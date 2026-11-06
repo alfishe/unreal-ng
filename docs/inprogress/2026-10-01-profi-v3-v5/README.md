@@ -58,9 +58,9 @@ port table, the factory ROMs, and the board manuals and PROM dumps from
 | v3 Kramis BIOS + TR-DOS 5.03, v5 Micco BIOS | confirmed (speccy4ever labels, ZXMAK2 romsets) |
 | `#FE` bit 7 always reads 1 | right for v3, **wrong for v5** (ZXMAK2, Karabas and pico-spec read a palette bit there) |
 | YM2149 on v5 | **wrong**: both manuals say AY-8910 / 8912 |
-| no floating bus on v3 | **wrong** per the v3.2 manual ("чтение пиксела экрана во время прямого хода луча") |
+| no floating bus on v3 | **wrong** per the v3.2 manual ("чтение пиксела экрана во время прямого хода луча", "reading a screen pixel during the active beam scan") |
 | v3 frame 71680 T, INT 47 T before paper | **right for one PROM** (`FB0579B6`, our decode gives 71680 / 48 T), but not for the original PROM of a 3.2 board (`0A1DFAFD`, dumped by the MDESK project), which gives the 69888 / 12580 every other emulator uses; that one is the v3 default ([cross-check.md](cross-check.md) section 4) |
 | v5 216 T line, 67392 T frame, 13860 T to paper | **wrong**: a decoding mistake we first made too. v5 boards reload the line counter with 61, not 63 (Kondor's fix list, the 5.06 netlist). With that, the v5 PROM gives 224 T x 312 = 69888 T and INT 14368 T before paper, the 48K's position |
-| (not in xpeccy-plus) v5 has a video WAIT in Spectrum mode | the v5 board holds CPU RAM accesses for the video, like a contended Sinclair bus (Gromov, the 5.06 album: jumper SB8 "торможение спектрум-режима") |
+| (not in xpeccy-plus) v5 has a video WAIT in Spectrum mode | the v5 board holds CPU RAM accesses for the video, like a contended Sinclair bus (Gromov, the 5.06 album: jumper SB8 "торможение спектрум-режима", "Spectrum mode slowdown") |
 | v3 turbo wait rule, HLD drops turbo | **confirmed** by the v3.2 schematic (E3); its Tact Meter figure (88208 T) is reproduced |
 | v3 256K / 768K with `#FF` holes | no other source; open |

@@ -1,0 +1,36 @@
+# Out Run (U.S. Gold / Probe 1987), the Kixx TZX "Outrun (Kixx).tzx" (128K tape loader: Tape Loader, then 1 OUT RUN in the
+# menu loads the race part, about 30 s of tape; pick 3 CONTROLS, 1 KEYBOARD first, or the car does not respond). Keyboard: Q accelerates, A brakes, O left, P right, M changes gear, H and R are
+# read too (pause / restart). Haptics (haptics.md §13 H5), found with TTD on a recorded run (the key reads by port-events, the
+# speed byte by sampling RAM against the speedometer, the writers by find-last): the speed is the 16-bit word #824F with the
+# high byte at #8250 (0 to about 235; the speedometer shows 1.25 times the byte, 138 km/h at 111); #9927 is the head of the
+# crash handler (it halves the speed at #9938, 210 -> 23 in one write, and sets the shake flags #8F90 / #8F8B), run once per crash
+# (three crashes in the recording, into the roadside after a held steer, three runs).
+# Checked in real time (Q held, 4 s straight, 4 s of O, 5 s of P): 0 crash on the road, 1 crash into the roadside during P; the
+# the speed rose and fell as driven. Known limits: the grass drag and the traffic hits are not events yet (the traffic part is a
+# separate menu entry).
+schema: 1
+kind: play
+id: builtin/game/out-run
+label: Out Run
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["d967fa3e5a3f5cfcf4414b35d00734b159fcff8ae0e9eae8c472aa1e6d97b3de"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: Q, label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: M, label: Gear }
+    east:         { key: "1", label: Select }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x8250", scale: 1.1 }
+    crash: { probe: exec, address: "0x9927" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }

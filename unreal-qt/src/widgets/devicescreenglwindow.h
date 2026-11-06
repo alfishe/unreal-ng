@@ -352,6 +352,7 @@ private:
 
     class HudOverlay* _hudOverlay = nullptr;
     QSize _renderPicture;  ///< renderWindowImage's picture size in device pixels, while it draws (empty: the window's)
+    uint32_t _imageFrameCount = 0;  ///< the shaders' FrameCount for renderWindowImage: one more per picture it renders
     bool _renderingImage = false;  ///< paintGL draws for renderWindowImage(): no HUD into the window
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }

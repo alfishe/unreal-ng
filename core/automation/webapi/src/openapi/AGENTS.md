@@ -17,9 +17,11 @@ openapi/
 ├── AGENTS.md              # This file
 ├── openapi_analysis.inc   # Beam position, screen digest, frame cost
 ├── openapi_analyzers.inc  # Analyzer management, coverage, AY log
+├── openapi_analysislayers.inc # Analysis layers: start / stop / status / explain / query / export / gallery / findings / review / experiment / cover (analysis::Execute)
 ├── openapi_assembly.inc   # In-process assembler + source listings
 ├── openapi_basic.inc      # BASIC interpreter control
 ├── openapi_breakpoints.inc # Breakpoint management
+├── openapi_callbacks.inc  # Script callbacks: list, resume, remove, policy (callbacks_api.cpp)
 ├── openapi_capture.inc    # Screen/OCR/audio/video capture
 ├── openapi_debug.inc      # Memory, registers, disassembly
 ├── openapi_pace.inc       # The paced run /run_pace (core RunPacer)
@@ -101,6 +103,7 @@ Includes are grouped by category:
 #include "openapi/openapi_state.inc"
 #include "openapi/openapi_analyzers.inc"
 #include "openapi/openapi_analysis.inc"
+#include "openapi/openapi_analysislayers.inc"
 
 // Debug Commands
 #include "openapi/openapi_stepping.inc"

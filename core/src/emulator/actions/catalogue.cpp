@@ -1,6 +1,8 @@
 #include "emulator/actions/catalogue.h"
 
+#include <cstdio>
 #include <map>
+#include <set>
 
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelhooks.h"
@@ -70,6 +72,8 @@ const Descriptions& DescriptionTable()
         {"run.pace_next", "A finer pace: one step down the ladder (25 fps .. 1 instruction)."},
         {"run.pace_prev", "A coarser pace: one step up the ladder (towards full speed)."},
         {"run.pace_by", "Walk the pace ladder by a dial's delta."},
+        {"run.pace_shuttle_faster", "A coarser pace by a spring-loaded ring's turn (level): one preset per step further from the centre; the return changes nothing."},
+        {"run.pace_shuttle_slower", "A finer pace by a spring-loaded ring's turn (level): one preset per step further from the centre; the return changes nothing."},
         {"run.pace_toggle", "Run at the pace, or stop it; at full speed pause or continue the machine."},
         {"run.pace_stop", "Stop the paced run; the machine stays paused."},
         {"run.pace_step", "Run one step of the chosen pace (a frame, N scanlines, an instruction)."},
@@ -258,6 +262,111 @@ const DefaultToggle* DefaultToggleOf(std::string_view id)
     const Toggles& table = ToggleTable();
     auto it = table.find(id);
     return it != table.end() ? &it->second : nullptr;
+}
+
+const std::vector<GuiActionDeclaration>& GuiActionDeclarations()
+{
+    static const char* const ttd = "Time travel";
+    static const char* const debug = "Debugger";
+    static const char* const machine = "Capture and machine";
+    static const char* const controllers = "Controllers";
+    static const std::vector<GuiActionDeclaration> table = {
+        // The analog scrub (a trigger's level, `curve: scrub`; a button press is the full level)
+        {"ttd.scrub_back", "Scrub back", ttd, ValueKind::Level},
+        {"ttd.scrub_forward", "Scrub forward", ttd, ValueKind::Level},
+        // The debugger window and its panes; the cursor keys repeat while held
+        {"dbg.open", "Open the debugger", debug},
+        {"dbg.focus_next_pane", "Next debugger pane", debug},
+        {"dbg.focus_prev_pane", "Previous debugger pane", debug},
+        {"dbg.cursor_up", "Cursor up in the pane", debug, ValueKind::Press, true},
+        {"dbg.cursor_down", "Cursor down in the pane", debug, ValueKind::Press, true},
+        {"dbg.cursor_left", "Cursor left in the pane", debug, ValueKind::Press, true},
+        {"dbg.cursor_right", "Cursor right in the pane", debug, ValueKind::Press, true},
+        {"dbg.page_up", "Page up in the pane", debug, ValueKind::Press, true},
+        {"dbg.page_down", "Page down in the pane", debug, ValueKind::Press, true},
+        {"dbg.memory_follow", "Memory follows the value under the cursor", debug, ValueKind::Press, true},
+        {"dbg.breakpoint_toggle_cursor", "Toggle a breakpoint at the cursor", debug},
+        {"dbg.follow_pc", "Disassembly follows PC", debug},
+        {"dbg.labels_toggle", "Labels in the disassembly", debug},
+        {"dbg.scroll_mode_toggle", "Disassembly scrolls by bytes / instructions", debug},
+        {"dbg.goto", "Disassembly at an address", debug, ValueKind::Press, false,
+         "addr (0..#FFFF: decimal, 0x.., #.., $..)"},
+        // The main window's screenshot to the clipboard and its on-screen keyboard
+        {"cap.screenshot", "Screenshot", machine},
+        {"osd.keyboard", "On-screen keyboard", machine},
+        // The Controllers window and its learn wizard
+        {"ctl.open", "Open the Controllers window", controllers},
+        {"ctl.learn", "Learn a device's controls", controllers, ValueKind::Press, false, "device"},
+        // Stubs: a binding to one says why instead of doing nothing
+        {"osd.quick_menu", "osd.quick_menu", machine},
+    };
+    return table;
+}
+
+const GuiActionDeclaration* GuiActionDeclarationOf(std::string_view id)
+{
+    for (const GuiActionDeclaration& declaration : GuiActionDeclarations())
+        if (id == declaration.id)
+            return &declaration;
+    return nullptr;
+}
+
+namespace
+{
+/// A JSON string as Python's json.dumps(ensure_ascii=False) writes it (make_deck_scenario.py --fetch-catalogue)
+std::string Quoted(std::string_view text)
+{
+    std::string out = "\"";
+    for (const char c : text)
+    {
+        switch (c)
+        {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20)
+                {
+                    char code[8];
+                    std::snprintf(code, sizeof(code), "\\u%04x", static_cast<unsigned>(c));
+                    out += code;
+                }
+                else
+                    out += c;
+        }
+    }
+    return out + "\"";
+}
+}  // namespace
+
+std::string ShippedCatalogueJson(const std::vector<ActionInfo>& actions)
+{
+    std::vector<ActionInfo> rows = actions;
+    std::set<std::string, std::less<>> ids;
+    for (const ActionInfo& info : actions)
+        ids.insert(info.id);
+    for (const GuiActionDeclaration& declaration : GuiActionDeclarations())
+        if (ids.count(declaration.id) == 0)
+            rows.push_back(ActionInfo{declaration.id, declaration.label, declaration.group, declaration.kind,
+                                      declaration.held, true, declaration.params, {}, false});
+    std::string out = "{\n \"format\": \"unreal-ng-action-catalogue\",\n \"version\": 1,\n \"actions\": [";
+    for (size_t i = 0; i < rows.size(); i++)
+    {
+        const ActionInfo& info = rows[i];
+        out += i == 0 ? "\n" : ",\n";
+        out += "  {\n   \"id\": " + Quoted(info.id) + ",\n   \"label\": " + Quoted(info.label) + ",\n   \"group\": " +
+               Quoted(info.group) + ",\n   \"kind\": " + Quoted(ValueKindName(info.kind)) + ",\n   \"held\": " +
+               (info.held ? "true" : "false") + ",\n   \"gui\": " + (info.gui ? "true" : "false");
+        if (!info.params.empty())
+            out += ",\n   \"params\": " + Quoted(info.params);
+        out += "\n  }";
+    }
+    out += rows.empty() ? "]\n}\n" : "\n ]\n}\n";
+    return out;
 }
 
 }  // namespace actions

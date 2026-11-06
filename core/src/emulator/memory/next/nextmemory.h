@@ -57,8 +57,17 @@ public:
     MemoryInterface* ModelMemoryInterface(bool debug, bool contended) override;
     /// Its own slot writes (SlotWriteFast), not MemoryWriteFast: its write taps take the debug path
     bool SupportsWriteTapHook() const override { return false; }
+    bool SupportsReadTapHook() const override { return false; }
     void RefreshSlotContention() override;
     uint8_t ToolReadRedirect(uint16_t addr, uint8_t normal) const override;
+    /// A tool's write goes to the slot the address falls in (PokeSlot), as its read comes from it
+    bool ToolWriteRedirect(uint16_t addr, uint8_t value) override;
+    /// The page and offset the slot shows (an 8K bank is half of a 16K page): physical breakpoints follow the MMU
+    MemoryPageDescriptor MapZ80AddressToPhysicalPage(uint16_t address) override;
+    uint8_t PhysicalSlotShift() const override { return 13; }
+    ttd::PhysPage TtdLocate(uint16_t addr, bool write, uint16_t& offsetInPage) const override;
+    /// The TTD restore: the image (NextStateCodec) holds the MMU and every view, the slot table follows it
+    void RestorePaging() override { Remap(); }
     /// endregion
 
     /// region <Slot table>
@@ -80,6 +89,9 @@ public:
     uint8_t AltRomRegister() const { return _alt; }
     uint8_t EffectiveRom() const;
     uint8_t AltPage() const;
+    /// The 16K ROM page a slot whose MMU value is #FF reads now: the selected ROM, or the alternate ROM while it
+    /// replaces reads (no DivMMC / Multiface overlay, no config mode)
+    uint8_t RomReadPage() const { return (_alt & 0xC0) == 0x80 ? AltPage() : EffectiveRom(); }
     /// The 48K BASIC ROM is what an opcode fetch at #0000 sees: ROM 3 / ROM 1 / ROM 0 by machine type, or the alternate
     /// 48K ROM while the alternate ROM replaces reads
     bool BasicRomVisible() const;
@@ -159,6 +171,8 @@ public:
     uint8_t PeekSlot(uint16_t addr) const;
     /// Physical 8K address (offset in the buffer) behind a CPU address, for reports
     uint32_t SlotReadOffset(unsigned slot) const { return _readOff[slot & 7]; }
+    /// The host byte a slot's CPU read sees at `offset` in its 8K (the boot ROM, DivMMC, Multiface, alternate ROM included)
+    uint8_t* SlotReadHostAddress(unsigned slot, uint16_t offset) { return _memory + _readOff[slot & 7] + (offset & (kSlotSize - 1)); }
     /// What a slot shows: "ram", "rom", "boot rom", "config bank", "divmmc rom", "divmmc ram", "unmapped"
     const char* SlotKind(unsigned slot) const { return _kind[slot & 7]; }
     /// endregion
@@ -191,6 +205,7 @@ private:
     uint32_t _readOff[kSlots] = {};
     uint32_t _writeOff[kSlots] = {};
     ttd::PhysPage _physPage[kSlots] = {};
+    TtdSlotKey _ttdKeys[kSlots] = {};   // Memory::TtdKeyOf (SyncWindows)
     std::unique_ptr<MemoryInterface> _fastIf;
     std::unique_ptr<MemoryInterface> _debugIf;
     std::unique_ptr<MemoryInterface> _fastContendedIf;

@@ -1,6 +1,6 @@
 # Phase 5 results: the switch to the engine
 
-Part of the [TTD v1 → v2 migration](README.md). Phase 5 design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md). Quality bar: [engine decision 33](engine-decisions.md#g-quality-bar-after-every-phase). Phase 4: [phase-4-results.md](phase-4-results.md). Open work: [TODO.md](TODO.md).
+Part of the [TTD v1 → v2 migration](README.md). Phase 5 design: [phase-5-switchover-tdd.md](phase-5-switchover-tdd.md). Quality bar: [engine decision 33](engine-decisions.md#g-quality-bar-after-every-phase). Phase 4: [phase-4-results.md](phase-4-results.md). Open work: [DONE.md](DONE.md).
 
 Measured 2026-10-05 on branch `ttd-engine` (master merged at `730566fbe`), Release, on the shared development host.
 
@@ -26,7 +26,7 @@ with the engine too (Step 4, 2026-10-06); the test files that drive v1 directly 
 | Check | Result |
 |---|---|
 | D33 matrix, engine against v1 (bytes, memory, counted work; 600 frames) | 46 configurations, 0 failing a deterministic condition (`ttd_engine_d33.py`, `UNREAL_TTD_BENCH_SET=full UNREAL_TTD_BENCH_ENGINE=all`, 600 frames, no seeks; baseline `testdata/ttd/bench/engine-phase5-full.json`). Recorded bytes per frame 3-16 times below v1 (Sprinter 18,364 → 1,132) |
-| PR-1, the engine alone in the frame | Measured 2026-10-05 before the merge: frame overhead 3-11 % on the default configurations; above the 15 % / 10 % limits where v1 is too (Pentagon *game* with coverage 25.6 %, v1 22.1 %) - [TODO.md](TODO.md) |
+| PR-1, the engine alone in the frame | Measured 2026-10-05 before the merge: frame overhead 3-11 % on the default configurations; above the 15 % / 10 % limits where v1 is too (Pentagon *game* with coverage 25.6 %, v1 22.1 %) - [DONE.md](DONE.md) |
 | Full test suite, macOS | All passed, 0 warnings (21 shards, the `test-parallel` target) on `f3e871de2` |
 | Linux gcc (`docker/linux/build.sh --test`) | 7,835 passed, 0 warnings on the merge `730566fbe`; 3 failures also on master (`TSL-VDAC2` cannot be created in the Linux image: the model-state contract and two shadow-model cases). Re-run on the final commit: 7,836 passed, 0 warnings on `f3e871de2`, the same three known failures |
 | ASan / UBSan on the TTD and DeZog tests | 1,485 passed (recoverable mode). Findings, all known and outside the engine: ATM710 / TS-Conf decoder teardown, `blip_buf` overflow, `modulelogger` index, misaligned binding in two v1 tests, `MainLoop_CUT` in `z80_test`, v1's `HistoryLimit_Test.ByteLimitHolds` use-after-free (also on master) |

@@ -46,7 +46,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>>& HostControl
         {"rumble", {"device", "effect"}},
         {"output", {"device", "pattern", "steps", "clicks", "marks"}},
         {"light", {"device", "color"}},
-        {"haptics_probe", {"kind", "address", "page", "port_mask", "play"}},
+        {"haptics_trial", {"text", "clear"}},
         {"role", {"device", "role"}},
         {"pin", {"device", "pin"}},
         {"identify", {"device"}},
@@ -365,7 +365,7 @@ namespace
             const Json::Value& decision = reply["decision"];
             const Json::Value& evidence = reply["evidence"];
             if (decision["decisive"].asBool())
-                out << decision["label"].asString() << " (port-read evidence: " << decision["reason"].asString() << ")";
+                out << decision["label"].asString() << " (device access evidence: " << decision["reason"].asString() << ")";
             else if (decision["keyboard"].asBool())
                 out << "the program reads the whole keyboard (" << decision["reason"].asString() << ")";
             else
@@ -436,7 +436,7 @@ void RegisterControllers(ToolRegistry& registry)
         }
         perVerb += "\n" + verb + " (host): " + (list.empty() ? "-" : list);
     }
-    const std::set<std::string> booleans = {"shift", "extended", "im2-leak", "async", "apply"};
+    const std::set<std::string> booleans = {"shift", "extended", "im2-leak", "async", "apply", "clear"};
     for (const std::string& option : options)
         schema["properties"][option]["type"] = booleans.count(option) ? "boolean" : option == "port" ? "integer" : "string";
     schema["properties"]["port"]["description"] = "sinclair-joystick: 1 (keys 6-0) or 2 (keys 1-5)";
@@ -462,7 +462,8 @@ void RegisterControllers(ToolRegistry& registry)
         "scheme: the scheme the pad works as (scheme/kempston, scheme/sinclair-1, scheme/qaop-space; 'none' = the "
         "machine's default)";
     schema["properties"]["text"]["description"] =
-        "save: the whole profile, YAML or JSON (schema 1); database_save: one devices.user.json entry as JSON "
+        "save: the whole profile, YAML or JSON (schema 1); haptics_trial: a play profile's events: and haptics: "
+        "(YAML or JSON) to try on the loaded game for this session; database_save: one devices.user.json entry as JSON "
         "({\"id\": \"xbox-elite-2\", \"images\": \"my-elite\"}: a known family changes the fields it names; a new "
         "one needs its match list) or a file's {\"families\": [...]}; database_import: a gamecontrollerdb.txt line "
         "or a RetroArch joypad autoconfig .cfg";
@@ -491,14 +492,7 @@ void RegisterControllers(ToolRegistry& registry)
     schema["properties"]["version"]["description"] = "database: the version (4 hex digits, a firmware range)";
     schema["properties"]["save"]["description"] =
         "database_import: false = parse and show only; default: write a user family into devices.user.json";
-    schema["properties"]["kind"]["description"] = "haptics_probe: exec, read, write, port-in or port-out";
-    schema["properties"]["address"]["description"] =
-        "haptics_probe: the address (exec, read, write) or port (port-in, port-out), 0x5C3A or decimal";
-    schema["properties"]["page"]["description"] = "haptics_probe: a RAM page (the address is the offset in it)";
-    schema["properties"]["port_mask"]["description"] = "haptics_probe: the port's decoded bits (0x00FF; all by default)";
-    schema["properties"]["play"]["description"] =
-        "haptics_probe: the library effect its rule plays (hit by default; tick, knock, thump, explosion, engine, "
-        "heartbeat, life-lost, pickup, shot, rumble-strip)";
+    schema["properties"]["clear"]["description"] = "haptics_trial: drop the session trial";
     schema["properties"]["control"]["description"] = "bind / unbind: south, lt.click, rstick.x, view+menu, dpad.*";
     schema["properties"]["spec"]["type"] = "object";
     schema["properties"]["spec"]["description"] =
@@ -536,9 +530,10 @@ void RegisterControllers(ToolRegistry& registry)
         "user device, a new name, a photo's image set), database_import (a gamecontrollerdb line or a RetroArch "
         "autoconfig file as a user family with its control map; the learn wizard is on REST, CLI and Python: it needs "
         "a person), aliases (old device id -> new: a controller first seen through GameController alone (gc:...) and "
-        "later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = the old id), haptics_probe (a "
-        "non-breaking breakpoint as a haptic source of the loaded game's user profile, with a rule; the debugger's "
-        "Add as Haptic Probe), match (the game profiles a program's signatures choose: exact, file SHA-256, then the "
+        "later matched to its HID device keeps its profiles under the new id), unalias (forget one, id = the old id), haptics_trial (try "
+        "events and haptics rules on the loaded game for this session, never written: text = the events: / haptics: "
+        "of a game profile, laid over its haptics at once, game.events shows them; clear drops it; another program "
+        "drops it too), match (the game profiles a program's signatures choose: exact, file SHA-256, then the "
         "TR-DOS file set's fuzzy rule; context shows them for the loaded program with where the haptics come from). "
         "Options per action:" +
             perVerb,

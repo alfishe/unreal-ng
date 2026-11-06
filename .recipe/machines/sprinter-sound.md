@@ -143,3 +143,33 @@ agree ([s6-sound-outcome.md](../../docs/inprogress/2026-09-28-sprinter/s6-sound-
 | No sound during `run_frames` | By design: a direct run goes at full host speed, so the host output is held for it (`GET /audio/mixer` -> `host_output.held`, `holders.direct_run`, `frames_held` grows); `resume` plays again, and after it `host_output.holders` is all `0` and `frames_audible` grows. A non-zero holder or a growing `stale_holds_cleared` after `resume` is a bug: report it with the `host_output` block. Captures (step 5) and recordings (step 6) are in emulated time and unaffected |
 | `PROPLAY.EXE` finds no General Sound | MOD files go to a GS card on the ISA ZX-bus adapter: not emulated yet (phase S6b) |
 | A MAME CHD boots on the first run only | MAME keeps the guest's writes in `diff/<name>.dif`; the capture script removes it before each run |
+
+## Wild Sound ISA card (verified 2026-10-09)
+
+Robus's Wild Sound in ISA slot 1 (`[ISA] Slot1=WILDSOUND`, or at creation): two AY chips at ISA I/O `#000` /
+`#001` and an XM player that the program uploads a module to. `prosiak.exe` of the system disk detects the card,
+uploads its XM and plays it until a key. Design: [2026-10-09-wildsound](../../docs/inprogress/2026-10-09-wildsound/README.md).
+
+```text
+emulator_manage {"action":"create","model":"SPRINTER","sprinter_isa_slot1":"wildsound"}
+media {"action":"insert","slot":"ide0.master","path":".../IMG/sp_hdd_sys.chd"}
+emulator_manage {"action":"reset"};  control_execution {"action":"run_frames","frames":1500}   # Flex Navigator
+type_input {"action":"type","text":"demos\\wildsnd\\prosiak.exe","delay_frames":6};  run_frames 400
+invoke_api {"method":"POST","path":"/api/v1/emulator/{id}/audio/capture","body":{"action":"start","seconds":10,"source":"ws_xm"}}
+type_input {"action":"tap","key":"enter","frames":3};  control_execution {"action":"run_frames","frames":520}
+#   screen: "Wild Sound ... ISA #0 165931.23042021", "XM TRK Data", "XM INS HDR", "XM INS", "XM PLAY"
+inspect_state {"aspects":["audio_wildsound"]}
+#   [audio_wildsound] slot 1: xm mode, unlocked, stream DIGPLAY 22610/22610, storage 174323 bytes, track "Prosiak" 4 ch
+#     playing order 1 pattern 2 row 16, speed 4 BPM 125
+invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/audio/capture/result?wav=true"}
+#   {"left":{"rms":0.065,"peak":0.44},"right":{"rms":0.058,"peak":0.31},"dominant_hz":836.5,"wav_path":...}
+#   (10 s from the Enter: the upload takes the first seconds)
+```
+
+- Capture sources: `ws_xm` (the module), `ws_ay1`, `ws_ay2` (the AY chips). The card plays one or the other.
+- The card's report also sits in the slot report (`GET /state/isa`, `slots[0].wild_sound`); its upload store is the
+  memory `wildsound.flash` (`memory_access`, `time_travel memory_at`).
+- Boot a fresh process for each run: a second SPRINTER created in the same process after a destroy may stop in
+  the BIOS (seen on master too, 2026-10-09; not the card). Wait for Flex Navigator's panel before typing.
+- Against an openmpt123 render of PROSIAK.XM (linear interpolation) over 25 s: envelope correlation 0.97, no tempo
+  drift.

@@ -43,18 +43,22 @@ RumbleLevels Scaled(const RumbleLevels& levels, float scale)
     out.high = clamp(levels.high);
     out.leftTrigger = clamp(levels.leftTrigger);
     out.rightTrigger = clamp(levels.rightTrigger);
+    out.hdLeft = clamp(levels.hdLeft);
+    out.hdRight = clamp(levels.hdRight);
     return out;
 }
 }  // namespace
 
 ProfileHaptics::ProfileHaptics(HapticProfile profile, std::string name, HapticMixer& mixer,
                                std::function<std::vector<HostDeviceId>()> targets,
-                               std::function<uint8_t(const HostDeviceId&)> actuators)
+                               std::function<uint8_t(const HostDeviceId&)> actuators,
+                               std::function<int(const HostDeviceId&)> playerOf)
     : _profile(std::move(profile)),
       _name(std::move(name)),
       _mixer(mixer),
       _targets(std::move(targets)),
-      _actuators(std::move(actuators))
+      _actuators(std::move(actuators)),
+      _playerOf(std::move(playerOf))
 {
     _states.resize(_profile.sources.size());
     for (size_t index = 0; index < _profile.sources.size(); index++)
@@ -73,6 +77,12 @@ ProfileHaptics::ProfileHaptics(HapticProfile profile, std::string name, HapticMi
         {
             state.probe = static_cast<int>(_probes.size());
             _probes.push_back(source.Probe());
+        }
+        else if (!source.IsBreakpointProbe() && !source.condition.empty() &&
+                 _frameConditions.size() < HapticFrame::kMaxConditions)
+        {
+            state.condition = static_cast<int>(_frameConditions.size());
+            _frameConditions.push_back(source.condition);
         }
         if (source.IsStream())
         {
@@ -104,6 +114,11 @@ std::vector<HapticStream> ProfileHaptics::Streams() const
 std::vector<HapticProbe> ProfileHaptics::Probes() const
 {
     return _probes;
+}
+
+std::vector<std::string> ProfileHaptics::FrameConditions() const
+{
+    return _frameConditions;
 }
 
 void ProfileHaptics::OnHapticHold(bool held)
@@ -239,7 +254,14 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
     std::vector<float>& levels = _frameLevels;
     levels.assign(_profile.sources.size(), 0.0f);
     for (size_t index = 0; index < _profile.sources.size(); index++)
+    {
+        // Evaluated first: a gated source still learns its byte and runs its filters
         levels[index] = Evaluate(_profile.sources[index], _states[index], frame);
+        const int condition = _states[index].condition;
+        if (condition >= 0 && (static_cast<unsigned>(condition) >= frame.conditionCount ||
+                               !((frame.conditionsHeld >> condition) & 1u)))
+            levels[index] = 0;
+    }
     _frameReady = true;
     {
         std::lock_guard<std::mutex> lock(_levelsMutex);
@@ -255,6 +277,14 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             index++;
         if (index == _profile.sources.size() || levels[index] <= 0)
             continue;
+        if (!rule.gate.empty())
+        {
+            size_t gate = 0;
+            while (gate < _profile.sources.size() && _profile.sources[gate].name != rule.gate)
+                gate++;
+            if (gate == _profile.sources.size() || _states[gate].value != rule.gateValue)
+                continue;
+        }
         HapticEffect effect;
         if (!BuiltinHapticEffect(rule.play, effect))
             continue;
@@ -266,6 +296,10 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
             effect.levels.lowHz = rule.lowHz;
         if (rule.highHz != 0)
             effect.levels.highHz = rule.highHz;
+        if (rule.hdFrequency > 0)
+            effect.levels.hdFrequency = rule.hdFrequency;
+        if (rule.hdWave)
+            effect.levels.hdWave = *rule.hdWave;
         if (!source.IsEvent())
         {
             // A level holds the effect at its peak while it lasts: the envelope would restart every frame
@@ -279,8 +313,11 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
     for (const HostDeviceId& device : _targets())
     {
         const uint8_t actuators = _actuators ? _actuators(device) : static_cast<uint8_t>(kTargetAll);
+        const int player = _playerOf ? _playerOf(device) : 0;
         for (const auto& [rule, effect] : effects)
         {
+            if (rule->player != 0 && rule->player != player)
+                continue;
             HapticEffect played = effect;
             played.levels = RetargetLevels(effect.levels, rule->TargetFor(actuators));
             _mixer.Play(device, played);
@@ -291,8 +328,20 @@ void ProfileHaptics::OnHapticFrame(const HapticFrame& frame)
 std::vector<GameEventInfo> ProfileHaptics::GameEvents() const
 {
     std::vector<GameEventInfo> events;
-    for (const HapticSource& source : _profile.sources)
-        events.push_back({source.name, !source.IsEvent()});
+    for (size_t index = 0; index < _profile.sources.size(); index++)
+    {
+        const HapticSource& source = _profile.sources[index];
+        GameEventInfo info;
+        info.name = source.name;
+        info.level = !source.IsEvent();
+        info.condition = source.condition;
+        if (!source.condition.empty())
+        {
+            info.probe = _states[index].probe;
+            info.frameCondition = _states[index].condition;
+        }
+        events.push_back(std::move(info));
+    }
     return events;
 }
 

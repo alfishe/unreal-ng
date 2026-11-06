@@ -1,6 +1,7 @@
 #include "platform/macos/iohidbackend.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDKeys.h>
 #include <IOKit/hid/IOHIDManager.h>
 
@@ -391,10 +392,12 @@ public:
     bool Output(const HostDeviceId& device, const StepsOut& out) override
     {
         std::lock_guard lock(_mutex);
+        // Kept first: a Dial asleep (no writer) when the context changed gets them when it wakes; the router sends a
+        // feel once
+        _dialSteps[device] = out;
         SurfaceDialWriter* writer = WriterLocked(device);
         if (writer == nullptr)
             return false;
-        _dialSteps[device] = out;
         writer->Steps(out);
         return true;
     }
@@ -559,6 +562,7 @@ private:
     {
         HostDeviceId id;  ///< the logical device's (EndpointMerge): shared by the endpoints of one physical device
         std::string key;  ///< this endpoint's, for EndpointMerge
+        uint64_t entry = 0;  ///< the IOHIDDevice service's registry entry id: one Device per service
         /// This endpoint gives the device's input (the one of its endpoints with the most controls)
         std::atomic<bool> input{true};
         std::vector<uint8_t> buffer;
@@ -623,15 +627,19 @@ private:
         // its pattern. Opened without seizing (kIOHIDOptionsTypeNone): the system keeps its own use of them
         // Valve's devices all: the Steam Controllers' pad is a vendor-page interface (SteamPad), their keyboard and
         // mouse ("lizard mode") are dropped in OnAdded
-        CFDictionaryRef matches[] = {
+        // The database's control surfaces by id: their collections are not a pad's (the ShuttlePRO is a Consumer
+        // Control). A user family added later is matched at the next start
+        std::vector<CFDictionaryRef> matches = {
             Matching(0x04),
             Matching(0x05),
             Matching(0x08),
             Matching(0x0E),
             VendorMatching(SteamPad::kValve),
             ProductMatching(GameCubeAdapter::kNintendo, GameCubeAdapter::kAdapter)};
-        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches),
-                                            static_cast<CFIndex>(std::size(matches)), &kCFTypeArrayCallBacks);
+        for (const auto& [vendor, product] : DeviceDatabase::Active()->SurfaceProducts())
+            matches.push_back(ProductMatching(vendor, product));
+        CFArrayRef matching = CFArrayCreate(kCFAllocatorDefault, reinterpret_cast<const void**>(matches.data()),
+                                            static_cast<CFIndex>(matches.size()), &kCFTypeArrayCallBacks);
         for (CFDictionaryRef match : matches)
             CFRelease(match);
         IOHIDManagerSetDeviceMatchingMultiple(manager, matching);
@@ -1119,6 +1127,19 @@ private:
 
     void OnAdded(IOHIDDeviceRef ref)
     {
+        // A service several of the manager's dictionaries match (the Surface Dial: System Multi-Axis and its product
+        // id) comes once per dictionary, each time as a ref of its own: the first ref is the device, the others are
+        // dropped (their removal finds nothing)
+        uint64_t entry = 0;
+        if (IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(ref), &entry) != KERN_SUCCESS)
+            entry = 0;
+        if (entry != 0)
+        {
+            std::lock_guard lock(_mutex);
+            if (std::any_of(_devices.begin(), _devices.end(),
+                            [entry](const auto& known) { return known.second->entry == entry; }))
+                return;
+        }
         const uint16_t vendor = static_cast<uint16_t>(IntProperty(ref, CFSTR(kIOHIDVendorIDKey)));
         const uint16_t product = static_cast<uint16_t>(IntProperty(ref, CFSTR(kIOHIDProductIDKey)));
         const int version = IntProperty(ref, CFSTR(kIOHIDVersionNumberKey));
@@ -1323,6 +1344,7 @@ private:
                  ++n)
                 unique = id + "#" + std::to_string(n);
             device->key = std::to_string(reinterpret_cast<uintptr_t>(ref));
+            device->entry = entry;
             const EndpointMerge::HidAdded added =
                 _merge.AddHid({device->key, unique, physical, identity.name, controls, SteadyNowMs()});
             newDevice = added.newDevice;

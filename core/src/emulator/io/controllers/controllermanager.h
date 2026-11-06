@@ -6,7 +6,7 @@
 ///
 /// A connector is to a retro device what a media slot is to a medium: a stable id, an alias, a kind:index
 /// selector, the devices it accepts. The manager builds the list for the machine (Rebuild), plugs devices, takes
-/// the host's samples at the frame boundary and routes every change through TimeTravelManager::SubmitLiveInput:
+/// the host's samples at the frame boundary and routes every change through TimeTravelController::SubmitLiveInput:
 /// Kempston as Joystick, the Next pads as NextPad, the keyboard joysticks as ConnectorState. The keyboard joysticks
 /// are an overlay on the matrix (Keyboard::SetOverlay), ANDed into the half-row reads like a stick wired in
 /// parallel with the keys.
@@ -15,7 +15,7 @@
 /// Refused while the journal owns input. While TTD records they wait for the frame boundary (ApplyPending, before
 /// the checkpoint), so the checkpoint holds them and the configuration fingerprint (`controllers.<connector>`) gives
 /// the recording a ConfigChange cut there: a replay crossing that frame takes the checkpoint, a seek before it
-/// unplugs again. TTD v1 keeps no configuration changes: there plugs are refused while it records. The keyboard
+/// unplugs again. The keyboard
 /// joysticks' devices, options and held controls are the blob of TTDDeviceType::Controllers, on every machine.
 
 #include <array>
@@ -25,16 +25,22 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "controllertypes.h"
+// Qt defines `slots` as a macro; this header reaches Qt translation units and names slots::InputRole
+#pragma push_macro("slots")
+#undef slots
+#include "emulator/slots/slottypes.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "debugger/ttd/engine/ttdconfigfingerprint.h"
 #include "debugger/ttd/ttdinputjournal.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/keyboard/keyboard.h"
-#include "portreadwatch.h"
+#include "emulator/ports/deviceaccesswatch.h"
 
+class BreakpointConditionProgram;
 class EmulatorContext;
 
 namespace controllers
@@ -71,6 +77,11 @@ struct Connector
     OverlayOptions options;
     uint16_t mask = 0;  ///< keyboard joysticks and card sockets: the controls held (the others read their device)
     const void* owner = nullptr;  ///< the card that brought the connector (ICard); null for the machine's own
+    /// The input role of the port its device answers (the slot registry's claim: KempstonJoystick for `kempston` and
+    /// `next.left`, KempstonJoystick2 for `next.right`, FullerJoystick, AmxMouse); None for the keyboard joysticks
+    slots::InputRole input = slots::InputRole::None;
+    /// The registry device whose claim that is: the card's slot ("edge.1") for a card's socket, "" for the board's
+    std::string source;
 };
 
 class ControllerManager : public ttd::TTDSerializable
@@ -89,13 +100,16 @@ public:
     std::vector<Connector> Connectors() const;
     /// id, alias or kind:index (kempston:0, next-db9:1, keyboard-joystick:0), case-insensitive; -1 when none
     int Find(const std::string& selector) const;
+    /// The connector whose device answers reads of @p input: the one @p source brought (a card's slot, the device
+    /// access evidence's registry id) first, else the first of that role; -1 when the machine has none
+    int FindForInput(slots::InputRole input, const std::string& source = {}) const;
     /// Bumped on every plug, unplug and rebuild
     uint64_t Revision() const;
     /// endregion </Connectors>
 
     /// region <Plugs (configuration)>
     /// Plug @p device into the connector: fails when the connector does not accept it, is fixed, or replay owns
-    /// input (TTD v1: also while it records). While TTD records the plug waits for the frame boundary (HasPending).
+    /// input. While TTD records the plug waits for the frame boundary (HasPending).
     /// Replacing a device releases what the old one held
     ControllerResult Plug(size_t index, RetroDeviceKind device, const OverlayOptions& options);
     ControllerResult Unplug(size_t index);
@@ -118,7 +132,7 @@ public:
     /// The controls held on the connector a card brought (ICard::Connectors): what the card's port answers from.
     /// 0 when the card has none
     uint16_t OwnedState(const void* owner) const;
-    /// Live input: the whole state of a connector, through TimeTravelManager::SubmitLiveInput (applied directly
+    /// Live input: the whole state of a connector, through TimeTravelController::SubmitLiveInput (applied directly
     /// without TTD). False when refused (the journal owns input) or the connector has no device
     bool Submit(size_t index, uint16_t mask);
     /// The TTD apply point of ConnectorState (live and replay): a keyboard joystick's or card socket's mask. False
@@ -153,14 +167,16 @@ public:
     void OnFrame(uint64_t frame);
     /// endregion </Input>
 
-    /// region <Port-read evidence (retro-devices.md §6)>
-    /// Start (from zero) or stop the port-read watch; applied at the next frame boundary on the machine's thread.
-    /// A media load starts it; it counts from the end of a tape's playing and stops itself after kPortReadWatchFrames
+    /// region <Device access evidence (docs/inprogress/2026-11-02-device-access-watch)>
+    /// Open (from zero) or close the device access watch's window of the auto connector: the decoder's watch
+    /// (PortDecoder::GetAccessWatch), applied at the next frame boundary. A media load opens it; it counts from the end
+    /// of a tape's playing and closes itself after kPortReadWatchFrames (the feature `deviceaccess` keeps the watch on)
     void WatchPortReads(bool on);
-    /// What the watch saw over its last window (active false when it does not run)
-    PortReadEvidence PortReads() const;
+    /// What the watch saw over its last window (active false when it does not run); a board access carries the
+    /// catalog cards that would answer it on the machine as it is (slots::CardCandidates, kept until Rebuild)
+    DeviceAccessEvidence PortReads() const;
     static constexpr uint32_t kPortReadWatchFrames = 1500;  ///< 30 s of play at 50 Hz
-    /// endregion </Port-read evidence>
+    /// endregion </Device access evidence>
 
     /// The keyboard-joystick connectors that have a device
     bool HasOverlayDevices() const;
@@ -215,6 +231,9 @@ private:
     mutable std::mutex _mutex;
     std::vector<Connector> _connectors;
     uint64_t _revision = 0;
+    /// The card candidates of board accesses by (out << 16 | port), for the slot set of the last Rebuild
+    mutable std::mutex _candidateMutex;
+    mutable std::unordered_map<uint32_t, std::vector<slots::CardCandidate>> _candidates;
     struct PendingPlug
     {
         std::string connector;
@@ -238,28 +257,33 @@ private:
     std::vector<HapticWatch> _hapticWatches;   ///< the bytes _hapticFed reads (emulator thread)
     size_t _hapticStreams = 0;                 ///< the sound's haptic taps _hapticFed asked for
     std::unique_ptr<HapticProbes> _hapticProbes;  ///< its breakpoint probes (emulator thread)
+    /// Its FrameConditions, compiled on this machine; null: did not compile or failed once (never holds again)
+    std::vector<std::shared_ptr<const BreakpointConditionProgram>> _hapticConditions;
+    std::vector<int> _hapticConditionEvents;   ///< per condition, its game event (the error goes there); -1: none
     std::atomic<bool> _hapticHeld{false};      ///< replay or seek: the feed was told (UpdateHapticHold)
     std::mutex _holdMutex;                     ///< UpdateHapticHold from the control thread and the frame boundary
     GameEventLog _gameEvents;                  ///< what _hapticFed reports
     bool _gameEventsOn = false;                ///< _hapticFed defined events (emulator thread)
+    std::vector<std::string> _gameEventNames;  ///< their names, for the script callbacks (emulator thread)
     void FeedHaptics(uint64_t frame);
     void AttachHapticFeed(const std::shared_ptr<IHapticFeed>& feed);
     void DetachHapticFeed();
+    void EvaluateHapticConditions(HapticFrame& summary);
     /// Per connector: the host's last submitted sample (-1 = none yet, submit the next one whole)
     std::vector<int32_t> _lastSample;
     bool _wasOwned = false;
     HostSample _sample;  // reused per frame
+    std::vector<PcKey> _ps2HostKeys;  ///< the PC keys the overlay holds on a PS/2 sink (machine thread only)
+    std::array<uint8_t, 2> _pcOnlyKeys{};  ///< the PC-only keys of a profile (rows 8 and 9 of HostKeys), not in the TTD blob; _mutex
     std::array<uint8_t, 8> _hostKeys{};  ///< the host key overlay, active high (journaled, in the blob); _mutex
     uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample
 
     /// The watch request (0 none, 1 start, 2 stop), taken at the frame boundary
-    std::atomic<int> _watchRequest{0};
-    std::atomic<bool> _watching{false};
-    PortReadWatch _watch;
-    void ApplyWatchRequest();
 
     void SubmitHostKeys(const std::vector<uint8_t>& keys);
     void SubmitMouse(const MouseSample& mouse);
 };
 
 }  // namespace controllers
+
+#pragma pop_macro("slots")

@@ -1,0 +1,10 @@
+{
+  "track": "test_xm",
+  "source": "test.xm",
+  "source_sha256": "38995d872538fcf469efd9ef46840f397bdf6220f393cb7f849fe5258a208293",
+  "render": {"tool": "openmpt123 0.8.9 (libopenmpt 0.8.9+r25652)", "command": "openmpt123 --batch --force --samplerate 44100 --no-float --dither 0 --filter 2 --end-time 20 -q -o test_xm.wav src/test.xm", "wav_sha256": "0d015696d0f13e36278424f169ffb3a0829970b8d304fc2a2b439f4a1c618886", "frames": 308985, "sample_rate": 44100, "channels": 2},
+  "onset_sample": null,
+  "window": {"samples": 882, "ms": 20, "from": "the onset (first sample of (L+R)/2 above 0.01 full scale)"},
+  "rms_x10000": [],
+  "zero_crossings": []
+}

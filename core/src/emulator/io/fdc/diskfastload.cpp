@@ -30,8 +30,9 @@ bool DiskFastLoad::IsArmed() const
         return false;
 
     // FeatureManager gate (fastdisk feature toggle).
-    // Note: FeatureManager::isEnabled(kFastDisk) automatically returns false
-    // whenever TTD recording is active.
+    // Note: FeatureManager::isEnabled(kFastDisk) returns false while the machine is
+    // bound to a TTD timeline (recording, replay, history): the compressed FDC timing
+    // is not an edit a replay could apply
     FeatureManager* fm = _context->pFeatureManager;
     if (fm == nullptr || !fm->isEnabled(Features::kFastDisk))
         return false;

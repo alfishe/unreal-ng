@@ -109,7 +109,7 @@ Also: `pentagon-case-top-owner.png` (the owner's black "PENTAGON" computer case 
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-1.jpg) `clones/orel-bk08-chm-1.jpg` | 3/4 from the front: the layout (measured), the ribbed ends, the palm rest, the main unit behind |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-2.jpg) `clones/orel-bk08-chm-2.jpg` | 3/4 from the left: the right-hand grey keys, the cap profile, the main unit's vents and buttons |
 | ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-chm-3.jpg) `clones/orel-bk08-chm-3.jpg` | detail: the main unit's label |
-| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-manual-fig5-key-legends.png) `clones/orel-bk08-manual-fig5-key-legends.png` | the manual's Рис. 5: key names and zones (a drawing, not to scale) |
+| ![](../../../tools/poc/031-authentic-osd-keyboards/references/photos/clones/orel-bk08-manual-fig5-key-legends.png) `clones/orel-bk08-manual-fig5-key-legends.png` | the manual's Fig. 5 (Рис. 5): key names and zones (a drawing, not to scale) |
 
 Also: `orel-bk08-chm-4.jpg`, `-5.jpg` (the manual's covers), `-6.jpg` (the box).
 

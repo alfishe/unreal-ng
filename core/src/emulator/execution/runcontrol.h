@@ -18,10 +18,12 @@
 #include <memory>
 #include <string>
 
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/execution/executionarbiter.h"
 #include "emulator/state/statenode.h"
 
 class Emulator;
+namespace framewatch { struct Spec; }
 class EmulatorContext;
 enum EmulatorStateEnum : uint8_t;
 
@@ -93,12 +95,22 @@ public:
     /// 700000000). `breakpoints`: a breakpoint ends it first (run to the cursor); false skips them (skip_until).
     /// The body says whether it got there: `hit`
     RunReply RunUntilPc(const Requester& requester, uint16_t pc, uint64_t maxTStates, bool breakpoints);
+    /// Whole frames until a frame watch's spec holds at a frame end, at most `maxFrames` (0: the default)
+    /// (debugger/watch/framewatch.h): the body is framewatch::RunResultNode with `text`; a bad spec is BadRequest
+    RunReply RunUntil(const Requester& requester, const framewatch::Spec& spec, unsigned maxFrames, bool breakpoints);
     /// Source level (the loaded listing, POST /listing/step_line): until PC is on another listing line; at most
     /// `maxTStates` (0: 100 frames). Conflict "No listing loaded" without one
     RunReply StepLine(const Requester& requester, uint64_t maxTStates);
     /// Until PC is at the first code byte of listing line `line` or the next one with code (POST
     /// /listing/run_to_line); at most `maxTStates` (0: 500 frames). Not Found for no such line
     RunReply RunToLine(const Requester& requester, int line, uint64_t maxTStates);
+    /// A sound card CPU's step (gs-debugger design §5.3; `kind` "in", "over" or "out", `count` 1..10000 for in): the
+    /// machine runs until the card ends it, then pauses. The card follows the main CPU's run (catch-up at a host port
+    /// access or the frame end), so the main CPU moves on to that point. A breakpoint of any CPU on the way ends it;
+    /// no end within the deadline (2 s, over / out 5 s) pauses the machine with the reason timeout. The body: `stop`
+    /// ({cpu, reason step / breakpoint / pause / timeout, cpu_pc, breakpoint_id, address, access}), the card CPU's
+    /// pc and sp, the main CPU's main_pc and main_sp
+    RunReply CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count = 1);
     /// endregion </Steps and runs>
 
     /// region <Machine>

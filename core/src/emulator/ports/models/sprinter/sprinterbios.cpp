@@ -164,7 +164,7 @@ bool IsaSlotFromString(const std::string& text, int slot, Options& options, std:
     if (slot < 0 || slot > 1 || !sprinterisa::ParseKind(text, kind))
     {
         error = "isa_slot" + std::to_string(slot + 1) +
-                ": none | zxbus | ram | ne2000 | el3c509b | sprinteresp | modem | dual16552";
+                ": none | zxbus | ram | ne2000 | el3c509b | sprinteresp | modem | dual16552 | wildsound";
         return false;
     }
     options.isaSlot[slot] = static_cast<int>(kind);

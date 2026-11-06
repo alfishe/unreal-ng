@@ -822,6 +822,19 @@ TEST_P(EmulatorHostAudio_Test, DirectRunsHoldHostOutput)
     EXPECT_EQ(_calls, 1u) << "delivery did not resume after the direct runs";
 }
 
+TEST(EmulatorStartsMuted_Test, ANewInstanceIsMutedUntilUnmuted)
+{
+    std::shared_ptr<Emulator> emulator =
+        EmulatorManager::GetInstance()->CreateEmulatorWithModel("starts-muted", "PENTAGON", LoggerLevel::LogError);
+    ASSERT_TRUE(emulator);
+    SoundManager* sound = emulator->GetContext()->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    EXPECT_TRUE(sound->isMuted()) << "only the GUI or an automation plane unmutes an instance";
+    sound->unmute();
+    EXPECT_FALSE(sound->isMuted());
+    EmulatorManager::GetInstance()->RemoveEmulator(emulator->GetId());
+}
+
 TEST_P(EmulatorHostAudio_Test, TurboHoldsHostOutputOnce)
 {
     SoundManager* sound = _context->pSoundManager;
@@ -918,6 +931,7 @@ protected:
         _context = _emulator->GetContext();
         _sound = _context->pSoundManager;
         ASSERT_NE(_sound, nullptr);
+        _sound->unmute();
         for (size_t i = 0; i < sizeof(kBeeperSquare); i++)
             _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(kBeeperAt + i), kBeeperSquare[i]);
         _emulator->GetZ80State()->pc = kBeeperAt;

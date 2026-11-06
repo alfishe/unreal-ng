@@ -107,6 +107,12 @@ public:
     bool Rename(const FatNode& node, const FatNode& dir, const std::string& name, FatNode& out);
     /// Change the attribute bits (read-only, hidden, system, archive); the directory bit stays
     bool SetAttributes(FatNode& node, uint8_t attributes);
+    /// The DOS date and time of the last write (the access date follows)
+    bool SetTime(FatNode& node, uint16_t date, uint16_t time);
+    /// The volume label: the root directory's label entry (made in a free slot, or removed when `label` is empty)
+    /// and the boot sector's copy (a FAT32 backup boot sector's too). Up to 11 characters of a short name or blanks,
+    /// upper-cased; InvalidName otherwise, NoSpace when the root has no free slot
+    bool SetLabel(const std::string& label);
 
     /// The free clusters (a FAT scan)
     uint32_t FreeClusters();

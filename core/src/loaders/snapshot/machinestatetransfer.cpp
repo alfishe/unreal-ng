@@ -10,7 +10,7 @@
 
 #include "common/stringhelper.h"
 #include "emulator/coordinator/ports.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcheckpoint.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
 #include "emulator/config.h"
@@ -70,6 +70,7 @@ namespace
             case MM_PENTAGON:
                 return PagingFamily::Pentagon;
             case MM_SCORP:
+            case MM_GMX:  // the card's extensions are a SameModel need of the source (Analyze), not a family of their own
                 return PagingFamily::Scorpion;
             case MM_ATM710:
             case MM_ATM3:
@@ -194,6 +195,7 @@ namespace
         RomRole rom = RomRole::Editor;
         bool fitsIn48 = false;  ///< A 128K-class source locked in 48K mode
         std::string why;        ///< Why the need is what it is
+        uint32_t ramKb = 0;     ///< The RAM a SameFamily target needs (0 = the source's size)
         bool atmNative = false; ///< ATM 7.10 into an ATM3 line target: the pager's own state moves
     };
 
@@ -302,6 +304,24 @@ namespace
 
             case PagingFamily::Scorpion:
             {
+                if (config.mem_model == MM_GMX)
+                {
+                    // The card's own paging (#78FD, #DFFD, pages 16-127), a ROM plane other than the Pentagon and
+                    // Scorpion schemes (1, 4, 7), the plane's TR-DOS page through #1FFD bit 2 and the 640x200 screen
+                    // exist on a GMX only; without them the machine is a Scorpion 256 (GMX design section 6)
+                    const uint8_t plane = static_cast<uint8_t>((state.scorpion.p7EFD >> 4) & 0x07);
+                    const bool gmxOnly = state.gmx.p78FD != 0 || state.pDFFD != 0 || UsesPagesFrom(source, 16) ||
+                                         (plane != 1 && plane != 4 && plane != 7) || (state.p1FFD & 0x04) ||
+                                         (state.scorpion.p7EFD & 0x08);
+                    if (gmxOnly)
+                    {
+                        a.need = Need::SameModel;
+                        a.why = "the source uses the GMX card's paging (#78FD, #DFFD, pages above 15, its own ROM plane "
+                                "or the 640x200 screen)";
+                        break;
+                    }
+                    a.ramKb = 256;
+                }
                 const bool extended = state.p1FFD != 0 || UsesPagesFrom(source, 8);
                 a.need = extended ? Need::SameFamily : Need::Mode128;
                 if (extended)
@@ -370,11 +390,14 @@ namespace
                 return false;
 
             case Need::SameFamily:
-                if (targetFamily == a.family && target.config.ramsize >= source.config.ramsize)
+            {
+                const uint32_t ramKb = a.ramKb ? a.ramKb : source.config.ramsize;
+                if (targetFamily == a.family && target.config.ramsize >= ramKb)
                     return true;
                 why = a.why + "; the target must be " + FamilyName(a.family) + " with at least " +
-                      std::to_string(source.config.ramsize) + "K";
+                      std::to_string(ramKb) + "K";
                 return false;
+            }
 
             case Need::SameModel:
             default:
@@ -558,11 +581,17 @@ namespace
             source.path.clear();
         }
 
+        std::unique_ptr<Medium> copy;
         if (const DiskImage* disk = medium.Floppy())
-            return std::make_unique<Medium>(source, AccessMode::Session, medium.Format(), disk->Clone(source.path));
-        if (const TapeImage* tape = medium.Tape())
-            return std::make_unique<Medium>(source, medium.Access(), medium.Format(), std::make_unique<TapeImage>(*tape));
-        return nullptr;
+            copy = std::make_unique<Medium>(source, AccessMode::Session, medium.Format(), disk->Clone(source.path));
+        else if (const TapeImage* tape = medium.Tape())
+            copy = std::make_unique<Medium>(source, medium.Access(), medium.Format(), std::make_unique<TapeImage>(*tape));
+        // An untouched medium is still its file's bytes: the copy keeps that identity, so a TTD seek on the target
+        // (the analysis base replaying a recording) sees the recording's medium. A written one is another medium:
+        // its own identity (the copy's path), so a seek reports it instead of setting versions it does not have
+        if (copy && medium.ChangedUnits() == 0)
+            copy->SetIdentity(medium.Identity());
+        return copy;
     }
 
     /// Check (apply = false) or copy (apply = true) the floppies and the tape into the same slots of the target.
@@ -725,7 +754,7 @@ namespace
         }
 
         std::vector<uint8_t> buffer;
-        // In ascending v1 id (a device that completes another one's state follows it: Wd1793Context after
+        // In ascending legacy id (a device that completes another one's state follows it: Wd1793Context after
         // BetaDisk), the devices without one last
         std::vector<const ttd::TTDRegistryEntry*> ordered;
         for (const ttd::TTDRegistryEntry& e : src.registry.Entries())
@@ -895,6 +924,11 @@ namespace
 
         const bool basic48 = a.need == Need::Mode48 || a.rom == RomRole::Basic48;
 
+        // A GMX target holds a Spectrum / Scorpion state in its Scorpion scheme (ROM plane 4, the card's pages off),
+        // before #1FFD / #7FFD
+        if (target.config.mem_model == MM_GMX)
+            ports.EnterSpectrum128Paging(pc);
+
         if (a.need == Need::SameFamily)
         {
             // The family's own latches, extensions first: #7FFD may lock them
@@ -1062,6 +1096,7 @@ namespace
             const bool to48 = FamilyOf(target) == PagingFamily::Spectrum48;
             const std::string pages = (a.need == Need::Mode48 || to48) ? "pages 5, 2, 0"
                                       : a.need == Need::Mode128     ? "pages 0-7"
+                                      : a.ramKb                     ? std::to_string(a.ramKb / 16) + " pages"
                                                                     : std::to_string(RamPages(source.config)) + " pages";
             report.items.push_back({"RAM", Status::Copied, pages});
             if (a.atmNative)
@@ -1177,7 +1212,9 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
             }
             else
             {
-                const uint16_t pages = a.need == Need::Mode128 ? uint16_t(8) : RamPages(source.config);
+                const uint16_t pages = a.need == Need::Mode128 ? uint16_t(8)
+                                       : a.ramKb               ? static_cast<uint16_t>(a.ramKb / 16)
+                                                               : RamPages(source.config);
                 for (uint16_t bank = 0; bank < pages; bank++)
                     CopyBank(source, target, bank);
             }
@@ -1245,7 +1282,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
         return report;
     }
 
-    // The target's coordinator: its rules (TTD v1 refuses while recording, D26), its session's end, its log
+    // The target's coordinator: its rules, its session's end, its log
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::StateTransfer;
     op.summary = "state from " + source.GetId();
@@ -1300,6 +1337,16 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
     second.reset();
     first.reset();
     return report;
+}
+
+bool MachineStateTransfer::MediumMovesWithState(MediaKind kind)
+{
+    return MovesWithState(kind);
+}
+
+std::unique_ptr<Medium> MachineStateTransfer::CopyMovingMedium(const Medium& medium, const std::string& tag)
+{
+    return MovesWithState(medium.Kind()) ? CopyMedium(medium, tag) : nullptr;
 }
 
 void MachineStateTransfer::FitSourceDevices(const CONFIG& source, CONFIG& target)

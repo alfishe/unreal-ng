@@ -262,9 +262,9 @@ The Unreal language (U §10.2), kept as it is and extended:
 | **new** `FRAME` | the frame number | new |
 | **new** `MPAG`, `GSCFG0` | card registers (on the card CPUs) | new |
 | **new** `CMD`, `DATA`, `STATUS` | the card mailbox latches (on any CPU) | new |
-| **new** `main.X`, `gs.X`, `neogs.X` | an operand of another CPU, e.g. `main.PC == 8123` on a card breakpoint | new |
-| numbers | hex, starting with a digit (`0DFFD`) | U |
-| **new** `#DFFD`, `$DFFD`, `0xDFFD`, `123d` | the other number forms | new |
+| **new** `main.X`, `gs.X`, `neogs.X` | an operand of another CPU, e.g. `main.PC == #8123` on a card breakpoint | new |
+| numbers | decimal (`123`); owner 2026-11-04, Unreal's bare hex (`0DFFD`) is refused with a hint | changed |
+| **new** `#DFFD`, `$DFFD`, `0xDFFD` | hex (`0DFFDh` and `123d` also read) | new |
 | `'c'` | a character constant | U |
 
 - **Classic parsing is kept:** the text is upper-cased except before `'`,
@@ -286,9 +286,15 @@ The Unreal language (U §10.2), kept as it is and extended:
   - at least N.
 
   Each has a Reset.
-- **A condition that fails to evaluate stops the machine** and puts the
-  breakpoint in an error state, with the reason. It is never silently false
-  (Spectaculator).
+- **A condition that fails to evaluate never stops the machine** (owner
+  2026-10-26, replacing "stops the machine" of Spectaculator): the breakpoint
+  is marked with the reason, the frame and the PC, is skipped from then on and
+  every plane is told. It is never silently false. Validation when the
+  condition is set (the parse, every operand against the trigger and the
+  machine, a dry run) refuses the obvious mistakes.
+- **Built (phase 1, 2026-10-26):** the improved form on memory and port
+  breakpoints, the Unreal order canonical, `matchCount` beside `hitCount`
+  ([conditional breakpoints](../../features/conditional-breakpoints.md)).
 - **Access-variable aliases** (ZXSpin): `RADDR` = `RD`, `WADDR` = `WR`,
   `RPORT` = `IN`, `WPORT` = `OUT`, `VALUE` = `VAL` / `MDT`, and `RWWORD` (the
   16-bit value of a word access). With them, one execution-condition engine

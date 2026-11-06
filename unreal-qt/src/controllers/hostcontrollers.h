@@ -5,10 +5,12 @@
 /// HostInputService and ProfileStore, the bound emulator's IHostInputSource, the player connector each pad drives
 /// (retro-devices.md §4, the machine default) and the profiles re-applied whenever a device or the machine changes.
 
+#include <QByteArray>
 #include <QObject>
 #include <QString>
 #include <QTimer>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -17,6 +19,7 @@
 
 #ifdef ENABLE_CONTROLLERS
 #include "emulator/io/controllers/ihapticfeed.h"
+#include "devicesfeed.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
@@ -24,6 +27,7 @@
 #include "wheelclaim.h"
 #endif
 #include "controllers/connectorview.h"
+#include "emulator/actions/contextstate.h"
 
 class Emulator;
 class EmulatorContext;
@@ -39,6 +43,7 @@ struct HostActionEvent
     bool turn = false;  ///< an encoder's turn: `value` steps at `rate` steps/s
     double rate = 0;
     QString params;     ///< the binding's `curve` object as JSON (the action's parameters); empty when none
+    QString instance;   ///< the emulator the device drives (pinned, else the followed one); empty: the window's
 };
 class EmulatorBinding;
 class QKeyEvent;
@@ -96,10 +101,17 @@ public:
     /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
     /// machine's order decide again
     void ResetPlayerChoices();
-    /// "Add probe from debugger" (haptics.md §7): @p probe (a debugger breakpoint) as a source of the user game profile
-    /// of the loaded file (the haptics_probe verb: user/game-<sha>, made from the profile whose haptics play now), with
-    /// a `hit` rule; the source's name in @p name; false with the reason
-    bool AddHapticProbe(const controllers::HapticProbe& probe, QString& name, QString& error);
+    /// The session's haptics trial (the haptics_trial verb, haptics.md §11): @p overlay over the game haptics for the
+    /// loaded program, applied at once; null clears. Empty when done, else the error code with @p message
+    std::string SetHapticsTrial(const controllers::JsonValue& overlay, std::string& message);
+    const controllers::JsonValue& HapticsTrial() const
+    {
+        return _trial;
+    }
+    const controllers::JsonValue& HapticsUnderTrial() const
+    {
+        return _hapticsUnderTrial;
+    }
 #endif
     /// Advanced > Debug layer (debug-and-ttd.md §1.6): the debug profiles take part; kept in the settings
     bool DebugLayer() const
@@ -133,6 +145,8 @@ public:
     /// While the debugger window has the focus the pads are debugger remotes too, with no layer key and without the
     /// Advanced switch (InputRouter::SetDebugFocus); another app taking the focus changes nothing
     void SetShortcutWindows(QWidget* main, QWidget* debugger);
+    /// Opens the debugger window: a surface entering a debug context (the deck's DEBUG menu) calls it once
+    void SetDebuggerOpener(std::function<void()> open) { _openDebugger = std::move(open); }
     bool GlobalShortcuts() const
     {
         return _globalShortcuts;
@@ -150,8 +164,9 @@ public:
     /// region <Contexts (control surfaces architecture.md §6)>
     /// The widgets whose focus sets the bound instance's context through actions::ContextState (last setter wins,
     /// Q-5): the debugger's panes (`debug.disasm`, `debug.registers`, `debug.memory`, `debug.stack`) and the TTD panel
-    /// (`ttd`). Entering one sets its context; the TTD panel shown sets `ttd`, hidden returns a `ttd` the GUI set to
-    /// the default; the debugger window hidden returns a `debug.*` the GUI set to the default
+    /// (`ttd`); elsewhere in the debugger window `debug`. Entering one sets its context; the focus back in another
+    /// window of the application returns a context the GUI set to the default, as the TTD panel or the debugger
+    /// window hidden does. Every surface follows the context (the pads too, InputRouter::FollowsIntoDebug)
     void SetContextWidgets(std::vector<std::pair<QWidget*, std::string>> widgets, QWidget* ttdPanel);
     /// The TTD panel was shown or hidden
     void OnTtdPanelVisible(bool visible);
@@ -197,24 +212,30 @@ protected:
 private:
     /// A key of a window the shortcuts take: true when a binding takes it (the window and the machine do not see it)
     bool shortcutKey(const QKeyEvent* event, bool pressed);
-    /// The debugger window took or lost the focus: the pads follow
-    void updateDebugFocus();
     void onBound();
     void onUnbound();
     void poll();
-    /// The bound instance's context (actions::ContextState, its default included) into the router
+    /// Every instance's context (actions::ContextState, its default included) into the router: the surfaces and the
+    /// pads of each follow their own instance's. When the bound instance's pads go into the debugger or come back,
+    /// its debug profiles are applied or dropped and the status bar says so
     void followContext();
-    /// The focus moved: the pane or panel it entered sets the context
+    /// The focus moved: the pane, panel or debugger window it entered sets the context, another window releases it
     void updateGuiContext();
+    /// A player's own `debug` layer (its layer key) went up or down: the instance's context is `debug` while it is
+    /// up (set by the device), what it was before comes back with the key
+    void onDebugLayer(const std::string& device, const std::string& instance, bool up);
     /// Set the bound instance's context as the GUI ("" = back to the default)
     void setGuiContext(const std::string& context);
     /// The GUI set the context in force and it matches @p prefix: back to the default
     void releaseGuiContext(const std::string& prefix);
 #ifdef ENABLE_CONTROLLERS
+    /// The `controllers.devices` value (monitoring::HostDevices), at every poll: DevicesFeed says when it changed
+    void publishDevices();
     void assignPlayers(const std::vector<controllers::HostDeviceInfo>& devices);
     /// Plug what the resolved profiles' connectors name, where the machine holds something else
     void applyConnectorPlans();
     void onFileLoaded(const QString& emulatorId, const QString& path);
+    void onGuestProgram(const QString& emulatorId, const QString& path, const QByteArray& data);
     void checkAuto();
     void applyAuto(const controllers::AutoDecision& decision);
     bool saveUserProfile(controllers::Profile profile, QString& error);
@@ -228,6 +249,13 @@ private:
     /// the system wheel (Windows: no built-in tools, no wheel menu); released when the last one goes and at the end
     void updateWheelMenu();
     void releaseWheelMenu();
+    /// Which client on this machine owns the devices (ClientQueue): the one the user activated last. The queue is a
+    /// file of process ids every client of this user shares; activating the application claims it, quitting leaves
+    void claimControllers();
+    void leaveControllers();
+    /// Own the devices while this process is the first live one of the queue; a queue with no live client is claimed
+    void updateOwner();
+    QString _ownersPath;  ///< "" in a windowless session: it never takes the devices from a window
     controllers::WheelClaim _wheelClaim;
     std::map<controllers::WheelClaim::Window, void*> _wheelHolds;  ///< WheelMenuWindows::Take's holds by window
     bool _wheelConnected = false;
@@ -235,21 +263,34 @@ private:
     std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
     std::string _videoKey;    ///< the profile and `video:` gameVideoChanged told last
     uint64_t _fileObserver = 0;
+    uint64_t _guestObserver = 0;
     uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
     /// The signatures, file hash and TR-DOS file set of the program loaded last into the bound emulator (only those
     /// fields are used)
     controllers::ProfileContext _program;
     QString _fileName;
-    bool _autoDone = false;      ///< decided (or a kept game profile holds the connectors) for this program
+    /// Latched: the port reads decided the joystick (or a kept game profile holds the connectors) for this program, the
+    /// watch is off. A program that reads the whole keyboard (a menu) decides nothing: the watch goes on until it
+    /// reads a joystick
+    bool _autoDone = false;
+    bool _keyboardNoticed = false;
+    bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
     std::unique_ptr<controllers::HostInputService> _service;
     controllers::ProfileStore _profiles;
     controllers::ResolvedProfiles _resolved;
+    /// The haptics trial (haptics.md §11): an overlay for the program of _trialSha, in memory only; the game haptics
+    /// the profiles resolve under it
+    controllers::JsonValue _trial;
+    std::string _trialSha;
+    std::string _trialError;  ///< why the last Reapply dropped the trial
+    controllers::JsonValue _hapticsUnderTrial;
     controllers::ProfileContext _context;
     /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
     std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
+    controllers::DevicesFeed _devicesFeed;
     std::vector<controllers::HostDeviceId> _known;
     std::map<controllers::HostDeviceId, std::pair<std::string, bool>> _knownNames;  ///< name, a player, by id
     std::map<controllers::HostDeviceId, std::string> _playerChoice;  ///< the user's connector per device
@@ -261,7 +302,13 @@ private:
     uint64_t _revision = ~0ull;
     uint64_t _machineRevision = ~0ull;
     bool _debugLayer = false;
-    bool _debugFocus = false;  ///< the debugger window has the focus
+    bool _playersFollow = false;  ///< the bound instance's context takes its pads into the debugger
+    struct HeldContext
+    {
+        std::string instance;
+        actions::ContextInfo before;  ///< the context the key replaced
+    };
+    std::map<std::string, HeldContext> _layerContexts;  ///< by device: the debug layer keys held up
     std::string _manualProfile;
     bool _soundHaptics = false;
     bool _soundHapticsDsp = false;
@@ -271,6 +318,8 @@ private:
     std::vector<std::pair<QWidget*, std::string>> _contextWidgets;
     QWidget* _ttdPanel = nullptr;
     std::string _guiPane;  ///< the context of the widget the focus entered last ("" none): set once per entry
+    std::function<void()> _openDebugger;
+    std::string _debugContextOf;  ///< the instance whose context in force is a debug one ("" none): opened once
     struct HeldKey
     {
         std::string control;

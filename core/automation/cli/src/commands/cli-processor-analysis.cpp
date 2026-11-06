@@ -3,10 +3,12 @@
 // video recording. Mirrors the WebAPI handlers (analyzers_api, profiler_api,
 // state_screen_api, recording_api) so every interface exposes the same features.
 
+#include "cli-analysis.h"
 #include "cli-audio-mixer.h"
 #include "cli-processor.h"
 
 #include <3rdparty/tinywav/tinywav.h>
+#include <debugger/analyzers/analysis/analysiscontrol.h>
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
@@ -26,6 +28,7 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/audio.h>
 #include <emulator/state/devicestate.h>
+#include <emulator/state/statenodejson.h>
 #include <emulator/video/screendigest.h>
 
 #include <algorithm>
@@ -250,7 +253,7 @@ void CLIProcessor::HandlePorts(const ClientSession& session, const std::vector<s
     ss << "  TR-DOS active: " << (((state.flags & (CF_TRDOS | CF_DOSPORTS)) != 0) ? "yes" : "no") << NEWLINE;
     ss << "  Mouse ports: " << (mouseDecoded ? "" : "shadowed - ") << mouseNote << NEWLINE;
 
-    const bool scorpion = (config.mem_model == MM_SCORP || config.mem_model == MM_PROFSCORP);
+    const bool scorpion = IsScorpionModel(config.mem_model);
     if (scorpion)
         ss << "  Shadow monitor paged: " << (((state.p1FFD & 0x02) != 0) ? "yes" : "no") << NEWLINE;
     else
@@ -328,11 +331,11 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
             uint8_t* pagePtr = memory.ROMPageHostAddress(romPage);
             if (pagePtr)
             {
-                std::string sig = rom->CalculateSignature(pagePtr, 0x4000);
-                // GetROMTitle carries the "Unknown ROM, <digest>" fallback;
-                // role comes from the core layout table (ROM::GetROMPageRole,
-                // §5.2) - a role/name mismatch is the wrong-ROM signal
-                ss << "  \"" << rom->GetROMTitle(sig) << "\"";
+                // GetROMPageTitle carries the "Unknown ROM, <digest>" fallback
+                // and names blank pages and copies; role comes from the core
+                // layout table (ROM::GetROMPageRole, §5.2) - a role/name
+                // mismatch is the wrong-ROM signal
+                ss << "  \"" << rom->GetROMPageTitle(romPage) << "\"";
                 ss << "  [" << rom->GetROMPageRole(romPage) << "]";
             }
         }
@@ -355,6 +358,10 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     ss << "  #1  0x4000-0x7FFF  RAM p" << (int)memory.GetRAMPageForBank1() << contended(1) << "  [Screen 0]" << NEWLINE;
     ss << "  #2  0x8000-0xBFFF  RAM p" << (int)memory.GetRAMPageForBank2() << contended(2) << NEWLINE;
     ss << "  #3  0xC000-0xFFFF  RAM p" << (int)memory.GetRAMPageForBank3() << contended(3) << NEWLINE;
+
+    // GMX: the card's register file (the /state/paging `gmx` view)
+    if (context->config.mem_model == MM_GMX)
+        ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
 
     session.SendResponse(ss.str());
 }
@@ -414,7 +421,7 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video window record <path> [<key>=<value> ...] - record the window as drawn (CRT, on-screen keyboard,\n"
         "                                   sound) to a .mov (prores) / .mp4 (h264): keyboard default|<picture id>,\n"
         "                                   codec prores|h264, audio on|off, fps 1..100 (audio off), scale 1..4,\n"
-        "                                   picture_height 0..4320, width / height, layout below|side\n"
+        "                                   hardware on|off, fit on|off, picture_height 0..4320, width / height, layout below|side\n"
         "  video window record frames <N> - a paused machine runs N frames, every one recorded\n"
         "  video window record stop       - finish the file (waits for ffmpeg, muxes the sound in)\n"
         "  video viewport [<name>]        - the overscan frame's crop: full, symmetric, standard, screen_only, next, prev\n"
@@ -727,6 +734,34 @@ void CLIProcessor::HandleFrameCost(const ClientSession& session, const std::vect
        << (state.tstates_frame_total ? totalActive * 100.0 / state.tstates_frame_total : 0.0) << "%)" << NEWLINE;
 
     session.SendResponse(ss.str());
+}
+
+// HandleAnalysis - the analysis layers through analysis::Execute (analysiscontrol.h), the same verbs as
+// POST /analysis/{start,stop}, GET /analysis/{status,explain} and MCP `analysis`
+void CLIProcessor::HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    std::string action;
+    std::map<std::string, std::string> options;
+    bool json = false;
+    std::string error;
+    if (!CliAnalysis::ParseArgs(args, action, options, json, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE + CliAnalysis::kUsage + NEWLINE);
+        return;
+    }
+    const analysis::Reply reply = analysis::Execute(*emulator, action, options);
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
+        return;
+    }
+    session.SendResponse((reply.Ok() ? reply.text : "Error: " + reply.message) + NEWLINE);
 }
 
 // HandleCoverage — code coverage analyzer control and queries. Mirrors
@@ -1046,16 +1081,37 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
                 return;
             }
         }
-        if (seconds < 0.01 || seconds > 30.0)
+
+        // "... [source] file <path.wav>": the samples go to the WAV while they come (no memory ceiling)
+        std::string file;
+        std::string sourceArg = args.size() >= 3 ? args[2] : std::string();
+        for (size_t i = 2; i < args.size(); i++)
         {
-            session.SendResponse("Duration must be within [0.01, 30.0] seconds.");
+            if (args[i] == "file")
+            {
+                if (i + 1 >= args.size())
+                {
+                    session.SendResponse("Usage: audiocapture start <seconds> [source] [file <path.wav>]");
+                    return;
+                }
+                file = args[i + 1];
+                if (i == 2)
+                    sourceArg.clear();
+                break;
+            }
+        }
+        const double maxSeconds = file.empty() ? 30.0 : AudioCaptureAnalyzer::MAX_STREAM_SECONDS;
+        if (seconds < 0.01 || seconds > maxSeconds)
+        {
+            session.SendResponse(file.empty() ? "Duration must be within [0.01, 30.0] seconds (use 'file <path>' for longer)."
+                                              : "Duration must be within [0.01, 86400] seconds.");
             return;
         }
 
         // One mixer device instead of the master mix (core AudioMixer::Capturable; GET /audio/mixer lists them)
         AudioSourceType source = AudioSourceType::MasterMix;
         std::string sourceError;
-        if (!AudioMixer::Capturable(context, args.size() >= 3 ? args[2] : std::string(), source, sourceError))
+        if (!AudioMixer::Capturable(context, sourceArg, source, sourceError))
         {
             session.SendResponse("Error: " + sourceError);
             return;
@@ -1065,10 +1121,20 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
         const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;  // interleaved stereo
 
         analyzerManager->activate("audiocapture");
-        capture->startCapture(target, source);
+        if (!file.empty())
+        {
+            std::string streamError;
+            if (!capture->startStreamCapture(file, static_cast<uint32_t>(rate), target, source, streamError))
+            {
+                session.SendResponse("Error: " + streamError);
+                return;
+            }
+        }
+        else
+            capture->startCapture(target, source);
 
         std::stringstream ss;
-        ss << std::dec << "Audio capture armed: " << seconds << "s (" << target << " stereo samples @ " << rate
+        ss << std::dec << "Audio capture armed" << (file.empty() ? "" : " to " + file) << ": " << seconds << "s (" << target << " stereo samples @ " << rate
            << " Hz), source " << AudioMixer::Key(source) << ".";
         session.SendResponse(ss.str());
         return;
@@ -1089,10 +1155,27 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
         return;
     }
 
+    if ((subcommand == "result" || subcommand == "save") && capture->isStreaming())
+    {
+        // The audio is in the WAV, not in memory
+        if (!capture->isStreamClosed())
+        {
+            session.SendResponse("The capture file is still being written - use 'audiocapture stop' or wait for the target.");
+            return;
+        }
+        const size_t streamRate = context->pSoundManager ? context->pSoundManager->getCoreRate() : 44100;
+        std::stringstream ss;
+        ss << std::dec << "Audio capture written to " << capture->getStreamPath() << ": "
+           << capture->getCapturedSamples() / 2 << " frames @ " << streamRate << " Hz"
+           << (capture->hasStreamFailed() ? " (write failed)" : "") << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+
     if (subcommand == "result" || subcommand == "save")
     {
         const auto& buffer = capture->getBuffer();
-        const size_t frames = buffer.size() / 2;
+        const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
 
         if (frames == 0)
         {
@@ -1160,6 +1243,9 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
     ss << "  Armed: " << (capture->isCaptureArmed() ? "yes" : "no") << NEWLINE;
     ss << "  Complete: " << (capture->isCaptureComplete() ? "yes" : "no") << NEWLINE;
     ss << "  Samples: " << capture->getCapturedSamples() << " / " << capture->getTargetSamples() << NEWLINE;
+    if (capture->isStreaming())
+        ss << "  File: " << capture->getStreamPath() << (capture->isStreamClosed() ? " (closed)" : " (writing)")
+           << NEWLINE;
 
     session.SendResponse(ss.str());
 }

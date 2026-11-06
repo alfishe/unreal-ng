@@ -175,8 +175,10 @@ class Covox : public SoundDevice   // + PortDevice
 - **DC handling:** digi playback leaves the DAC at an arbitrary level —
   a `FilterDC` on the device output (same one the AY path uses), exposed
   as the "DC-offset removal" toggle in its UI section (UX doc §3.1).
-- **Registration:** present iff `config.covoxFB`; volume seeds from
-  `covoxFB_vol`.
+- **Registration:** one instance whatever ports it answers (`#FB` on the
+  Pentagon-style card, the SounDrive sets, `#DD` - the Scorpion's only
+  Covox port); its volume is the mixer's COVOX row and channels, no
+  per-port volume.
 - **Recording:** appears automatically as a capture source via the
   registry — no recording-side changes needed.
 

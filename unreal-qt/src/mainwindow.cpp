@@ -67,6 +67,7 @@
 #include "controllers/guiactions.h"
 #include "emulator/actions/actionregistry.h"
 #include "controllers/hostcontrollers.h"
+#include "platform/windowlesssession.h"
 #include "controllers/surfacestatusicon.h"
 #include "controllers/streamdeckpage.h"
 #include "controllers/surfacetargets.h"
@@ -115,8 +116,8 @@
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "ui_mainwindow.h"
+#include "debugger/externaldebuggers.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/mousecapturecontroller.h"
 #include "emulator/companioncontroller.h"
@@ -373,6 +374,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
     {
         QMutexLocker locker(&_audioMutex);
+        // A windowless session is heard by nobody (agents, tests): silent, the device still the clock
+        _soundManager->setSilent(!WindowlessSessionUses("sound"));
         if (_soundManager->init())
         {
             _audioInitialized = true;
@@ -388,7 +391,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Instantiate Logger window
     logWindow = new LogWindow();
 
-    // Instantiate debugger window. Hidden at start: Debug -> Debugger Window shows it,
+    // Instantiate debugger window. Hidden at start: Debug -> Debugger -> Embedded shows it,
     // and debug instrumentation is enabled only while it is visible
     debuggerWindow = new DebuggerWindow();
     debuggerWindow->setBinding(m_binding);  // Connect to central binding
@@ -426,6 +429,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // hidden until Tools → Controllers
     _hostControllers = new HostControllers(m_binding, this);
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
+    _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
@@ -457,24 +461,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_hostControllers, &HostControllers::gameVideoChanged, this, &MainWindow::applyGameVideo);
     // The debugger closed: a debug.* context the GUI set returns to the default
     connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
-    // The breakpoint list's "Add as Haptic Probe": a source of the loaded game's user profile (haptics.md §7)
-    connect(debuggerWindow, &DebuggerWindow::hapticProbeRequested, this,
-            [this](int kind, int address, int page, int portMask) {
-#ifdef ENABLE_CONTROLLERS
-                controllers::HapticProbe probe;
-                probe.kind = static_cast<controllers::HapticProbeKind>(kind);
-                probe.address = probe.end = static_cast<uint16_t>(address);
-                probe.page = page < 0 ? 0xFFFF : static_cast<uint16_t>(page);
-                probe.portMask = static_cast<uint16_t>(portMask);
-                QString name, error;
-                statusBar()->showMessage(_hostControllers->AddHapticProbe(probe, name, error)
-                                             ? tr("Haptic probe %1 added to this game's profile (rule: hit)").arg(name)
-                                             : error,
-                                         5000);
-#else
-                (void)kind, (void)address, (void)page, (void)portMask;
-#endif
-            });
     _controllerToast = new ControllerToast(this);
     connect(_hostControllers, &HostControllers::autoDecided, this, [this](const QString& text) {
         _controllerToast->showText(text, QRect(mapToGlobal(QPoint(0, 0)), size()));
@@ -669,6 +655,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::showRegistersRequested, this, &MainWindow::handleShowRegisters);
     connect(_menuManager, &MenuManager::showMemoryRequested, this, &MainWindow::handleShowMemory);
     connect(_menuManager, &MenuManager::debuggerToggled, this, &MainWindow::handleDebuggerToggled);
+    connect(_menuManager, &MenuManager::externalDebuggerRequested, this, &MainWindow::handleExternalDebuggerRequested);
     connect(_menuManager, &MenuManager::logWindowToggled, this, &MainWindow::handleLogWindowToggled);
     connect(_menuManager, &MenuManager::tapeManagerToggled, this, &MainWindow::handleTapeManagerToggled);
     // Keep the menu check state in sync when the window closes via its own close box
@@ -1076,6 +1063,8 @@ MainWindow::~MainWindow()
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1271,16 +1260,15 @@ void MainWindow::registerWindowView()
             error = "The window is closed";
             return false;
         }
-        if (!window->_windowRecorder)
-            window->_windowRecorder = new WindowRecorder(window->_osdKeyboardWindow, window);
+        WindowRecorder* recorder = window->windowRecorder();
         switch (action)
         {
             case WindowViewProvider::RecordAction::Start:
-                return window->_windowRecorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
+                return recorder->start(window->_screenWrapper, window->_emulator, *request, out, error);
             case WindowViewProvider::RecordAction::Stop:
-                return window->_windowRecorder->stop(out, error);
+                return recorder->stop(out, error);
             case WindowViewProvider::RecordAction::Status:
-                window->_windowRecorder->status(out);
+                recorder->status(out);
                 return true;
         }
         return false;
@@ -1454,6 +1442,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _streamDeckSupervision = nullptr;
     delete _controllersDialog;
     _controllersDialog = nullptr;
+    if (_statusBarManager)
+        _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
@@ -2605,7 +2595,7 @@ void MainWindow::updateUnsavedMediaMark()
 bool MainWindow::confirmUnsavedMedia()
 {
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
-    if (!context || !context->pMediaManager)
+    if (!context || !context->pMediaManager || _unattendedClose)
         return true;
     const ClosePrompt prompt = ClosePromptFor(context->pMediaManager->Unsaved());
     if (!prompt.ask)
@@ -3033,6 +3023,9 @@ void MainWindow::openDiskDialog()
                      buildFilterGroup(tr("TD0 Images"), {"td0"}) + ";;" +
                      buildFilterGroup(tr("MGT Images"), {"mgt", "img"}) + ";;" +
                      buildFilterGroup(tr("Raw PC Floppy Images"), {"img", "ima"}) + ";;" +
+                     buildFilterGroup(tr("MB-02 Images"), {"mb2", "mbd"}) + ";;" +
+                     buildFilterGroup(tr("MDOS (Didaktik) Images"), {"d40", "d80"}) + ";;" +
+                     buildFilterGroup(tr("Profi CP/M Images"), {"pro"}) + ";;" +
                      tr("All Files (*)");
 
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open Disk"), _lastDirectory, filter);
@@ -4122,6 +4115,22 @@ void MainWindow::handleDebuggerToggled(bool visible)
     }
 }
 
+void MainWindow::handleExternalDebuggerRequested(const QString& program)
+{
+    // Over this window's instance, by its id: the debugger never picks another emulator of the same server
+    const std::shared_ptr<Emulator> emulator = activeEmulator();
+    QString error;
+    if (ExternalDebuggers::Launch(program, emulator ? QString::fromStdString(emulator->GetId()) : QString(), &error))
+    {
+        // It turns the debug mode on itself (PUT /debugmode) and runs with the emulator's breakpoints: closing the
+        // embedded window afterwards must not switch the mode off under it
+        _debugInstrumentationByUi = false;
+        statusBar()->showMessage(tr("%1 started").arg(program), 3000);
+    }
+    else
+        statusBar()->showMessage(tr("Debugger: %1").arg(error), 5000);
+}
+
 void MainWindow::handleDebuggerVisibilityChanged(bool visible)
 {
     // Covers the menu toggle, the window's close box and docking-driven hides
@@ -4138,9 +4147,15 @@ void MainWindow::applyDebugInstrumentation(bool enabled)
     if (_emulator)
     {
         if (enabled)
+        {
             _emulator->DebugOn();
-        else
+            _debugInstrumentationByUi = true;
+        }
+        else if (_debugInstrumentationByUi)
+        {
             _emulator->DebugOff();
+            _debugInstrumentationByUi = false;
+        }
     }
 }
 
@@ -4679,6 +4694,22 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
 }
 
 #ifdef ENABLE_RECORDING
+WindowRecorder* MainWindow::windowRecorder()
+{
+    if (!_windowRecorder)
+    {
+        _windowRecorder = new WindowRecorder(_osdKeyboardWindow, this);
+        // Every recording UI shows a window recording whichever one (or the WebAPI) started it
+        connect(_windowRecorder, &WindowRecorder::stateChanged, this, [this] {
+            if (_recordingWidget)
+                _recordingWidget->syncWindowRecordingState();
+            if (_videoRecordingWidget)
+                _videoRecordingWidget->syncWindowRecordingState();
+        });
+    }
+    return _windowRecorder;
+}
+
 void MainWindow::handleVideoRecordingRequested()
 {
     if (!_recordingWidget)
@@ -4712,6 +4743,7 @@ void MainWindow::openAdvancedRecordingDialog()
     }
 
     _videoRecordingWidget = new VideoRecordingWidget(m_binding ? m_binding->emulatorShared() : nullptr, nullptr);
+    _videoRecordingWidget->setWindowRecording(windowRecorder(), [this] { return _screenWrapper; });
     _videoRecordingWidget->setAttribute(Qt::WA_DeleteOnClose);
     _videoRecordingWidget->setWindowFlags(Qt::Tool | Qt::Window);
     connect(_videoRecordingWidget, &QWidget::destroyed, this, [this]() {
@@ -5603,6 +5635,15 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
         _emulator->ClearAudioCallback();
     }
 
+    // An instance starts muted (SoundManager). The interactive GUI unmutes the instance it binds, once; a headless
+    // process (offscreen / minimal platform) leaves it muted: only an automation plane (audio/mixer/master) unmutes it.
+    // Binding the same instance again keeps whatever mute state the user set.
+    const QString platform = QGuiApplication::platformName();
+    const bool headless = platform == QLatin1String("offscreen") || platform == QLatin1String("minimal");
+    if (!headless && _audioBoundId != emulator->GetId())
+        emulator->SetHostAudioMuted(false);
+    _audioBoundId = emulator->GetId();
+
     // Bind the audio callback to the new emulator
     qDebug() << "MainWindow::bindEmulatorAudio() - Binding audio callback to emulator"
              << QString::fromStdString(emulator->GetId());
@@ -5755,7 +5796,9 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
     // 7. UI state
     updateMenuStates();
 
-    // Debug instrumentation follows the debugger window: on only while it is visible
+    // Debug instrumentation follows the debugger window: on only while it is visible. The adopted instance's own
+    // debug mode (an automation client switched it on) is not the window's to switch off
+    _debugInstrumentationByUi = false;
     applyDebugInstrumentation(debuggerWindow && debuggerWindow->isVisible());
 
     // Turbo render cap for this emulator: the display refresh rate we are on
@@ -5843,7 +5886,7 @@ void MainWindow::applyBlackBox()
     EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;
     ttd::TimeTravelController* controller = context ? context->pTimeTravelController : nullptr;
     if (!controller)
-        return;   // v1 (UNREAL_TTD_BACKEND=v1) has no black box
+        return;
 
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     const bool on = settings.value(QStringLiteral("TimeTravel/BlackBox"), false).toBool();

@@ -60,7 +60,9 @@ The WebSocket plane runs on the WebAPI's existing event loops: Drogon / trantor,
 - No thread per connection, per topic, per hub or per module; the thread count does not grow with clients.
 - A `call` whose handler is slow, or touches an emulator, goes to the work the REST handler already uses. It never
   runs long on an I/O thread.
-- One timer on the loop drives every readout. It is armed only while someone subscribes.
+- Readouts are read on events, never on a beat: a change of state posts a notification (or
+  `NotifyReadoutsChanged`), values moving with emulated time follow that instance's frames, host meters run at the
+  subscriber's rate. A paused instance costs nothing ([websocket-interface §4.2](../emulator/design/control-interfaces/websocket-interface.md#42-event-driven-reads)).
 - Backpressure per connection uses the high-water mark of queued bytes. A client that stays over it is closed with
   `slow_consumer`.
 

@@ -18,10 +18,12 @@ const char* const kMonitorUsage =
     "monitor host.stats                     - The process: CPU %, resident / peak memory, threads, uptime\n"
     "monitor host.clients                   - Connections and requests per plane (rest, ws, events, mcp, cli)\n"
     "monitor video.present                  - The window's way to the screen: presenter, VRR, display rate switch\n"
+    "monitor controllers.devices            - Host devices (pads, surfaces): id, name, battery, notice\n"
     "monitor emulator.stats [instance=]     - fps, real-time speed %, frame time, CPU MHz, interrupts / frame\n"
     "monitor debug.breakpoints [instance=]  - Breakpoints: total, active, by kind, groups, last hit\n"
     "monitor media.slots | recording.state | debug.labels | ttd.status | debug.analyzers | controllers.state\n"
     "monitor game.events [instance=]        - The game's events (its play profile's events:): fires, values, recent\n"
+    "monitor devices.access [instance=]     - Device access watch: per device and channel the accesses, sites, bits\n"
     "Flags: --json (the reply every surface returns); instance= an id or an index (default the followed one)\n";
 
 std::string Lines(const std::string& text, const char* newline)
@@ -86,6 +88,31 @@ void ClientsText(std::ostringstream& out, const StateNode& clients, const char* 
         << Str(clients.find("instances")) << nl;
 }
 
+/// controllers.devices: one line per host device (its battery and notice), or why there are none
+void DevicesText(std::ostringstream& out, const StateNode& devices, const char* nl)
+{
+    const StateNode* available = devices.find("available");
+    if (available == nullptr || !available->b)
+    {
+        out << "Host devices: none in this process (the game controllers live in the Qt client)" << nl;
+        return;
+    }
+    const StateNode* list = devices.find("devices");
+    out << "Host devices (revision " << Str(devices.find("revision")) << "):"
+        << (list == nullptr || list->items.empty() ? " none connected" : "") << nl;
+    if (list == nullptr)
+        return;
+    for (const StateNode& device : list->items)
+    {
+        const StateNode* battery = device.find("battery");
+        out << "  " << Str(device.find("id")) << " " << Str(device.find("name")) << ", battery "
+            << (battery != nullptr ? Str(battery->find("text")) : "-");
+        if (const StateNode* notice = device.find("notice"))
+            out << "; " << notice->s;
+        out << nl;
+    }
+}
+
 void StatsText(std::ostringstream& out, const StateNode& stats, const char* nl)
 {
     const StateNode* frame = stats.find("frame_time_us");
@@ -112,6 +139,8 @@ std::string Text(const std::string& verb, StateNode body, const char* nl)
             HostText(out, *host, nl);
         if (const StateNode* clients = body.find("clients"))
             ClientsText(out, *clients, nl);
+        if (const StateNode* devices = body.find("devices"))
+            DevicesText(out, *devices, nl);
         if (const StateNode* instances = body.find("instances"))
             for (const StateNode& instance : instances->items)
             {
@@ -133,6 +162,11 @@ std::string Text(const std::string& verb, StateNode body, const char* nl)
     if (verb == "host.clients")
     {
         ClientsText(out, body, nl);
+        return out.str();
+    }
+    if (verb == "controllers.devices")
+    {
+        DevicesText(out, body, nl);
         return out.str();
     }
     if (verb == "emulator.stats")

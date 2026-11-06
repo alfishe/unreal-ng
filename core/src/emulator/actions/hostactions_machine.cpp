@@ -19,7 +19,6 @@
 #include <thread>
 #include <vector>
 
-#include "3rdparty/tinywav/tinywav.h"
 #include "common/filehelper.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
@@ -312,7 +311,7 @@ ActionResult ExportMedia(const ActionCall& call)
     if (!format.empty() && format[0] == '.')
         format.erase(0, 1);
     static const std::vector<std::string> disks = {"trd", "scl", "udi", "fdi", "dsk", "td0",
-                                                   "mgt", "img", "hfe", "scp"};
+                                                   "mgt", "img", "mb2", "d80", "pro", "hfe", "scp"};
     static const std::vector<std::string> tapes = {"tap", "tzx"};
     const bool tape = info->descriptor.kind == MediaKind::Tape;
     const bool floppy = info->descriptor.kind == MediaKind::Floppy;
@@ -320,7 +319,7 @@ ActionResult ExportMedia(const ActionCall& call)
     {
         if (format.empty())
             return BadRequest(std::string("format: ") + (tape ? "tap or tzx" : floppy ? "trd, scl, udi, fdi, dsk, td0, "
-                                                                                        "mgt, img, hfe or scp"
+                                                                                        "mgt, img, mb2, d80, pro, hfe or scp"
                                                                                       : "the image format") +
                               " (or path)");
         if (info->source.empty() || FileHelper::IsFolder(info->source))
@@ -680,8 +679,8 @@ ActionResult AudioCapture(const ActionCall& call)
     const double seconds = NumberParam(call.value, "seconds", error).value_or(5.0);
     if (!error.empty())
         return BadRequest(error);
-    if (seconds < 0.01 || seconds > 30.0)
-        return BadRequest("seconds: 0.01..30");
+    if (seconds < 0.01 || seconds > AudioCaptureAnalyzer::MAX_STREAM_SECONDS)
+        return BadRequest("seconds: 0.01..86400");
     AudioSourceType source = AudioSourceType::MasterMix;
     if (!AudioMixer::Capturable(context, TextParam(call.value, "source").value_or(""), source, error))
         return BadRequest(error);
@@ -694,10 +693,14 @@ ActionResult AudioCapture(const ActionCall& call)
 
     const uint32_t rate = context->pSoundManager->getCoreRate();
     const size_t target = static_cast<size_t>(seconds * static_cast<double>(rate)) * 2;  // interleaved stereo
+    std::error_code ec;
+    std::filesystem::create_directories(FileHelper::ToFsPath(path).parent_path(), ec);
+    // The samples go to the WAV while they come: any length, no memory ceiling
     {
         Emulator::CpuHold hold(*call.emulator, "audio capture");  // the analyzer's subscriptions change parked
         analyzers->activate("audiocapture");
-        capture->startCapture(target, source);
+        if (!capture->startStreamCapture(path, rate, target, source, error))
+            return Conflict(error);
     }
     // Emulated time: in turbo it takes less; a starved host may take longer
     const auto deadline = std::chrono::steady_clock::now() +
@@ -706,10 +709,9 @@ ActionResult AudioCapture(const ActionCall& call)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     {
         Emulator::CpuHold hold(*call.emulator, "audio capture");
-        capture->stopCapture();
+        capture->stopCapture();   // writes the rest and closes the file
     }
-    const std::vector<int16_t>& buffer = capture->getBuffer();
-    const size_t frames = std::min(buffer.size(), capture->getCapturedSamples()) / 2;
+    const size_t frames = capture->getCapturedSamples() / 2;
     StateNode body = StateNode::Object();
     body["source"] = sourceKey;
     body["seconds"] = static_cast<double>(frames) / static_cast<double>(std::max<uint32_t>(1, rate));
@@ -718,13 +720,8 @@ ActionResult AudioCapture(const ActionCall& call)
     body["path"] = path;
     if (frames == 0)
         return ActionResult::Failure("Conflict", "no samples came (is the machine running?)", std::move(body));
-    std::error_code ec;
-    std::filesystem::create_directories(FileHelper::ToFsPath(path).parent_path(), ec);
-    TinyWav wav{};
-    if (tinywav_open_write(&wav, 2, static_cast<int32_t>(rate), TW_INT16, TW_INTERLEAVED, path.c_str()) != 0)
+    if (capture->hasStreamFailed())
         return ActionResult::Failure("Conflict", "cannot write " + path, std::move(body));
-    tinywav_write_i(&wav, const_cast<void*>(static_cast<const void*>(buffer.data())), static_cast<int>(frames));
-    tinywav_close_write(&wav);
     return ActionResult::Success(std::move(body), "Audio of " + sourceKey + " saved: " + path);
 }
 

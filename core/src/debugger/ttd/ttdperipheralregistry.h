@@ -69,7 +69,7 @@ struct TTDRestoreReport
 class ITTDRegionSource;
 struct TTDDeviceRegion;
 
-/// One registered device: its key (type + instance), its v1 blob id (None when v1 cannot record it)
+/// One registered device: its key (type + instance), its legacy id (None for a device added after the freeze)
 struct TTDRegistryEntry
 {
     TTDDeviceKey key;
@@ -83,8 +83,8 @@ struct TTDRegistryEntry
 /// @brief Registry for managing connected peripherals and their TTD state.
 ///
 /// A device is known by its TTDDeviceKey (D23, d23-device-keys.md): its type and its instance name. Several
-/// instances of one type sit side by side. The v1 blob id (PeripheralId, frozen) is only for v1's checkpoints:
-/// CaptureAll / RestoreAll; a device without one cannot be recorded by v1 (V1Recordable).
+/// instances of one type sit side by side. The legacy id (PeripheralId, frozen) orders restores and keys the
+/// blob map of CaptureAll / RestoreAll, kept from the deleted v1 format.
 class TTDPeripheralRegistry
 {
 public:
@@ -116,7 +116,7 @@ public:
     TTDSerializable* Find(const TTDDeviceKey& key) const;
     /// The first registered device of @p type (a machine with one device of that kind)
     TTDSerializable* FindType(TTDDeviceType type) const;
-    /// The device v1 saves under @p id (v1's checkpoints and files)
+    /// The device with legacy id @p id (edit records of sessions before D23)
     TTDSerializable* FindLegacy(uint8_t id) const;
     TTDSerializable* FindLegacy(PeripheralId id) const { return FindLegacy(static_cast<uint8_t>(id)); }
 
@@ -128,33 +128,26 @@ public:
     /// Count of registered peripherals.
     size_t Count() const { return _entries.size(); }
 
-    /// v1's capture: every device with a v1 id, by that id
+    /// Every device with a legacy id, as a blob, by that id (the deleted v1 checkpoint layout)
     void CaptureAll(std::unordered_map<uint8_t, std::vector<uint8_t>>& outBlobs) const;
 
-    /// Restore all peripherals from a v1 blob map (by v1 id).
+    /// Restore all peripherals from a blob map by legacy id (CaptureAll's).
     ///
     /// Driven by the registered devices rather than by the blobs: a device the
     /// checkpoint has no entry for would otherwise keep whatever state the live
     /// machine last left there, which is a divergence with no error anywhere.
     ///
-    /// @param blobs Map of v1 id → serialized state
+    /// @param blobs Map of legacy id → serialized state
     /// @return Counts describing what was and was not restored.
     TTDRestoreReport RestoreAll(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const;
 
-    /// Whether v1 can record this device set: every device has a v1 id of its own. False with the device named
-    bool V1Recordable(std::string& why) const;
-
-    /// A v1 checkpoint's blobs as device states: each under the key of the live device with that v1 id (the
-    /// registered machine's names), else {type of the id, ""}; a blob that does not decode is left out
-    TTDDeviceStates StatesOfV1Blobs(const std::unordered_map<uint8_t, std::vector<uint8_t>>& blobs) const;
-    /// v1's not-recorded mask (a bit per v1 id) and the keys it stands for ({type of the id, ""})
+    /// The keys a not-recorded mask (a bit per legacy id, session facts version 1-2) stands for ({type of the id, ""})
     static std::vector<TTDDeviceKey> KeysOfV1Mask(const PeripheralMask& mask);
-    static PeripheralMask V1MaskOf(const std::vector<TTDDeviceKey>& keys);   ///< keys of a type past the v1 ids: left out
 
     /// Every device's whole state, by entry: a live snapshot the same registry loads back (LoadLive) while the
     /// device set stays as it is
     void SaveLive(std::vector<std::vector<uint8_t>>& out) const;
-    /// Load a SaveLive snapshot: in ascending v1 id (a device that completes another one's state follows it), the
+    /// Load a SaveLive snapshot: in ascending legacy id (a device that completes another one's state follows it), the
     /// devices without one last. A snapshot of another device set loads nothing
     void LoadLive(const std::vector<std::vector<uint8_t>>& states) const;
 
@@ -174,7 +167,7 @@ public:
     bool CheckDeviceTable(std::string& error) const;
 
     /// Devices whose memory the time-travel engine records as regions
-    /// (Phase 1, Step 6); v1 does not use them. A source that is a registered
+    /// (Phase 1, Step 6). A source that is a registered
     /// device itself is paired with it (TTDRegistryEntry::regions)
     void RegisterRegionSource(ITTDRegionSource* source);
     const std::vector<ITTDRegionSource*>& RegionSources() const { return _regionSources; }
@@ -207,7 +200,7 @@ public:
     /// Total state size of all registered peripherals (for metrics).
     size_t TotalStateSize() const;
 
-    /// Unwrap a v1 blob back to raw device state. Returns empty on any
+    /// Unwrap a blob (PeripheralBlobHeader) back to raw device state. Returns empty on any
     /// inconsistency, including the header naming a different device than
     /// @p expectedId — the id is carried twice precisely so that can be caught.
     ///
@@ -215,7 +208,7 @@ public:
     /// tests and offline tools need to read one without a live registry.
     static std::vector<uint8_t> DecodeBlob(uint8_t expectedId, const std::vector<uint8_t>& blob);
 
-    /// Wrap a device's raw state in a PeripheralBlobHeader (v1), compressing the
+    /// Wrap a device's raw state in a PeripheralBlobHeader, compressing the
     /// payload when that actually makes it smaller
     static std::vector<uint8_t> EncodeBlob(uint8_t id, const uint8_t* state, size_t size);
 

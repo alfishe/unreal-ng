@@ -1,12 +1,12 @@
 #pragma once
 
 /// @file timetravelengine.h
-/// @brief TimeTravelEngine: the time-travel engine that replaces TimeTravelManager (v1).
+/// @brief TimeTravelEngine: the time-travel engine that replaced v1 (deleted in Phase 6).
 ///
-/// Built next to v1 and checked against it byte for byte; users switch to it
-/// in Phase 5 (docs/inprogress/2026-09-25-ttd-v2-migration/README.md). The
-/// engine is fed one frame input per frame boundary (live capture, or the v1
-/// file feeder in verification) and restores any recorded position.
+/// Built next to v1 and checked against it byte for byte until users switched
+/// to it in Phase 5 (docs/inprogress/2026-09-25-ttd-v2-migration/README.md). The
+/// engine is fed one frame input per frame boundary (live capture) and
+/// restores any recorded position.
 ///
 /// Phase 1, Steps 1-3 (this version): time, positions, regions, checkpoints
 /// with their parent, optional streams, memory accounting, the piece store
@@ -100,7 +100,7 @@ struct TTDEngineCheckpoint
     bool baseline = false;         ///< a segment starts here: every piece stored whole (D41)
     TTDCpuState cpu;
     TTDChipsetState chipset;
-    /// v1 ids of device states this frame offered for devices the table
+    /// Legacy ids of device states this frame offered for devices the table
     /// does not have (reported as DeviceNotPresent on restore); usually empty
     std::vector<uint8_t> unclaimedDevices;
     /// Where the bus journals stood at this boundary: a replay from here
@@ -109,6 +109,13 @@ struct TTDEngineCheckpoint
     uint64_t busWriteCursor = 0;
     uint64_t mediaReadCursor = 0;   ///< ... and the media read journal
     uint64_t busVectorCursor = 0;   ///< ... and the interrupt-vector journal
+    /// Interrupts accepted while halted, up to this boundary (TTDFrameInput::haltedInterrupts): the frame before
+    /// was HALT-paced when it grew. Live captures only, not in the session file: haltKnown false after a load
+    uint64_t haltedInterrupts = 0;
+    bool haltKnown = false;
+    /// The bytes the picture is read from (TTDFrameInput::screen), as an index into the session's screen layouts
+    /// plus one (ScreenLayoutOf); 0: not known. Live captures only, not in the session file
+    uint32_t screenLayout = 0;
     /// Only for the regions that changed at this checkpoint (and, on every
     /// S-th checkpoint, for every region): its range of the engine's change
     /// records and, on those checkpoints, a full reference table (shared
@@ -165,8 +172,8 @@ struct TTDEngineHeapBreakdown
     size_t portReads = 0;           ///< the IN bus journal (compressed blocks + the open block)
     size_t portWrites = 0;          ///< the OUT bus journal
     size_t portJournalSlack = 0;    ///< allocated, not holding records
-    size_t mediaReads = 0;          ///< sectors read from media images (v1 has no such journal)
-    size_t busVectors = 0;          ///< interrupt vectors taken (v1 has no such journal)
+    size_t mediaReads = 0;          ///< sectors read from media images
+    size_t busVectors = 0;          ///< interrupt vectors taken
     size_t writeJournal = 0;        ///< the write journal (D40): compressed blocks and segments
     size_t frameStreams = 0;        ///< frame-boundary stream copies not written out yet (D19)
     /// The session's own tables: regions, what memory holds now, per-region
@@ -194,7 +201,7 @@ struct TTDRestoreStats
     uint64_t linksDecoded = 0;    ///< difference versions applied while decoding
 };
 
-/// Counted work of one capture (deterministic; the CI gate compares it with v1's, D33)
+/// Counted work of one capture (deterministic; the benchmark reports it, D33)
 struct TTDEngineCaptureWork
 {
     uint64_t piecesOffered = 0;       ///< pieces handed to the capture (dirty or rescanned)
@@ -250,11 +257,11 @@ public:
     /// The state of device @p key at checkpoint @p index; false when the
     /// device is not in the table or had no state there
     bool DeviceState(size_t index, const TTDDeviceKey& key, std::vector<uint8_t>& out) const;
-    /// The same for the device v1 saves under @p v1Id (the oracles that compare with v1)
+    /// The same for the device with legacy id @p v1Id
     bool DeviceStateOfV1Id(size_t index, uint8_t v1Id, std::vector<uint8_t>& out) const;
     /// The device table index of @p key, or -1
     int32_t DeviceIndex(const TTDDeviceKey& key) const;
-    /// The device table index of the device v1 saves under @p v1Id, or -1
+    /// The device table index of the device with legacy id @p v1Id, or -1
     int32_t DeviceIndexOfV1Id(uint8_t v1Id) const;
     /// Whether region @p region holds a device's state (not memory)
     bool IsDeviceStateRegion(uint32_t region) const
@@ -323,20 +330,27 @@ public:
     void NoteMediaVersion(const std::string& slot, const std::string& format, bool hasVersions,
                           const TTDMediaVersion& version);
     const std::vector<TTDMediaSlot>& MediaSlots() const { return _mediaSlots; }
+
+    /// The bytes checkpoint @p cp's picture is read from (sorted); null: not known (a session loaded from a file)
+    const std::vector<TTDScreenRange>* ScreenLayoutOf(const TTDEngineCheckpoint& cp) const
+    {
+        return cp.screenLayout == 0 || cp.screenLayout > _screenLayouts.size() ? nullptr
+                                                                                : &_screenLayouts[cp.screenLayout - 1];
+    }
     /// Slot @p slot's version at checkpoint @p index; false before its first
     /// recorded version
     bool MediaVersionAt(size_t index, size_t slot, TTDMediaVersion& out) const;
 
-    /// Bind a session that was not recorded from this machine (fed from a v1
-    /// file; Phase 4: read from its own file) to the live machine it restores
-    /// into: each memory region to the live region of the same id and size,
-    /// each device to the live device of the same v1 id. Returns how many
+    /// Bind a session that was not recorded from this machine (read from its
+    /// file, Phase 4) to the live machine it restores into: each memory region
+    /// to the live region of the same id and size, each device to the live
+    /// device of the same key, else of the same legacy id. Returns how many
     /// regions and devices stay unbound; @p unbound names them
     size_t BindLive(const std::vector<TTDRegionDesc>& liveRegions, const std::vector<TTDDeviceEntry>& liveDevices,
                     std::string* unbound = nullptr);
 
     /// Bus data (Phase 3, Step 1): every IN result and every OUT of the main
-    /// CPU, in execution order, in v1's block format. Appended while
+    /// CPU, in execution order, in the bus journal's block format (kept from v1). Appended while
     /// recording; each checkpoint keeps where both stood
     void AppendBusRead(const TTDPortRecord& r) { _busReads.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc); }
     void AppendBusWrite(const TTDPortRecord& r) { _busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
@@ -486,7 +500,7 @@ public:
     /// only the pieces whose content differs (Step 5): a piece is decoded when
     /// the version in live memory is not the target's, or when @p written says
     /// it was written since (null = nothing written). Pieces the session had
-    /// not seen at that point are left alone, as v1 does
+    /// not seen at that point are left alone
     TTDRestoreResult RestoreToMemory(size_t index, const TTDWrittenFn& written = nullptr,
                                      TTDRestoreStats* stats = nullptr);
 
@@ -661,6 +675,8 @@ private:
     /// records never move
     std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region
     std::deque<TTDEngineCheckpoint> _checkpoints;
+    /// Every distinct screen layout of the session, once (a mode switch adds one; most sessions have one or two)
+    std::vector<std::vector<TTDScreenRange>> _screenLayouts;
     std::vector<TTDConfigEntry> _configs;
     std::vector<TTDMediaSlot> _mediaSlots;
     std::vector<std::pair<uint32_t, TTDMediaVersion>> _pendingMedia;   ///< slot, version: for the next checkpoint

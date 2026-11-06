@@ -865,6 +865,24 @@
    "params": "delta = tenths"
   },
   {
+   "id": "video.temporal_toggle",
+   "label": "Temporal effects",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "on? (else flips)"
+  },
+  {
+   "id": "video.temporal_effect",
+   "label": "Temporal effect",
+   "group": "Video",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "effect? (blend|dlss|next; next)"
+  },
+  {
    "id": "video.viewport",
    "label": "Overscan viewport",
    "group": "Video",
@@ -973,6 +991,15 @@
    "params": "picture? (one of osd_keyboard_pictures, next, prev; next)"
   },
   {
+   "id": "osd.keyboard_style",
+   "label": "Keyboard style",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "gui": false,
+   "params": "style? (one of osd_keyboard_styles: photo, schematic, hybrid; next, prev; next)"
+  },
+  {
    "id": "run.pace_set",
    "label": "Pace",
    "group": "Run",
@@ -1002,6 +1029,22 @@
    "label": "Pace on a dial",
    "group": "Run",
    "kind": "delta",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_shuttle_faster",
+   "label": "Pace coarser on a shuttle ring",
+   "group": "Run",
+   "kind": "level",
+   "held": false,
+   "gui": false
+  },
+  {
+   "id": "run.pace_shuttle_slower",
+   "label": "Pace finer on a shuttle ring",
+   "group": "Run",
+   "kind": "level",
    "held": false,
    "gui": false
   },
@@ -1209,7 +1252,7 @@
    "kind": "press",
    "held": false,
    "gui": false,
-   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, note?, group?"
+   "params": "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address (or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), note?, group?"
   },
   {
    "id": "dbg.bp_remove",
@@ -1534,6 +1577,23 @@
    "kind": "press",
    "held": false,
    "gui": true
+  },
+  {
+   "id": "ctl.open",
+   "label": "Open the Controllers window",
+   "group": "Controllers",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "ctl.learn",
+   "label": "Learn a device's controls",
+   "group": "Controllers",
+   "kind": "press",
+   "held": false,
+   "gui": true,
+   "params": "device"
   },
   {
    "id": "osd.quick_menu",

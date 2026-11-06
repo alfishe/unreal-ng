@@ -228,6 +228,30 @@ QRectF DeviceScreenWrapper::pictureSourceRect() const
     return {};
 }
 
+bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, int pictureHeight)
+{
+    if (_useGPU && _gpuWindow)
+    {
+        image = _gpuWindow->renderWindowImage(false, pictureHeight);
+        if (!image.isNull() && pictureHeight <= 0)  // a picture drawn at its own height is the whole image
+            image = image.copy(_gpuWindow->pictureDeviceRect().intersected(image.rect()));
+    }
+    else if (_software)
+    {
+        const QPixmap pixmap = _software->grab();
+        image = pixmap.toImage();
+        const QWidget* parent = _software->parentWidget();
+        const QRect picture = parent ? _software->geometry() : QRect(QPoint(0, 0), _software->size());
+        image = image.copy(QRect(QPoint(0, 0), (QSizeF(picture.size()) * pixmap.devicePixelRatio()).toSize()));
+    }
+    if (image.isNull())
+    {
+        error = "The screen has drawn no picture yet";
+        return false;
+    }
+    return true;
+}
+
 bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error, bool hud, int pictureHeight)
 {
     QImage image;

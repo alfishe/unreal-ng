@@ -1,0 +1,43 @@
+# Enduro Racer (Activision / Sega 1987, Giga Games), the TAP "Enduro_Racer.tap" (48K code, started from the 128K tape loader,
+# it asks "Infy Time (y/n)?" first). The menu takes SPACE to execute the highlighted line and any other key to advance;
+# Define keys is the keyboard mode; the default control mode here is a Sinclair-style joystick on 1-5 (the game answered 4 = throttle, 1 / 2 steer, 3 / 5 brake
+# and wheelie; the "Define keys" panel lists Q throttle, A wheelie, O / P, Space brakes for the keyboard mode). Haptics
+# (haptics.md §13 H5), found with TTD on a recorded run (find-last on the speed byte, coverage scan, reverse-continue):
+# the speed is the byte #7C34 (the low byte of the word #7C33, 0 to about 198 km/h); #AA66 is the instruction that cuts the
+# speed while the bike drags through the roadside (169 -> 136 in 22 frames at the bushes, 58 -> 21 in 200 frames off the road);
+# #AD02 is the speed write of the crash skid (88 -> 0 over about 110 frames, one write every 5 frames); #AB01 runs once when the
+# crash is over and the rider is put back on the bike (a block that ran in exactly one frame of the recording).
+# Checked in real time (the race starts with SPACE on START GAME, 4 held, then 2 held into the roadside): 10 verge at the first
+# bush, then a crash with 22 skid fires (one per 5 frames, so a knock every 80 ms while the bike slides) and 1 upright, then
+# 13 verge per 1.5 s while the bike drags along the verge. Known limits: the jump (#A140 block) and the wheelie are not events yet.
+schema: 1
+kind: play
+id: builtin/game/enduro-racer
+label: Enduro Racer
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["6f100999fb4d09720dc0783f043e760a76878776f3cdf4a395817b1e0c7822b3"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    lstick.left:  { key: "1" }
+    lstick.right: { key: "2" }
+    dpad.left:    { key: "1" }
+    dpad.right:   { key: "2" }
+    rt.click:     { key: "4", label: Throttle }
+    south:        { key: "4", label: Throttle }
+    lt.click:     { key: "3", label: Brake }
+    west:         { key: "5", label: Wheelie }
+    menu:         { key: SPACE, label: Select }
+haptics:
+  sources:
+    speed:   { probe: value, address: "0x7C34", scale: 1.2 }
+    verge:   { probe: exec, address: "0xAA66" }
+    skid:    { probe: exec, address: "0xAD02" }
+    upright: { probe: exec, address: "0xAB01" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: verge, play: rumble-strip }
+    - { on: skid, play: knock, scale: 0.8 }
+    - { on: upright, play: thump, scale: 0.6 }

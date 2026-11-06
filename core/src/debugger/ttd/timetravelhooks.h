@@ -5,9 +5,8 @@
 ///
 /// The core (loaders, devices, MainLoop, the CPU's input gate, the feature
 /// manager) talks to time travel only through this interface and
-/// EmulatorContext::pTimeTravelHooks, so the object behind it can change - v1's
-/// TimeTravelManager today, the engine after the switch - without touching the
-/// core. Every call is per frame, on a rare event, or behind the CPU's step-work
+/// EmulatorContext::pTimeTravelHooks (the TimeTravelController), so the object
+/// behind it can change without touching the core. Every call is per frame, on a rare event, or behind the CPU's step-work
 /// bit; per-event recording (memory and port writes, coverage) is not here.
 ///
 /// Surfaces (WebAPI, CLI, Lua, Python, GDB, DeZog, Qt) and lockstep groups that
@@ -16,6 +15,8 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ttdphyspage.h"
 
@@ -63,6 +64,25 @@ struct TTDCursor
                paused == other.paused;
     }
     bool operator!=(const TTDCursor& other) const { return !(*this == other); }
+};
+
+/// @brief A card hook's write of a sound card (gs-debugger design §8A.7, Q3): an input of the track that the replay
+/// hands to the card's debug target, applied when the card reaches the same time of the same frame
+struct TTDCardEdit
+{
+    enum Kind : uint8_t
+    {
+        Bytes = 0,   ///< `bytes` written from `address` on, as the card CPU's write would land
+        Cpu = 1,     ///< `bytes`: the card CPU's Z80CpuRegisters
+        Read = 2,    ///< the memory read at `address` sees `bytes[0]`
+        PortIn = 3,  ///< the port read of `address` sees `bytes[0]`
+    };
+    uint8_t cpu = 0;       ///< DebugCpuId of the card
+    Kind kind = Bytes;
+    uint64_t frame = 0;    ///< the ZX frame the card was in (its frame-end catch-up counts to that frame)
+    int64_t at = 0;        ///< GeneralSoundCard::cardFrameTime at the instruction boundary (a read: of its step)
+    uint16_t address = 0;
+    std::vector<uint8_t> bytes;
 };
 
 /// @brief Stable string identifier for a TTDSessionState.
@@ -119,7 +139,9 @@ class ITTDWriteSink
 {
 public:
     virtual ~ITTDWriteSink() = default;
-    virtual void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal, uint16_t m1pc, PhysPage physPage) = 0;
+    /// `flip`: Memory::TtdKeyOf's bit for the byte
+    virtual void RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal, uint16_t m1pc, PhysPage physPage,
+                                   uint8_t flip = 0) = 0;
     virtual void RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc) = 0;
 };
 
@@ -135,6 +157,10 @@ public:
     virtual void OnMachineParking() = 0;
     /// Z80, before an instruction, only when EmulatorContext::kStepWorkTtdInput is set
     virtual void ServiceInput() = 0;
+    /// A halted CPU's idle (Z80::RunHaltedIdle) with kStepWorkTtdInput set: the CPU T-state of this frame
+    /// ServiceInput next has work at - the idle runs only the fetches that start before it. 0: ServiceInput acts at
+    /// every boundary now (live input queued, a paused recording's end watched), UINT32_MAX: not in this frame
+    virtual uint32_t InputIdleLimit() const { return 0; }
     /// The machine left the recorded timeline from outside (reset)
     virtual void OnMachineReset() = 0;
     /// Ends a recording; the history is kept. For an operation that ends the session (reset, autostart) use EndSession
@@ -155,19 +181,35 @@ public:
     virtual void RecordExternalEvent(TTDExternalEventKind kind, const char* reason) = 0;
     /// A medium change landed in @p slot at this frame boundary (before its checkpoint): @p what is the new medium
     /// ("<path>"), "ejected" or "discarded". A recording keeps it as an event there (M3, Q4); then ports and sectors
-    /// only. A backend that keeps no such events refuses media changes while recording instead
+    /// only
     virtual void NoteMediaChange(const char* slot, const char* what)
     {
         (void)slot;
         (void)what;
     }
-    /// Whether a recording keeps media changes as events (NoteMediaChange): the engine does, TTD v1 does not
-    virtual bool RecordsMediaChanges() const { return false; }
     /// A tool's edit of the machine: Begin before it, End after it (Emulator::EditMemoryFromTool,
     /// and a fast loader's trap: what it wrote, the registers and the time it spent).
     /// End without a source: nothing was edited (a trap declined)
     virtual void BeginToolEdit() = 0;
     virtual void EndToolEdit(const char* source) = 0;
+    /// Whether a recording keeps a logic callback's writes (RecordScriptEdit): the engine's controller does; default: no
+    virtual bool RecordsScriptEdits() const { return false; }
+    /// A logic callback's writes, just made at an instruction boundary (ScriptCallbackManager::ApplyEdits): the bytes
+    /// in @p pokes (address, byte) written through the CPU's view, in order, and with @p cpu the registers it set.
+    /// A recording keeps them as an edit there that a replay applies (the callback never runs on replay)
+    virtual void RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes, bool cpu)
+    {
+        (void)source;
+        (void)pokes;
+        (void)cpu;
+    }
+    /// A card hook's writes, just made by the card's target (GSCardTarget): a recording keeps them as one edit there,
+    /// which a replay hands back to the target for the card time they name (the hook never runs on replay)
+    virtual void RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
+    {
+        (void)source;
+        (void)edits;
+    }
     /// A device was swapped for another one (the General Sound card): every device of @p oldType leaves, @p device
     /// comes in under its own key
     virtual void UpdatePeripheral(TTDDeviceType oldType, TTDSerializable* device) = 0;
@@ -234,5 +276,10 @@ public:
     /// stopped) runs at the 1x it was recorded at - another multiplier would drop it (frame timing is part of the
     /// determinism contract), so the speed control is refused, not the history. A black box refuses nothing
     virtual std::string SpeedLock() const { return {}; }
+    /// Whether a recording that locks acceleration still keeps turbo mode, turbo tape and fast tape (phase 2, D4):
+    /// turbo only takes the host's pacing away (the machine's frames are the same), and the tape trap is a recorded
+    /// edit a replay applies. The host speed stays at 1x; fast disk stays held (its compressed FDC timing is no
+    /// edit). Default: no, it locks them all
+    virtual bool RecordsShortcuts() const { return false; }
 };
 }  // namespace ttd

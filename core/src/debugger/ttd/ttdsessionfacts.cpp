@@ -13,7 +13,7 @@ namespace ttd
 namespace
 {
 /// 3 (D23): the not-recorded devices as keys, no mask of the recorded ones (the session's device table lists them);
-/// 2: two masks of v1 ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
+/// 2: two masks of legacy ids as word lists (u8 count, u64 words: any u8 id); 1: one u64 each (ids 0..63). The masks of
 /// versions 1 and 2 are read: the recorded one dropped, the not-recorded one as keys {type of the id, ""}
 constexpr uint16_t kFactsVersion = 3;
 constexpr uint16_t kFactsVersionFirst = 1;
@@ -42,7 +42,8 @@ bool ReadMask(TTDByteReader& r, uint16_t version, PeripheralMask& mask)
     }
     return true;
 }
-constexpr uint16_t kBookmarksVersion = 1;
+// 1: frame, T, label. 2 (2026-11-03, agent notes): + note, tags, the context at the moment, watched ranges
+constexpr uint16_t kBookmarksVersion = 2;
 }  // namespace
 
 std::vector<uint8_t> EncodeSessionFacts(const TTDSessionFacts& facts)
@@ -118,6 +119,30 @@ std::vector<uint8_t> EncodeBookmarks(const TTDBookmarkJournal& bookmarks)
         w.U64(b.time.frame);
         w.U32(b.time.tInFrame);
         w.Str(b.label);
+        w.Str(b.note);
+        w.U8(static_cast<uint8_t>(b.tags.size()));
+        for (const std::string& tag : b.tags)
+            w.Str(tag);
+        const TTDBookmarkContext& c = b.context;
+        w.U8(c.valid ? 1 : 0);
+        if (c.valid)
+        {
+            for (const uint16_t v : {c.pc, c.sp, c.af, c.bc, c.de, c.hl, c.ix, c.iy, c.codePage})
+                w.U16(v);
+            w.U8(c.iff1);
+            w.U8(c.im);
+            w.U8(c.p7FFD);
+            w.U8(c.codeKind);
+            w.Str(c.instruction);
+        }
+        w.U8(static_cast<uint8_t>(b.watches.size()));
+        for (const TTDBookmarkWatch& watch : b.watches)
+        {
+            w.U16(watch.address);
+            w.U8(watch.length);
+            w.U8(static_cast<uint8_t>(watch.bytes.size()));
+            w.Bytes(watch.bytes.data(), watch.bytes.size());
+        }
     }
     return std::move(w.bytes);
 }
@@ -127,7 +152,7 @@ bool DecodeBookmarks(const std::vector<uint8_t>& bytes, TTDBookmarkJournal& book
     TTDByteReader r(bytes);
     uint16_t version = 0;
     uint64_t count = 0;
-    if (!r.U16(version) || version != kBookmarksVersion || !r.Varint(count) || count > r.Left())
+    if (!r.U16(version) || version < 1 || version > kBookmarksVersion || !r.Varint(count) || count > r.Left())
         return false;
     TTDBookmarkJournal read;
     for (uint64_t i = 0; i < count; ++i)
@@ -135,7 +160,40 @@ bool DecodeBookmarks(const std::vector<uint8_t>& bytes, TTDBookmarkJournal& book
         TTDBookmark b;
         if (!r.U64(b.time.frame) || !r.U32(b.time.tInFrame) || !r.Str(b.label))
             return false;
-        read.Add(b);
+        if (version >= 2)
+        {
+            uint8_t tags = 0;
+            uint8_t valid = 0;
+            uint8_t watches = 0;
+            if (!r.Str(b.note) || !r.U8(tags))
+                return false;
+            b.tags.resize(tags);
+            for (std::string& tag : b.tags)
+                if (!r.Str(tag))
+                    return false;
+            if (!r.U8(valid))
+                return false;
+            TTDBookmarkContext& c = b.context;
+            c.valid = valid != 0;
+            if (c.valid)
+            {
+                for (uint16_t* v : {&c.pc, &c.sp, &c.af, &c.bc, &c.de, &c.hl, &c.ix, &c.iy, &c.codePage})
+                    if (!r.U16(*v))
+                        return false;
+                if (!r.U8(c.iff1) || !r.U8(c.im) || !r.U8(c.p7FFD) || !r.U8(c.codeKind) || !r.Str(c.instruction))
+                    return false;
+            }
+            if (!r.U8(watches))
+                return false;
+            b.watches.resize(watches);
+            for (TTDBookmarkWatch& watch : b.watches)
+            {
+                uint8_t n = 0;
+                if (!r.U16(watch.address) || !r.U8(watch.length) || !r.U8(n) || !r.Bytes(watch.bytes, n))
+                    return false;
+            }
+        }
+        read.Add(b);   // one that breaks a bound (a hand-edited file) is left out, the rest load
     }
     bookmarks.Clear();
     for (const TTDBookmark& b : read.Snapshot())

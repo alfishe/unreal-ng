@@ -76,7 +76,7 @@
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot1"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["properties"]["isa_slot2"]["type"] = "string";
     schemas["CreateEmulatorRequest"]["properties"]["sprinter"]["description"] =
-        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
+        "A SPRINTER's firmware and start options (core SprinterBios): bios = 3.04 | 3.06 | 3.07 or a file in rom/sprinter (or a path), fast_start (skip the PLD loader), accel_int_suspend (an INT acknowledge blocks accelerator operations), isa_slot1 / isa_slot2 (the card in ISA slot 1 / 2: none | ne2000 | zxbus | ram | el3c509b | sprinteresp | modem | dual16552 | wildsound, fixed for the instance; a kind not built yet is refused in /state/isa); default: [ROM] SPRINTER and [SPRINTER] of the model's unreal.ini (shipped: 3.07). 400 on an unknown image";
 
     schemas["CreateEmulatorRequest"]["properties"]["slots"]["type"] = "object";
     schemas["CreateEmulatorRequest"]["properties"]["slots"]["additionalProperties"]["type"] = "string";
@@ -112,7 +112,8 @@
     schemas["SettingsResponse"]["properties"]["settings"]["description"] =
         "Grouped settings: io_acceleration (fast_tape, turbo_tape, fast_disk - the state in effect, so off "
         "while time-travel debugging holds them), turbo_mode (bool, the turbomode feature), speed (host speed "
-        "multiplier 1, 2, 4, 8 or 16), turbo_active (read-only: the engine runs unthrottled now - turbo_mode, or "
+        "multiplier 1, 2, 4, 8 or 16), effective_speed (read-only: host speed x the machine's hardware turbo, the CPU clock "
+        "multiplier in effect), turbo_active (read-only: the engine runs unthrottled now - turbo_mode, or "
         "turbo tape warping a load), turbo_audio (bool, audio kept on in turbo mode), "
         "disk_interface (trdos_present, trdos_traps), audio (audio_rate - pinned rate "
         "or \"auto\" - core_rate_hz, the live core rate, and the sound character: ay_voicing "
@@ -237,6 +238,60 @@
     schemas["BreakpointsListResponse"]["properties"]["breakpoints"]["items"]["$ref"] =
         "#/components/schemas/BreakpointInfo";
 
+    // Script callbacks (callbacks_api.cpp): the fields of Lua's callbacks()
+    {
+        Json::Value& cb = schemas["ScriptCallback"];
+        cb["type"] = "object";
+        cb["description"] = "A Lua / Python callback and its statistics (absent fields: as in the Lua table)";
+        const char* integers[] = {"id", "breakpoint", "budget_us", "ring", "pending", "hits", "dropped", "calls",
+                                  "errors", "overruns", "total_us", "max_us", "p99_us", "last_overrun_frame",
+                                  "last_overrun_us", "aborted", "instructions"};
+        for (const char* name : integers)
+            cb["properties"][name]["type"] = "integer";
+        const char* strings[] = {"on", "mode", "role", "owner", "label", "target", "event", "policy", "state",
+                                 "reason", "last_error"};
+        for (const char* name : strings)
+            cb["properties"][name]["type"] = "string";
+        for (const char* name : {"tap", "breakpoint", "game_event"})
+            cb["properties"]["on"]["enum"].append(name);
+        for (const char* name : {"suspend", "disable", "ignore", "unpaced"})
+            cb["properties"]["policy"]["enum"].append(name);
+        for (const char* name : {"active", "suspended", "disabled"})
+            cb["properties"]["state"]["enum"].append(name);
+        for (const char* name : {"deferred", "frame", "sync"})
+            cb["properties"]["mode"]["enum"].append(name);
+        cb["properties"]["mode"]["description"] = "deferred: the script's thread; frame / sync: the hook state on the "
+                                                  "emulation thread, at the frame end / inside the access";
+        for (const char* name : {"view", "logic"})
+            cb["properties"]["role"]["enum"].append(name);
+        cb["properties"]["role"]["description"] = "Frame and sync: view (writes only with no time travel session) or "
+                                                  "logic (writes at the next instruction boundary, recorded by time "
+                                                  "travel and replayed without the call)";
+        cb["properties"]["aborted"]["description"] = "Frame and sync: calls stopped by the instruction budget";
+        cb["properties"]["instructions"]["description"] = "Frame and sync: the instruction budget of a call";
+        cb["properties"]["target"]["description"] = "What it is called on: \"tap write #5C78 if MDT == 0\", \"breakpoint 3\", \"event died\"";
+        cb["properties"]["reason"]["description"] = "Why it was suspended or disabled";
+        cb["properties"]["breakpoint"]["description"] = "The tap's hidden breakpoint, or the breakpoint whose stops it follows";
+
+        Json::Value& list = schemas["ScriptCallbackList"];
+        list["type"] = "object";
+        list["properties"]["count"]["type"] = "integer";
+        Json::Value& hooks = list["properties"]["hooks"];
+        hooks["type"] = "object";
+        hooks["description"] = "Once there are frame or sync callbacks: the hooks' time per frame and the unpaced state";
+        hooks["properties"]["unpaced"]["type"] = "boolean";
+        for (const char* name : {"unpaced_spans", "last_frame_us", "max_frame_us", "frames_over_share", "frame_share_percent"})
+            hooks["properties"][name]["type"] = "integer";
+        list["properties"]["callbacks"]["type"] = "array";
+        list["properties"]["callbacks"]["items"]["$ref"] = "#/components/schemas/ScriptCallback";
+
+        Json::Value& result = schemas["ScriptCallbackResult"];
+        result["type"] = "object";
+        result["properties"]["status"]["type"] = "string";
+        result["properties"]["message"]["type"] = "string";
+        result["properties"]["callback"]["$ref"] = "#/components/schemas/ScriptCallback";
+    }
+
     // Memory Breakpoint Info
     schemas["MemoryBreakpointInfo"]["type"] = "object";
     schemas["MemoryBreakpointInfo"]["description"] = "Memory breakpoint (execute/read/write)";
@@ -248,6 +303,14 @@
     schemas["MemoryBreakpointInfo"]["properties"]["read"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["write"]["type"] = "boolean";
     schemas["MemoryBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["MemoryBreakpointInfo"]["properties"]["stop"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["stop"]["description"] = "false: it only counts its hits, never stops";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["MemoryBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -262,6 +325,14 @@
     schemas["PortBreakpointInfo"]["properties"]["in"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["out"]["type"] = "boolean";
     schemas["PortBreakpointInfo"]["properties"]["active"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
+    schemas["PortBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["PortBreakpointInfo"]["properties"]["stop"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["stop"]["description"] = "false: it only counts its hits, never stops";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
+    schemas["PortBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["group"]["type"] = "string";
 
@@ -437,14 +508,25 @@
         "The N of the hit policy (1 or more); alone it means hit_mode 'equal'";
     schemas["AddBreakpointRequest"]["properties"]["page"]["type"] = "object";
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["type"] = "string";
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("ram");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("rom");
-    schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append("cache");
+    for (const char* kind : {"ram", "rom", "cache", "vram", "divmmc", "divmmcrom", "mfrom", "mfram"})
+        schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["kind"]["enum"].append(kind);
     schemas["AddBreakpointRequest"]["properties"]["page"]["properties"]["page"]["type"] = "integer";
     schemas["AddBreakpointRequest"]["properties"]["page"]["description"] =
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
-        "accepted too). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
+        "accepted too; the ZX Next's DivMMC and Multiface: {kind: divmmc, page: 0-15}, divmmcrom, mfrom, mfram). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
         "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
+    schemas["AddBreakpointRequest"]["properties"]["stop"]["type"] = "boolean";
+    schemas["AddBreakpointRequest"]["properties"]["stop"]["description"] =
+        "false: the breakpoint only counts its hits (hit_count, after the condition and the hit policy) and never stops "
+        "the machine; memory, ports, machine events and chip registers. Default true";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
+        "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
+        "M(addr), W(addr), access operands RD WR VAL PORT, FRAME, PG0-3, labels; numbers decimal, hex as #FF, $FF or 0xFF). "
+        "Compiled and checked against the trigger here: 400 with the reason and its column";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["type"] = "string";
+    schemas["AddBreakpointRequest"]["properties"]["condition_dialect"]["description"] =
+        "unreal (default) or c (C precedence, decimal numbers); the canonical form shown back is always Unreal";
     schemas["AddBreakpointRequest"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["note"]["description"] = "Optional annotation";
     schemas["AddBreakpointRequest"]["properties"]["group"]["type"] = "string";
@@ -467,6 +549,9 @@
     schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["stop"]["type"] = "boolean";
+    schemas["AddBreakpointResponse"]["properties"]["condition"]["type"] = "string";
+    schemas["AddBreakpointResponse"]["properties"]["match_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["group"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["message"]["type"] = "string";
@@ -843,17 +928,17 @@
         "False when the manager is missing (minimal build); state will be \"idle\"";
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
-        "The engine (D8): a seek, step or reverse query while recording paused the recording; state is detached. "
-        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it. Always false on v1";
+        "D8: a seek, step or reverse query while recording paused the recording; state is detached. "
+        "Resuming at its end (resume, or running into it) continues the same recording; stop ends it";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
         "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
         "released by the history limit or never recorded. null when there is no history";
     schemas["TTDStatusResponse"]["properties"]["black_box"]["type"] = "boolean";
     schemas["TTDStatusResponse"]["properties"]["black_box"]["description"] =
-        "The black box is armed on this instance (the engine; started with black_box, or by unreal-qt's "
+        "The black box is armed on this instance (started with black_box, or by unreal-qt's "
         "Debug > Time Travel > Always Record): its recordings keep the last minutes and step aside for turbo and "
-        "host speed. Always false on v1";
+        "host speed";
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["nullable"] = true;
     schemas["TTDStatusResponse"]["properties"]["recording_folder"]["description"] =
@@ -864,8 +949,7 @@
         "startup cleanup 7 days after its process ended";
     schemas["TTDStatusResponse"]["properties"]["backend"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["backend"]["description"] =
-        "Which implementation records on this instance: \"engine\" (the default) or \"v1\" (selected with "
-        "UNREAL_TTD_BACKEND=v1); null when time travel is not available";
+        "Which implementation records on this instance: \"engine\"; null when time travel is not available";
     // The write journal (D40): the same fields in /ttd/status, /ttd/journal and the build response
     {
         Json::Value journal;
@@ -915,7 +999,7 @@
         b["frames_covered"]["type"] = "integer";
         b["frames_covered"]["description"] = "Already inside a span, left as they were";
         b["frames_refused"]["type"] = "integer";
-        b["frames_refused"]["description"] = "Hold a v1 marker without its data: cannot be replayed";
+        b["frames_refused"]["description"] = "Hold a barrier (a marker without the data a replay needs): cannot be replayed";
         b["records"]["type"] = "integer";
         b["records"]["description"] = "Writes added";
     }
@@ -985,9 +1069,9 @@
     schemas["TTDSeekRequest"]["description"] =
         "Request body for POST /ttd/seek. Either frame (with optional tinframe) "
         "or bookmark must be present — a bookmark label resolves to its stored "
-        "(frame, tinframe) first. A frame without tinframe is the frame's end on "
-        "the engine (D13: state and picture of {frame+1, 0}; arrived_at names it "
-        "{frame, its length}), its start on v1; tinframe 0 is the frame's start.";
+        "(frame, tinframe) first. A frame without tinframe is the frame's end "
+        "(D13: state and picture of {frame+1, 0}; arrived_at names it "
+        "{frame, its length}); tinframe 0 is the frame's start.";
     schemas["TTDSeekRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDSeekRequest"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDSeekRequest"]["properties"]["tinframe"]["type"] = "integer";
@@ -1160,6 +1244,19 @@
     schemas["TTDBmk"]["properties"]["label"]["type"] = "string";
     schemas["TTDBmk"]["properties"]["label"]["description"] =
             "Unique session key: non-empty, at most 63 characters.";
+    schemas["TTDBmk"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["note"]["description"] = "The agent's or human's note, at most 4096 characters.";
+    schemas["TTDBmk"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDBmk"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDBmk"]["properties"]["context"]["type"] = "object";
+    schemas["TTDBmk"]["properties"]["context"]["nullable"] = true;
+    schemas["TTDBmk"]["properties"]["context"]["description"] =
+            "The machine at the bookmark's moment, taken when it was added (null: not taken): pc, sp, af, bc, de, "
+            "hl, ix, iy, iff1, im, p7ffd, code_page, code_kind (rom / ram / cache), instruction, text.";
+    schemas["TTDBmk"]["properties"]["watch"]["type"] = "array";
+    schemas["TTDBmk"]["properties"]["watch"]["description"] =
+            "Watched Z80 ranges and their bytes at the moment: {address, length, bytes[]}.";
+    schemas["TTDBmk"]["properties"]["watch"]["items"]["type"] = "object";
 
     schemas["TTDBookmarkAddRequest"]["type"] = "object";
     schemas["TTDBookmarkAddRequest"]["description"] =
@@ -1174,6 +1271,37 @@
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["format"] = "uint32";
     schemas["TTDBookmarkAddRequest"]["properties"]["tinframe"]["default"] = 0;
+    schemas["TTDBookmarkAddRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBookmarkAddRequest"]["properties"]["note"]["maxLength"] = 4096;
+    schemas["TTDBookmarkAddRequest"]["properties"]["tags"]["description"] =
+        "Up to 8 tags of 1..31 characters (letters, digits, _ - .): a list or a comma-separated string.";
+    schemas["TTDBookmarkAddRequest"]["properties"]["watch"]["description"] =
+        "Up to 8 Z80 ranges address[:length] (length 1..16, hex as 0x / # / $): a list or a comma-separated string.";
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["default"] = true;
+    schemas["TTDBookmarkAddRequest"]["properties"]["context"]["description"] =
+        "Take the registers, the instruction and the watched bytes at the moment (another moment: one silent seek).";
+
+    schemas["TTDBookmarkNoteRequest"]["type"] = "object";
+    schemas["TTDBookmarkNoteRequest"]["description"] =
+        "Request body for PUT /ttd/bookmarks/{label}: only the fields given change.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["append"]["type"] = "boolean";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["append"]["description"] = "Add the note as a new line.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["tags"]["description"] = "Replace the tags.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["add_tags"]["description"] = "Tags to add.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["remove_tags"]["description"] = "Tags to remove.";
+    schemas["TTDBookmarkNoteRequest"]["properties"]["rename"]["type"] = "string";
+
+    schemas["TTDBookmarkExportResponse"]["type"] = "object";
+    schemas["TTDBookmarkExportResponse"]["description"] =
+        "Response from /ttd/export-bookmarks: the bookmarks as a WALKTHROUGH section (markdown), YAML comment lines "
+        "for a game profile's header (profile) or JSON.";
+    schemas["TTDBookmarkExportResponse"]["properties"]["format"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDBookmarkExportResponse"]["properties"]["text"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["path"]["type"] = "string";
+    schemas["TTDBookmarkExportResponse"]["properties"]["bytes"]["type"] = "integer";
 
     schemas["TTDBookmarksResponse"]["type"] = "object";
     schemas["TTDBookmarksResponse"]["description"] =
@@ -1296,6 +1424,10 @@
         "A .ttd file on the emulator's machine to search instead of the current session. It is read and "
         "checked like a load but not loaded: the session is untouched, and it works while recording. "
         "400 when the file cannot be read or has no port journals";
+    schemas["TTDPortEventsRequest"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDPortEventsRequest"]["properties"]["context"]["description"] =
+        "Each hit's registers and stack_top at its IN / OUT instruction, replayed with the machine put back. Default "
+        "on, off while a recording runs (true pauses it, as browsing does) and for a file (true: 400)";
 
     schemas["TTDPortEventHit"]["type"] = "object";
     schemas["TTDPortEventHit"]["properties"]["index"]["type"] = "integer";
@@ -1310,6 +1442,37 @@
     schemas["TTDPortEventHit"]["properties"]["pc"]["description"] = "Address of the IN / OUT instruction";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["type"] = "integer";
     schemas["TTDPortEventHit"]["properties"]["ay_register"]["description"] = "AY register selected at the access (AY queries only)";
+    schemas["TTDPortEventHit"]["properties"]["device"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["device"]["nullable"] = true;
+    schemas["TTDPortEventHit"]["properties"]["device"]["description"] =
+        "The device the machine's port map gives the port (null when no row decodes it, or for a file)";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["tags"]["description"] = "The port map row's tags (keyboard, ay, storage, ...)";
+    schemas["TTDPortEventHit"]["properties"]["what"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["what"]["description"] =
+        "What the access did, in words: 'keyboard: half-row A-G, keys down: a', 'AY: select register 7 (mixer)', "
+        "'FDC: command Read sector (#80)', 'paging: RAM 3 at #C000, screen 5, ROM 1', 'border blue, MIC 0, beeper 0'";
+    schemas["TTDPortEventHit"]["properties"]["rows"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["rows"]["description"] =
+        "A read of the ULA (even port): the keyboard half-rows its address selects, bit n = A(8+n) low "
+        "(0 = CAPS..V, 7 = SPACE..B)";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["type"] = "array";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["items"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["keys"]["description"] =
+        "A read of the ULA: the keys it saw down, by the names 'key' takes; empty when it read several half-rows "
+        "(a 0 bit cannot tell their keys apart)";
+    schemas["TTDPortEventHit"]["properties"]["registers"]["type"] = "object";
+    for (const char* r : {"af", "bc", "de", "hl", "ix", "iy", "sp"})
+        schemas["TTDPortEventHit"]["properties"]["registers"]["properties"][r]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["registers"]["description"] =
+        "context: the registers at the instruction's M1, before it ran";
+    schemas["TTDPortEventHit"]["properties"]["stack_top"]["type"] = "integer";
+    schemas["TTDPortEventHit"]["properties"]["stack_top"]["description"] =
+        "context: the word at SP - the caller's return address when the routine pushed nothing";
+    schemas["TTDPortEventHit"]["properties"]["context_error"]["type"] = "string";
+    schemas["TTDPortEventHit"]["properties"]["context_error"]["description"] =
+        "context: why this hit has none (a replay barrier before it)";
 
     schemas["TTDPortEventsResponse"]["type"] = "object";
     schemas["TTDPortEventsResponse"]["properties"]["event"]["type"] = "string";
@@ -1321,6 +1484,8 @@
     schemas["TTDPortEventsResponse"]["properties"]["truncated"]["description"] = "More hits than 'limit'";
     schemas["TTDPortEventsResponse"]["properties"]["scanned"]["type"] = "integer";
     schemas["TTDPortEventsResponse"]["properties"]["scanned"]["description"] = "Journal records examined";
+    schemas["TTDPortEventsResponse"]["properties"]["context"]["type"] = "boolean";
+    schemas["TTDPortEventsResponse"]["properties"]["context"]["description"] = "The hits carry registers and stack_top";
     schemas["TTDPortEventsResponse"]["properties"]["hits"]["type"] = "array";
     schemas["TTDPortEventsResponse"]["properties"]["hits"]["items"]["$ref"] = "#/components/schemas/TTDPortEventHit";
 
@@ -1359,12 +1524,31 @@
     schemas["TTDFindLastRequest"]["properties"]["before_frame"]["format"] = "uint64";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["type"] = "integer";
     schemas["TTDFindLastRequest"]["properties"]["before_tin"]["format"] = "uint32";
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["type"] = "integer";
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["minimum"] = 0;
-    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["maximum"] = 255;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][1]["type"] = "string";
+    schemas["TTDFindLastRequest"]["properties"]["phys_page"]["oneOf"][1]["enum"].append("rom");
     schemas["TTDFindLastRequest"]["properties"]["phys_page"]["description"] =
-        "Physical RAM page 0..255 (JSON number only; 400 otherwise). Pins the search to one page, so a banked "
-        "address does not answer with another page's access.";
+        "Physical RAM page 0..255, or \"rom\" (the bucket all ROM shares: reads and instruction starts); 400 "
+        "otherwise. Pins the search to one page, so a banked address does not answer with another page's access.";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["before"]["description"] =
+        "At or before this machine time (a hit's t, or next_before of a cut list); instead of before_frame";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["format"] = "uint64";
+    schemas["TTDFindLastRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
+    schemas["TTDFindLastRequest"]["properties"]["all"]["type"] = "boolean";
+    schemas["TTDFindLastRequest"]["properties"]["all"]["description"] =
+        "Every match newest first (up to limit) in hits[]; the machine does not move";
+    schemas["TTDFindLastRequest"]["properties"]["changes_only"]["type"] = "boolean";
+    schemas["TTDFindLastRequest"]["properties"]["changes_only"]["description"] =
+        "access write only: skip a write that stored the byte already there; each hit carries old_value";
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["type"] = "integer";
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["minimum"] = 1;
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["maximum"] = 10000;
+    schemas["TTDFindLastRequest"]["properties"]["limit"]["default"] = 100;
     schemas["TTDFindLastRequest"]["properties"]["space"]["type"] = "string";
     schemas["TTDFindLastRequest"]["properties"]["space"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* space : {"ram", "vram", "cache"})
@@ -1403,6 +1587,24 @@
     schemas["TTDFindLastResponse"]["properties"]["offset"]["description"] =
         "The offset in the video / fast RAM (space vram / cache)";
     schemas["TTDFindLastResponse"]["properties"]["access"]["type"] = "string";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["t"]["description"] = "all / changes_only / from_frame: the hit's machine time";
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["nullable"] = true;
+    schemas["TTDFindLastResponse"]["properties"]["old_value"]["description"] =
+        "changes_only: the byte the write replaced; null when unknown";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["type"] = "array";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["description"] =
+        "all: the matches newest first, each with frame, tinframe, t, pc, value, phys_page, access, space, addr / "
+        "offset (and old_value with changes_only)";
+    schemas["TTDFindLastResponse"]["properties"]["hits"]["items"]["type"] = "object";
+    schemas["TTDFindLastResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDFindLastResponse"]["properties"]["truncated"]["description"] = "all: stopped at limit, older matches exist";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["type"] = "integer";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["format"] = "uint64";
+    schemas["TTDFindLastResponse"]["properties"]["next_before"]["description"] = "truncated: pass it as before for the next page";
     schemas["TTDFindLastResponse"]["properties"]["blocked"]["type"] = "boolean";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["type"] = "integer";
     schemas["TTDFindLastResponse"]["properties"]["marker_frame"]["format"] = "uint64";
@@ -1491,6 +1693,34 @@
         "Non-empty list of reverse breakpoint PCs (required), 0..65535 each: a number, or a string "
         "(decimal, \"0x..\", \"#..\" or \"$..\"). A bad entry is a 400.";
     schemas["TTDReverseContinueRequest"]["required"].append("pcs");
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][1]["type"] = "string";
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][1]["enum"].append("rom");
+    schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["description"] =
+        "Only instructions run from this RAM page (or \"rom\"): one Z80 address on two banks is two searches";
+    schemas["TTDReverseContinueRequest"]["properties"]["all"]["type"] = "boolean";
+    schemas["TTDReverseContinueRequest"]["properties"]["all"]["description"] =
+        "Every hit newest first (up to limit) in hits[]; the machine does not move";
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["minimum"] = 1;
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["maximum"] = 10000;
+    schemas["TTDReverseContinueRequest"]["properties"]["limit"]["default"] = 100;
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_frame"]["description"] =
+        "At or before this frame (+ before_tin) instead of strictly before the current position";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["format"] = "uint32";
+    schemas["TTDReverseContinueRequest"]["properties"]["before_tin"]["description"] = "With before_frame only (400 alone)";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["before"]["description"] =
+        "At or before this machine time (a hit's t, or next_before)";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
     schemas["TTDReverseContinueResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1504,6 +1734,21 @@
     schemas["TTDReverseContinueResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDReverseContinueResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["t"]["description"] = "The hit's machine time (single mode)";
+    schemas["TTDReverseContinueResponse"]["properties"]["phys_page"]["description"] =
+        "The page the hit ran from: 0..255, or \"rom\"";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["type"] = "array";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["description"] =
+        "all: the hits newest first, each {frame, tinframe, t, pc, phys_page}";
+    schemas["TTDReverseContinueResponse"]["properties"]["hits"]["items"]["type"] = "object";
+    schemas["TTDReverseContinueResponse"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["type"] = "integer";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["format"] = "uint64";
+    schemas["TTDReverseContinueResponse"]["properties"]["next_before"]["description"] =
+        "truncated: pass it as before for the next page";
     schemas["TTDReverseContinueResponse"]["properties"]["blocked_by_marker"]["$ref"] =
         "#/components/schemas/TTDMarker";
     schemas["TTDReverseContinueResponse"]["properties"]["covered_from"]["type"] = "integer";

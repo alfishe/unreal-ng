@@ -3,11 +3,30 @@
   "images": [
     {
       "view": "front",
-      "source": "tools/controllers/make_fallback_images.py",
+      "title": "Valve Steam Deck, front and back",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
       "author": "unreal-ng",
       "licence": "same as the repository",
-      "terms": "generated line drawing, no photo",
-      "retouch": "none"
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "the outline, the screen, every control's position and size, the speaker slots, the back paddles: Steam Deck reference drawing rev. B (2022-02-02), sheet 2, front and back views at 1:1",
+          "source": "https://gitlab.steamos.cloud/SteamHardware/SteamDeck/-/blob/master/steamdeck_2d_20220202.pdf",
+          "author": "Valve Corporation",
+          "licence": "CC BY-NC-SA 4.0",
+          "use": "measured geometry only (vector paths read in mm); no lines shipped",
+          "retrieved": "2026-10-31"
+        },
+        {
+          "what": "the colours: the matte dark grey shell, the dark caps with white letters",
+          "source": "https://commons.wikimedia.org/wiki/File:Steam_Deck_(front).png",
+          "author": "VulcanSphere",
+          "licence": "CC BY-SA 4.0",
+          "use": "reference only, not traced",
+          "retrieved": "2026-10-31"
+        }
+      ]
     }
   ]
 }

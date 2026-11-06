@@ -80,6 +80,8 @@ public:
     virtual int Pid() const = 0;
     /// true once it ended (never blocks)
     virtual bool Exited(int& code, bool& crashed) = 0;
+    /// true once it said it serves (LaunchSpec::readyFlag; never blocks); false when it cannot say
+    virtual bool Ready() { return false; }
     virtual void Terminate() = 0;
     virtual void Kill() = 0;
 };
@@ -89,6 +91,8 @@ struct LaunchSpec
     std::string path;
     std::vector<std::string> args;
     std::string logFile;
+    /// The daemon's `--ready-fd`: the launcher appends it with the descriptor of a pipe it watches (IProcess::Ready)
+    std::string readyFlag;
 };
 
 class ILauncher
@@ -136,6 +140,7 @@ public:
     static constexpr int64_t kStartTimeoutMs = 10000;
     static constexpr int64_t kStopGraceMs = 2000;  ///< after POST /api/v1/quit, then terminate
     static constexpr int64_t kGiveUpMs = 60000;
+    static constexpr int64_t kMissingCheckMs = 5000;  ///< no binary: how often a daemon started elsewhere is looked for
     static constexpr int64_t kStableMs = 30000;    ///< running this long: the crash count starts again
     static constexpr int64_t kDeckCheckMs = 1000;
     static constexpr int64_t kQuickExitMs = 5000;  ///< a clean end sooner than this counts as a failed start
@@ -209,6 +214,7 @@ private:
         Backoff,
         Failed,
         Stopped,
+        Missing,  ///< no daemon binary (a build without the companion): no countdown, a running one still adopted
     };
     static const char* StateName(State state);
 
@@ -241,6 +247,7 @@ private:
     bool _released = false;               ///< the lease on _child / the adopted daemon was given back
     bool _userStopped = false, _userStarted = false, _restart = false, _stopping = false;
     int64_t _stopAt = 0;                  ///< quit asked at
+    bool _readySeen = false;  ///< ours said it serves (--ready-fd): looked at once
     int64_t _startedAt = 0, _healthyAt = 0, _nextHealth = 0, _restartAt = 0, _failedUntil = 0, _nextDeckCheck = 0;
     int _healthFails = 0, _failures = 0, _restarts = 0, _decksAttached = 0;
     int _appliedPid = 0;                  ///< the daemon the settings were applied to

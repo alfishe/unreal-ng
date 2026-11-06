@@ -43,6 +43,7 @@ set(SOL2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/sol2/sol2-3.5.0/single/inc
 #------------------------------------------------------------------------------
 set(AUTOMATION_LUA_SOURCES
     src/automation-lua.cpp
+    src/hooks/luahookhost.cpp
     # NOTE: automation-main.cpp is excluded because it contains a main() function
     # which conflicts when linking with other executables like unreal-qt
 )
@@ -50,6 +51,7 @@ set(AUTOMATION_LUA_SOURCES
 set(AUTOMATION_LUA_HEADERS
     src/automation-lua.h
     src/emulator/lua_emulator.h
+    src/hooks/luahookhost.h
 )
 
 #------------------------------------------------------------------------------
@@ -169,8 +171,8 @@ endif()
 # Static libraries should only use headers, not link dependencies.
 #
 # EXCEPTION: zstd::libzstd is linked here because core's ttd_compression.h
-# (pulled in transitively via timetravelmanager.h -> ttd_codec_page_store.h
-# -> lua_emulator.h) #includes <zstd.h>, and we use core/src via raw include
+# (pulled in by the TTD headers, e.g. ttd_codec_page_store.h)
+# #includes <zstd.h>, and we use core/src via raw include
 # paths rather than target_link_libraries(unrealng::core). zstd::libzstd is
 # an INTERFACE IMPORTED target so this does NOT add any link output to
 # automation_lua; it only propagates zstd's include directory.

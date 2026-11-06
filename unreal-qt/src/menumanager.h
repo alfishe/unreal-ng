@@ -70,7 +70,7 @@ public:
     void setTrafficWindowChecked(bool checked);
     void setFt812DebugChecked(bool checked);
 
-    // Sync the Debug -> Debugger Window check state from the window's own show / hide
+    // Sync the Debug -> Debugger -> Embedded check state from the window's own show / hide
     // (setChecked does not re-emit triggered)
     void setDebuggerChecked(bool checked);
 
@@ -194,6 +194,8 @@ signals:
     void videoSyncToggled(bool on);              // View -> Video Synchronization
     void videoSyncWindowRequested();             // Tools -> Video Synchronization...
     void debuggerToggled(bool visible);
+    /// Debug > Debugger > eCat / Unreal TUI / Unreal TUI, TS-Conf: start that program (externaldebuggers.h) over this window's emulator
+    void externalDebuggerRequested(const QString& program);
     void logWindowToggled(bool visible);
     void tapeManagerToggled(bool visible);
     void mediaPanelToggled(bool visible);
@@ -298,6 +300,7 @@ private:
     QAction* _videoSyncAction = nullptr;
     QAction* _videoSyncWindowAction = nullptr;
     QAction* _debuggerAction;
+    QAction* _tuiTsConfDebuggerAction = nullptr;  // Debug > Debugger > Unreal TUI, TS-Conf: only on a TS-Conf machine
     QAction* _logWindowAction;
     QAction* _tapeManagerAction;
     QAction* _mediaPanelAction = nullptr;

@@ -313,7 +313,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lzma)
 
 # Link zstd (TTD codec)
 # PUBLIC because ttd_compression.h is a public header (included by
-# ttd_codec_page_store.h → timetravelmanager.h → consumed by unreal-qt,
+# ttd_codec_page_store.h and other TTD sources, consumed by unreal-qt,
 # automation/lua, automation/webapi, tests). All consumers need zstd's
 # include path available.
 target_link_libraries(${PROJECT_NAME} PUBLIC $<TARGET_NAME:zstd::libzstd>)

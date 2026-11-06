@@ -55,13 +55,14 @@ namespace ttd {
 /// the rest of the .ttd format.
 struct TTDWriteRecord
 {
-    uint64_t globalT  : 40;   ///< TimeTravelManager::GlobalT of the write (T-states at the
+    uint64_t globalT  : 40;   ///< TimeTravelController::GlobalT of the write (T-states at the
                               ///< model's top clock since frame 0; ~90 h at 1 unit per
                               ///< T-state, ~10 h at 8)
     uint64_t addr     : 16;   ///< Z80 address (or port number when isIo == 1)
     uint64_t isIo     : 1;    ///< 1 = port OUT, 0 = memory write
     uint64_t pageHigh : 1;    ///< bit 8 of the page: a virtual page of another memory space (ttdphyspage.h)
-    uint64_t pad      : 6;    ///< Reserved (alignment / future flags)
+    uint64_t flip     : 1;    ///< Memory::TtdKeyOf: the byte is at (addr & #3FFF) ^ (flip << 13) of the page
+    uint64_t pad      : 5;    ///< Reserved (alignment / future flags)
     uint16_t m1pc;            ///< PC of the writing instruction
     uint8_t  value;           ///< Byte written
     uint8_t  physPage;        ///< Physical RAM page (disambiguates banked writes); its low 8 bits
@@ -74,6 +75,11 @@ static_assert(sizeof(TTDWriteRecord) == 8 + 2 + 1 + 1,
 inline ttd::PhysPage RecordPage(const TTDWriteRecord& r)
 {
     return static_cast<ttd::PhysPage>(r.physPage | (static_cast<unsigned>(r.pageHigh) << 8));
+}
+/// The byte's offset in the record's page (a RAM page; Memory::TtdKeyOf)
+inline uint16_t RecordOffset(const TTDWriteRecord& r)
+{
+    return static_cast<uint16_t>((r.addr & 0x3FFF) ^ (static_cast<unsigned>(r.flip) << 13));
 }
 /// kPhysPageNone (ROM, no page) stays the 0xFF it always was: bit 8 is set for a page of another space only
 inline void SetRecordPage(TTDWriteRecord& r, ttd::PhysPage page)
@@ -123,7 +129,7 @@ public:
 
     /// @brief Append a write record.
     ///
-    /// Caller (TimeTravelManager::RecordMemoryWrite / RecordIoWrite) is
+    /// Caller (TimeTravelController::RecordMemoryWrite / RecordIoWrite) is
     /// responsible for monotonicity of `globalT`. This method just stores.
     void Append(const TTDWriteRecord& rec);
 
@@ -178,13 +184,12 @@ public:
     void Clear();
 
     // -----------------------------------------------------------------------
-    // Serialization (.ttd v3 — see ttddumpformat.h)
+    // Serialization (the v1 file's journal section; v1 was deleted, only tests call these)
     // -----------------------------------------------------------------------
 
     /// @brief Write the live records as a length-prefixed block.
     ///
     /// Format: u8 count, then count * sizeof(TTDWriteRecord) bytes.
-    /// Called by TimeTravelManager::SerializeSession under pause.
     bool Serialize(std::ostream& out) const;
 
     /// @brief Read records written by Serialize.

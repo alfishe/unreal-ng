@@ -16,6 +16,7 @@ set(SOURCES
     src/cli-processor.cpp
     src/commands/cli-processor-instance.cpp
     src/commands/cli-processor-action.cpp
+    src/commands/cli-processor-watch.cpp
     src/commands/cli-processor-recent.cpp
     src/commands/cli-processor-surface.cpp
     src/commands/cli-processor-streamdeck.cpp
@@ -24,6 +25,7 @@ set(SOURCES
     src/commands/cli-processor-asm.cpp
     src/commands/cli-processor-signature.cpp
     src/commands/cli-processor-breakpoint.cpp
+    src/commands/cli-processor-cardcpu.cpp
     src/commands/cli-processor-memory.cpp
     src/commands/cli-processor-analyzer.cpp
     src/commands/cli-processor-analyzer-mgr.cpp
@@ -32,6 +34,7 @@ set(SOURCES
     src/commands/cli-processor-disk.cpp
     src/commands/cli-processor-media.cpp
     src/commands/cli-processor-slots.cpp
+    src/commands/cli-processor-history.cpp
     src/commands/cli-processor-controllers.cpp
     src/commands/cli-processor-multisound.cpp
     src/commands/cli-processor-cdaudio.cpp
@@ -153,7 +156,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 # Static libraries should only use headers, not link dependencies.
 #
 # EXCEPTION: zstd::libzstd is linked here because core's ttd_compression.h
-# (pulled in transitively via timetravelmanager.h -> ttd_codec_page_store.h)
+# (pulled in by the TTD headers, e.g. ttd_codec_page_store.h)
 # #includes <zstd.h>, and we use core/src via raw include paths rather than
 # target_link_libraries(unrealng::core). zstd::libzstd is an INTERFACE
 # IMPORTED target so this does NOT add any link output to automation-cli; it

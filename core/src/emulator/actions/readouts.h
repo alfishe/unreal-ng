@@ -15,11 +15,12 @@
 /// | `audio.mixer` | the mixer's levels: {master: {muted}, solo, devices: [{source, muted, solo, audible, volume, peak, active, channels?}]} |
 /// | `audio.source.<key>` | one row or channel (audio.source.ay1, audio.source.ay1.a): {source, name, muted, solo, audible, volume, gain_db, peak, active}; by name only |
 /// | `debug.mode` | {enabled} |
-/// | `host.stats`, `host.clients`, `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`, `debug.buffers`, `game.events` | monitoring (monitoringapi.h): the value of GET /api/v1/monitor/{name} |
+/// | `host.stats`, `host.clients`, `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `controllers.state`, `debug.buffers`, `game.events`, `devices.access` | monitoring (monitoringapi.h): the value of GET /api/v1/monitor/{name} |
 /// | `actions.unavailable` | {id: reason} of the catalogue's actions the user's hands could not run now (a deck greys their keys out) |
 /// | `video.window` | the GUI window's display settings as published (WindowDisplay report + available; headless {available: false}) |
 /// | `video.crt_params` | {available, profile, kind, values: {name: value}} of the active CRT profile, as published |
 /// | `video.viewport` | {overscan, overscan_available, viewport, viewports, framebuffer, display, video_mode} |
+/// | `video.temporal` | {available, on, effect (blend / dlss: the one the switch runs), dlss} of the temporal effects |
 /// | `machine.previous`, `machine.switches`, `media.recent`, `media.rzx`, `input.connectors`, `cap.record` | the
 /// machine area's (machinereadouts.h) |
 /// | `toggle.<id>` | {on} for every toggle of the catalogue (`toggle.feature.<name>` for the features) |

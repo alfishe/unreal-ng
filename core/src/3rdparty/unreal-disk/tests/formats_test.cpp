@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "testdata.h"
 #include "unrealdisk/detail/helpers.h"
 #include "unrealdisk/floppyformats.h"
@@ -48,7 +50,7 @@ TEST(Formats_Test, EveryTestImageLoads)
         {"loaders/trd/EyeAche.trd", "trd"},          {"loaders/scl/eyeache2.scl", "scl"},
         {"loaders/fdi/VORON1.FDI", "fdi"},           {"loaders/udi/VORON1.UDI", "udi"},
         {"loaders/td0/trdos-sample.td0", "td0"},     {"loaders/dsk/plus3-blank.dsk", "dsk"},
-        {"loaders/dsk/edsk-protected.dsk", "dsk"},
+        {"loaders/dsk/edsk-protected.dsk", "dsk"},   {"loaders/pro/ReadFile.pro", "pro"},
     };
     for (const auto& [path, expected] : images)
     {
@@ -128,4 +130,29 @@ TEST(Formats_Test, ImagesInMemoryLoadLikeFiles)
         ASSERT_EQ(fromData->getCylinders(), fromFile->getCylinders()) << path;
         EXPECT_EQ(TrdosBytes(*fromData), TrdosBytes(*fromFile)) << path;
     }
+}
+
+TEST(Formats_Test, AProDumpSavesBackByteForByteWithTheSystemTrackIds)
+{
+    const std::string path = TestDataPath("loaders/pro/ReadFile.pro");
+    std::vector<uint8_t> original;
+    ASSERT_TRUE(FileHelper::ReadFile(path, original));
+    std::string format;
+    auto disk = Load(path, &format);
+    ASSERT_NE(disk, nullptr);
+    EXPECT_EQ(format, "pro");
+    // Cylinder 0 side 0 has IDs 1, 2, 3, 4, 9 (the BIOS boots from R = 9), every other track 1..5
+    const DiskImage::Track* system = disk->getTrackForCylinderAndSide(0, 0);
+    EXPECT_NE(system->findSector(9), nullptr);
+    EXPECT_EQ(system->findSector(5), nullptr);
+    EXPECT_NE(disk->getTrackForCylinderAndSide(0, 1)->findSector(5), nullptr);
+    EXPECT_EQ(std::memcmp(system->findSector(9)->data, original.data() + 4 * 1024, 1024), 0);
+
+    const auto folder = ScratchFolder("pro");
+    const std::string copy = (folder / "copy.pro").string();
+    const FloppySaveResult saved = FloppyFormats::Save({}, *disk, copy, false);
+    ASSERT_TRUE(saved.saved) << saved.reason;
+    std::vector<uint8_t> back;
+    ASSERT_TRUE(FileHelper::ReadFile(copy, back));
+    EXPECT_EQ(back, original);
 }

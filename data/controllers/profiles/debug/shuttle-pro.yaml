@@ -1,0 +1,49 @@
+# The Contour ShuttlePRO v2 and ShuttleXpress (control surfaces devices.md §4): debug devices, their families start
+# as debugger remotes, so this works without the debug layer switch. The keys by row, as on the device:
+#
+#          K1  K2  K3  K4            bookmark prev, add, next; record on / off
+#        K5  K6  K7  K8  K9          step out, back an instruction, pause / continue, step in, step over
+#        K14     Jog     K15         held while turning: by instructions / by seconds; alone: follow PC / next pane
+#          K10         K11           back a frame, forward a frame
+#         K12           K13          reverse continue, back to live
+#
+# The shuttle ring is the debugger's speed control and moves it from where it is: turned right (CW) slower, a preset
+# per position (25 fps, 5 fps, 1 fps, a frame, 100 / 10 / 1 scanlines, 1 instruction), turned left (CCW) faster, up to
+# full speed (real time). The spring's return changes nothing: the pace stays where the turn left it.
+# The jog wheel moves the machine forward and back: by default an instruction a step (forward steps in, back steps
+# back through the history), held K14 by frames, held K15 by seconds of the history. In the TTD panel (the context
+# `ttd`, ctx.set on any plane; with a history and nothing set it is `ttd`) it seeks the history: 1 frame a step
+# turned slowly, up to 100 turned fast; `ttd.timecode` the same by seconds. The ShuttleXpress has K5-K9 only.
+schema: 1
+kind: debug
+id: builtin/debug/shuttle-pro
+label: Debugger on the ShuttlePRO
+applies_to: { families: [shuttle-pro-v2, shuttle-xpress] }
+layers:
+  debug:
+    shuttle.left:  { action: run.pace_shuttle_faster, curve: scrub }
+    shuttle.right: { action: run.pace_shuttle_slower, curve: scrub }
+    button.1:      { action: ttd.bookmark_prev }
+    button.2:      { action: ttd.bookmark_add }
+    button.3:      { action: ttd.bookmark_next }
+    button.4:      { action: ttd.record_toggle }
+    button.5:      { action: run.step_out }
+    button.6:      { action: ttd.step_back_instruction, repeat: { delay: 15, rate: 4 } }
+    button.7:      { action: run.pause_toggle }
+    button.8:      { action: run.step_in, repeat: { delay: 15, rate: 4 } }
+    button.9:      { action: run.step_over }
+    button.10:     { action: ttd.step_back_frame, repeat: { delay: 15, rate: 4 } }
+    button.11:     { action: run.frame_step, repeat: { delay: 15, rate: 4 } }
+    button.12:     { action: ttd.reverse_continue }
+    button.13:     { action: ttd.resume_live }
+    button.14:     { action: dbg.follow_pc }
+    button.15:     { action: dbg.focus_next_pane }
+    jog:           { action: run.step_by }
+    button.14+jog: { action: run.step_by, curve: { unit: frames } }
+    button.15+jog: { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }
+  "@ttd":
+    jog:           { action: ttd.seek_by, curve: { unit: frames, min: 1, max: 100 } }
+    button.14+jog: { action: ttd.jog_instructions }
+    button.15+jog: { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }
+  "@ttd.timecode":
+    jog:           { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }

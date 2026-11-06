@@ -21,14 +21,14 @@ TEST(CliAudioMixer_Test, TableShowsHostOutputHolders)
     ASSERT_NE(sound, nullptr);
 
     std::string table = CliAudioMixer::Table(DeviceState::AudioMixer(context), "\n");
-    EXPECT_NE(table.find("host output: playing (holders: direct_run 0, ttd_replay 0, turbo 0; stale cleared 0)"),
+    EXPECT_NE(table.find("host output: playing (holders: direct_run 0, ttd_replay 0, turbo 0, unpaced 0; stale cleared 0)"),
               std::string::npos)
         << table;
 
     {
         SoundManager::HostOutputHold replay(sound, SoundManager::HostHoldReason::TtdReplay);
         table = CliAudioMixer::Table(DeviceState::AudioMixer(context), "\n");
-        EXPECT_NE(table.find("host output: held (holders: direct_run 0, ttd_replay 1, turbo 0;"), std::string::npos)
+        EXPECT_NE(table.find("host output: held (holders: direct_run 0, ttd_replay 1, turbo 0, unpaced 0;"), std::string::npos)
             << table;
     }
     table = CliAudioMixer::Table(DeviceState::AudioMixer(context), "\n");

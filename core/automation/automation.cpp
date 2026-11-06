@@ -23,6 +23,7 @@
 
 #if ENABLE_MCP_AUTOMATION
 #include "mcp/src/automation-mcp.h"
+#include <emulator/monitoring/clientstats.h>
 #endif
 
 #if ENABLE_CLI_AUTOMATION
@@ -148,6 +149,28 @@ void Automation::stop()
 #endif
 }
 
+bool Automation::IsLuaReady()
+{
+#if ENABLE_LUA_AUTOMATION
+    return _lua && _lua->ready();
+#else
+    return false;
+#endif
+}
+
+int Automation::RunLuaFile(const std::string& path, std::string& error)
+{
+#if ENABLE_LUA_AUTOMATION
+    if (_lua)
+        return _lua->runFile(path, error);
+    error = "Lua automation is not started";
+#else
+    (void)path;
+    error = "this build has no Lua automation";
+#endif
+    return 1;
+}
+
 std::string Automation::getEmulatorIdOrFirst(const std::string& providedId)
 {
     if (!providedId.empty()) {
@@ -222,6 +245,15 @@ bool Automation::startPython()
 }
 #endif
 
+int Automation::GetWebAPIPort() const
+{
+#if ENABLE_WEBAPI_AUTOMATION
+    return _webAPI ? _webAPI->port() : 0;
+#else
+    return 0;
+#endif
+}
+
 #if ENABLE_WEBAPI_AUTOMATION
 bool Automation::startWebAPI()
 {
@@ -249,6 +281,10 @@ bool Automation::startMCP()
     _mcp = new AutomationMCP();
     if (_mcp)
     {
+        // host.clients.mcp.tools: the calls per tool and action
+        _mcp->SetToolCallObserver([](const std::string& tool, const std::string& action) {
+            monitoring::ClientStats::Instance().ToolCall(tool, action);
+        });
         _mcp->start();
     }
     else

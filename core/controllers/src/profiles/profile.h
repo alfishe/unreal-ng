@@ -77,6 +77,9 @@ struct Profile
 
     std::map<std::string, ConnectorPlan> connectors;
     std::vector<PlayerPin> players;
+    /// `joystick_keys`: the keys of the QAOP-style joystick the port reads may pick (`up:q,down:a,left:o,right:p,fire:m`,
+    /// the plug's `keys` option); empty = the plug's own. The game's own menu chooses the joystick, this is only its keys
+    std::string joystickKeys;
     JsonValue options;  ///< defaults of every binding of the profile (an object, maybe empty)
     /// layer ("play", "debug", a shift layer) -> control (`south`, `view+menu`) -> the binding as written
     std::vector<std::pair<std::string, JsonValue::Members>> layers;
@@ -97,6 +100,13 @@ struct Profile
 bool ParseProfile(const std::string& text, Profile& out, std::string& error);
 /// The same on a parsed tree
 bool ParseProfile(const JsonValue& root, Profile& out, std::string& error);
+
+/// A session trial of game haptics (haptics.md §11, the haptics_trial verb): @p text is a play profile's `events:`
+/// and `haptics:` (YAML, or JSON when it starts with `{`), the same fields a game profile file has. Into @p overlay
+/// as a `haptics` overlay (the events as its sources, OverlayHaptics lays it over @p base); false with the reason when
+/// it, laid over @p base, does not parse as a profile would (a rule may name the base's sources, an event may replace
+/// one)
+bool ParseHapticTrial(const std::string& text, const JsonValue& base, JsonValue& overlay, std::string& error);
 
 /// The JSON layer name of a router layer and back ("play" <-> kPlayLayer)
 std::string RouterLayer(const std::string& jsonLayer);

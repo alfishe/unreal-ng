@@ -1,7 +1,11 @@
 #include "stackwidget.h"
 
+#include <cstdlib>
+
+#include <QGridLayout>
+
+#include "common/widgets/qclickablelabel.h"
 #include "debugger/debuggerwindow.h"
-#include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -16,22 +20,52 @@ StackWidget::StackWidget(QWidget* parent) : QWidget(parent), ui(new Ui::StackWid
 
     m_mainThread = QApplication::instance()->thread();
 
-    m_debuggerWindow = static_cast<DebuggerWindow*>(parent);
+    m_debuggerWindow = DebuggerWindow::Of(parent);
 
-    // Shortcuts for value labels
-    sp0Value = ui->sp0Value;
-    sp1Value = ui->sp1Value;
-    sp2Value = ui->sp2Value;
-    sp3Value = ui->sp3Value;
+    // One row per word: the offset from SP, the word (click: disassembly, double click: memory), the return hint;
+    // the text in the debugger's panel font
+    for (int i = 0; i < kEntries; i++)
+    {
+        const int offset = kFirstOffset + 2 * i;
+        auto* offsetLabel = new QLabel(offset == 0 ? QStringLiteral("SP") : QStringLiteral("%1%2")
+                                                                                .arg(offset < 0 ? '-' : '+')
+                                                                                .arg(std::abs(offset), 0, 16)
+                                                                                .toUpper(),
+                                       this);
+        offsetLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        offsetLabel->setStyleSheet(offset == 0 ? QStringLiteral("QLabel { font-weight: bold; }")
+                                               : QStringLiteral("QLabel { color: #808080; }"));
 
-    // Subscribe to double clicks on stack addresses
-    connect(sp0Value, SIGNAL(doubleClicked()), this, SLOT(sp0Value_doubleClicked()));
-    connect(sp1Value, SIGNAL(doubleClicked()), this, SLOT(sp1Value_doubleClicked()));
-    connect(sp2Value, SIGNAL(doubleClicked()), this, SLOT(sp2Value_doubleClicked()));
-    connect(sp3Value, SIGNAL(doubleClicked()), this, SLOT(sp3Value_doubleClicked()));
+        auto* value = new QClickableLabel(this);
+        value->setText(QStringLiteral("----"));
+        value->setCursor(Qt::PointingHandCursor);
+        value->setToolTip(tr("Click: show it in the disassembly; double click: in the memory view; right click: menu"));
+        if (offset == 0)
+            value->setStyleSheet(QStringLiteral("QLabel { font-weight: bold; }"));
+        value->installEventFilter(this);
 
-    // Set up context menus for stack addresses
-    setupContextMenus();
+        auto* hint = new QLabel(this);
+        hint->setStyleSheet(QStringLiteral("QLabel { color: #808080; }"));
+
+        ui->stackGrid->addWidget(offsetLabel, i, 0);
+        ui->stackGrid->addWidget(value, i, 1);
+        ui->stackGrid->addWidget(hint, i, 2);
+        m_offsets[static_cast<size_t>(i)] = offsetLabel;
+        m_values[static_cast<size_t>(i)] = value;
+        m_hints[static_cast<size_t>(i)] = hint;
+
+        connect(value, &QClickableLabel::clicked, this, [this, i] {
+            std::array<uint16_t, kEntries> words{};
+            if (readStack(words))
+                emit jumpToAddressInDisassembly(words[static_cast<size_t>(i)]);
+        });
+        connect(value, &QClickableLabel::doubleClicked, this, [this, i] {
+            std::array<uint16_t, kEntries> words{};
+            if (readStack(words))
+                emit changeMemoryViewZ80Address(words[static_cast<size_t>(i)]);
+        });
+    }
+    ui->stackGrid->setColumnStretch(2, 1);
 }
 
 StackWidget::~StackWidget() {}
@@ -55,68 +89,33 @@ Memory* StackWidget::getMemory()
     return context ? context->pMemory : nullptr;
 }
 
-void StackWidget::setupContextMenus()
-{
-    // Install event filter on all stack address labels
-    sp0Value->installEventFilter(this);
-    sp1Value->installEventFilter(this);
-    sp2Value->installEventFilter(this);
-    sp3Value->installEventFilter(this);
-}
-
 bool StackWidget::eventFilter(QObject* obj, QEvent* event)
 {
     if (event->type() == QEvent::ContextMenu)
     {
-        QContextMenuEvent* contextEvent = static_cast<QContextMenuEvent*>(event);
-        QLabel* label = qobject_cast<QLabel*>(obj);
-
-        if (label)
-        {
-            int stackIndex = -1;
-
-            // Determine which stack address was right-clicked
-            if (label == sp0Value)
-                stackIndex = 0;
-            else if (label == sp1Value)
-                stackIndex = 1;
-            else if (label == sp2Value)
-                stackIndex = 2;
-            else if (label == sp3Value)
-                stackIndex = 3;
-            else
-                return QWidget::eventFilter(obj, event);
-
-            // Show context menu for this stack address
-            showStackAddressContextMenu(label, stackIndex, contextEvent->globalPos());
-            return true;
-        }
+        for (int i = 0; i < kEntries; i++)
+            if (obj == m_values[static_cast<size_t>(i)])
+            {
+                showStackAddressContextMenu(i, static_cast<QContextMenuEvent*>(event)->globalPos());
+                return true;
+            }
     }
 
     // Pass the event to the parent class
     return QWidget::eventFilter(obj, event);
 }
 
-void StackWidget::showStackAddressContextMenu(QLabel* label, int stackIndex, const QPoint& pos)
+void StackWidget::showStackAddressContextMenu(int stackIndex, const QPoint& pos)
 {
-    // Get the stack value for this index
-    uint16_t stackValues[4] = {};
-    readStackIntoArray(stackValues, 4);
-    uint16_t address = stackValues[stackIndex];
+    std::array<uint16_t, kEntries> words{};
+    if (!readStack(words))
+        return;
+    const uint16_t address = words[static_cast<size_t>(stackIndex)];
 
     QMenu contextMenu("Stack Address Actions", this);
-
-    // Create actions
-    QAction* jumpToAction = new QAction("Jump to in Disassembly", &contextMenu);
-    QAction* showInMemoryAction = new QAction("Show in Memory View", &contextMenu);
-
-    // Add actions to menu
-    contextMenu.addAction(jumpToAction);
-    contextMenu.addAction(showInMemoryAction);
-
-    // Connect actions
+    QAction* jumpToAction = contextMenu.addAction(tr("Jump to in Disassembly"));
+    QAction* showInMemoryAction = contextMenu.addAction(tr("Show in Memory View"));
     connect(jumpToAction, &QAction::triggered, [this, address]() { emit jumpToAddressInDisassembly(address); });
-
     connect(showInMemoryAction, &QAction::triggered, [this, address]() { emit changeMemoryViewZ80Address(address); });
 
     // Show the menu at the cursor position
@@ -127,10 +126,11 @@ void StackWidget::reset()
 {
     // Clear labels without reading from emulator
     // (reset is called when emulator is being released, so don't access it)
-    sp0Value->setText("----");
-    sp1Value->setText("----");
-    sp2Value->setText("----");
-    sp3Value->setText("----");
+    for (size_t i = 0; i < m_values.size(); i++)
+    {
+        m_values[i]->setText(QStringLiteral("----"));
+        m_hints[i]->clear();
+    }
     update();
 }
 
@@ -148,97 +148,66 @@ void StackWidget::refresh()
     if (currentThread != m_mainThread)
     {
         QMetaObject::invokeMethod(this, "refresh", Qt::QueuedConnection);
+        return;
     }
-    else
+
+    std::array<uint16_t, kEntries> words{};
+    Memory* memory = getMemory();
+    if (!memory || !readStack(words))
     {
-        uint16_t stackValues[4] = {};
-        readStackIntoArray(stackValues, 4);
-
-        QString sp0Name = StringHelper::Format("$%04X", stackValues[0]).c_str();
-        QString sp1Name = StringHelper::Format("$%04X", stackValues[1]).c_str();
-        QString sp2Name = StringHelper::Format("$%04X", stackValues[2]).c_str();
-        QString sp3Name = StringHelper::Format("$%04X", stackValues[3]).c_str();
-
-        sp0Value->setText(sp0Name);
-        sp1Value->setText(sp1Name);
-        sp2Value->setText(sp2Name);
-        sp3Value->setText(sp3Name);
-
-        update();
+        reset();
+        return;
     }
+    for (size_t i = 0; i < words.size(); i++)
+    {
+        m_values[i]->setText(QStringLiteral("$%1").arg(words[i], 4, 16, QLatin1Char('0')).toUpper());
+        const QString hint = ReturnHint(*memory, words[i]);
+        m_hints[i]->setText(hint.isEmpty() ? QString() : QStringLiteral("<- %1").arg(hint));
+        m_hints[i]->setToolTip(hint.isEmpty() ? QString()
+                                              : tr("A return address: the %1 that ends right before it pushes it")
+                                                    .arg(hint.section(' ', 0, 0)));
+    }
+    update();
+}
+
+QString StackWidget::ReturnHint(Memory& memory, uint16_t address)
+{
+    // CALL nn (CD) and CALL cc,nn (C4 CC D4 DC E4 EC F4 FC) end 3 bytes before the return address
+    const uint8_t call = memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 3));
+    if (call == 0xCD || (call & 0xC7) == 0xC4)
+    {
+        const uint16_t target = static_cast<uint16_t>(memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 2)) |
+                                                      (memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 1)) << 8));
+        return QStringLiteral("CALL %1").arg(target, 4, 16, QLatin1Char('0')).toUpper();
+    }
+    // RST n one byte before; RST 38 (FF) is left out: FF fills empty memory, a word after it is rarely a return
+    const uint8_t rst = memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 1));
+    if ((rst & 0xC7) == 0xC7 && rst != 0xFF)
+        return QStringLiteral("RST %1").arg(rst & 0x38, 2, 16, QLatin1Char('0')).toUpper();
+    return {};
 }
 
 std::vector<QWidget*> StackWidget::cursorCells() const
 {
-    return {sp0Value, sp1Value, sp2Value, sp3Value};
+    return {m_values.begin(), m_values.end()};
 }
-
-void StackWidget::sp0Value_doubleClicked()
-{
-    qDebug("StackWidget::sp0Value_doubleClicked()");
-
-    uint16_t stackValues[4] = {};
-    readStackIntoArray(stackValues, 4);
-    uint16_t stackValue = stackValues[0];
-
-    emit changeMemoryViewZ80Address(stackValue);
-}
-
-void StackWidget::sp1Value_doubleClicked()
-{
-    qDebug("StackWidget::sp1Value_doubleClicked()");
-
-    uint16_t stackValues[4] = {};
-    readStackIntoArray(stackValues, 4);
-    uint16_t stackValue = stackValues[1];
-
-    emit changeMemoryViewZ80Address(stackValue);
-}
-
-void StackWidget::sp2Value_doubleClicked()
-{
-    qDebug("StackWidget::sp2Value_doubleClicked()");
-
-    uint16_t stackValues[4] = {};
-    readStackIntoArray(stackValues, 4);
-    uint16_t stackValue = stackValues[2];
-
-    emit changeMemoryViewZ80Address(stackValue);
-}
-
-void StackWidget::sp3Value_doubleClicked()
-{
-    qDebug("StackWidget::sp3Value_doubleClicked()");
-
-    uint16_t stackValues[4] = {};
-    readStackIntoArray(stackValues, 4);
-    uint16_t stackValue = stackValues[3];
-
-    emit changeMemoryViewZ80Address(stackValue);
-}
-
-/// region </Event handlers / Slots>
 
 /// region <Helper methods>
-void StackWidget::readStackIntoArray(uint16_t* outArray, uint16_t depth)
+bool StackWidget::readStack(std::array<uint16_t, kEntries>& out)
 {
-    if (!outArray || !depth)
-        return;
-
     Memory* memory = getMemory();
     EmulatorContext* context = getEmulatorContext();
     if (!memory || !context || !context->pCore)
-        return;
+        return false;
     Z80State* z80 = context->pCore->GetZ80();
-    uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp);
-
-    for (unsigned long i = 0; i < depth; i++)
+    uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp + kFirstOffset);
+    for (uint16_t& word : out)
     {
-        uint8_t loByte = memory->DirectReadFromZ80Memory(sp++);
-        uint16_t hiByte = memory->DirectReadFromZ80Memory(sp++);
-
-        outArray[i] = (hiByte << 8) | loByte;
+        const uint8_t loByte = memory->DirectReadFromZ80Memory(sp++);
+        const uint16_t hiByte = memory->DirectReadFromZ80Memory(sp++);
+        word = static_cast<uint16_t>((hiByte << 8) | loByte);
     }
+    return true;
 }
 /// endregion </Helper methods>
 

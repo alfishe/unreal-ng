@@ -106,8 +106,10 @@ bool AutomationDezog::start(uint16_t port)
 
     // Route emulator stop events into the DZRP session as NTF_PAUSE
     dzrp::Server* server = _server.get();
-    _adapter->setPauseNotifier(
-        [server](dzrp::BreakReason reason, uint16_t addr, uint8_t bank) { server->notifyPause(reason, addr, bank); });
+    DezogDebugAdapter* adapter = _adapter.get();
+    _adapter->setPauseNotifier([server, adapter](dzrp::BreakReason reason, uint16_t addr, uint8_t bank) {
+        server->notifyPause(reason, addr, bank, adapter->stopText());
+    });
 
     std::cout << "Starting DeZog (DZRP) server on port " << resolvedPort << "..." << std::endl;
 

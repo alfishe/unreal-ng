@@ -206,3 +206,28 @@ TEST_F(RomSpace_Test, ShippedProfRomLoadsForProfScorpion)
     EXPECT_EQ(_memory->base_sys_rom, _memory->ROMPageHostAddress(2));
     EXPECT_EQ(_memory->base_dos_rom, _memory->ROMPageHostAddress(3));
 }
+
+/// A page list's titles (ROM::GetROMPageTitle): blank pages say so, a copy names the lowest page it equals, an
+/// unknown page keeps its digest
+TEST_F(RomSpace_Test, PageTitlesNameBlankPagesAndCopies)
+{
+    ROM rom(_context);
+    std::memset(_memory->ROMPageHostAddress(0), 0xFF, PAGE_SIZE);
+    std::memset(_memory->ROMPageHostAddress(1), 0x00, PAGE_SIZE);
+    std::memset(_memory->ROMPageHostAddress(2), 0x5A, PAGE_SIZE);
+    std::memcpy(_memory->ROMPageHostAddress(3), _memory->ROMPageHostAddress(2), PAGE_SIZE);
+    std::memcpy(_memory->ROMPageHostAddress(4), _memory->ROMPageHostAddress(2), PAGE_SIZE);
+    std::memset(_memory->ROMPageHostAddress(5), 0xFF, PAGE_SIZE);
+    _memory->ROMPageHostAddress(5)[PAGE_SIZE - 1] = 0x00;
+
+    EXPECT_EQ("Empty (all #FF)", rom.GetROMPageTitle(0));
+    EXPECT_EQ("Empty (all #00)", rom.GetROMPageTitle(1));
+    const std::string unknown = rom.GetROMPageTitle(2);
+    EXPECT_EQ(0u, unknown.rfind("Unknown ROM, <", 0)) << unknown;
+    EXPECT_EQ(std::string::npos, unknown.find("(="));
+    EXPECT_EQ(unknown + " (= ROM page 2)", rom.GetROMPageTitle(3));
+    EXPECT_EQ(unknown + " (= ROM page 2)", rom.GetROMPageTitle(4));
+    // One byte apart from a blank page: neither blank nor a copy
+    EXPECT_EQ(0u, rom.GetROMPageTitle(5).rfind("Unknown ROM, <", 0));
+    EXPECT_EQ(std::string::npos, rom.GetROMPageTitle(5).find("(="));
+}

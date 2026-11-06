@@ -52,9 +52,8 @@ namespace
         "controllers haptics [device]               - Which devices' motors the emulator drives, why not, their effects\n"
         "controllers rumble <device> [effect]       - Play a test effect (identify, low, high, clicks, left-trigger,\n"
         "                                             right-trigger, swell; default identify)\n"
-        "controllers haptics_probe <kind> <address> [page=N port_mask=M play=hit]\n"
-        "                                           - A haptic probe (exec, read, write, port-in, port-out) as a source of\n"
-        "                                             the loaded game's user profile, with a rule\n"
+        "controllers haptics_trial [<file>|clear]   - Try a play profile's events: / haptics: (a YAML or JSON file) on\n"
+        "                                             the loaded game for this session, never written; clear drops it\n"
         "controllers output <device> <tick|double|buzz> - A control surface's haptic pattern (the Surface Dial)\n"
         "controllers output <device> steps=36 clicks=on|off - Its steps per turn and a click at each (off: free wheel)\n"
         "controllers output <device> marks=second,edge - A seek's marks as the device's layer plays them\n"
@@ -185,13 +184,9 @@ namespace
             }
             else if (verb == "match")
                 request.options["path"] = words[1];
-            else if (verb == "haptics_probe")
-            {
-                request.options["kind"] = words[1];
-                if (words.size() > 2)
-                    request.options["address"] = words[2];
-            }
-            else if (verb == "save" || verb == "database_save" || verb == "database_import")
+            else if (verb == "haptics_trial" && words[1] == "clear")
+                request.options["clear"] = "true";
+            else if (verb == "save" || verb == "haptics_trial" || verb == "database_save" || verb == "database_import")
             {
                 std::ifstream file(words[1], std::ios::binary);
                 if (!file)

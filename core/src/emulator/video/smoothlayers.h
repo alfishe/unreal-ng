@@ -10,7 +10,7 @@
 namespace smoothmotion
 {
 
-/// Layers (POC 039, `layers`): the in-between picture of a pair A, B at the weight w, every pixel drawn by the layer that
+/// Layers (POC 047, `layers`): the in-between picture of a pair A, B at the weight w, every pixel drawn by the layer that
 /// best explains its neighbourhood over the frames k and k + 1 (k - 1 for the still and steady checks).
 ///
 /// A layer is a vector: zero (a static layer) or one of the block fields' vectors k -> k + 1 and k - 1 -> k (the
@@ -28,7 +28,7 @@ namespace smoothmotion
 /// does better there; over paper or drawn graphics both are exact).
 ///
 /// The CPU reference: integer arithmetic, the same bits on every compiler. Measured on the synthetic suite of
-/// POC 039 (tools/poc/039-smoothing-filters): 24.5 % wrong over the 10-scene sum, MotionField::Compose 118 %.
+/// POC 047 (tools/poc/047-smoothing-filters): 24.5 % wrong over the 10-scene sum, MotionField::Compose 118 %.
 class LayerFlow
 {
 public:

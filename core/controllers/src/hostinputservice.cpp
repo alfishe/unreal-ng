@@ -47,6 +47,8 @@ HostInputService::HostInputService() : _router(std::make_shared<InputRouter>())
         // The backend is written outside _mutex (a backend reports into it under its own lock); _hapticsWrite keeps
         // it alive against Stop
         std::lock_guard<std::mutex> write(_hapticsWrite);
+        if (!_owner.load())
+            return false;  // another client owns the devices: the mixer forgets this one
         IBackend* backend = nullptr;
         {
             std::lock_guard<std::mutex> lock(_mutex);
@@ -203,10 +205,31 @@ bool HostInputService::SetLight(const HostDeviceId& device, const LightColor& co
     // Under the lock, as Output: a backend's SetLight queues or writes one sysfs file and never reports into us
     std::lock_guard<std::mutex> lock(_mutex);
     IBackend* backend = BackendOfLocked(device);
-    if (backend == nullptr || !backend->HasLight(device) || !backend->SetLight(device, color))
+    if (backend == nullptr || !backend->HasLight(device) || (_owner.load() && !backend->SetLight(device, color)))
         return false;
-    _lights[device] = color;  // what Identify's blink goes back to
+    _lights[device] = color;  // what Identify's blink goes back to, and what the owner sets again (SetOwner)
     return true;
+}
+
+void HostInputService::SetOwner(bool owner)
+{
+    if (_owner.load() == owner)
+        return;
+    if (!owner)
+    {
+        _haptics->StopAll();  // while still the owner: the motors are written to rest
+        _owner = false;
+        _router->SetSuspended(true);
+        return;
+    }
+    _owner = true;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto& [device, color] : _lights)
+            if (IBackend* backend = BackendOfLocked(device); backend != nullptr && backend->HasLight(device))
+                backend->SetLight(device, color);
+    }
+    _router->SetSuspended(false);  // the feel of every device again
 }
 
 void HostInputService::Stop()
@@ -457,6 +480,8 @@ void HostInputService::PlayTest(const HostDeviceId& device, const TestEffect& te
         return;
     }
     std::lock_guard<std::mutex> write(_hapticsWrite);
+    if (!_owner.load())
+        return;
     IBackend* backend = nullptr;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -529,7 +554,23 @@ std::shared_ptr<IHapticFeed> HostInputService::HapticFeedFor(const std::string& 
                                                              const std::string& name)
 {
     return std::make_shared<ProfileHaptics>(profile, name, *_haptics, TargetsFor(instance),
-                                            [this](const HostDeviceId& device) { return RumbleActuators(device); });
+                                            [this](const HostDeviceId& device) { return RumbleActuators(device); },
+                                            [this](const HostDeviceId& device) { return PlayerNumber(device); });
+}
+
+int HostInputService::PlayerNumber(const HostDeviceId& device) const
+{
+    // The numbering of the profiles' `play@N` layers and `player:` rules: the N-th pad connected (not a keyboard, not a mouse)
+    int number = 0;
+    for (const HostDeviceInfo& info : _router->Devices())
+    {
+        if (info.family == "keyboard" || info.family == "mouse")
+            continue;
+        ++number;
+        if (info.id == device)
+            return number;
+    }
+    return 0;
 }
 
 void HostInputService::SetHapticsGate(bool open)
@@ -555,6 +596,8 @@ uint8_t HostInputService::Outputs(const HostDeviceId& device) const
 
 bool HostInputService::Output(const HostDeviceId& device, const HapticOut& out)
 {
+    if (!_owner.load())
+        return false;
     // Under the lock, as HasRumble: a backend's Output only queues and never reports into this service
     std::lock_guard<std::mutex> lock(_mutex);
     IBackend* backend = BackendOfLocked(device);
@@ -563,6 +606,8 @@ bool HostInputService::Output(const HostDeviceId& device, const HapticOut& out)
 
 bool HostInputService::Output(const HostDeviceId& device, const StepsOut& out)
 {
+    if (!_owner.load())
+        return false;
     // Under the lock, as HasRumble: a backend's Output only queues and never reports into this service
     std::lock_guard<std::mutex> lock(_mutex);
     IBackend* backend = BackendOfLocked(device);

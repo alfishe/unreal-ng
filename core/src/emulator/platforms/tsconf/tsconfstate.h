@@ -174,7 +174,7 @@ struct TsConfState
     /// region <Virtual TR-DOS (§8.2)>
     uint8_t vgDrive;            ///< drive select bits of the last #FF write (drive_sel_raw)
     uint8_t preVdos;            ///< a trapped FDC access: vdos starts at the next M1
-    uint8_t vdosReserved[2];    ///< keeps the struct free of tail padding
+    uint16_t cpuLineRunning;    ///< CPU DRAM reads of the current line so far (DRAM budget; here, in the old tail pad)
     /// endregion
 
     /// Accessors

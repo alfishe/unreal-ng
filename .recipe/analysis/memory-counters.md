@@ -21,13 +21,21 @@ Two related but distinct instruments:
 ## MCP (preferred)
 
 ```text
-# memory profiler via invoke_api (same paths as WebAPI):
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/memory/start"}
+# session control
+analyze_performance {"action":"profiler","profiler":"memory","op":"start"}
 #   ...run the scenario: control_execution {"action":"run_frames","frames":500}...
-invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/memory/stop"}
-invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/memory/pages","query_params":{"limit":20}}
-invoke_api         {"method":"GET", "path":"/api/v1/emulator/{id}/profiler/memory/counters",
-                   "query_params":{"page":5,"mode":"physical"}}
+
+# per-address counters: every cell is a text line (0x5C08 r=12 w=3 x=0)
+analyze_performance {"action":"memory_counters","view":"top","kinds":"x","limit":16}          # hot code
+analyze_performance {"action":"memory_counters","space":"phys","view":"top","kinds":"w"}      # hot variables, with the bank
+analyze_performance {"action":"memory_counters","addresses":"0x5C00,0x9C40-0x9C43"}          # exactly these cells
+analyze_performance {"action":"memory_counters","space":"ram5","view":"sparse","start":"0x1800","length":"0x300"}
+
+# watches: a region or a partially decoded port, with the PCs and the values
+analyze_performance {"action":"memory_watch","op":"add","name":"lives","start":"0x9C40","length":"1","callers":true,"values":true}
+analyze_performance {"action":"memory_watch","op":"add","name":"kempston","port":"0x1F","mask":"0xFF","callers":true}
+analyze_performance {"action":"memory_watch"}                                                  # list (the default op)
+
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/profiler/memory/save",
                    "body":{"path":"scratch/memprofile.yaml","format":"yaml"}}
 
@@ -123,11 +131,33 @@ curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?page=5&mode=physical" \
         | map({offset: (.key|tonumber), writes: .value})'
 ```
 
-Per-region monitoring (named ranges with caller/data-value tracking) is
-planned for the profiler (`.../profiler/memory/regions` is documented as
-planned and answers 404 today). The `/memory/regions` and
-`/memory/region/{name}` endpoints are a different feature (named memory
-region access), not profiler counters.
+The `MemoryCounters` form takes a space and returns cells, so a client never downloads the 64K arrays:
+
+```bash
+# the 16 most executed CPU addresses
+curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?space=cpu&format=top&kinds=x&limit=16" | jq -c '.cells[]'
+# the most written cells of the whole physical memory, each with its page ([address, r, w, x, "ram5"])
+curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?space=phys&format=top&kinds=w&limit=32" | jq -c '.cells[]'
+# exactly these cells, zeros too
+curl -s "$BASE/emulator/$EMU_ID/profiler/memory/counters?addresses=0x5C00,0x9C40-0x9C43" | jq -c '.cells[]'
+# a page's window as raw uint32 arrays (reads, writes, executes) for numpy
+curl -s -o scratch/ram5.bin "$BASE/emulator/$EMU_ID/profiler/memory/counters?space=ram5&format=binary"
+```
+
+Watches are named regions and ports, with the PCs (callers) and values seen:
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/profiler/memory/watches" -H 'Content-Type: application/json' \
+     -d '{"name":"kempston","port":"0x1F","mask":"0xFF","callers":true,"values":true}' | jq .
+curl -s "$BASE/emulator/$EMU_ID/profiler/memory/watches" | jq '.watches[] | {name, reads, writes, callers}'
+curl -s -X DELETE "$BASE/emulator/$EMU_ID/profiler/memory/watches/kempston"
+```
+
+The `debug.watches` WebSocket topic pushes the totals at every frame's end. The `/memory/regions` and
+`/memory/region/{name}` endpoints are a different feature (named memory region access), not profiler counters.
+Python: `emu.memory_counters(...)`, `emu.memory_watch_port(...)`; Lua: `memory_counters{...}`,
+`memory_watch_port(...)`; CLI: `profiler memory counters ...`, `profiler memory watch ...`
+([module page](../../docs/emulator/design/debugger/memory-counters.md)).
 
 ### Save / export
 
@@ -158,7 +188,9 @@ The complementary instrument over plain REST: `POST /coverage/start|stop|clear`,
 |:--|:--|
 | Which RAM bank does this demo thrash? | start → run 500 frames → `pages` sorted by writes |
 | Is the loader copying from ROM into RAM? | `pages`: ROM page reads + RAM page writes paired |
-| Which addresses in the screen bank change? | `counters?mode=physical&page=5`, top writes |
+| Which addresses in the screen bank change? | `counters?space=ram5&format=top&kinds=w` |
+| What is a POKE address: code, constant or variable? | `counters?addresses=...` after a run: executed = code, read only = constant, written = variable |
+| Which input does a game read? | port watches `0x1F`/`0xFF` and `0xFE`/`0xFF` ([game-start-input.md](game-start-input.md)) |
 | Did my patched routine ever execute? | coverage (`/coverage`), not this recipe |
 | Before/after comparison of a fix | start/clear around each variant, export YAML, diff |
 

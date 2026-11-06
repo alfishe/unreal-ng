@@ -7,6 +7,7 @@
 #include "emulator/io/sprinter/isa/isaslotconfig.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/platforms/atm/atmstate.h"
+#include "emulator/platforms/gmx/gmxstate.h"
 #include "emulator/platforms/profi/profistate.h"
 #include "emulator/platforms/scorpion/scorpionstate.h"
 #include "emulator/platforms/zxevo/evostate.h"
@@ -49,6 +50,8 @@ constexpr char const* NC_ACTION_CATALOGUE = "ACTION_CATALOGUE";                 
 constexpr char const* NC_SURFACE_TARGET = "SURFACE_TARGET";                       // The followed instance, the views (focus order, active instances) or a surface session's target changed (actions::TargetState) - payload: SurfaceTargetPayload (process-wide)
 constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";                 // A companion client asked to pair, was paired, denied or revoked; a pairing expired or was cancelled - payload: CompanionChangedPayload (process-wide, no emulator id)
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
+constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
+constexpr char const* NC_FRAME_WATCH = "FRAME_WATCH";   // An armed frame watch was added, removed, hit or failed - payload: FrameWatchPayload (debugger/watch/framewatch.h)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -72,6 +75,7 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
+constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
@@ -80,6 +84,7 @@ constexpr char const* NC_MEDIA_CLEAN = "MEDIA_CLEAN";                           
 constexpr char const* NC_MEDIA_EXPORTED = "MEDIA_EXPORTED";                     // A medium was exported to a file (payload: MediaSlotPayload, _path = target)
 constexpr char const* NC_MEDIA_SAVED = "MEDIA_SAVED";                           // A medium was saved; it now stands for that file (payload: MediaSlotPayload, path = the file)
 constexpr char const* NC_CONTROLLER_CONNECTOR_CHANGED = "CONTROLLER_CONNECTOR_CHANGED"; // A device was plugged into or unplugged from a connector, or the connector list was rebuilt (payload: ControllerConnectorPayload). Posted from ControllerManager on the thread that applied it, after its lock is released
+constexpr char const* NC_CONTROLLER_DEVICES_CHANGED = "CONTROLLER_DEVICES_CHANGED"; // The host input devices' value changed: a device arrived or left, its battery, notice, light, role or pin (no payload; process-wide). Posted by monitoring::HostDevices::Publish on the host input owner's thread
 constexpr char const* NC_RECORDING_STATE = "RECORDING_STATE";                   // Recording started or stopped (payload: RecordingStatePayload). Posted from RecordingManager.
 constexpr char const* NC_MEMORY_PAGE_CHANGED = "MEMORY_PAGE_CHANGED";           // RAM bank mapping changed (payload: MemoryPagePayload). Posted by Memory on bank switch.
 constexpr char const* NC_ROM_PAGE_CHANGED = "ROM_PAGE_CHANGED";                 // ROM selection changed (payload: ROMPagePayload). Posted by Memory on ROM switch.
@@ -93,6 +98,7 @@ constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       
 constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
+constexpr char const* NC_READOUTS_CHANGED = "READOUTS_CHANGED";                 // Published state a readout shows changed where no other notification says so: tape transport, write protect, the mixer, TTD session state, debug tools, analysis jobs, window settings, front-panel switches, recent files, settings (payload: ReadoutsChangedPayload; NotifyReadoutsChanged, readoutschanged.h). The control surfaces read their values on it instead of polling
 
 // endregion </PER-EMULATOR-INSTANCE MessageCenter Notifications>
 
@@ -361,6 +367,14 @@ inline constexpr bool IsProfiModel(MEM_MODEL model)
 	return model == MM_PROFI || model == MM_PROFI3;
 }
 
+/// The machines built on the Scorpion ZS-256 host board: the base board, the ProfROM board and the GMX card in its
+/// CPU socket. What they share - the #7FFD / #1FFD paging, the DD50 Magic trigger, the Beta128, the SMUC - keys on
+/// this. Design: docs/inprogress/2026-10-07-gmx/design.md section 3
+inline constexpr bool IsScorpionModel(MEM_MODEL model)
+{
+	return model == MM_SCORP || model == MM_PROFSCORP || model == MM_GMX;
+}
+
 const int RAM_48 = 48, RAM_128 = 128, RAM_256 = 256, RAM_512 = 512, RAM_1024 = 1024, RAM_2048 = 2048, RAM_4096 = 4096;
 
 /// A setting another thread switches while the machine runs (WebAPI, CLI, GUI) and the loop reads once a frame.
@@ -571,6 +585,12 @@ struct NeoGSConfig
 
 struct zxkeymap;
 
+/// CONFIG::even_M1 bits: the clock an opcode fetch from RAM that starts on an odd T-state waits one T at. The
+/// Scorpion SC15.1 logic: at 3.5 MHz only (its turbo bypasses the wait). The GMX card's own logic: at 7 MHz only
+/// (GMX design 2.6, Q21: the host WAIT is cut, the card's DRAM slot holds turbo fetches from RAM)
+constexpr uint8_t EVEN_M1_NORMAL = 0x01;
+constexpr uint8_t EVEN_M1_TURBO = 0x02;
+
 struct CONFIG
 {
 	unsigned t_line;	// t-states per line
@@ -612,7 +632,7 @@ struct CONFIG
 	unsigned framexsize;
 	unsigned framey;
 	unsigned frameysize;
-	uint8_t even_M1, border_4T;
+	uint8_t even_M1, border_4T;  // even_M1: EVEN_M1_* bits, the clocks the Even M1 wait acts at (z80.cpp)
 
 	uint8_t floatbus, floatdos;
 	
@@ -660,6 +680,9 @@ struct CONFIG
 	uint32_t romsize;
 	RamPowerOn ramPowerOn = RamPowerOn::Random;	// [MISC] RAMPowerOn: RAM contents at creation
 	ScorpionTurboLogic scorpionTurboLogic = ScorpionTurboLogic::SC151;	// [MISC] ScorpionTurboLogic (Scorpion models)
+	/// [SMUC] Isa / IsaBase / IsaIrq / IsaPeer: the card in the SMUC's ISA-8 slot (a Scorpion with [HDD] Scheme=SMUC):
+	/// NONE (default) | MODEM | DUAL16552 (sprinterisa::CardKind; the same card models as the Sprinter's slots)
+	sprinterisa::SlotConfig smucIsa{};
 
 	IDE_SCHEME ide_scheme;			// [HDD] Scheme: the machine's IDE board (implementation-plan.md D8)
 	uint8_t ide_stall = 1;			// [HDD] IdeStall: TS-Conf's CPU stall on an IDE bus cycle (1 = on, the default, as the RTL; 0 = bypass)
@@ -745,7 +768,6 @@ struct CONFIG
 		/// legacy SD=1), 1 mode 1 (#0F / #1F / #4F / #5F), 2 mode 2 (#F1 / #F3 / #F9 / #FB)
 		uint8_t sdMode = 0;
 		int beeper_vol, micout_vol, micin_vol, ay_vol, aydig_vol;
-		int covoxFB_vol, covoxDD_vol, sd_vol, covoxProfi_vol;
 		int gs_vol, bass_vol, moonsound_vol;
 		VOID_FUNC do_sound;
 		uint8_t enabled, gsreset, dsprimary;
@@ -908,6 +930,11 @@ struct CONFIG
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
 	// for the session only
 	char profi_nvram_path[FILENAME_MAX];
+	// SMUC clock cells + serial EEPROM image ([SMUC] NvramFile=); empty = kept for the session only
+	char smuc_nvram_path[FILENAME_MAX];
+	// [SMUC] NvramInitial=: the image a board without a saved one starts from (read only; relative to the config
+	// file); empty = blank cells and EEPROM
+	char smuc_nvram_initial_path[FILENAME_MAX];
 
 	// Sprinter Sp2000 ([SPRINTER] section, Sprinter tdd-integration §1.1)
 	struct
@@ -1370,6 +1397,7 @@ struct EmulatorState
 	AtmState atm;             // ATM Turbo 1 / 2+ / 3, ZX-Evo BaseConf (shared by the three ATM decoders)
 	EvoState evo;             // ATM3 / ZX-Evo BaseConf decoder only
 	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
+	GmxState gmx;             // Scorpion GMX card register file (#00, #78FD, scroller, Magic latch)
 	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
 	/// endregion </Hardware-family state>
 };

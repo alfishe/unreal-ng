@@ -252,7 +252,10 @@
         field("keyboard", "string",
               "default (the keyboard the OSD shows), a picture id of the machine (pentagon2plus, ...) or of another "
               "with the same matrix (zxnext on a Pentagon), or true; left out or false = the picture only");
-        field("codec", "string", "prores (ProRes 4444, the default) or h264 (H.264 4:4:4)");
+        field("codec", "string", "prores (ProRes 4444, the default), h264 or h265 (4:4:4 through ffmpeg)");
+        field("hardware", "boolean",
+              "h264 / h265 on the GPU's encoder (macOS VideoToolbox, no ffmpeg, 4:2:0 / H.265 4:2:2); default false");
+        field("fit", "boolean", "Scale the picture to a given width x height frame (aspect kept); default false");
         field("audio", "boolean",
               "The machine's sound, frame for frame with the picture (default true; PCM in .mov, AAC in .mp4)");
         field("fps", "integer", "Left out or 0 = the machine's frame rate (needed with audio); 1..100 with audio false");

@@ -1,18 +1,39 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
 Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
-On the engine (`backend: "engine"`, the default) `find-last`, `reverse-step`
-and `reverse-continue` while recording pause the recording and answer; on v1
-they return `409` until the recording is stopped. The coverage queries answer
-at any time. Session rules
+`find-last`, `reverse-step` and `reverse-continue` while recording pause the
+recording and answer. The coverage queries answer at any time. Session rules
 (states, what wipes history, markers):
 [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
 
 These are the "answer the question backwards" primitives:
 
 - *Who wrote this memory?* → `find-last`
+- *Why does this byte / register hold this value?* → `cause-chain` (MCP `cause_chain`: the writer, its source, that
+  source's writer... back to a constant, a port read or the initial memory, in one call; no `find_last` +
+  `disassemble` + `reverse_step` loop)
+- *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
+  turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
+  instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
+- *What did this frame do?* (where its time went, what it wrote, which ports it used) → `explain-frame` (MCP
+  `explain_frame`: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with
+  its writers, screen, border, input and markers from one replay; no `seek` + `memory_diff` + `find_last` per range +
+  `port_events` + stepping loop)
+- *What differs between these two moments?* (before and after the player died, the title and the first level, either
+  side of an OUT) → `diff` (MCP `diff`: the registers, latches and 8K slots that differ, the memory ranges with their
+  bytes and last writers, screen, border, the devices changed, the keys and markers in between; any T inside a frame;
+  no `seek` + `inspect_state` at each moment + `memory_diff` + `memory_at` / `find_last` per range + seek back)
+- *Keep what I found and write it up* (a WALKTHROUGH step, a game profile's header) → `bookmark_add` with `note`,
+  `tags` and `watch` at each finding (the moment's PC, instruction, registers and watched bytes are taken once), then
+  one `bookmark_export` (`format` markdown / profile / json, `tag`, `path`); the notes live in the session and its
+  `.ttd` file, not in the agent's context. No `seek_bookmark` + `inspect_state` + `disassemble` + memory reads per
+  bookmark
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
+- *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
+  busiest frames, one call, no replay), then the queries below on a phase
 - *Which frames touched this address range?* → coverage probe/scan/summary
+- *In which frames did a game profile's probe fire?* → `probe-frames` (MCP `probe_frames`: the probes as the profile
+  writes them, `if:` included; a replay of the window, the machine stays)
 
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred — the
 > `time_travel` tool covers find-last, reverse-step/continue and the coverage
@@ -29,17 +50,64 @@ time_travel {"action":"coverage_probe","frame":11782,"kind":"executed",
 time_travel {"action":"coverage_scan","from_frame":11000,"to_frame":12000,"kind":"written",
              "addr_from":"0x8000","addr_to":"0xBFFF","phys_page":5,"limit":200}
 time_travel {"action":"coverage_summary","kind":"executed"}
+# the recording cut into phases (start here on an unknown session):
+time_travel {"action":"timeline"}   # min_phase_ms (default 200); buckets=true adds an overview
+#   each phase: tags (screen = bytes the renderer shows were written, on every video family; tape only with a tape in;
+#   disk, sound, burst, paging, halt), the devices it used ({device,in,out} ports, {slot,sectors} host-read media,
+#   {region,frames} card / video memory), its busiest frame: seek there next; `missing` says what the session lacks
+# a profile's probes over the history ("shot" and "died" of a haptic profile):
+time_travel {"action":"probe_frames","from_frame":11000,"to_frame":12000,
+             "probes":[{"probe":"exec","address":"0x8A14"},
+                       {"probe":"write","address":"0x5F20","if":"VAL < MDT"}]}
 
-# reverse travel (pauses a running recording on the engine; v1: stop it first):
+# reverse travel (pauses a running recording):
 time_travel {"action":"find_last","addr":16384,"access":"write"}
 time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","access":"write",
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
 time_travel {"action":"reverse_step","count":50}               # or {"tstates":2000} — exactly one
 time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
 
+# why a value: the chain back from it (store <- A <- load <- (IX+3) <- block copy <- ... <- initial / port / constant)
+time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position
+time_travel {"action":"cause_chain","reg":"HL","frame":11800,"tinframe":20000,"depth":6}
+#   one line per link: name = value, kind, f<frame>+<t>, PC, instruction, <- inputs; [stop: depth] = ask deeper there
+
+# when did it happen (frames filtered from the stored history, only hit frames replayed):
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"decreased"}      # lives went down
+time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"becomes","value":"0"}
+time_travel {"action":"find_event","find":"screen","min_changed":60,"limit":10}            # scene changes
+time_travel {"action":"find_event","find":"exec","addr":"0x8A14","order":"last"}            # its last run
+time_travel {"action":"find_event","find":"key","key":"SPACE"}                              # fire pressed
+time_travel {"action":"find_event","find":"border","value":2}                               # border turned red
+#   one line per hit: f<frame>+<t> PC instruction  why (before -> after); "more from frame N": from_frame=N goes on
+#   a value changed and back within one frame: "exact":true; a mem hit marked device: no CPU write explains it
+
+# what one frame did (one replay; the machine stays):
+time_travel {"action":"explain_frame"}                                   # the current position's frame
+time_travel {"action":"explain_frame","frame":1204,"sections":"routines,memory","limit":4}
+#   frame N (T, instructions): ISR x %, HALT y %, code z %; routines by time (isr / start marked), the interrupt,
+#   paging, ports per device (keys down on ULA reads), memory ranges with writers, screen %, border, input, markers
+#   a typical chain: find_event names the frame -> explain_frame says what ran in it -> cause_chain on one byte
+
+# what differs between two moments (two silent seeks; the machine stays):
+time_travel {"action":"diff","from_frame":1201}                          # moment 1201 -> the current position
+time_travel {"action":"diff","from_frame":1201,"from_tinframe":20000,"to_frame":1204,"sections":"cpu,memory"}
+#   diff f1201+20000 -> f1204+0: frames and T between; cpu: the registers that changed; latches and 8K slots;
+#   memory ranges (screen pixels / attributes / RAM page + address) with bytes and "last write f+t pc instruction";
+#   screen, border, devices changed, keys and markers between. writers=false skips the write search
+
 # follow-ups once find-last names a writer PC:
 debug_code  {"action":"disassemble","address":"0x8174","count":12}   # pc-16 window (= /disasm)
 time_travel {"action":"bookmark_add","label":"writer"}               # pin the finding
+
+# keep the finding with the bookmark, then write all of them up in one call (the machine stays):
+time_travel {"action":"bookmark_add","label":"lives-dec","frame":212,"tinframe":31540,
+             "note":"the life counter drops on contact","tags":["lives"],"watch":["#A13C","#A140:4"]}
+#   Bookmark 'lives-dec' f212+31540 [lives]: PC #A1F3 dec (hl); #A13C=03, #A140..#A143=.. - the life counter ...
+time_travel {"action":"bookmark_note","label":"lives-dec","note":"also on a bullet","append":true}
+time_travel {"action":"bookmark_export","format":"markdown","title":"Green Beret"}   # a WALKTHROUGH section
+time_travel {"action":"bookmark_export","format":"profile","tag":"lives"}            # a game profile's header comment
+#   path = a file on the emulator's machine: written there too
 ```
 
 ## WebAPI
@@ -64,9 +132,13 @@ Query fields (combine freely; at least one criterion required):
 | `access` | `"write"` (default) / `"read"` / `"execute"` / `"io"` |
 | `value` | the byte written/read, 0..255 |
 | `pc_from` / `pc_to` | restrict by the PC that performed the access |
-| `phys_page` | 0..255 (JSON number): only accesses to this physical RAM page |
+| `phys_page` | 0..255 or `"rom"`: only accesses to this physical RAM page (or the ROM) |
 | `space` | `ram` (default) / `vram` / `cache`: the Sprinter's video RAM or fast RAM, the address fields then offsets in it (inside one 16 KB page) |
-| `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` only counts together with `before_frame`) |
+| `before_frame` / `before_tin` | search at or before this point instead of the current position (`before_tin` without `before_frame` is a 400) |
+| `before` | the same bound as a machine time (`t` of a hit, `next_before` of a cut list) |
+| `from_frame` | do not look older than this frame |
+| `all` | `true`: every match newest first (up to `limit`, default 100, at most 10000), the machine does not move |
+| `changes_only` | `true` (writes only): skip writes that stored the byte already there; each hit has `old_value` |
 
 At least one of `addr`, `addr_from`, `addr_to`, `pc_from`, `pc_to`, `value`
 is required. Address, value and PC fields may be JSON numbers or strings
@@ -103,6 +175,17 @@ barrier blocked the search — then the response also carries
 `"blocked": true` and `marker_frame`, `marker_tinframe`, `marker_kind`,
 `marker_reason`.
 
+**Every change of a variable** (a speed byte, a lives counter), with the
+value before and after, in one call - no dedupe loop:
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" -H 'Content-Type: application/json' \
+     -d '{"addr":"0x5B00","access":"write","changes_only":true,"all":true,"limit":1000}' \
+  | jq -c '.hits[] | {frame, tinframe, pc, old_value, value}'
+```
+
+A cut list (`truncated: true`) goes on with `"before": <next_before>`.
+
 Classic triage chain: value went bad at address X →
 `find-last {addr:X, access:"write"}` gives the writing `pc` →
 `GET /disasm?address=<pc-16>` shows the code →
@@ -137,19 +220,21 @@ Non-empty `pcs` array required; execution rewinds until any PC matches.
 Blocked by replay barriers like any backward travel
 (`blocked_by_marker: {kind, reason, frame, tinframe}` in the response).
 
-Loop it from bash for "previous N hits":
+Every hit at once, newest first, without moving the machine (`all`), and only
+the runs from one page (`phys_page`, 0..255 or `"rom"`) - one Z80 address on
+two banks is two different routines:
 
 ```bash
-PCS='[33156]'
-for i in 1 2 3 4 5; do
-  R=$(curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
-       -H 'Content-Type: application/json' -d "{\"pcs\": $PCS}")
-  echo "$R" | jq -c '{pc, frame, tinframe}'
-  # optionally reverse-step once more so the next continue finds an earlier hit
-  curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step" \
-       -H 'Content-Type: application/json' -d '{"count": 1}' >/dev/null
-done
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
+     -H 'Content-Type: application/json' \
+     -d '{"pcs": [49152], "phys_page": 3, "all": true, "limit": 1000}' \
+  | jq -c '{count, truncated, next_before, hits: [.hits[] | {frame, tinframe, phys_page}]}'
 ```
+
+A cut list (`truncated: true`) goes on with `"before": <next_before>`.
+Bounds in both modes: `before_frame` [+ `before_tin`] or `before` (machine T,
+at or before), `from_frame` (not older). Without `all` it seeks to the newest
+hit, as before.
 
 For "when did the program read a key / write the AY / touch a port" without
 replaying, see `POST /ttd/port-events` (MCP `time_travel` `port_events`) in
@@ -168,13 +253,22 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/probe?frame=11782&kind=executed&add
 curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?from_frame=11000&to_frame=12000&kind=written&addr_from=32768&addr_to=49151&phys_page=5&limit=200" \
   | jq '{matching_frames, first_match, last_match, truncated}'
 
+# The newest 50 frames that ran a routine on page 3, as runs; follow next_to_frame for more
+curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/scan?kind=executed&addr_from=49152&addr_to=49200&phys_page=3&order=newest&ranges=true&limit=50" \
+  | jq -c '{ranges, truncated, next_to_frame, exact}'
+
 # Activity heatmap over the whole session (auto bucketing)
 curl -s "$BASE/emulator/$EMU_ID/ttd/coverage/summary?kind=executed" \
   | jq '.buckets[:5]'
 ```
 
 - `kind`: `executed` / `written` / `read`
-- `phys_page` optional (0–255) for physical addressing
+- `phys_page` optional (0–255, or `rom` for the bucket all ROM shares). Without
+  it on RAM the offset matches on every page and 16 KB window: `exact: false`,
+  a listed frame may hold another page's access
+- `limit` up to 10000; `first_match` / `last_match` are the true ends of the
+  window even when the list is cut; the cursor `next_from_frame` (oldest
+  order) / `next_to_frame` (newest) continues it
 - frames outside the indexed window answer `index_available: false` — not
   "no", just "unknown"
 - Use scan to shortlist frames, then `seek` to them and inspect
@@ -185,6 +279,7 @@ The engine stores every recorded memory at every checkpoint. These two read that
 
 - `space` is `ram`, `ramN` (machine RAM page N), or any memory the session records, by name or alias: `vram` / `sprinter.vram`, `cache` / `sprinter.fastram`, `neogs.ram`, `neogs.flash`, `gs.ram`, `moonsound.wave`, `evo.flash`, and so on. `GET /memory/regions` lists them.
 - Both read checkpoint boundaries (frame starts) by default. `at_frame` names the checkpoint read, the newest at or before the frame asked.
+- `ram` / `ramN` offsets are physical: on a Pentagon in 48K mode Z80 `0xC000` is page 0, not `ram` offset `0xC000` (page 3). For what the CPU saw, use `space: "cpu"`: `offset` is a Z80 address (offset + length at most 65536), the bytes are those at `frame` / `tinframe` through the paging then, and `banks` names the page in each 16 KB window. It replays to the point silently and restores the machine.
 - memory-at takes `tinframe` for a point inside the frame, on `ram`, `ramN`, `vram` and `cache`. It applies the frame's writes up to that point from the write journal; without the journal it builds the journal for that one frame by replay. The bytes are what a seek to frame:tinframe shows, and the machine does not move. Other memories refuse `tinframe` (their writes are not journaled): seek there.
 
 ```bash
@@ -226,6 +321,5 @@ Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
   coverage endpoints likewise take Z80 ranges plus an optional `phys_page`.
 - **Reverse travel across a marker** (tape transport command, WD1793
   sector/track write, debugger memory edit): the engine replays them and
-  crosses; v1 halts with the marker description, as its replay cannot
-  reproduce the event.
+  crosses.
   Keyboard/mouse input is journaled and is not a barrier.

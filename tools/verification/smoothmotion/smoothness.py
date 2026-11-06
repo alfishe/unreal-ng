@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Smoothness of a frame rate conversion, measured on its pictures.
 
-Input: the source frames (50 Hz, raw RGBA, as tools/poc/039-smoothing-filters/capture.py writes them) and the pictures
-a filter put on the display (60 Hz refreshes, raw RGBA, `FILTERS_RAW=1` of the POC 039 filters tool). Output: per
+Input: the source frames (50 Hz, raw RGBA, as tools/poc/047-smoothing-filters/capture.py writes them) and the pictures
+a filter put on the display (60 Hz refreshes, raw RGBA, `FILTERS_RAW=1` of the POC 047 filters tool). Output: per
 filter and per region the numbers below, a table and JSON.
 
 Regions are rectangles that move rigidly in the source: from a ground-truth file of the synthetic tests

@@ -2806,15 +2806,26 @@ static std::string ReplaceOperandPlaceholders(std::string mnemonic)
     }
     return mnemonic;
 }
+Z80Disassembler::ListingStyle& Z80Disassembler::Style()
+{
+    static thread_local ListingStyle style;
+    return style;
+}
+
 std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
 {
     std::string result;
+
+    // The template in the listing's case: operands are put in after, so labels keep theirs
+    std::string mnemonic = decoded.opcode.mnem;
+    if (Style().upperCase)
+        mnemonic = StringHelper::ToUpper(mnemonic);
 
     /// region <No operands>
 
     if (decoded.operandBytes.size() == 0)
     {
-        result = decoded.isTruncated ? ReplaceOperandPlaceholders(decoded.opcode.mnem) : decoded.opcode.mnem;
+        result = decoded.isTruncated ? ReplaceOperandPlaceholders(mnemonic) : mnemonic;
         return result;
     }
 
@@ -2822,7 +2833,6 @@ std::string Z80Disassembler::formatMnemonic(const DecodedInstruction& decoded)
 
     /// region <Operands exist>
 
-    std::string mnemonic = decoded.opcode.mnem;
     uint8_t operandBytesNeeded = 0;
     std::vector<uint8_t> operands = parseOperands(mnemonic, &operandBytesNeeded);
     std::vector<uint16_t> values;
@@ -3060,8 +3070,11 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
                             // necessarily one - but when a label exists at exactly that value it is
                             // almost certainly a pointer/table base, so the label is shown there too.
                             // The operand keeps its immediate semantics otherwise (no jump target, etc.)
+                            // A listing style may keep labels to the operands used as addresses
+                            const bool address = (flags & (OF_JUMP | OF_CALL | OF_MEMADR)) != 0 ||
+                                                 (!result.empty() && result.back() == '(');
                             std::string labelName;
-                            if (labelManager)
+                            if (labelManager && (address || Style().immediateLabels))
                             {
                                 auto label = labelManager->GetLabelByZ80Address(targetAddr);
                                 if (label && !label->name.empty())

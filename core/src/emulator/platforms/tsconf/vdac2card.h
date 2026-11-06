@@ -71,6 +71,7 @@
 
 #include "debugger/ttd/ttddisplayparticipant.h"
 #include "emulator/io/spi/spidevice.h"
+#include "emulator/platforms/tsconf/tsconfhistory.h"
 #include "emulator/platforms/tsconf/vdac2capture.h"
 
 namespace ttd
@@ -277,6 +278,11 @@ private:
 
     EmulatorContext* _context;
     std::function<uint32_t()> _rasterInFrame;
+    /// The FT812 SPI transactions (tsconfhistory.h): the one in progress goes in at its deselect
+    Vdac2History _history;
+    Vdac2Record _transaction;
+    uint32_t _transactionBytes = 0;   ///< bytes of the open transaction (0: none open)
+    void HistoryByte(uint8_t mosi, uint8_t miso);
     std::vector<uint8_t> _rom;
     EveChip* _chip = nullptr;
     Time _time;

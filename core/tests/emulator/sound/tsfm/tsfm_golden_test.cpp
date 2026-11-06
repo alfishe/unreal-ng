@@ -411,9 +411,10 @@ TEST_F(TsfmGolden_Test, HighQuality44100)
 TEST_F(TsfmGolden_Test, LowQuality44100)
 {
     // Moved twice on 2026-10-10: the per-chip buffers clamp (BUGS.md #13), then average each chip on its own - the
-    // old split by the chips' current levels went up to hundreds of times full scale (TSFM ISSUES.md #25)
+    // old split by the chips' current levels went up to hundreds of times full scale (TSFM ISSUES.md #25). Moved on
+    // 2026-10-28 by the blobs alone (the audio is unchanged): their board byte marks the LQ render path (bit 4)
     const uint64_t digest = RunSession(2, false, 44100);
-    EXPECT_EQ(digest, 0xc002bdc72b956120ull) << Hex(digest);
+    EXPECT_EQ(digest, 0x9de9567008b535e0ull) << Hex(digest);
 }
 
 TEST_F(TsfmGolden_Test, HighQuality48000)
@@ -425,7 +426,9 @@ TEST_F(TsfmGolden_Test, HighQuality48000)
 TEST_F(TsfmGolden_Test, TtdBlobAndRestore)
 {
     // A mid-frame checkpoint in frame 6, restored into a fresh device that continues the same script: the blob
-    // bytes and everything both devices produce afterwards are part of the digest
+    // bytes and everything both devices produce afterwards are part of the digest. The load pins the render path
+    // (setTtdRenderPinned; no sound manager unpins it here), so the restored device renders the suppressed frames
+    // 9-10 and runs the core in frame 12 (moved on 2026-10-28)
     const Script script(4);
     auto a = std::make_unique<SoundChip_TurboSoundFM>(_context);
     SetT(0);
@@ -450,5 +453,5 @@ TEST_F(TsfmGolden_Test, TtdBlobAndRestore)
     db.Bytes(again.data(), again.size());
 
     EXPECT_EQ(da.Get(), 0x5b0bcb56d816ec20ull) << Hex(da.Get());
-    EXPECT_EQ(db.Get(), 0xbdac82cac320e190ull) << Hex(db.Get());
+    EXPECT_EQ(db.Get(), 0x3dc87a7229a8adb8ull) << Hex(db.Get());
 }

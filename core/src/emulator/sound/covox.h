@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/chipwritehistory.h"
 #include "emulator/ports/portdecoder.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
@@ -48,6 +49,19 @@ struct blip_t;
 /// `PortDecoder_Scorpion256` turned out to have none of
 /// `PortDecoder_Pentagon128`'s per-model SoundDrive fix (see
 /// docs/inprogress/2026-09-23-sounddrive-quad-wiring/DONE.md, session 3).
+///
+/// One instance, one set of controls (the mixer's COVOX row), whatever ports
+/// it answers: a fitment adds ports, never a second DAC or volume. The mono
+/// Covox's port depends on the board: #FB on the Pentagon-style card
+/// (CovoxFB), #DD on the Scorpion family - its printer data latch, the
+/// Scorpion's one and only Covox port ([SOUND] CovoxDD=1, slot built-in
+/// `covox-dd`; no #FB on the board). Both drive the mono latch (RightB in
+/// the code), centred on both sides when it is the only one driven - as
+/// Xpeccy's hardware/scorpion.c `scrpOutDD` (`sdrvWrite(..., 0xfb, val)`).
+/// A SounDrive / #FB card in a Scorpion slot adds its ports to this
+/// instance. The #DD decode is the board's partial one (PrinterDecodeOf):
+/// yellow board #0027/#00DD, Turbo+ #0023/#00DD (Xpeccy; MAME scorpion.cpp
+/// Centronics mirror #FFDC). Write-only.
 class Covox : public PortDevice, public ttd::TTDSerializable
 {
 public:
@@ -91,7 +105,12 @@ public:
     /// (CovoxFB=1, SD=0), Mode1 / Mode2 one SounDrive port set (mode=1 / 2:
     /// the real card's S1 switch), Mode1Mono the mode-1 set plus a Covox card's
     /// #FB (two cards, one DAC module)
-    enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono };
+    /// None: no SounDrive / #FB card - the Scorpion's own Covox on #DD alone (CovoxDD=1, CovoxFB=0, SD=0)
+    enum class Fitment { Mono, Quad, Mode1, Mode2, Mode1Mono, None };
+
+    /// The Scorpion printer port's decode on this model (yellow board and GMX: A0 = 1, A1 = 0, A2 = 1, A5 = 0;
+    /// Turbo+: A0 = 1, A1 = 0, A5 = 0), or mask 0 when the model has no such port
+    static PortMaskMatch PrinterDecodeOf(int memModel);
 
     enum class Channel { LeftA = 0, LeftB = 1, RightA = 2, RightB = 3, Count = 4 };
 
@@ -111,9 +130,12 @@ public:
 
 protected:
     EmulatorContext* _context;
+    ChipWriteHistory _history;  ///< the DAC writes, by channel (chipwritehistory.h)
 
     // Fitment baked in at construction (see Fitment doc, public section)
     Fitment _fitment;
+    // The Scorpion's Covox port #DD (the printer data latch, on the mono latch): its decode, mask 0 = not answered (CovoxDD)
+    PortMaskMatch _printerDecode{};
 
     // Audio buffer (one frame of stereo int16)
     AudioFrameDescriptor _audioDescriptor;
@@ -172,6 +194,8 @@ protected:
     std::array<std::array<int16_t, MAX_SAMPLES_PER_FRAME>, 4> _channelTapBuffer{};
     std::array<size_t, 4> _channelTapFilled{};
     void FillChannelTap(int channel, size_t upTo);
+    /// One latch write at the current T-state: the level step into blip_buf, the chip-register watch and history
+    void WriteLatch(Channel ch, uint8_t value);
 
     // Input clock (T-states fed to blip): base CPU clock x frequency
     // multiplier - the T-state position is descaled by EmulatorState::AudioTstate
@@ -220,6 +244,9 @@ public:
 
     /// Mono Covox on #FB, or the quad SoundDrive
     Fitment fitment() const { return _fitment; }
+    /// It answers the Scorpion's Covox port #DD (CovoxDD on the Scorpion family), and that port's decode
+    bool answersPrinterPort() const { return _printerDecode.mask != 0; }
+    PortMaskMatch printerDecode() const { return _printerDecode; }
     /// @param expectedSamples Exact per-frame sample count from SoundManager's
     ///        accumulator (0 = compute locally via rounding, legacy behavior).
     ///        Passing it keeps the covox stream in lockstep with the mixer.
@@ -294,7 +321,7 @@ public:
     /// audio pipeline (rebuilt by handleFrameStart) or user config (mute,
     /// DC-removal toggle).
     ///
-    /// Layout: 4 bytes - _dacValue[0..3] (LeftA, LeftB, RightA, RightB).
+    /// Layout: see covox.cpp (9 bytes).
     size_t TTDStateSize() const override;
     void   TTDSaveState(uint8_t* dst) const override;
     void   TTDLoadState(const uint8_t* src) override;

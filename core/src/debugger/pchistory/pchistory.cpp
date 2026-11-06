@@ -1,4 +1,5 @@
 #include "pchistory.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 
@@ -7,12 +8,27 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
 
+PcHistory::PcHistory(EmulatorContext* context)
+    : _context(context),
+      _exec(context ? &context->histories : nullptr, "cpu", "instructions the main CPU starts", kExecHistoryRing)
+{
+    _exec->EnableFastPush();
+    // On or off from any thread (a plane's configuration): the step-work bit is atomic
+    _exec->OnSwitch([context](bool on) {
+        if (context)
+            context->SetStepWork(EmulatorContext::kStepWorkExecHistory, on);
+    });
+}
+
 void PcHistory::Arm(bool on)
 {
     if (on && !_armed)
         Clear();
+    const bool changed = _armed != on;
     _armed = on;
     _context->SetStepWork(EmulatorContext::kStepWorkPcHistory, on);
+    if (changed)
+        NotifyReadoutsChanged(_context, "debug.tools");  // debug.analyzers: pchist armed
 }
 
 void PcHistory::Clear()
@@ -24,6 +40,11 @@ void PcHistory::Clear()
 void PcHistory::Record(uint16_t address)
 {
     const MemoryPageDescriptor where = _context->pMemory->MapZ80AddressToPhysicalPage(address);
+    if (_exec.On() && !_context->ttdReplayActive)
+        _exec->PushFast(ExecRecord{ _context->emulatorState.frame_counter, address, static_cast<uint8_t>(where.mode),
+                                    static_cast<uint8_t>(where.page) });
+    if (!_armed)
+        return;
     _ring[_next] = Entry{address, static_cast<uint8_t>(where.mode), where.page};
     _next = (_next + 1) % kCapacity;
     ++_total;

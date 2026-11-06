@@ -50,7 +50,7 @@ struct TTDTimePoint
 {
     uint64_t frame = 0;       ///< Frame index since session start
     uint32_t tInFrame = 0;    ///< T-states within the frame at the model's top CPU clock
-                              ///< (0 = frame start; TimeTravelManager::TInFrameNow, B4)
+                              ///< (0 = frame start; TimeTravelController::TInFrameNow, B4)
 
     bool operator==(const TTDTimePoint& o) const
     { return frame == o.frame && tInFrame == o.tInFrame; }
@@ -221,16 +221,19 @@ struct TTDChipsetState
     /// a 7 here (design-hires.md)
     uint8_t hw_clock_den = 0;
     uint8_t hw_clock_den_applied = 0;
-    uint8_t reserved[1] = {};
+    /// z80.t_l at the capture (taken from the tail padding): the fraction of a T-state a CPU above the base clock
+    /// stands at (tt advances by rate = 256 / multiplier). Restored with cpu_t_in_frame: a fraction left from before
+    /// a restore moves every later M1 alignment (even_M1). 0 at the base clock, so older captures keep their bytes
+    uint8_t cpu_t_fraction = 0;
 };
 
 static_assert(sizeof(TTDChipsetState) == 120, "TTDChipsetState layout must stay stable (hashed byte-wise)");
 static_assert(offsetof(TTDChipsetState, cpu_t_in_frame) == 114, "cpu_t_in_frame must sit at former pad offset 114");
 static_assert(offsetof(TTDChipsetState, hw_clock_den) == 117, "hw_clock_den must sit at pad offset 117");
-static_assert(offsetof(TTDChipsetState, reserved) == 119, "reserved must sit at pad offset 119");
-static_assert(offsetof(TTDChipsetState, reserved) + sizeof(TTDChipsetState::reserved)
+static_assert(offsetof(TTDChipsetState, cpu_t_fraction) == 119, "cpu_t_fraction must sit at pad offset 119");
+static_assert(offsetof(TTDChipsetState, cpu_t_fraction) + sizeof(TTDChipsetState::cpu_t_fraction)
                   == sizeof(TTDChipsetState),
-              "TTDChipsetState has implicit trailing padding - resize reserved[]");
+              "TTDChipsetState has implicit trailing padding");
 
 /// @brief z80.t stored in / read from a chipset snapshot (cpu_t_in_frame)
 inline void SetChipsetCpuTInFrame(TTDChipsetState& state, uint32_t t)
@@ -307,6 +310,17 @@ struct TTDBankOverrides
     uint16_t page[2] = {0xFFFF, 0xFFFF};  ///< [0] = window 1, [1] = window 2
 };
 
+/// The CPU's four 16K windows at a capture (Memory::GetWindowMap): offsets into the whole memory block and their
+/// modes. memory-at space cpu at a checkpoint reads the mapped pages from the store with it, without a replay.
+/// valid is false where the windows are not what the CPU reads (a bus redirect, the Next's 8K slots) and in a
+/// session loaded from a file
+struct TTDCpuWindows
+{
+    uint32_t offset[4] = {0, 0, 0, 0};
+    uint8_t mode[4] = {0, 0, 0, 0};
+    bool valid = false;
+};
+
 struct TTDCheckpoint
 {
     TTDTimePoint time;
@@ -323,6 +337,7 @@ struct TTDCheckpoint
     TTDCpuState     cpu;
     TTDChipsetState chipset;
     TTDBankOverrides bankOverrides;  ///< debugger-forced windows 1/2 (see TTDBankOverrides)
+    TTDCpuWindows    cpuWindows;     ///< the CPU's mapping at the capture, overrides included
 
     // --- Peripheral state (TTDPeripheralRegistry) ---
     /// Map of PeripheralId → serialized state. Only devices actually connected
@@ -358,11 +373,12 @@ TTDCpuState CaptureCpuState(const Z80State& src);
 void RestoreCpuState(const TTDCpuState& src, Z80State* dst);
 
 /// @brief Snapshot the port-latch + counter subset of an EmulatorState,
-/// plus the CPU's in-frame T-state (z80.t, see cpu_t_in_frame) - required so
-/// every capture path records where the CPU stands in the frame.
+/// plus the CPU's in-frame T-state (z80.t, see cpu_t_in_frame, and its fraction
+/// z80.t_l, cpu_t_fraction) - required so every capture path records where the
+/// CPU stands in the frame.
 /// Peripheral-bearing sub-structs (tape, nvram) are ignored — those are
 /// handled via TTDSerializable at the checkpoint-orchestration layer.
-TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFrame);
+TTDChipsetState CaptureChipsetState(const EmulatorState& src, uint32_t cpuTInFrame, uint8_t cpuTFraction = 0);
 
 /// @brief Restore the port-latch + counter subset of an EmulatorState.
 /// Does NOT re-run the port decoder — that is the caller's responsibility

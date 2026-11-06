@@ -2,6 +2,13 @@
 shared: speed
 model: plusxl
 
+# +-- screen speed: Speed (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      X1         X2         X4         X8         X16        NEXT       .          .
+# 1 | .          TURBO      TURBO SND  FAST TAPE  FAST DISK  .          .          .          .
+# 2 | .          .          .          .          .          .          .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# +--
 menu speed:
   title: Speed
   label: SPEED

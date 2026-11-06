@@ -93,6 +93,11 @@ struct NvencEncoder::Impl
 
     // Frame encoding
     bool encodeFrame(const uint8_t* rgba);
+    /// Zero-copy halves of encodeFrame: lock the next input buffer (draining a pending output first) / unlock it and
+    /// submit it. encodeFrame is convert + beginFrame + copy + finishFrame
+    bool beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch);
+    void abortFrame();
+    bool finishFrame();
     void writeOutput();
 
     // Audio encoding
@@ -571,22 +576,31 @@ void NvencEncoder::Impl::copyToInputBuffer(void* dst, uint32_t dstPitch)
         memcpy(dstUV + y * dstPitch, uvPlane + y * width, width);
 }
 
-bool NvencEncoder::Impl::encodeFrame(const uint8_t* rgba)
+bool NvencEncoder::Impl::beginFrame(uint8_t*& bufferData, uint32_t& bufferPitch)
 {
-    convertRgbaToNv12(rgba);
-
     // If all buffers are pending, read one output first
     if (pendingFrames >= NUM_BUFFERS)
         writeOutput();
 
-    // Lock and fill input buffer at current encode index
+    // Lock the input buffer at the current encode index
     auto lockIn = nvencStruct<NV_ENC_LOCK_INPUT_BUFFER>(NV_ENC_LOCK_INPUT_BUFFER_VER);
     lockIn.inputBuffer = inputBuffers[encodeIdx];
     if (nvenc.nvEncLockInputBuffer(encoder, &lockIn) != NV_ENC_SUCCESS)
         return false;
 
     pitch = lockIn.pitch;
-    copyToInputBuffer(lockIn.bufferDataPtr, pitch);
+    bufferData = static_cast<uint8_t*>(lockIn.bufferDataPtr);
+    bufferPitch = lockIn.pitch;
+    return true;
+}
+
+void NvencEncoder::Impl::abortFrame()
+{
+    nvenc.nvEncUnlockInputBuffer(encoder, inputBuffers[encodeIdx]);
+}
+
+bool NvencEncoder::Impl::finishFrame()
+{
     nvenc.nvEncUnlockInputBuffer(encoder, inputBuffers[encodeIdx]);
 
     // Encode frame
@@ -626,6 +640,19 @@ bool NvencEncoder::Impl::encodeFrame(const uint8_t* rgba)
     return true;
 }
 
+bool NvencEncoder::Impl::encodeFrame(const uint8_t* rgba)
+{
+    convertRgbaToNv12(rgba);
+
+    uint8_t* bufferData = nullptr;
+    uint32_t bufferPitch = 0;
+    if (!beginFrame(bufferData, bufferPitch))
+        return false;
+
+    copyToInputBuffer(bufferData, bufferPitch);
+    return finishFrame();
+}
+
 // ============================================================================
 // Public interface
 // ============================================================================
@@ -662,6 +689,52 @@ void NvencEncoder::OnVideoFrame(const FramebufferDescriptor& framebuffer, double
 {
     if (_isRecording && _impl->encoder && _impl->encodeFrame(framebuffer.memoryBuffer))
         _framesEncoded++;
+}
+
+FrameTargetResult NvencEncoder::AcquireFrameTarget(uint32_t width, uint32_t height, FrameTarget& target)
+{
+    if (!_isRecording || !_impl || !_impl->encoder)
+        return FrameTargetResult::Dropped;
+
+    // The input buffers are NV12 of the encoder's size (even: 4:2:0)
+    if (width != _impl->width || height != _impl->height || (width & 1) || (height & 1))
+        return FrameTargetResult::Unsupported;
+
+    uint8_t* bufferData = nullptr;
+    uint32_t bufferPitch = 0;
+    if (!_impl->beginFrame(bufferData, bufferPitch))
+    {
+        _lastError = "nvEncLockInputBuffer failed";
+        return FrameTargetResult::Dropped;
+    }
+
+    target.format = FrameTargetFormat::Nv12;
+    target.data = bufferData;
+    target.stride = bufferPitch;
+    target.uv = bufferData + static_cast<size_t>(bufferPitch) * height;
+    target.uvStride = bufferPitch;
+    target.width = width;
+    target.height = height;
+    target.swapRedBlue = false;
+    target.handle = _impl.get();
+    return FrameTargetResult::Ready;
+}
+
+void NvencEncoder::SubmitFrameTarget(FrameTarget& target, double)
+{
+    if (!_impl || target.handle != _impl.get())
+        return;
+    if (_impl->finishFrame())
+        _framesEncoded++;
+    target = FrameTarget();
+}
+
+void NvencEncoder::ReleaseFrameTarget(FrameTarget& target)
+{
+    if (!_impl || target.handle != _impl.get())
+        return;
+    _impl->abortFrame();
+    target = FrameTarget();
 }
 
 void NvencEncoder::OnAudioSamples(const int16_t* samples, size_t sampleCount, double timestampSec)

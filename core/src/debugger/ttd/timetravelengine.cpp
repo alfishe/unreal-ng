@@ -357,8 +357,8 @@ size_t TimeTravelEngine::BindLive(const std::vector<TTDRegionDesc>& liveRegions,
         for (const TTDDeviceEntry& l : liveDevices)
             if (l.descriptor.Key() == e.descriptor.Key())
                 live = &l;
-        // A session that names its devices otherwise (fed from a v1 file: "id<N>"; the socket's board): the device
-        // v1 saves under the same id
+        // A session that names its devices otherwise ("id<N>"; the socket's board): the device with the same
+        // legacy id
         if (!live && e.descriptor.legacyId != PeripheralId::None)
             for (const TTDDeviceEntry& l : liveDevices)
                 if (l.descriptor.legacyId == e.descriptor.legacyId)
@@ -391,6 +391,7 @@ void TimeTravelEngine::EndSession()
     _streamCopies = {};
     _configs = {};
     _mediaSlots = {};
+    _screenLayouts = {};
     _pendingMedia = {};
     _events.Clear();
     _rzxFrames = {};
@@ -502,6 +503,26 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     cp.busWriteCursor = _busWrites.Size();
     cp.mediaReadCursor = _mediaReads.Size();
     cp.busVectorCursor = _busVectors.Size();
+    cp.haltedInterrupts = input.haltedInterrupts;
+    cp.haltKnown = input.haltKnown;
+    if (input.screen)
+    {
+        // The same layout as the frame before, nearly always: the last one is checked first
+        const std::vector<TTDScreenRange>& layout = *input.screen;
+        size_t found = _screenLayouts.size();
+        if (!_screenLayouts.empty() && _screenLayouts.back() == layout)
+            found = _screenLayouts.size() - 1;
+        else
+            for (size_t k = 0; k < _screenLayouts.size(); ++k)
+                if (_screenLayouts[k] == layout)
+                {
+                    found = k;
+                    break;
+                }
+        if (found == _screenLayouts.size())
+            _screenLayouts.push_back(layout);
+        cp.screenLayout = static_cast<uint32_t>(found + 1);
+    }
     cp.cpu = input.cpu;
     cp.chipset = input.chipset;
 
@@ -1597,7 +1618,7 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
             result.Add(issue);
         }
     }
-    // (an id is unclaimed when the session's table has no device for it: the v1 file's blobs)
+    // (an id is unclaimed when the session's table has no device for it: blobs fed by legacy id)
     for (const uint8_t id : cp->unclaimedDevices)
         if (DeviceIndexOfV1Id(id) < 0)
         {

@@ -31,6 +31,7 @@
 #include "emulator/platform.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/covox.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/slots/slotconfig.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/soundmanager.h"
@@ -80,6 +81,7 @@ std::string DescribeFittedDevices(EmulatorContext* context)
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode1     ? "mode1"
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode2     ? "mode2"
                 : sound->getCovox()->fitment() == Covox::Fitment::Mode1Mono ? "mode1+mono"
+                : sound->getCovox()->fitment() == Covox::Fitment::None      ? "dd"
                                                                             : "mono")
             << "\n";
     }
@@ -132,7 +134,15 @@ std::string DescribeFittedDevices(EmulatorContext* context)
         }
         out << " " << id << ":" << size;
     }
-    out << " notRecorded " << ttd::TTDPeripheralRegistry::V1MaskOf(registry.NotRecorded()).Low() << "\n";
+    uint64_t notRecorded = 0;   // a bit per legacy id below 64
+    for (const ttd::TTDDeviceKey& key : registry.NotRecorded())
+    {
+        if (static_cast<uint16_t>(key.type) < 64)
+        {
+            notRecorded |= uint64_t{1} << static_cast<uint16_t>(key.type);
+        }
+    }
+    out << " notRecorded " << notRecorded << "\n";
     return out.str();
 }
 
@@ -151,7 +161,7 @@ std::string DescribeConfigCards(const CONFIG& config)
 const std::vector<std::string>& ShippedConfigFolders()
 {
     static const std::vector<std::string> folders = {
-        "atm3", "atm450", "atm710", "next", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
+        "atm3", "atm450", "atm710", "gmx", "next", "pentagon128k", "pentagon512k", "profi", "profi3", "profscorp", "scorpion",
         "spectrum128", "spectrum2", "spectrum2a", "spectrum3", "spectrum48", "sprinter", "ts-conf", "zx-diagnostics",
     };
     return folders;
@@ -730,6 +740,44 @@ std::string PlannedCovox(MEM_MODEL model, std::initializer_list<std::pair<std::s
     return CovoxOf(*config);
 }
 
+/// The Covox on the Scorpion printer port (#DD): a switchable built-in of the Scorpion family, on by default, switched by
+/// builtin.covox-dd or the legacy [SOUND] CovoxDD
+TEST(SlotManager_Test, ScorpionPrinterCovoxIsASwitchableBuiltIn)
+{
+    auto planned = [](MEM_MODEL model, std::initializer_list<std::pair<std::string, std::string>> lines) {
+        auto config = MakeConfig(model);
+        config->sound.covoxDD = 0;  // the [SLOTS] switch decides, not this field
+        SetSlots(*config, lines);
+        const SlotManager::Result result = SlotManager::Plan(*config, kAllGroups);
+        SlotManager::Apply(result, *config, kAllGroups);
+        return config->sound.covoxDD;
+    };
+    EXPECT_EQ(planned(MM_SCORP, { { "zxbus.1", "neogs" } }), 1) << "on by default with [SLOTS]";
+    EXPECT_EQ(planned(MM_SCORP, { { "builtin.covox-dd", "off" } }), 0);
+    EXPECT_EQ(planned(MM_PROFSCORP, { { "builtin.covox-dd", "on" } }), 1);
+    EXPECT_EQ(planned(MM_GMX, { { "builtin.covox-dd", "on" } }), 1);
+    EXPECT_EQ(planned(MM_PENTAGON, { { "builtin.covox-dd", "on" } }), 0) << "no Scorpion Covox on the Pentagon";
+
+    auto scorpion = MakeConfig(MM_SCORP);
+    scorpion->sound.covoxDD = 0;
+    SlotManager::Result result = SlotManager::Plan(*scorpion, kAllGroups);
+    ASSERT_NE(result.FindBuiltIn("covox-dd"), nullptr);
+    EXPECT_FALSE(result.FindBuiltIn("covox-dd")->on);
+    EXPECT_EQ(result.FindBuiltIn("covox-dd")->state, "switched off");
+
+    // Legacy CovoxDD=1 switches it on, and the configuration written back names it
+    scorpion->sound.covoxDD = 1;
+    result = SlotManager::Plan(*scorpion, kAllGroups);
+    ASSERT_NE(result.FindBuiltIn("covox-dd"), nullptr);
+    EXPECT_TRUE(result.FindBuiltIn("covox-dd")->on);
+    EXPECT_EQ(result.FindBuiltIn("covox-dd")->source, "[SOUND] CovoxDD=1");
+    SlotManager::Apply(result, *scorpion, kAllGroups);
+    EXPECT_EQ(scorpion->sound.covoxDD, 1);
+    const SlotConfig written = SlotManager::ConfigOf(result);
+    EXPECT_TRUE(std::any_of(written.builtIns.begin(), written.builtIns.end(),
+                            [](const SlotBuiltInSwitch& s) { return s.id == "covox-dd" && s.on; }));
+}
+
 /// Step 5: covox-fb and soundrive cards (the SounDrive mode switch an option) and the board Covox of the machines
 /// that have one, switched by builtin.covox
 TEST(SlotManager_Test, CovoxCardsAndTheBoardCovoxComeFromTheSlots)
@@ -835,7 +883,46 @@ TEST(SlotManager_Test, ReportListsSlotsAndBuiltIns)
     EXPECT_EQ(slotList->items[0].find("slot")->s, "ay-socket");
     ASSERT_NE(report.find("builtIns"), nullptr);
     EXPECT_FALSE(report.find("builtIns")->items.empty());
+    // A built-in carries its functions and port claims, as a card does: the Beta-128 answers #1F / #3F / #5F / #7F
+    // and #FF (the device registry a debugger attributes port accesses by)
+    const StateNode* beta = nullptr;
+    for (const StateNode& builtIn : report.find("builtIns")->items)
+    {
+        if (builtIn.find("id")->s == "beta128")
+        {
+            beta = &builtIn;
+        }
+    }
+    ASSERT_NE(beta, nullptr);
+    ASSERT_NE(beta->find("functions"), nullptr);
+    EXPECT_FALSE(beta->find("functions")->items.empty());
+    const StateNode* ports = beta->find("ports");
+    ASSERT_NE(ports, nullptr);
+    bool status = false;
+    for (const StateNode& port : ports->items)
+    {
+        const int mask = static_cast<int>(port.find("mask")->i);
+        const int match = static_cast<int>(port.find("match")->i);
+        status = status || (0x001F & mask) == match;
+    }
+    EXPECT_TRUE(status) << "a claim of the Beta-128 covers #1F";
     emulator.Release();
+}
+
+/// A port access belongs to the registry device whose claim covers it: a fitted card by its slot, a built-in by its
+/// id, the board's own port to nobody; the gate splits #1F between the Beta-128 (DOS) and the Kempston joystick
+TEST(SlotManager_Test, PortOwnersAttributeAccessesByTheRegistry)
+{
+    StagedMachine m("pentagon128k", "zxbus.1 = neogs");
+    ASSERT_TRUE(m.Ok());
+    const slots::PortOwners owners = slots::PortOwners::Of(m.Context());
+    ASSERT_TRUE(owners.Declared());
+    EXPECT_EQ(owners.Find(0x001F, false, true), "beta128");
+    EXPECT_EQ(owners.Find(0x001F, false, false), "kempston-joystick");
+    EXPECT_EQ(owners.Find(0x001F, true, false), "") << "the Kempston joystick is read only";
+    EXPECT_EQ(owners.Find(0x00BB, true, false), "zxbus.1") << "the NeoGS command port";
+    EXPECT_FALSE(owners.Find(0xFFFD, true, false).empty()) << "the AY register select";
+    EXPECT_EQ(owners.Find(0x7FFD, true, false), "") << "the paging port is the board's own";
 }
 
 // endregion

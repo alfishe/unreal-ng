@@ -1,1058 +1,674 @@
-# ttd.ksy — Canonical Kaitai Struct schema for the Unreal-NG TTD session dump.
+# ttd.ksy - the Unreal-NG time-travel session file (TTD schema 2), written by the engine.
 #
-# Single source of truth for the .ttd binary format. The C++ writer in
-# timetravelmanager.cpp conforms to this schema; conformance is verified by
-# cross-language round-trip tests (C++ writes, Kaitai-generated Python parser
-# reads). Third parties can regenerate parsers for any Kaitai-supported
-# language:
+# Written by core/src/debugger/ttd/engine/ttdcontainer.cpp (the container) and
+# ttdsessionfile.cpp (the session in it); read by the same files and by the
+# analyzer (tools/verification/ttd-analyzer/src/ttdcontainer.py), which is the
+# machine-checked reader (tests/test_ttdcontainer.py against files the C++
+# writer produced, testdata/ttd/v2/). Design:
+# docs/inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md.
 #
-#     kaitai-struct-compiler ttd.ksy -t python -o <outdir>
-#     kaitai-struct-compiler ttd.ksy -t cpp    -o <outdir>
-#     kaitai-struct-compiler ttd.ksy -t rust   -o <outdir>
-#     # ... or Java, Go, JavaScript, Ruby, Lua, Nim, PHP, Swift, C#
+# Schema 1 (v1's files) is not read any more: v1 and its schema went with
+# Phase 6 of the migration (2026-10-30); this file was engine/ttdsession.ksy
+# until then.
 #
-# Compatibility contract:
-#   * Schema version lives in two places (must always agree):
-#       - meta.schema-version below
-#       - schema_version field in every .ttd file header
-#   * A reader that encounters schema_version > N MUST refuse to parse and
-#     surface a clear error.
-#   * Evolution within a major version is ADDITIVE ONLY (new optional blobs
-#     appended at the end of a checkpoint, new flag bits — never reorder or
-#     shrink existing fields).
-#   * Breaking changes bump schema-version, git-tag this file as
-#     `ttd-schema-vN`, and update both version fields atomically in one commit.
+# Layout:
+#   header   magic "TTDD", schema 2, flags, size, CRC, UUID, creation time,
+#            zstd version, stream table, the session's tables
+#   records  32-byte header + payload each; grouped into parts, every part
+#            closed by a part-end record (stream 0)
+#   index    part table, stream totals, index extra (finished files only)
+#   trailer  24 bytes at the end: index offset, size, CRC, magic "TTDX", CRC
 #
-# v2 breaking changes (Phase 5 codec — see
-# docs/inprogress/2026-07-19-time-travel/phase-5-codec-poc-results.md):
-#   * 4 KB sub-pages (was 16 KB). Each emulator RAM page is split into
-#     4 × 4 KB sub-pages, each with its own slot in the page store.
-#   * Per-slot encoding discriminator: Full / XorPrev / Zero.
-#   * zstd level-1 compression of every non-Zero slot payload.
-#   * Per-slot CRC32C integrity field (4 bytes): the CRC of the reconstructed
-#     4 KB, stored by the writer and verified by readers.
-#   * Per-checkpoint frame_kind (I-frame vs P-frame) + keyframe_anchor.
-#   * Checkpoint RAM refs are now 4 * model_ram_pages u32 slot indices.
-#   * No v1 backwards compatibility - older files are refused with an error.
+# Integrity (owner decision 2026-10-04): CRC32C (Castagnoli) everywhere. The
+# header CRC covers the whole header with the CRC field read as zero; a record
+# header's CRC its first 28 bytes; a payload's CRC the payload as stored. A
+# file without a valid trailer is read by scanning records ("TREC" sync); an
+# incomplete last part is dropped; a damaged part makes it and the parts that
+# depend on it unreachable.
 #
-# The format has not shipped, so it is amended in place rather than versioned.
-# header.model_ram_pages is u2; it was u1 until a 4 MB machine (TSConf / ZX-Evo)
-# was found to have exactly 256 RAM pages, truncating to 0 and making the
-# checkpoint RAM ref table parse as empty. Sessions recorded before that
-# amendment do not parse and must be re-recorded.
+# Payloads flagged compressed are zstd frames (the frame records its content
+# size). Kaitai has no zstd process: the stream payload types below describe
+# the bytes after decompression (`payload_*`), to be applied by the reader.
 #
-# This file previously declared schema-version 2 while the C++ writer emitted 1.
-# They are both 1 now.
-#
-# Schema 3 (this file): the header's peripheral_mask and not_recorded_mask
-# are word lists (u1 count, u8 words; id N is bit N % 64 of word N / 64) so
-# any u1 peripheral id can be named - id 63 was the last a single u8 could.
-# Everything else is schema 1's layout. A reader takes schema 1 and 3 (2 is
-# the engine's container format, not described here). Files of schema 1 are
-# still valid input: their masks are one u8 each (the `*_v1` fields below).
-#
-# License: MIT — re-publishable, vendorable, forkable.
+# No compatibility promise before the release (owner decision 2026-10-03):
+# the layout is amended in place, fixtures rewritten.
 
 meta:
-  id: ttd_dump
-  title: Unreal-NG TTD Session Dump
+  id: ttd
+  title: Unreal-NG time-travel session file (schema 2)
   file-extension: ttd
   endian: le
-  application: unreal-ng
-  license: MIT
-  ks-version: 0.10
-  schema-version: 3
-  doc: |
-    A binary serialization of an Unreal-NG Time-Travel Debugging recording
-    session: the complete timeline of per-frame checkpoints plus the
-    codec-aware COW (copy-on-write) page store that backs RAM content.
+  license: GPL-3.0-or-later
 
-    Producers (any of):
-      * TimeTravelManager::SerializeSession()  (core C++ API)
-      * core/tests/debugger/ttd/ttd_dump_format_test.cpp  (round-trip)
-      * `automation-cli ttd dump --out session.ttd`  (CLI)
-      * `POST /api/v1/emulator/{id}/ttd/dump`  (WebAPI wrapper, optional)
-
-    Consumers:
-      * TimeTravelManager::DeserializeSession()  (round-trip into a fresh
-        manager; used by replay/restore tools and tests)
-      * tools/verification/ttd-analyzer/  (Python: integrity checks,
-        anomaly detection, framebuffer rendering)
-      * Any third-party tool that generates a parser from this .ksy
-
-# ---------------------------------------------------------------------------
-# Top-level file layout
-# ---------------------------------------------------------------------------
 seq:
   - id: header
     type: header
-    doc: Fixed-size file header (magic, version, model metadata).
-  - id: page_store
-    type: page_slot
-    repeat: expr
-    repeat-expr: header.page_store_count
-    doc: |
-      Codec-aware COW page store. Each slot is one of:
-        * Full     — independent 4 KB snapshot (zstd-1 compressed)
-        * XorPrev  — XOR delta against prev_slot's reconstructed bytes
-        * Zero     — all-zero 4 KB region (payload omitted)
-      Slots are referenced by compact zero-based index from each checkpoint's
-      ram_sub_slots vector.
-  - id: checkpoints
-    type: checkpoint
-    repeat: expr
-    repeat-expr: header.checkpoint_count
-    doc: |
-      Per-frame checkpoints, ordered by frame (strictly monotonically
-      increasing). The first checkpoint is the session baseline (always a
-      KeyFrame); subsequent ones alternate between KeyFrame and DeltaFrame
-      per the I/P discriminator in TimeTravelManager::CaptureNow.
+  - id: records
+    type: record
+    repeat: until
+    repeat-until: _io.pos >= records_end
+    doc: Every record up to the index (or to the end of an unfinished file)
 
-# ---------------------------------------------------------------------------
-# Types
-# ---------------------------------------------------------------------------
+instances:
+  trailer:
+    pos: _io.size - 24
+    type: trailer
+    doc: Valid only in a finished file (check magic and CRC)
+  records_end:
+    value: 'trailer.magic == [0x54, 0x54, 0x44, 0x58] ? trailer.index_offset : _io.size'
+  index:
+    pos: trailer.index_offset
+    size: trailer.index_size
+    type: index
+    if: trailer.magic == [0x54, 0x54, 0x44, 0x58]
+
 types:
   header:
-    doc: |
-      File header. Fixed layout so readers can read just the header to
-      decide whether to proceed.
     seq:
       - id: magic
-        contents: "TTDD"
-        doc: 4-byte magic identifier ("TTD Dump").
+        contents: 'TTDD'
       - id: schema_version
         type: u2
-        doc: |
-          Schema version: 3 (written); 1 (older files, read). Readers
-          refuse other versions with a clear error. From 3 the header's
-          masks are word lists (`wide_mask`).
+        valid: 2
       - id: flags
         type: u2
-        doc: |
-          Bitfield. Bit 0 = little-endian (always 1; the writer
-          static_asserts little-endian). Bit 1 = a write-journal section
-          follows the checkpoint table. Bit 2 = a reverse-search coverage
-          index section follows the write journal. Bit 3 = an advisory
-          bookmarks section follows the coverage index (TD-4 agent
-          bookmarks: u32 count, then per bookmark u64 frame, u32 tInFrame,
-          u8 label_len, label bytes — labels are unique, non-empty and at
-          most 63 chars). Bit 4 = the write journal covers the whole
-          session (one segment from the first checkpoint to the last).
-          Bit 12 = the write journal is followed by its segment table
-          (D40: the journal is recorded on demand): u32 count, then per
-          segment u64 from, u64 to - the machine-time spans, after `from`
-          up to and including `to`, in which every memory write is in the
-          journal. A reader answers write searches inside them from the
-          journal and replays elsewhere. Port OUTs are not in the write
-          journal (the port journals, bit 8, have them). Bit 5 = every
-          in-frame position (tInFrame, journal globalT) counts T-states at
-          the model's top CPU clock (B4); without it a model with a hardware
-          turbo is refused, because its positions counted at the clock
-          running then and repeat after a mid-frame switch down. Bit 6 = an
-          input-journal section follows the bookmarks: u32 count, then per
-          event (21 bytes) u64 frame, u32 tInFrame, u8 kind
-          (TTDInputKind: 0 Key, 1 MouseMove, 2 MouseButtons, 3 MouseWheel,
-          4 MouseCounters, 5 KeyboardReset, 6 GSCommand, 7 GSData, 8 GSNmi,
-          9 GSResetCard, 10 GSReset, 11 PcKey - a physical PC key for the PS/2
-          controller, key = PcKey, 12 NetEvent - a host network answer for a
-          virtual-network socket, 13 NetLinkReset - every host connection
-          gone; their network fields live in the bit-10 section, 14 Joystick - a
-          Kempston joystick state write, u1 buttonMask = the state byte, 15 FrontPanelSwitch, 16 NetFrame - an
-          Ethernet frame from the host LAN for the bridged gateway, its network record and bytes in the bit-10
-          section like a NetEvent's, 17 MidiPanic - every slot card's MIDI synthesizer stops all its voices, no fields, 18 NextPad - the whole state of one joystick connector of the ZX Next: key = connector 0 left / 1 right, s2 dx = the 12 buttons R L D U B C A START Y Z X MODE from bit 0), 19 ConnectorState - the retro controls held on one controller-manager connector whose device has no kind of its own (Sinclair, Cursor, keys joystick): key = connector index, s2 dx = the control mask (bit 0 right, 1 left, 2 down, 3 up, 4 fire, 5-7 fire 2-4), 20 HostKeys - the ZX keys host controllers hold on one half-row (the controller manager's host key overlay): key = half-row 0..7 (A8..A15), s2 dx = the held bits (bit n = D n, active high), u8 key, u8 pressed (0/1), s2 dx, s2 dy,
-          u1 buttonMask, s1 wheelSteps, u1 value; ascending time. Bit 7 = an
-          external-event section follows: u32 count, then per marker u64
-          frame, u32 tInFrame, u8 kind (TTDExternalEventKind; unknown values
-          are kept), u8 reason_len (0..63), reason bytes; ascending time.
-          The writer always sets bits 6 and 7 (the sections may be empty), so
-          a file without them predates saved input: it replays inside a frame
-          without the recorded input. Both sections are replay data - a
-          reader must not treat them as optional annotations.
-          Bit 8 = the port journals follow the external events: every IN
-          result, then every OUT, of the main CPU in execution order, each
-          with its time and PC (ttd-port-read-journal.md). Each journal: u8
-          record_count, u4 block_records (32768), u4 block_count, then per
-          block u4 records, u8 base_frame (its first record's frame), u4
-          crc32c of the raw block, u4 compressed_size, zstd payload; the raw
-          block is five columns of `records` entries - u2 ports, u1 values,
-          u2 PCs, u4 frame deltas (from the previous record, 0 for the
-          first), u4 T-states (TTD time in the frame: absolute for the first
-          record and when the frame changed, else the step from the previous
-          record). Every block but the last holds block_records records;
-          records are in time order. Then u4 cursor_count (=
-          checkpoint_count) and one u8 cursor per checkpoint (the journal
-          position at its capture; non-decreasing, at most record_count).
-          Written only when the session holds all of its history's I/O; with
-          it a replay feeds the CPU the recorded IN values and needs no media
-          or host device. Replay data, like bits 6 and 7.
-
-          The flag-gated trailing sections (write journal, coverage index,
-          bookmarks, input journal, external events, port journals, network
-          inputs) are
-          not yet modeled in
-          this schema's top-level seq;
-          the C++ writer/reader pair (TimeTravelManager::SerializeSession /
-          DeserializeSession) is authoritative for their layouts, and a
-          reader that stops after `checkpoints` gets the machine states of a
-          session, without the accelerators, annotations and replay inputs.
-          Bit 9 (0x0200) = the header's last 8 bytes hold the peripheral
-          mask (see `peripheral_mask`); older files leave them zero.
-          Bit 10 (0x0400) = a network-input section follows the port
-          journals (the last section; only when the session has NetEvents):
-          u32 count, then per NetEvent input in journal order u32 event_index, u16 socket,
-          u8 event (1 Connected, 2 ConnectFailed, 3 Data, 4 PeerClosed,
-          5 Reset, 6 Accepted, 7 Datagram, 8 EchoReply, 9 ListenFailed, 10 ModemLines),
-          u8 status, u32 addr, u16 port, u32 payload_offset,
-          u32 payload_length; then u32 payload_size and the payload bytes
-          (what the machine received from the host network).
-          Bit 11 (0x0800) = the header continues with `not_recorded_mask`
-          (devices fitted but deliberately not recorded); only when that mask
-          is not zero. Bits 12-15 reserved (must be 0).
-      - id: model_id
-        type: u1
-        doc: eModel enum value (which machine model was active).
-      - id: model_ram_pages
-        type: u2
-        doc: |
-          Exclusive RAM page-index bound for the active model. Each checkpoint
-          carries model_ram_pages x 4 ram_sub_slots entries (4 sub-pages per
-          16 KB emulator page).
-
-          This is a BOUND, not a page count. Models that map RAM at
-          non-contiguous page numbers need a bound larger than the number of
-          pages they actually own: a 48K machine has 3 pages but addresses them
-          as pages 0, 2 and 5, so its bound is 6 and the unused slots inside the
-          range are serialized as never-touched refs.
-
-          u2 because a 4 MB machine has exactly 256 pages.
-      - id: cpu_state_size
-        type: u2
-        doc: |
-          Byte size of the TTDCpuState struct as written by this producer.
-          Lets a reader detect struct-layout drift between writer build and
-          reader build of the C++ implementation. For .ksy-generated readers
-          this field is informational only.
-      - id: chipset_state_size
-        type: u2
-        doc: |
-          Byte size of the TTDChipsetState struct as written by this producer.
-          Same drift-detection purpose as cpu_state_size.
-      - id: rom_signature
-        type: u8
-        doc: |
-          FNV-1a fingerprint of the whole ROM region the session was recorded
-          against. Checkpoints store which ROM PAGE is paged in, never the ROM
-          bytes, so replaying against a different ROM set maps the recorded
-          page numbers onto different code. On ProfROM machines a plane id only
-          means something relative to its image, so a mismatch is a hard error
-          rather than a warning. Zero means "unknown" — written when the
-          producer had no memory attached — and skips the check.
-      - id: captured_at_unix_ms
-        type: u8
-        doc: Wall-clock capture time (milliseconds since Unix epoch).
-      - id: emulator_id_len
-        type: u1
-      - id: emulator_id
-        size: emulator_id_len
-        type: str
-        encoding: UTF-8
-        doc: Symbolic instance identifier of the source emulator.
-      - id: session_state
-        type: u1
-        doc: |
-          TTDSessionState enum value at capture time
-          (0 = idle, 1 = recording, 2 = detached).
-      - id: session_start_frame
-        type: u8
-        doc: Frame counter at session start (typically 0).
-      - id: session_end_frame
-        type: u8
-        doc: Last captured frame counter.
-      - id: page_store_count
+        doc: bit 0 converted from a schema-1 file (D31)
+      - id: header_size
         type: u4
-        doc: |
-          Number of page_slot records following the header. In v2 this is
-          the count of LIVE slots (refcount > 0) — dead slots are not
-          serialized. Slots are written in compact remapped order so a
-          reader's index N here matches the indices referenced by
-          checkpoints' ram_sub_slots.
-      - id: checkpoint_count
+      - id: header_crc
         type: u4
-        doc: Number of checkpoint records following the page store.
-      - id: peripheral_mask_v1
+      - id: uuid
+        size: 16
+      - id: created_micros
         type: u8
-        if: schema_version < 3
-        doc: |
-          Schema 1. With flags bit 9: bit N set = TTD peripheral id N
-          (TurboSound 0, Beta Disk 1, ..., General Sound 5, GS LW 11,
-          NeoGS 12, ...) has a state blob in the first checkpoint - the
-          recorded machine's device set, readable without walking to the
-          checkpoints. Without bit 9: zero (formerly reserved). Ids above
-          63 cannot be named here.
-      - id: peripheral_mask
-        type: wide_mask
-        if: schema_version >= 3
-        doc: |
-          Schema 3: the same set as a word list; id N is bit N % 64 of
-          words[N / 64]. Only the words up to the highest non-zero one are
-          stored (at least one).
-      - id: not_recorded_mask_v1
-        type: u8
-        if: schema_version < 3 and (flags & 0x0800) != 0
-        doc: |
-          Schema 1. Bit N set = peripheral id N was fitted but time travel
-          does not record it (no blob in any checkpoint; it runs live
-          through seeks): the lightweight General Sound (11). A loader
-          fits the same card.
-      - id: not_recorded_mask
-        type: wide_mask
-        if: schema_version >= 3 and (flags & 0x0800) != 0
-        doc: Schema 3: the not-recorded set as a word list, as peripheral_mask.
-  wide_mask:
-    doc: |
-      A set of peripheral ids (PeripheralId is a u1: 0..255) as 64-bit
-      words, word w holding ids 64*w .. 64*w+63.
+        doc: microseconds since 1970, UTC
+      - id: zstd_version
+        type: u4
+      - id: reserved
+        size: 20
+      - id: stream_count
+        type: u2
+      - id: streams
+        type: stream_desc
+        repeat: expr
+        repeat-expr: stream_count
+      - id: session_tables_size
+        type: u4
+      - id: session_tables
+        size: session_tables_size
+        type: session_tables
+
+  stream_desc:
     seq:
-      - id: word_count
+      - id: id
+        type: u2
+        doc: |
+          0 container (part ends), 1 pieces, 3 checkpoints, 5 events,
+          6 configuration, 7 write journal, 13 bus reads, 14 bus writes,
+          15 bus vectors, 16 media (sector) reads; 0x0100-0x01FF frame-boundary
+          streams; 0x0200-0x02FF reserved (branches); 0x0300-0x03FF reserved (groups)
+      - id: layout_version
+        type: u2
+      - id: kind
         type: u1
-        valid:
-          min: 1
-          max: 4
-      - id: words
+        doc: 0 required (a reader that does not know it refuses the file), 1 ancillary (skipped)
+      - id: name_size
+        type: u1
+      - id: name
+        type: str
+        size: name_size
+        encoding: UTF-8
+
+  session_tables:
+    seq:
+      - id: version
+        type: u2
+        valid: 1
+      - id: snapshot_interval
+        type: u4
+        doc: a full reference table every this many checkpoints (rebuilt on load, not stored)
+      - id: region_count
+        type: vlq
+      - id: regions
+        type: region
+        repeat: expr
+        repeat-expr: region_count.value
+        doc: the memory regions; device-state regions follow from the devices
+      - id: device_count
+        type: vlq
+      - id: devices
+        type: device
+        repeat: expr
+        repeat-expr: device_count.value
+
+  region:
+    seq:
+      - id: id
+        type: u2
+        doc: |
+          TTDRegionId: a kind's memory (0x00-0x3FFF); a further instance of that kind 0x4000 + n x 0x100 + the
+          kind's id (D23); device states from 0x8000 (one per device-table entry)
+      - id: name
+        type: str_vlq
+      - id: owner_type
+        type: u2
+      - id: owner_instance
+        type: str_vlq
+      - id: pieces
+        type: u4
+        doc: 4 KB pieces
+      - id: bytes
+        type: u4
+      - id: dirty_granularity
+        type: u4
+      - id: block_pieces
+        type: u4
+
+  device:
+    seq:
+      - id: type
+        type: u2
+      - id: instance
+        type: str_vlq
+      - id: legacy_id
+        type: u1
+        doc: |
+          The device's PeripheralId (ttdserializable.h; frozen at 0-65: a device added after the freeze has
+          0xFF here and only its type, D23). Every id keeps its number:
+          0 TurboSound, 1 BetaDisk, 2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
+          8 AtmPaging, 9 ProfiPaging, 10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS, 13 Plus3Paging, 14 Upd765,
+          15 EvoSdCard, 16 TsConfPaging, 17 AtaChannel, 18 Ds12887, 19 EvoPs2, 20 ZxNetUsb, 21 EvoTurboCache,
+          22 EvoFontRam, 23 KempstonJoystick, 24 SerialPort, 25 SprinterPld, 26 Atm2Kbc, 27 MachineSerialPeer,
+          28 SprinterVideoRam, 29 Z84C15, 30 SprinterFastRam, 31 SprinterInput, 32 SprinterCovoxBlaster,
+          33 SprinterIsa, 34 SprinterPads, 35 Wd1793Context, 36 AtmIoBus, 37 Atm2IoEsp, 38 EvoMouse, 39 ZiFiLine,
+          40 ZiFi, 41 CdDrive, 42 Vdac2Memory, 43 Vdac2, 44 ProfiXtKbc, 45 EthernetNics, 46 SlotSerial1,
+          47 SlotSerial2, 48 SlotSerial1B, 49 SlotSerial2B, 50 Ppi8255, 51 Pit8253, 52 Usart8251, 53 Saa1099,
+          54 Smuc, 55 EvoAvrVolatile, 56 KeyboardMatrix, 57 RzxPlayback, 58 MultiSound, 59 Sam2695, 60 MultiSoundGs,
+          61 EvoFlash, 62 NextState, 63 NextSystemArea, 64 MachineSerialPeer2, 65 JoystickSerialPeer.
+          The state each carries: the device's own SaveTtdState; the documentation of the former schema-1 blobs is in
+          the git history of this file's predecessor (core/src/debugger/ttd/ttd.ksy before 2026-10-30).
+      - id: layout_version
+        type: u2
+      - id: state_size
+        type: u4
+      - id: variable_size
+        type: u1
+      - id: firmware_fingerprint
+        type: u8
+      - id: restore_after_count
+        type: vlq
+      - id: restore_after
+        type: device_key
+        repeat: expr
+        repeat-expr: restore_after_count.value
+      - id: time_field_count
+        type: vlq
+      - id: time_fields
+        type: time_field
+        repeat: expr
+        repeat-expr: time_field_count.value
+      - id: runs_behind_cpu
+        type: u1
+
+  device_key:
+    seq:
+      - id: type
+        type: u2
+      - id: instance
+        type: str_vlq
+
+  time_field:
+    seq:
+      - id: offset
+        type: u2
+      - id: width
+        type: u1
+
+  record:
+    seq:
+      - id: sync
+        contents: 'TREC'
+      - id: stream_id
+        type: u2
+      - id: flags
+        type: u2
+        doc: bit 0 payload zstd-compressed, bit 1 part-end record
+      - id: part_index
+        type: u4
+      - id: sequence
+        type: u4
+      - id: stored_size
+        type: u4
+      - id: raw_size
+        type: u4
+      - id: payload_crc
+        type: u4
+      - id: header_crc
+        type: u4
+      - id: payload
+        size: stored_size
+        type:
+          switch-on: stream_id
+          cases:
+            0: part_end
+
+  part_end:
+    doc: Stream 0, never compressed
+    seq:
+      - id: first_frame
+        type: u8
+      - id: frame_count
+        type: u4
+      - id: branch
+        type: u2
+      - id: record_count
+        type: u4
+      - id: record_offsets
         type: u8
         repeat: expr
-        repeat-expr: word_count
-  page_slot:
+        repeat-expr: record_count
+      - id: dependency_count
+        type: vlq
+      - id: dependency_deltas
+        type: vlq
+        repeat: expr
+        repeat-expr: dependency_count.value
+        doc: the earlier parts this one needs, ascending, each as the difference from the one before
+      - id: extra_size
+        type: vlq
+      - id: extra
+        size: extra_size.value
+        doc: byte 0 bit 0 - a file starts here (the loader restarts version numbers and journal positions)
+
+  index:
+    seq:
+      - id: version
+        type: u2
+        valid: 1
+      - id: part_count
+        type: u4
+      - id: parts
+        type: index_part
+        repeat: expr
+        repeat-expr: part_count
+      - id: stream_count
+        type: u2
+      - id: streams
+        type: index_stream
+        repeat: expr
+        repeat-expr: stream_count
+      - id: extra_size
+        type: u4
+      - id: extra
+        size: extra_size
+
+  index_part:
+    seq:
+      - id: part_end_offset
+        type: u8
+      - id: first_frame
+        type: u8
+      - id: frame_count
+        type: u4
+      - id: branch
+        type: u2
+
+  index_stream:
+    seq:
+      - id: id
+        type: u2
+      - id: records
+        type: u8
+      - id: stored_bytes
+        type: u8
+      - id: raw_bytes
+        type: u8
+
+  trailer:
+    seq:
+      - id: index_offset
+        type: u8
+      - id: index_size
+        type: u4
+      - id: index_crc
+        type: u4
+      - id: magic
+        size: 4
+      - id: trailer_crc
+        type: u4
+        doc: CRC32C of the first 20 bytes
+
+  # --- Stream payloads, after decompression ---------------------------------
+
+  payload_pieces:
     doc: |
-      One entry in the v2 codec page store. Encoded layout per slot:
-        u8  encoding       (0=Full, 1=XorPrev, 2=Zero)
-        u32 refcount       (informational; reader rebuilds its own)
-        u32 prev_slot      (compact index; 0xFFFFFFFF when encoding != XorPrev)
-        u32 crc32c         (CRC32C of the reconstructed 4 KB; readers
-                            verify it after reconstruction)
-        u32 payload_size   (bytes of zstd-compressed payload; 0 for Zero)
-        u8[payload_size]   payload
+      Stream 1: the piece versions this part introduces, in the order its
+      checkpoints' changes name them. Versions are numbered from the file's
+      start (from each part flagged as a file start in a joined file).
+    seq:
+      - id: versions
+        type: piece_version
+        repeat: eos
+
+  piece_version:
     seq:
       - id: encoding
         type: u1
         doc: |
-          0 = Full (independent 4 KB snapshot, zstd-1 compressed payload)
-          1 = XorPrev (XOR against prev_slot's reconstructed bytes, zstd-1)
-          2 = Zero (all-zero 4 KB region, payload omitted)
-      - id: refcount
+          0 full (a zstd frame of the 4 KB), 1 xor (a zstd frame of the XOR
+          with the base), 2 zero (no payload), 3 ranges (the XOR's non-zero
+          runs: u2 offset, u1 length, bytes; applied by XOR)
+      - id: depth
+        type: vlq
+      - id: base_plus_one
+        type: vlq
+        doc: the version a difference applies to (its number + 1; 0 none)
+      - id: content_crc
         type: u4
-        doc: |
-          Informational only. The reader rebuilds its own refcount model
-          by walking checkpoints' ram_sub_slots vectors. The writer
-          includes this for diagnostics and round-trip verification.
-      - id: prev_slot
-        type: u4
-        doc: |
-          Compact slot index of the slot this one XORs against. Only
-          meaningful when encoding == 1 (XorPrev); set to 0xFFFFFFFF
-          otherwise. Must point to a slot earlier in the page_store
-          sequence (delta chains are strictly forward-only).
-      - id: crc32c
-        type: u4
-        doc: |
-          CRC32C (Castagnoli) of the RECONSTRUCTED 4 KB content (after
-          decompression and, for XorPrev, applying the delta chain), as
-          computed by the page store when the piece was captured; Zero
-          pieces carry the CRC of an all-zero 4 KB. Readers recompute it
-          after reconstruction and treat a mismatch as an integrity error.
-          zstd frames carry no checksum of their own, so this is the only
-          check on page payloads.
+        doc: CRC32C of the decoded 4 KB
       - id: payload_size
-        type: u4
-        doc: |
-          Byte length of the following payload. For encoding == Zero this
-          is always 0. For Full / XorPrev this is the size of the
-          zstd-1-compressed frame (typically 200-2000 bytes for real
-          emulator state).
+        type: vlq
       - id: payload
-        size: payload_size
-        doc: |
-          Raw payload bytes:
-            * encoding == Full    → zstd frame, decompresses to 4 KB
-            * encoding == XorPrev → zstd frame, decompresses to 4 KB XOR mask
-            * encoding == Zero    → omitted (payload_size == 0)
+        size: payload_size.value
 
-  cpu_state:
-    doc: |
-      Architectural Z80 state. Mirrors TTDCpuState in ttd_checkpoint.h.
-      Excludes host-side fields (memory interface pointers, debugger
-      cursors, transient decode scratch).
-
-      The C++ writer emits sizeof(TTDCpuState) == 48 bytes verbatim. The
-      alignment gaps are named members on the C++ side rather than implicit
-      padding: these objects are copied by member-wise assignment (which does
-      not copy padding) and then hashed byte-wise, so unnamed padding would
-      leak uninitialized bytes into the hash. Offset 31 is ``nmi_pending``
-      (an NMI requested and not taken yet; zero in sessions recorded before it); offsets 35 and 43 now carry ``boundary`` and
-      ``int_acked_in_pulse`` (zero in sessions recorded before them).
+  payload_checkpoints:
+    doc: Stream 3
     seq:
-      - id: pc
-        type: u2
-      - id: sp
-        type: u2
-      - id: af
-        type: u2
-      - id: bc
-        type: u2
-      - id: de
-        type: u2
-      - id: hl
-        type: u2
-      - id: ix
-        type: u2
-      - id: iy
-        type: u2
-      - id: alt_af
-        type: u2
-      - id: alt_bc
-        type: u2
-      - id: alt_de
-        type: u2
-      - id: alt_hl
-        type: u2
-      - id: i
-        type: u1
-      - id: r_low
-        type: u1
-      - id: r_hi
-        type: u1
-      - id: iff1
-        type: u1
-      - id: iff2
-        type: u1
-      - id: im
-        type: u1
-      - id: halted
-        type: u1
-      - id: nmi_pending
-        type: u1
-        doc: |
-          Explicit filler aligning memptr (u2) to a 2-byte boundary after
-          the 7 u8 fields above (offset 31), now carrying the pending NMI
-          (0 / 1; Z80::IsNmiPending). Zero in sessions recorded before it.
-      - id: memptr
-        type: u2
-        doc: Undocumented MEMPTR / WZ register.
-      - id: q
-        type: u1
-        doc: Undocumented Q register (affects CCF/SCF flag behavior).
-      - id: boundary
-        type: u1
-        doc: |
-          Instruction-boundary state (Z80BoundaryEnum: 0 none, 1/2 pending
-          DD/FD prefix, 3 INT shadow, 4 LD A,I/R quirk, 5 NMI just
-          acknowledged), in the former filler at offset 35. Older files: 0.
-      - id: eipos
-        type: u2
-        doc: Legacy EI position; unused since boundary.
-      - id: haltpos
-        type: u2
-        doc: HALT instruction position.
-      - id: nmi_in_progress
-        type: u1
-      - id: int_pending
-        type: u1
-        doc: INT line state (latched).
-      - id: int_gate
-        type: u1
-        doc: External interrupts gate (1 = enabled).
-      - id: int_acked_in_pulse
-        type: u1
-        doc: |
-          The current INT pulse was acknowledged (machines whose INT ends at
-          the acknowledge, e.g. ZX-Evo); in the former filler at offset 43.
-          Older files: 0.
-      - id: halt_cycle
-        type: u4
-        doc: Cycle at which HALT became active.
-
-  chipset_state:
-    doc: |
-      Port-latch subset of EmulatorState + counters. Mirrors
-      TTDChipsetState in ttdcheckpoint.h.
-
-      Amendment (in-place, pre-release — sessions recorded before it do not
-      parse and must be re-recorded): this structure now carries ONLY the
-      standard Spectrum 128K ports, shrinking to 120 bytes (it was 168, or
-      184 once the Scorpion ProfROM fields were added). Every
-      extended / model-specific latch that used to live here (pXXXX, pDFFD,
-      pFDFD, p1FFD, the GMX p7xFD group, Quorum p00 / p80FD, the ATM pFFF7
-      array, the Profi palette, Scorpion ProfROM state, video_mode, ...) moved out into
-      per-model serializers reached through TTDPeripheralRegistry and is
-      carried in `peripheral_blob` entries instead. The common format is
-      model-agnostic: it knows nothing about any specific machine.
-    seq:
-      # ---- Counters ----
-      - id: t_states
-        type: u8
-      - id: frame_counter
-        type: u8
-      # ---- Standard Spectrum 128K port latches ----
-      - id: p7ffd
-        type: u1
-        doc: 128K banking / screen / ROM select. Bit 3 selects screen bank.
-      - id: pfe
-        type: u1
-        doc: Beeper / EAR / border color / mic. Bits 0-2 = border color.
-      - id: peff7
-        type: u1
-        doc: Beta Disk interface control.
-      - id: pbffd
-        type: u1
-        doc: AY-3-8912 register select.
-      - id: pfffd
-        type: u1
-        doc: AY-3-8912 data.
-      - id: pff77
-        type: u1
-        doc: TurboSound chip select.
-      - id: border_attr
-        type: u1
-      - id: flags
-        type: u1
-        doc: Runtime execution flags (CF_TRDOS etc.).
-      # ---- FDC state (common to Beta Disk models) ----
-      - id: wd_shadow
-        size: 4
-        doc: 2F, 4F, 6F, 8F WD1793 shadow registers.
-      # ---- Video / palette ----
-      - id: comp_pal
-        size: 16
-        doc: Hardware palette registers.
-      - id: ulaplus_mode
-        type: u1
-      - id: ulaplus_reg
-        type: u1
-      - id: ulaplus_cram
-        size: 64
-        doc: ULAplus palette entries.
-      - id: hw_turbo_ratio
-        type: u1
-        doc: |
-          Model-neutral HARDWARE turbo: the guest-visible CPU clock ratio, 1..8
-          (1 = base clock, 2 = 7 MHz, 4 = 14 MHz, 6 = 21 MHz).
-          A hardware turbo keeps the 20 ms frame and only multiplies the CPU
-          T-states inside it, so the audio path descales by this (the AY, beeper
-          and Covox clocks are unchanged). Queued value.
-      - id: hw_turbo_ratio_applied
-        type: u1
-        doc: As composed into current_z80_frequency_multiplier at the frame boundary.
-      - id: current_z80_frequency_multiplier
-        type: u1
-        doc: |
-          CPU multiplier relative to the base clock. Zero means the session
-          predates this field being captured; readers should treat it as 1.
-      - id: next_z80_frequency_multiplier
-        type: u1
-        doc: Queued multiplier, applied at the next frame start.
-      - id: cpu_t_in_frame
-        size: 3
-        doc: |
-          z80.t at the capture, 24-bit little-endian: the CPU's in-frame
-          T-state (a frame ends when its last instruction crosses the
-          boundary, so a checkpoint's CPU sits a few T-states in - the
-          overshoot). Restored with the checkpoint so a replayed frame runs
-          with the original instruction timing. Taken from the former
-          reserved tail; sessions recorded before it read 0.
-      - id: hw_clock_den
-        type: u1
-        doc: |
-          Denominator of the hardware clock ratio, queued (CPU T per base T =
-          hw_turbo_ratio / hw_clock_den). 0 means 1: only the Profi in hi-res
-          (3 / 5 MHz = 6/7, 10/7) writes a 7. Taken from the reserved tail.
-      - id: hw_clock_den_applied
-        type: u1
-        doc: The denominator as composed into the running clock; 0 means 1.
-      - id: reserved
-        size: 1
-        doc: |
-          Explicit tail filler keeping the struct free of implicit padding
-          (sizeof == 120; four bytes were taken from it for the CPU clock
-          fields above, three for cpu_t_in_frame, two for the clock denominator). The C++ side copies these objects by member-wise
-          assignment and hashes them byte-wise, so unnamed padding would
-          leak uninitialized bytes into the hash. Always zero.
-
-  registry_blob:
-    doc: |
-      One peripheral blob: its registry id followed by the opaque serialized
-      state. A reader that does not know the id MUST keep the
-      bytes rather than drop them — the C++ reader does, so re-serializing a
-      session stays byte-identical even on a build lacking that model.
-    seq:
-      - id: peripheral_id
-        type: u1
-        doc: |
-          PeripheralId enum value (see ttdserializable.h): 0 TurboSound, 1 BetaDisk,
-          2 Tape, 3 Covox, 4 TSFM, 5 GeneralSound, 6 ScorpionProfROM, 7 KempstonMouse,
-          8 AtmPaging, 9 ProfiPaging (Profi: 16-entry palette, pDFFD latch, front-panel switches),
-          10 MoonSound, 11 GeneralSoundLightweight, 12 NeoGS (card registers and device state only: a v1 session does
-          not record the card RAM or the flash; the engine's session records them as regions 4 neogs.ram and
-          5 neogs.flash, engine/ttdsession.ksy),
-          13 Plus3Paging, 14 Upd765 (+3 floppy controller),
-          15 EvoSdCard (ZX-Evo Z-Controller + SD card protocol state),
-          16 TsConfPaging (TSConf machine state), 17 AtaChannel (IDE board: channel, both units, adapter latches; a second channel appended on the Sprinter),
-          18 Ds12887 (MC146818 / DS12887 clock: cells, address latch, time base;
-          ATM3, Profi, Scorpion SMUC), 19 EvoPs2 (ZX-Evo AVR PS/2 keyboard: the
-          16-byte scan code log, its pointers, the parser flags, the modifier
-          mask, the held keys and the F12 hold: down flag and its press time in
-          emulated microseconds - 56 bytes since 2026-10-07), 20 ZxNetUsb (ZXNETUSB card ports, W5300
-          registers and socket states, unsent bytes, and journal references
-          for the received bytes; the virtual network's guest-side tables -
-          netstate.h; since 2026-10-08 a netstate::Tail follows when reserved[0] = 1: what the fixed
-          arrays do not hold and bytes received before the recording, netstatetail.h),
-          21 EvoTurboCache (ZX-Evo at 14 MHz: the DRAM's code and data cache words, 6 bytes),
-          22 EvoFontRam (ZX-Evo text-mode font RAM, 2 KB, and the glyph byte #0EBD reads: 2050 bytes),
-          23 KempstonJoystick (Kempston joystick: u1 version, u1 state byte, active high; carried by
-          machines whose decoder answers #1F - Pentagon, Scorpion, Profi, ZX-Evo, TS-Conf, Sprinter, Next - and any
-          machine with a Kempston interface card (69) fitted),
-          24 SerialPort (the 16550 on #xxEF - the ZX-Evo AVR's or a ZX-WiFi card's - and its peer:
-          netstate::SerialPort; without a peer only the header and the UART registers and FIFOs; with a
-          peer a netstate::Tail follows when flags bit 1 is set, since 2026-10-08),
-          25 SprinterPld (Sprinter Sp2000 PLD and decoder, sprinter_pld_blob below),
-          26 Atm2Kbc (ATM Turbo 2+ keyboard controller: Atm2Kbc::State - the MCS-51 RAM, SFRs, PC, clock,
-          interrupt and UART state, the board latches, the PS/2 keyboard model, the controller's time base),
-          27 MachineSerialPeer (the peer on a machine serial port that is no 16550 on #xxEF - the ATM Turbo 2+
-          keyboard controller's RS-232, the ZX Profi v5's 8251: netstate::Com, the peer part only; a
-          netstate::Tail follows when reserved[0] bit 1 is set, since 2026-10-08),
-          28 SprinterVideoRam (u1 version 1, then the 256 KB video RAM; a whole-array blob until TTD v2
-          memory regions), 29 Z84C15 (u1 version 2, then the Z84C15's on-chip block, 227 bytes: z84c15_blob below; version 1, 171 bytes with the timer-only CTC, is not restored),
-          30 SprinterFastRam (u1 version 1, then the 64 KB fast RAM: v1's whole-array blob; the engine records
-          the fast RAM as region 7 sprinter.fastram and the blob as the version byte only),
-          31 SprinterInput (sprinter_input_blob below: the AT keyboard's byte stream and the serial mouse),
-          32 SprinterCovoxBlaster, 33 SprinterIsa (the ISA slots: u1 version 1, u1 the whole #9FBD latch, u1 x 2
-          the card kind fitted in slot 1 / 2 - 0 none, 1 zxbus, 2 ram, 3 ne2000, 4 el3c509b, 5 sprinteresp,
-          6 modem, 7 dual16552 - then each card's own bus state, none so far; a session whose kinds differ from
-          the fitted cards is refused at load), 34 SprinterPads (reserved for a Sprinter device still to come -
-          the extended pads: no blob is written under it yet),
-          35 Wd1793Context (u1 version 1, then 112 bytes: the WD1793 command in flight beyond the BetaDisk
-          blob - rate-retry search, byte cell, rotational delay, the sector and tracks in use and the transfer
-          pointers as (drive, track, offset), the read-track noise seed, up to 4 queued command steps as tags;
-          layout in wd1793.cpp SaveTransferContext. Declared by the Sprinter; restored after BetaDisk).
-          Blobs are restored in ascending id order.
-          Every Sprinter blob (25, 28-31, 35) starts with its version byte; a blob of another version is not
-          loaded. The Sprinter also carries 18 Ds12887, 17 AtaChannel (two channels), 1 BetaDisk, 7 KempstonMouse,
-          23 KempstonJoystick.
-          36 AtmIoBus (ATM Turbo 2+ INTERNAL I/O connector: the #FB bus address latch, 1 byte + 3 reserved),
-          37 Atm2IoEsp (the ATM2IOESP card: netstate::SerialPort - its 16550 and peer, as SerialPort),
-          38 EvoMouse (the ZX-Evo AVR's PS/2 mouse: version, X, Y, buttons + wheel, plugged in, 3 reserved),
-          39 ZiFiLine (the TS AVR's ZiFi UART and its peer: netstate::SerialPort, as SerialPort),
-          40 ZiFi (the TS AVR's ZiFi API block, 32 bytes: version 1, api, err, selectZf, imr, isr, zibtr, zitor,
-          ribtr, ritor, 5 reserved, u8 x 8 zfLastRx, u8 x 8 rsLastRx).
-          41 CdDrive (the IDE board's ATAPI CD drives beyond AtaChannel, cd_drive_blob below; only on a board
-          with a CD unit, so the blobs of every other machine are unchanged),
-          42 Vdac2Memory (the TS-Conf VDAC2 card's FT812 memory regions whole, in region order: RAM_G, DL0, DL1,
-          REG, CMD, SPECIAL, INFLIGHT; until TTD v2 memory regions; only with the card),
-          43 Vdac2 (the VDAC2 card: u1 version 1, u1 showing, u1 intAsserted, u1 reserved, u4 edgeCount, u8 frameBase,
-          u8 position, u8 remainder, u8 nextEvent, u8 x 16 edges, then the FT812 control state, eve-emu EveSaveState;
-          restored after 42),
-          44 ProfiXtKbc (the Profi PROFI-XT keyboard controller: ProfiXtKbc::State - u4 version 1, u1 engine (0 firmware,
-          1 table), the output latch, WAIT flip-flop, read in progress, reset line, the time base, the MCS-48 (clock, PC,
-          A, PSW, 256 bytes RAM of which the 8035 uses 64, port latches and pins, F1, memory bank, interrupt and timer
-          state, T0 / T1 / INT), the XT keyboard's wire (queued set-1 bytes, the frame in flight, typematic key, held
-          keys) and the table engine's closed positions per PC key; only on a Profi with the controller fitted),
-          45 EthernetNics (the frame-level network cards in expansion slots, the Sprinter's NE2000 / 3C509B: u1
-          version 2, u1 card count, per card u1 key length, the key ("isa2.eth"), u1 kind length, the kind ("ne2000" |
-          "el3c509b"), u4 state length, the state; then u4 length + the Ethernet gateway's tables. NE2000 state: u1
-          version 1, u1 variant (0 RTL8019AS, 1 UM9003, 2 NE1000), the DP8390 state, the 93C46 EEPROM state, 16 KB
-          packet RAM, 8 bytes RTL8019AS page 3 (9346CR, BPAGE, CONFIG1-4, stalled, reserved), 6 bytes station address.
-          3C509B state (EtherLink3::SaveCardState): u1 version 1, u1 variant (0 TPO, 1 TP), the ASIC fields little-endian
-          in EL3_STATE_FIELDS order (ID sequence state, tag, ID port, EEPROM access, window 0 / 3 configuration, window,
-          byte latches, masks, interrupt flags, thresholds, enables, station address, media / net diagnostic bits,
-          link times, the transmitter, 31-entry TX status stack, statistics), the 64-word EEPROM, u2 TX packet count and
-          per packet u2 length, u1 flags, u2 bytes + bytes, u2 RX packet count and per packet u2 read position, u1
-          error, u2 bytes + bytes. Version 1 of the blob (NE2000 only: per card the key, then the NE2000 state) still
-          loads; only with such a card),
-          46 SlotSerial1 (the UART card in expansion slot 1, the Sprinter's SprinterESP: netstate::SerialPort as id
-          24 - the TL16C550C and its peer, an ESP module with its AT state, sockets and received bytes by journal
-          reference; only with such a card), 47 SlotSerial2 (the same for expansion slot 2),
-          48 SlotSerial1B (the second UART of the card in expansion slot 1: SprinterSerial's COM2; the same
-          netstate::SerialPort; a Hayes modem peer keeps its command state in the record's ESP bytes, peer kind 6),
-          49 SlotSerial2B (the same for expansion slot 2),
-          50 Ppi8255 (an 8255 PPI, the ZX Profi's: Ppi8255::State - u1 mode word, u1 port A, B, C output latches),
-          51 Pit8253 (an 8253 PIT, the ZX Profi v5's COM baud timer: Pit8253::State - per counter u1 control, out,
-          gate, has count, counting, load pending, new count, fired, write MSB, read MSB, latched, LSB written, u2
-          count register, output latch, u4 reload, counting element, mode 3 pulses left; then u4 reserved, u8 last
-          clock, u8 fraction; 104 bytes; only on the v5 board),
-          52 Usart8251 (an 8251 USART, the ZX Profi v5's COM port: Usart8251::State - u1 mode, command, expect, sync
-          1, sync 2, errors, RX data, RX ready, TX buffer, TX full, TX shifter, TX busy, RX shifter, RX busy, the
-          board's #B3 latch, reserved, u8 TX done, RX done, last clock, bytes in, bytes out, overruns; 64 bytes; only
-          on the v5 board; its peer is MachineSerialPeer),
-          53 Saa1099 (a Philips
-          SAA1099, 157 bytes: u1 layout version 2, 32 registers, address latch, sound enable, sync, clock gate, per tone
-          generator u4 clocks to transition + level + latched tone + latched octave, per noise generator u4 LFSR + u4
-          divider, per envelope generator 11 bytes, u8 host time, u8 clock-ratio remainder, u8 gated and u8 ungated
-          chip clocks, s4 left and s4 right output level (held while the clock gate is stopped); layout in
-          saa1099.cpp; only inside a card that carries the chip),
-          54 Smuc (the Scorpion SMUC board, 36 bytes: u1 version 1, u1 pFFBA, u1 p7FBA, u1 x 8 IDE window registers,
-          then the serial EEPROM link: u1 mode, u1 flags (bit 0 stable, 1 tx, 2 rx, 3 ack), u1 bitCount, u1 data,
-          u1 addressLow, u1 addressHigh, u1 writePos, u1 sda, u1 scl, u1 x 16 writeBuffer; not the EEPROM contents),
-          55 EvoAvrVolatile (the ZX-Evo AVR's volatile state on TS-Conf and the ATM3, 20 bytes: u1 version 2,
-          u1 extType, u1 eepromPage, u1 flags (bit 0 EEPROM mode, 1 Caps LED, 2 tape-out mode), then the /WAIT
-          ports' timing shared by #xxEF and #BFF7 (EvoAvrWait): u8 AVR cycle the main loop resumed its pass, u8 AVR
-          cycle the EEPROM's last write ends; on the ATM3 the first bytes repeat what 8 carries),
-          56 KeyboardMatrix (the ZX keyboard, variable size: u1 version 1, u1 x 8 matrix rows, u1 pair count,
-          then (u1 ZXKeysEnum key, u1 pressed count) pairs in key order; key changes themselves are input events),
-          57 RzxPlayback (an RZX recording played while TTD records, 84 bytes: u1 version 1 (0: nothing played),
-          u1 player state (0 playing, 1 finished, 2 desynced, 3 stopped), u1 last IN value, u1 first desync kind,
-          u8 recording fingerprint (FNV-1a over the frames and IN values), u8 frames done, u4 fetches, u4 IN position,
-          u8 interrupts, u8 desyncs, u8 snapshots applied, s4 drift, s4 max drift, then the first desync: u4 block,
-          u8 frame, u4 expected, u4 actual, u2 PC, u2 port; the recording itself is not in the session),
-          58 MultiSound (a ZX-MultiSound card, slot-built, instance <slot>.multisound: u1 version 1, u8 adapter
-          origin, u8 adapter last time, then the card: u1 version 1, u8 now, u8 frame base, u8 frame ticks,
-          u8 rendered-to, u8 sample accumulator, u1 FM muted, u2 FM mute changes + 256 x (u8 time, u1 muted), 11 CPLD
-          latches, 4 x (u1 DAC sample, u1 volume), u8 YM2203 pair synced time + the pair's blob, the MIDI line
-          (18 bytes), the shared DACs; layout in multisoundcard.h),
-          59 Sam2695 (a Dream SAM2695 synthesizer, instance <slot>.multisound.sam2695: sam2695::Synth::SaveState, magic
-          "SAM2", version, the bank's SHA-256, UART, parser, queue, channels, voices; a load refuses another bank),
-          60 MultiSoundGs (the ZX-MultiSound's General Sound, instance <slot>.multisound.gs: the GeneralSound (5)
-          layout with 1-2 MB RAM; the engine region MultiSoundGsRam (17)),
-          61 EvoFlash (the ZX-Evo's ROM chip as a 29F040 flash, TS-Conf and ATM3, 33 bytes: u1 version 1, then the
-          chip's command state - u1 mode (0 read array, 1-2 unlock steps, 3 autoselect, 4 program set-up, 5 erase
-          set-up, 6-7 erase unlock steps, 8 sector-erase window, 9 busy, 10 failed), u1 reserved, u1 flags (bit 0
-          erasing, 1 writable, 2 contents modified, 3 AMD IDs), u1 DQ6 toggle, u1 DQ7 source byte, u1 sectors to
-          erase (bit per 64 KB sector), u1 program value, s8 erase window end, s8 busy end (base clock t-states),
-          u3 program offset, 6 reserved; the 512 KB array is the engine region EvoFlash (18), the machine's ROM
-          pages 0-31),
-          62 NextState (the ZX Spectrum Next, one image of NextStateCodec::Save: u1 version (8 now; the reader takes its own only), then the board (selected
-          register, the 256 NextREG bytes, timing, reset bits), the memory map (MMU slots, paging bits, DivMMC /
-          Multiface / Layer 2 views, config mode), video registers (clip windows, 8 x 256 palette words), sprites (128 x 5
-          attribute bytes, 16 KB patterns, upload latches), the copper (2 KB list, position, mode, clock), the DMA, the CTC,
-          the interrupt controller, the I2C bus with the DS1307, the Multiface and DivMMC latches, the decoder's SD SPI
-          and timing latches, the extended keys (u2), the left pad's extra buttons (u1) and the right pad (u2, 12 buttons); fixed length per machine; the audio chips (three AY8910 with their pan, mode and the four DACs) and the two SD
-          cards' protocol state are in it; the system area (ROMs, DivMMC RAM) is blob 63),
-          63 NextSystemArea (the Next's system area, 262144 bytes, no version byte: the 16 pages of 16 KB from page 0 -
-          the ROMs the firmware loads in config mode (pages 0-7) and the DivMMC RAM (pages 8-15, 16 banks of 8 KB)),
-          64 MachineSerialPeer2 (the peer on a machine's second serial port, the Next's UART 1 / the Pi's line: the
-          blob of MachineSerialPeer (27), a netstate::Com with its tail; needs the wide peripheral mask of schema 3),
-          65 JoystickSerialPeer (the peer plugged into the Next's joystick connector while NR #0B selects the UART
-          mode: the same blob),
-          66 Controllers (controllers::ControllerManager, a machine peripheral: u1 version 2, u1 the count of
-          journaled connectors (the keyboard joysticks and the card-brought ones such as the Fuller Box's), then per
-          connector in connector order: u1 device (RetroDeviceKind), u1 Sinclair port, u1 cursor shift, 8 x u1 the
-          keys of right, left, down, up, fire 1-4 (PcKey), u2 the held controls (Kempston bit order); a blob of
-          another connector count restores nothing),
-          67 FullerBox (a Fuller Box card, slot-built, instance <slot>.fuller-box: u1 version 1, u8 card-axis origin,
-          u8 last card time, f8 next generator tick (IEEE bits, u8), u8 the mixer's frame-start sample phase, then the
-          AY (SoundChip_AY8910's 73 bytes); the stick's controls are in Controllers (66)),
-          68 AmxMouse (an AMX mouse card, slot-built, instance <slot>.amx-mouse: u1 version 1, then the Z80 PIO as
-          2 x 10 bytes, port A then B: u1 mode, u1 next control word (0 any, 1 the mode 3 direction, 2 the mask), u1
-          input register, u1 output register, u1 direction, u1 mask, u1 interrupt control word, u1 vector, u1 the
-          peripheral's line levels, u1 flags (bit 0 IE, 1 IP, 2 IUS, 3 RDY, 4 /STB high, 5 the mode 3 match); then s2
-          the pending X mickeys (+ right), s2 the pending Y mickeys (+ up), u1 the buttons (D0 left, D1 right, D2
-          middle, active low), per axis u8 frame and u4 T-state of the next strobe's earliest time; 50 bytes),
-          69 KempstonInterface (a Kempston joystick interface card, slot-built, instance <slot>.kempston: u1 version 1;
-          the interface has no state, the stick byte is KempstonJoystick (23), carried while the card is fitted).
-          ScorpionProfROM (6) byte 5 is the Turbo+ latch (scorpion_turbo; 0 in sessions recorded before it).
-          Plus3Paging (13): u1 p1FFD, u1 floating-bus byte (the gate array's last contended byte), u1 flags
-          (bit 0: the byte is valid; 0 in sessions recorded before it), u1 reserved.
-          BetaDisk (1) blob: 254 bytes = WD1793 controller 146 + 4 x FDD 27
-          (layout in wd1793.cpp, TTDSerializable region). Bytes 143..145 are
-          the controller clock policy (0 Fixed1MHz, 1 AutoStepTurbo, 2 Latched),
-          the clock now (1 = 1 MHz, 2 = 2 MHz) and the data separator rate
-          (0 = 250 kbit/s, 1 = 500 kbit/s). Recordings made before 2026-09-29
-          carry the older 251-byte blob, which the reader reports as a size
-          mismatch and does not restore.
-      - id: state
-        type: peripheral_blob
-
-  cd_drive_blob:
-    doc: |
-      Payload of peripheral 41 CdDrive (ttdcddrive.cpp): the CD audio side and the READ CD
-      staging of every unit of the IDE board (channel * 2 + position; 2 units, 4 on the
-      Sprinter), zero for a unit that is no CD drive. Little-endian.
-    seq:
-      - id: version
-        type: u1
-        doc: 2 (v1, without disc_identity, is not restored)
-      - id: cd_units
-        type: u1
-        doc: bit n set - unit n is a CD drive
-      - id: reserved
-        size: 6
-      - id: units
-        type: cd_drive_unit
-        repeat: eos
-  cd_drive_unit:
-    seq:
-      - id: head
-        type: s8
-        doc: |
-          The optical head in 1 / 3,500,000 of a 44.1 kHz sample from LBA 0; while playing it is
-          relative to the frame start (the head = this + elapsed base T-states x 44100)
-      - id: play_start_lba
-        type: u4
-      - id: end_lba
-        type: u4
-        doc: the play stops before this frame
-      - id: status
-        type: u1
-        doc: 0 idle (15h), 1 playing (11h), 2 paused (12h), 3 completed (13h, reported once), 4 error (14h, once)
-      - id: sotc
-        type: u1
-        doc: page 0Eh stop on track crossing
-      - id: port_select
-        size: 4
-        doc: page 0Eh channels routed to output ports 0-3 (bit 0 left, bit 1 right)
-      - id: port_volume
-        size: 4
-      - id: flags
-        type: u1
-        doc: bit 0 - the play ends at a data track (status 14h)
-      - id: reserved
-        size: 5
-      - id: stage_pos
-        type: u2
-      - id: stage_len
-        type: u2
-      - id: tray_open
-        type: u1
-        doc: START STOP UNIT eject opened the tray (no disc for the drive until it loads); 0 before 2026-10-02
-      - id: prevent_removal
-        type: u1
-        doc: PREVENT ALLOW MEDIUM REMOVAL (bit 0)
-      - id: stage_reserved
-        size: 2
-      - id: stage
-        size: 2816
-        doc: the READ CD sector (with C2 and subchannel fields) still going to the 2048-byte data buffer
-      - id: disc_identity
-        type: u8
-        doc: |
-          v2: the inserted disc's ContentId (0 without a disc). A restore onto a disc with
-          another identity is reported (warning), not refused
-
-  sprinter_pld_blob:
-    doc: |
-      Payload of peripheral 25 SprinterPld (ttdsprinter.cpp). Little-endian.
-      The accelerator section is empty (size 0) until Sprinter phase S5, which
-      bumps the version when it fills it.
-    seq:
-      - id: version
-        type: u1
-        doc: 1
-      - id: pld_state
-        size: 112
-        doc: SprinterPldState (sprinterpldstate.h) - cells #C0-#FF, SC, PN, CNF, ROM_RG, ALL_MODE, PORT_Y, RGMOD, HOLD, flags, configuration state, bitstream count and hashes, load watchdog.
-      - id: cbl_control
-        type: u1
-      - id: powered_on
-        type: u1
-      - id: dcp_opened_frame
-        type: s8
-      - id: dcp_opened_pc
-        type: u2
-      - id: int_mode_page
-        type: u1
-      - id: int_frame_lines
-        type: u2
-      - id: int_acked_pulse
-        type: s8
-      - id: int_keyboard_latched
-        type: u1
-      - id: screen_frame_lines
-        type: u2
-        doc: Frame height the raster runs with (320 / 312; 0 = no Sprinter screen).
-      - id: module_name
-        size: 32
-        type: strz
-        encoding: ASCII
-        doc: Active PLD configuration module, looked up by name on load.
-      - id: module_state_room
-        type: u2
-        doc: Room for the largest module state the build registers (Standard: 0).
-      - id: module_state_used
-        type: u2
-        doc: The first module_state_used bytes of module_state are the active module's.
-      - id: module_state
-        size: module_state_room
-      - id: accel_size
-        type: u2
-      - id: accel_state
-        size: accel_size
-
-  z84c15_blob:
-    doc: |
-      Payload of peripheral 29 Z84C15 after its version byte (Z84C15::SaveState).
-    seq:
-      - id: system
-        size: 8
-        doc: SCRP, WCR, MWBR, CSBR, MCR, WDTMR, WDTCR, interrupt priority (#F4).
-      - id: wait_generator
-        size: 6
-        doc: WCR as written, effective WCR, MWBR, M1 cycles left in the power-on window, after-ED flag, active.
-      - id: watchdog_running
-        type: u1
-      - id: watchdog_fired
-        type: u1
-      - id: watchdog_start
-        type: u8
-        doc: The clock (the board's units; the Sprinter's 42 MHz crystal ticks) the current watchdog count started at.
-      - id: watchdog_clocks_before
-        type: u8
-        doc: System clocks the watchdog counted before watchdog_start (a clock speed change folds them).
-      - id: ctc_clock_num
-        type: u4
-        doc: One system clock lasts ctc_clock_num / ctc_clock_den clock units (the Sprinter - 12 / multiplier).
-      - id: ctc_clock_den
-        type: u4
-      - id: ctc_vector
-        type: u1
-      - id: ctc_channels
-        size: 32
+      - id: count
+        type: vlq
+      - id: checkpoints
+        type: checkpoint
         repeat: expr
-        repeat-expr: 4
-        doc: |
-          control, time constant, awaiting constant, running, waiting for the trigger edge, count at the
-          anchor (0 = 256), anchor u8 (timer - the clock; counter or waiting - the input edges counted),
-          zero counts before the anchor u8, zero counts turned into requests u8, IP, IUS.
-      - id: sio_channels
-        size: 18
-        repeat: expr
-        repeat-expr: 2
-        doc: WR0-WR7, pointer, receive FIFO[3], FIFO count, last data, overrun, Rx-first armed, Rx-first IP, Rx IUS.
-      - id: pio_ports
-        size: 11
-        repeat: expr
-        repeat-expr: 2
-        doc: mode, direction, output, vector, interrupt control, mask, next, inputs, condition, IP, IUS.
-
-  sprinter_input_blob:
-    doc: |
-      Payload of peripheral 31 SprinterInput (89 bytes, version 3; version 2 was 88 bytes, without
-      the PLD keyboard flags; version 1 was 85 bytes, without the board mouse counters). Times are
-      base (3.5 MHz) T-states of the machine's cumulative clock.
-    seq:
-      - id: version
-        type: u1
-      - id: kbd_queue
-        size: 16
-      - id: kbd_head
-        type: u1
-      - id: kbd_count
-        type: u1
-      - id: kbd_overflow
-        type: u1
-      - id: kbd_repeat_key
-        type: u1
-      - id: kbd_held
-        size: 16
-      - id: kbd_next_byte_at
-        type: u8
-      - id: kbd_last_byte_at
-        type: u8
-      - id: kbd_repeat_at
-        type: u8
-      - id: mouse_packet
-        size: 3
-      - id: mouse_sent
-        type: u1
-      - id: mouse_last_x
-        type: u1
-      - id: mouse_last_y
-        type: u1
-      - id: mouse_last_buttons
-        type: u1
-      - id: mouse_synced
-        type: u1
-      - id: mouse_next_byte_at
-        type: u8
-      - id: kbd_overruns
-        type: u8
-      - id: board_mouse_x
-        type: u1
-        doc: The board mouse counters both mouse views read (serial packets, the PLD's Kempston view).
-      - id: board_mouse_y
-        type: u1
-      - id: board_mouse_buttons
-        type: u1
-        doc: Active low, D0 left, D1 right, D2 middle.
-      - id: pld_keyboard_flags
-        type: u1
-        doc: |
-          The PLD's keyboard block (KBD.TDF) decoding the wire: bit 0 KB_EXT (last byte #E0), bit 1
-          KB_OFF (last byte other than #E0 was #F0), bit 2 KB_CTRL, bit 3 KB_ALT, bit 4 KB_SH.
-
-  peripheral_blob:
-    doc: |
-      A length-prefixed blob containing a serialized peripheral device
-      (AY/TurboSound, FDC, Tape, Covox). The format of the blob's contents
-      is device-specific; the .ttd format treats them as opaque bytes.
-      Unchanged from v1.
-    seq:
-      - id: size
-        type: u4
-      - id: data
-        size: size
+        repeat-expr: count.value
 
   checkpoint:
+    seq:
+      - id: frame_delta
+        type: vlq
+        doc: from the previous checkpoint of the part (the first from 0)
+      - id: flags
+        type: u1
+        doc: bit 0 baseline - a segment starts here, every piece stored whole (D41)
+      - id: start
+        type: u8
+        doc: the frame's start in machine time
+      - id: cpu
+        size: 48
+        doc: TTDCpuState (ttdcheckpoint.h)
+      - id: chipset
+        size: 120
+        doc: TTDChipsetState (ttdcheckpoint.h)
+      - id: unclaimed_count
+        type: vlq
+      - id: unclaimed_devices
+        size: unclaimed_count.value
+      - id: bus_read_cursor
+        type: vlq
+        doc: positions in the file's journals, from its first record
+      - id: bus_write_cursor
+        type: vlq
+      - id: media_read_cursor
+        type: vlq
+      - id: bus_vector_cursor
+        type: vlq
+      - id: region_count
+        type: vlq
+      - id: regions
+        type: region_changes
+        repeat: expr
+        repeat-expr: region_count.value
+
+  region_changes:
+    doc: Each listed piece takes the next version of the part's stream 1
+    seq:
+      - id: region
+        type: vlq
+      - id: count
+        type: vlq
+      - id: pieces
+        type: vlq
+        repeat: expr
+        repeat-expr: count.value
+
+  payload_events:
+    doc: Stream 5
+    seq:
+      - id: count
+        type: vlq
+      - id: events
+        type: event
+        repeat: expr
+        repeat-expr: count.value
+
+  event:
+    seq:
+      - id: time_delta
+        type: vlq
+        doc: machine time from the previous event of the part
+      - id: kind
+        type: u2
+        doc: TTDEventKind (engine/ttdeventlog.h)
+      - id: cpu
+        type: u2
+      - id: args
+        size: 16
+      - id: payload_size_plus_one
+        type: vlq
+      - id: payload
+        size: 'payload_size_plus_one.value == 0 ? 0 : payload_size_plus_one.value - 1'
+
+  payload_ports:
     doc: |
-      One complete machine state at a frame boundary. Always captured at
-      tInFrame == 0. v2 adds two fields up front: frame_kind (I-frame vs
-      P-frame) and keyframe_anchor (the frame index of the I-frame this
-      delta chain roots at, for seek-side delta-chain reconstruction).
+      Streams 13-15 (IN, OUT, interrupt vectors), as columns. A time is the
+      delta from the previous record of the same frame, or the time itself on
+      a new frame
+    seq:
+      - id: count
+        type: vlq
+      - id: times
+        type: port_time
+        repeat: expr
+        repeat-expr: count.value
+      - id: ports
+        type: u2
+        repeat: expr
+        repeat-expr: count.value
+      - id: pcs
+        type: u2
+        repeat: expr
+        repeat-expr: count.value
+      - id: values
+        type: u1
+        repeat: expr
+        repeat-expr: count.value
+
+  port_time:
+    seq:
+      - id: frame_delta
+        type: vlq
+      - id: time
+        type: vlq
+
+  payload_media_reads:
+    doc: Stream 16
+    seq:
+      - id: count
+        type: vlq
+      - id: reads
+        type: media_read
+        repeat: expr
+        repeat-expr: count.value
+
+  media_read:
     seq:
       - id: frame
         type: u8
-        doc: Frame index since session start.
-      - id: global_t
-        type: u8
-        doc: Denormalized sort key (== frame at frame boundary in v2).
-      - id: frame_kind
-        type: u1
-        doc: |
-          0 = KeyFrame (I-frame): every model RAM page captured as 4
-              independent Full sub-page snapshots. Self-sufficient for
-              restore.
-          1 = DeltaFrame (P-frame): only dirty pages re-captured, encoded
-              as XorPrev slots. Restore walks the delta chain back to the
-              anchoring KeyFrame.
-      - id: keyframe_anchor
-        type: u8
-        doc: |
-          Frame index of the KeyFrame this checkpoint's delta chain roots
-          at. For a KeyFrame this equals `frame`; for a DeltaFrame this
-          equals the most recent KeyFrame's frame index. Used by the seek
-          engine to bound recovery work after a corrupt delta.
-      - id: cpu
-        type: cpu_state
-      - id: chipset
-        type: chipset_state
-      - id: ram_sub_slots
+      - id: t_in_frame
         type: u4
+      - id: slot
+        type: str_vlq
+      - id: lba
+        type: u8
+      - id: size
+        type: vlq
+      - id: bytes
+        size: size.value
+
+  payload_configuration:
+    doc: Stream 6
+    seq:
+      - id: entry_count
+        type: vlq
+      - id: entries
+        type: config_entry
         repeat: expr
-        repeat-expr: _parent.header.model_ram_pages * 4
-        doc: |
-          Flat list of (4 * model_ram_pages) slot indices, in
-          (page, sub) order:
-              ram_sub_slots[page * 4 + sub]
-          Each entry is either:
-            * a slot index into the page_store sequence (0-based, compact)
-            * the sentinel 0xFFFFFFFF (NEVER_TOUCHED_SLOT) meaning the
-              sub-page was never written during the session up to this
-              checkpoint — live RAM content IS the historical content, so
-              the restore path skips it.
-
-        doc: AY / TurboSound state.
-
-        doc: WD1793 FDC + FDD state.
-
-        doc: Tape state.
-      - id: peripheral_blob_count
-        type: u2
-        doc: |
-          Number of peripheral blobs produced by TTDPeripheralRegistry. Every
-          device goes through the registry — the core four (TurboSound, Beta
-          Disk, Tape, Covox) and any model-specific ones alike — so a device
-          absent on this machine simply has no entry rather than an empty
-          fixed slot. Entries are written sorted by peripheral_id so the byte
-          image is reproducible; the producer's container is an unordered map.
-      - id: peripheral_blobs
-        type: registry_blob
+        repeat-expr: entry_count.value
+      - id: media_change_count
+        type: vlq
+      - id: media_changes
+        type: media_change
         repeat: expr
-        repeat-expr: peripheral_blob_count
-        doc: Covox 4-channel DAC state.
+        repeat-expr: media_change_count.value
+
+  config_entry:
+    seq:
+      - id: frame
+        type: u8
+      - id: field_count
+        type: vlq
+      - id: fields
+        type: config_field
+        repeat: expr
+        repeat-expr: field_count.value
+
+  config_field:
+    seq:
+      - id: name
+        type: str_vlq
+      - id: value
+        type: u8
+      - id: affects_restore
+        type: u1
+
+  media_change:
+    seq:
+      - id: slot
+        type: str_vlq
+      - id: format
+        type: str_vlq
+      - id: has_versions
+        type: u1
+      - id: checkpoint
+        type: vlq
+      - id: content_id
+        type: u8
+      - id: version
+        type: u8
+
+  payload_frame_stream:
+    doc: |
+      Streams 0x0100-0x013F (ancillary, D19): the copies a frame-boundary
+      stream took in the part's frames. Each is the XOR with the stream's
+      previous copy in the file, zstd-compressed; a full copy at least every 50
+      frames, on a size change and at the file's start. Stream 0x0100 is the
+      screenshot: u2 width, u2 height, u1 video mode, then the framebuffer (RGBA)
+    seq:
+      - id: count
+        type: vlq
+      - id: copies
+        type: frame_copy
+        repeat: expr
+        repeat-expr: count.value
+
+  frame_copy:
+    seq:
+      - id: frame_delta
+        type: vlq
+        doc: from the part's first frame
+      - id: kind
+        type: u1
+        doc: 0 full, 1 the XOR with the previous copy
+      - id: raw_size
+        type: vlq
+      - id: packed_size
+        type: vlq
+      - id: packed
+        size: packed_size.value
+        doc: a zstd frame of raw_size bytes
+
+  payload_write_journal:
+    doc: |
+      Stream 7 (ancillary, D40), with the session's last part: the records in
+      blocks of 2,048 in v1's column layout (EncodeWriteBlock,
+      ttdwritejournal.cpp), then the segments the journal covers
+    seq:
+      - id: record_count
+        type: vlq
+      - id: blocks
+        type: write_block
+        repeat: expr
+        repeat-expr: '(record_count.value + 2047) / 2048'
+      - id: segment_count
+        type: vlq
+      - id: segments
+        type: write_segment
+        repeat: expr
+        repeat-expr: segment_count.value
+
+  write_block:
+    doc: |
+      Columns (EncodeWriteBlock): varint size of the time column, varint
+      first globalT, the varint time deltas, then per record u2 addresses,
+      u2 PCs, u1 values, u1 pages (low 8 bits), the I/O bits (1 bit per
+      record, LSB first) and - only in a block that has a page above 255 -
+      the page-high bits in the same layout: bit 8 of the page, set for a
+      virtual page of another memory space (0x110-0x11F the Sprinter's video
+      RAM, 0x120-0x12F its fast RAM; the address holds the offset in that
+      page). A block without the column has RAM pages only (all older ones).
+      After it, only in a block that has such a record, the flip bits in the
+      same layout (the page-high column is then written, zeros if none): the
+      byte sits at (address & 0x3FFF) ^ 0x2000 of its page - the Next's MMU
+      maps an odd 8K page into an even slot or the reverse (2026-11-03)
+    seq:
+      - id: size
+        type: vlq
+      - id: columns
+        size: size.value
+
+  write_segment:
+    seq:
+      - id: from
+        type: u8
+      - id: to
+        type: u8
+
+  # --- Basics ------------------------------------------------------------------
+
+  vlq:
+    doc: LEB128 unsigned (7 bits per byte, low first, bit 7 = more)
+    seq:
+      - id: groups
+        type: u1
+        repeat: until
+        repeat-until: (_ & 0x80) == 0
+    instances:
+      value:
+        value: >-
+          (groups[0] & 0x7f)
+          + (groups.size > 1 ? (groups[1] & 0x7f) << 7 : 0)
+          + (groups.size > 2 ? (groups[2] & 0x7f) << 14 : 0)
+          + (groups.size > 3 ? (groups[3] & 0x7f) << 21 : 0)
+          + (groups.size > 4 ? (groups[4] & 0x7f) << 28 : 0)
+          + (groups.size > 5 ? (groups[5] & 0x7f) << 35 : 0)
+          + (groups.size > 6 ? (groups[6] & 0x7f) << 42 : 0)
+          + (groups.size > 7 ? (groups[7] & 0x7f) << 49 : 0)
+          + (groups.size > 8 ? (groups[8] & 0x7f) << 56 : 0)
+
+  str_vlq:
+    seq:
+      - id: size
+        type: vlq
+      - id: value
+        type: str
+        size: size.value
+        encoding: UTF-8

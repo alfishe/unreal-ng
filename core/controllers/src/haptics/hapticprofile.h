@@ -5,6 +5,7 @@
 /// frame probes of §5) and the rules that play an effect of the built-in library (§6.2) when a source fires.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,11 @@ struct HapticSource
     float riseDb = 12.0f;
     float withinMs = 30.0f;
     float floor = 0.05f;  ///< onset: the level must reach it (0..1 of full scale)
+    /// `if:` (the core condition language, docs/features/conditional-breakpoints.md): a breakpoint probe counts a hit
+    /// only when it holds at the access (with its access operands); any other source fires only when it holds at the
+    /// frame end. `when:` keeps its meaning beside it; an `each_write` probe's byte before is then the one of the
+    /// last write the condition held for. Empty: none
+    std::string condition;
 
     bool IsEvent() const
     {
@@ -104,6 +110,9 @@ struct HapticSource
     }
     /// The breakpoint probe this source arms (IsBreakpointProbe)
     HapticProbe Probe() const;
+    /// Where `if:` is checked, as the access operands it may use (BreakpointConditionTrigger: BRK_COND_EXEC for an
+    /// exec probe, ..., 0 at the frame end)
+    uint8_t ConditionTrigger() const;
 };
 
 /// Where an effect plays: the abstract targets of §6.1, ORed
@@ -113,7 +122,9 @@ enum HapticTarget : uint8_t
     kHandleHigh = kRumbleHigh,
     kTriggerLeft = kRumbleLeftTrigger,
     kTriggerRight = kRumbleRightTrigger,
-    kTargetAll = 15,
+    kHdLeft = kRumbleHdLeft,
+    kHdRight = kRumbleHdRight,
+    kTargetAll = kHandleLow | kHandleHigh | kTriggerLeft | kTriggerRight | kHdLeft | kHdRight,
 };
 
 struct HapticRule
@@ -124,10 +135,19 @@ struct HapticRule
     uint8_t target = 0;  ///< 0: the effect's own; else the first of `trigger.right|handle.high`
     std::vector<uint8_t> fallbacks;  ///< the rest, in order: the first a device has plays (Haptics_Fallback)
     uint8_t priority = 0;            ///< `priority`: over the effect's own when set
-    /// `hd: {frequency_hz, low_hz, high_hz}`: the HD frequency of each band over the effect's own (0: the effect's);
-    /// `frequency_hz` sets both bands, `low_hz` / `high_hz` one each
+    /// `player: N`: plays on the N-th pad connected only (the numbering of `play@N` layers); 0: on every pad
+    uint8_t player = 0;
+    /// `if: {source, equals}`: the rule plays only while the byte a `value` source watches equals `gateValue` at the
+    /// frame the event fires (the direction of a blow); empty: always
+    std::string gate;
+    uint8_t gateValue = 0;
+    /// `hd: {frequency_hz, low_hz, high_hz, waveform}`: the HD frequency of each band over the effect's own (0: the
+    /// effect's); `frequency_hz` sets both bands and the voice coils' tone, `low_hz` / `high_hz` one band each,
+    /// `waveform` (sine, square, noise) the coils' wave
     uint16_t lowHz = 0;
     uint16_t highHz = 0;
+    uint16_t hdFrequency = 0;      ///< the voice coils' tone
+    std::optional<HdWave> hdWave;  ///< the voice coils' wave
 
     /// The target for a device with @p actuators: the first alternative it has all of, else the last one
     uint8_t TargetFor(uint8_t actuators) const;
@@ -148,6 +168,12 @@ struct HapticProfile
 /// The `haptics` section -> its sources and rules; false with the reason, which names the place
 bool ParseHapticProfile(const JsonValue& section, HapticProfile& out, std::string& error);
 
+/// Checks an `if:` text for a source whose condition takes the access operands @p trigger (ConditionTrigger): false
+/// with the reason. The core installs it (this library does not link the condition engine); none installed: every
+/// text passes here and the machine checks it when the profile is armed
+using HapticConditionCheck = bool (*)(const std::string& text, uint8_t trigger, std::string& error);
+void SetHapticConditionCheck(HapticConditionCheck check);
+
 /// The built-in effect library (haptics.md §6.2): peak levels on the handle motors, a length, an envelope; false for an
 /// unknown id
 bool BuiltinHapticEffect(const std::string& id, HapticEffect& out);
@@ -159,14 +185,12 @@ const std::vector<std::string>& BuiltinHapticEffectIds();
 bool ParseHapticStream(const std::string& text, HapticStream& out);
 const char* HapticStreamName(HapticStream stream);
 
-/// "Add probe from debugger" (haptics.md §7): @p probe (a breakpoint's address or port) as a new source of the
-/// `haptics` section @p haptics (made an object when null) with a rule that plays @p play; a write probe sees every
-/// write (`each_write`, `when: changed`). The new source's name in @p name ("probe-1", "probe-2", ...); false with the
-/// reason when the result does not parse
-bool AddHapticProbeSource(JsonValue& haptics, const HapticProbe& probe, const std::string& play, std::string& name,
-                          std::string& error);
+/// @p overlay laid over the `haptics` section @p base: its sources replace those of the same name, its rules follow
+/// the base's, any other field replaces the base's (the session trial of haptics.md §11)
+JsonValue OverlayHaptics(const JsonValue& base, const JsonValue& overlay);
 
-/// Move @p levels to @p target: the loudest handle level goes to every target channel
+/// Move @p levels to @p target: the loudest level goes to every target channel; `all` keeps each channel's own and
+/// gives the voice coils the loudest where the effect has none for them
 RumbleLevels RetargetLevels(const RumbleLevels& levels, uint8_t target);
 
 }  // namespace controllers

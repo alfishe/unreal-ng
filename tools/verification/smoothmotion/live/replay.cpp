@@ -383,7 +383,7 @@ int main(int argc, char** argv)
     }
 
     // The perfect clock: frame k due at k periods, a refresh every mean refresh period from 3 ms, frames pushed two
-    // ahead (POC 039's filters tool); smoothness.py's own times (--src-hz, --disp-hz)
+    // ahead (POC 047's filters tool); smoothness.py's own times (--src-hz, --disp-hz)
     {
         const std::string ideal = outDir + "/ideal";
         SmoothMotion sm;

@@ -659,7 +659,7 @@ class Project:
         extra = e.get("face" + suffix) or {}
         if g:
             f = {"glyph": g}
-            if e.get("label") and not suffix:
+            if e.get("label"):  # on and off alike: a toggle that is on keeps saying what it is
                 f["label"] = e["label"]
         elif suffix:
             return dict(extra) if extra else None
@@ -983,6 +983,8 @@ def project_model(doc, vocab, base=None, where=""):
         if m["kind"] == "key":
             fo = dict(n.get("face_on") or {})
             goi, got = face_glyph(fo), (meta.get("glyph_on") or [None])[0]
+            if fo.get("label") is not None and fo.get("label") == face.get("label"):
+                fo.pop("label")  # the on face repeats the key's label (deckflow writes it): not an edit of its own
             eff["glyph_on"] = goi or got
             if fo:
                 m["face_on"] = fo
@@ -1203,6 +1205,84 @@ def menu_tree(model):
     if root:
         walk(root)
     return out
+
+
+MAP_HEAD = "# +-- screen "
+MAP_TAIL = "# +--"
+
+
+def map_cell(model, nid):
+    """A key's text in a screen map: its label (else its id); `>` marks a key that opens a page."""
+    n = model["nodes"][nid]
+    text = str(n.get("label") or (nid if n.get("kind") == "key" else n.get("open") or nid)).upper()
+    return (">" + text if n.get("kind") in ("menu", "include") else text)[:9]
+
+
+def map_step(st):
+    """What a dial side or a key does, in a word: its action id or where it navigates."""
+    if not isinstance(st, dict):
+        return ""
+    if st.get("action"):
+        return str(st["action"])
+    if st.get("nav"):
+        return "go " + str(st["nav"])
+    return ""
+
+
+def screen_map(model, mid):
+    """The comment block above `menu ID:`: the page as the deck shows it (a cell per key, `<` the back key, `.` free),
+    the pages its keys open and what its dials do. deckflow build writes it; edit the keys, not the map."""
+    rows, cols = grid_of(model)
+    n = model["nodes"][mid]
+    cells = {}
+    opens = []
+    for k in children(model, mid):
+        c = model["nodes"][k]
+        if isinstance(c.get("at"), list) and len(c["at"]) == 2:
+            cells[tuple(c["at"])] = map_cell(model, k)
+            if c.get("kind") in ("menu", "include"):
+                opens.append(f"[{c['at'][0]},{c['at'][1]}] {k}" if (c.get("open") or k) == k
+                             else f"[{c['at'][0]},{c['at'][1]}] {c.get('open')}")
+    back = back_slot(model, mid)
+    if back is not None:
+        cells.setdefault(back, "<BACK")
+    title = n.get("title") or mid
+    out = [f"{MAP_HEAD}{mid}: {title} (deckflow build writes this map from the keys below)"]
+    out.append("#     " + "".join(f"{c:<11}" for c in range(cols)).rstrip())
+    for r in range(rows):
+        out.append(f"# {r} | " + "".join(f"{cells.get((r, c), '.'):<11}" for c in range(cols)).rstrip())
+    if opens:
+        line = "# opens:"
+        for o in opens:
+            if len(line) + len(o) + 2 > 116:
+                out.append(line.rstrip(","))
+                line = "#       "
+            line += f" {o},"
+        out.append(line.rstrip(","))
+    for idx, d in sorted((n.get("dials") or {}).items(), key=lambda x: int(x[0])):
+        sides = [f"{side} {map_step(d.get(side))}" for side in ("turn", "press", "left", "right") if d.get(side)]
+        out.append(f"# dial {idx} {str(d.get('label') or '').upper()}: " + ", ".join(sides))
+    out.append(MAP_TAIL)
+    return out
+
+
+def refresh_maps(text, model):
+    """The spec text with every page's screen map (re)written right above its `menu ID:` line."""
+    lines = text.split("\n")
+    marks = [i for i, l in enumerate(lines) if l.startswith("menu ") and l.rstrip().endswith(":")]
+    for i in reversed(marks):
+        mid = lines[i][5:].rstrip()[:-1].strip()
+        if mid not in model["nodes"]:
+            continue
+        start = i
+        if i > 0 and lines[i - 1] == MAP_TAIL:  # the old map: from its head down to the tail above the menu
+            j = i - 2
+            while j >= 0 and not lines[j].startswith(MAP_HEAD):
+                j -= 1
+            if j >= 0:
+                start = j
+        lines[start:i] = screen_map(model, mid)
+    return "\n".join(lines)
 
 
 def section_text(model, mid, auto=()):
@@ -1935,12 +2015,22 @@ class Pipeline:
             models[u.label()] = (u, M, doc)
         if errors:
             raise Failed(errors + all_issues)
+        for u in units:
+            all_changes += self.write_maps(u)
         if cli:
             main = units[0]
             all_issues += cli_check(self.paths, main.project_path)
         if docs and not units[0].shared:
             all_changes += self.write_docs(units[0], models)
         return all_changes, all_issues
+
+    def write_maps(self, u):
+        """The spec's screen maps brought up to date (comments only: the model does not change)."""
+        if not os.path.exists(u.spec_path):
+            return []
+        sp, S = self.spec_side(u)
+        text = refresh_maps(sp.text, S)
+        return [f"wrote {self.paths.rel(u.spec_path)} (screen maps)"] if write_if_changed(u.spec_path, text) else []
 
     def all_specs(self):
         out = []
@@ -1970,6 +2060,9 @@ class Pipeline:
                     continue
                 issues += sp.issues
                 issues += check_model(S, self.vocab, sp)
+                if refresh_maps(sp.text, S) != sp.text:
+                    issues.append(Issue(self.paths.rel(u.spec_path), "the screen maps are not up to date "
+                                                                     "(deckflow build writes them)", False))
                 B = self.base_side(u)
                 P = self.project_side(u, B)
                 if P is not None:

@@ -1,0 +1,87 @@
+# Torvin: Echo of the Realms (ZX Next, Technoshed), two demos, one document each: TorvinRealmsDemo 2.00 and the older
+# TorvinDemo (the hero is called Lumo in its story text). Controls (the manual, Torvin.pdf): O left, P right, Q up,
+# A down, Space jumps; the joystick's fire jumps. Hold Q / A with O / P towards a ladder and Torvin grabs it. The NEX
+# needs its data/ folder next to the working directory of the SD card (esxDOS).
+#
+# Haptics (haptics.md section 13): events only, from the code, never from the sound. The game (compiled C, Z88DK) asks
+# for each sound through one routine (RealmsDemo #773E, TorvinDemo #7749: `ld (#FD58),a`, A = the effect), so the
+# callers are a map of the events. Found by per-frame coverage diffs around each event, then read in the disassembly.
+# Slots 2 to 7 of the Next MMU stay put in play (#4000 and #6000 = page 5, #8000 and #A000 = page 2, #C000 = page 0),
+# so a probe takes its 16K page. Probes only fire while the emulator runs for real (resume); run_frames does not
+# deliver them.
+#
+# TorvinRealmsDemo 2.00 (probes proven by play, game.events monitor):
+#   jump  #8AA6  the jump start (sound #11, `ld a,#11` after the key test). One fire per jump: four short Space taps on the
+#         spot gave four fires, and the per-frame coverage saw it once, in the frame of the take-off, nowhere else.
+#   hurt  #9B78  a bat (Order member) touches Torvin and he stays alive (sound #4B). The health byte #D43B falls by one
+#         at the same time: 29 falls of #D43B, 29 fires over an 80 s run. The lethal touch does not fire it.
+#   key   #86B5  a key is picked up (sound 1; the HUD shows "HOLDING" and the key): one fire at the green key of the
+#         first screen, none in thousands of frames of walking, jumping and climbing.
+#   land  #8BA8  the jump state is reset (`xor a / ld (#D441),a / ld a,8 / ld (#D443),a ...`), about 33 frames after the
+#         take-off: five Space taps gave five jumps and five lands, and over 120 s of random play (about 70 jumps) every
+#         `jump` was followed by one `land`.
+#   died  #B284  health reached 0 (sound #41, the game-over screen "Sadly Torvin has fallen"): +1 for a bat's last hit
+#         at health 1 (hurt did not fire), +1 for #D43B poked to 0.
+# TorvinDemo (the older demo): the same game with the data one #300 lower (health #D13B) and other code addresses, found
+#   by the same sound routine and the bytes around each call; proven in the same way.
+#   jump  #961D (four taps, four fires), hurt  #A7AA (16 falls of the health byte, 16 fires in 30 s), died  #7A56 (page 5:
+#   the code lives in slot 3; +1 for a bat's last hit, hurt silent). No key probe: its keys were not reached.
+#
+# Left out (named so nobody repeats them):
+#   #B078 / #B080 / #B0C0 (sounds #41 / #40): the game-over screen; #B080 ("die2") fires about ten seconds after `died`, when
+#         the game restarts. Not shown to be a game event.
+#   #8C47 (RealmsDemo): sound 6, `dec (#D43B)`: seen once in the frame #D43B fell by one, never again, so not shown to
+#         be once per event (probably a Warden or Order guard contact; the fall of 32 and 45 pixels on floor 0 did not
+#         reach it). Its twins #83EB and #8C2A never ran. They are damage paths, not proven.
+#   #84DF (RealmsDemo) and #8E84 (TorvinDemo): sound 4, `#D43B += 2` capped at the maximum: a heart picked up. The heart
+#         could not be reached in the time, so it never fired.
+#   #8977 and #8A0D (RealmsDemo), #9148 and #91E0 (TorvinDemo): sound #22 (a door unlocked); #C30E (sound #31, the exit
+#         door and the shard): not reached.
+#   a write watch on #D43B (decreased): it fired 11 times on the title and story screens, which reuse the byte.
+# Known limits: a host gamepad that is plugged in and drifts makes Torvin walk or jump with no key pressed (the game
+# also reads the Kempston port), and each such jump fires `jump`. Two bats touching in one frame count as two hurts.
+schema: 1
+kind: play
+id: builtin/game/torvin
+label: Torvin, Echo of the Realms (Realms demo 2.00)
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["5f76d5109befcfb6672ee5282c03fba6879e1c8d40cc26cc71fe3271658f8e1f"]
+layers:
+  play:
+    south: { key: SPACE, label: Jump }
+events:
+  jump: { probe: exec, address: "page:2:0x8AA6" }
+  hurt: { probe: exec, address: "page:2:0x9B78" }
+  key:  { probe: exec, address: "page:2:0x86B5" }
+  died: { probe: exec, address: "page:2:0xB284" }
+  land: { probe: exec, address: "page:2:0x8BA8" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: hurt, play: hit }
+    - { on: key, play: pickup }
+    - { on: died, play: life-lost }
+---
+schema: 1
+kind: play
+id: builtin/game/torvin-demo
+label: Torvin, Echo of the Realms (first demo)
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["0a932fab7d1f8cda3c4a5e2ea305e131653c7e8711ed3fd5cb79a7ce2d866bb7"]
+layers:
+  play:
+    south: { key: SPACE, label: Jump }
+events:
+  jump: { probe: exec, address: "page:2:0x961D" }
+  hurt: { probe: exec, address: "page:2:0xA7AA" }
+  died: { probe: exec, address: "page:5:0x7A56" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: hurt, play: hit }
+    - { on: died, play: life-lost }

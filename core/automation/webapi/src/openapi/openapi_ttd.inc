@@ -2,7 +2,7 @@
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
     // + Phase 4 reverse-execution (2 endpoints) + session restore via load
-    // (1 endpoint) + TD-4 agent bookmarks (3 endpoints) = 19 endpoints total,
+    // (1 endpoint) + TD-4 agent bookmarks (5 endpoints) = 21 endpoints total,
     // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
@@ -54,7 +54,7 @@
         "- `black_box`: record as the black box (the engine; D29): keep the last `minutes` (default 5, 1..1440) "
         "and never hold turbo or the host speed - the recording stops before either takes effect, its history kept, "
         "and a new session starts once nothing accelerates; fast loaders' traps are recorded. Absent or false: an "
-        "explicit recording, which holds the machine at real speed. v1 answers 400 for black_box true";
+        "explicit recording, which holds the machine at real speed";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/start"]["post"]["parameters"][0]["required"] = true;
@@ -110,8 +110,8 @@
         op["description"] =
             "Replays frames `from_frame`..`to_frame` (both optional; default: the whole session) with every memory "
             "write collected, and adds them to the write journal: the frames join its spans. Frames already covered "
-            "are left as they are; the session's last frame and frames holding a v1 marker without its data are not "
-            "built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
+            "are left as they are; the session's last frame and frames holding a barrier (a marker without the data a "
+            "replay needs) are not built. About 2-4 ms per frame, like RZX playback: the request answers when done; GET /ttd/journal shows "
             "the progress meanwhile (`write_journal_build`) and POST /ttd/journal/build/cancel stops it (what was "
             "built is kept). Not while recording.";
         op["parameters"][0]["name"] = "id";
@@ -502,6 +502,61 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // PUT /ttd/bookmarks/{label} — edit a bookmark's note, tags, label
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["summary"] = "Edit a TTD agent bookmark: note, tags, label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["description"] =
+        "Only the fields given change: note (append: as a new line), tags (replace), add_tags, remove_tags, "
+        "rename. The bookmark's time and context stay.";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["name"] = "label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDBookmarkNoteRequest";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["200"]["description"] = "The bookmark as it is now (bookmark, text)";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["400"]["description"] = "Nothing to change, or a bound broken";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["404"]["description"] = "Emulator instance not found, or unknown bookmark label";
+    paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["put"]["responses"]["409"]["description"] = "rename onto an existing label";
+
+    // =====================================================================
+    // GET / POST /ttd/export-bookmarks — the bookmarks written up
+    // =====================================================================
+    for (const char* method : {"get", "post"})
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/export-bookmarks"][method];
+        op["summary"] = "Export the TTD agent bookmarks: WALKTHROUGH section, profile comment or JSON";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "format = markdown (default: a WALKTHROUGH section, one block per bookmark with its note, context, "
+            "watched bytes, tags and the seek call), profile (YAML comment lines of at most 120 columns for a game "
+            "profile's header) or json; tag (only those), title, path (written there too). GET takes them as the "
+            "query, POST as the body. The machine does not move.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        op["parameters"][0]["schema"]["type"] = "string";
+        op["responses"]["200"]["description"] = "The export";
+        op["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBookmarkExportResponse";
+        op["responses"]["400"]["description"] = "Unknown format";
+        op["responses"]["409"]["description"] = "The file could not be written";
+    }
+    for (const char* name : {"format", "tag", "title", "path"})
+    {
+        Json::Value p;
+        p["name"] = name;
+        p["in"] = "query";
+        p["schema"]["type"] = "string";
+        paths["/api/v1/emulator/{id}/ttd/export-bookmarks"]["get"]["parameters"].append(p);
+    }
+
+    // =====================================================================
     // DELETE /ttd/bookmarks/{label} — remove an agent bookmark (TD-4)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/bookmarks/{label}"]["delete"]["summary"] =
@@ -537,8 +592,7 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
         "Serializes the current TTD session to a .ttd binary file at the "
         "given filesystem path: the engine's session file (schema 2, Kaitai "
-        "schema core/src/debugger/ttd/engine/ttdsession.ksy); on v1 "
-        "(UNREAL_TTD_BACKEND=v1) v1's format (ttd.ksy).";
+        "schema core/src/debugger/ttd/ttd.ksy).";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;
@@ -651,14 +705,17 @@
             op["responses"]["400"]["description"] = "Missing or bad option, a memory the session does not record, a frame "
                                                     "before the first checkpoint";
             op["responses"]["404"]["description"] = "No recorded history, or the instance is not found";
-            op["responses"]["501"]["description"] = "Backend v1 (no piece store)";
+            op["responses"]["501"]["description"] = "Time travel is not available for this instance";
         }
         Json::Value& at = paths[kAt]["post"];
         at["summary"] = "Read a memory as it was at a past checkpoint, without seeking";
         at["description"] =
             "Bytes of any memory the session records (machine RAM, the Sprinter's video and fast RAM, sound card RAM and "
             "flash, VDAC2, EEPROMs ...) at the newest checkpoint at or before 'frame', from the engine's store: the "
-            "machine does not move. at_frame names the checkpoint read, exact whether it is the frame asked for.";
+            "machine does not move. at_frame names the checkpoint read, exact whether it is the frame asked for. ram / "
+            "ramN offsets are physical. Space cpu: offset is a Z80 address (offset + length at most 65536) and the bytes "
+            "are what the CPU saw at frame / tinframe through its paging then (a silent replay, the machine restored), "
+            "with banks [{window, addr, kind, page, name}].";
         Json::Value& atBody = at["requestBody"]["content"]["application/json"]["schema"];
         atBody["properties"]["frame"]["type"] = "integer";
         atBody["properties"]["offset"]["type"] = "string";
@@ -666,7 +723,9 @@
         atBody["properties"]["length"]["type"] = "integer";
         atBody["properties"]["length"]["description"] = "Bytes, 1..65536, default 256 (clipped at the memory's end)";
         atBody["required"].append("frame");
-        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}";
+        atBody["properties"]["tinframe"]["type"] = "integer";
+        atBody["properties"]["tinframe"]["description"] = "A point inside the frame (ram, ramN, vram, cache, cpu)";
+        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}; space cpu adds banks";
         Json::Value& diff = paths[kDiff]["post"];
         diff["summary"] = "What changed in a memory between two checkpoints";
         diff["description"] =
@@ -696,9 +755,12 @@
         "alone), 'ear' (the program saw the tape signal change), 'ay-read' / "
         "'ay-write' [register] (the register selection is followed through the OUT "
         "journal), 'ay-select', 'border', 'beeper', or 'in' / 'out' narrowed with the "
-        "raw filters. Nothing is replayed: it answers the same on a loaded .ttd file. "
+        "raw filters. The search replays nothing: it answers the same on a loaded .ttd file. A read of the ULA "
+        "names the half-rows it selected and the keys it saw down; with 'context' (default on, off while a "
+        "recording runs) each hit carries the registers at its instruction and the word at SP (the caller), replayed "
+        "with the machine put back. "
         "409 when the session has no port journal (TSConf, ZX Next, NeoGS, a file "
-        "without it) or while a recording is running. With 'file' it searches a .ttd on "
+        "without it), or when a long run keeps a running recording's CPU busy (pause and ask again). With 'file' it searches a .ttd on "
         "disk instead, without loading it (400 when the file cannot be read or has no journals).";
     paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/port-events"]["post"]["parameters"][0]["in"] = "path";
@@ -812,6 +874,42 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // POST /ttd/probe-frames — the frames a game profile's probes fired in
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["summary"] = "The frames a game profile's probes fired in (a replay of the window)";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["description"] =
+        "Replays each complete recorded frame of [from_frame, to_frame] with the probes armed as taps of the "
+        "replay's own sink, so they match as in real time (banks, pages, port masks, the `if` condition with its "
+        "operands); the live haptics, the user's breakpoints and the deck hear nothing, and the machine stays where "
+        "it stood. A frame the coverage index proves free of every memory probe is not replayed (pruned_frames); "
+        "a frame a replay barrier cuts is skipped and listed in barrier_frames. Body: probes, an array of at most 16 "
+        "objects {probe: exec|read|write|port-in|port-out, address, end?, page?, port_mask?, if?} (numbers or "
+        "strings, decimal or hex), or one probe's fields at the top level; from_frame?, to_frame?, limit? (frames "
+        "listed per probe, default 1000, at most 10000). A probe whose condition does not compile has error and no "
+        "frames. When every probe's list is full and the window goes on, truncated is true and next_from_frame is "
+        "the next call's from_frame. A recording running is paused for the query.";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["probes"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["probes"]["items"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["from_frame"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["to_frame"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["limit"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["200"]["description"] =
+        "{from_frame, to_frame, replayed_frames, pruned_frames, barrier_frames, blocked_by_marker?, probes: "
+        "[{probe, address, end?, page?, port_mask?, if?, error?, frame_count, hit_count, frames, hits, truncated}], "
+        "truncated, next_from_frame?}";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["400"]["description"] = "A probe field is malformed, or more than 16 probes";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["404"]["description"] = "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["409"]["description"] = "No complete recorded frame in the window";
+    paths["/api/v1/emulator/{id}/ttd/probe-frames"]["post"]["responses"]["501"]["description"] = "TTD engine not available in this build";
+
+    // =====================================================================
     // GET /ttd/coverage/probe — probe address range containment for a frame
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/coverage/probe"]["get"]["summary"] =
@@ -856,6 +954,71 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"][1]["description"] =
         "ram (default), vram (the Sprinter's video RAM) or cache (its fast RAM): addr_from / addr_to are then "
         "offsets in that memory, inside one 16 KB page; the answer names space, offset_from, offset_to";
+    {
+        Json::Value& params = paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["parameters"];
+        const char* const extra[][2] = {
+            {"phys_page", "0..255, or rom (the bucket all ROM shares). Without it on space ram the offset matches on "
+                          "every page and 16 KB window (exact: false in the answer)"},
+            {"limit", "List entries, 1..10000 (default 200): frames, or runs with ranges=true"},
+            {"order", "oldest (default) or newest: newest lists the newest matches first"},
+            {"ranges", "true: ranges[[from, to], ...] (runs of consecutive matching frames) instead of frames[]"}};
+        for (const auto& [name, text] : extra)
+        {
+            Json::Value param;
+            param["name"] = name;
+            param["in"] = "query";
+            param["schema"]["type"] = "string";
+            param["description"] = text;
+            params.append(param);
+        }
+        paths["/api/v1/emulator/{id}/ttd/coverage/scan"]["get"]["responses"]["200"]["description"] =
+            "{kind, addr_from, addr_to, phys_page, order, exact, frames[] or ranges[], first_match, last_match (the true "
+            "ends of the window, also when the list is cut), matching_frames, scanned_frames, truncated, "
+            "next_from_frame (oldest order) / next_to_frame (newest order) when cut: pass it back as from_frame / "
+            "to_frame, index_available, covered_from, covered_to}";
+    }
+
+    // =====================================================================
+    // GET /ttd/coverage/rare — addresses touched in at most N frames, as blocks
+    // =====================================================================
+    {
+        Json::Value& get = paths["/api/v1/emulator/{id}/ttd/coverage/rare"]["get"];
+        get["summary"] = "Rare code or data: addresses touched in at most max_frames frames, as blocks";
+        get["tags"].append("Time-Travel Debug");
+        get["description"] =
+            "One pass over the coverage index (no replay): the keys of the address range touched in at most "
+            "max_frames frames of the window, neighbouring keys of one page with the same frames joined into a "
+            "block (executed: up to 4 bytes apart; written / read: adjacent), rarest first. Returns 400 like scan, "
+            "and when max_frames is not 1..1000.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        const char* const params[][2] = {
+            {"from_frame", "First frame of the window (default: the session start)"},
+            {"to_frame", "Last frame of the window (default: the session end)"},
+            {"kind", "executed (default), written or read"},
+            {"addr_from", "Range start (Z80 address; with space vram / cache an offset in that memory)"},
+            {"addr_to", "Range end, inclusive"},
+            {"phys_page", "0..255, or rom (the bucket all ROM shares): only that page"},
+            {"space", "ram (default), vram or cache (the Sprinter's memories)"},
+            {"max_frames", "A key is rare when at most this many frames touched it, 1..1000 (default 1)"},
+            {"limit", "Blocks listed, 1..10000 (default 200)"}};
+        for (const auto& [name, text] : params)
+        {
+            Json::Value param;
+            param["name"] = name;
+            param["in"] = "query";
+            param["schema"]["type"] = "string";
+            param["description"] = text;
+            get["parameters"].append(param);
+        }
+        get["responses"]["200"]["description"] =
+            "{kind, addr_from, addr_to, max_frames, scanned_frames, unindexed_frames, distinct_keys, rare_keys, "
+            "rare_blocks (all, also when the list is cut), truncated, index_available, covered_from, covered_to, "
+            "blocks[{phys_page (0..255 or rom) or space + offset_from, page_offset_from, page_offset_to, addr_from / "
+            "addr_to (where the page was mapped at the start of the first frame, when one window showed it), keys, "
+            "frame_count, frames[]}]}";
+    }
 
     // =====================================================================
     // GET /ttd/coverage/summary — activity heatmap across frame intervals
@@ -870,3 +1033,255 @@
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/coverage/summary"]["get"]["parameters"][0]["required"] = true;
+
+    // =====================================================================
+    // GET /ttd/timeline — the recording cut into phases (TD-5)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/timeline"]["get"];
+        op["summary"] = "The recording cut into phases of the same activity (TD-5)";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Every frame's facts the session holds (coverage distinct keys, changed RAM pieces and screen frames, "
+            "halted frames, port / sector / vector counts, keys and other input, per port-map device IN / OUT, per "
+            "media slot sectors, border / paging / frame length changes), tagged over a window of min_phase_ms and cut "
+            "at frame precision into phases of the same activity (tape, disk, net, sound, screen, burst, halt; input "
+            "and paging mark a phase, never cut one); buckets are an optional overview. Reads only what the "
+            "recording stores, no replay; facts the session cannot give are listed in missing[] with the reason. "
+            "Reply: from_frame, to_frame, bucket_size, bucket_count, truncated, fps, devices[] {name, tags}, phases[] "
+            "{frame_start, frame_end, tags[], facts..., devices[], busiest_frame}, buckets[] (buckets=true), events[] "
+            "{frame, tinframe, kind, text}, missing[] {fact, reason}, cost {frames, port_records, ms}.";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "First frame (default: the oldest held)"},
+            {"to_frame", "integer", "Last frame, inclusive (default: the last complete frame)"},
+            {"bucket_size", "integer", "Frames per overview bucket (default: the window over limit buckets)"},
+            {"limit", "integer", "Most overview buckets, 1..500 (default 20); an explicit bucket_size cuts the window there"},
+            {"buckets", "boolean", "Also return the overview buckets (default false: the phases only)"},
+            {"ports", "boolean", "Classify the port records per device (default true)"},
+            {"min_phase_ms", "integer", "The shortest phase in ms of machine time, also the window frames are tagged over (default 200)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // GET /ttd/cause-chain — where a value came from (the TTD cause chain)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/cause-chain"]["get"];
+        op["summary"] = "Where the value of a memory byte or a register came from (the cause chain)";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Replays the frames it needs with the instruction and bus hooks and follows the value back: the "
+            "instruction that wrote it, that instruction's inputs (registers, memory bytes) and theirs, as a tree "
+            "bounded by depth and max_links. Kinds: store, load, copy, computed, constant, port, block, modify, "
+            "return, interrupt, refresh, initial (held since the session start), rom, device (the byte read differs "
+            "from the CPU's last write: something else wrote it), stop. The machine goes back where it stood; a live "
+            "recording pauses for browsing. Reply: target {kind, name, addr, phys_page | reg, frame, tinframe}, "
+            "links[] {id, parent, depth, kind, name, value, frame, tinframe, pc, code_page, text, inputs[], detail, "
+            "stop}, stops, frames_traced, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"addr", "string", "A memory byte: the Z80 address (decimal, 0x.., #..); addr or reg"},
+            {"phys_page", "string", "addr: the RAM page behind it, 0..255 or rom (default: the page mapped at the moment)"},
+            {"reg", "string", "A register: A F B C D E H L IXH IXL IYH IYL I R, a pair AF BC DE HL IX IY SP, or primed A' ... L', AF' ... HL'"},
+            {"frame", "integer", "The moment's frame (default: the current position)"},
+            {"tinframe", "integer", "The moment inside the frame, TTD time units (default 0)"},
+            {"depth", "integer", "Links from the target to a leaf, 1..16 (default 4)"},
+            {"max_links", "integer", "Links in the whole tree, 1..256 (default 32)"},
+            {"max_frames", "integer", "Frames searched back for a register's producer, 1..1000 (default 50)"},
+            {"flags", "boolean", "Follow F as an input (default false: listed, not followed)"},
+            {"text", "boolean", "Also return the chain as indented text, one line per link (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // GET /ttd/find-event — the moment something happened (TTD find event)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/find-event"]["get"];
+        op["summary"] = "The first (or last) moments in a frame window where an event happened";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "One call for every 'when': kind mem (a byte or word meets cond: changed, increased, decreased, equals, "
+            "becomes, differs, bit_set, bit_clear; frame boundaries, or every CPU write with exact=true), screen (cond "
+            "change: at least min_changed % of the picture's bytes differ from the frame before; cleared: every pixel "
+            "byte one value), exec (an address or range ran), port (IN / OUT by port, mask and value), border (the "
+            "colour changed, or became value), key (a key pressed or released, from the input journal). Frames are "
+            "filtered from what the session stores; only the hit frames are replayed, for the write or the "
+            "instruction. The machine goes back where it stood; a live recording pauses for browsing. Reply: event "
+            "{kind, cond, order, addr, phys_page}, hits[] {frame, tinframe, pc, code_page, text, before, after, "
+            "device, why}, window {from_frame, to_frame}, more, next_from_frame | next_to_frame, barriers[], "
+            "missing[], frames_scanned, frames_replayed, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"kind", "string", "mem, screen, exec, port, border or key (required)"},
+            {"cond", "string", "mem: changed (default), increased, decreased, equals, becomes, differs, bit_set, bit_clear; screen: change (default), cleared"},
+            {"addr", "string", "mem / exec: the Z80 address (decimal, 0x.., #..)"},
+            {"addr_to", "string", "exec: the range's last address (default addr)"},
+            {"phys_page", "string", "mem / exec: the RAM page, 0..255 or rom (mem default: the page mapped at the current position; exec default: any)"},
+            {"size", "integer", "mem: 1 or 2 bytes, little endian (default 1)"},
+            {"value", "string", "mem: V of equals / becomes / differs; port: the value; border: the colour 0..7"},
+            {"bit", "integer", "mem: B of bit_set / bit_clear"},
+            {"exact", "boolean", "mem: every CPU write instead of frame boundaries (finds a change undone in the same frame)"},
+            {"min_changed", "integer", "screen change: percent of the picture's bytes, 0..100 (default 50)"},
+            {"dir", "string", "port: in or out (default out)"},
+            {"port", "string", "port: the port number"},
+            {"port_mask", "string", "port: the bits of port compared (default 0xFFFF)"},
+            {"value_mask", "string", "port: the bits of value compared (default 0xFF)"},
+            {"key", "string", "key: a ZX key name (SPACE, Q, CAPS, SYMBOL, ENTER, ...; default any key)"},
+            {"pressed", "boolean", "key: presses (default true) or releases"},
+            {"order", "string", "first (default: the oldest hits) or last (the newest)"},
+            {"from_frame", "integer", "The window's first frame (default: the history's start)"},
+            {"to_frame", "integer", "The window's last frame (default: the history's end)"},
+            {"limit", "integer", "Hits, 1..100 (default 1); more + next_from_frame / next_to_frame continue"},
+            {"max_frames", "integer", "exec without the coverage index: frames replayed at most (default 1000)"},
+            {"text", "boolean", "Also return the hits as text, one line each and a summary (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // GET /ttd/explain-frame — what one frame did (TTD explain frame)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/explain-frame"]["get"];
+        op["summary"] = "What one frame did: time split, routines, interrupt, paging, ports, memory, screen, input";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "One replay of the frame with the instruction and bus hooks answers: time (T in the interrupt routine, in "
+            "HALT, in the rest), routines (from the call structure: CALL / RST / the interrupt acknowledge / RET; "
+            "calls, inclusive and own T, instructions, the first caller; sorted by time), interrupts (when, IM, the "
+            "vector, the routine, its T, where it returned), paging (bank changes with time and PC), ports (per "
+            "direction and device: count, values, first time and PC; ULA reads with the keys seen down), memory (the "
+            "bytes changed and written per range - the screen's pixels and attributes, the stack, RAM ranges - with "
+            "their writers; changed bytes no CPU write explains are marked device), screen (% changed, the border "
+            "colours in order), input (keys held and pressed / released) and markers. The machine goes back where it "
+            "stood; a live recording pauses for browsing. Reply: frame, frame_t, end_t, partial, barrier, "
+            "instructions, time {isr, halt, code}, routines[] {pc, code_page, isr, start, label, calls, t, own_t, "
+            "insns, caller}, more_routines, interrupts_enabled, interrupts[] {tinframe, mode, vector, entry, t, "
+            "returned, returned_to, before_frame}, paging[] {tinframe, pc, bank, page, was}, ports[] {dir, device, port, many_ports, count, "
+            "tinframe, pc, values[], rows, keys[]}, memory[] {region, phys_page, offset, addr, length, changed, "
+            "written, before, after, device, writers[] {pc, code_page, text, count}}, screen {bytes, changed, pixels, "
+            "attributes, switched, border[] {colour, count}}, input {held[], events[] {tinframe, key, pressed}}, "
+            "markers[], frames_replayed, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"frame", "integer", "The frame (default: the current position's frame)"},
+            {"sections", "string", "Comma list: time, routines, interrupt, paging, ports, memory, screen, input, markers (default all)"},
+            {"limit", "integer", "Entries per list (routines, paging, ports, memory ranges, writers per range), 1..100 (default 8)"},
+            {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // GET /ttd/diff — what differs between two moments (TTD diff of two moments)
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/diff"]["get"];
+        op["summary"] = "What differs between two moments: registers, paging, memory with the last writes, screen, devices";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "The machine is replayed to each moment (any T inside a frame) and its whole state taken there. The answer "
+            "lists what differs: the registers, the port latches and the 8K slot mapping, the RAM changed in ranges "
+            "(the screen's pixels and attributes one range each, the rest per page with gaps of 16 bytes or less; "
+            "ranges of 8 bytes or less with their bytes at both moments) with the last CPU write in between (the "
+            "write journal: time, PC, instruction), the screen and border, the devices whose state differs, and what "
+            "happened in between (frames, T, keys held and pressed, markers, a replay barrier). The machine goes back "
+            "where it stood; a live recording pauses for browsing. Reply: from {frame, tinframe}, to, backwards, "
+            "registers[] {name, before, after}, latches[], slots[] {address, before, after, before_other_half, "
+            "after_other_half}, memory {changed, pages, ranges[] {region, page, offset, address, length, changed, "
+            "before[], after[], last_write {frame, tinframe, pc, address, text}, no_cpu_write}, more}, screen {bytes, "
+            "pixels_changed, attributes_changed, switched, border_before, border_after}, devices {changed[] {name, "
+            "bytes, changed}, more, same}, between {frames, t, keys_held[], keys[] {frame, tinframe, key, pressed}, "
+            "more_keys, markers[], barrier}, writer_searches, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "The first moment's frame (required)"},
+            {"from_tinframe", "integer", "T inside it (default 0)"},
+            {"to_frame", "integer", "The second moment's frame (default: the current position)"},
+            {"to_tinframe", "integer", "T inside it (default 0)"},
+            {"sections", "string", "Comma list: cpu, paging, memory, screen, devices, between (default all)"},
+            {"limit", "integer", "Entries per list (memory ranges, devices, keys), 1..200 (default 16)"},
+            {"writers", "boolean", "The last write in between per memory range (default true)"},
+            {"text", "boolean", "Also return the answer as text, one block per section (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }

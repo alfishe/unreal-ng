@@ -36,6 +36,13 @@ KERNEL=="hidraw*", KERNELS=="*045E:0B21*", MODE="0660", TAG+="uaccess"
 KERNEL=="hidraw*", KERNELS=="*045E:091B*", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="045e", ATTRS{id/product}=="091b", MODE="0660", TAG+="uaccess"
 
+# Contour ShuttlePRO v2 (0B33:0030) and ShuttleXpress (0B33:0020), USB: read access to the hidraw node, where the
+# emulator reads the whole device (hid-input drops the shuttle ring's return to the centre, a zero of a usage it
+# declares relative), and to the input node, which is neither a joystick nor a keyboard.
+KERNEL=="hidraw*", KERNELS=="*0B33:0030*", MODE="0660", TAG+="uaccess"
+KERNEL=="hidraw*", KERNELS=="*0B33:0020*", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="0b33", ATTRS{id/product}=="0030|0020", MODE="0660", TAG+="uaccess"
+
 # PlayStation pads: DualSense (054C:0CE6), DualSense Edge (0DF2), DualShock 4 (05C4, 09CC, the wireless adapter 0BA0).
 # Write access for what hid-playstation does not drive: a DualSense's adaptive triggers (output report 2 / 0x31 with
 # only the trigger flags; the kernel keeps the motors, the light bar and the player LEDs). Read access for the Edge's

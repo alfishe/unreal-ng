@@ -10,7 +10,9 @@
 ///
 /// Which files need a model: an SPG program runs on TS-Conf only
 /// (LoaderSPG::kModel); an SZX names the machine it was saved on and needs one that
-/// can hold it (LoaderSZX::Suits). Other snapshots load on the running machine as before.
+/// can hold it (LoaderSZX::Suits). A .z80 / .sna names no model up front: when the dry plan refuses it for want of memory
+/// (a 128K file on a 48K, a Pentagon 512 one on a Pentagon 128), it needs the machine its header names, else the one the
+/// refusal asks for. Other snapshots load on the running machine as before.
 ///
 /// Worked example: Load({emulatorId: "e1" (a Pentagon), path: "wc.spg"})
 /// -> RequiredModel says "TSL" 4096 KB -> ModelSwitch builds a TS-Conf "e2",
@@ -34,7 +36,8 @@ struct SnapshotLoadRequest
     std::string emulatorId;
     std::string path;
     /// The file needs another model: switch (true) or refuse (false). Not given: an SPG (runs on TS-Conf only) switches; an SZX saved on
-    /// another model is refused unless the configuration says `[SNAPSHOT] SwitchModel=1`
+    /// another model, or a .z80 / .sna the running machine cannot hold, is refused unless the configuration says
+    /// `[SNAPSHOT] SwitchModel=1`
     std::optional<bool> switchModel;
     /// Who commits the snapshot into the machine: "" = the plan decides (the machine's policy, else today's commit),
     /// "legacy" = today's commit, or a registered policy name (snapshot pipeline, PLAN #84)

@@ -6,7 +6,9 @@
 #include <QSettings>
 #include <algorithm>
 #include <set>
+#include <utility>
 
+#include "debugger/externaldebuggers.h"
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 #include "widgets/slangpresetrunner.h"
@@ -28,7 +30,7 @@
 // Avoid Qt 'signals' and 'slots' macro conflicts with core struct members
 #undef signals
 #undef slots
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/fdc/fdd.h"
 #define signals Q_SIGNALS
@@ -768,8 +770,8 @@ void MenuManager::createMachineMenu()
     std::vector<TMemModel> models = manager->GetAvailableModels();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
 
-    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). GMX, KAY,
-    // QUORUM, LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
+    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). KAY, QUORUM,
+    // LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
 
     for (const auto& model : models)
     {
@@ -1145,13 +1147,42 @@ void MenuManager::createDebugMenu()
 {
     _debugMenu = _menuBar->addMenu(tr("&Debug"));
 
-    // Debugger window. Hidden at start; while hidden the emulator runs without
+    // Debugger: the embedded window, or a separate debugger over this window's emulator through the WebAPI
+    QMenu* debuggerMenu = _debugMenu->addMenu(tr("&Debugger"));
+
+    // The embedded window. Hidden at start; while hidden the emulator runs without
     // debug instrumentation (see MainWindow::handleDebuggerVisibilityChanged)
-    _debuggerAction = _debugMenu->addAction(tr("&Debugger Window"));
+    _debuggerAction = debuggerMenu->addAction(tr("&Embedded"));
     _debuggerAction->setStatusTip(tr("Show/hide the debugger window (debug features are active only while it is shown)"));
     _debuggerAction->setCheckable(true);
     _debuggerAction->setChecked(false);
     connect(_debuggerAction, &QAction::triggered, this, &MenuManager::debuggerToggled);
+
+    // The separate ones (debuggers/README.md), each a program of its own beside unreal-qt: grayed out when the build
+    // has no WebAPI or the program is not there
+    const auto addExternal = [this, debuggerMenu](const QString& text, const char* program, const QString& tip) {
+        QAction* action = debuggerMenu->addAction(text);
+        const QString name = QLatin1String(program);
+#ifdef ENABLE_WEBAPI_AUTOMATION
+        const bool available = !ExternalDebuggers::Binary(name).isEmpty();
+        action->setStatusTip(available ? tip : tr("%1 is not beside unreal-qt in this build").arg(name));
+#else
+        const bool available = false;
+        action->setStatusTip(tr("This build has no WebAPI: %1 has nothing to connect to").arg(name));
+#endif
+        action->setEnabled(available);
+        connect(action, &QAction::triggered, this, [this, name]() { emit externalDebuggerRequested(name); });
+        return action;
+    };
+    addExternal(tr("e&Cat"), ExternalDebuggers::kEcat,
+                tr("Start eCat3's debugger (unreal-debugger) over this emulator: a tab per processor, dumps, devices"));
+    addExternal(tr("Unreal &TUI"), ExternalDebuggers::kTui,
+                tr("Start the classic UnrealSpeccy debugger (unreal-tui-debugger) over this emulator"));
+    _tuiTsConfDebuggerAction =
+        addExternal(tr("Unreal TUI, TS-&Conf"), ExternalDebuggers::kTuiTsConf,
+                    tr("Start the TS-Conf debugger (unreal-tui-debugger-tsconf) over this emulator: PC history, the "
+                       "TS-Conf registers"));
+    _tuiTsConfDebuggerAction->setVisible(false);
 
     // FT812 line budget (line-budget-metrics.md §3.3): exists only while the active
     // machine has the VDAC2 card (TSL-VDAC2); hidden, not grayed out, otherwise
@@ -1458,6 +1489,9 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     // Debug -> FT812 Debug: only for a machine with the VDAC2 card
     if (_ft812DebugAction)
         _ft812DebugAction->setVisible(emulatorExists && Ft812DebugWindow::Offered(activeEmulator->GetContext()));
+    // Debug -> Debugger -> Unreal TUI, TS-Conf: it attaches to TS-Conf machines only
+    if (_tuiTsConfDebuggerAction)
+        _tuiTsConfDebuggerAction->setVisible(emulatorExists && lease->config.mem_model == MM_TSL);
 
     // File menu - Save Snapshot requires active emulator
     _saveSnapshotMenu->setEnabled(emulatorExists);
@@ -1571,41 +1605,43 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         EmulatorContext* context = activeEmulator->GetContext();
         FeatureManager* featureManager = context ? context->pFeatureManager : nullptr;
 
-        // The same predicate the core refuses on (FeatureManager::setFeature,
-        // Core::SetSpeedMultiplier), so the menu never offers what the core rejects
-        bool ttdActive = (featureManager && featureManager->isTtdRecordingActive()) ||
-                         (context && context->pTimeTravelHooks && context->pTimeTravelHooks->IsRecording());
-        // Shortcuts change what the guest code does: off while recording AND while
-        // replaying or positioned in history
-        // An RZX playback holds them off the same way (the recording's CPU path)
+        // The core's own refusal (FeatureManager::refusalReason, Core::CanSetSpeedMultiplier), so the menu never
+        // offers what the core rejects: TTD and an RZX playback hold the shortcuts that change what the guest code
+        // does (the engine's recording keeps them, their traps are recorded edits)
+        auto offered = [featureManager](const char* id) {
+            return featureManager && featureManager->refusalReason(id, true).empty();
+        };
         const bool rzxPlaying = activeEmulator->IsRzxPlaying();
         const bool timelineBound =
-            ttdActive || rzxPlaying || (featureManager && featureManager->isTtdTimelineBound());
+            rzxPlaying || (featureManager && (featureManager->isTtdRecordingActive() || featureManager->isTtdTimelineBound()));
         if (_stopRzxAction)
             _stopRzxAction->setEnabled(rzxPlaying);
 
-        _tapeTrapsAction->setEnabled(!timelineBound);
-        _turboTapeAction->setEnabled(!timelineBound);
+        // A held feature reads as off (isEnabled reports the state in effect)
+        _tapeTrapsAction->setEnabled(offered(Features::kFastTape));
+        _turboTapeAction->setEnabled(offered(Features::kTurboTape));
         if (_fastDiskAction)
         {
-            _fastDiskAction->setEnabled(!timelineBound);
-            _fastDiskAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastDisk));
+            _fastDiskAction->setEnabled(offered(Features::kFastDisk));
+            _fastDiskAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastDisk));
         }
 
-        _tapeTrapsAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kFastTape));
-        _turboTapeAction->setChecked(!timelineBound && featureManager && featureManager->isEnabled(Features::kTurboTape));
+        _tapeTrapsAction->setChecked(featureManager && featureManager->isEnabled(Features::kFastTape));
+        _turboTapeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboTape));
 
-        // Run > Speed: same TTD lock as the tape/disk shortcuts above. Only 1x is
-        // offered while recording (the core forced it on record start); the check
-        // mark follows the host speed setting, not the emulated hardware turbo.
+        // Run > Speed: only 1x is offered while a recording (or a history recorded at 1x) holds the host speed; the
+        // check mark follows the host speed setting, not the emulated hardware turbo
         if (_turboModeAction)
         {
-            _turboModeAction->setEnabled(!ttdActive);
-            _turboModeAction->setChecked(!ttdActive && featureManager && featureManager->isEnabled(Features::kTurboMode));
+            _turboModeAction->setEnabled(offered(Features::kTurboMode));
+            _turboModeAction->setChecked(featureManager && featureManager->isEnabled(Features::kTurboMode));
         }
-        for (QAction* fast : {_speed2xAction, _speed4xAction, _speed8xAction, _speed16xAction})
-            fast->setEnabled(!ttdActive);
-        if (Core* core = context ? context->pCore : nullptr)
+        Core* core = context ? context->pCore : nullptr;
+        const std::pair<QAction*, uint8_t> speeds[] = {
+            {_speed2xAction, 2}, {_speed4xAction, 4}, {_speed8xAction, 8}, {_speed16xAction, 16}};
+        for (const auto& [action, multiplier] : speeds)
+            action->setEnabled(core && core->CanSetSpeedMultiplier(multiplier));
+        if (core)
         {
             switch (core->GetHostSpeedMultiplier())
             {

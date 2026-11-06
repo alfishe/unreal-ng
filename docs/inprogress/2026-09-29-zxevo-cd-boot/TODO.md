@@ -5,13 +5,15 @@ unreal-ng (two tests); the items below are open questions and follow-ups, none b
 
 ## Verify in the emulator (the ERS state we only read from source)
 
-- [ ] **No `AUTORUN.ZX` on the disc**: confirm where `RST 0` (`pentevo/rom/mainmenu/src/hdd_cd_boot.a80:356`)
-  lands. Expected: the ERS menu restarts. Candidate test `ZXEvoErs_Test.CdBootWithoutAutorunReturnsToTheMenu`.
-- [ ] **Entry state**: record `SP`, `IY`, `IM`, port `#7FFD`, `#EFF7`, the ROM page at `#0000` and the
-  CPU speed when `AUTORUN.ZX` starts, and put them in the README table (now marked unverified).
-  In particular: is `IY = 23610` and `IM 1`, as the 2006 standard says?
-- [ ] **Hard disk on the slave / nothing on the slave**: confirm the endless `iniini` loop
-  (`:229-259`) and that nothing hangs the emulator itself.
+- [x] **No `AUTORUN.ZX` on the disc** (2026-10-02): `RST 0` lands in the 48K BASIC ROM (page 28, which the
+  ERS keeps at `#0000` while it runs from RAM): a 48K BASIC cold start, the (c) 1982 screen - not the ERS
+  menu the source suggested. Test `ZXEvoErs_Test.CdBootWithoutAutorunColdStarts48KBasic`.
+- [x] **Entry state** (2026-10-02): A `#B0`, B 0, C 0, D 1, E `#FB`, HL 4, DI, IM 1, SP `#5FFC`, IY `#5C3A`
+  (23610), `#7FFD` = `#10`, `#EFF7` = `#14`, the 48K BASIC ROM (page 28) at `#0000`; README table updated.
+  Test `ZXEvoErs_Test.CdBootEntersAutorunWithTheDocumentedRegisters`.
+- [x] **Hard disk on the slave** (2026-10-02): the ERS keeps re-identifying the slave, the emulator keeps
+  running frames. Test `ZXEvoErs_Test.CdBootWithAHardDiskOnTheSlaveKeepsAsking`. No device at all on the
+  slave is not tried: the ZX-Evo config always fits a unit.
 - [ ] **Hybrid ISO** (non-empty sectors 0-15): what the directory walk does after the root
   directory (`:340-355`). Low priority; real discs for the Spectrum are not hybrid.
 - [x] The ERS sees the disc ejected and inserted again: `ZXEvoErs_Test.CdBootSeesTheDiscEjectedAndInsertedAgain` (`087b9ec7`)
@@ -24,15 +26,12 @@ unreal-ng (two tests); the items below are open questions and follow-ups, none b
   `RUN "boot"` (`CDRUNATM.$B`), menu, ENTER, the clip streams from the disc; no emulator change needed. The
   exploratory test needs the 455 MB ISO, so it is not in the suite; a small synthetic `.zxv` disc could make it one.
 
-- [ ] **DNA OS** `dna_nemo.iso` (ZET-9, 2007; `dna_nemo_iso.zip` on Alone Coder's ZX page): boot it with
-  "D. CD boot" on `ATM3`. Record which ATAPI commands its `CDR_DRV` driver sends (`state ide`
-  `last_packet`) and whether its ISO 9660 file system (`CD_DFS`) lists the disc. First real OS to
-  exercise the drive beyond the ERS. Note: DNA OS targets ATM Turbo / Nemo IDE; its ZX-Evo
-  compatibility is unknown.
-- [ ] **Time Gal** (`timegal.iso`, 185 MB, Internet Archive item `timegal-zx`, plus the "ZX Evo fix"):
-  boot on `ATM3`; check the 16-color mode, the frame rate at emulated drive speed, and the commands
-  it sends (the source shows the same set as the ERS). Users on real hardware reported drive-model
-  dependence; a success in the emulator says nothing about that.
+- [x] **DNA OS** `dna_nemo.iso` (2026-10-02): "D. CD boot" on `ATM3` brings up DNA_SHELL v0.14; `CD_DFS` lists
+  the disc in both panels. Its driver sends TEST UNIT READY, READ TOC, READ (10), SET CD SPEED - all
+  supported, no error (sampled `state/ide` `last_packet` / sense during the boot).
+- [x] **Time Gal** `timegal.iso` (2026-10-02): plays on `ATM3` from the original ISO (no ZX Evo fix needed in
+  the emulator): the 16-color title, then the video from the disc (40 different frames in 40 screenshots
+  over 10 s). Drive-model dependence on real hardware cannot show here.
 - [ ] Decide whether a small `AUTORUN.ZX` test disc belongs in `testdata/` (the tests already build
   one in memory, so probably not).
 

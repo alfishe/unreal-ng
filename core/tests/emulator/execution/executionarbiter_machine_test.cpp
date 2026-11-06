@@ -512,6 +512,35 @@ TEST_F(ExecutionArbiterMachine_Test, AScriptSessionStopsWithControlRevoked)
 /// Reading a paused machine's video change log while automation runs frames on it (a direct run records into the
 /// log, reallocating as it goes): the readers take the CPU first, so they never read a frame being written. Found by
 /// an ASan soak (heap-use-after-free in DeviceState::VideoChanges against Emulator::RunNFrames)
+// A script a client sends (/lua/exec, /python/exec) acts in that client's session while it runs: its steps pass the
+// gate as the client's, take_control is a no-op, release_control leaves the session to the client. Afterwards the
+// script surface is on its own again (refused while the client holds the machine)
+TEST_F(ExecutionArbiterMachine_Test, AClientsScriptActsInTheClientsSession)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    const EmulatorContext::ImplicitControl mcp =
+        context->EnterImplicitRunControl("mcp", "mcp|127.0.0.1|MCP agent", "MCP agent", std::chrono::milliseconds(15000));
+    ASSERT_TRUE(mcp.allowed);
+    EXPECT_THROW(execution::script::Check(*_emulator, execution::Origin::Lua), std::runtime_error)
+        << "a script on its own is refused while MCP holds the machine";
+    {
+        const execution::script::BorrowedSessions borrowed(execution::Origin::Lua, {{_emulator, mcp.owner}});
+        EXPECT_NO_THROW(execution::script::Check(*_emulator, execution::Origin::Lua));
+        const execution::Requester me = execution::script::RequesterOf(*_emulator, execution::Origin::Lua);
+        EXPECT_EQ(me.client, mcp.owner.toString()) << "its requests are the client's";
+        EXPECT_EQ(_emulator->Pause(me).outcome, execution::Outcome::Applied);
+        EXPECT_EQ(_emulator->Resume(me).outcome, execution::Outcome::Applied);
+        std::string reason;
+        EXPECT_TRUE(execution::script::TakeControl(*_emulator, execution::Origin::Lua, "lua", reason)) << reason;
+        execution::script::ReleaseControl(*_emulator, execution::Origin::Lua);
+        EXPECT_TRUE(context->HasRunControl(mcp.owner)) << "the client's session stays";
+    }
+    EXPECT_TRUE(context->HasRunControl(mcp.owner));
+    EXPECT_THROW(execution::script::Check(*_emulator, execution::Origin::Lua), std::runtime_error)
+        << "the script ended: the surface is on its own again";
+    context->ReleaseImplicitRunControl("mcp|127.0.0.1|MCP agent");
+}
+
 TEST_F(ExecutionArbiterMachine_Test, ReadingTheVideoLogDuringADirectRunNeverReadsAFrameBeingWritten)
 {
     _emulator->Pause(execution::Requester{execution::Origin::WebApi, {}}, "test");
@@ -637,24 +666,29 @@ TEST_F(ExecutionArbiterMachine_Test, ALongDirectRunLetsAHoldInBetweenFrames)
 {
     const unsigned frames = 200;  // long enough that a hold asked at its start would otherwise wait for most of it
     ASSERT_TRUE(PausedForCounting(_emulator));  // the running fixture would add frames before the run starts
-    const uint64_t before = Frame(_emulator);
-    std::atomic<bool> runDone{false};
-    TestThread run([&]() {
-        _emulator->RunNFrames(frames, true);
-        runDone = true;
-    });
-    ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping(); }));
-
+    // A loaded machine can deschedule this thread until the run is over: then the race did not happen, the next run
+    // tries again (a hold that waited for the whole run fails every attempt)
     bool heldDuringTheRun = false;
+    for (int attempt = 0; attempt < 5 && !heldDuringTheRun; ++attempt)
     {
-        Emulator::CpuHold hold(*_emulator, "ttd stop");
-        EXPECT_TRUE(hold.Held());
-        heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
-        EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
+        const uint64_t before = Frame(_emulator);
+        std::atomic<bool> runDone{false};
+        TestThread run([&]() {
+            _emulator->RunNFrames(frames, true);
+            runDone = true;
+        });
+        ASSERT_TRUE(TestWait::For([&]() { return _emulator->IsDirectStepping() || runDone.load(); }));
+        {
+            Emulator::CpuHold hold(*_emulator, "ttd stop");
+            EXPECT_TRUE(hold.Held());
+            heldDuringTheRun = !runDone.load() && _emulator->IsDirectStepping();
+            if (heldDuringTheRun)
+                EXPECT_TRUE(_emulator->IsEmulationParked() || _emulator->IsDirectStepping());
+        }
+        run.Join();
+        EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
     }
-    run.Join();
     EXPECT_TRUE(heldDuringTheRun) << "the hold waited for the whole run instead of a frame boundary";
-    EXPECT_EQ(Frame(_emulator), before + frames) << "the run ran exactly its frames around the lent hold";
 }
 
 /// What the run does not lend to: a pause (it stays queued and applies at the run's end) and another direct run

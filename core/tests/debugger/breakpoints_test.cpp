@@ -1219,6 +1219,44 @@ TEST_F(BreakpointManager_test, PageSpec_ParseNameAndMachinePages)
         << "no page: the address in any page";
 }
 
+/// --page bank8kN (platform-debugging P4): an 8K RAM bank, the Next's MMU unit, is the half of 16K page N / 2; the
+/// offset in the page takes the half and the address's place in its slot, a range stays in one 8K slot
+TEST_F(BreakpointManager_test, PageSpec_EightKBank)
+{
+    _context->config.ramsize = 1024;  // RAM pages 0-63
+    BreakpointSpec spec;
+    spec.access = BRK_MEM_WRITE;
+    spec.address = 0xE005;
+    std::string error;
+    ASSERT_TRUE(BreakpointManager::ParsePageInto("bank8k33", spec, error)) << error;
+    EXPECT_EQ(spec.page, 16);
+    EXPECT_EQ(spec.pageType, BANK_RAM);
+    const uint16_t id = _brkManager->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const BreakpointSnapshot bp = _brkManager->GetBreakpointById(id);
+    EXPECT_EQ(bp->page, 16);
+    EXPECT_EQ(bp->PageOffset(), 0x2005) << "the upper half of page 16";
+
+    BreakpointSpec lower = spec;
+    ASSERT_TRUE(BreakpointManager::ParsePageInto("BANK8K#20", lower, error)) << error;
+    lower.address = 0x4005;
+    const uint16_t low = _brkManager->AddBreakpoint(lower, error);
+    ASSERT_NE(low, BRK_INVALID) << error;
+    EXPECT_EQ(_brkManager->GetBreakpointById(low)->PageOffset(), 0x0005) << "bank #20: the lower half of page 16";
+
+    spec.hasEnd = true;
+    spec.addressEnd = 0xC005;
+    spec.address = 0xBFFF;
+    EXPECT_EQ(_brkManager->AddBreakpoint(spec, error), BRK_INVALID);
+    EXPECT_NE(error.find("one 8K slot"), std::string::npos) << error;
+    for (const char* bad : {"bank8k", "bank8k512", "bank8kx"})
+    {
+        error.clear();
+        EXPECT_FALSE(BreakpointManager::ParsePageInto(bad, spec, error)) << bad;
+        EXPECT_NE(error.find("8K bank"), std::string::npos) << error;
+    }
+}
+
 /// Note and group set after creation (WebAPI POST /breakpoints note / group, Lua / Python bp_note / bp_group, the
 /// CLI note); unknown ids and an empty group are refused
 TEST_F(BreakpointManager_test, SetNoteAndGroup)

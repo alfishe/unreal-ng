@@ -6,6 +6,7 @@
 
 #include "3rdparty/blip_buf/blip_buf.h"
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/core.h"
@@ -17,10 +18,13 @@
 
 Covox::Covox(EmulatorContext* context, size_t sampleRate)
     : _context(context)
-    , _fitment(!context->config.sound.sd           ? Fitment::Mono
+    , _history(ChipHistoryRegistry(context), [context]() { return ChipHistoryDevice(context, PORT_RIGHT_B, "covox"); },
+               "DAC writes", kChipWriteRing)
+    , _fitment(!context->config.sound.sd           ? (context->config.sound.covoxFB ? Fitment::Mono : Fitment::None)
                : context->config.sound.sdMode == 1 ? (context->config.sound.covoxFB ? Fitment::Mode1Mono : Fitment::Mode1)
                : context->config.sound.sdMode == 2 ? Fitment::Mode2
                                                    : Fitment::Quad)
+    , _printerDecode(context->config.sound.covoxDD ? PrinterDecodeOf(context->config.mem_model) : PortMaskMatch{})
     , _sampleRate(sampleRate)
 {
     // Allocate blip_buf accumulators for stereo output
@@ -234,13 +238,40 @@ namespace
             case Covox::Fitment::Mode1Mono:
                 return (lowByte & Covox::PORT_MASK_MODE1) == Covox::PORT_MATCH_MODE1 ||
                        lowByte == (Covox::PORT_RIGHT_B & 0xFF);
+            case Covox::Fitment::None:
+                return false;
         }
         return false;
+    }
+
+    bool MatchesPrinter(PortMaskMatch decode, uint16_t rawPort)
+    {
+        return decode.mask != 0 && (rawPort & decode.mask) == decode.match;
+    }
+}
+
+PortMaskMatch Covox::PrinterDecodeOf(int memModel)
+{
+    switch (memModel)
+    {
+        case MM_SCORP:
+        case MM_GMX:
+            return PortMaskMatch{ 0x0027, 0x0005 };  // Xpeccy scorpion.c: {0x0027, 0x00dd} - A0 A1 A2 A5
+        case MM_PROFSCORP:
+            return PortMaskMatch{ 0x0023, 0x0001 };  // Xpeccy scorpion.c (Turbo+): {0x0023, 0x00dd}; MAME mirror #FFDC
+        default:
+            return PortMaskMatch{};
     }
 }
 
 bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 {
+    // The Scorpion's Covox port #DD: the mono latch
+    if (MatchesPrinter(_printerDecode, rawPort))
+    {
+        WriteLatch(Channel::RightB, value);
+        return true;
+    }
     if (!MatchesFitment(_fitment, rawPort))
         return false;
 
@@ -250,24 +281,35 @@ bool Covox::tryClaimOut(uint16_t rawPort, uint8_t value)
 
 std::vector<PortMaskMatch> Covox::selfDecodingClaims() const
 {
+    std::vector<PortMaskMatch> claims;
     switch (_fitment)
     {
         case Fitment::Quad:
-            return { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            claims = { PortMaskMatch{ PORT_MASK, PORT_MATCH }, PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            break;
         case Fitment::Mono:
-            return { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            claims = { PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            break;
         case Fitment::Mode1:
-            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            claims = { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 } };
+            break;
         case Fitment::Mode2:
-            return { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+            claims = { PortMaskMatch{ PORT_MASK, PORT_MATCH } };
+            break;
         case Fitment::Mode1Mono:
-            return { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            claims = { PortMaskMatch{ PORT_MASK_MODE1, PORT_MATCH_MODE1 }, PortMaskMatch{ 0x00FF, PORT_RIGHT_B & 0xFF } };
+            break;
+        case Fitment::None:
+            break;
     }
-    return {};
+    if (answersPrinterPort())
+        claims.push_back(_printerDecode);
+    return claims;
 }
 
 bool Covox::tryClaimIn(uint16_t rawPort, uint8_t& outValue)
 {
+    // The printer port is write-only (no read decode on the board): a read there is not claimed
     if (!MatchesFitment(_fitment, rawPort))
         return false;
 
@@ -303,18 +345,29 @@ void Covox::portDeviceOutMethod(uint16_t port, uint8_t value)
     bool isMode2 = (lowByte & PORT_MASK) == PORT_MATCH;
     bool isMode1 = (lowByte & PORT_MASK_MODE1) == PORT_MATCH_MODE1;
     if (!isMode2 && !isMode1)
+    {
+        if (MatchesPrinter(_printerDecode, port))
+            WriteLatch(Channel::RightB, value);
         return;
+    }
+    WriteLatch(portToChannel(port), value);
+}
 
+void Covox::WriteLatch(Channel ch, uint8_t value)
+{
     uint32_t currentTState = (_context && _context->pCore && _context->pCore->GetZ80())
                              ? _context->emulatorState.AudioTstate(_context->pCore->GetZ80()->t)
                              : 0;
 
     // Update the DAC value for this channel
-    Channel ch = portToChannel(port);
     if (_channelTap)
         FillChannelTap(static_cast<int>(ch), static_cast<size_t>(static_cast<uint64_t>(currentTState) * _sampleRate /
                                                                   CPU_CLOCK_RATE));
     _dacValue[static_cast<int>(ch)] = value;
+    if (_context && _context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
+    if (_history.On()) [[unlikely]]
+        RecordChipWrite(_context, _history, SoundChipKind::Dac, 0, static_cast<uint16_t>(ch), value);
     _writtenThisFrame[static_cast<int>(ch)] = true;
     _staleFrameCount[static_cast<int>(ch)] = 0;
 

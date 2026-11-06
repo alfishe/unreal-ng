@@ -44,7 +44,7 @@ hardware.
 
 No existing emulator can be reused (§4). The FT812 model is written as a **separate
 library** with no dependency on unreal-ng and vendored into the tree, as the user asked:
-"если нет - придется сделать как отдельную библиотеку и потом ее завендорим".
+"if not, it will have to be made as a separate library, and then we vendor it in".
 
 ## 2. Hardware facts (verified against the sources)
 
@@ -78,8 +78,8 @@ and has to re-sync. The two pictures are never mixed.
 
 The FT812 RGB bus is 24-bit (8 bits per channel straight to the DAC). The schematic has an
 `AU_L` / `AUDIO` net on the FT812 audio pin, but the card has **no audio output**. In the
-forum thread TS-Labs answered whether the sound would be routed: "Нет, потому что там не
-звук, а пародия"; it would have needed "4 резика и 4 кондюка" of filter. Jumper J1 affects
+forum thread TS-Labs answered whether the sound would be routed: "No, because what is there is
+not sound but a parody of it"; it would have needed "4 resistors and 4 capacitors" of filter. Jumper J1 affects
 colors (§2.7).
 
 In the Evo path, the card's CPLD converts 5-bit channels to 8 bits with PAL_SEL
@@ -185,10 +185,10 @@ same way. They matter for the docs, because users hit them.
 
 | Topic | What is known | Post |
 |---|---|---|
-| Image size limit | "JPG - кол-во пикселей (Х*У) не должно превышать 524288, размеры не более 1024х768; PNG - кол-во пикселей (Х*У) не должно превышать 483328, размеры не более 1024х768" (creator, 10.12.2023). The answer from TS-Labs the same day: the pictures are shown "из внутренней памяти, где лежат в формате битмапа". | [p31899](https://forum.tslabs.info/viewtopic.php?p=31899#p31899), [p31900](https://forum.tslabs.info/viewtopic.php?p=31900#p31900) |
+| Image size limit | "JPG: the pixel count (X*Y) must not exceed 524288, size at most 1024x768; PNG: the pixel count (X*Y) must not exceed 483328, size at most 1024x768" (creator, 10.12.2023). The answer from TS-Labs the same day: the pictures are shown "from the internal memory, where they are stored as a bitmap". | [p31899](https://forum.tslabs.info/viewtopic.php?p=31899#p31899), [p31900](https://forum.tslabs.info/viewtopic.php?p=31900#p31900) |
 | Why those numbers | Our arithmetic, not from the thread: the decoded picture is a 16-bit bitmap in the 1 MB `RAM_G`. 524 288 × 2 bytes = 1 MB exactly, so a JPEG may fill all of `RAM_G`. 483 328 × 2 = 944 KB, which leaves 80 KB for the PNG decoder's working memory. The library enforces the limit as the available `RAM_G` at the output address, not as hard-coded numbers. | — |
-| JPEG kinds | "требуются во1х Baseline JPEG (это которые грузятся сразу, а не с увеличением разрешения), во2х формата RGB (хоть в даташите про это и не сказано) либо ч/б" (TS-Labs, 30.04.2020). Progressive JPEG and CMYK JPEG do not load; the CMYK case was a user file that would not show. | [p30961](https://forum.tslabs.info/viewtopic.php?p=30961#p30961), [p30959](https://forum.tslabs.info/viewtopic.php?p=30959#p30959) |
-| Jumper J1 | "Оказывается у меня всё это время vdac2 показывал в розово-фиолетовом... Поставил перемычку, стало в сером как первоначально" (Frago, 01.05.2021). Without J1 the colors are wrong. What J1 connects is not stated; it is a board option, not something software sees, so the emulator always behaves as with J1 fitted. | [p31579](https://forum.tslabs.info/viewtopic.php?p=31579#p31579) |
+| JPEG kinds | "what is needed is, first, Baseline JPEG (the kind that loads at once, not with increasing resolution), second, RGB format (even though the datasheet does not say so) or b/w" (TS-Labs, 30.04.2020). Progressive JPEG and CMYK JPEG do not load; the CMYK case was a user file that would not show. | [p30961](https://forum.tslabs.info/viewtopic.php?p=30961#p30961), [p30959](https://forum.tslabs.info/viewtopic.php?p=30959#p30959) |
+| Jumper J1 | "It turns out that all this time my vdac2 was showing everything in pinkish purple... I fitted the jumper, and it became grey as originally" (Frago, 01.05.2021). Without J1 the colors are wrong. What J1 connects is not stated; it is a board option, not something software sees, so the emulator always behaves as with J1 fitted. | [p31579](https://forum.tslabs.info/viewtopic.php?p=31579#p31579) |
 | Audio | No audio output on the card (§2.1). | forum, page 2 |
 
 **For the user documentation** (the recipe in §6.5 and the `ftview` notes):
@@ -262,7 +262,7 @@ HLE for the coprocessor (§5.4).
 3. **The picture follows the beam, as on the chip.** The FT812 has no frame buffer: it draws
    each line from the live display list and the live `RAM_G` just before scanning it out.
    Software depends on that: a write into `RAM_G` under the list being shown visibly breaks
-   sprites on the real card [SW R-Type `CLAUDE.md`, "большие спрайты глючат"]. So lines are
+   sprites on the real card [SW R-Type `CLAUDE.md`, "big sprites glitch"]. So lines are
    drawn in step with FT812 time: before any write that changes what is drawn, the library
    first draws every line the beam has passed (catch-up, like the TS-Conf renderer). While
    the monitor does not show the FT812 (msel = 0), lines are not drawn, but all timing runs.
@@ -595,7 +595,7 @@ All of these get docs, an OpenAPI entry and a recipe.
 | CLI | `state vdac2`, `vdac2 dl [active\|pending]`, `vdac2 mem <addr> <len>`, `vdac2 frame <file>` |
 | MCP | `inspect_state` aspect `vdac2`; `capture_media` with the source `vdac2` |
 | Lua / Python | `vdac2_state()`, `vdac2_display_list()`, `vdac2_read(addr, len)`, `vdac2_frame()` |
-| Qt | later: an FT812 debugger dock (DL with highlighting, `RAM_G` as bitmaps by handle, registers). Not in v1, following the TS-Conf decision ("debug UI - потом"). The API above is complete enough that the dock is integration only. |
+| Qt | later: an FT812 debugger dock (DL with highlighting, `RAM_G` as bitmaps by handle, registers). Not in v1, following the TS-Conf decision ("debug UI - later"). The API above is complete enough that the dock is integration only. |
 | Recipe | `.recipe/machines/tsconf-vdac2.md`: how to enable the card, put a game on the SD card, start it, take a picture; which images `ftview` accepts (§2.7) |
 
 ## 7. Isolation and performance
@@ -744,8 +744,8 @@ whoever has one; items that the BT8XX emulator can answer are checked there firs
 - ESP32-S3 firmware (FT8xx master, mode table with frequencies): https://github.com/tslabs/zx-evo/tree/master/pentevo/esp32
 - TS-Conf documentation: https://github.com/tslabs/zx-evo/tree/master/pentevo/docs/TSconf
 - Chip documents in the TS-Labs repository: https://github.com/tslabs/zx-evo-docs
-- Forum thread "IDE Video DAC2 на FT812" (13 pages; audio, J1, image limits, software): https://forum.tslabs.info/viewtopic.php?f=40&t=651
-- Video "VDAC2 - видеокарта для ZX Evolution": https://www.youtube.com/watch?v=OjSbMH9WKf4 ,
+- Forum thread "IDE Video DAC2 на FT812" ("IDE Video DAC2 on the FT812"; 13 pages; audio, J1, image limits, software): https://forum.tslabs.info/viewtopic.php?f=40&t=651
+- Video "VDAC2 - видеокарта для ZX Evolution" ("VDAC2, a video card for the ZX Evolution"): https://www.youtube.com/watch?v=OjSbMH9WKf4 ,
   https://rutube.ru/video/9e1d5210d92516fb09cb355ff219caf3/
 
 **FT812 (Bridgetek)**
@@ -769,8 +769,8 @@ whoever has one; items that the BT8XX emulator can answer are checked there firs
 - R-Type VDAC2: https://github.com/andrewinsidelazarev/R-Type-Arcade-VDAC2-FT812 (release v1.01: https://github.com/andrewinsidelazarev/R-Type-Arcade-VDAC2-FT812/releases/tag/v1.01)
 - Zuma Deluxe VDAC2: https://github.com/andrewinsidelazarev/Zuna-Deluxe-VDAC2-FT812 (release v1.1: https://github.com/andrewinsidelazarev/Zuna-Deluxe-VDAC2-FT812/releases/tag/v1.1)
 - Heroes of Might and Magic II for VDAC2: https://github.com/andrewinsidelazarev/Heroes-of-Might-and-Magic-II-for-VDAC2
-- In the game repositories: TSLib with the FT812 macros (`Docs/TSLib/Include/FT/`), the "VDAC2 #2 - Первые шаги" article (`Docs/_VDAC2_pervye_shagi.txt`), the TS-Conf + VDAC2 textbook (`Docs/uchebnik_tsconf_vdac2.md`)
+- In the game repositories: TSLib with the FT812 macros (`Docs/TSLib/Include/FT/`), the "VDAC2 #2 - Первые шаги" ("VDAC2 #2: first steps") article (`Docs/_VDAC2_pervye_shagi.txt`), the TS-Conf + VDAC2 textbook (`Docs/uchebnik_tsconf_vdac2.md`)
 
 **Community**
-- zx-pk.ru, "Разработка игры-космосима под ZX Evo Tsconf + VDAC2": https://zx-pk.ru/threads/32689-razrabotka-igry-kosmosima-pod-zx-evo-tsconf-vdac2.html
+- zx-pk.ru, "Разработка игры-космосима под ZX Evo Tsconf + VDAC2" ("Developing a space-sim game for the ZX Evo TS-Conf + VDAC2"): https://zx-pk.ru/threads/32689-razrabotka-igry-kosmosima-pod-zx-evo-tsconf-vdac2.html
 - speccy.pl, Rev.CV (VDAC2 on the board's VGA connector; blocks automated fetches): https://www.speccy.pl/forum/index.php?topic=7464.0

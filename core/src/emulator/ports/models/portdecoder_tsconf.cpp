@@ -3,6 +3,7 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/slots/portowners.h"
 #include "emulator/platforms/tsconf/tsconfprogramsnapshot.h"
 #include "loaders/snapshot/snapshotcapture.h"
 
@@ -10,6 +11,9 @@
 
 #include <cstring>
 
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/ttd/atm/ttdevoavrvolatile.h"
 #include "debugger/ttd/atm/ttdevoflash.h"
 #include "debugger/ttd/atm/ttdevomouse.h"
@@ -26,6 +30,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/tsconf/screentsconf.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
 #include "emulator/platforms/tsconf/tsconfmemoryregions.h"
@@ -46,6 +51,25 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     // master ([V] top.v:1168-1189); a guest write is a TTD replay barrier (the
     // media manager's rule)
     _zc.SetDevice(&_sdCard);
+    _dma.eventWatch = &_context->machineEventWatch;
+    _dma.onFinish = [this]() {
+        if (_dmaHistory.On() && !_context->ttdReplayActive)
+        {
+            const uint64_t frame = _context->emulatorState.frame_counter;
+            _dmaHistory->UpdateLast([frame](TsDmaRecord& r) {
+                if (!r.done)
+                {
+                    r.done = true;
+                    r.endFrame = frame;
+                }
+            });
+        }
+    };
+    _dma.onActivity = [this](bool started, uint8_t value) {
+        GSReportHostEvent(_context, started ? GSCardEvent::TsDmaStart : GSCardEvent::TsDmaDone, value);
+    };
+    _dma.onAccess = [this](bool write, uint32_t byteAddress, uint8_t value) { ReportDmaAccess(write, byteAddress, value); };
+    _engine.onBeam = [this](uint32_t from, uint32_t to) { WatchBeam(from, to); };
     _dma.SetSpi([this](bool read, uint8_t out) -> uint8_t {
         // The bus analyzer sees the DMA's bytes as the DMA's
         const bool tap = _spiTap.Active();
@@ -67,6 +91,7 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
     _zc.SetTap(&_spiTap);
     _sdCard.SetBusTap(&_spiTap, 0);
     _sdCard.SetClock([this]() { return EmulatedMicroseconds(); });
+    _sdCard.AttachHistory(_context, [context = _context]() { return slots::PortOwnerName(context, 0x0057, "sd-zc"); });
     // The VDAC2 card keeps time in raster tacts; it closes a frame once the
     // engine has accounted all of it (the DMA's last SPI bytes included)
     _engine.SetFrameEndListener([this]() {
@@ -339,6 +364,8 @@ void PortDecoder_TSConf::ApplyState()
     _cramVersion++;  // a reset or a state load replaced CRAM
     if (_memory)
         _dma.Attach(_memory->RAMBase(), &GetIdeAdapter(), _memory);
+    if (_context->pCore && _context->pCore->GetZ80())
+        _dma.busWatch = &_context->pCore->GetZ80()->isDebugMode;
     // The VDAC builds are XTR_FEAT builds: they have DMA BLT2 (hardware-spec §0.1)
     _dma.SetBlt2Built(TsConfDma::kBuildHasBlt2 || _context->config.ts_vdac != 0);
     InstallInterrupts();
@@ -716,6 +743,36 @@ uint8_t PortDecoder_TSConf::ReadRegister(uint8_t reg)
     }
 }
 
+std::string PortDecoder_TSConf::RegistersDevice() const
+{
+    return slots::PortOwnerName(_context, 0x00AF, "ts-registers");
+}
+
+/// The register write, after the board latched it; a DMA_CTRL write is a launch too (after it: the counters it took)
+void PortDecoder_TSConf::RecordRegister(uint8_t reg, uint8_t value)
+{
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    const uint16_t tacts = z80 ? static_cast<uint16_t>(z80->t) : 0;
+    const uint16_t pc = z80 ? z80->m1_pc : 0;
+    if (_registerHistory.On())
+        _registerHistory->Push({ .frame = frame, .tacts = tacts, .pc = pc, .reg = reg, .value = value });
+    if (reg != TsConfReg::DmaCtrl || !_dmaHistory.On())
+        return;
+    TsDmaRecord record;
+    record.frame = frame;
+    record.tacts = tacts;
+    record.pc = pc;
+    record.device = static_cast<uint8_t>(((value >> 4) & 0x08) | (value & 0x07));
+    record.flags = _ts.dmaFlags;
+    record.source = _ts.dmaSrc << 1;
+    record.destination = _ts.dmaDst << 1;
+    record.burst = static_cast<uint16_t>(_ts.regs[TsConfReg::DmaLen] + 1);
+    record.blocks = static_cast<uint16_t>(_ts.regs[TsConfReg::DmaNum] + 1);
+    record.aborted = _dmaRunningAtWrite;
+    _dmaHistory->Push(record);
+}
+
 void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
 {
     if (reg >= TsConfReg::kCount)
@@ -783,11 +840,14 @@ void PortDecoder_TSConf::WriteRegister(uint8_t reg, uint8_t value)
             _dma.WriteAddress(reg, value);
             break;
         case TsConfReg::DmaCtrl:
+            _dmaRunningAtWrite = _dma.Busy();
             _dma.Launch(value);
             break;
         default:
             break;
     }
+    if ((_registerHistory.On() || _dmaHistory.On()) && !_context->ttdReplayActive) [[unlikely]]
+        RecordRegister(reg, value);
 }
 
 void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
@@ -797,6 +857,35 @@ void PortDecoder_TSConf::EnterSpectrum128Paging([[maybe_unused]] uint16_t pc)
     WriteRegister(TsConfReg::MemConfig,
                   static_cast<uint8_t>((static_cast<uint8_t>(TsConfLck128::Mode128K) << 6) | rom128));
     RefreshM1Hook();   // the DOS trap is armed in mapped mode with ROM128 = 1
+}
+
+void PortDecoder_TSConf::ApplyBootROMDefaults(ROMModeEnum mode)
+{
+    if (mode != RM_DOS)
+        return;
+
+    // Window 0 in mapped mode is the ROM group {service, TR-DOS, 128, 48} of PAGE0 (here 0: TS-BIOS, TR-DOS 5.04T,
+    // 128, 48) picked by ~DOS and ROM128. Memory::SetROMMode(RM_DOS) right after this sets #7FFD bit 4 to match
+    _state->p7FFD |= 0x10;
+    _ts.regs[TsConfReg::Page0] = 0x00;
+    _ts.regs[TsConfReg::MemConfig] =
+        static_cast<uint8_t>((static_cast<uint8_t>(TsConfLck128::Mode128K) << 6) | TsConfMemConfig::Rom128);
+    _ts.dos = 1;
+    UpdateBanks();
+    RefreshM1Hook();
+}
+
+uint16_t PortDecoder_TSConf::GetClockSelect() const
+{
+    return static_cast<uint16_t>(_ts.regs[TsConfReg::SysConfig] & 0x03);
+}
+
+void PortDecoder_TSConf::RestoreClockSelect(uint16_t select)
+{
+    const uint8_t sysConfig = _ts.regs[TsConfReg::SysConfig];
+    const uint8_t value = static_cast<uint8_t>((sysConfig & ~0x03) | (select & 0x03));
+    if (value != sysConfig)
+        WriteRegister(TsConfReg::SysConfig, value);
 }
 
 /// #7FFD (hardware-spec §2.3): ROM128 = D4, V_PAGE = D3 ? 7 : 5 immediately,
@@ -1162,9 +1251,45 @@ void PortDecoder_TSConf::FmWindow::onWrite(uint16_t addr, uint8_t value, [[maybe
     }
     else
     {
-        // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF)
+        // 0x400-0x4FF: +0x400+n is OUT (n << 8 | #AF): a port breakpoint on that port sees it
+        EmulatorContext* context = _owner._context;
+        if (context->pDebugManager && context->pEmulator && context->pCore->GetZ80()->isDebugMode) [[unlikely]]
+        {
+            const uint16_t port = static_cast<uint16_t>((offset & 0xFF) << 8 | 0xAF);
+            const uint16_t id = context->pDebugManager->GetBreakpointsManager()->HandlePortOut(port, value);
+            if (id != BRK_INVALID)
+                context->pEmulator->OnBreakpointHit(id, port, BreakpointHitKind::PortOut);
+        }
         _owner.WriteRegister(static_cast<uint8_t>(offset), value);
     }
+}
+
+void PortDecoder_TSConf::ReportDmaAccess(bool write, uint32_t byteAddress, uint8_t value)
+{
+    // The CPU's rule: 'breakpoints' off (a typed BASIC line, a step over's run) is off for the DMA too
+    if (!_context->pDebugManager || !_context->pEmulator || !_context->pMemory->BreakpointsActive())
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint8_t page = static_cast<uint8_t>(byteAddress >> 14);
+    const uint16_t offset = static_cast<uint16_t>(byteAddress & 0x3FFF);
+    const uint16_t id = write ? brk.HandlePageWrite(BANK_RAM, page, offset, value) : brk.HandlePageRead(BANK_RAM, page, offset, value);
+    if (id != BRK_INVALID) [[unlikely]]
+        _context->pEmulator->OnBreakpointHit(id, offset, write ? BreakpointHitKind::DmaWrite : BreakpointHitKind::DmaRead);
+}
+
+/// A beam breakpoint's place on TS-Conf: line 0..319 of the raster, hc the CPU tact in the line (0..223, 3.5 MHz)
+void PortDecoder_TSConf::WatchBeam(uint32_t from, uint32_t to)
+{
+    if (!_context->pDebugManager || !_context->pEmulator)
+        return;
+    const uint16_t id = _context->pDebugManager->GetBreakpointsManager()->HandleBeam([&](uint16_t line, uint16_t hc) {
+        if (line >= TsConfEngine::kLines || hc >= TsConfEngine::kLineTacts)
+            return false;
+        const uint32_t at = static_cast<uint32_t>(line) * TsConfEngine::kLineTacts + hc;
+        return at >= from && at < to;
+    });
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, 0, BreakpointHitKind::Beam);
 }
 
 void PortDecoder_TSConf::CommitTableWord(bool cram, uint8_t index, uint16_t word)

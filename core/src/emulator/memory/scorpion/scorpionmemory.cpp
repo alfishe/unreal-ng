@@ -81,7 +81,10 @@ bool ScorpionMemory::UpdateModelBanks()
     // state.scorpion.profromBank stays 0 until the ProfROM read-strobe hook (Task 7)
     // writes it; resolving here on every rebuild is what makes snapshot load
     // and TTD restore land in the right quadrant with no extra code
-    if (config.mem_model == MM_PROFSCORP)
+    // GMX: the plane is #7EFD bits 6-4 and nothing else (no ProfROM read strobe, design 2.4, Q2); the decoder keeps
+    // it in profromBank
+    const bool gmx = config.mem_model == MM_GMX;
+    if (config.mem_model == MM_PROFSCORP || gmx)
         ResolveScorpionRomBases(state.scorpion.profromBank);
 
     // TR-DOS session machinery requires both the DOS and service ROMs to be
@@ -95,15 +98,31 @@ bool ScorpionMemory::UpdateModelBanks()
     // --- bank3 (#C000): #7FFD[2:0] + #1FFD[4]→bit3 + #1FFD[7:6]→bits[5:4],
     // clamped to the physical RAM size ---
     uint8_t ram_mask = GetRamMask();
-    uint8_t bank3 = static_cast<uint8_t>((state.p7FFD & 0b111)
-                                         | ((state.p1FFD & 0x10) >> 1)
-                                         | ((state.p1FFD & 0xC0) >> 2));
-    SetRAMPageToBank3(static_cast<uint8_t>(bank3 & ram_mask));
+    if (gmx)
+    {
+        // GMX (design 2.3): #C000 = #DFFD[2:0] -> bits 6-4, #1FFD[4] -> bit 3, #7FFD[2:0]; #8000 = #78FD ^ 2
+        const uint8_t gmxBank3 = static_cast<uint8_t>(((state.pDFFD & 0x07) << 4) | ((state.p1FFD & 0x10) >> 1) |
+                                                      (state.p7FFD & 0x07));
+        SetRAMPageToBank3(static_cast<uint8_t>(gmxBank3 & ram_mask));
+        SetRAMPageToBank2(static_cast<uint8_t>(((state.gmx.p78FD & 0x7F) ^ 0x02) & ram_mask));
+    }
+    else
+    {
+        uint8_t bank3 = static_cast<uint8_t>((state.p7FFD & 0b111)
+                                             | ((state.p1FFD & 0x10) >> 1)
+                                             | ((state.p1FFD & 0xC0) >> 2));
+        SetRAMPageToBank3(static_cast<uint8_t>(bank3 & ram_mask));
+    }
+
+    // GMX #1FFD bit 2 "hard DOS page": the plane's TR-DOS page at #0000 with the Beta ports on, over RAM 0 (MAME,
+    // pico-speccy). On the base boards the bit is the RS-232 line (below)
+    const bool gmxDosPage = gmx && (state.p1FFD & 0x04) && dosAvailable;
 
     // --- bank0 (#0000) priority chain ---
-    // #1FFD bit 2 is NOT consulted: on hardware it is the RS-232 line, and the
-    // heritage "force TR-DOS session" meaning has no hardware backing
-    // (hardware-reference §12 item 9)
+    // #1FFD bit 2 is NOT consulted on the base boards: on hardware it is the
+    // RS-232 line, and the heritage "force TR-DOS session" meaning has no
+    // hardware backing (hardware-reference §12 item 9). The GMX is the one
+    // exception (gmxDosPage above)
     //
     // Magic button first (DD50.1 "1-Dos/0-SOS", hardware-reference §9): while
     // the DOS trigger is armed, page 3 (TR-DOS) of the CURRENT plane stands at
@@ -117,7 +136,11 @@ bool ScorpionMemory::UpdateModelBanks()
     // only suspends it for its pending-NMI window; overriding RAM0 for the
     // whole armed window is the hardware-faithful reading ("page 3 stands at
     // #0000") and keeps the entry chain intact
-    if (state.scorpion.dosTrigger && dosAvailable)
+    if (gmxDosPage)
+    {
+        SetROMDOS();
+    }
+    else if (state.scorpion.dosTrigger && dosAvailable)
     {
         if (state.p1FFD & 0x02)
             SetROMSystem();         // service latch wins - the #0033 trick
@@ -159,6 +182,10 @@ bool ScorpionMemory::UpdateModelBanks()
     if ((state.flags & CF_TRDOS) && dosAvailable)
     {
         state.flags |= CF_DOSPORTS | CF_LEAVEDOSRAM;
+    }
+    else if (gmxDosPage)
+    {
+        state.flags |= CF_DOSPORTS;  // the latch holds the page: no session to close on a RAM fetch
     }
     else if (state.scorpion.dosTrigger && dosAvailable)
     {

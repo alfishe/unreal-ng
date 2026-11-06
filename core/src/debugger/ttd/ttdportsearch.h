@@ -76,6 +76,17 @@ struct TTDPortHit
     int ayRegister = -1;   ///< the AY register selected at the access (-1: none known)
 };
 
+/// The machine at a port access (port-events' context, phase 2 D5): the CPU
+/// at the M1 of the IN / OUT instruction, before it ran
+struct TTDPortContext
+{
+    bool ok = false;
+    std::string error;       ///< !ok: why (a replay barrier, no M1 found)
+    TTDTimePoint at{};       ///< The instruction's M1
+    TTDCpuState cpu{};       ///< Registers at that M1
+    uint16_t stackTop = 0;   ///< The word at SP: the return address when the routine pushed nothing
+};
+
 struct TTDPortSearchResult
 {
     bool ok = false;
@@ -120,6 +131,17 @@ const std::vector<std::string>& PortEventNames();
 /// Numbers: decimal, 0x.., #.. or $... Apply after BuildPortEventQuery: an
 /// option overrides what the event set. False with `err` for a bad option
 bool ApplyPortQueryOption(TTDPortQuery& q, const std::string& name, const std::string& value, std::string& err);
+
+/// The keyboard half-rows an IN from the ULA (an even port) selects: bit n
+/// set = address line A(8+n) low, the half-row of keyboard row n (0 = CAPS..V,
+/// 7 = SPACE..B). 0 for an odd port
+uint8_t KeyboardRowsRead(uint16_t port);
+
+/// The keys a ULA read saw down, by the names the "key" event takes ("a",
+/// "caps", "enter"...): their bits are 0 in `value`. Only for a read that
+/// selects one half-row; reading several at once, a 0 bit cannot tell which
+/// row's key it was, so the list is empty
+std::vector<std::string> KeysSeenDown(uint16_t port, uint8_t value);
 
 /// Short text names of the enums (reports, schemas)
 const char* PortDirectionName(TTDPortJournal::Direction d);

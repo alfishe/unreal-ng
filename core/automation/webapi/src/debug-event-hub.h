@@ -35,7 +35,7 @@ public:
     DebugEventHub& operator=(const DebugEventHub&) = delete;
 
     /// Follow the core's notifications (idempotent): NC_EMULATOR_STATE_CHANGE, NC_EXECUTION_CPU_STEP,
-    /// NC_BREAKPOINTS_CHANGED on the default MessageCenter
+    /// NC_BREAKPOINTS_CHANGED, NC_SCRIPT_CALLBACKS_CHANGED, NC_FRAME_WATCH, NC_ASM_SYNC on the default MessageCenter
     void Start();
     void Stop();
 
@@ -69,6 +69,8 @@ private:
     void OnStateChange(Message* message);
     void OnCpuStep(Message* message);
     void OnBreakpointsChanged(Message* message);
+    void OnScriptCallbacksChanged(Message* message);  // NC_SCRIPT_CALLBACKS_CHANGED: callbacks_changed on debug
+    void OnFrameWatch(Message* message);              // NC_FRAME_WATCH: watch_hit / _added / _removed / _error on debug
     void OnAsmSync(Message* message);   // NC_ASM_SYNC: topic asm_sync
 
     /// Numbers the event (per emulator), then sends it to every matching subscription

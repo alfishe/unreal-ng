@@ -8,8 +8,8 @@
 
 The controllers dialog shows the selected host device with a callout per control and lights the controls while they
 are held (`unreal-qt/src/controllers/controllerpicture.cpp`). Until now the pictures were line drawings from
-`tools/controllers/make_fallback_images.py`. Q-1 asked whether the image set should be retouched photos or vector
-art; the owner answered on 2026-10-23: vector, made the way POC 031 made the on-screen keyboards. This POC draws the
+`tools/controllers/make_fallback_images.py` (removed 2026-11-01, once its last set, the keyboard, was drawn here).
+Q-1 asked whether the image set should be retouched photos or vector art; the owner answered on 2026-10-23: vector, made the way POC 031 made the on-screen keyboards. This POC draws the
 first set.
 
 ## Goals
@@ -69,7 +69,7 @@ first set.
 | `svgkit.py` | gradients, shades, text outlines, path helpers |
 | `style.py` | the house style: body, wells, sticks, buttons, D-pads, bumpers, triggers, paddles |
 | `model.py` | the canvas, the scale (8.6 px per mm), views, layers, hotspots in mm converted to canvas px |
-| `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`; the all-pads round adds `xbox_more`, `logitech`, `sony_more`, `joycon`, `nintendo_retro`, `others`, `eightbitdo_more`, `arcade`, each with a `SETS` dict) |
+| `devices/` | one module per maker or device: geometry in mm, colours, controls, sources (`xbox`, `playstation`, `dualshock`, `switchpro`, `eightbitdo`, `generic`, `db9`; the all-pads round adds `xbox_more`, `logitech`, `sony_more`, `joycon`, `nintendo_retro`, `others`, `eightbitdo_more`, `arcade`, each with a `SETS` dict; later `contour`: the ShuttlePRO v2 debug remote, its hotspots polygons; `sega`: the Mega Drive six-button pad, replacing the md6-pad line drawing; `microsoft`: the Surface Dial and `valve`: the Steam Deck front and back, replacing their line drawings) |
 | `trace.py` | measures an outline on a top view: silhouette, symmetry axis, left half mirrored, scaled to the measured width, cubic Beziers within a tolerance; `--shell` prints the right half for `mirrored_d`, `--grid` a 5 mm grid for reading the control positions, `--overlay` the fit |
 | `render.py` | Qt (PySide6 `QSvgRenderer`) and rsvg renders, the Qt-vs-rsvg numbers, the per-device sheets with every control highlighted as `ControllerPicture` paints it, the overview |
 | [`measurements-2026-10-23-render-check.md`](measurements-2026-10-23-render-check.md) | Qt vs rsvg, sizes, render cost |

@@ -7,9 +7,9 @@
 /// The journal is recorded on demand: switched on and off during a recording,
 /// or built later by replay. Its segments say which spans of machine time it
 /// covers; inside them "who wrote this address last" answers from it at once.
-/// Records arrive in time order and are kept as v1's file blocks (2,048
-/// records in columns, zstd level 1) instead of v1's raw 12-byte ring: about
-/// 15-40 times smaller (E7).
+/// Records arrive in time order and are kept in file blocks (2,048 records in
+/// columns, zstd level 1, the layout v1's files had) instead of a raw 12-byte
+/// ring: about 15-40 times smaller (E7).
 
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +49,8 @@ public:
                                                   const std::function<bool(const TTDWriteRecord&)>& pred) const;
     /// Every record in time order
     void ForEach(const std::function<void(const TTDWriteRecord&)>& visit) const;
+    /// The records with afterT < globalT <= upToT, newest first, until @p visit returns false
+    void ForEachBackward(uint64_t afterT, uint64_t upToT, const std::function<bool(const TTDWriteRecord&)>& visit) const;
 
     void Clear();
     /// Replace the records by @p records (in time order); what DropBefore

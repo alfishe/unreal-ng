@@ -15,6 +15,7 @@
 #include <trantor/net/TcpServer.h>
 #include <trantor/utils/Logger.h>
 #include <functional>
+#include <future>
 #include <vector>
 #include "Acceptor.h"
 #include "inner/TcpConnectionImpl.h"
@@ -136,36 +137,14 @@ void TcpServer::stop()
 {
     if (loop_->isInLoopThread())
     {
-        acceptorPtr_.reset();
-        // copy the connSet_ to a vector, use the vector to close the
-        // connections to avoid the iterator invalidation.
-        std::vector<TcpConnectionPtr> connPtrs;
-        connPtrs.reserve(connSet_.size());
-        for (auto &conn : connSet_)
-        {
-            connPtrs.push_back(conn);
-        }
-        for (auto &connection : connPtrs)
-        {
-            connection->forceClose();
-        }
+        closeAllInLoop();
     }
     else
     {
         std::promise<void> pro;
         auto f = pro.get_future();
         loop_->queueInLoop([this, &pro]() {
-            acceptorPtr_.reset();
-            std::vector<TcpConnectionPtr> connPtrs;
-            connPtrs.reserve(connSet_.size());
-            for (auto &conn : connSet_)
-            {
-                connPtrs.push_back(conn);
-            }
-            for (auto &connection : connPtrs)
-            {
-                connection->forceClose();
-            }
+            closeAllInLoop();
             pro.set_value();
         });
         f.get();
@@ -177,6 +156,41 @@ void TcpServer::stop()
         auto f = pro.get_future();
         iter.second->getLoop()->runInLoop([&iter, &pro]() mutable {
             iter.second.reset();
+            pro.set_value();
+        });
+        f.get();
+    }
+}
+// unreal-ng: the connections are closed on their own loops before stop()
+// returns. A forceClose() only queued there ran after the owner had destroyed
+// the server (drogon's quit resets the listeners right after stopListening)
+// and its close callback then used the freed server (unreal-qt crashed on
+// exit with a WebSocket client connected).
+void TcpServer::closeAllInLoop()
+{
+    loop_->assertInLoopThread();
+    acceptorPtr_.reset();
+    // copy the connSet_ to a vector, use the vector to close the
+    // connections to avoid the iterator invalidation.
+    std::vector<TcpConnectionPtr> connPtrs;
+    connPtrs.reserve(connSet_.size());
+    for (auto &conn : connSet_)
+    {
+        connPtrs.push_back(conn);
+    }
+    for (auto &connection : connPtrs)
+    {
+        auto connLoop = connection->getLoop();
+        if (connLoop->isInLoopThread())
+        {
+            connection->forceClose();
+            continue;
+        }
+        std::promise<void> pro;
+        auto f = pro.get_future();
+        connLoop->queueInLoop([&connection, &pro]() {
+            // in the connection's loop: forceClose closes at once
+            connection->forceClose();
             pro.set_value();
         });
         f.get();
@@ -205,8 +219,19 @@ void TcpServer::connectionClosed(const TcpConnectionPtr &connectionPtr)
     }
     else
     {
+        // unreal-ng: this may run on loop_ after the server is gone (it is
+        // destroyed on loop_, right after stop()): then only the connection
+        // is finished
         loop_->queueInLoop(
-            [this, connectionPtr]() { handleCloseInLoop(connectionPtr); });
+            [this, alive = std::weak_ptr<bool>(alive_), connectionPtr]() {
+                if (alive.lock())
+                {
+                    handleCloseInLoop(connectionPtr);
+                    return;
+                }
+                connectionPtr->getLoop()->queueInLoop(
+                    [connectionPtr]() { connectionPtr->connectDestroyed(); });
+            });
     }
 }
 

@@ -198,3 +198,30 @@ TEST_F(DezogZesaruxFixture, ExtendedStackClassificationLines)
 }
 
 /// endregion </extended-stack lines>
+
+/// region <ZX Next>
+
+// The Next (platform-debugging P4): DeZog's ZEsarUX remote takes the eight 8K slots from the machine name, the MMU
+// words and the page tokens as ZEsarUX gives them for tbblue
+class DezogZesaruxNextFixture : public DezogZesaruxFixture
+{
+protected:
+    std::string ModelName() const override { return "NEXT"; }
+};
+
+TEST_F(DezogZesaruxNextFixture, TheNextReportsEightSlotsAsZesarux)
+{
+    EXPECT_EQ(_client.command("get-current-machine"), "ZX Spectrum Next");
+    EXPECT_EQ(_client.command("tbblue-set-register 87 33"), "");  // MMU7 (NR #57) = 8K bank #21
+    const std::string pages = _client.command("get-memory-pages");
+    // Slots 0 / 1 the two halves of the selected ROM, then the reset layout (10 11 4 5 0) and bank #21
+    const std::string rom = std::to_string(_adapter->nextRomSelect() * 2);
+    const std::string romHigh = std::to_string(_adapter->nextRomSelect() * 2 + 1);
+    EXPECT_EQ(pages, "O" + rom + " O" + romHigh + " A10 A11 A4 A5 A0 A33 ");
+    char mmu[40];
+    std::snprintf(mmu, sizeof(mmu), "MMU=%04x%04x000a000b0004000500000021", 0x8000 | (_adapter->nextRomSelect() * 2),
+                  0x8000 | (_adapter->nextRomSelect() * 2 + 1));
+    EXPECT_NE(_client.command("get-registers").find(mmu), std::string::npos) << mmu;
+}
+
+/// endregion </ZX Next>

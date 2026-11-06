@@ -32,6 +32,7 @@
 #include "emulator/coordinator/ports.h"
 #include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/blockformats.h"
+#include "emulator/media/guestprogramwatch.h"
 #include "emulator/media/mediaconfig.h"
 #include "emulator/media/mediaformatregistry.h"
 #include "emulator/media/mediaslot.h"
@@ -325,6 +326,9 @@ public:
     /// The attached medium (tests, peripherals' diagnostics); nullptr if empty.
     /// Only valid on the emulation thread or while the emulator is not running
     Medium* GetMedium(const std::string& slotId);
+    /// A medium put in that is not in its slot yet: a change while a TTD recording runs lands at the next frame
+    /// boundary (an event of the recording there), even on a parked machine. Any thread
+    bool HasIncoming(const std::string& slotId) const;
 
     /// Replace the "is the machine executing?" check (tests drive the queue
     /// without a running main loop). nullptr restores the emulator's state
@@ -447,6 +451,8 @@ private:
     static void AttachJournal(Medium& medium, const MediaSource& source, JournalChoice choice);
 
     EmulatorContext* _context = nullptr;
+    /// Names the program file the guest reads from a block medium (NC_GUEST_PROGRAM)
+    GuestProgramWatch _guestProgramWatch{_context};
     std::function<bool()> _applyNowProbe;
     bool _releasing = false;  ///< the destructor saves by policy: nothing executes any more
     /// Defined in mediamanager.cpp: an inline one gets a different type per TU under MSVC LTCG (C4744)

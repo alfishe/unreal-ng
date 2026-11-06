@@ -12,15 +12,15 @@
       "label": "Esc",
       "shape": {
         "rect": [
-          83,
-          499,
+          124,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        121,
-        537
+        162,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -31,15 +31,15 @@
       "label": "F1",
       "shape": {
         "rect": [
-          251,
-          499,
+          285,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        289,
-        537
+        322,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -50,15 +50,15 @@
       "label": "F2",
       "shape": {
         "rect": [
-          335,
-          499,
+          365,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        373,
-        537
+        403,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -69,15 +69,15 @@
       "label": "F3",
       "shape": {
         "rect": [
-          419,
-          499,
+          445,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        457,
-        537
+        483,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -88,15 +88,15 @@
       "label": "F4",
       "shape": {
         "rect": [
-          503,
-          499,
+          525,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        541,
-        537
+        563,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -107,15 +107,15 @@
       "label": "F5",
       "shape": {
         "rect": [
-          629,
-          499,
+          645,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        667,
-        537
+        683,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -126,15 +126,15 @@
       "label": "F6",
       "shape": {
         "rect": [
-          713,
-          499,
+          726,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        751,
-        537
+        763,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -145,15 +145,15 @@
       "label": "F7",
       "shape": {
         "rect": [
-          797,
-          499,
+          806,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        835,
-        537
+        844,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -164,15 +164,15 @@
       "label": "F8",
       "shape": {
         "rect": [
-          881,
-          499,
+          886,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        919,
-        537
+        924,
+        579
       ],
       "callout": "left",
       "quiet": true,
@@ -183,15 +183,15 @@
       "label": "F9",
       "shape": {
         "rect": [
-          1007,
-          499,
+          1006,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1045,
-        537
+        1044,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -202,15 +202,15 @@
       "label": "F10",
       "shape": {
         "rect": [
-          1091,
-          499,
+          1086,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1129,
-        537
+        1124,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -221,15 +221,15 @@
       "label": "F11",
       "shape": {
         "rect": [
-          1175,
-          499,
+          1167,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1213,
-        537
+        1204,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -240,15 +240,15 @@
       "label": "F12",
       "shape": {
         "rect": [
-          1259,
-          499,
+          1247,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1297,
-        537
+        1285,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -259,15 +259,15 @@
       "label": "`",
       "shape": {
         "rect": [
-          83,
-          625,
+          124,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        121,
-        663
+        162,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -278,15 +278,15 @@
       "label": "1",
       "shape": {
         "rect": [
-          167,
-          625,
+          204,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        205,
-        663
+        242,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -297,15 +297,15 @@
       "label": "2",
       "shape": {
         "rect": [
-          251,
-          625,
+          285,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        289,
-        663
+        322,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -316,15 +316,15 @@
       "label": "3",
       "shape": {
         "rect": [
-          335,
-          625,
+          365,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        373,
-        663
+        403,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -335,15 +335,15 @@
       "label": "4",
       "shape": {
         "rect": [
-          419,
-          625,
+          445,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        457,
-        663
+        483,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -354,15 +354,15 @@
       "label": "5",
       "shape": {
         "rect": [
-          503,
-          625,
+          525,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        541,
-        663
+        563,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -373,15 +373,15 @@
       "label": "6",
       "shape": {
         "rect": [
-          587,
-          625,
+          605,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        625,
-        663
+        643,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -392,15 +392,15 @@
       "label": "7",
       "shape": {
         "rect": [
-          671,
-          625,
+          686,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        709,
-        663
+        723,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -411,15 +411,15 @@
       "label": "8",
       "shape": {
         "rect": [
-          755,
-          625,
+          766,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        793,
-        663
+        803,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -430,15 +430,15 @@
       "label": "9",
       "shape": {
         "rect": [
-          839,
-          625,
+          846,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        877,
-        663
+        884,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -449,15 +449,15 @@
       "label": "0",
       "shape": {
         "rect": [
-          923,
-          625,
+          926,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        961,
-        663
+        964,
+        699
       ],
       "callout": "left",
       "quiet": true,
@@ -468,15 +468,15 @@
       "label": "-",
       "shape": {
         "rect": [
-          1007,
-          625,
+          1006,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1045,
-        663
+        1044,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -487,15 +487,15 @@
       "label": "=",
       "shape": {
         "rect": [
-          1091,
-          625,
+          1086,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1129,
-        663
+        1124,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -506,15 +506,15 @@
       "label": "Backspace",
       "shape": {
         "rect": [
-          1175,
-          625,
-          160,
+          1167,
+          662,
+          156,
           76
         ]
       },
       "anchor": [
-        1255,
-        663
+        1245,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -525,15 +525,15 @@
       "label": "Tab",
       "shape": {
         "rect": [
-          83,
-          709,
-          118,
+          124,
+          742,
+          116,
           76
         ]
       },
       "anchor": [
-        142,
-        747
+        182,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -544,15 +544,15 @@
       "label": "Q",
       "shape": {
         "rect": [
-          209,
-          709,
+          244,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        247,
-        747
+        282,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -563,15 +563,15 @@
       "label": "W",
       "shape": {
         "rect": [
-          293,
-          709,
+          325,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        331,
-        747
+        362,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -582,15 +582,15 @@
       "label": "E",
       "shape": {
         "rect": [
-          377,
-          709,
+          405,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        415,
-        747
+        443,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -601,15 +601,15 @@
       "label": "R",
       "shape": {
         "rect": [
-          461,
-          709,
+          485,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        499,
-        747
+        523,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -620,15 +620,15 @@
       "label": "T",
       "shape": {
         "rect": [
-          545,
-          709,
+          565,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        583,
-        747
+        603,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -639,15 +639,15 @@
       "label": "Y",
       "shape": {
         "rect": [
-          629,
-          709,
+          645,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        667,
-        747
+        683,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -658,15 +658,15 @@
       "label": "U",
       "shape": {
         "rect": [
-          713,
-          709,
+          726,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        751,
-        747
+        763,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -677,15 +677,15 @@
       "label": "I",
       "shape": {
         "rect": [
-          797,
-          709,
+          806,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        835,
-        747
+        844,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -696,15 +696,15 @@
       "label": "O",
       "shape": {
         "rect": [
-          881,
-          709,
+          886,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        919,
-        747
+        924,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -715,15 +715,15 @@
       "label": "P",
       "shape": {
         "rect": [
-          965,
-          709,
+          966,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1003,
-        747
+        1004,
+        780
       ],
       "callout": "left",
       "quiet": true,
@@ -734,15 +734,15 @@
       "label": "[",
       "shape": {
         "rect": [
-          1049,
-          709,
+          1046,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1087,
-        747
+        1084,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -753,15 +753,15 @@
       "label": "]",
       "shape": {
         "rect": [
-          1133,
-          709,
+          1127,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1171,
-        747
+        1164,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -772,15 +772,15 @@
       "label": "\\",
       "shape": {
         "rect": [
-          1217,
-          709,
-          118,
+          1207,
+          742,
+          116,
           76
         ]
       },
       "anchor": [
-        1276,
-        747
+        1265,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -791,15 +791,15 @@
       "label": "Caps",
       "shape": {
         "rect": [
-          83,
-          793,
-          139,
+          124,
+          822,
+          136,
           76
         ]
       },
       "anchor": [
-        152,
-        831
+        192,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -810,15 +810,15 @@
       "label": "A",
       "shape": {
         "rect": [
-          230,
-          793,
+          265,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        268,
-        831
+        302,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -829,15 +829,15 @@
       "label": "S",
       "shape": {
         "rect": [
-          314,
-          793,
+          345,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        352,
-        831
+        382,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -848,15 +848,15 @@
       "label": "D",
       "shape": {
         "rect": [
-          398,
-          793,
+          425,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        436,
-        831
+        463,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -867,15 +867,15 @@
       "label": "F",
       "shape": {
         "rect": [
-          482,
-          793,
+          505,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        520,
-        831
+        543,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -886,15 +886,15 @@
       "label": "G",
       "shape": {
         "rect": [
-          566,
-          793,
+          585,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        604,
-        831
+        623,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -905,15 +905,15 @@
       "label": "H",
       "shape": {
         "rect": [
-          650,
-          793,
+          665,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        688,
-        831
+        703,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -924,15 +924,15 @@
       "label": "J",
       "shape": {
         "rect": [
-          734,
-          793,
+          746,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        772,
-        831
+        783,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -943,15 +943,15 @@
       "label": "K",
       "shape": {
         "rect": [
-          818,
-          793,
+          826,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        856,
-        831
+        864,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -962,15 +962,15 @@
       "label": "L",
       "shape": {
         "rect": [
-          902,
-          793,
+          906,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        940,
-        831
+        944,
+        860
       ],
       "callout": "left",
       "quiet": true,
@@ -982,16 +982,16 @@
       "shape": {
         "rect": [
           986,
-          793,
+          822,
           76,
           76
         ]
       },
       "anchor": [
         1024,
-        831
+        860
       ],
-      "callout": "right",
+      "callout": "left",
       "quiet": true,
       "order": 51
     },
@@ -1000,15 +1000,15 @@
       "label": "'",
       "shape": {
         "rect": [
-          1070,
-          793,
+          1066,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        1108,
-        831
+        1104,
+        860
       ],
       "callout": "right",
       "quiet": true,
@@ -1019,15 +1019,15 @@
       "label": "Enter",
       "shape": {
         "rect": [
-          1154,
-          793,
-          181,
+          1147,
+          822,
+          176,
           76
         ]
       },
       "anchor": [
-        1244,
-        831
+        1234,
+        860
       ],
       "callout": "right",
       "quiet": true,
@@ -1035,18 +1035,18 @@
     },
     {
       "control": "key.lshift",
-      "label": "Shift",
+      "label": "Left Shift",
       "shape": {
         "rect": [
-          83,
-          877,
-          181,
+          124,
+          902,
+          176,
           76
         ]
       },
       "anchor": [
-        173,
-        915
+        212,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1057,15 +1057,15 @@
       "label": "Z",
       "shape": {
         "rect": [
-          272,
-          877,
+          305,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        310,
-        915
+        342,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1076,15 +1076,15 @@
       "label": "X",
       "shape": {
         "rect": [
-          356,
-          877,
+          385,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        394,
-        915
+        423,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1095,15 +1095,15 @@
       "label": "C",
       "shape": {
         "rect": [
-          440,
-          877,
+          465,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        478,
-        915
+        503,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1114,15 +1114,15 @@
       "label": "V",
       "shape": {
         "rect": [
-          524,
-          877,
+          545,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        562,
-        915
+        583,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1133,15 +1133,15 @@
       "label": "B",
       "shape": {
         "rect": [
-          608,
-          877,
+          625,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        646,
-        915
+        663,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1152,15 +1152,15 @@
       "label": "N",
       "shape": {
         "rect": [
-          692,
-          877,
+          706,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        730,
-        915
+        743,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1171,15 +1171,15 @@
       "label": "M",
       "shape": {
         "rect": [
-          776,
-          877,
+          786,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        814,
-        915
+        824,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1190,15 +1190,15 @@
       "label": ",",
       "shape": {
         "rect": [
-          860,
-          877,
+          866,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        898,
-        915
+        904,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1209,15 +1209,15 @@
       "label": ".",
       "shape": {
         "rect": [
-          944,
-          877,
+          946,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        982,
-        915
+        984,
+        940
       ],
       "callout": "left",
       "quiet": true,
@@ -1228,15 +1228,15 @@
       "label": "/",
       "shape": {
         "rect": [
-          1028,
-          877,
+          1026,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        1066,
-        915
+        1064,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1244,18 +1244,18 @@
     },
     {
       "control": "key.rshift",
-      "label": "Shift",
+      "label": "Right Shift",
       "shape": {
         "rect": [
-          1112,
-          877,
-          223,
+          1107,
+          902,
+          216,
           76
         ]
       },
       "anchor": [
-        1223,
-        915
+        1214,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1263,18 +1263,18 @@
     },
     {
       "control": "key.lctrl",
-      "label": "Ctrl",
+      "label": "Left Ctrl",
       "shape": {
         "rect": [
-          83,
-          961,
-          97,
+          124,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        131,
-        999
+        172,
+        1020
       ],
       "callout": "left",
       "quiet": true,
@@ -1282,18 +1282,18 @@
     },
     {
       "control": "key.lgui",
-      "label": "Win",
+      "label": "Left Win",
       "shape": {
         "rect": [
-          188,
-          961,
-          97,
+          224,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        236,
-        999
+        272,
+        1020
       ],
       "callout": "left",
       "quiet": true,
@@ -1301,18 +1301,18 @@
     },
     {
       "control": "key.lalt",
-      "label": "Alt",
+      "label": "Left Alt",
       "shape": {
         "rect": [
-          293,
-          961,
-          97,
+          325,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        341,
-        999
+        372,
+        1020
       ],
       "callout": "left",
       "quiet": true,
@@ -1323,15 +1323,15 @@
       "label": "Space",
       "shape": {
         "rect": [
-          398,
-          961,
-          517,
+          425,
+          982,
+          497,
           76
         ]
       },
       "anchor": [
-        656,
-        999
+        673,
+        1020
       ],
       "callout": "left",
       "quiet": true,
@@ -1339,18 +1339,18 @@
     },
     {
       "control": "key.ralt",
-      "label": "Alt",
+      "label": "Right Alt",
       "shape": {
         "rect": [
-          923,
-          961,
-          97,
+          926,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        971,
-        999
+        974,
+        1020
       ],
       "callout": "left",
       "quiet": true,
@@ -1358,18 +1358,18 @@
     },
     {
       "control": "key.rgui",
-      "label": "Win",
+      "label": "Right Win",
       "shape": {
         "rect": [
-          1028,
-          961,
-          97,
+          1026,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        1076,
-        999
+        1074,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1380,15 +1380,15 @@
       "label": "Menu",
       "shape": {
         "rect": [
-          1133,
-          961,
-          97,
+          1127,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        1181,
-        999
+        1174,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1396,18 +1396,18 @@
     },
     {
       "control": "key.rctrl",
-      "label": "Ctrl",
+      "label": "Right Ctrl",
       "shape": {
         "rect": [
-          1238,
-          961,
-          97,
+          1227,
+          982,
+          96,
           76
         ]
       },
       "anchor": [
-        1286,
-        999
+        1275,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1418,15 +1418,15 @@
       "label": "PrtSc",
       "shape": {
         "rect": [
-          1364,
-          499,
+          1347,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1402,
-        537
+        1385,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -1437,15 +1437,15 @@
       "label": "ScrLk",
       "shape": {
         "rect": [
-          1448,
-          499,
+          1427,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1486,
-        537
+        1465,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -1456,15 +1456,15 @@
       "label": "Pause",
       "shape": {
         "rect": [
-          1532,
-          499,
+          1507,
+          541,
           76,
           76
         ]
       },
       "anchor": [
-        1570,
-        537
+        1545,
+        579
       ],
       "callout": "right",
       "quiet": true,
@@ -1475,15 +1475,15 @@
       "label": "Ins",
       "shape": {
         "rect": [
-          1364,
-          625,
+          1347,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1402,
-        663
+        1385,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1494,15 +1494,15 @@
       "label": "Home",
       "shape": {
         "rect": [
-          1448,
-          625,
+          1427,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1486,
-        663
+        1465,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1513,15 +1513,15 @@
       "label": "PgUp",
       "shape": {
         "rect": [
-          1532,
-          625,
+          1507,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1570,
-        663
+        1545,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1532,15 +1532,15 @@
       "label": "Del",
       "shape": {
         "rect": [
-          1364,
-          709,
+          1347,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1402,
-        747
+        1385,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1551,15 +1551,15 @@
       "label": "End",
       "shape": {
         "rect": [
-          1448,
-          709,
+          1427,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1486,
-        747
+        1465,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1570,15 +1570,15 @@
       "label": "PgDn",
       "shape": {
         "rect": [
-          1532,
-          709,
+          1507,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1570,
-        747
+        1545,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1589,15 +1589,15 @@
       "label": "\u2191",
       "shape": {
         "rect": [
-          1448,
-          877,
+          1427,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        1486,
-        915
+        1465,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1608,15 +1608,15 @@
       "label": "\u2190",
       "shape": {
         "rect": [
-          1364,
-          961,
+          1347,
+          982,
           76,
           76
         ]
       },
       "anchor": [
-        1402,
-        999
+        1385,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1627,15 +1627,15 @@
       "label": "\u2193",
       "shape": {
         "rect": [
-          1448,
-          961,
+          1427,
+          982,
           76,
           76
         ]
       },
       "anchor": [
-        1486,
-        999
+        1465,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1646,15 +1646,15 @@
       "label": "\u2192",
       "shape": {
         "rect": [
-          1532,
-          961,
+          1507,
+          982,
           76,
           76
         ]
       },
       "anchor": [
-        1570,
-        999
+        1545,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1665,15 +1665,15 @@
       "label": "Num",
       "shape": {
         "rect": [
-          1637,
-          625,
+          1608,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1675,
-        663
+        1645,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1681,18 +1681,18 @@
     },
     {
       "control": "key.kp_divide",
-      "label": "/",
+      "label": "Num /",
       "shape": {
         "rect": [
-          1721,
-          625,
+          1688,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1759,
-        663
+        1726,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1700,18 +1700,18 @@
     },
     {
       "control": "key.kp_multiply",
-      "label": "*",
+      "label": "Num *",
       "shape": {
         "rect": [
-          1805,
-          625,
+          1768,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1843,
-        663
+        1806,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1719,18 +1719,18 @@
     },
     {
       "control": "key.kp_minus",
-      "label": "-",
+      "label": "Num -",
       "shape": {
         "rect": [
-          1889,
-          625,
+          1848,
+          662,
           76,
           76
         ]
       },
       "anchor": [
-        1927,
-        663
+        1886,
+        699
       ],
       "callout": "right",
       "quiet": true,
@@ -1738,18 +1738,18 @@
     },
     {
       "control": "key.kp_7",
-      "label": "7",
+      "label": "Num 7",
       "shape": {
         "rect": [
-          1637,
-          709,
+          1608,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1675,
-        747
+        1645,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1757,18 +1757,18 @@
     },
     {
       "control": "key.kp_8",
-      "label": "8",
+      "label": "Num 8",
       "shape": {
         "rect": [
-          1721,
-          709,
+          1688,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1759,
-        747
+        1726,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1776,18 +1776,18 @@
     },
     {
       "control": "key.kp_9",
-      "label": "9",
+      "label": "Num 9",
       "shape": {
         "rect": [
-          1805,
-          709,
+          1768,
+          742,
           76,
           76
         ]
       },
       "anchor": [
-        1843,
-        747
+        1806,
+        780
       ],
       "callout": "right",
       "quiet": true,
@@ -1795,18 +1795,18 @@
     },
     {
       "control": "key.kp_plus",
-      "label": "+",
+      "label": "Num +",
       "shape": {
         "rect": [
-          1889,
-          709,
+          1848,
+          742,
           76,
-          160
+          156
         ]
       },
       "anchor": [
-        1927,
-        789
+        1886,
+        820
       ],
       "callout": "right",
       "quiet": true,
@@ -1814,18 +1814,18 @@
     },
     {
       "control": "key.kp_4",
-      "label": "4",
+      "label": "Num 4",
       "shape": {
         "rect": [
-          1637,
-          793,
+          1608,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        1675,
-        831
+        1645,
+        860
       ],
       "callout": "right",
       "quiet": true,
@@ -1833,18 +1833,18 @@
     },
     {
       "control": "key.kp_5",
-      "label": "5",
+      "label": "Num 5",
       "shape": {
         "rect": [
-          1721,
-          793,
+          1688,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        1759,
-        831
+        1726,
+        860
       ],
       "callout": "right",
       "quiet": true,
@@ -1852,18 +1852,18 @@
     },
     {
       "control": "key.kp_6",
-      "label": "6",
+      "label": "Num 6",
       "shape": {
         "rect": [
-          1805,
-          793,
+          1768,
+          822,
           76,
           76
         ]
       },
       "anchor": [
-        1843,
-        831
+        1806,
+        860
       ],
       "callout": "right",
       "quiet": true,
@@ -1871,18 +1871,18 @@
     },
     {
       "control": "key.kp_1",
-      "label": "1",
+      "label": "Num 1",
       "shape": {
         "rect": [
-          1637,
-          877,
+          1608,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        1675,
-        915
+        1645,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1890,18 +1890,18 @@
     },
     {
       "control": "key.kp_2",
-      "label": "2",
+      "label": "Num 2",
       "shape": {
         "rect": [
-          1721,
-          877,
+          1688,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        1759,
-        915
+        1726,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1909,18 +1909,18 @@
     },
     {
       "control": "key.kp_3",
-      "label": "3",
+      "label": "Num 3",
       "shape": {
         "rect": [
-          1805,
-          877,
+          1768,
+          902,
           76,
           76
         ]
       },
       "anchor": [
-        1843,
-        915
+        1806,
+        940
       ],
       "callout": "right",
       "quiet": true,
@@ -1928,18 +1928,18 @@
     },
     {
       "control": "key.kp_enter",
-      "label": "Enter",
+      "label": "Num Enter",
       "shape": {
         "rect": [
-          1889,
-          877,
+          1848,
+          902,
           76,
-          160
+          156
         ]
       },
       "anchor": [
-        1927,
-        957
+        1886,
+        980
       ],
       "callout": "right",
       "quiet": true,
@@ -1947,18 +1947,18 @@
     },
     {
       "control": "key.kp_0",
-      "label": "0",
+      "label": "Num 0",
       "shape": {
         "rect": [
-          1637,
-          961,
-          160,
+          1608,
+          982,
+          156,
           76
         ]
       },
       "anchor": [
-        1717,
-        999
+        1686,
+        1020
       ],
       "callout": "right",
       "quiet": true,
@@ -1966,18 +1966,18 @@
     },
     {
       "control": "key.kp_decimal",
-      "label": ".",
+      "label": "Num .",
       "shape": {
         "rect": [
-          1805,
-          961,
+          1768,
+          982,
           76,
           76
         ]
       },
       "anchor": [
-        1843,
-        999
+        1806,
+        1020
       ],
       "callout": "right",
       "quiet": true,

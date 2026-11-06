@@ -396,24 +396,18 @@ void EmulatorAPI::playTape(const HttpRequestPtr& /*req*/,
     
     // Parse-once (idempotent); paused -> resume the frozen position IN PLACE
     // (FR-6), otherwise start at the consumption cursor
-    bool played = context->pTape->EnsureImageLoaded();
-    bool resumed = false;
-    if (played) {
-        if (context->pTape->GetPlaybackState() == TapePlaybackState::Paused) {
-            context->pTape->ResumePlaybackFromPause();
-            resumed = true;
-        } else {
-            context->pTape->StartPlaybackAtCursor();
-        }
-    }
+    // A tape loaded while a TTD recording runs lands at the next frame boundary: its play is queued till then
+    const TapePlayResult result = context->pTape->Play();
+    const bool played = result != TapePlayResult::NoBlocks;
     
     hold.reset();
     
     Json::Value ret;
     ret["status"] = played ? "success" : "error";
-    ret["message"] = !played    ? "Tape image has no loadable blocks"
-                     : resumed ? "Tape playback resumed (in place)"
-                               : "Tape playback started";
+    ret["message"] = !played                            ? "Tape image has no loadable blocks"
+                     : result == TapePlayResult::Resumed ? "Tape playback resumed (in place)"
+                     : result == TapePlayResult::Queued  ? "Tape playback starts when the tape is in"
+                                                         : "Tape playback started";
     
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     resp->setStatusCode(played ? HttpStatusCode::k200OK : HttpStatusCode::k400BadRequest);
@@ -2551,7 +2545,7 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
     ret["drive"] = drive;
     ret["files"] = Json::arrayValue;
 
-    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
+    // The files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02 / MB-01, MDOS, FAT): unreal-disk's DiskFs, as /media/{slot}/files.
     // TR-DOS entries keep their catalog fields (type, start, length, sectors, first track / sector)
     DiskFs fs(*diskImage);
     std::vector<DiskFsEntry> entries;

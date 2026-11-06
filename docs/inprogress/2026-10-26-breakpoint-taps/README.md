@@ -1,7 +1,8 @@
 # Breakpoint taps: one non-stopping observation path for analyzers, haptics and scripts
 
 **Status:** 2026-10-26: phases 1-4 implemented (§10; §6 and §7 say where the build differs from the design); phase 5
-waits for F1. §1 describes the state before the work.
+(conditions and script callbacks, [conditions-and-callbacks.md](conditions-and-callbacks.md), measured in POC 039) is
+built 2026-10-27. §1 describes the state before the work.
 
 The emulator gets more and more watchers that never stop the CPU: analyzers (TR-DOS, NedoOS, DSS, ROM print, the
 BASIC editor monitor), the haptic feed's game probes, coverage, the bus and font analyzers ahead. Each needs the same
@@ -36,7 +37,8 @@ the hit-count policies (F5) are.
 - Armed: cost proportional to what is watched. An exec tap costs one bit test per instruction; a write tap costs one
   byte test per write to its 16K bank, not the debug memory path.
 - Conditions and hit policies of the conditional-breakpoint model apply to taps unchanged.
-- TTD replay mutes every tap in one place.
+- TTD replay mutes every tap in one place, apart from a replay query's own sink
+  (`BreakpointManager::SetReplayTapSink`): TTD's probe-frames arms its probes as taps of that sink and hears only them.
 
 Non-goals: per-access callbacks for every byte of memory (coverage keeps its own path), changing what a stopping
 breakpoint does.
@@ -64,6 +66,12 @@ As implemented: `IBreakpointTapSink::OnTap(const BreakpointTapHit&)` with `{cook
 kind}` (`BRK_TAP_EXEC / READ / WRITE / PORT_IN / PORT_OUT`); `descriptor->tapSink` (0 = `BRK_NO_TAP`) and
 `tapCookie`. HapticProbes and the AnalyzerManager are the sinks; the old probe names are gone.
 
+A run that skips breakpoints (`RunNFrames` and the other direct runs by default, so `run_frames` on every plane) still
+tells the taps: `skipBreakpoints` cancels stops, not observation. Memory and port taps were never under it; the
+execution check calls `BreakpointManager::HandlePCTaps(pc)` there, a walk that passes over every non-tap candidate
+(nothing counted, nothing stops, the stepping-on pass left to the breakpoint). Nothing armed: the same `execTapHold`
+test as before, no cost.
+
 ## 4. Gates: demand from the armed set, not from one client
 
 Today a client flips global switches (`setProbeDebugHold`, `execProbeHold`). Instead the breakpoint manager derives
@@ -74,7 +82,7 @@ hasWrite / hasPortIn / hasPortOut`:
 |:--|:--|:--|
 | `tapExec` | any armed tap of kind exec | `Z80::execTapHold` (today `execProbeHold`): the instruction start's check without debug mode; `IdleStepsInert` off |
 | `tapWrite` | any armed write tap | the per-bank write hook (§5) for the banks its addresses map to; re-derived on a bank switch |
-| `tapRead` | any armed read tap | the debug memory path (rare; §5) |
+| `tapRead` | any armed read tap | the read-tap interface over the fast one (§5); the debug path on a model with its own interface (the Next) |
 | `tapPort` | any armed port tap | nothing new: the port path already checks `hasPortIn / hasPortOut` |
 
 The manager pushes the demand into Core / Memory through one call (`Core::OnTapDemandChanged`) on the emulation
@@ -104,9 +112,16 @@ void Memory::MemoryWriteFast(uint16_t addr, uint8_t value)
 - A write tap: only writes into its 16K bank leave the fast line. There one bit test (`_hotState.MemoryBit(WRITE)`);
   a miss stores and returns. A Dizzy-style counter in page 2 taxes page 2's writes only, not the screen's.
 - The contended and overlay variants wrap `MemoryWriteFast`, so all eight interfaces get it without new ones.
-- **Reads** stay on the debug path while a read tap is armed: a read check on the fast path taxes every read for
-  everyone, and read taps are rare (profiles prefer exec, haptics.md §5). Revisit with a measurement if an analyzer
-  needs them.
+- **Reads**: a read check on the fast read would tax every read for everyone, so the plain fast read stays as it is.
+  While a read tap is armed (2026-11-04) `Core::SelectMemoryInterface` selects `Z80::ReadTapMemIf` over the fast
+  interface it chose (`Memory::SetReadTapInner`): its read, opcode fetch and write call that interface's, then the
+  read and the fetch test the read filter's bit (`MemoryBit(READ)`) and a marked address goes to `HandleMemoryRead`
+  with the byte the CPU got (as on the debug path a stopping breakpoint there is only counted). One interface for all
+  eight combinations; the idle-fetch skip asks the inner one (`Z80::HaltedFetchIsPure`) after `ReadIsInertAt`. With
+  the debug mode on for another reason the debug read tells the taps (`ReadDebugEffects` checks breakpoints while
+  read taps are armed). A model with its own memory interface (`SupportsReadTapHook` false: the Next) holds the debug
+  path. Cost: about +11 % of a 48K frame while a read probe is armed, against +30 % with the debug hold
+  ([haptics.md §12](../2026-10-17-controller-manager/haptics.md#12-testing)).
 
 As implemented: `Memory::_writeHooks` has `kWriteHookVideo` (the video watch is set) and `kWriteHookTap` (a write
 tap is armed). The hooked branch does the video catch-up for pages 5 / 7, the store, then one bit test of the
@@ -234,11 +249,15 @@ Each phase lands on its own with its tests; phases 1-2 hold the performance clai
 
 - Two sinks at once on the same address: both get the hit, neither stops, the user's list stays empty.
 - A tap and a stopping breakpoint on one address: the stop happens, the tap is told.
+- Read taps off the debug path: data and operand reads told with the byte read, the debug read tells them once with the
+  debug mode on, the Next keeps the debug path (`BreakpointTaps_Test.ReadTap*`, `BreakpointTapsNext_Test`).
+- A run that skips breakpoints tells the exec taps and leaves the breakpoints uncounted
+  (`BreakpointTaps_Test.RunThatSkipsBreakpointsStillTellsTheExecTaps`).
 - Demand: arming / disarming each kind sets and clears exactly its gate; with nothing armed the memory interface is
   the fast one and `IdleStepsInert` holds.
 - Light write path: a tap in bank 2 does not route bank 1 writes through the hook; a bank switch moves the hook;
   `before` is the replaced byte; the video watch's catch-up still runs (the event-rule screen tests).
-- TTD replay: no sink is told.
+- TTD replay: no sink is told, apart from the replay's own sink (`TTDAnalysisQueries_Test.ProbeFramesReplayIsHeardOnlyByTheQuery`).
 - Analyzers: TR-DOS analyzer tests pass with debug mode off; `requestMemoryBreakpoint` does not stop and is hidden.
 - Game events: Dizzy X's play test publishes `jump`, `land` as events; the haptic feed plays them from the event
   list.

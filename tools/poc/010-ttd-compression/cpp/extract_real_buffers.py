@@ -46,6 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 ANALYZER_SRC = REPO_ROOT / "tools" / "verification" / "ttd-analyzer" / "src"
 sys.path.insert(0, str(ANALYZER_SRC))
 
+# Retired (2026-10-30): ttd_format.py, v1's reader, was deleted with v1; this script no longer runs
 from ttd_format import (  # noqa: E402
     ENCODING_FULL,
     ENCODING_XOR_PREV,

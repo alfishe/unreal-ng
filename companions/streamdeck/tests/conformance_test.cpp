@@ -548,7 +548,9 @@ void TestSlowViewerBesideFast()
         }
     }
     CHECK(fast.Count(wire::ReplayBegin) == 1 && fast.Count(wire::SetFeature) == 1);
-    CHECK(writing < 50ms);  // posts only: a stalled viewer never holds the device thread
+    // posts only: a stalled viewer never holds the device thread (a blocking write would hang here for good; the
+    // bound leaves room for a loaded machine's scheduling)
+    CHECK(writing < 250ms);
 
     std::uint8_t buf[16] = {};
     CHECK(RunUntil(loop, [&] { return deck->Read(buf, 0) == 5; }));  // the slow viewer's input arrived

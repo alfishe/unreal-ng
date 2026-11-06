@@ -1,0 +1,9 @@
+# The Wild Sound test programs as a FAT16 hard disk for the Sprinter's ide0.slave (DSS drive D:),
+# next to the system disk on ide0.master. See README.md in this folder.
+#   media {"action":"insert","slot":"ide0.slave","path":"<abs>/testdata/sound/wildsound/wildsound.ucompose.yaml"}
+# D:\PROSIAK.EXE, D:\XM\*.EXE, D:\S3M\*.EXE. The sources (src/), the reference data (ref/) and the
+# notes stay on the host.
+version: 1
+target: {fs: fat16, partition: mbr, label: WILDSOUND, size: 40MiB, fixedTime: 1791504000}
+layers:
+  - {name: wildsound, source: {folder: .}, include: ["*.exe"], exclude: [src, ref]}

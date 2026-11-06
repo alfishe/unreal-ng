@@ -5,8 +5,6 @@
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
-#include "emulator/emulator.h"
-
 int main(int argc, char** argv)
 {
     // UNREAL_QT_TEST_PLATFORM=cocoa (or xcb, windows) runs the suites on the real platform: real fonts and metrics,
@@ -22,7 +20,5 @@ int main(int argc, char** argv)
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsFolder.path());
     ::testing::InitGoogleTest(&argc, argv);
-    // The engine records, as in the application
-    Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
     return RUN_ALL_TESTS();
 }

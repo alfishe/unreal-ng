@@ -1,5 +1,6 @@
 #include "unrealdisk/trdosfs.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "unrealdisk/diskimage.h"
@@ -12,6 +13,7 @@ constexpr size_t kSector = TrdosCatalog::SECTOR_SIZE;
 constexpr size_t kSectorsPerTrack = TrdosCatalog::SECTORS_PER_TRACK;
 constexpr size_t kInfoSector = 8;
 constexpr size_t kInfoDeletedCount = 0xF4;   // the disk info sector's count of deleted files
+constexpr size_t kInfoTitle = 0xF5;          // its 8-byte disk title
 
 std::string Padded(const std::string& name)
 {
@@ -132,6 +134,71 @@ bool TrdosFileSystem::Delete(const std::string& name, char type, std::string& er
     return found;
 }
 
+bool TrdosFileSystem::Rename(const std::string& name, char type, const std::string& newName, char newType, std::string& error)
+{
+    // A first byte #00 ends the catalog, #01 marks a deleted file
+    if (newType == 0 || newName.empty() || newName.size() > 8 || static_cast<uint8_t>(newName[0]) <= 1)
+    {
+        error = "a TR-DOS name has 1 to 8 characters and a type letter: '" + Describe(newName, newType) + "'";
+        return false;
+    }
+    TrdosCatalog catalog;
+    if (!catalog.Parse(_image))
+    {
+        error = "the disk has no TR-DOS file system";
+        return false;
+    }
+    const std::string padded = Padded(name);
+    const std::string target = Padded(newName);
+    const bool same = padded == target && type == newType;
+    for (const TrdosFile& f : catalog.Files())
+        if (!same && !f.deleted && f.name == target && f.type == newType)
+        {
+            error = "the disk has a file " + Describe(newName, newType) + " already";
+            return false;
+        }
+    DiskImage::Track* track0 = _image.getTrack(0);
+    bool found = false;
+    for (const TrdosFile& f : catalog.Files())
+        if (!f.deleted && f.name == padded && (type == 0 || f.type == type))
+        {
+            uint8_t dir[kSector];
+            std::memcpy(dir, track0->getDataForSector(static_cast<uint8_t>(f.slot / 16)), kSector);
+            std::memcpy(dir + (f.slot % 16) * 16, target.data(), 8);
+            dir[(f.slot % 16) * 16 + 8] = static_cast<uint8_t>(newType);
+            track0->writeSectorData(static_cast<uint8_t>(f.slot / 16), dir, kSector);
+            found = true;
+        }
+    if (!found)
+        error = "no file " + Describe(name, type) + " on the disk";
+    return found;
+}
+
+bool TrdosFileSystem::SetTitle(const std::string& title, std::string& error)
+{
+    if (title.size() > 8 || std::any_of(title.begin(), title.end(), [](char c) { return c < ' ' || c > '~'; }))
+    {
+        error = "a TR-DOS disk title has at most 8 printable ASCII characters (" + title + ")";
+        return false;
+    }
+    const uint8_t* info = SectorData(_image, kInfoSector);
+    if (!info || !TrdosCatalog::IsTrdos(_image))
+    {
+        error = "the disk has no TR-DOS file system";
+        return false;
+    }
+    uint8_t sector[kSector];
+    std::memcpy(sector, info, kSector);
+    const std::string padded = Padded(title);
+    std::memcpy(sector + kInfoTitle, padded.data(), 8);
+    if (!WriteSector(_image, kInfoSector, sector))
+    {
+        error = "the info sector cannot be written";
+        return false;
+    }
+    return true;
+}
+
 bool TrdosFileSystem::Write(const std::string& name, char type, const std::vector<uint8_t>& bytes, const WriteOptions& options,
                             std::string& error)
 {
@@ -140,7 +207,7 @@ bool TrdosFileSystem::Write(const std::string& name, char type, const std::vecto
         error = "a TR-DOS file needs its type letter";
         return false;
     }
-    if (name.empty() || name.size() > 8)
+    if (name.empty() || name.size() > 8 || static_cast<uint8_t>(name[0]) <= 1)
     {
         error = "a TR-DOS name has 1 to 8 characters: '" + name + "'";
         return false;

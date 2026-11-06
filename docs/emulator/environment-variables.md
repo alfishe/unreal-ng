@@ -32,9 +32,6 @@ Windows `cmd`: `set UNREAL_WEBAPI_PORT=8190` and then the command on the next li
   `UNREAL_CONTENTION_GOLDEN_PRINT`, `GS_GOLDEN_PRINT`) print new expected values to paste into the source
   and skip the comparison, so those tests pass whatever the code does. The `*_UPDATE` switches also skip
   the comparing tests while they rewrite. A test run with one of them set proves nothing.
-- **`UNREAL_TTD_BACKEND=v1`** is an emergency fallback, not a setting: it brings back the previous
-  time-travel recorder (v1) for that one application process until v1 is removed. The new engine is the
-  default. It has no effect in `core-tests` (see section 3).
 - **Two prefixes for the same kind of switch:** `UNREAL_` and `UNREALNG_` (the older one, still used by a
   few test switches). A misspelled or wrongly prefixed name is silently ignored, nothing warns.
 - **`UNREAL_SLOTS_...` means two unrelated things:** `UNREAL_SLOTS_DIR` / `UNREAL_SLOTS_BUILD` /
@@ -64,7 +61,6 @@ automation servers live inside it).
 | `UNREAL_DEZOG_TARGET_WAIT_MS` | 1-60000 ms (2000) | How long the DeZog server waits for an emulator instance before a connection fails. Mainly for tests that want a short failure. | `core/automation/dezog/src/automation-dezog.cpp:59` |
 | `UNREAL_DEZOG_HISTORY` | `0` = off, anything else = on (on) | Turns off the step-back history that DeZog's reverse debugging uses. | `core/automation/dezog/src/dezogdebugadapter.cpp:60` |
 | `UNREAL_ZRCP_PORT` | 1-65535 (10000) | Port of the ZEsarUX-compatible remote control server (ZRCP). Used when the caller does not pass a port. | `core/automation/zesarux/src/automation-zesarux.cpp:33`, name in `core/automation/zesarux/include/automation-zesarux.h:48` |
-| `UNREAL_TTD_BACKEND` | `v1` or unset (unset = the engine) | Which time-travel recorder new emulator instances use. Only the exact value `v1` matters: it selects the previous recorder for the whole process, kept as an emergency fallback until v1 is removed (v1 has no black box). Anything else: the engine. | `core/src/emulator/emulator.cpp:2025` (read once at start-up) |
 | `UNREAL_SYMBOL_BUNDLES` | `0` = off, anything else = on (on) | Turns off the symbol bundles: the labels of known ROMs (`data/symbols/manifest.json`, shipped as `symbols/` next to `rom/`) that each new instance and each ROM reload imports as sets of origin `bundle`. | `core/src/emulator/emulator.cpp:3752` |
 | `UNREAL_AUDIO_DIAG` | set / unset (off) | Temporary diagnostics: prints frame timing lateness and audio buffer fill to stderr about every 5 seconds. | `core/src/emulator/mainloop.cpp:92` |
 | `ZXDLSS_THREADS` | number >= 1 (logical cores, at most 8) | Number of threads for the ZX-DLSS GigaScreen de-flicker filter (`mod-tpgw`). | `core/src/emulator/video/zxdlss/mod_tpgw.cpp:78` |
@@ -82,6 +78,7 @@ automation servers live inside it).
 | `UNREAL_SMOOTH_TRACE` | a folder (none) | unreal-qt screen window (GPU): smooth motion's live trace for `tools/verification/smoothmotion/live` - from the first refresh after a file `start` appears in the folder, smooth motion reset, every frame pushed and every refresh's plan and picture (`events.tsv`, `frames.rgba`, `refreshes.rgba`), held in memory and written at the end. | `core/src/emulator/video/smoothtrace.h`, `unreal-qt/src/widgets/devicescreenglwindow.cpp` |
 | `UNREAL_SMOOTH_TRACE_SKIP` | refreshes (0) | With `UNREAL_SMOOTH_TRACE`: refreshes after `start` appears before the trace starts. | `core/src/emulator/video/smoothtrace.h` |
 | `UNREAL_SMOOTH_TRACE_REFRESHES` | refreshes (600) | With `UNREAL_SMOOTH_TRACE`: refreshes traced (about 0.8 MB of memory each at 352 x 288). | `core/src/emulator/video/smoothtrace.h` |
+| `UNREAL_WINDOWLESS_DEVICES` | comma list of `sound`, `controllers`, `streamdeck`, or `all` (unset: none) | What a windowless unreal-qt (the `offscreen` or `minimal` platform, `--headless`: agents' and tests' instances) uses all the same. Without it such a session touches nothing of the person's: the sound is silent (the audio device still runs, it paces the emulation; the speakers get zeros), no gamepad, HID device or Surface Dial is opened, no Stream Deck daemon is started. A session with windows uses everything. `tools/verification/streamdeck/acceptance.py` sets `streamdeck` | `unreal-qt/src/platform/windowlesssession.h` |
 | `UNREAL_QT_VIEW_SETTINGS` | `off` (unset: on) | unreal-qt neither reads nor writes the picture it keeps across sessions (QSettings `View/*`: GPU, CRT profile and parameters, blending, scale, HUD and theme; never overscan / viewport: a new Pentagon starts without them): the window starts with the defaults and leaves the user's settings alone. `tools/verification/mcp/mcplib.py` sets it for the instances it launches ([command-interface.md](design/control-interfaces/command-interface.md#gui-window-display-settings)). | `unreal-qt/src/mainwindow_picture.cpp`, `MainWindow::restoreViewSettings` |
 | `UNREAL_MCP_URL` | URL (`http://127.0.0.1:8092/mcp`) | Where the `unreal-mcp-bridge` (stdio-to-HTTP bridge for MCP clients) connects. The `--url` argument wins. | `core/automation/mcp/bridge/src/main.cpp:34` |
 
@@ -129,8 +126,9 @@ CMake reads a few standard variables while configuring: `VCPKG_ROOT` (Windows de
 | `MOONSOUND_FULL_SWEEP` | set / unset (fast subset) | Runs the full 11-patch MoonSound sweep with long windows instead of the fast subset. | `core/tests/emulator/sound/chips/soundchip_moonsound_test.cpp:1657` |
 | `PAIR_LONG_RUN_FRAMES` | number (1000) | Length of the YM2203 pair long-run drift test. | `core/tests/emulator/sound/tsfm/ym2203pair_test.cpp:892` |
 | `UNREAL_RZX_FULL` | exactly `1` (off) | Plays the whole RZX Archive recordings (minutes) instead of the first 300 frames. | `core/tests/emulator/rzx/rzxsession_test.cpp:824` |
-| `UNREAL_RZX_CORPUS` | a folder of `.rzx` files (test skipped) | Plays every recording in the folder to the end (and the TTD seek check on them). | `core/tests/emulator/rzx/rzxsession_test.cpp:855`, `core/tests/debugger/ttd/timetravelmanager_rzxplayback_test.cpp:294` ([`tools/verification/rzx/README.md`](../../tools/verification/rzx/README.md)) |
+| `UNREAL_RZX_CORPUS` | a folder of `.rzx` files (test skipped) | Plays every recording in the folder to the end (and the TTD seek check on them). | `core/tests/emulator/rzx/rzxsession_test.cpp:855`, `core/tests/debugger/ttd/timetravelcontroller_rzxplayback_test.cpp:294` ([`tools/verification/rzx/README.md`](../../tools/verification/rzx/README.md)) |
 | `UNREAL_RZX_FILE`, `UNREAL_RZX_ORACLE`, `UNREAL_RZX_STOP` | `.rzx` path, `.z80` path, frame count (skipped; STOP 0 = whole) | Plays one recording up to a frame and compares the machine with a reference snapshot (finding the first frame where two emulators disagree). | `core/tests/emulator/rzx/rzxsession_test.cpp:960` |
+| `UNREAL_BENCH_HISTORIES` | `all`, or device ids separated by commas (`cpu`, `zxbus.1.cpu,board.ports`); unset: all off | The device histories `BM_HostFrame_*` records into while it runs (rings of their default size), for the off / one on / all on cost of the histories (docs/emulator/design/debugger/device-history.md). The label names them. | `core/benchmarks/emulator/memory/hostbusoverlay_benchmark.cpp` |
 | `UNREAL_SPRINTER_HDD` | path to the raw `sp_hdd_sys.img` (tests skipped) | Sprinter hard-disk boot tests, Flex Navigator and ZX-mode tests with the MAME pack's system disk; the demo exactness tests (`SprinterFastPathsDemo_Test`) and the demo benchmarks (`BM_SprinterDemo_*`, skipped with an error without it). | `core/tests/emulator/machines/sprinter/sprinter_boot_test.cpp:962`, `sprinterzxsession.h`, `sprinteridlecycles_test.cpp`, `core/benchmarks/emulator/machines/sprinter_demo_benchmark.cpp` |
 | `UNREAL_SPRINTER_HDD_MEDIA` | path (`sp_hdd_media.img` next to the system disk) | Data disk for drive D in the Flex Navigator test. | `sprinter_boot_test.cpp:1565` |
 | `UNREAL_SPRINTER_HDD_VHD` | path to `sp_disk1.vhd` (skipped) | DSS 1.62 boot from a ZXMAK2 VHD image. | `sprinter_boot_test.cpp:984` |
@@ -150,10 +148,6 @@ Set by the test programs themselves (not switches): `core-tests` pins `TZ=EST5ED
 (`core/tests/main.cpp:56`) so the real-time-clock pictures match on any machine; `unreal-qt-tests` sets
 `QT_QPA_PLATFORM=offscreen` (`unreal-qt/tests/qt/qttestmain.cpp:10`). `GTEST_TOTAL_SHARDS` (set by the sharded
 run) relaxes a wall-clock budget in `core/tests/common/timehelper_test.cpp:48`.
-
-**`UNREAL_TTD_BACKEND` in core-tests:** the variable has no effect there. `core-tests` and `unreal-qt-tests` record
-with the engine; the test files that drive v1 directly are listed in `core/tests/_helpers/ttdv1tests.h`, and a
-listener in `core/tests/main.cpp` selects v1 before each of their suites and tests.
 
 ## 4. Regenerating expected results (golden files) - rewrite or print
 
@@ -180,7 +174,6 @@ and skips the comparison.
 | `UNREALNG_RECORD_TSCONF_EQUIV` | set / unset | **Prints** the TS-Conf renderer hash; no comparison. | `core/tests/emulator/machines/tsconf/screentsconf_test.cpp:434` |
 | `UNREAL_CONTENTION_GOLDEN_PRINT` | set / unset | **Prints** the per-model timing fingerprint table; no comparison. | `core/tests/emulator/video/contentionregression_test.cpp:283` |
 | `GS_GOLDEN_PRINT` | set / unset | **Prints** the General Sound digests; no comparison. | `core/tests/emulator/sound/chips/soundchip_gs_golden_test.cpp:222` |
-| `TTD_FIXTURE_OUT` | file path (`./ttd_fixture.ttd`) | Where the TTD dump-format test writes its fixture session. | `core/tests/debugger/ttd/ttddumpformat_test.cpp:413` |
 | `UNREALNG_SZX_EXPORT_DIR` | a folder (skipped / not copied) | Saves our `.szx` / `.z80` files there for the libspectrum interoperability check. | `core/tests/loaders/snapshot/szx/loaderszx_test.cpp:304`, `loader_z80_test.cpp:938` ([`tools/verification/szx/README.md`](../../tools/verification/szx/README.md)) |
 
 ## 5. Diagnostics and probes inside tests
@@ -267,7 +260,7 @@ description in [`tools/verification/ttd-bench/README.md`](../../tools/verificati
 | Variable | Values (default) | What it does |
 |---|---|---|
 | `UNREAL_TTD_BENCH_SET` | `ci`, `turbo`, `full` (`ci`) | Which set of configurations to measure. |
-| `UNREAL_TTD_BENCH_ENGINE` | `v1`, `all`, or a comma list (`v1`) | Which recorders to measure. |
+| `UNREAL_TTD_BENCH_ENGINE` | `controller`, `all`, or a comma list (`controller`, the only one since v1 was deleted) | Which recorders to measure. |
 | `UNREAL_TTD_BENCH_PERIPHERALS` | `none` or a list like `ay+gs512+moon` (the matrix's own) | Peripheral overlay for every configuration. |
 | `UNREAL_TTD_BENCH_FRAMES` | number (each workload's own) | Recorded frames. |
 | `UNREAL_TTD_BENCH_SEEKS` | number (40 for `ci`, else 200) | Random seek positions. |
@@ -296,7 +289,6 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | `UNREAL_WEBAPI_URL` | URL (`http://127.0.0.1:8090`) | Emulator the Wireshark capture plugin talks to. | `tools/wireshark/unreal-ng-extcap.py:26` ([README](../../tools/wireshark/README.md)) |
 | `UNREAL_ASM_EMULATOR_URL` | URL (default `http://localhost:<--port>`, port 8090) | Emulator the assembler scripts talk to (another host); `--port` is enough on this one. | `tools/verification/unreal-asm/lib/emulator.py` |
 | `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` | binary paths (names on `PATH`; in `unreal-asm-tests` the tests skip) | External assemblers for the cross-checks, in `tools/verification/unreal-asm/*/*.py` and in `unreal-asm-tests`. | `tools/verification/unreal-asm/checks/crosscheck.py:115`, `core/src/3rdparty/unreal-asm/tests/*_test.cpp` ([README](../../core/src/3rdparty/unreal-asm/README.md)) |
-| `UNREAL_TTD_PERIPHERAL_HEADER` | header path (the repository's `ttdserializable.h`) | Where the TTD analyzer reads device ids from, when run outside the tree. | `tools/verification/ttd-analyzer/src/ttd_format.py:216` |
 | `UNREAL_BUILD` | build folder (`cmake-build-agent-release`) | Build with `core-tests` for the co-emulation runner. | `tools/verification/coemu/unreal-ng/run.sh:8` |
 | `PROGRAM`, `OUT`, `MAX_FRAMES` | program base path (the contention probe), out folder, frames (60000) | Co-emulation harness: what to run, where results go, when to give up. | `tools/verification/coemu/common/common.sh:23` |
 | `FUSE_BIN`/`FUSE_DIR`, `MAME_BIN`/`MAME_ROMPATH`, `ZESARUX_BIN`/`ZESARUX_PORT`, `XPECCY_DIR`, `XPECCY_UPSTREAM_DIR`/`XPECCY_ROMS`, `ZXMAK2_DIR`/`ZXMAK2_BIN`, `KOZYNAX_DIR`/`KOZYNAX_BIN`, `SPEC_CHUM_DIR`/`SPEC_CHUM_BIN`, `SKOOLKIT_PYTHON`, `M8XXX_DIR`/`M8XXX_ROMS`, `CHROME_BIN`, `*_BUILD` | paths | Where each co-emulation runner finds the other emulator and builds its harness. | `tools/verification/coemu/*/run.sh` ([coemu README](../../tools/verification/coemu/README.md)) |
@@ -311,7 +303,8 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 |---|---|---|
 | `SDCTL_NO_MIRROR` | any value (unset) | A real deck alone: no mirror to a running Stream Deck Studio, as `--no-mirror` (`companions/streamdeck/cli/cli.cpp:49`). |
 | `UNREAL_STREAMDECK_BIN` | path (unset: beside the studio, its bundle or the suite's bundle, then `PATH`; for unreal-qt the `binary` setting, then beside unreal-qt) | The `unreal-streamdeck` executable Stream Deck Studio starts when no daemon answers at launch, or for the editor's Run (`companions/streamdeck/studio/daemoncontrol.cpp`, `DaemonControl::Path`), and the one unreal-qt's supervisor starts (it wins over the `binary` setting: `core/src/emulator/companions/streamdecksupervisor.cpp`, `Supervisor::BinaryPath`; [daemon.md §7](../inprogress/2026-10-19-streamdeck-integration/daemon.md#7-supervision-by-unreal-qt)). |
-| `UNREAL_STREAMDECK_SUPERVISOR` | `off` (unset: the setting) | unreal-qt starts no Stream Deck daemon in this run whatever Tools > Stream Deck... says (the setting is kept); `streamdeck status` says `off`. `tools/verification/mcp/mcplib.py` sets it for the instances it launches (`unreal-qt/src/controllers/streamdeckpage.cpp`, `StreamDeckSupervision`). |
+| `UNREAL_STREAMDECK_SUPERVISOR` | `off` (unset: the setting) | unreal-qt starts no Stream Deck daemon in this run whatever Tools > Stream Deck... says (the setting is kept; a windowless session starts none either, see `UNREAL_WINDOWLESS_DEVICES`); `streamdeck status` says `off`. `tools/verification/mcp/mcplib.py` sets it for the instances it launches (`unreal-qt/src/controllers/streamdeckpage.cpp`, `StreamDeckSupervision`). |
+| `UNREAL_STREAMDECK_USB` | `off` (unset: USB decks are opened) | `unreal-streamdeck run` opens no USB deck: own (software) decks only, so a test rig runs beside the user's daemon and physical deck (`companions/streamdeck/daemon/runcommand.cpp`, `UsbOff`; [daemon.md](../companions/streamdeck/daemon.md#the-idle-scenario)). |
 | `UNREAL_STREAMDECK_LOCK` | a file path (unset: `unreal-streamdeck.lock` in `$XDG_RUNTIME_DIR`, else `$TMPDIR`, else `/tmp/unreal-streamdeck-<uid>.lock`; `%LOCALAPPDATA%\unreal-streamdeck\` on Windows) | The daemon's single-instance lock: one `unreal-streamdeck run` per lock file; a second start hands its `--parent` to the holder and exits 0. A test or a second daemon on other ports names its own (`--lock FILE` wins; `--no-lock` takes none) (`companions/streamdeck/lib/src/daemonlife.cpp`, `DefaultLockPath`; [daemon.md](../companions/streamdeck/daemon.md#one-daemon-and-its-starters)). |
 | `UNREAL_STREAMDECK_DATA` | a folder holding `streamdeck/` (unset: the app bundle's `Contents/Resources`, beside the executable, `../share/unreal-ng`, then the source tree's `data/`) | The companion's data directory, `$data` in scenario paths: the idle screen's theme (`streamdeck/themes/unrealng`) and every `$data/...` / `$icons/...` picture. Taken when it has a `streamdeck/` folder, else the usual lookup ([daemon.md](../companions/streamdeck/daemon.md#data-directory); `companions/streamdeck/lib/src/datadir.cpp`, `data::Root`). |
 

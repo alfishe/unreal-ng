@@ -136,7 +136,7 @@ SaveSet rewrites the file); or patch bytes +3 / +4 of the `s` file to `A` (the i
 | 3.3.51 | 512K | `enter`, `a`, `~6`, `space`, `~4` (one "No Disk": its overlays are one `OVERLAYS.t` catalogue) |
 | 3.3.Final, 3.80.4, 3.4, x64.1, 4.20 | 512K | `space`, `~4` |
 | 4.0x8 | 512K | `space`, `~5`, `space`, `~3` ("*** ERROR *** Press any key": its built-in drive D); then before every load File (`enter`), Drive (`d`), `a`: the menu stays open, `l` opens Load |
-| 4.x64 | 512K | `~10`, `space`, `~4`, CS+SPACE, `~3`: its "Нет диска!" ("No disk!", Повтор / Отмена) has no drive list, so the dump disks carry its settings file `ZASM4x64.S` (type `S`, start `#5445`) with bytes +3 / +4 `AA` instead of the shipped `DD`; the key past its picture opens the "Сегодня" (today) date dialog, CS+SPACE closes it; menus in Russian (Файл / Загрузить = File / Load, same keys) |
+| 4.x64 | 512K | `~10`, `space`, `~4`, CS+SPACE, `~3`: its "Нет диска!" ("No disk!", Повтор / Отмена = Retry / Cancel) has no drive list, so the dump disks carry its settings file `ZASM4x64.S` (type `S`, start `#5445`) with bytes +3 / +4 `AA` instead of the shipped `DD`; the key past its picture opens the "Сегодня" ("Today") date dialog, CS+SPACE closes it; menus in Russian (Файл / Загрузить = File / Load, same keys) |
 
 On a 128K machine the 512K versions stop on their picture with a red border (a `DI : HALT` after the memory test,
 `BC` = `#7FFD`); 3.3.02's red border on 512K is its own picture. The "No Disk" here is the emulator answering

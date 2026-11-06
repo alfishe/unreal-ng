@@ -40,7 +40,7 @@ YM2203 pair per chip, like the TurboSound FM's `ay1` / `ay2` / `fm1` / `fm2`),
 `next_ay1`..`next_ay3` and `next_dac` (its three AYs and its DAC, one row each). Only the devices the machine has are
 listed; naming one that is not fitted is a `400` whose text lists the fitted keys.
 
-Channels: `<source>.<channel>` names one channel of a row - `ay1.a` / `.b` / `.c`, `covox.la` / `lb` / `ra` / `rb`,
+Channels: `<source>.<channel>` names one channel of a row - `ay1.a` / `.b` / `.c`, `covox.la` / `lb` / `ra` / `rb` (SounDrive; a mono Covox - `#FB`, the Scorpion's `#DD` - has `covox.mono` alone),
 `gs.1`..`gs.4` (NeoGS `.8`), `fm1.1`..`fm1.3`, `moonsound_fm.1`..`.18`, `moonsound_pcm.1`..`.24` (metered),
 `ms_ssg1.a`, `ms_fm1.2`, `ms_midi.1`..`.16` (mute and solo only), `next_dac.a`..`.d`. A channel takes muted, solo
 (within its row: the row's other channels go silent) and volume / gain_db, applied at the next frame start
@@ -123,15 +123,17 @@ verifies. Per-frame `peak` and `active` (`activeRecently`) are the quick
 
 The mixer report also says what the host audio output got. A run that is not
 paced to real time holds it: the speakers get nothing while every device keeps
-computing its samples (captures and recordings still get them). Three things
+computing its samples (captures and recordings still get them). Four things
 hold it, each for exactly its own span: a direct run (`run_frames`,
-`run_tstates`, `step`... - `direct_run`), a TTD seek or replay (`ttd_replay`)
-and turbo mode (`turbo`). None of them touches the user's master mute.
+`run_tstates`, `step`... - `direct_run`), a TTD seek or replay (`ttd_replay`),
+turbo mode (`turbo`) and script hooks of the `unpaced` policy that keep the
+frames over their period (`unpaced`, [script callbacks](../../docs/features/script-callbacks.md)).
+None of them touches the user's master mute.
 
 | Field | Meaning |
 |:--|:--|
 | `held` | `true` while any hold is active |
-| `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo` |
+| `holders` | active holds by reason: `direct_run`, `ttd_replay`, `turbo`, `unpaced` |
 | `holds_taken` | holds ever taken, by reason |
 | `stale_holds_cleared` | holds a `resume` found without their reason and dropped (a leak; stays `0`) |
 | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames given to the speakers / of those, not silent / withheld |
@@ -184,12 +186,67 @@ How to use them:
 - **Compare before and after a change:** capture the same `source` for the
   same number of frames twice and diff `left`/`right` `rms`.
 
+## Sound or AY writes of a recorded (TTD) span: rewind, drop the TTD, free-run with a capture
+
+A replay cannot record these. The device histories (`ay-socket`, the AY log) write nothing while TTD replays
+(`ttdReplayActive`: a seek re-executes what a history already holds), and a `seek` fast-forwards from the nearest
+checkpoint without rendering sound, so only the last frame of the jump reaches the audio capture. The way that
+works is a plain run from the point you want:
+
+```bash
+# 1. The session back from disk (a fresh instance of the same model is fine); it comes up idle
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/load" -H 'Content-Type: application/json' -d '{"path":"scratch/session-001.ttd"}'
+# 2. Rewind to the start of the span
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/seek" -H 'Content-Type: application/json' -d '{"frame": 12000}'
+# 3. Drop the TTD: stop it, then forget the history
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop"
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate"
+# 4. Arm what you want while the machine is still paused at that point
+curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: application/json' \
+     -d '{"action":"start","seconds":600,"to_file":true,"path":"scratch/span.wav"}'
+curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' \
+     -d '{"mode":"capture","limit":0,"stream":"scratch/span-ay.jsonl"}'
+# 5. Free-run (resume) for the length of the span; the capture closes itself at its target.
+curl -s -X POST "$BASE/emulator/$EMU_ID/resume"
+# 6. Read /audio/capture/status until file_closed, then switch the history off (closes its stream)
+curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' -d '{"mode":"off"}'
+```
+
+Notes:
+
+- **Measured end to end** (Pentagon, a loop writing AY registers and toggling the beeper; dump, load, seek, stop,
+  invalidate, both captures armed, resume): the WAV is exactly 1.0 s (88 200 samples, 176 444 bytes, header patched),
+  the AY history holds all 123 988 writes of that second with none dropped, its stream file has the same number of
+  lines. (A unreal-qt older than this note paused the machine after the first resume: the TTD panel sought the emptied timeline; resume again if `is_paused` is still true.)
+- **Both captures together.** The audio capture and the AY history see the same frames, so one pass gives the sound
+  and the register writes of a span (`frame` / `tacts` of each write against the sample position:
+  `samples = frames * samples_per_frame + tacts * rate / cpu_clock`).
+- **The AY history has no 65 536 ceiling**, unlike `/ay/log` (a ring clamped to 65 536, 128 194 entries lost in 2 s
+  of a busy loop). `capture` with `limit` 0 and a `stream` kept all 294 469 writes of 3 s with none dropped. The
+  device is `ay-socket` on a machine with a TurboSound / TSFM card, else `ay`: `GET /history` lists the name.
+- **Input of the original session is not fed again by a free run.** Keys, the mouse and tape / disk actions
+  journaled in the recording replay during `seek` / `step-forward` only. For a span that needs them (a menu to get
+  through, a tape to load), drive them yourself (`keyboard/type`, `tape/...`) after the rewind. Not measured here:
+  check a span with input against the original before trusting its audio.
+- **Short spans without leaving the replay.** `step-forward` renders the sound of each frame it replays, so a few
+  dozen frames can be captured in place (see the TTD recipe, "Audio during a replay"); the AY history stays silent
+  there.
+
 ## Pitfalls
 
 - **The machine must run to fill the buffer.** Arming on a paused machine
   collects nothing; `audio/capture/result` answers `409` while a capture is
   armed but incomplete ("poll /audio/capture/status first") and `409` when
   there is no captured audio at all.
+- **Long captures go to a file.** The memory capture holds 30 s at most. `POST /audio/capture
+  {"action":"start","seconds":600,"to_file":true,"path":"..."}` streams a WAV through a writer thread (up to
+  24 h, only the disk limits it; the same on every plane: CLI `audiocapture start 600 file out.wav`, Lua
+  `audio_capture_start(600, "", "out.wav")`, Python `audio_capture_start(600, file="out.wav")`, MCP `audio_capture`
+  with `to_file` / `path`, which arms and returns at once); `stop` closes the file, `status` shows `wav_path` / `file_closed`, `result` gives
+  the path and length (no level analysis: the samples are not in memory). The `cap.audio_capture` action always
+  streams, so it has no 30 s ceiling.
+- **A stopped capture holds only what came.** `stop` cuts the buffer to the captured samples; the result
+  and the WAV never carry a silent tail up to the target.
 - **One capture buffer per instance.** A new `start` replaces the previous
   one; read or export the result first. `seconds` outside 0.01-30 is a `400`.
 - **`source` is validated at arming time.** An unknown key, or a device that

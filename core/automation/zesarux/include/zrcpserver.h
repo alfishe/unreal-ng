@@ -91,6 +91,11 @@ private:
     void handleSetMembreakpoint(int sock, const std::vector<std::string>& words);
     void handleCpuHistory(int sock, const std::vector<std::string>& words);
     void handleExtendedStack(int sock, const std::vector<std::string>& words);
+    void handleWriteMemory(int sock, const std::vector<std::string>& words);
+    void handleHexdump(int sock, const std::vector<std::string>& words);
+    void handleLoadBinary(int sock, const std::string& params);
+    void handleGetBreakpoints(int sock, const std::vector<std::string>& words);
+    void handleTbblueRegister(int sock, bool set, const std::vector<std::string>& words);
 
     // --- wire formatting (byte-exact ZEsarUX formats; see zrcp-server.md) ---
     std::string buildRegistersLine(const dzrp::IDebugInterface::Registers& regs,
@@ -112,7 +117,9 @@ private:
     // --- breakpoint management ---
     void installBreakpoint(BreakpointEntry& entry);
     void uninstallBreakpoint(BreakpointEntry& entry);
-    BreakpointEntry* findBreakpointByAddr(uint16_t addr);
+    // The first enabled breakpoint at addr whose condition and pass count say stop (all of them are checked);
+    // known: some breakpoint is set there
+    BreakpointEntry* stoppingBreakpointAt(uint16_t addr, bool& known);
     bool breakpointShouldStop(BreakpointEntry& entry);  // condition + pass count
 
     // Instruction length when disassembleInstruction() reports none

@@ -91,7 +91,8 @@ def dpad_key(view, cx, cy, direction, colors):
     control = f"dpad.{direction}"
     style.shaped(view, polygon_d(rot), colors["key"], control, polygon_d(grow), stroke=0.25)
     xs, ys = [p[0] for p in rot], [p[1] for p in rot]
-    view.spot(control, "D-pad", ("rect", min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)), "left",
+    view.spot(control, f"D-pad {common.ARROW[direction]}",
+              ("rect", min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)), "left",
               group="dpad")
 
 

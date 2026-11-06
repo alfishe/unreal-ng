@@ -13,6 +13,7 @@ set(SOURCES
     src/gdbpacket.cpp
     src/gdbdispatcher.cpp
     src/gdbtarget_z80.cpp
+    src/gdbagentexpr.cpp
 )
 
 set(HEADERS
@@ -21,6 +22,7 @@ set(HEADERS
     include/gdbpacket.h
     include/gdbdispatcher.h
     include/gdbtarget_z80.h
+    include/gdbagentexpr.h
 )
 
 add_library(${PROJECT_NAME} STATIC ${SOURCES} ${HEADERS})

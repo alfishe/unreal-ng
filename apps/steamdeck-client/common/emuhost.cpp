@@ -174,11 +174,6 @@ bool EmuHost::OpenAudio(std::string* error)
     return true;
 }
 
-void EmuHost::SetPresentDelayFrames(uint8_t frames)
-{
-    _emulator->GetContext()->pScreen->SetPresentDelayFrames(frames);
-}
-
 void EmuHost::Start()
 {
     _emulator->StartAsync();

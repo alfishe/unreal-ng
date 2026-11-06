@@ -10,11 +10,11 @@
 #include "emulator/mainloop.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
-#include "_helpers/ttdv1tests.h"
 #include "common/filehelper.h"
 #include "emulator/io/storage/sessionwritemap.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/atm/evoflash.h"
+#include "emulator/ports/models/portdecoder_scorpion256.h"
 
 /// Tests share one process-wide EmulatorManager. An instance a test leaves
 /// registered outlives it and changes what later tests see (sole-instance
@@ -73,8 +73,6 @@ int main(int argc, char **argv)
   // Nor session deltas: a composite's writes are saved by writes.save when its emulator goes (D-8); a test that
   // checks that turns it on
   MediaManager::SetSaveOnRelease(false);
-  // The engine records, as in the application; v1's own tests select v1 (TtdBackendListener below)
-  Emulator::SetDefaultTimeTravelBackend(Emulator::TimeTravelBackend::Engine);
   ::testing::InitGoogleTest(&argc, argv);
 
   // The settings folder (FileHelper::GetWritablePath) is this process's scratch folder: files a machine saves there
@@ -89,14 +87,13 @@ int main(int argc, char **argv)
   // A test that flashes a ZX-Evo ROM must not change the ROM the next test boots: the flash's persistence file is
   // off except in the tests of the persistence itself (EvoFlashPersist_Test)
   EvoFlash::SetPersistenceAllowed(false);
+  // Nor the SMUC's NVRAM ([SMUC] NvramFile of the GMX config): every GMX boot starts from the power-on contents
+  PortDecoder_Scorpion256::SetNvramPersistenceAllowed(false);
 
   // Sound devices (AY / TurboSound / TSFM, General Sound, MoonSound) are left
   // out of every machine unless a test opts in with a SoundCardScope (see
   // soundcardscope.h for why)
   SoundCardScope::InstallPolicy();
-
-  // v1's own tests (the files in ttdv1tests.h) record with v1; every other test with the engine
-  ::testing::UnitTest::GetInstance()->listeners().Append(new ttdtest::TtdBackendListener());
 
   auto* leakGuard = new ManagerLeakGuard();  // owned by gtest once appended
   ::testing::UnitTest::GetInstance()->listeners().Append(leakGuard);

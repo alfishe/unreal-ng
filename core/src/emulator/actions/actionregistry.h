@@ -46,6 +46,9 @@ class Emulator;
 
 namespace actions
 {
+/// Why an action that needs a paused machine cannot run (`not_now`), and what to do
+inline constexpr const char* kNeedsPause = "the machine is running: pause it first";
+
 
 class ActivityFeed;
 
@@ -150,7 +153,7 @@ struct ActionRules
     /// The companion scope the call needs (automation_gate::CompanionScope bits); 0 = it changes nothing, nobody is
     /// gated. Null: 0. A function of the value and the machine: run.pause_toggle pausing needs none, resuming ScopeRun
     std::function<uint32_t(Emulator& emulator, const ActionValue& value)> scope;
-    /// A paused machine is needed (steps, instruction steps): "needs a pause" for every origin otherwise
+    /// A paused machine is needed (steps, instruction steps): `not_now` kNeedsPause for every origin otherwise
     bool needsPause = false;
     /// "" when it can run now, else why not ("no time travel history", "not available yet"). Reads published state
     /// only: never waits for the machine. Null: always available
@@ -244,7 +247,8 @@ public:
         std::string id;
         std::string param;
     };
-    std::vector<ToggleReadout> ToggleReadouts() const;
+    /// Built once per catalogue revision (the readouts ask on every read of a `toggle.*`)
+    std::shared_ptr<const std::vector<ToggleReadout>> ToggleReadouts() const;
     /// Every action with its availability on `instanceId` for `origin` (a dry run of the gates: no session is
     /// opened). Reads published state only. Without the instance every row is unavailable "no machine"
     std::vector<ActionStatus> Statuses(const std::string& instanceId, const ActionOrigin& origin) const;
@@ -291,6 +295,8 @@ private:
     bool _shutDown = false;
     std::vector<RegistrationHandle> _builtin;  ///< the core actions of Instance()
     uint64_t _revision = 0;
+    mutable std::shared_ptr<const std::vector<ToggleReadout>> _toggles;  ///< ToggleReadouts of `_togglesRevision`
+    mutable uint64_t _togglesRevision = 0;
     ActivityFeed* _feed = nullptr;
     bool _post = false;  ///< Instance(): a catalogue change posts NC_ACTION_CATALOGUE
 };

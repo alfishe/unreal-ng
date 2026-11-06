@@ -16,6 +16,9 @@
 #include "emulator/io/serial/uart16550.h"
 #include "emulator/io/fdc/fdc.h"
 #include "emulator/io/ide/ideadapter.h"
+#include "emulator/ports/deviceaccesswatch.h"
+#include "emulator/ports/portclaimindex.h"
+#include "emulator/ports/porthistory.h"
 #include "emulator/ports/portdiagrecorder.h"
 #include "emulator/slots/portclaimtable.h"   // guards the Qt `slots` macro itself
 #include "debugger/ttd/ttdserializable.h"  // ttd::PeripheralId / TTDSerializable (leaf header)
@@ -228,7 +231,8 @@ enum class PagingLatch : uint8_t
     AFE, AFB,                       // ATM 4.50 system ports (atm branch)
     PFFF7Window0, PFFF7Window1,     // ATM 7.10/ATM3 per-window latches
     PFFF7Window2, PFFF7Window3,     // (reserved until the decoders land)
-    PFE                             // the ULA port #FE as last written: border, MIC, EAR
+    PFE,                            // the ULA port #FE as last written: border, MIC, EAR
+    PGmx00, P78FD, P7AFD, P7CFD     // Scorpion GMX: #xx00 configuration, #8000 page, scroll start low / high
     // TSConf's latches live in its own state (TsConfState, PLAN #41 phase 1):
     // its decoder reports them itself, they are not EmulatorState fields
 };
@@ -427,6 +431,9 @@ public:
     /// region <Fields>
 protected:
     EmulatorContext* _context = nullptr;
+    PortClaimIndex _claimIndex;
+    PortHistories _portHistories;
+    DeviceAccessWatch _accessWatch;
 
     EmulatorState* _state = nullptr;
     snapshot::ISnapshotCommitPolicy* _snapshotPolicy = nullptr;   ///< not owned (SetSnapshotPolicy)
@@ -634,6 +641,15 @@ public:
     /// memory-manager defaults when the requested mode is RM_DOS). Base: none.
     virtual void ApplyBootROMDefaults(ROMModeEnum mode) { (void)mode; }
 
+    /// The ROM mode a reset asked for @p mode really starts in (Core::Reset, before reset()). Base: @p mode. A model
+    /// whose CPU always starts in its own firmware answers that (GMX: the loader), or defers a disk autostart's
+    /// RM_DOS until the firmware has booted (IsAutostartDeferred)
+    virtual ROMModeEnum ResolveResetROMMode(ROMModeEnum mode) { return mode; }
+
+    /// A disk autostart waits for the model's firmware boot: the TR-DOS start comes later, so the autostart's
+    /// command loop hook leaves earlier TR-DOS runs alone. Base: never
+    virtual bool IsAutostartDeferred() const { return false; }
+
     /// Re-run the model-specific set_banks() RAM mapping from the model's latches.
     /// Called by Memory::UpdateZ80Banks() for every model: ATM710/ATM3/+2A/+3 own
     /// the whole memory manager; Profi, Spectrum 128 and the Pentagons derive the
@@ -677,6 +693,13 @@ public:
     bool HasKempstonJoystick() const { return _slotKempstonJoystick || BoardHasKempstonJoystick(); }
     /// The model's own decode (#1F; Scorpion #FF1F). Machines without the arm stay false
     virtual bool BoardHasKempstonJoystick() const { return false; }
+    /// The register a device of this machine has selected now, by the input role of its select claims (the device
+    /// access watch's seed when it starts): AyIo = the AY data read's register (ITurboSoundDevice::getBusReadRegister),
+    /// the Next adds NextReg; -1 when not known or not a register (the TSFM status byte)
+#pragma push_macro("slots")
+#undef slots
+    virtual int SelectedIndex(slots::InputRole role) const;
+#pragma pop_macro("slots")
     /// A slot-built card with the kempston-joystick function is fitted (SlotManager::BuildCards / ReleaseCards)
     void SetSlotKempstonJoystick(bool fitted) { _slotKempstonJoystick = fitted; }
 
@@ -719,6 +742,14 @@ public:
     /// the base class and is shared by the model decoders for session gating
     bool IsBeta128Port(uint16_t decodedPort) const;
 
+    /// A Beta 128 on a Sinclair (48K-BETA128, the 128K and +3 decoders): the interface decodes the low byte only
+    /// (FUSE beta.c; MAME beta128.cpp decodes even fewer lines) and drives the bus only while the TR-DOS ROM is
+    /// paged in (CF_TRDOS). Returns false when the low byte is not a Beta port; otherwise the cycle is the Beta's:
+    /// with TR-DOS on it reaches the WD1793 / system register, with it off a read stays undecoded (Z80::in()
+    /// serves the floating bus) and a write is dropped, both marked wasBeta128Gated
+    bool TryBeta128LowBytePortIn(uint16_t port, uint8_t& result, PortDecodeDisposition& disp);
+    bool TryBeta128LowBytePortOut(uint16_t port, uint8_t value, PortDecodeDisposition& disp);
+
     /// Whether a decoded port value belongs to the General Sound host mailbox
     /// (#33 reset/NMI, #B3 data, #BB command/status). Shared the same way as
     /// IsBeta128Port, for model decoders to gate these rows on whether a GS
@@ -740,6 +771,19 @@ public:
 
     /// Recorder access for transports/tests. nullptr while the feature is off.
     /// Once returned the pointer stays valid for the decoder's lifetime
+    /// The port accesses of each registry device (porthistory.h)
+    PortHistories& GetPortHistories()
+    {
+        return _portHistories;
+    }
+    /// What the program uses, attributed by the registry's claims (deviceaccesswatch.h)
+    DeviceAccessWatch& GetAccessWatch()
+    {
+        return _accessWatch;
+    }
+    /// The registry's claims of the machine's slots now, for the histories and the watch: after the cards are built
+    void BuildAccessObservers();
+
     PortDiagnosticRecorder* getPortTraceRecorder()
     {
         return _portTraceFeatureCache.load(std::memory_order_acquire) ? _portTrace.get() : nullptr;

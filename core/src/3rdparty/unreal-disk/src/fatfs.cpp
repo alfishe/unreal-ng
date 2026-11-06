@@ -1027,6 +1027,128 @@ bool FatFs::SetAttributes(FatNode& node, uint8_t attributes)
     return StoreEntry(node);
 }
 
+bool FatFs::SetTime(FatNode& node, uint16_t date, uint16_t time)
+{
+    _error = Error::None;
+    if (node.root)
+        return Fail(Error::InvalidName);
+    if (!Writable())
+        return Fail(Error::ReadOnly);
+    node.date = date;
+    node.time = time;
+    return StoreEntry(node);
+}
+
+bool FatFs::SetLabel(const std::string& label)
+{
+    _error = Error::None;
+    if (!Writable())
+        return Fail(Error::ReadOnly);
+    // The 11 bytes: short-name characters and blanks (not in front), upper case, the code page's letters
+    uint8_t bytes[11];
+    std::memset(bytes, ' ', sizeof(bytes));
+    size_t count = 0;
+    for (char32_t c : UnicodeHelper::DecodeUtf8(label))
+    {
+        c = UnicodeHelper::ToUpper(c);
+        uint8_t byte = 0;
+        const bool ascii = c < 0x80;
+        if (count >= sizeof(bytes) || (ascii && c != ' ' && !ShortNameCharacter(static_cast<char>(c))) ||
+            (ascii && c == ' ' && count == 0) || (!ascii && !UnicodeHelper::ToCodePage(_page, c, byte)))
+            return Fail(Error::InvalidName);
+        bytes[count++] = ascii ? static_cast<uint8_t>(c) : byte;
+    }
+    if (count && bytes[0] == kDeleted)
+        bytes[0] = 0x05;
+
+    // The root's label entry, else the first free slot
+    std::vector<uint64_t> sectors;
+    if (!DirectorySectors(Root(), sectors))
+        return false;
+    uint64_t labelLba = 0, freeLba = 0;
+    int labelOffset = -1, freeOffset = -1;
+    uint8_t s[kSector];
+    for (uint64_t lba : sectors)
+    {
+        if (!ReadSector(lba, s))
+            return false;
+        bool end = false;
+        for (int offset = 0; offset < static_cast<int>(kSector) && !end; offset += 32)
+        {
+            const uint8_t* e = s + offset;
+            if (e[0] == 0 || e[0] == kDeleted)
+            {
+                if (freeOffset < 0)
+                {
+                    freeLba = lba;
+                    freeOffset = offset;
+                }
+                end = e[0] == 0;
+            }
+            else if (e[11] != kLongName && (e[11] & FatNode::kVolume) && !(e[11] & FatNode::kDirectory) && labelOffset < 0)
+            {
+                labelLba = lba;
+                labelOffset = offset;
+            }
+        }
+        if (end)
+            break;
+    }
+    if (count == 0 && labelOffset >= 0)
+    {
+        if (!ReadSector(labelLba, s))
+            return false;
+        s[labelOffset] = kDeleted;
+        if (!WriteSector(labelLba, s))
+            return false;
+    }
+    else if (count)
+    {
+        if (labelOffset < 0 && freeOffset < 0)
+        {
+            std::vector<uint64_t> added;
+            if (!ExtendDirectory(Root(), added))
+                return false;
+            freeLba = added.front();
+            freeOffset = 0;
+        }
+        const uint64_t lba = labelOffset >= 0 ? labelLba : freeLba;
+        const int offset = labelOffset >= 0 ? labelOffset : freeOffset;
+        if (!ReadSector(lba, s))
+            return false;
+        uint8_t* e = s + offset;
+        std::memset(e, 0, 32);
+        std::memcpy(e, bytes, 11);
+        e[11] = FatNode::kVolume | FatNode::kArchive;
+        Put16(e + 22, _time);
+        Put16(e + 24, _date);
+        if (!WriteSector(lba, s))
+            return false;
+    }
+
+    // The boot sector's copy (when it has the extended signature), and the FAT32 backup boot sector's
+    if (count == 0)
+        std::memcpy(bytes, "NO NAME    ", 11);
+    const bool fat32 = _type == FatReaderType::Fat32;
+    std::vector<uint64_t> boots = {_volumeStart};
+    if (!ReadSector(_volumeStart, s))
+        return false;
+    const uint16_t backup = fat32 ? Get16(s + 50) : 0;
+    if (backup != 0 && backup != 0xFFFF && backup < _reservedSectors)
+        boots.push_back(_volumeStart + backup);
+    for (uint64_t lba : boots)
+    {
+        if (!ReadSector(lba, s))
+            return false;
+        if (s[fat32 ? 66 : 38] != 0x29)
+            continue;
+        std::memcpy(s + (fat32 ? 71 : 43), bytes, 11);
+        if (!WriteSector(lba, s))
+            return false;
+    }
+    return true;
+}
+
 uint32_t FatFs::FreeClusters()
 {
     _error = Error::None;

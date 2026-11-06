@@ -1,5 +1,6 @@
 #include "screen.h"
 #include "ulacontention.h"
+#include "emulator/readoutschanged.h"
 
 #include <common/image/imagehelper.h>
 
@@ -17,10 +18,12 @@
 #include "emulator/video/screendigest.h"
 #include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/atm/screenatm.h"
+#include "emulator/video/gmx/gmxgeometry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/notifications.h"
+#include "emulator/ports/models/profiboard.h"
 #include "emulator/sound/soundmanager.h"
 #include "stdafx.h"
 
@@ -463,14 +466,18 @@ Screen::ModeSelection Screen::DetectModeProfi(const EmulatorState& state) const
     return { M_PROFI, R_256_192 };
 }
 
-// GMX: 7EFD bit 3 selects the extended 320x200 mode; without it the model
-// keeps its current/legacy mode selection
+// GMX: #7EFD bit 3 selects the card's 640x200 extended mode (GMX design 2.5); without it the host Scorpion's raster
 Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
 {
     if (state.scorpion.p7EFD & 0x08)
         return { M_GMX, R_320_200 };
 
-    return { _vid.mode, R_256_192 };
+    // #00 bit 7 (ST/PENT): the Pentagon frame, 320 lines with 80 from INT to the active screen and the border
+    // without strobing (GMX manual, the Pentagon scheme): the Pentagon 128 raster
+    if (state.gmx.p00 & 0x80)
+        return { M_PENTAGON128K, R_256_192 };
+
+    return DetectModeScorpion(state);
 }
 
 // Unknown/legacy models: keep the current mode, standard ZX raster
@@ -590,6 +597,7 @@ void Screen::SetVideoMode(VideoModeEnum mode)
         case M_SCORPION:  // Scorpion ZS-256 - discrete-logic ULA, contention-free
         case M_PROFI:     // Profi - discrete-logic ULA, no contention
         case M_PROFIHR:
+        case M_GMX:       // the GMX extended mode on the Scorpion board
             _rasterState.borderUpdateTStates = 1;
             _rasterState.contentionEnabled = false;
             _rasterState.fetchType = ULA_DISCRETE_LOGIC;
@@ -734,6 +742,8 @@ videomap::VideoLatches Screen::CaptureVideoLatches() const
         l.pFE = _state->pFE;
         l.borderAttr = _state->border_attr;
         l.atmBorderBright = _state->atm.borderBright;
+        if (_context->config.mem_model == MM_GMX)
+            l.scrollStart = static_cast<uint16_t>(GmxGeometry::ScrollStart(_state->gmx.p7AFD, _state->gmx.p7CFD));
     }
     CaptureFamilyLatches(l);
     return l;
@@ -985,6 +995,8 @@ void Screen::AllocateFramebuffer(VideoModeEnum mode)
         case M_ATMTL:   // ATM3 Linear Text
         case M_PROFI:   // Profi standard / hi-res
         case M_PROFIHR:
+        case M_GMX:     // GMX 640x200 (ScreenGmx)
+        case M_SCORPION:  // Scorpion ZS-256 (reached with a new size when the GMX leaves its 640x200 mode)
         case M_TS16:    // TS-Conf (ScreenTSConf)
         case M_TS256:
         case M_TSTX:
@@ -1797,6 +1809,7 @@ bool Screen::SetTemporalAlgorithm(const std::string& name)
         }
         _temporalRestoreScreenHQ = _temporalRestoreZXDLSS = false;
     }
+    NotifyReadoutsChanged(_context, "video.temporal");
     return true;
 }
 
@@ -2100,6 +2113,11 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
         case M_SPRINTER:
             return {0, 184, 184, 4};
 
+        // GMX 640x200: the ZX paper window at 5 px/T, borders at 2 px/T (gmxgeometry.h)
+        case M_GMX:
+            return {static_cast<uint16_t>(GmxGeometry::kPaperStartT), static_cast<uint16_t>(GmxGeometry::kPaperTStates),
+                    static_cast<uint16_t>(GmxGeometry::kVisibleEndT), static_cast<uint8_t>(GmxGeometry::kPixelsPerT)};
+
         // Profi 512x240: the ZX paper window at 4 px/T, borders at 2 px/T
         case M_PROFIHR:
         {
@@ -2121,6 +2139,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
     static const VideoModeInfo pmc{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 6144, 6144, 12288};
     static const VideoModeInfo phr{"1 bpp (monochrome)", 2, 1, nullptr, 0, 0, 0, 0, 0, 0};
     static const VideoModeInfo p384{"2 colors per attribute block", 16, 1, "8x8 pixels", 0, 0, 0, 6144, 768, 6912};
+    static const VideoModeInfo gmx{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
     static const VideoModeInfo profiHr{"1 bpp, per-pixel palette (16 entries)", 16, 1, "8x1 pixels", 0, 0, 0, 0, 0, 0};
     static const VideoModeInfo atm16{"4 bpp (16 colors per pixel)", 16, 4, "per pixel pair (bit-planar)", 0, 0, 4, 16000, 0, 16000};
     static const VideoModeInfo atmHr{"1 bpp bitmap + attribute per 8x1 cell", 16, 1, "8x1 pixels", 0, 0, 0, 16000, 16000, 32000};
@@ -2137,6 +2156,7 @@ const VideoModeInfo& Screen::GetVideoModeInfo(VideoModeEnum mode)
         case M_PHR:     return phr;
         case M_P384:    return p384;
         case M_PROFIHR: return profiHr;
+        case M_GMX:     return gmx;
         case M_ATM16:   return atm16;
         case M_ATMHR:   return atmHr;
         case M_ATMTX:
@@ -2182,6 +2202,58 @@ ScreenState Screen::DescribeScreenState() const
     return s;
 }
 
+void Screen::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const
+{
+    // What each family's renderer reads (ScreenAtm, ScreenAlco, ScreenProfi, ScreenZX), as bytes of RAM pages. The
+    // palettes live in device state, not counted here
+    out.clear();
+    const uint8_t p7FFD = _context->emulatorState.p7FFD;
+    const uint32_t video = (p7FFD & 0x08) ? 7u : 5u;
+    auto page = [&](uint32_t p, uint32_t offset, uint32_t bytes) { out.push_back({nullptr, p * 0x4000u + offset, bytes}); };
+    switch (_mode)
+    {
+        case M_ATM16:   // the four bit-planes at {vp - 4, vp} + {0, #2000}
+        case M_ATMHR:   // pixels in vp, attributes in vp - 4, both halves
+            for (const uint32_t p : {video, video - 4})
+            {
+                page(p, 0x0000, 8000);   // 40 bytes x 200 lines a plane
+                page(p, 0x2000, 8000);
+            }
+            break;
+        case M_ATMTX:   // 25 rows of 64 bytes from #01C0 in both halves of vp; attributes from #01C0 and #21C0 of vp - 4
+            for (const uint32_t p : {video, video - 4})
+            {
+                page(p, 0x01C0, 0x0629);   // the attributes of vp - 4 run one byte further (#01C1 + index)
+                page(p, 0x21C0, 0x0629);
+            }
+            out.push_back({"device.EvoFontRam", 0, 4096});   // a ZX-Evo program may load its own font
+            break;
+        case M_ATMTL:   // ZX-Evo text linear: codes and attributes of one page, 8 or 10
+            page((p7FFD & 0x08) ? 10u : 8u, 0, 0x4000);
+            out.push_back({"device.EvoFontRam", 0, 4096});
+            break;
+        case M_P16:     // AlCo 16 colours: the ZX pixel layout in both halves of the video page and its pair
+            for (const uint32_t p : {video, video ^ 1u})
+            {
+                page(p, 0x0000, 0x1800);
+                page(p, 0x2000, 0x1800);
+            }
+            break;
+        case M_PMC:     // hardware multicolour: pixels, and 8 x 1 attributes at #2000, in the video page
+            page(video, 0x0000, 0x1800);
+            page(video, 0x2000, 0x1800);
+            break;
+        case M_PROFIHR: // pixels in page 4 / 6; attributes in page #38 / #3A unless the board has no palette chips
+            page((p7FFD & 0x08) ? 6u : 4u, 0, 0x4000);
+            if (!ProfiMonochromeHires(_context->config) && _context->pMemory)
+                page(((p7FFD & 0x08) ? 0x3Au : 0x38u) & _context->pMemory->GetRamMask(), 0, 0x4000);
+            break;
+        default:        // the ZX layout: 6,912 bytes of page 5, or 7 on a machine with a shadow screen
+            page(GetVideoRAMPage(_context->config.mem_model, p7FFD), 0, 6912);
+            break;
+    }
+}
+
 std::vector<uint16_t> Screen::GetDisplayedRAMPages(VideoModeEnum mode, MEM_MODEL model, uint8_t p7FFD)
 {
     const uint8_t effective7FFD = HasShadowScreen(model) ? p7FFD : 0;
@@ -2194,6 +2266,7 @@ std::vector<uint16_t> Screen::GetDisplayedRAMPages(VideoModeEnum mode, MEM_MODEL
         case M_P16:
         case M_PMC:
         case M_PROFIHR:
+        case M_GMX:
             return GetActiveSurfaceRAMPages(mode, effective7FFD, true);
         default:
             return {GetVideoRAMPage(model, p7FFD)};
@@ -2237,8 +2310,12 @@ std::vector<uint16_t> Screen::GetActiveSurfaceRAMPages(VideoModeEnum mode, uint8
         case M_PROFIHR:
             return (p7FFD & 0x08) ? std::vector<uint16_t>{6, 0x3A} : std::vector<uint16_t>{4, 0x38};
 
+        // GMX 640x200: pixel page #39 (#3B with 7FFD.3), attribute page 64 above it (gmxgeometry.h)
+        case M_GMX:
+            return {GmxGeometry::PixelPage(p7FFD), GmxGeometry::AttrPage(p7FFD)};
+
         // ZX family and every other mode: fall back to the classic surface
-        // (Profi/GMX/TS renderers are stubbed on master until they define one)
+        // (TS renderers are stubbed on master until they define one)
         default:
         {
             if (bankedZX)
@@ -2415,7 +2492,13 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
         }
     }
 
-    if (fromTstate >= maxFrameDuration || toTstate >= maxFrameDuration)
+    // A step that ends far past the frame end (the TS-Conf arbiter holding the CPU while DMA owns the bus, a long
+    // wait) still had the beam draw the frame's tail: draw up to the end, not nothing (the renderers stop at their
+    // own frame end)
+    if (fromTstate < maxFrameDuration && toTstate >= maxFrameDuration)
+        toTstate = maxFrameDuration - 1;
+
+    if (fromTstate >= maxFrameDuration)
     {
         MLOGERROR("Screen::DrawPeriod - Incorrect fromTstate: %d and/or toTstate: %d. MAX_FRAME_DURATION: %d. Skipping period.",
                   fromTstate, toTstate, maxFrameDuration);

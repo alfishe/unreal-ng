@@ -639,7 +639,7 @@ void Ym2203Pair::saveTimeline(uint8_t*& cur) const
 {
     // Relative to the synced master clock: the cursor decides on which tick every SSG write lands, a pending
     // write is chip input that has not reached the generators yet
-    const int64_t base = _chipT;
+    const int64_t base = _adoptCpuClock ? 0 : _chipT;
     PutU64(cur, uint64_t(_renderT - base));
     for (int i = 0; i < 2; ++i)
     {
@@ -655,14 +655,17 @@ void Ym2203Pair::saveTimeline(uint8_t*& cur) const
     }
 }
 
-void Ym2203Pair::loadTimeline(const uint8_t*& cur, uint64_t base)
+void Ym2203Pair::loadTimeline(const uint8_t*& cur, uint64_t base, bool adopt)
 {
     // The pair continues from the restored host position without adopting: the next syncTo clocks the chips over
     // exactly the ticks the original run did. The master-clock axis restarts at the same value (1 : 1: it is the
-    // host axis; with a ratio its origin is free - everything on it is stored relative)
+    // host axis; with a ratio its origin is free - everything on it is stored relative). A pair saved while it still
+    // adopted the clock adopts it again: the original's chips started at its first sync after the capture
+    if (adopt)
+        base = 0;
     _syncedT = base;
     _chipT = int64_t(base);
-    _adoptCpuClock = false;
+    _adoptCpuClock = adopt;
 
     const int64_t cursorOffset = int64_t(GetU64(cur));
     for (int i = 0; i < 2; ++i)

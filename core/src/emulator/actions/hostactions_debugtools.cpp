@@ -326,6 +326,18 @@ bool BreakpointSpecFromParams(Emulator& emulator, const ActionValue& value, Brea
     if (const std::optional<std::string> hits = TextParam(value, "hits"))
         if (!BreakpointManager::ParseHitSpec(*hits, spec.hitMode, spec.hitTarget, error))
             return false;
+    spec.condition = TextParam(value, "condition").value_or("");
+    if (const std::optional<std::string> dialect = TextParam(value, "dialect"))
+        if (!BreakpointConditionProgram::ParseDialect(*dialect, spec.conditionDialect))
+        {
+            error = "dialect: unreal or c";
+            return false;
+        }
+    // stop false: the breakpoint only counts its hits
+    if (const std::optional<bool> stop = BoolParam(value, "stop", error))
+        spec.stop = *stop;
+    if (!error.empty())
+        return false;
     spec.note = TextParam(value, "note").value_or("");
     spec.group = TextParam(value, "group").value_or("");
     return true;
@@ -451,7 +463,7 @@ void RegisterBreakpointActions(const std::function<void(const char*, const char*
     add("dbg.bp_add", "Add a breakpoint", debugger, ValueKind::Press,
         "kind (exec|read|write|rw|in|out|io|nextreg_read|nextreg_write|nextreg|beam|copper|magic|keyboard), address "
         "(or a label), end?, preset? (fe|7ffd|1ffd|fffd|bffd), mask?, page?, slot_only?, hc?, doors?, value?, "
-        "value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, note?, group?",
+        "value_mask?, opcode? (edff|dd01), key? (any), on? (press|release|both), hits?, stop? (false: only count), note?, group?",
         "Add a breakpoint of any kind: memory, ports with a mask or a preset, ZX Next registers, the beam, the copper, "
         "the magic opcodes, a key.",
         [](const ActionCall& call) {

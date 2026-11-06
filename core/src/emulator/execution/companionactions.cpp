@@ -5,6 +5,7 @@
 #include "debugger/ttd/timetravelhooks.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/execution/automationgate.h"
 #include "emulator/execution/companionregistry.h"
 
@@ -76,6 +77,22 @@ const std::vector<ActionInfo>& Actions()
         return list;
     }();
     return actions;
+}
+
+std::optional<std::chrono::milliseconds> NextTimedChange()
+{
+    std::optional<std::chrono::milliseconds> next;
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    for (const std::string& id : manager->GetEmulatorIds())
+    {
+        const std::shared_ptr<Emulator> emulator = manager->GetEmulator(id);
+        const EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+        if (!context)
+            continue;
+        if (const auto left = context->RunControlTimeToChange(); left && (!next || *left < *next))
+            next = left;
+    }
+    return next;
 }
 
 MachineView ViewOf(Emulator& emulator)

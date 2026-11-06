@@ -555,9 +555,11 @@ uint8_t Z84C15::AcknowledgeInterrupt()
         {
             SetIus(order[i], true);
             ClearIpOnAcknowledge(order[i]);
+            _lastAcknowledged = Code(order[i]);
             return Vector(order[i]);
         }
     }
+    _lastAcknowledged = -1;
     return 0xFF;  // nobody on the chip drives the bus
 }
 
@@ -571,9 +573,11 @@ void Z84C15::OnReti()
         if (Ius(order[i]))
         {
             SetIus(order[i], false);
+            _lastRetired = Code(order[i]);
             return;
         }
     }
+    _lastRetired = -1;
 }
 
 void Z84C15::ReturnFromIntInSio()

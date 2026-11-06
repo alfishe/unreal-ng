@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Record the port-journal fixtures and the emulator's answers to them.
 
-Two real sessions (testdata/ttd/port-journals/, see testdata/ttd/README.md):
+Two real sessions in the engine's format (testdata/ttd/port-journals/engine/,
+see testdata/ttd/README.md):
 
   dizzyx.ttd           Dizzy X (128K snapshot, AY music) on a Pentagon while
                        keys the game polls are pressed: 8, 0, 5, Q, SPACE
@@ -11,9 +12,8 @@ Two real sessions (testdata/ttd/port-journals/, see testdata/ttd/README.md):
 
 For each, a set of "when did the program ..." questions is asked of the live
 session (POST /ttd/port-events) and of the saved file ("file": no load), the
-two answers are checked equal, and the answers are written to expected.json.
-The analyzer's test (tools/verification/ttd-analyzer/tests/test_port_search.py)
-and the C++ test (TimeTravelManager_PortJournalFixture_Test) ask the same
+two answers are checked equal, and the answers are written to
+testdata/ttd/port-journals/expected.json. The C++ fixture test asks the same
 questions of the files and must get these answers.
 
 Usage: start the desktop app with the WebAPI (port 8090), then
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from record_fixtures import PROJECT_ROOT, EmulatorApi, run_frames  # noqa: E402
 
 OUT_DIR = PROJECT_ROOT / "testdata/ttd/port-journals"
+SESSION_DIR = OUT_DIR / "engine"
 
 DIZZY_KEYS: List[Tuple[str, int, int]] = [
     # key, frames held, frames after the release
@@ -112,7 +113,7 @@ def record_dizzy(api: EmulatorApi) -> Dict[str, Any]:
             run_frames(api, base, held)
             api.post(f"{base}/keyboard/release", {"key": key})
             run_frames(api, base, after)
-        path = OUT_DIR / "dizzyx.ttd"
+        path = SESSION_DIR / "dizzyx.ttd"
         dump(api, base, path)
         return {"file": path.name, "answers": ask(api, base, path, DIZZY_QUERIES)}
     finally:
@@ -131,7 +132,7 @@ def record_tape(api: EmulatorApi) -> Dict[str, Any]:
         run_frames(api, base, 10)
         api.post(f"{base}/keyboard/release", {"key": "enter"})
         run_frames(api, base, 1000)
-        path = OUT_DIR / "greenberet-load.ttd"
+        path = SESSION_DIR / "greenberet-load.ttd"
         dump(api, base, path)
         return {"file": path.name, "answers": ask(api, base, path, TAPE_QUERIES)}
     finally:
@@ -139,7 +140,7 @@ def record_tape(api: EmulatorApi) -> Dict[str, Any]:
 
 
 def main() -> int:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    SESSION_DIR.mkdir(parents=True, exist_ok=True)
     api = EmulatorApi(timeout=300.0)
     fixtures = [record_dizzy(api), record_tape(api)]
     (OUT_DIR / "expected.json").write_text(json.dumps({"fixtures": fixtures}, indent=1) + "\n")

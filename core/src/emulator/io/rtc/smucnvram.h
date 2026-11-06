@@ -58,6 +58,12 @@ public:
 	/// Backing-store readback (debug UI / tests)
 	uint8_t GetEEPROMByte(uint16_t addr) const { return _nvram[addr & 0x7FF]; }
 
+	/// The battery-backed image ([SMUC] NvramFile): the clock's 256 cells (Ds12887::NvramImage), then the 2 KB EEPROM.
+	/// Load keeps the power-on contents when the file is missing or has the wrong size (false)
+	static constexpr size_t kImageSize = 256 + 0x800;
+	bool LoadImage(const std::string& path);
+	bool SaveImage(const std::string& path) const;
+
 	/// Re-arm the power-on line/shift state; battery-backed contents survive
 	void ResetSerialLinkState();
 
@@ -80,7 +86,7 @@ public:
 	void SetLinkState(const LinkState& state);
 
 	/// The 2 KB EEPROM: the time-travel engine's region SmucEeprom (compared at
-	/// each capture: one write path, 2 KB). v1 does not record it
+	/// each capture: one write path, 2 KB)
 	void TTDRegions(std::vector<ttd::TTDDeviceRegion>& out) override;
 	void TTDArmRegions(bool) override {}
 

@@ -6,6 +6,9 @@
 #include "mcp-resources.h"
 #include "mcp-sse.h"
 
+#include "../../common/answerbudget.h"  // max_chars (header only)
+
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -22,8 +25,8 @@ const char* const kServerInstructions =
     "Unreal-NG ZX Spectrum emulator control surface. Core tools: emulator_manage, load_software, "
     "control_execution, inspect_state, type_input, mouse_input, joystick_input. Time-travel debugging: time_travel (start recording, "
     "run, stop, then find_last / reverse_continue / seek / step backward; inspect_state aspect 'ttd' shows the "
-    "session). While recording, speed is held at 1x and turbo / fast loaders are off; loading media wipes the "
-    "history. RZX input recordings: rzx_playback (play / stop / status). Assembler sources (decode, encode, convert, the files "
+    "session). While recording, speed is held at 1x and fast disk is off; turbo and fast tape stay (load a tape in "
+    "turbo while recording); loading media into a stopped session wipes its history. RZX input recordings: rzx_playback (play / stop / status). Assembler sources (decode, encode, convert, the files "
     "of a disk): asm_source. Router tools: search_api / invoke_api expose the "
     "full WebAPI (see openapi.json). Resolve the machine with target:\"auto\" unless several "
     "instances run. Resources: unreal://keyboard-layout, unreal://basic-reference, unreal://z80-isa, "
@@ -172,6 +175,12 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
             done(MakeRpcError(id, kInvalidParams, "Unknown tool: " + name));
             return;
         }
+        if (_toolCallObserver)
+        {
+            const Json::Value& arguments = params["arguments"];
+            const bool hasAction = arguments.isObject() && arguments.isMember("action") && arguments["action"].isString();
+            _toolCallObserver(name, hasAction ? arguments["action"].asString() : std::string());
+        }
 
         // Tool execution problems are reported through the tool result
         // (isError: true), never as JSON-RPC errors, per the MCP spec
@@ -220,6 +229,25 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
             }
             replyJson = format.asString() == "json";
         }
+        // max_chars (answer budgets): the whole answer fitted after the tool ran; a bad one refused before it runs
+        size_t budget = 0;
+        if (argumentsCopy->isObject() && argumentsCopy->isMember(answer_budget::kArg))
+        {
+            std::string why;
+            const bool good = answer_budget::Parse((*argumentsCopy)[answer_budget::kArg], budget, why);
+            argumentsCopy->removeMember(answer_budget::kArg);
+            if (!good)
+            {
+                Json::Value payload;
+                Json::Value text;
+                text["type"] = "text";
+                text["text"] = why;
+                payload["content"].append(text);
+                payload["isError"] = true;
+                done(MakeRpcResult(id, std::move(payload)));
+                return;
+            }
+        }
         // An argument the schema does not name is a typo ("addr" for "address"): ignored, it would leave the tool's
         // default in place and answer something that looks right (a read from 0). Names starting with '_' are internal;
         // 'target' is taken by every tool (agents send target "auto" everywhere, a tool without a machine ignores it)
@@ -251,7 +279,7 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
         }
         try
         {
-            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller, replyJson](ToolResult result) {
+            tool->handler(*argumentsCopy, caller, [argumentsCopy, id, done, &caller, replyJson, budget](ToolResult result) {
                 // The user took control back at the GUI during this call (execution arbiter design §6a): whatever the
                 // tool made of the 409, the agent gets the one answer - stop, do not retry, ask the user
                 if (caller.TakeRevoked())
@@ -262,6 +290,24 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                 // The gate opened a session for this call: advise the agent to take control explicitly (once)
                 if (const std::string advice = caller.TakeImplicitAdvice(); !advice.empty())
                     result.text += "\n\n" + advice;
+                // The budget fits what the model reads: content[] (the text alone; with the JSON echo the text a third
+                // and the JSON the rest) and, apart, structuredContent (the clients that read it read it instead)
+                std::string echoText;
+                if (budget > 0)
+                {
+                    const bool echo = replyJson && !result.structured.isNull();
+                    result.text = answer_budget::FitText(result.text, echo ? budget / 3 : budget, budget);
+                    if (!result.structured.isNull())
+                    {
+                        const size_t jsonBudget = echo ? std::max(budget - std::min(budget, answer_budget::Chars(result.text)),
+                                                                  answer_budget::kMinChars / 2)
+                                                       : budget;
+                        result.structured = answer_budget::FitJson(result.structured, jsonBudget, nullptr, budget);
+                        if (echo)
+                            echoText = answer_budget::FitText(EchoStructured(result.structured, result.imageData),
+                                                              jsonBudget, budget);
+                    }
+                }
                 Json::Value payload;
                 Json::Value text;
                 text["type"] = "text";
@@ -281,7 +327,7 @@ void McpDispatcher::Dispatch(const Json::Value& request, IApiCaller& caller, Res
                     {
                         Json::Value echo;
                         echo["type"] = "text";
-                        echo["text"] = EchoStructured(result.structured, result.imageData);
+                        echo["text"] = budget > 0 ? echoText : EchoStructured(result.structured, result.imageData);
                         payload["content"].append(echo);
                     }
                     payload["structuredContent"] = result.structured;

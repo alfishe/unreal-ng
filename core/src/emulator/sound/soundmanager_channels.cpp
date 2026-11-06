@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/readoutschanged.h"
 
 #include <algorithm>
 #include <cctype>
@@ -108,6 +109,7 @@ bool SoundManager::setMixerChannel(AudioSourceType type, const std::string& chan
     if (volume >= 0.0f)
         it->volume = std::clamp(volume, 0.0f, 1.0f);
     row->touched = true;
+    NotifyReadoutsChanged(_context, "audio.mixer");  // audio.mixer / audio.source.* a deck shows
     return true;
 }
 

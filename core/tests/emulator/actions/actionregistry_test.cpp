@@ -258,9 +258,9 @@ TEST_F(ActionRegistry_Test, AnActionThatNeedsAPauseIsRefusedNotNowWhileTheMachin
     const ActionResult result = _registry->Run("t.step", Press(), _id, Origin(execution::Origin::Gui));
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.error, "not_now");
-    EXPECT_EQ(result.message, "needs a pause");
+    EXPECT_EQ(result.message, kNeedsPause);
     EXPECT_EQ(runs.load(), 0);
-    EXPECT_EQ(_registry->Unavailable("t.step", _id, Origin(execution::Origin::Gui), Press()), "needs a pause");
+    EXPECT_EQ(_registry->Unavailable("t.step", _id, Origin(execution::Origin::Gui), Press()), kNeedsPause);
 }
 
 TEST_F(ActionRegistry_Test, TheGuiAndHostDevicesAreRefusedAChangeWhileAnotherSurfaceHoldsControl)

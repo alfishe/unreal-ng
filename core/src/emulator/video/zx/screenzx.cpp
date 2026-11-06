@@ -109,6 +109,9 @@ void ScreenZX::SelectRangeRenderer()
         case VideoFamily::Profi:
             _rangeRenderer = &ScreenZX::DrawRangeProfi;
             break;
+        case VideoFamily::Gmx:
+            _rangeRenderer = &ScreenZX::DrawRangeGmx;
+            break;
         case VideoFamily::Alco:
             _rangeRenderer = &ScreenZX::DrawRangeAlco;
             break;
@@ -877,6 +880,13 @@ void ScreenZX::DrawRangeProfi(uint32_t fromTstate, uint32_t toTstate)
     _profiScreen->DrawRange(fromTstate, toTstate, rasterDescriptors[_mode], _framebuffer, _borderColor);
 }
 
+void ScreenZX::DrawRangeGmx(uint32_t fromTstate, uint32_t toTstate)
+{
+    if (!_gmxScreen)
+        _gmxScreen = std::make_unique<ScreenGmx>(_context, _memory);
+    _gmxScreen->DrawRange(fromTstate, toTstate, rasterDescriptors[_mode], _framebuffer, _borderColor, _vid.flash != 0);
+}
+
 void ScreenZX::DrawRangeAlco(uint32_t fromTstate, uint32_t toTstate)
 {
     if (!_alcoScreen)
@@ -1327,7 +1337,7 @@ void ScreenZX::RenderFrameBatch()
     // across the whole frame instead so ScreenHQ=OFF still produces correct
     // output (DrawRange dispatches to the family renderer).
     if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL ||
-        _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR)
+        _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR || _mode == M_GMX)
     {
         if (_framebuffer.memoryBuffer == nullptr)
             return;

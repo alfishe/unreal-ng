@@ -1,0 +1,24 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="add">icons/edit_add.png</file>
+        <file alias="cancel">icons/cancel.png</file>
+        <file alias="cfg_copy">icons/kpager.png</file>
+        <file alias="exit">icons/exit.png</file>
+        <file alias="file_save">icons/3floppy_unmount.png</file>
+        <file alias="finish">icons/finish.png</file>
+        <file alias="forward">icons/forward.png</file>
+        <file alias="next">icons/next.png</file>
+        <file alias="open">icons/cdrom_mount.png</file>
+        <file alias="pause">icons/player_pause.png</file>
+        <file alias="play_fwd">icons/player_fwd.png</file>
+        <file alias="play">icons/player_play.png</file>
+        <file alias="reload">icons/reload.png</file>
+        <file alias="remove">icons/edit_remove.png</file>
+        <file alias="step_over">icons/step_over.png</file>
+        <file alias="top">icons/top.png</file>
+        <file alias="undo">icons/undo.png</file>
+    </qresource>
+    <qresource prefix="/fonts">
+        <file alias="consolas">fonts/Consolas.ttf</file>
+    </qresource>
+</RCC>

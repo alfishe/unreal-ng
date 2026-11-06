@@ -47,7 +47,6 @@ public:
 
     /// Open the default playback device and register the audio callback
     bool OpenAudio(std::string* error = nullptr);
-    void SetPresentDelayFrames(uint8_t frames);
 
     void Start();   // StartAsync: the core's MainLoop paces itself
     void Stop();

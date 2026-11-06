@@ -5,6 +5,7 @@
 #include <queue>
 #include <vector>
 
+#include "debugger/history/devicehistory.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 peripheral serializer)
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
@@ -15,15 +16,36 @@
 #include "emulator/ports/portdecoder.h"
 #include "stdafx.h"
 
-class WD1793Collector;
 class IWD1793Observer;
 
 class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
-    friend WD1793Collector;
-
     /// region <Types>
 public:
+    /// One command of the controller's history (history::DeviceHistory, device `beta128`): what was written to the
+    /// command register, the registers and the drive it ran on, and how it ended. A debugger's view of the chip's own
+    /// state machine
+    struct CommandRecord
+    {
+        uint64_t start = 0;     ///< T-state of the write to the command register (the chip's own clock)
+        uint64_t end = 0;       ///< T-state of the completion; valid when `done`
+        uint64_t frame = 0;     ///< the frame the command was written in
+        uint16_t pc = 0;        ///< the Z80 PC of the OUT
+        uint8_t command = 0;    ///< the command byte
+        uint8_t track = 0;      ///< the track, sector and data registers when the command was written
+        uint8_t sector = 0;
+        uint8_t data = 0;
+        uint8_t drive = 0;
+        uint8_t side = 0;
+        uint8_t status = 0;     ///< the status register at the completion
+        bool done = false;      ///< false: still running, or cut short (a force interrupt, a reset)
+
+        void ToState(StateNode& node) const;
+    };
+    /// The ring of the standby mode: the history runs as a ring of the last 64 commands from the start (a command
+    /// is rare, a few per second at most)
+    static constexpr size_t kCommandHistorySize = 64;
+
     /// Diff-gate cache for NC_FDC_STATE_CHANGED — the display-relevant tuple that was
     /// posted last. An aggregate of plain values so comparison stays trivial.
     /// DRQ is deliberately not part of it: it toggles once per data byte (~6250
@@ -658,8 +680,8 @@ public:
 
     /// region <Fields>
 protected:
-    WD1793Collector* _collector = nullptr;
     std::vector<IWD1793Observer*> _observers;
+    history::DeviceHistory<CommandRecord> _commandHistory{ "beta128", "FDC commands", kCommandHistorySize };
 
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
@@ -989,6 +1011,16 @@ public:
     // Observer support for analyzers
     void addObserver(IWD1793Observer* observer);
     void removeObserver(IWD1793Observer* observer);
+
+    /// The command history (off / ring / capture / stream; registered in the context's histories as `beta128`)
+    history::DeviceHistory<CommandRecord>& CommandHistory()
+    {
+        return _commandHistory;
+    }
+    const history::DeviceHistory<CommandRecord>& CommandHistory() const
+    {
+        return _commandHistory;
+    }
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -1327,6 +1359,8 @@ public:
     {
         return _sleeping || (_state == S_IDLE && _motorTimeoutTStates <= 0);
     }
+    /// Asleep: handleStep returns at once. Awake and inert, it still stamps its time on every step (handleStepAwake)
+    bool IsAsleep() const { return _sleeping; }
     void handleFrameEnd();
     /// handleStep's work while the controller is awake
     void handleStepAwake();

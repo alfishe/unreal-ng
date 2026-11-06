@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "hid/hiddescriptor.h"
+#include "hid/hidusage.h"
 
 namespace controllers
 {
@@ -45,12 +46,17 @@ struct HidLayout
     /// Consumer-page usages -> controls (AC Home 0x223, AC Back 0x224, Record 0xB2 on the Luna over Bluetooth)
     std::vector<std::pair<uint16_t, std::string>> consumer;
     std::vector<HidBit> bits;
+    /// Fields read as the family says, before the generic mapping (first match wins)
+    std::vector<HidUsage> usages;
+    /// The fields of any application collection, not only a joystick's, pad's or multi-axis controller's (a control
+    /// surface declares itself a Consumer Control)
+    bool anyApplication = false;
 };
 
 /// A device database layout (`xbox`, `playstation`, `nintendo`); anything else is `generic`
 HidLayout HidLayoutFor(const std::string& layout);
 /// The layout of @p match with the family's own `hid` map on top (devices.json: `buttons`, `rxRyTriggers`,
-/// `dpadAxes`, `hat`, `consumer`, `bits`; device-database.md §2)
+/// `dpadAxes`, `hat`, `consumer`, `bits`, `usages`, `application`; device-database.md §2)
 HidLayout HidLayoutFor(const DeviceMatch& match);
 
 using ControlSink = std::function<void(const std::string& control, float value)>;
@@ -84,10 +90,16 @@ private:
         Hat,
         Paddles,  ///< Xbox Bluetooth: P1-P4 bits
         Profile,  ///< Xbox Bluetooth: the onboard profile
+        Split,    ///< HidRead::Split
+        Encoder,  ///< HidRead::Encoder
+        Counter,  ///< HidRead::Counter
     };
     struct Slot
     {
         HidField field;
+        /// The range values are scaled by: the field's, or the family's own (HidUsage::range); the field's own range
+        /// still decides how it is read (sign-extended or not)
+        HidField scale;
         Kind kind = Kind::Button;
         std::string control;
         int32_t last = 0;

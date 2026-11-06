@@ -110,16 +110,23 @@ def test_a_join_is_welcomed_with_the_instance_its_context_and_the_scopes(s):
     expect(welcome['instance'] == emu and welcome['target']['instance'] == emu, 'follow: the only instance', welcome)
     expect(welcome['target']['mode'] == 'follow' and welcome['target']['model'] == 'PENTAGON', 'the target', welcome)
     expect(welcome['context'] == 'play', 'no history yet: play', welcome)
+    expect(isinstance(welcome.get('views'), list) and all('id' in v for v in welcome['views']), 'the views', welcome)
     expect({'run', 'rewind', 'debug'} <= set(welcome['scopes']), 'the scopes granted', welcome)
     ws.send({'op': 'join', 'v': 1, 'name': 'x', 'model': 'y', 'target': {'view': 'v1'}})
     ws.close()
     pinned = connect(s)
-    pinned.send({'op': 'join', 'v': 1, 'name': 'x', 'model': 'y', 'target': {'view': 'v1'}})
-    error = pinned.until(lambda m: m.get('op') == 'error', 'a view')
-    expect(error['error'] == 'not_now', 'views come with SD4', error)
+    pinned.send({'op': 'join', 'v': 1, 'name': 'x', 'model': 'y', 'serial': 'V9', 'target': {'view': 'v9999'}})
+    error = pinned.until(lambda m: m.get('op') == 'error', 'an unknown view')
+    expect(error['error'] in ('Not Found', 'not_now'), 'no such view (not_now: a host without views)', error)
     pinned.send({'op': 'join', 'v': 1, 'name': 'x', 'model': 'y', 'target': {'instance': 0}})
     welcome = pinned.until(lambda m: m.get('op') == 'welcome', 'pinned by index')
     expect(welcome['instance'] == emu and welcome['target']['mode'] == 'instance', 'pinned', welcome)
+    # the surface is a TargetState session: the host lists it and its pin
+    status, body = http(s, 'GET', '/api/v1/surfaces/sessions/' + welcome['session'])
+    expect(status == 200 and body['session']['pin'].startswith('instance:'), 'the session on REST', body)
+    pinned.send({'op': 'pin', 'target': 'follow', 'rid': 'p1'})
+    target = pinned.until(lambda m: m.get('op') == 'target' and m.get('rid') == 'p1', 'the pin op answered')
+    expect(target['mode'] == 'follow', 'unpinned by the pin op', target)
     pinned.close()
 
 
@@ -413,9 +420,16 @@ def test_a_client_that_stops_reading_is_closed_as_a_slow_consumer(s):
         slow.send({'op': 'snapshot'})
         asked += 1
         time.sleep(0.001)
-    # Reads nothing until the server closed it as a slow consumer: congested for `limit`, however loaded the host
+    # Reads nothing until the server closed it as a slow consumer: congested for `limit`, however loaded the host. It
+    # keeps asking meanwhile: on a loaded host one loop turn answers many requests with one view, so the first burst
+    # alone may leave the buffers short of the mark
     deadline = time.time() + limit + 30
     while ws_dropped(s) == before and time.time() < deadline:
+        try:
+            slow.send({'op': 'snapshot'})
+            asked += 1
+        except OSError:
+            pass  # the server closed it meanwhile
         time.sleep(0.05)
     expect(ws_dropped(s) == before + 1, f'the server closes it as a slow consumer within {limit + 30:.0f} s',
            (before, asked))

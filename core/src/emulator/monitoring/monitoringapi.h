@@ -15,6 +15,7 @@
 /// | `host.stats` | the process | available, cpu_percent (100 = one core), cpu_percent_host (of all cores), cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, interval_s |
 /// | `host.clients` | the process | per plane (rest, ws, events, debug_ws, mcp, cli): connections, opened, requests; companions (paired), instances |
 /// | `video.present` | the process | The GUI window's way to the screen, changed with the setup only (frame presenter design, section 6.4): available (false headless), emulator, presenter (metal / dxgi / gl / software), present_policy, fixed_display, vrr, refresh_hz {min, max}, smooth {setting, mode in effect, device, game}, display {setting keep / match, state keep / matched / unchanged, reason, hz, original_hz, machine_hz} |
+/// | `controllers.devices` | the process | The host input devices (hostdevices.h): available (a host input owner, the Qt client, publishes them), revision (one more per change), devices [the `devices` reply's entries: id, name, family, layout, backend, role, pin, layers, context, outputs, battery {known, text, level, coarse, charging, wired}, light {available, reason}, notice]; a new value when a device arrives or leaves, its battery, notice, light, role or pin changes |
 /// | `emulator.stats` | an instance | state, measuring, fps, nominal_fps, speed_percent, frame_time_us {avg, max}, frame_budget_percent, halted_percent, interrupts_per_frame, frame, t_states, turbo, cpu {mhz, base_mhz, multiplier (host x hardware), host_multiplier, hw_turbo_ratio} |
 /// | `debug.breakpoints` | an instance | available, total, active, inactive, owned, by_kind {memory, exec, read, write, port, port_in, port_out, keyboard, nextreg, beam, copper, magic}, groups [{name, total, active}], last_hit {id, type, address, access, group, note} or null |
 /// | `media.slots` | an instance | available, slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty (any) |
@@ -24,7 +25,11 @@
 /// | `debug.buffers` | an instance | How full each trace buffer is, at most once a second: `opcode`, `calltrace`, `calltrace_hot`, `porttrace`, `gsporttrace`, `pchist`, `aylog`, `coverage` (addresses run of 65536) each {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent} (a buffer not allocated is absent); `ttd` {history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, write_journal_bytes} |
 /// | `debug.analyzers` | an instance | opcode, memory, calltrace (stopped / capturing / paused), coverage {available, recording, instructions}, pchist (armed / off) |
 /// | `controllers.state` | an instance | available, connectors [{id, kind, device, plugged, fixed}], plugged |
+/// | `analysis.progress` | an instance | The `analysis build` job (analysisjobs.h): job, state (none, running, done, failed, cancelled), frames_done, frames_total, percent, error |
+/// | `analysis.ready` | an instance | The L1 the last build made: ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path |
 /// | `game.events` | an instance | The game's events (gameevents.h; the play profile's `events:` / `haptics.sources`, live frames only): available, profile, frame, seq, events {<name>: {kind (event / level), fires, last_frame, level, value (the watched byte or word, else null)}} (by name: a readout path reaches one), recent [{seq, frame, name}] (the last 64 fired, oldest first) |
+/// | `devices.access` | an instance | The device access watch (deviceaccesswatch.h, deviceaccessnode.h): available, active, continuous (the feature `deviceaccess`), frames_observed, window, dropped_channels, channels [{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, tested_bits}], other_sites}]; a new value at every folded frame while it counts. Started by a media load, `controllers auto apply` or the feature |
+/// | `debug.watches` | an instance | The memory watches (memorywatch.h) as published at the last frame's end: available, session (stopped / capturing / paused), revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}] |
 ///
 /// One more verb, not a topic: `breakpoint_groups` (instance) {groups: [{name, total, active, ids}]}, also WebAPI
 /// `GET /api/v1/emulator/{id}/breakpoints/groups`, Lua / Python `bp_groups()`.
@@ -59,6 +64,9 @@ bool IsInstanceName(const std::string& name);
 /// One value now; Null for an unknown name
 StateNode ReadProcess(const std::string& name);
 StateNode ReadInstance(const std::string& name, Emulator& emulator);
+/// The values kept for polled readers (a TTL, some keyed on nothing) of instance `instanceId` ("" every one)
+/// dropped: the next read computes them (an event-driven reader after a change)
+void ForgetCached(const std::string& instanceId);
 
 /// Every verb: `all`, the names, `breakpoint_groups`
 const std::vector<std::string>& Verbs();

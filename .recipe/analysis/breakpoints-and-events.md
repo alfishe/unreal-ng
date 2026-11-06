@@ -15,12 +15,21 @@ A step from the execution breakpoint the machine is stopped at runs that instruc
 on from a breakpoint). A machine that sits at an address with a breakpoint without having stopped
 there (fresh reset, a jump done by a seek) stops on the first step, without executing.
 
-Memory breakpoints need debug mode and the `breakpoints` feature. The feature can be off while debug mode is on
+Memory breakpoints need the `breakpoints` feature (debug mode follows: an active breakpoint holds it on). The feature can be off while debug mode is on
 (seen 2026-10-10 on a `PENTAGON` created through the WebAPI): the breakpoint is added `active` but its `hit_count`
 stays 0. Switch it on with `PUT /feature/breakpoints {"enabled":true}` (it switches debug mode on too; `PUT /debugmode` alone
 does not switch the feature on) and check `GET /features` when a breakpoint
 never fires. A memory breakpoint stops during the access, so the PC is inside or just past the writing instruction
 ([articles/program-state-reverse.md](../articles/program-state-reverse.md)).
+
+**Conditions.** A memory or port breakpoint takes a `condition` (`"A == 7"`, `"VAL == 0"`, `"(VAL & 7) == 2"`): it
+stops only when the expression holds, `match_count` counts every match and `hit_count` the ones where it held:
+[conditional-breakpoints.md](conditional-breakpoints.md).
+
+While the `breakpoints` feature is on, an active breakpoint holds the debug path on whatever `debugmode` says (since
+2026-10-26). Before, the Qt window that adopted a machine created through the WebAPI / MCP switched `debugmode` off
+when its debugger was hidden, and a breakpoint set just before was accepted and never fired; now the window leaves an
+adopted machine's debug mode as it is, and the hold covers every other way.
 
 **Ranges.** Any execution, read or write breakpoint can cover a range: `address` + `address_end`. A
 range is checked as fast as one address, and so are ten thousand of them (the emulator paints them
@@ -66,10 +75,10 @@ curl -s $BASE/emulator/$EMU/breakpoints | jq '.breakpoints[] | {id, address, add
 
 | Surface | Range | Page | Mask | Hits |
 |:--|:--|:--|:--|:--|
-| CLI | `bp 0x8000-0x80FF`, `wp 0x4000-0x57FF w` | `--page ram32 [--slot-only]` | `bport 0xFE i --mask 0x00FF` | `--hits >=5`; `bphits reset [id]` |
-| Lua | `bp(a, {to=e})` | `bp(a, "ram32")`, `{page=, slot_only=}` | `bp_port_in(p, {mask=})` | `{hits=">=5"}`; `bp_reset_hits([id])` |
-| Python | `emu.bp(a, to=e)` | `page="ram32", slot_only=True` | `emu.bp_port_in(p, mask=)` | `hits=">=5"`; `emu.bp_reset_hits([id])` |
-| MCP | `bp_add` `address_end` | `page`, `slot_only` | `port_mask` | `hits`; action `bp_reset_hits` |
+| CLI | `bp 0x8000-0x80FF`, `wp 0x4000-0x57FF w` | `--page ram32 [--slot-only]` | `bport 0xFE i --mask 0x00FF` | `--hits >=5`; `--count` (never stops); `bphits reset [id]` |
+| Lua | `bp(a, {to=e})` | `bp(a, "ram32")`, `{page=, slot_only=}` | `bp_port_in(p, {mask=})` | `{hits=">=5"}`; `{stop=false}`, `bp_hits(id)`; `bp_reset_hits([id])` |
+| Python | `emu.bp(a, to=e)` | `page="ram32", slot_only=True` | `emu.bp_port_in(p, mask=)` | `hits=">=5"`; `stop=False`, `emu.bp_hits(id)`; `emu.bp_reset_hits([id])` |
+| MCP | `bp_add` `address_end` | `page`, `slot_only` | `port_mask` | `hits`; `stop: false`; action `bp_reset_hits` |
 | ZX Next | CLI `bnextreg 0x07 w --via copper`, `bbeam 99 --hc 255`, `bcopper 12`; WebAPI/MCP types `nextreg_write`/`nextreg_read`/`nextreg` (`doors`, `value`, `value_mask`), `beam` (`hc`), `copper`; Lua/Python `bp_nextreg_write`, `bp_beam`, `bp_copper`; magic opcodes `bmagic edff|dd01`, types `magic_ed_ff`/`magic_dd_01`, `bp_magic("ed_ff")` (stops after the NOP / `LD BC,nn` ran; none armed = no cost) | | | |
 | unreal-qt | Breakpoint editor: "to", "Page", "This slot only", "Mask", "Hits" fields; the list shows them | | | |
 

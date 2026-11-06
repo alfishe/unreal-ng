@@ -21,6 +21,8 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
     _debugContendedIf = std::make_unique<MemoryInterface>(static_cast<MemoryReadCallback>(&NextMemory::SlotReadContendedDebug),
                                                           static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedDebug));
     _toolReadRedirect = true;  // DirectReadFromZ80Memory asks the slot table
+    _ttdSlots8k = _ttdKeys;     // TTD names a byte per 8K slot (TtdKeyOf)
+    _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
     ResetMmu();
 }
 
@@ -96,7 +98,7 @@ uint8_t NextMemory::MemoryReadDebug(uint16_t addr, bool isExecution)
 {
     const unsigned slot = addr >> 13;
     const uint8_t result = _memory[_readOff[slot] + (addr & (kSlotSize - 1))];
-    ReadDebugEffects(addr, result, isExecution, _physPage[slot]);
+    ReadDebugEffects(addr, result, isExecution, _physPage[slot], _ttdKeys[slot].flip);
     return result;
 }
 
@@ -109,12 +111,59 @@ void NextMemory::SlotWriteDebug(uint16_t addr, uint8_t value)
 {
     const unsigned slot = addr >> 13;
     _memory[_writeOff[slot] + (addr & (kSlotSize - 1))] = value;
-    WriteDebugEffects(addr, value, _physPage[slot]);
+    WriteDebugEffects(addr, value, _physPage[slot], _ttdKeys[slot].flip);
 }
 
 uint8_t NextMemory::ToolReadRedirect(uint16_t addr, [[maybe_unused]] uint8_t normal) const
 {
     return PeekSlot(addr);
+}
+
+bool NextMemory::ToolWriteRedirect(uint16_t addr, uint8_t value)
+{
+    PokeSlot(addr, value);
+    return true;
+}
+
+MemoryPageDescriptor NextMemory::MapZ80AddressToPhysicalPage(uint16_t address)
+{
+    MemoryPageDescriptor result;
+    result.slotShift = 13;
+    const uint8_t* host = _memory + _readOff[address >> 13] + (address & (kSlotSize - 1));
+    const uint8_t* ram = RAMBase();
+    const uint8_t* rom = ROMBase();
+    if (host >= ram && host < ram + static_cast<size_t>(MAX_RAM_PAGES) * PAGE_SIZE)
+    {
+        const size_t offset = static_cast<size_t>(host - ram);
+        result.mode = BANK_RAM;
+        result.page = static_cast<uint8_t>(offset / PAGE_SIZE);
+        result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
+    }
+    else if (host >= rom && host < rom + static_cast<size_t>(MAX_ROM_PAGES) * PAGE_SIZE)
+    {
+        const size_t offset = static_cast<size_t>(host - rom);
+        result.mode = BANK_ROM;
+        result.page = static_cast<uint8_t>(offset / PAGE_SIZE);
+        result.addressInPage = static_cast<uint16_t>(offset % PAGE_SIZE);
+    }
+    else
+        result.addressInPage = static_cast<uint16_t>(address & 0x3FFF);  // the trash page: no page (DivMMC and Multiface memory is in the ROM pages)
+    return result;
+}
+
+ttd::PhysPage NextMemory::TtdLocate(uint16_t addr, bool write, uint16_t& offsetInPage) const
+{
+    // The slot's own 8K: an odd 8K page in an even slot is the upper half of its 16K page, not the lower
+    const unsigned slot = addr >> 13;
+    const uint32_t host = (write ? _writeOff[slot] : _readOff[slot]) + (addr & (kSlotSize - 1));
+    const uint32_t ram = static_cast<uint32_t>(_ramBase - _memory);
+    if (host >= ram && host - ram < static_cast<uint32_t>(InstalledRamPages()) * PAGE_SIZE)
+    {
+        offsetInPage = static_cast<uint16_t>((host - ram) % PAGE_SIZE);
+        return static_cast<ttd::PhysPage>((host - ram) / PAGE_SIZE);
+    }
+    offsetInPage = static_cast<uint16_t>(addr & 0x3FFF);
+    return ttd::kPhysPageNone;
 }
 
 uint8_t NextMemory::PeekSlot(uint16_t addr) const
@@ -475,6 +524,17 @@ void NextMemory::ApplyLayer2(unsigned slot)
 
 void NextMemory::SyncWindows()
 {
+    // TTD's key per slot: the page and whether the slot's 8K is the page's other half than the slot's own parity
+    const uint32_t ram = static_cast<uint32_t>(_ramBase - _memory);
+    const uint32_t ramBytes = static_cast<uint32_t>(InstalledRamPages()) * PAGE_SIZE;
+    for (unsigned s = 0; s < kSlots; s++)
+    {
+        _ttdKeys[s].page = _physPage[s];
+        const uint32_t rel = _readOff[s] - ram;
+        _ttdKeys[s].flip = _physPage[s] != ttd::kPhysPageNone && _readOff[s] >= ram && rel < ramBytes
+                               ? static_cast<uint8_t>(((rel >> 13) ^ s) & 1u)
+                               : 0;
+    }
     for (unsigned w = 0; w < 4; w++)
     {
         const unsigned lo = w * 2;

@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "common/modulelogger.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/config.h"
@@ -27,6 +28,7 @@ namespace
 
 constexpr const char* kAySocket = "ay-socket";
 constexpr const char* kBoardCovox = "covox";
+constexpr const char* kPrinterCovox = "covox-dd";   // the Scorpion's printer-port Covox ([SOUND] CovoxDD)
 
 const SlotPlanner& Planner()
 {
@@ -43,6 +45,7 @@ struct CardFields
     GSTypeKind gs = GSTypeKind::NONE;
     bool moonSound = false;
     bool covoxFb = false;
+    bool covoxDd = false;       ///< the Scorpion printer Covox (built-in covox-dd)
     bool sd = false;
     uint8_t sdMode = 0;         ///< the SounDrive card's port set: 0 both, 1, 2
     uint8_t zxBusNetwork = 0;   ///< networkspec::kCardZxNetUsb | kCardZxWifi
@@ -54,6 +57,7 @@ struct CardFields
         fields.gs = config.sound.gsTypeKind;
         fields.moonSound = config.sound.moonsound != 0;
         fields.covoxFb = config.sound.covoxFB != 0;
+        fields.covoxDd = config.sound.covoxDD != 0;
         fields.sd = config.sound.sd != 0;
         fields.sdMode = config.sound.sdMode;
         fields.zxBusNetwork = static_cast<uint8_t>(config.network.card & ~networkspec::kCardAtm2IoEsp);
@@ -71,7 +75,8 @@ struct CardFields
             case SlotCardGroup::MoonSound:
                 return moonSound == other.moonSound;
             case SlotCardGroup::Covox:
-                return covoxFb == other.covoxFb && sd == other.sd && (!sd || sdMode == other.sdMode);
+                return covoxFb == other.covoxFb && covoxDd == other.covoxDd && sd == other.sd &&
+                       (!sd || sdMode == other.sdMode);
             case SlotCardGroup::Network:
                 return zxBusNetwork == other.zxBusNetwork;
             case SlotCardGroup::Count:
@@ -97,6 +102,7 @@ struct CardFields
         if (groups & SlotGroupBit(SlotCardGroup::Covox))
         {
             config.sound.covoxFB = covoxFb ? 1 : 0;
+            config.sound.covoxDD = covoxDd ? 1 : 0;
             config.sound.sd = sd ? 1 : 0;
             config.sound.sdMode = sd ? sdMode : 0;
         }
@@ -195,6 +201,7 @@ CardFields ProjectFields(const SlotConfig& slotConfig, const CONFIG& config)
     fields.gs = GSTypeKind::NONE;
     fields.moonSound = false;
     fields.covoxFb = false;
+    fields.covoxDd = false;
     fields.sd = false;
     fields.zxBusNetwork = 0;
     for (const SlotConfigEntry& entry : slotConfig.entries)
@@ -234,6 +241,10 @@ CardFields ProjectFields(const SlotConfig& slotConfig, const CONFIG& config)
         if (builtIn.id == kBoardCovox && builtIn.on)
         {
             fields.covoxFb = true;
+        }
+        if (builtIn.id == kPrinterCovox && builtIn.on)
+        {
+            fields.covoxDd = true;
         }
     }
     return fields;
@@ -778,6 +789,12 @@ SlotConfig SlotManager::TranslateLegacy(const CONFIG& config, uint32_t groups)
         {
             out.builtIns.push_back({ kBoardCovox, config.sound.covoxFB != 0,
                                      std::string("[SOUND] CovoxFB=") + (config.sound.covoxFB ? "1" : "0") });
+        }
+        // The Scorpion's printer Covox: CovoxDD switches it (on by default)
+        if (FindBuiltIn(machine, kPrinterCovox) != nullptr)
+        {
+            out.builtIns.push_back({ kPrinterCovox, config.sound.covoxDD != 0,
+                                     std::string("[SOUND] CovoxDD=") + (config.sound.covoxDD ? "1" : "0") });
         }
         if (config.sound.sd)
         {
@@ -1521,7 +1538,9 @@ SlotManager::Result SlotManager::Plan(const CONFIG& config, uint32_t decidedGrou
             if (group == SlotCardGroup::Covox)
             {
                 requested.builtIns.erase(std::remove_if(requested.builtIns.begin(), requested.builtIns.end(),
-                                                        [](const SlotBuiltInSwitch& s) { return s.id == kBoardCovox; }),
+                                                        [](const SlotBuiltInSwitch& s) {
+                                                            return s.id == kBoardCovox || s.id == kPrinterCovox;
+                                                        }),
                                          requested.builtIns.end());
             }
             const SlotConfig translated = TranslateLegacy(config, SlotGroupBit(group));
@@ -1928,6 +1947,8 @@ void SlotManager::Apply(const Result& result, CONFIG& config, uint32_t decidedGr
         return s.entry.card == "covox-fb" && !s.entry.disabled;
     });
     fields.covoxFb = covoxCard || (boardCovox != nullptr && boardCovox->kind == BuiltInKind::Switchable && boardCovox->on);
+    const BuiltIn* printerCovox = result.FindBuiltIn(kPrinterCovox);
+    fields.covoxDd = printerCovox != nullptr && printerCovox->on;
     fields.sd = false;
     fields.sdMode = 0;
     for (const Slot& s : result.entries)
@@ -2131,6 +2152,11 @@ bool SlotManager::BuildCards()
             }
         }
     }
+    // A card's own General Sound (the MultiSound's): its debug hooks follow the new card
+    if (DebugManager* debug = _context->pDebugManager)
+    {
+        debug->OnSlotCardsChanged();
+    }
     return true;
 }
 
@@ -2154,7 +2180,13 @@ void SlotManager::ReleaseCards()
         decoder->BindSlotSignals(nullptr);
         decoder->SetSlotKempstonJoystick(false);
     }
+    const bool hadCards = !_cards.empty();
     _cards.clear();
+    // The hooks forget the card that is gone
+    if (DebugManager* debug = _context != nullptr ? _context->pDebugManager : nullptr; debug != nullptr && hadCards)
+    {
+        debug->OnSlotCardsChanged();
+    }
 }
 
 ICard* SlotManager::FindCard(const std::string& slot) const

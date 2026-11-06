@@ -257,17 +257,14 @@ std::string GDBPacket::hexDecode(std::string_view hex)
 
 bool GDBPacketReader::feed(char c)
 {
-    // Handle interrupt character anywhere
-    if (c == 0x03)
-    {
-        _interrupt = true;
-        return false;
-    }
-
     switch (_state)
     {
         case State::WaitingForStart:
-            if (c == '$')
+            // 0x03 between packets is the client's interrupt (Ctrl-C); inside a packet it is data (an X packet's
+            // binary bytes: '#' escaped as '}' 0x03)
+            if (c == 0x03)
+                _interrupt = true;
+            else if (c == '$')
             {
                 _state = State::ReadingData;
                 _data.clear();

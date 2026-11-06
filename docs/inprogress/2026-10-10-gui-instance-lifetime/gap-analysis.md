@@ -71,7 +71,7 @@ Raw pointers stored in GUI objects that outlive a removal unless someone clears 
 
 | Kind | Members |
 |------|---------|
-| `Emulator*` | `EmulatorBinding::m_emulator`, `DebuggerWindow::_emulator` (legacy), `GuiEmulatorContext::emulator`, and the dialogs and widgets `PcHistoryDialog`, `BreakpointDialog`, `BreakpointGroupDialog`, `BreakpointEditor`, `DeviceMemoryDialog`, `DiskFilesDialog`, `DiskSectorDialog`, `DebugVisualizationWindow`, `MemoryPagesVisWidget`, `MemoryWidget`, `Memory16KBWidget`, `BorderTimingWidget`, `ULABeamWidget`, `FloppyDiskWidget`, `SpeedControlWidget` |
+| `Emulator*` | `EmulatorBinding::m_emulator`, `DebuggerWindow::_emulator` (legacy), `GuiEmulatorContext::emulator`, and the dialogs and widgets `PcHistoryPane`, `BreakpointDialog`, `BreakpointGroupDialog`, `BreakpointEditor`, `DeviceMemoryDialog`, `DiskFilesDialog`, `DiskSectorDialog`, `DebugVisualizationWindow`, `MemoryPagesVisWidget`, `MemoryWidget`, `Memory16KBWidget`, `BorderTimingWidget`, `ULABeamWidget`, `FloppyDiskWidget`, `SpeedControlWidget` |
 | `EmulatorContext*` | `AudioSettingsWidget::_context`, `VideoRecordingWidget::_context`, `HudModel::_context`, `HudSettingsDialog::_context`, `GuiEmulatorContext::context`, `StatusBarManager::_biosIssuesContext` (identity only), `Ft812DebugWindow::_measuring` |
 
 Only the binding, the debugger window, the menu, the screen and the two settings widgets are cleared in the

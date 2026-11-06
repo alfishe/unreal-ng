@@ -35,6 +35,10 @@ public:
     void RenderFrameBatch() override;
     void RenderOnlyMainScreen() override;
     void FillBorderWithColor(uint8_t color) override;
+    /// The layers' memory in the 16K banks (bank B = pieces 4B..4B+3): the ULA (bank 5 or 7, by its Timex mode), LoRes
+    /// (bank 5), Layer 2 (NR #12, 3 to 5 banks by NR #70), the tilemap (NR #6E / #6F, bank 5 or the 8K of bank 7).
+    /// Sprite patterns and the palettes live in the Next state, not counted
+    void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const override;
     /// endregion
 
     /// Copper time (28 MHz clocks from the first paper line) of a T-state of the frame

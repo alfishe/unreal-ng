@@ -29,9 +29,10 @@
         Json::Value& all = op("/api/v1/monitor", "Everything a monitoring page shows",
                               "The host process, the clients and every instance (or the one named) with each "
                               "summary; published state only, never a wait for an emulation thread",
-                              "{ok, host: host.stats, clients: host.clients, video: video.present, instances: [{instance, index, model, "
+                              "{ok, host: host.stats, clients: host.clients, video: video.present, devices: controllers.devices, instances: [{instance, index, model, "
                               "emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, "
-                              "ttd.status, debug.analyzers, controllers.state, game.events}]}");
+                              "ttd.status, debug.analyzers, controllers.state, game.events, devices.access "
+                              "(without channels: channel_count)}]}");
         param(all, "instance", "query", false, instanceText);
 
         Json::Value& name = op(
@@ -51,18 +52,28 @@
             "calltrace, coverage, pchist}; debug.buffers: {opcode, calltrace, calltrace_hot, porttrace, gsporttrace, "
             "pchist, aylog, coverage: {used, capacity, slot_bytes, used_bytes, capacity_bytes, percent}, ttd: "
             "{history_bytes, limit_bytes, limit_frames, memory_bytes, checkpoints, write_journal_records, "
-            "write_journal_bytes}}; controllers.state: {connectors, plugged}; game.events: {available, profile, frame, seq, "
-            "events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}; breakpoint_groups: {groups "
+            "write_journal_bytes}}; controllers.state: {connectors, plugged}; controllers.devices (the process): {available, "
+            "revision, devices [the /api/v1/controllers/devices entries: id, name, family, backend, role, pin, battery, "
+            "light, notice]}; game.events: {available, profile, frame, seq, "
+            "events {<name>: {kind, fires, last_frame, level, value}}, recent [{seq, frame, name}]}; "
+            "devices.access: {available, active, continuous, frames_observed, window, dropped_channels, channels "
+            "[{device, channel, dir, port, input, frames, reads_per_frame, tested_bits, sites [{pc, count, "
+            "tested_bits}], other_sites}]}; breakpoint_groups: {groups "
             "[{name, total, active, ids}]}",
             "{ok, instance? (an instance's name), ...the value's fields}");
         param(name, "name", "path", true,
-              "host.stats | host.clients | video.present | emulator.stats | debug.breakpoints | media.slots | recording.state | "
+              "host.stats | host.clients | video.present | controllers.devices | emulator.stats | debug.breakpoints | media.slots | recording.state | "
               "debug.labels | ttd.status | debug.analyzers | debug.buffers | controllers.state | game.events | "
+              "devices.access | "
               "breakpoint_groups");
         param(name, "instance", "query", false, instanceText);
 
         Json::Value& groups = op("/api/v1/emulator/{id}/breakpoints/groups", "The breakpoint groups",
-                                 "The user breakpoints' groups (owned and hidden breakpoints are not listed), by name",
-                                 "{ok, instance, groups: [{name, total, active, ids}]}");
+                                 "The user breakpoints' groups (owned and hidden breakpoints are not listed), by name, "
+                                 "of one CPU's breakpoints",
+                                 "{ok, instance, cpu, groups: [{name, total, active, ids}]}");
         param(groups, "id", "path", true, "Emulator instance id");
+        param(groups, "cpu", "query", false,
+              "main (default), gs (the sound card CPU's) or ms (the MultiSound's General Sound); 400 for another name");
+        groups["responses"]["400"]["description"] = "Bad Request: an unknown cpu";
     }

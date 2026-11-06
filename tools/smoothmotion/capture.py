@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture consecutive emulated frames through the WebAPI (from POC 038), the input of draft-video-profile.py.
+"""Capture consecutive emulated frames through the WebAPI (from POC 046), the input of draft-video-profile.py.
 
 For each snapshot: load it, run `--warmup` frames, then `--frames` frames one by one (`run_frame`), each followed by
 `capture/framebuffer?format=rgba`. Writes <out>/<name>.rgba (frames back to back) and <name>.json (width, height,

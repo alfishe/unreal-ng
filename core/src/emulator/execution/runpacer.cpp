@@ -524,12 +524,15 @@ RunReply RunPacer::Step(const Requester& requester)
     RunReply reply = Reply("Stepped " + std::string(chosen.label));
     const Emulator::BreakpointStop& stop = emulator->LastDirectStop();
     StateNode stopNode = StateNode::Object();
+    stopNode["cpu"] = DebugCpuName(stop.cpu);
     stopNode["reason"] = stop.hit ? "breakpoint" : "step";
     if (stop.hit)
     {
         stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
         stopNode["address"] = static_cast<int>(stop.address);
         stopNode["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(stop.cpuPc);
     }
     reply.body["stop"] = std::move(stopNode);
     if (Z80State* z80 = emulator->GetZ80State())

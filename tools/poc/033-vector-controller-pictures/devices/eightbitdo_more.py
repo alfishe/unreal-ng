@@ -401,7 +401,8 @@ def arcade():
     for direction, dx, dy in (("up", 0, -1), ("down", 0, 1), ("left", -1, 0), ("right", 1, 0)):
         style.glyph(view, style.arrow_d(cx + dx * 26, cy + dy * 26, 3.6, direction), colors["glyph"], "dpad",
                     fill=True, opacity=0.7)
-        view.spot(f"dpad.{direction}", "Stick", ("circle", cx + dx * 23, cy + dy * 23, 8.0), "left", group="dpad")
+        view.spot(f"dpad.{direction}", f"Stick {common.ARROW[direction]}", ("circle", cx + dx * 23, cy + dy * 23, 8.0),
+                  "left", group="dpad")
     for control, name, x, y, row in ARCADE_BUTTONS:
         style.button(view, x, y, 15.0, colors["red"], control, gap=0.9)
         style.glyph(view, circle_d(x, y, 11.6), shade(colors["red"], 0.86), control, width=0.5)

@@ -23,6 +23,7 @@ public:
     explicit ChildProcess(std::unique_ptr<childprocess::Child> child) : _child(std::move(child)) {}
     int Pid() const override { return _child->Pid(); }
     bool Exited(int& code, bool& crashed) override { return _child->Exited(code, crashed); }
+    bool Ready() override { return _child->Ready(); }
     void Terminate() override { _child->Terminate(); }
     void Kill() override { _child->Kill(); }
 
@@ -39,6 +40,7 @@ public:
         s.path = spec.path;
         s.args = spec.args;
         s.logFile = spec.logFile;
+        s.readyFlag = spec.readyFlag;
         auto child = childprocess::Child::Start(s, error);
         if (!child)
             return nullptr;
@@ -155,6 +157,7 @@ const char* Supervisor::StateName(State state)
         case State::Backoff: return "backoff";
         case State::Failed: return "failed";
         case State::Stopped: return "stopped";
+        case State::Missing: return "missing";
     }
     return "detached";
 }
@@ -276,7 +279,8 @@ void Supervisor::Start()
         _failedUntil = 0;
         _restartAt = 0;
         _failures = 0;
-        if (_state == State::Failed || _state == State::Backoff || _state == State::Stopped)
+        if (_state == State::Failed || _state == State::Backoff || _state == State::Stopped ||
+            _state == State::Missing)
             _state = State::Waiting;
     }
     Notify();
@@ -391,6 +395,16 @@ bool Supervisor::Update(const StateNode& changes, std::string& error)
             const bool restart = (next.apiPort != _settings.apiPort || next.viewersPort != _settings.viewersPort ||
                                   next.binary != _settings.binary) &&
                                  (_child || _state == State::Running);
+            if (_state == State::Missing && next.binary != _settings.binary)
+                _failedUntil = 0;  // the binary named now: tried at the next step
+            if (_state == State::Foreign && next.apiPort != _settings.apiPort)
+            {
+                // another host's daemon on the old port is no reason to stay: ours on the new one
+                _state = State::Waiting;
+                _health = Health{};
+                _healthFails = 0;
+                _error.clear();
+            }
             _settings = next;
             if (restart)
                 _restart = true;  // ours takes the new ports or binary
@@ -516,13 +530,15 @@ void Supervisor::Launch(int64_t now)
     spec.path = BinaryPathLocked();
     if (spec.path.empty())
     {
-        _error = "no unreal-streamdeck beside unreal-qt: set UNREAL_STREAMDECK_BIN or the binary setting";
-        _state = State::Failed;
-        _failedUntil = now + kGiveUpMs;
+        _error = "this build has no unreal-streamdeck beside unreal-qt (configure with -DUNREAL_STREAMDECK=ON), or set "
+                 "UNREAL_STREAMDECK_BIN or the binary setting";
+        _state = State::Missing;
+        _failedUntil = now + kMissingCheckMs;
         return;
     }
     spec.args = LaunchArgsLocked();
     spec.logFile = _host.logFile;
+    spec.readyFlag = "--ready-fd";
     std::string error;
     auto launcher = _launcher;
     auto child = launcher->Start(spec, error);
@@ -540,7 +556,8 @@ void Supervisor::Launch(int64_t now)
     _released = false;
     _state = State::Starting;
     _startedAt = now;
-    _nextHealth = now + 200;  // the first look soon: it listens within a few ms
+    _nextHealth = now + 200;  // the first look soon: it listens within a few ms (sooner when it says so: --ready-fd)
+    _readySeen = false;
     _healthFails = 0;
     _error.clear();
 }
@@ -719,7 +736,12 @@ void Supervisor::Step(int64_t now)
         }
     }
 
-    // health
+    // health: ours starting looks at once when it says it serves (--ready-fd; a daemon without it waits for the tick)
+    if (_state == State::Starting && _child && !_readySeen && _child->Ready())
+    {
+        _readySeen = true;
+        _nextHealth = now;
+    }
     const bool watched = (_child && !_released) || _state == State::Adopted || _state == State::Foreign;
     if (watched && now >= _nextHealth)
     {
@@ -773,7 +795,8 @@ void Supervisor::Step(int64_t now)
         {
             _state = _userStopped ? State::Stopped : (_settings.mode == Mode::Off ? State::Off : State::Waiting);
         }
-        else if (!(_state == State::Backoff && now < _restartAt) && !(_state == State::Failed && now < _failedUntil))
+        else if (!(_state == State::Backoff && now < _restartAt) &&
+                 !((_state == State::Failed || _state == State::Missing) && now < _failedUntil))
         {
             const int wantPort = _settings.apiPort;
             l.unlock();

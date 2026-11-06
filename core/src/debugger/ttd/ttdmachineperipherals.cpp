@@ -51,7 +51,7 @@ bool RegisterMachinePeripherals(EmulatorContext* context, TTDPeripheralRegistry&
     if (!context)
         return true;
 
-    // Logging goes through the TTD module, as when this code lived in TimeTravelManager
+    // Logging goes through the TTD module, as when this code lived in v1's manager (deleted in Phase 6)
     ModuleLogger* _logger = context->pModuleLogger;
     const PlatformModulesEnum _MODULE = PlatformModulesEnum::MODULE_DEBUGGER;
     const uint16_t _SUBMODULE = 0x0000;  // TTD has no submodule id of its own yet

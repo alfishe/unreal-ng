@@ -2,9 +2,12 @@
 
 #include "smucnvram.h"
 
+#include "common/filehelper.h"
 #include "debugger/ttd/ttdserializable.h"
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 //
 // SMUC battery-backed parts: clock + LC16 serial EEPROM
@@ -13,6 +16,38 @@ SMUCNvram::SMUCNvram()
 {
 	memset(_nvram, 0x00, sizeof(_nvram));
 	memset(_writeBuffer, 0x00, sizeof(_writeBuffer));
+}
+
+bool SMUCNvram::LoadImage(const std::string& path)
+{
+	if (path.empty())
+		return false;
+	std::ifstream file(FileHelper::ToFsPath(path), std::ios::binary);
+	if (!file)
+		return false;
+	std::vector<uint8_t> image(kImageSize);
+	file.read(reinterpret_cast<char*>(image.data()), static_cast<std::streamsize>(image.size()));
+	if (file.gcount() != static_cast<std::streamsize>(image.size()) || !_rtc.LoadNvramImage(image.data(), 256))
+		return false;
+	memcpy(_nvram, image.data() + 256, sizeof(_nvram));
+	return true;
+}
+
+bool SMUCNvram::SaveImage(const std::string& path) const
+{
+	if (path.empty())
+		return false;
+	std::vector<uint8_t> image = _rtc.NvramImage();
+	image.insert(image.end(), _nvram, _nvram + sizeof(_nvram));
+	// The settings folder may not exist yet (a first run)
+	const std::filesystem::path parent = FileHelper::ToFsPath(path).parent_path();
+	if (!parent.empty())
+		FileHelper::CreateFolders(parent.string());
+	std::ofstream file(FileHelper::ToFsPath(path), std::ios::binary | std::ios::trunc);
+	if (!file)
+		return false;
+	file.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+	return static_cast<bool>(file);
 }
 
 SMUCNvram::~SMUCNvram()

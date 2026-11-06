@@ -64,7 +64,8 @@ These account for most "it won't boot" reports. Check them before suspecting the
 
 | Model id | Full name | Firmware / ROM | Boots from (out of the box) | Required medium format |
 |:--|:--|:--|:--|:--|
-| `48K` | ZX-Spectrum 48K | `data/rom/48.rom` | tape (`tape`); Beta-128-style FDC is decoded on every Sinclair model in this build's shipped configs, so a TR-DOS floppy in `fdd.a` also autostarts | tape: `.tap`/`.tzx`/etc.; floppy: TR-DOS TRD (see [autostart-disk.md](../../.recipe/run/autostart-disk.md)) |
+| `48K` | ZX-Spectrum 48K | `data/rom/48.rom` | tape (`tape`); no TR-DOS ROM, so a TR-DOS floppy does nothing | tape: `.tap`/`.tzx`/etc. |
+| `48K-BETA128` | ZX-Spectrum 48K + Beta 128 (variant of `48K`) | `data/rom/48.rom` + `data/rom/trdos503.rom` | tape; TR-DOS floppy `fdd.a`–`fdd.d` after `RANDOMIZE USR 15616` / `15619` (no menu, no autostart on reset), see [48k-beta128.md](../../.recipe/machines/48k-beta128.md) | TR-DOS TRD / SCL |
 | `128k` | ZX-Spectrum 128K | `data/rom/128.rom` | tape, TR-DOS floppy `fdd.a`–`fdd.d` | same as above |
 | `PLUS2` | ZX-Spectrum +2 (grey, Amstrad ROM) | `data/rom/plus2.rom` | tape, TR-DOS floppy (Beta-128 decoded the same way as other Sinclairs in this build) | same as above |
 | `PLUS2A` | ZX-Spectrum +2A (the +3 without its floppy controller) | `data/rom/plus2a.rom` | tape; no native +3 FDC (that is the point of this model) | tape |
@@ -77,7 +78,7 @@ These account for most "it won't boot" reports. Check them before suspecting the
 | `ATM3` | ZX-Evo (ATM Turbo 3, BaseConf) | `data/rom/zxevo-fe.rom` (official NedoPC BaseConf image; `[EVO] Fpga=legacy` switches to the older `data/rom/zxevo.rom`) | ERS menu: **Z.** TR-DOS floppy, **B.** IDE hard disk (NemoIDE, `[HDD] Scheme=NEMO-DIVIDE`), **D.** CD (`ide0.slave`, `CD1=1` by default), **5.** SD card (`sd.zc`, Z-Controller — NedoOS) | TR-DOS TRD; HDD: **MBR + FAT** (pitfall 1); CD: ISO 9660 with `AUTORUN.ZX` in the root; SD: **raw FAT16/FAT32, no MBR** (pitfall 1) |
 | `TSL` (alias `TSCONF`) | TS-Conf (ZX-Evo, TS-Labs configuration) | `data/rom/zxevo.rom` (TS-BIOS, page 0) | TS-BIOS boot menu: TR-DOS/Beta-128 (virtual drives), SD card `sd.zc` ("BD boot.$c"), Nemo IDE `ide0.master`/`ide0.slave` (`[HDD] Scheme=NEMO-DIVIDE`) | SD: **raw FAT16/FAT32, no MBR** (pitfall 1); a blank CMOS starts in TS-BIOS Setup, not the boot menu — see below |
 | `ZXPOLY-48K`/`-128K`/`-PENTAGON` | ZX-Poly (4 synced instances of a base model) | same ROM as the base model | same boot sources as the base model, plus `.zxp` (all 4 modules at once) and `.prom` (the ZX-Poly Test ROM) | same filesystem rules as the base model |
-| `SPRINTER` | Peters Plus Sprinter Sp2000 | **not yet implemented** — planned BIOS 3.04 (3.06 selectable) + Estex DSS | design-only: floppy (Beta-128/WD1793), IDE ×2 (HDD + ATAPI CD), PC folder | design-only, see [Sprinter](#sprinter-spринter-not-yet-implemented) below |
+| `SPRINTER` | Peters Plus Sprinter Sp2000 | **not yet implemented** — planned BIOS 3.04 (3.06 selectable) + Estex DSS | design-only: floppy (Beta-128/WD1793), IDE ×2 (HDD + ATAPI CD), PC folder | design-only, see [Sprinter](#sprinter-sprinter-not-yet-implemented) below |
 
 Sources for every ROM path: each model's `[ROM]` section in `data/configs/<config-folder>/unreal.ini`
 (config folder names, e.g. `pentagon128k`, `atm3`, `ts-conf`, do not always match the model id —

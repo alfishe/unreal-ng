@@ -6,7 +6,8 @@
 
 void NextDivMmc::Note(NextDivMmcKind kind, uint16_t address, bool instant)
 {
-    if (!_journal.Enabled()) [[likely]]
+    const bool watched = eventWatch && *eventWatch && onWatchedEvent;
+    if (!_journal.Enabled() && !watched) [[likely]]
         return;
     NextDivMmcEvent e;
     if (fillClock)
@@ -16,13 +17,19 @@ void NextDivMmc::Note(NextDivMmcKind kind, uint16_t address, bool instant)
     e.instant = instant;
     e.mapped = Mapped();
     e.control = ReadPort();
-    _journal.Record(e);
+    if (_journal.Enabled())
+        _journal.Record(e);
+    if (watched)
+        onWatchedEvent(e);
     if (kind == NextDivMmcKind::MapIn && address == 0x0008 && fillCall)
     {
         NextDivMmcEvent call = e;
         call.kind = NextDivMmcKind::EsxCall;
         fillCall(call);
-        _journal.Record(call);
+        if (_journal.Enabled())
+            _journal.Record(call);
+        if (watched)
+            onWatchedEvent(call);
     }
 }
 

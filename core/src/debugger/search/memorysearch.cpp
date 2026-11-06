@@ -49,7 +49,10 @@ struct View
 
 uint32_t RamPageCount(EmulatorContext* context)
 {
-    return context && context->config.ramsize ? context->config.ramsize / 16 : MAX_RAM_PAGES;
+    if (!context || !context->config.ramsize)
+        return MAX_RAM_PAGES;
+    // The 16K and 48K boards number their RAM as the 128K does (5, 2, 0 at #4000, #8000, #C000)
+    return std::max<uint32_t>(context->config.ramsize / 16, 8);
 }
 
 const uint8_t* PageHost(EmulatorContext* context, MemoryBankModeEnum type, uint32_t page)
@@ -175,6 +178,27 @@ std::string SpaceName(const MemorySearchRequest& request)
         case MemorySearchRequest::Space::Region: return request.region;
         default: return std::string(BreakpointManager::PageKindName(request.pageType)) + std::to_string(request.page);
     }
+}
+
+std::vector<uint32_t> FindInBuffer(const uint8_t* data, size_t size, const std::vector<uint8_t>& pattern,
+                                   const std::vector<uint8_t>& mask, unsigned max)
+{
+    std::vector<uint32_t> out;
+    const size_t n = pattern.size();
+    if (data == nullptr || n == 0 || n > size || (!mask.empty() && mask.size() != n))
+        return out;
+    for (size_t at = 0; at + n <= size && out.size() < max; ++at)
+    {
+        bool matched = true;
+        for (size_t i = 0; i < n && matched; ++i)
+        {
+            const uint8_t m = mask.empty() ? 0xFF : mask[i];
+            matched = ((data[at + i] ^ pattern[i]) & m) == 0;
+        }
+        if (matched)
+            out.push_back(static_cast<uint32_t>(at));
+    }
+    return out;
 }
 
 MemorySearchResult Search(EmulatorContext* context, const MemorySearchRequest& request)

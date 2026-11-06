@@ -1,0 +1,34 @@
+# Buggy Boy (Elite 1987), the Z80 snapshot BUGGYBOY.Z80 (the NVG "arcade" dump). In the OPTIONS screen SPACE takes PLAY, then SPACE
+# again takes the course (OFFROAD first). Keyboard, from the key table the game reads at #7099..#70AC (found with TTD port-events,
+# then checked by play): P accelerates, L brakes, X steers left, C steers right; the table can be redefined in DEFINE PLAYING KEYS.
+# Haptics (haptics.md §13 H5), found with TTD on a recorded run: the speed is the byte #70CD (0 to #7B, 115 is the cruise on the
+# speedometer), the cruise toggles 123 / 115 by itself; #7D52 is the instruction that halves the speed when the buggy hits a bale
+# or a wall (115 -> 57 -> 28 -> 14, one halving per few frames), and #916C zeroes it while the buggy is stopped after the crash (it runs every frame of the stop, 33 times in one 8 s wait,
+# so it is not a probe).
+# Checked in real time (P held 25 s, X / C in turn for 3 s each): 13 hit by the end (1 after the first X, 6 after the first C, 9 after
+# the second X); each crash halves the speed three or four times, so a crash is a short train of hits.
+schema: 1
+kind: play
+id: builtin/game/buggy-boy
+label: Buggy Boy
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["561796e7996ed7401836d00584004f85cdb42c1376d01fe791954c22d05e44b0"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: X }
+    dpad.right:   { key: C }
+    lstick.left:  { key: X }
+    lstick.right: { key: C }
+    rt.click:     { key: P, label: Accelerate }
+    lt.click:     { key: L, label: Brake }
+    south:        { key: SPACE, label: Select }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x70CD", scale: 2 }
+    hit:   { probe: exec, address: "0x7D52" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: hit, play: hit, scale: 0.7 }

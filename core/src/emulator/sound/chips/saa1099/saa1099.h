@@ -157,6 +157,8 @@ public:
     void WriteAddress(uint64_t t, uint8_t value);
     /// A0 = 0: data for the addressed register
     void WriteData(uint64_t t, uint8_t value);
+    /// The addressed register (the last WriteAddress)
+    uint8_t Address() const { return _s.address; }
 
     /// Advance the generators to host time t
     void Run(uint64_t t);

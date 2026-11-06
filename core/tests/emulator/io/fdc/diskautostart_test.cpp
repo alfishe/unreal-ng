@@ -13,6 +13,8 @@
 #include "emulator/io/fdc/trdoscatalog.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memory.h"
+#include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/screen.h"
 #include "loaders/disk/loader_trd.h"
 #include "base/featuremanager.h"
@@ -704,6 +706,109 @@ TEST(DiskAutostart_Atm710, TheClockTheMachineRanAtIsKept)
     context->pCore->Reset();
     EXPECT_EQ(state.hw_turbo_ratio, 1) << "a real reset clears #FF77";
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// Owner report 2026-11-02: the autostart from the ATM710's BIOS menu ran at 3.5 MHz. The menu's TURBO ON (the default
+/// after every reset) takes effect only when an entry is chosen, which the autostart's quick reset skips: the autostart
+/// stands in for that choice and starts at 7 MHz; with TURBO OFF at 3.5 MHz. Boot-bound: the BIOS runs to its menu and
+/// the cold start to the TR-DOS command loop (in turbo)
+TEST(DiskAutostart_Atm710, TheBiosMenuTurboItemSetsTheClock)
+{
+    for (const bool turboOn : {true, false})
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM710", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        EmulatorState& state = context->emulatorState;
+        auto* decoder = dynamic_cast<PortDecoder_ATM710*>(context->pPortDecoder);
+        ASSERT_NE(decoder, nullptr);
+        emulator->EnableTurboMode();
+        for (int frames = 0; frames < 300 && !decoder->BiosMenuTurbo(); frames++)
+            emulator->RunNFrames(1, true);
+        ASSERT_TRUE(decoder->BiosMenuTurbo()) << "the BIOS menu never came up with TURBO ON";
+        ASSERT_EQ(state.hw_turbo_ratio, 1) << "the menu itself runs at 3.5 MHz";
+        if (!turboOn)
+            context->pMemory->RAMPageAddress(2)[PortDecoder_ATM710::BIOS_MENU_TURBO_FLAG] = 0;  // the item set to OFF
+
+        auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+        ASSERT_TRUE(result.started) << result.message;
+        for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+            emulator->RunNFrames(1, true);
+        ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+        EXPECT_EQ(state.hw_turbo_ratio_applied, turboOn ? 2 : 1) << (turboOn ? "TURBO ON" : "TURBO OFF");
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+/// Owner request 2026-11-02: the Scorpion ZS-256 Turbo+ at 7 MHz (IN #7FFD strobed the flip-flop) keeps that clock
+/// through the autostart's quick reset and its TR-DOS cold start, as the ATM710 does; a real reset still clears the
+/// flip-flop. Boot-bound: the cold start runs to the TR-DOS command loop (a few frames, in turbo)
+class DiskAutostart_ScorpionClock_Test : public ::testing::TestWithParam<const char*> {};
+
+TEST_P(DiskAutostart_ScorpionClock_Test, TheClockTheMachineRanAtIsKept)
+{
+    MessageCenter::DisposeDefaultMessageCenter();
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(GetParam(), LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    EmulatorState& state = context->emulatorState;
+    emulator->EnableTurboMode();
+    context->pPortDecoder->DecodePortIn(0x7FFD, 0x8000);
+    ASSERT_EQ(state.hw_turbo_ratio, 2) << GetParam() << ": IN #7FFD sets the Turbo+ flip-flop";
+
+    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+    ASSERT_TRUE(result.started) << result.message;
+    EXPECT_EQ(state.scorpion.turbo, 1) << GetParam() << ": after the quick reset";
+    EXPECT_EQ(state.hw_turbo_ratio_applied, 2) << GetParam() << ": applied at once";
+    for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+        emulator->RunNFrames(1, true);
+    ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+    EXPECT_EQ(state.scorpion.turbo, 1) << GetParam() << ": after the cold start";
+
+    context->pCore->Reset();
+    EXPECT_EQ(state.scorpion.turbo, 0) << GetParam() << ": a real reset clears the flip-flop";
+    EXPECT_EQ(state.hw_turbo_ratio, 1);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+INSTANTIATE_TEST_SUITE_P(Models, DiskAutostart_ScorpionClock_Test, ::testing::Values("Scorpion", "ProfScorp"));
+
+/// Owner request 2026-11-03: the TS-Conf autostart answered "boot" but every reset went through TS-BIOS, which booted
+/// Wild Commander from the SD card: the disk never ran. The quick reset now enters TR-DOS 5.04T (ROM page 1) at once and
+/// keeps the clock TS-BIOS or the program set (SYS_CONFIG[1:0]: 3.5 / 7 / 14 MHz). Boot-bound: the TR-DOS cold start
+/// runs to its command loop (a few frames, in turbo)
+TEST(DiskAutostart_TsConf, TheDiskBootsInTrdosAtTheClockTheMachineRan)
+{
+    for (const uint8_t clock : {uint8_t{0}, uint8_t{1}, uint8_t{2}})
+    {
+        MessageCenter::DisposeDefaultMessageCenter();
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("TSL", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        EmulatorState& state = context->emulatorState;
+        auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
+        ASSERT_NE(decoder, nullptr);
+        emulator->EnableTurboMode();
+        context->pPortDecoder->DecodePortOut(0x20AF, clock, 0x0000);  // SYS_CONFIG, as TS-BIOS sets the clock
+        const uint8_t ratio = static_cast<uint8_t>(1u << clock);
+        ASSERT_EQ(state.hw_turbo_ratio, ratio);
+
+        auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
+        ASSERT_TRUE(result.started) << result.message;
+        EXPECT_EQ(decoder->GetState().dos, 1) << "the quick reset enters TR-DOS, not TS-BIOS";
+        EXPECT_EQ(context->pMemory->GetROMPageForBank(0), 1) << "window 0: TR-DOS 5.04T, ROM page 1";
+        EXPECT_EQ(state.hw_turbo_ratio, ratio) << "SYS_CONFIG clock " << int(clock) << " after the quick reset";
+        for (int frames = 0; frames < 200 && context->pDiskAutostart->IsColdStartFinishPending(); frames++)
+            emulator->RunNFrames(1, true);
+        ASSERT_FALSE(context->pDiskAutostart->IsColdStartFinishPending()) << "the cold start never reached the command loop";
+        EXPECT_EQ(state.hw_turbo_ratio_applied, ratio) << "SYS_CONFIG clock " << int(clock) << " after the cold start";
+
+        context->pCore->Reset();
+        EXPECT_EQ(decoder->GetState().dos, 0) << "a real reset runs TS-BIOS again";
+        EXPECT_EQ(state.hw_turbo_ratio, 1) << "a real reset clears SYS_CONFIG";
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }
 
 /// The owner's disk end to end: BQ ATM from testdata/machines/atm/ballq_gr.scl runs through the autostart on the

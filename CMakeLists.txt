@@ -322,10 +322,48 @@ endif ()
 # ========================================
 # Companions (paired processes; no link to the core)
 # ========================================
-option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" OFF)
-if (UNREAL_STREAMDECK)
+# On with the Qt apps: unreal-qt's supervisor starts the daemon found beside it, so every build carries one
+option(UNREAL_STREAMDECK "Build the Stream Deck companion (companions/streamdeck)" ${BUILD_QT_APPS})
+# A build folder configured while the default was OFF holds OFF in its cache: turned on once (an OFF given after that
+# stays). CMAKE_CACHE_MAJOR_VERSION is defined only when an existing cache was loaded
+if (BUILD_QT_APPS AND NOT UNREAL_STREAMDECK AND NOT DEFINED CACHE{UNREAL_STREAMDECK_DEFAULT_ON}
+    AND DEFINED CACHE{CMAKE_CACHE_MAJOR_VERSION})
+    message(STATUS ">>> UNREAL_STREAMDECK now defaults to ON with the Qt apps: turned on in this build folder")
+    set(UNREAL_STREAMDECK ON CACHE BOOL "Build the Stream Deck companion (companions/streamdeck)" FORCE)
+endif ()
+set(UNREAL_STREAMDECK_DEFAULT_ON 1 CACHE INTERNAL "UNREAL_STREAMDECK's default ON applied to this build folder")
+if (UNREAL_STREAMDECK AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # hidapi's hidraw backend enumerates through libudev
+    find_package(PkgConfig QUIET)
+    if (PkgConfig_FOUND)
+        pkg_check_modules(SD_UDEV_PROBE QUIET libudev)
+    endif ()
+    if (NOT SD_UDEV_PROBE_FOUND)
+        message(WARNING "The Stream Deck companion is skipped: libudev not found (install libudev-dev)")
+        set(UNREAL_STREAMDECK_SKIPPED ON)
+    endif ()
+endif ()
+if (UNREAL_STREAMDECK AND NOT UNREAL_STREAMDECK_SKIPPED)
     message(STATUS ">>> Building the Stream Deck companion")
     add_subdirectory(companions/streamdeck)
+    if (TARGET unreal-qt AND TARGET unreal-streamdeck)
+        add_dependencies(unreal-qt unreal-streamdeck)  # `build.sh unreal-qt` refreshes the daemon its supervisor runs
+    endif ()
+    # data/streamdeck/catalogue.json from the action registry (tools/actioncatalogue)
+    if (TARGET unrealng::core AND NOT CMAKE_CROSSCOMPILING)
+        add_subdirectory(tools/actioncatalogue)
+    endif ()
+endif ()
+
+# ========================================
+# Debuggers (debuggers/)
+# ========================================
+# The Qt debugger (a window over the core in its own process, or over a running unreal-qt through its WebAPI) and the
+# terminal debuggers, classic and TS-Conf (a running unreal-qt through its WebSocket). See debuggers/README.md
+option(UNREAL_DEBUGGER_QT "Build the Qt debugger unreal-debugger (debuggers/qt)" ${BUILD_QT_APPS})
+option(UNREAL_TUI_DEBUGGERS "Build the terminal debuggers unreal-tui-debugger[-tsconf] (debuggers/tui)" ON)
+if (UNREAL_DEBUGGER_QT OR UNREAL_TUI_DEBUGGERS)
+    add_subdirectory(debuggers)
 endif ()
 
 # ========================================
@@ -364,6 +402,24 @@ endif (BUILD_POC)
 option(BUILD_SIGNATURE_POC "Build POC 034 signature-poc (tools/poc/034-media-signatures)" OFF)
 if (BUILD_SIGNATURE_POC AND TARGET unrealng::swsignature)
 	add_subdirectory(tools/poc/034-media-signatures/cpp)
+endif ()
+
+# POC 038 (TTD replay query engine): window queries replayed on headless clones; needs the core
+option(BUILD_TTD_REPLAY_POC "Build POC 038 ttd-replay-poc (tools/poc/038-ttd-replay-query-engine)" OFF)
+if (BUILD_TTD_REPLAY_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/038-ttd-replay-query-engine/cpp)
+endif ()
+
+# POC 040 (TTD in-place replay profile): where today's in-place replay spends its time; needs the core
+option(BUILD_TTD_INPLACE_PROFILE_POC "Build POC 040 ttd-inplace-profile (tools/poc/040-ttd-inplace-replay-profile)" OFF)
+if (BUILD_TTD_INPLACE_PROFILE_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/040-ttd-inplace-replay-profile/cpp)
+endif ()
+
+# POC 041 (ecat debugger): eCat3's debugger window over the core, needs the core and Qt 6 Widgets
+option(BUILD_ECAT_DEBUGGER_POC "Build POC 041 ecat-debugger-poc (tools/poc/041-ecat-debugger)" OFF)
+if (BUILD_ECAT_DEBUGGER_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/041-ecat-debugger/cpp)
 endif ()
 
 # Steam Deck client experiments (SDL3), built on their own: the other PoCs are not needed
@@ -427,6 +483,15 @@ if (BUILD_QT_APPS)
     if (TARGET unreal-streamdeck-studio)
         list(APPEND SUITE_DEPS unreal-streamdeck-studio)
     endif()
+    # The debuggers (debuggers/README.md): plain executables beside unreal-qt (macOS: in UnrealNG.app/Contents/MacOS,
+    # the bundle's Qt and data); the Qt one deployed with the suite's Qt, the terminal ones need none
+    set(SUITE_DEBUGGERS)
+    foreach (_debugger unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf)
+        if (TARGET ${_debugger})
+            list(APPEND SUITE_DEBUGGERS ${_debugger})
+        endif()
+    endforeach()
+    list(APPEND SUITE_DEPS ${SUITE_DEBUGGERS})
     
     # macOS: Combined DMG with all apps
     if(APPLE)
@@ -463,10 +528,14 @@ if (BUILD_QT_APPS)
         set(SUITE_STUDIO_APP "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Applications/Stream Deck Studio.app")
         if(TARGET unreal-streamdeck)
             # data/streamdeck (the idle screen's theme, icons): Contents/Resources/streamdeck, found by the daemon in
-            # Contents/MacOS and by the nested studio (companions/streamdeck/lib/src/datadir.cpp)
+            # Contents/MacOS and by the nested studio (companions/streamdeck/lib/src/datadir.cpp); beside it the test
+            # software the scenarios open as "$data/..." (testsoft, testtapes, testsnapshots)
             list(APPEND MACOS_PACKAGE_COMMANDS
                 COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/unreal-streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-streamdeck"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/Resources/testsnapshots"
             )
         endif()
         if(TARGET unreal-streamdeck-studio)
@@ -476,6 +545,14 @@ if (BUILD_QT_APPS)
                 COMMAND ${CMAKE_COMMAND} -E create_symlink "UnrealNG.app/Contents/Applications/Stream Deck Studio.app" "${SUITE_STAGING_DIR}/Stream Deck Studio.app"
             )
             set(SUITE_MACOS_DEPLOY_EXTRA "-executable=${SUITE_STUDIO_APP}/Contents/MacOS/unreal-streamdeck-studio")
+        endif()
+        foreach(_debugger IN LISTS SUITE_DEBUGGERS)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/bin/${_debugger}" "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/${_debugger}"
+            )
+        endforeach()
+        if(TARGET unreal-debugger)
+            list(APPEND SUITE_MACOS_DEPLOY_EXTRA "-executable=${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-debugger")
         endif()
 
         list(APPEND MACOS_PACKAGE_COMMANDS
@@ -536,6 +613,11 @@ if (BUILD_QT_APPS)
                 COMMAND codesign --force --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/unreal-streamdeck"
             )
         endif()
+        foreach(_debugger IN LISTS SUITE_DEBUGGERS)
+            list(APPEND MACOS_PACKAGE_COMMANDS
+                COMMAND codesign --force --options runtime --entitlements "${CMAKE_CURRENT_SOURCE_DIR}/install/macos/entitlements.plist" --sign - "${SUITE_STAGING_DIR}/UnrealNG.app/Contents/MacOS/${_debugger}"
+            )
+        endforeach()
 
         list(APPEND MACOS_PACKAGE_COMMANDS
             # Sign each app with hardened runtime and entitlements
@@ -600,7 +682,8 @@ if (BUILD_QT_APPS)
             )
         endif()
 
-        # Stream Deck companion beside unreal-qt.exe, its data (streamdeck/) beside it; the studio shares the suite's Qt
+        # Stream Deck companion beside unreal-qt.exe, its data (streamdeck/ and the test software its scenarios open:
+        # testsoft/, testtapes/, testsnapshots/) beside it; the studio shares the suite's Qt
         # DLLs (windeployqt below)
         if(TARGET unreal-streamdeck)
             list(APPEND WIN_PACKAGE_COMMANDS
@@ -609,6 +692,12 @@ if (BUILD_QT_APPS)
                     "${SUITE_STAGING_DIR}/"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/testsnapshots"
             )
         endif()
         set(_win_deploy_studio)
@@ -620,6 +709,13 @@ if (BUILD_QT_APPS)
             )
             set(_win_deploy_studio "${SUITE_STAGING_DIR}/unreal-streamdeck-studio.exe")
         endif()
+        foreach(_debugger IN LISTS SUITE_DEBUGGERS)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/${_debugger}.exe"
+                    "${SUITE_STAGING_DIR}/"
+            )
+        endforeach()
 
         set(_win_deploy_runtime_options)
         if(MSVC)
@@ -644,6 +740,11 @@ if (BUILD_QT_APPS)
         if(_win_deploy_studio)
             list(APPEND WIN_PACKAGE_COMMANDS
                 COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${_win_deploy_studio}" --no-translations ${_win_deploy_runtime_options}
+            )
+        endif()
+        if(TARGET unreal-debugger)
+            list(APPEND WIN_PACKAGE_COMMANDS
+                COMMAND "${WINDEPLOYQT_EXECUTABLE}" "${SUITE_STAGING_DIR}/unreal-debugger.exe" --no-translations ${_win_deploy_runtime_options}
             )
         endif()
         list(APPEND WIN_PACKAGE_COMMANDS
@@ -768,7 +869,8 @@ if (BUILD_QT_APPS)
             )
         endif()
 
-        # Stream Deck companion beside unreal-qt, its data (streamdeck/) beside it; the udev rule where the DEB installs
+        # Stream Deck companion beside unreal-qt, its data (streamdeck/, testsoft/, testtapes/, testsnapshots/) beside it;
+        # the udev rule where the DEB installs
         # it (lib/udev/rules.d: copy it to /etc/udev/rules.d for access to the deck without root).
         # tools/package-appimage.sh takes all three into the AppImage.
         if(TARGET unreal-streamdeck)
@@ -778,6 +880,12 @@ if (BUILD_QT_APPS)
                     "${SUITE_STAGING_DIR}/"
                 COMMAND ${CMAKE_COMMAND} -E copy_directory
                     "${DATA_PATH}/streamdeck" "${SUITE_STAGING_DIR}/streamdeck"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsoft" "${SUITE_STAGING_DIR}/testsoft"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testtapes" "${SUITE_STAGING_DIR}/testtapes"
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DATA_PATH}/testsnapshots" "${SUITE_STAGING_DIR}/testsnapshots"
                 COMMAND ${CMAKE_COMMAND} -E copy
                     "${CMAKE_SOURCE_DIR}/companions/streamdeck/linux/70-unreal-streamdeck.rules"
                     "${SUITE_STAGING_DIR}/lib/udev/rules.d/70-unreal-streamdeck.rules"
@@ -790,6 +898,13 @@ if (BUILD_QT_APPS)
                     "${SUITE_STAGING_DIR}/"
             )
         endif()
+        foreach(_debugger IN LISTS SUITE_DEBUGGERS)
+            list(APPEND LINUX_PACKAGE_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy
+                    "${CMAKE_BINARY_DIR}/bin/${_debugger}"
+                    "${SUITE_STAGING_DIR}/"
+            )
+        endforeach()
 
         list(APPEND LINUX_PACKAGE_COMMANDS
             # Copy shared resources (only once)
@@ -849,9 +964,9 @@ if (BUILD_QT_APPS)
 
     set(SYMBOLS_STAGING_DIR "${CMAKE_BINARY_DIR}/packages/symbols")
     # Executables beside the apps (bin/<name>[.exe]), symbols like the apps': the MCP bridge, the Stream Deck daemon,
-    # and Stream Deck Studio where it is a plain executable (macOS: an app bundle, below)
+    # the debuggers, and Stream Deck Studio where it is a plain executable (macOS: an app bundle, below)
     set(SYMBOL_TOOLS)
-    foreach(_tool unreal-mcp-bridge unreal-streamdeck)
+    foreach(_tool unreal-mcp-bridge unreal-streamdeck unreal-debugger unreal-tui-debugger unreal-tui-debugger-tsconf)
         if(TARGET ${_tool})
             list(APPEND SYMBOL_TOOLS ${_tool})
         endif()

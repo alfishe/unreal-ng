@@ -1,47 +1,90 @@
-# Status: TODO
+# Status: DONE
 
-GMX (`MM_GMX`, "ZS Scorpion + GMX", 2048K): **design written 2026-10-07, nothing implemented.** The model is not
-creatable today. Plan: [design.md](design.md) section 7; tests: [tdd-plan.md](tdd-plan.md).
+GMX (`MM_GMX`, "ZS Scorpion + GMX", 2048K): **design written 2026-10-07, revised 2026-10-30 with the original manual,
+real software and the current firmware; phases 1-8 implemented and on master (2026-10-30 - 2026-11-01).** Model `GMX`;
+usage: [.recipe/machines/gmx.md](../../../.recipe/machines/gmx.md); the software tried on it:
+[software-compatibility.md](software-compatibility.md). Plan: [design.md](design.md) section 7; tests:
+[tdd-plan.md](tdd-plan.md).
 
 ## Phases
 
-- [ ] Phase 1: creatable machine (factory, `GmxState`, register file, RAM and ROM mapping, config folder, roles, recipe sections 1-2, parity on all surfaces)
-- [ ] Phase 2: TTD blob, snapshot capture policy, `MachineStateTransfer`, paging fields on all surfaces
-- [ ] Phase 3: 640x200 extended video, Qt, screenshots
-- [ ] Phase 4: turbo strobes, Magic freeze, BLKEXT details, INT select
-- [ ] Phase 5: slots and media (General Sound incompatibility, SMUC disk list)
-- [ ] Phase 6: evidence-driven corrections
+- [x] Phase 1: creatable machine (factory, `GmxState`, register file, RAM and ROM mapping, config folder with `gmx644.rom`, roles, recipe sections 1-2, parity on all surfaces)
+- [x] Phase 2: TTD blob (GmxPaging 70), snapshot capture policy, `MachineStateTransfer`, the `gmx` paging node on WebAPI, CLI, Lua, Python, MCP (+ resource `unreal://machine/gmx`)
+- [x] Phase 3: 640x200 extended video (M_GMX 736x288, ScreenGmx, GmxVideoMapper), scroller, flash, screenshots; monitor test screen and Edge Grinder boot tests
+- [x] Phase 4: turbo with the card's Even M1 wait (EVEN_M1_TURBO, a RAM copy loop 1.93x, ROM 2x), Magic latch and the `#7EFD` bit 2 gate, BLKEXT, `#00` RECONF, INT select (`#00` bit 7: the Pentagon 320-line frame). Edge Grinder's counter reads 25 (phase 6)
+- [x] Phase 5: slots and media: the Z-Controller SD (`#77` / `#57`) as media slot `sd.zc` (alias `sd`, FAT32), the
+  `sd-zc` built-in, General Sound plugs (2026-11-02: the 1999 refusal rule dropped, history only), port map rows, TTD
+  (EvoSdCard); the Qt Machine menu lists "ZS Scorpion + GMX" from the model table. SMUC disk list: no drive, as before
+- [x] Phase 6: evidence-driven corrections: Q12, Q21, Q22 closed by live runs (Edge Grinder in game at 25 fps, its
+  frame against the author's screenshot; OSZ from the SD into the None Commander: [evidence/](evidence/)). No
+  table changed; Q8-Q10, Q17 stay as decided (no source or no request)
+- [x] Phase 7: the SMUC board the monitor's fast test probes, all found: 8259 (`#7EBE` / `#7FBE`, IR0 = the
+  DS1685's /IRQ, INT through `#FFBA` D3), the ISA-8 slot through the DOS ports (`#18E6-#7FFE`, A8 / A7 = `#FFBA`
+  D2 / D1) with a modem or a dual 16552 as network slot `smuc.isa`, the clock's periodic flag, the clock cells and
+  the 24C16 kept in `[SMUC] NvramFile` (the settings folder), a first power-on starts from `NvramInitial`
+  (`data/configs/gmx/smuc-nvram-initial.bin`, what the monitor itself writes into blank cells, so CMOS and NVRAM
+  checksums pass). The fast test lists "128 bytes CMOS found, NVRAM found, Interrupt controller found, Modem
+  found" with `[SMUC] Isa=MODEM`; HDD and SD "not found" only while no medium is inserted ([evidence/](evidence/)).
+  2026-11-05: the shipped config leaves the slot empty (`Isa=NONE`, a typical board): the window shares `#7FFE` with
+  the Space - B row, and with the DOS ports open a modem's scratch register answered there (VPlayer paused on every key)
+- [x] Phase 8 (2026-11-01): software and the hard disk. A disk autostart right after power-on waits for the
+  firmware boot (its end: the first 48 BASIC KEY-SCAN, `IN #FE` at `#0296` on the plane's 48 ROM page, frame 338 on
+  6.44 and 313 on 5.00; the monitor-call stub's `#7EFD = #40` at frame 112 is too early), then does the quick reset into the plane's TR-DOS with drive A on the floppy (`#7FBA` D7; a reset
+  left it on the hard disk image: `A>` and no `boot`); the SMUC NVRAM file is kept per firmware
+  (`<NvramFile stem>-<rom stem>.bin`: ProfROM v5.00 signs its CMOS `#64`, 6.44 `#65`, each re-inits the other's, v5.00
+  to its 18.10.98 default date); ProfROM MFS hard disks (MBR type `#53`) in unreal-disk / zxdisk (TR-DOS collections,
+  iS-DOS subpartitions; [disk-file-systems.md](../../emulator/design/disk-file-systems.md#profrom-mfs-layout)); the
+  software from the collection run on the model ([software-compatibility.md](software-compatibility.md))
 
 Done so far:
-- [x] Source survey: Unreal Speccy (zx-evo fork), MAME, pico-speccy, the 1999 and 2004 articles, the Black_Cat port table
-  ([research-reference-consensus.md](research-reference-consensus.md)); ZXMAK2, Xpeccy, UnrealSpeccyP and others have no GMX
+- [x] Source survey 2026-10-07: Unreal Speccy (zx-evo fork), MAME, pico-speccy, the 1999 and 2004 articles, the Black_Cat
+  port table ([research-reference-consensus.md](research-reference-consensus.md))
 - [x] Requirements, design, test plan, firmware survey ([roms.md](roms.md))
+- [x] 2026-10-30: the original Scorpion manual "GMX ... Manual" (22.11.1998) found and kept in
+  [references/](references/); every register re-checked against it
+  ([research-2026-10-30-emulators-and-manual.md](research-2026-10-30-emulators-and-manual.md)), with the rev.2022
+  documentation (same programming section; adds the 14 MHz clock output and the host CLOCK / `#1FFD` latch
+  modifications). ZEsarUX, Xpeccy,
+  ZXMAK2, UnrealSpeccyP, Zero, ZX-M8XXX, zxsp, Spectral have no GMX (re-checked)
+- [x] 2026-10-30: Edge Grinder and OSZ read for the hardware they use
+  ([research-2026-10-30-software.md](research-2026-10-30-software.md)); fixtures in `testdata/machines/gmx/`
+- [x] 2026-10-30: the web Unreal Speccy GMX model (zxby.org) examined
+  ([research-2026-10-30-web-unreal.md](research-2026-10-30-web-unreal.md)); its firmware `gmx644.rom` (Loader V2.00 +
+  monitor 6.44su, 2025) tracked in `data/rom/`
 
 ## Open questions
 
-Each has a recommendation, chosen so that the phase can start without a reply.
+Each has a recommendation, chosen so that the phase can start without a reply. "Closed" rows name the evidence.
 
-| Q | Question | Recommendation |
+| Q | Question | Status / recommendation |
 |:--|:--|:--|
-| Q1 | Which plane and page does the loader hand control to for the Scorpion scheme, and what `RESET=` / role names does the config need? | Boot `gmx.rom` in phase 1 and trace the `#7EFD` writes (TTD makes this cheap); name roles from that. Until then plane 0 = `Specific`, planes 1-4 as Section 2.4 of [roms.md](roms.md) |
-| Q2 | Does the `#0100-#010F` ProfROM plane strobe exist on the GMX scheme? MAME inherits it, pico-speccy disabled it after a real-firmware crash | Off (pico-speccy's trace). Keep the code path behind a config key `[GMX] ProfRomStrobe=0` only if a firmware turns up that needs it |
-| Q3 | `#7EFD` bit 2: "lifts the `#7FFD` lock" (Unreal) or "ignores Magic / NMI" (MAME)? | MAME's meaning; no lock lifting. Unreal's reading has no second source, MAME's names the Magic gate and is used by `do_nmi` |
-| Q4 | Scroller semantics: line scroller (`offset / 80`, MAME, pico-speccy, article "line scroller") or byte offset (Unreal)? Does `#7AFD` keep 8 bits (Unreal, article) or `& #F0` (MAME, pico-speccy)? | Line scroller `offset / 80 mod 200`, store 8 bits, use all 14 bits in the division. Revisit with a scroll demo or the board test (scheme 6) |
-| Q5 | Do `IN` from the `#1FFD` / `#7FFD` families still toggle turbo on a GMX? | Yes, as the Scorpion Turbo+ host board (MAME inherits it); the GMX firmware writes `#7EFD`, so a test with both writers is cheap. Config key `[GMX] TurboStrobe=1` |
-| Q6 | What reads the Magic shift register, and in what order? | Implement as MAME; no extra behavior |
-| Q7 | The Magic lock of `#7AFD` / `#7EFD` read-backs (MAME only) | Phase 4, implement as MAME, flagged "M" in the port map |
-| Q8 | Pentagon, Composit and test schemes as models? | No. Pentagon exists; the others have no software worth the cost. The test scheme can be reached through the loader with `gmx.rom` anyway, but it needs the FPGA reload, which we do not model, so `[GMX]` stays Scorpion-scheme only. Ask the owner if a Pentagon-scheme mode is wanted |
-| Q9 | `#7EFD` bits 0-1 (flash EWR / Vpp) and the loader's flash update | Ignore; flash is read-only. Revisit only if the loader's "P - program from disk" path must run |
-| Q10 | RAM sizes: the article lists 256, 512, 1024, 1280 and 2048 KB SIMM sets; the model table has 2048 only | Keep 2048. Smaller sizes need the same wrap rule MAME and pico-speccy use (`% pages`) and an `AvailRAMs` change; add on request |
-| Q11 | Buffer screen pages: `#3A / #7A` (article) or `#3B / #7B` (three emulators)? | `#3B / #7B` (code agrees thrice; `#7FFD` bit 3 selects, the Scorpion habit of 5 / 7). The article may count pages from `#39` as "first / second" |
-| Q12 | Exact pixel timing and border width of the extended mode | Naive first: Scorpion line, 640 pixels at twice the dot clock, border as MAME (24 pixels sides). Measure against the board test screen photo if one turns up |
-| Q13 | INT: Scorpion or Pentagon (shadow monitor option); the "132000 clocks in turbo" sentence | Scorpion default; a `[GMX] Int=Scorpion\|Pentagon` key later; ignore the sentence (not a frame length at 7 MHz) |
-| Q14 | General Sound does not work with the card (article). Model it? | Mark `unrealistic` in the slot planner, allow with the override, as the ZX-MultiSound on `SCORPION` |
-| Q15 | Port decode strictness: Black_Cat's patterns and Unreal's mask are loose, MAME and pico-speccy use exact 16-bit addresses; BC's `#7FFD` has A14 free | Exact high byte, `A5 = 1, A1 = 0, A0 = 1` for the low part, as design 2.2; a sweep test pins it |
-| Q16 | Newer firmware (ProfROM + GMX 5.xx / 6.xx, loader V2.00) is not in the local collection | Look in the KLUG BBS archive and the zxart / zx-pk file sections; phase 1 does not need it |
-| Q17 | Does scheme 6 (board test) boot in our model? It needs a scheme reload we do not do | Probably not; the phase 3 video test then uses a synthetic RAM pattern |
+| Q1 | Which plane and page does the loader hand control to, what `RESET=` / role names does the config need? | **Closed (firmware).** At power-on the loader (`gmx644.rom` plane 0, unpacked to `#5C01`) checks the scheme and does `OUT (#00),#0A` (RECONF scheme 2, CPU reset); after the reset it reads the magic byte `#8A`, takes scheme 2 "Work Sch" (trailer D = E = `#FF`), writes `OUT (#7EFD),#40` and `OUT (#00),#02`, then `JP #0000`: plane 4 page 0, the Scorpion 128 menu, which turns turbo on (`#7EFD = #C0`). Every RESET goes through plane 0 again (RESET clears the plane bits unless FIXROM). Roles: plane 4 and 7 = 128 / 48 / SYS / DOS, plane 1 = Pentagon 128 / 48, plane 5 = SYS (shadow monitor), others `Specific`. `RESET=` is irrelevant: the hardware always starts the loader. This is also where OSZ's `#02` in `#00` comes from |
+| Q2 | Does the `#0100-#010F` ProfROM plane strobe exist on the GMX? | **Off.** The manual's port list has no such strobe; pico-speccy's hardware trace shows it would break the monitor's self-checksum. (The web Unreal keeps it on the two low plane bits, inherited from its PROFSCORP base; MAME too) |
+| Q3 | `#7EFD` bit 2: lifts the `#7FFD` lock (Unreal) or blocks Magic (MAME)? | **Closed: both.** Manual: D2 "MagEnable - 1 = the Magic button blocked", and section 3.1: the BLKPK1 lock "is switched off when D2 of port 7EFD (MGEN) is set" |
+| Q4 | Scroller: line scroller (`offset / 80`) or byte offset? 8 bits or `& #F0` in `#7AFD`? | **Closed:** one write-only 14-bit start address in bytes, low four bits forced to 0 by hardware (manual: "80 = one graphic line, 640 = one text line", "the low four bits are reset in hardware"). Model: `start = ((#7CFD & #3F) << 8 \| (#7AFD & #F0))`, display address `(line * 80 + column + start) mod 16000`. OSZ uses it with multiples of 640 |
+| Q5 | Do `IN` from the `#1FFD` / `#7FFD` families still toggle turbo on a GMX? | **Closed: no strobes.** The strobes are a feature of the host Turbo+ EPLD, which drives the CPU clock and WAIT; the GMX fitting cuts both (manual II.6 WAIT diode, rev.2022 II.7 the host CLOCK pin) and the card makes its own clock. The manual's only turbo controls are `#7EFD` bit 7 and the Normal/Turbo button. Unreal, pico-speccy and the web Unreal agree; MAME's GMX class inherits the strobes from its Turbo+ base (a deviation) |
+| Q6 | What reads the magic shift register? | **Closed:** the loader (plane 0 page 0 at `#00F1`) reads it eight times after a reset; `#00` bits 0-2 are the FLEX8000 scheme number CONF0-2 and bit 3 RECONF reloads that scheme (manual). The value tells the loader which scheme was asked for |
+| Q7 | The Magic latch of the read-backs | **Closed: real.** Manual section 2: the bits marked `*` of `#7AFD` / `#7EFD` are latched at Magic and released by a dummy read of `#FF`; MAME models exactly this. Phase 4 |
+| Q8 | Pentagon, Composit and test schemes as models? | **Closed (2026-10-31): through the firmware.** The loader V2.00 Set Up menu (Delete at power-on) chooses the scheme and writes `#00` itself: scheme 4 Pentagon = `#E4` (BLKEXT + BLKEX2 + ST/PENT, plane 1), scheme 7 Pentagon7 = `#A7` (BLKEXT + ST/PENT, plane 3). Modelled: BLKEX2 (all `#xxFD` off, `#7FFD` at A1 = A15 = 0, manual "the Pentagon scheme"), ST/PENT runs the ZX screen on the Pentagon raster and border; a border effect draws the same frame as on the PENTAGON model. Composit and the board test stay out (no source for Composit, the test needs the FPGA reload) |
+| Q9 | `#7EFD` bits 0-1 (flash EWR / Vpp) and the loader's flash update | Ignore; flash is read-only. The manual names the chip 28F400, the official site "28f040" (a 512K x 8 part fits the map); decide only if the update path must run |
+| Q10 | RAM sizes 256K-2048K | Keep 2048. The manual adds the alias rule for two 256K SIMMs (SM0-1 ignored: banks `0-#F` and `#40-#4F`); smaller sizes need that rule, on request |
+| Q11 | Buffer screen: `#3A / #7A` or `#3B / #7B`? | **Closed: `#3B / #7B`.** Both manuals (1998 and rev.2022) say `#3A / #7A`, but Edge Grinder flips `#7FFD` bit 3 every frame with screen 1 in `#3B / #7B` and ran at 25 fps on the real board (author's history, 2021-07-06, 2021-08-25): with `#3A` every other frame would be garbage. OSZ's driver hands out `#3B` ("screen 3b"); MAME, Unreal, pico-speccy and the web Unreal agree. `#39 -> #3B` is the bit-1 flip of ZX page 5 -> 7. The test cites the manual's text as a known documentation error |
+| Q12 | Pixel timing and border width of the extended mode | **Closed (evidence, phase 6):** Scorpion line, 640 pixels in the 256-pixel time, 48 px borders in a 736x288 frame. Edge Grinder in game matches the author's screenshot (`testdata/machines/gmx/reference/`): panel, borders, colours ([evidence/edgegrinder-gameplay-fps25.png](evidence/edgegrinder-gameplay-fps25.png)) |
+| Q13 | INT: Scorpion or Pentagon, the "132000 clocks in turbo" sentence | **Mechanism closed:** `#00` bit 7 ST/PENT: 0 = INT at the end of frame sync, 312 lines; 1 = INT at its start, 320 lines (manual); read back in `#7EFD` bit 4; `#00` survives RESET. Default Scorpion. The 132000 sentence stays ignored |
+| Q14 | General Sound does not work with the card. Model it? | Reversed 2026-11-02: no rule, a GS plugs as on any Scorpion. The 1999 article stays as history; the official site named the 20.04.99 firmware as the fix and Puzzle Bobble (2024) plays through a GS on a GMX |
+| Q15 | Port decode strictness | `#00`: full decode A0-A7 = 0, any high byte (manual: "full decoding"). The `#xxFD` file: exact high byte (MAME, pico-speccy). It must be decoded before the Scorpion `#7FFD` arm (whose mask also matches all four `#7xFD` ports) and before the AY arm (whose `#FFFD` mask also matches `#DFFD`) |
+| Q16 | Newer firmware | **Closed:** `data/rom/gmx644.rom` (Loader V2.00, monitor 6.44su, 21.08.2025), the image OSZ needs |
+| Q17 | Does scheme 6 (board test) boot in our model? | Probably not (FPGA reload). Phase 3 video tests use a synthetic RAM pattern plus Edge Grinder |
+| Q18 | RESET and `#00` | **New, closed by the manual:** RESET clears every GMX latch except `#00`; `#00` is cleared only by power-off or a RECONF. MAME and Unreal clear it on reset (deviation). Writes without bit 3 (OSZ writes `#02` around every monitor call, so does the firmware) only store the value: no reset |
+| Q19 | Where does the NMI fetch when `#1FFD` bit 0 (RAM 0) is set? | **Closed (manual 3.2):** "if MAGIC is pressed while the ROM is blocked (BLK1), instructions and data are read from the ROM, write cycles go to the RAM": the fetch at `#0066` comes from the DOS page of the current plane, writes to `#0000-#3FFF` still land in RAM page 0, for as long as the DOS trigger the Magic set is on. MAME forces ROM while the NMI is pending (reads only). OSZ also keeps a copy of the firmware's NMI entry at `#0066` of page 0 (`os_main.asm`, "NMI handling": save AF/R, `IN #7EFD`, `IN #7AFD`, `OUT #1FFD,#12`), so the monitor is entered from either source; the manual fixes the source as the ROM |
+| Q20 | FAT16 or FAT32 for the SD card | **Closed: FAT32 only.** LW/PLM changelog: "only FAT32 is supported"; the 6.44 monitor knows FAT32 and MFS partitions only (strings in planes 5-6 of `gmx644.rom`). The host folder `osz/sdcard/` is presented as FAT32 (`fatsynthvolume` can) |
+| Q22 | Attribute byte of the extended mode | **Closed (evidence, phase 6): standard ZX.** The manual ("the structure of the attribute byte is standard"), MAME and Unreal (zx-evo); Edge Grinder's panel and map colours match the author's screenshot. The web Unreal's nibble decode stays a deviation |
+| Q21 | Turbo waits | **Closed (measured, phase 6).** No source gives the phase rule; implemented as the Even M1 rule on the 7 MHz grid in turbo (`EVEN_M1_TURBO`: an opcode fetch from RAM on an odd 7 MHz T waits one T): ROM code exactly 2x, a RAM copy loop 1.93x (ZX-Format #07: "1.8-1.9x from RAM, exactly 2x from ROM"), and Edge Grinder's frame-rate counter (key R) reads **25** in game, the author's final real-board figure ([evidence/edgegrinder-gameplay-fps25.png](evidence/edgegrinder-gameplay-fps25.png)) |
 
 ## Pointers
 
 [README.md](README.md) - [requirements.md](requirements.md) - [design.md](design.md) - [tdd-plan.md](tdd-plan.md) -
-[roms.md](roms.md) - [research-reference-consensus.md](research-reference-consensus.md)
+[roms.md](roms.md) - [research-reference-consensus.md](research-reference-consensus.md) -
+[research-2026-10-30-emulators-and-manual.md](research-2026-10-30-emulators-and-manual.md) -
+[research-2026-10-30-software.md](research-2026-10-30-software.md) -
+[research-2026-10-30-web-unreal.md](research-2026-10-30-web-unreal.md) - [references/](references/)

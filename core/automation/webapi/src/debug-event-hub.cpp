@@ -1,7 +1,12 @@
 #include "debug-event-hub.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "common/statenode_json.h"
+#include "debugger/callbacks/callbackcontrol.h"
+#include "debugger/debugmanager.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -19,12 +24,17 @@ std::string CompactJson(const Json::Value& value)
     return Json::writeString(builder, value);
 }
 
-/// A stop's breakpoint fields (PauseEvent, protocol §3.16)
-void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t address, BreakpointHitKind kind)
+/// A stop's breakpoint fields (PauseEvent, protocol §3.16): the CPU whose breakpoint it was, and for a card the
+/// instruction of the access (the main CPU's own position is in the registers)
+void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t address, BreakpointHitKind kind,
+                         const std::string& cpu, uint16_t cpuPc)
 {
+    event["cpu"] = cpu;
     event["breakpoint_id"] = breakpointId;
     event["address"] = address;
     event["access"] = BreakpointHitKindName(kind);
+    if (cpu != "main")
+        event["cpu_pc"] = cpuPc;
 }
 }  // namespace
 
@@ -60,6 +70,12 @@ void DebugEventHub::Start()
     _observers.emplace_back(NC_BREAKPOINTS_CHANGED,
                             messageCenter.AddObserver(NC_BREAKPOINTS_CHANGED,
                                                       [this](int, Message* message) { OnBreakpointsChanged(message); }));
+    _observers.emplace_back(NC_SCRIPT_CALLBACKS_CHANGED,
+                            messageCenter.AddObserver(NC_SCRIPT_CALLBACKS_CHANGED, [this](int, Message* message) {
+                                OnScriptCallbacksChanged(message);
+                            }));
+    _observers.emplace_back(NC_FRAME_WATCH,
+                            messageCenter.AddObserver(NC_FRAME_WATCH, [this](int, Message* message) { OnFrameWatch(message); }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -199,7 +215,8 @@ void DebugEventHub::Publish(const std::string& emulatorId, const std::string& to
         event["topic"] = topic;
         event["seq"] = static_cast<Json::UInt64>(++_seq[emulatorId]);
         event["emulator"] = emulatorId;
-        event["cpu"] = "main";
+        if (!event.isMember("cpu"))
+            event["cpu"] = "main";
         // Under the lock: a sink removed is never called again (a sink only queues)
         for (const auto& [id, sink] : _sinks)
             if (sink)
@@ -238,7 +255,15 @@ void DebugEventHub::OnStateChange(Message* message)
             if (payload->pauseCause == PauseCause::Breakpoint)
             {
                 event["reason"] = "breakpoint";
-                AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind);
+                AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
+                                    payload->cpuPc);
+            }
+            else if (payload->pauseCause == PauseCause::Step)
+            {
+                // Another CPU's step ended (a sound card's): that CPU and its instruction
+                event["reason"] = "step";
+                event["cpu"] = payload->cpu;
+                event["cpu_pc"] = payload->cpuPc;
             }
             else
                 event["reason"] = "pause";
@@ -263,7 +288,8 @@ void DebugEventHub::OnCpuStep(Message* message)
     event["event"] = "step_done";
     event["reason"] = payload->stopped ? "breakpoint" : "step";
     if (payload->stopped)
-        AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind);
+        AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
+                            payload->cpuPc);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 
@@ -278,6 +304,63 @@ void DebugEventHub::OnBreakpointsChanged(Message* message)
     for (uint16_t id : payload->ids)
         event["ids"].append(id);
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnFrameWatch(Message* message)
+{
+    auto* payload = message ? dynamic_cast<FrameWatchPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // watch_hit (a running machine got there: frame, reasons, paused), watch_added, watch_removed, watch_error
+    Json::Value event;
+    event["event"] = "watch_" + payload->event;
+    event["id"] = payload->id;
+    if (!payload->label.empty())
+        event["label"] = payload->label;
+    if (payload->event == "hit" || payload->event == "error")
+        event["frame"] = static_cast<Json::UInt64>(payload->frame);
+    if (payload->event == "hit")
+    {
+        event["reasons"] = Json::Value(Json::arrayValue);
+        for (const std::string& reason : payload->reasons)
+            event["reasons"].append(reason);
+        if (!payload->textLine.empty())
+            event["text_line"] = payload->textLine;
+        event["paused"] = payload->paused;
+        event["removed"] = payload->removed;
+    }
+    if (!payload->error.empty())
+        event["error"] = payload->error;
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnScriptCallbacksChanged(Message* message)
+{
+    auto* payload = message ? dynamic_cast<ScriptCallbacksChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    const std::string emulatorId = payload->emulatorId.toString();
+    Json::Value event;
+    event["event"] = "callbacks_changed";
+    event["id"] = payload->id;
+    // The callback as GET /callbacks shows it now (a registration, a resume, a policy, a suspension), or removed: true
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(emulatorId) : nullptr;
+    EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
+    ScriptCallbackManager* callbacks =
+        context && context->pDebugManager ? context->pDebugManager->GetScriptCallbacks() : nullptr;
+    CallbackInfo info;
+    if (payload->id == 0)
+    {
+        // Id 0: the manager's own state (the hooks went unpaced or back)
+        if (callbacks)
+            event["hooks"] = StateNodeToJson(callback_control::HooksNode(callbacks->HookStatus()));
+    }
+    else if (callbacks && callbacks->Get(payload->id, info))
+        event["callback"] = StateNodeToJson(callback_control::InfoNode(info));
+    else if (callbacks)
+        event["removed"] = true;
+    Publish(emulatorId, kTopicDebug, event);
 }
 
 void DebugEventHub::OnAsmSync(Message* message)

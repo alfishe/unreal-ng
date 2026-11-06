@@ -27,7 +27,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont  # noqa: E402
 from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPen  # noqa: E402
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPen,  # noqa: E402
+                           QPolygonF)
 from PySide6.QtSvg import QSvgRenderer  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -82,9 +83,11 @@ def is_pressed(value):
     return value >= PRESSED or value <= -PRESSED
 
 
-def dialog(svg_path, hotspots, theme, live=None, selected=None, width=1100, height=600):
-    """ControllerPicture::paintEvent at @p width x @p height on @p theme with the live values @p live"""
+def dialog(svg_path, hotspots, theme, live=None, selected=None, width=1100, height=600, captions=None):
+    """ControllerPicture::paintEvent at @p width x @p height on @p theme with the live values @p live and the
+    callouts' @p captions (control -> the binding's text)"""
     live = live or {}
+    captions = captions or {}
     colors = THEMES[theme]
     image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(QColor(*colors["window"]))
@@ -108,13 +111,17 @@ def dialog(svg_path, hotspots, theme, live=None, selected=None, width=1100, heig
     spots = []
     for c in hotspots["controls"]:
         shape = c["shape"]
+        polygon = None
         if "circle" in shape:
             cx, cy, r = shape["circle"]
             rect, circle = QRectF(cx - r, cy - r, 2 * r, 2 * r), True
+        elif "polygon" in shape:
+            polygon = QPolygonF([QPointF(x, y) for x, y in shape["polygon"]])
+            rect, circle = polygon.boundingRect(), False
         else:
             rect, circle = QRectF(*shape["rect"]), False
         analog = c.get("analog", {})
-        spots.append({"control": c["control"], "label": c.get("label", c["control"]), "rect": rect, "circle": circle,
+        spots.append({"control": c["control"], "label": c.get("label", c["control"]), "rect": rect, "circle": circle, "polygon": polygon,
                       "anchor": QPointF(*c["anchor"]), "left": c.get("callout", "left") == "left",
                       "analog": analog.get("kind", ""), "pair": analog.get("pair", ""),
                       "radius": analog.get("radius", 0), "quiet": c.get("quiet", False)})
@@ -139,6 +146,8 @@ def dialog(svg_path, hotspots, theme, live=None, selected=None, width=1100, heig
             painter.setBrush(lit if is_pressed(v) else sel)
             if s["circle"]:
                 painter.drawEllipse(box)
+            elif s["polygon"] is not None:
+                painter.drawPolygon(QPolygonF([to_widget(q.x(), q.y()) for q in s["polygon"]]))
             else:
                 painter.drawRoundedRect(box, 6, 6)
     metrics = QFontMetrics(qfont)
@@ -161,7 +170,8 @@ def dialog(svg_path, hotspots, theme, live=None, selected=None, width=1100, heig
             painter.drawLine(end, anchor)
             painter.setPen(QColor(*(colors["highlight"] if active else colors["text"])))
             painter.drawText(label, (Qt.AlignmentFlag.AlignRight if left else Qt.AlignmentFlag.AlignLeft)
-                             | Qt.AlignmentFlag.AlignVCenter, s["label"])
+                             | Qt.AlignmentFlag.AlignVCenter,
+                             s["label"] + ("  " + captions[s["control"]] if captions.get(s["control"]) else ""))
             y += step
     painter.end()
     return qimage_to_pil(image).convert("RGB")
@@ -190,6 +200,9 @@ def hotspot_map(picture, hotspots):
         if "circle" in shape:
             cx, cy, r = (v * k for v in shape["circle"])
             draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=colour + (255,), width=2, fill=colour + (40,))
+        elif "polygon" in shape:
+            draw.polygon([(x * k, y * k) for x, y in shape["polygon"]], outline=colour + (255,), width=2,
+                         fill=colour + (40,))
         else:
             x, y, w, h = (v * k for v in shape["rect"])
             draw.rectangle((x, y, x + w, y + h), outline=colour + (255,), width=2, fill=colour + (40,))

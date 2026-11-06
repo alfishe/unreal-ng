@@ -119,6 +119,7 @@ root:
         label: TURBO
       face_on:
         glyph: mach.turbo.on
+        label: TURBO
       id: turbo
       state: toggle.mach.turbo_toggle
       tags:
@@ -139,6 +140,7 @@ root:
         label: "TURBO SND"
       face_on:
         glyph: settings.toggle.on
+        label: "TURBO SND"
       id: audio
       state: toggle.set.toggle.turbo_audio
       tags:
@@ -159,6 +161,7 @@ root:
         label: "FAST TAPE"
       face_on:
         glyph: settings.toggle.on
+        label: "FAST TAPE"
       id: tape
       state: toggle.set.toggle.fast_tape
       tags:
@@ -179,6 +182,7 @@ root:
         label: "FAST DISK"
       face_on:
         glyph: settings.toggle.on
+        label: "FAST DISK"
       id: disk
       state: toggle.set.toggle.fast_disk
       tags:

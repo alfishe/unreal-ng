@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <chrono>
+#include <optional>
 #include <functional>
 #include "stdafx.h"
 
@@ -51,6 +52,7 @@ class RecordingManager;
 class DebugManager;
 class Z80Disassembler;
 class FeatureManager;
+class IBreakpointConditionMachine;
 class MediaManager;
 class BusManager;
 class EthernetGateway;
@@ -61,10 +63,11 @@ class IMachineOps;
 
 // TTD manager lives in the ttd namespace - forward-declare so the context
 // can hold a pointer without pulling the full TTD headers into every consumer.
-namespace ttd { class TimeTravelManager; class TimeTravelController; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
+namespace ttd { class TimeTravelController; class ITimeTravelHooks; class ITTDWriteSink; class TTDCoverageIndex; class TTDAccessProbe; class TTDPortJournal; class ITTDDisplayParticipant; }
 namespace rzx { class RzxPlayer; }
 
 #include "debugger/ttd/ttdprobe.h"  // inline member - needs full definition
+#include "debugger/history/devicehistory.h"  // inline member: the histories of the machine's devices
 
 // Create callback type for audio
 // User in emulator/sound/soundmanager and client/GUI
@@ -200,6 +203,10 @@ public:
     // RST $08 handler (the Next's esxDOS mode, feature "esxdos"); nullptr while nothing serves it
     IRst8Trap* pRst8Trap = nullptr;
 
+    // The operands of breakpoint conditions only the machine answers (NR(x), HC, VC, CPC: the Next's decoder);
+    // nullptr on a machine without them
+    const IBreakpointConditionMachine* pConditionMachine = nullptr;
+
 	// Video controller parameters and logic
 	Screen* pScreen = nullptr;
 
@@ -254,15 +261,11 @@ public:
     // Feature toggle manager
     FeatureManager* pFeatureManager = nullptr;
 
-    // Time-travel debugging manager (owned by Emulator, lives across the
-    // lifetime of the context). May be null on minimal builds without TTD.
-    ttd::TimeTravelManager* pTimeTravelManager = nullptr;
     /// What the core calls into time travel (frame boundary, loads, input, guards): the
-    /// same object as pTimeTravelManager until the engine takes over (Phase 5). Null when
-    /// time travel is not constructed. The core uses this pointer; surfaces use the manager
+    /// controller below. Null when time travel is not constructed
     ttd::ITimeTravelHooks* pTimeTravelHooks = nullptr;
-    /// The engine's controller when this instance runs one (Phase 5): then it is
-    /// also pTimeTravelHooks, and the verbs (TTDControl) drive it. Null otherwise
+    /// The time-travel controller (owned by Emulator, lives across the lifetime of the
+    /// context); the verbs (TTDControl) drive it. Null on a bare context
     ttd::TimeTravelController* pTimeTravelController = nullptr;
 
     // Media manager: every storage slot and the media in them (owned by
@@ -281,7 +284,7 @@ public:
 
     // TTD silent-replay mode flag (parent TDD 8.2 + Appendix C).
     //
-    // Set by TimeTravelManager::EnterReplayMode() before any intra-frame
+    // Set by TimeTravelController::EnterReplayMode() before any intra-frame
     // replay (SeekTo with tInFrame > 0, StepBackInstruction, reverse-search
     // probes). Cleared by ExitReplayMode(). Read by every suppression site
     // listed in Appendix C - breakpoints skip, analyzers dispatch no-op,
@@ -300,6 +303,18 @@ public:
     /// plain bool; checked behind the breakpoint filters, never on a path without breakpoints
     bool toolAccessActive = false;
 
+    /// The sound chips report their register writes (ReportChipRegisterWrite): set by the main CPU's breakpoint manager
+    /// while a chip register breakpoint is active (platform-debugging P3). Read on the chips' OUT paths
+    bool chipRegisterWatch = false;
+
+    /// The machine tells its events (GSReportHostEvent: interrupts, NMI, the DivMMC automap, esxDOS calls, the DMA):
+    /// set by the main CPU's breakpoint manager while an event breakpoint is active (platform-debugging P5)
+    bool machineEventWatch = false;
+
+    /// A beam breakpoint is active on the main CPU: the machines without their own beam watch (TS-Conf's engine) look
+    /// at the raster after every step (platform-debugging P6). Set by the main CPU's breakpoint manager
+    bool beamWatch = false;
+
     /// A device that can replace the machine's picture (VDAC2's FT812) and so takes
     /// part in what a TTD position shows (ttddisplayparticipant.h); set by the device
     ttd::ITTDDisplayParticipant* pTtdDisplayParticipant = nullptr;
@@ -314,14 +329,16 @@ public:
     /// from other threads, machines raise theirs on the emulation thread.
     enum StepWorkBits : uint32_t
     {
-        kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelManager::ServiceInput)
+        kStepWorkTtdInput = 1u << 0,         ///< TTD journal playback armed or live input queued (TimeTravelController::ServiceInput)
         kStepWorkInterruptSource = 1u << 1,  ///< the machine owns INT (Z80::SetInterruptSource)
         kStepWorkMachineStep = 1u << 2,      ///< a machine engine runs after every step (Z80::SetMachineStepHook)
         kStepWorkRzx = 1u << 3,              ///< an RZX recording plays (rzxPlayer: frame ends, fetch counting)
         kStepWorkDeviceInt = 1u << 4,        ///< a device holds /INT low (Z80::SetDeviceIntLine)
         kStepWorkEngine = 1u << 5,           ///< the machine runs on its own instruction engine (Z80::SetEngine)
         kStepWorkPcHistory = 1u << 6,        ///< a debugger records the PC history (PcHistory::Arm)
-        // Next free: 1u << 7
+        kStepWorkScriptEdits = 1u << 7,      ///< a logic callback's writes wait for the boundary (ScriptCallbackManager)
+        kStepWorkExecHistory = 1u << 8,      ///< the main CPU's execution history `cpu` is on (PcHistory, exechistory.h)
+        // Next free: 1u << 9
     };
     std::atomic<uint32_t> stepWork{0};
 
@@ -363,9 +380,13 @@ public:
     // predictable branch. Cost when not armed: ~1 cycle.
     ttd::TTDAccessProbe ttdProbe;
 
+    // The histories of the machine's devices (debugger/history/devicehistory.h), by registry id: each device
+    // registers its own while it lives; every automation plane reads and configures them here
+    history::Registry histories;
+
     // Per-frame coverage collection (reverse-search index). Read on the
     // instruction-fetch path, so it is a plain bool rather than a call into
-    // TimeTravelManager: one predictable, almost-always-false branch. Set by
+    // TimeTravelController: one predictable, almost-always-false branch. Set by
     // StartRecording and cleared by StopRecording / InvalidateSession, all of
     // which run on the control thread with the emulator paused.
     bool ttdCoverageActive = false;
@@ -373,7 +394,7 @@ public:
     /// otherwise (Phase 5, C1d): the core records into it inline, like a direct call
     ttd::TTDCoverageIndex* ttdCoverage = nullptr;
     /// Who takes memory writes (debug write path) and port OUTs while time travel
-    /// records: v1's manager or the engine's controller (Phase 5, C1d)
+    /// records: the engine's controller (Phase 5, C1d)
     ttd::ITTDWriteSink* ttdWriteSink = nullptr;
     /// endregion </Child object references>
 
@@ -477,6 +498,11 @@ public:
 
     /// Snapshot for UI status / diagnostics. Thread-safe.
     RunControlState GetRunControlState() const;
+
+    /// How long until the claim's state changes with time alone, with no notification of its own: the idle lease of
+    /// a session runs out (seen, and "expired" posted, at the next query) or a re-take cooldown ends. nullopt: nothing
+    /// waits on the clock. The push planes arm a one-shot timer for it instead of re-reading on a beat
+    std::optional<std::chrono::milliseconds> RunControlTimeToChange() const;
 
 private:
     struct RunControlClaim

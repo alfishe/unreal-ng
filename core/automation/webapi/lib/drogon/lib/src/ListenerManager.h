@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <functional>
 #include <trantor/net/EventLoopThreadPool.h>
 #include <trantor/net/callbacks.h>
 #include <trantor/utils/NonCopyable.h>
@@ -49,7 +50,11 @@ class ListenerManager : public trantor::NonCopyable
         const std::vector<std::pair<std::string, std::string>> &sslConfCmds,
         const std::vector<trantor::EventLoop *> &ioLoops);
     void startListening();
-    void stopListening();
+    /// @param drainIoLoops waits until the IO loops have run what was queued
+    ///        on them. The servers' connections are closed on the IO loops,
+    ///        which then notify the listening loop: without the waits the
+    ///        listening loop is gone before its notifications.
+    void stopListening(const std::function<void()> &drainIoLoops = {});
 
     void setBeforeListenSockOptCallback(std::function<void(int)> cb)
     {

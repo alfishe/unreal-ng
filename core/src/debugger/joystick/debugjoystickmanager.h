@@ -51,7 +51,7 @@ struct JoystickStateSnapshot
 
 /// Single funnel for automation input to the Kempston joystick (joystick TDD §4, §6).
 ///
-/// Every state change goes through TimeTravelManager::SubmitLiveInput as a
+/// Every state change goes through TimeTravelController::SubmitLiveInput as a
 /// TTDInputKind::Joystick event carrying the whole new state byte: refused while the journal
 /// owns input (replay), journaled BEFORE the device changes while recording, applied on the
 /// machine's thread. Host keys do not come here: a bound PC key is applied by Keyboard (the

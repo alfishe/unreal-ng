@@ -64,6 +64,9 @@ public:
     static constexpr const size_t SIGNATURE_LEN = 8;
     static constexpr const size_t SIGNATURE_FULL_LEN = 34;
     static constexpr const size_t CREATOR_LEN = 14;
+    static constexpr const char* CPDREAD_CREATOR = "CPDRead";                 // Creator prefix of CPDRead images
+    static constexpr const size_t CPDREAD_SLOTTED_SIZE = 128;                 // Stored length CPDRead pads...
+    static constexpr const size_t CPDREAD_SLOT_SIZE = 256;                    // ...to this many file bytes
     static constexpr const size_t DISK_INFO_SIZE = 256;
     static constexpr const size_t TRACK_INFO_SIZE = 256;
     static constexpr const size_t SECTOR_INFO_SIZE = 8;

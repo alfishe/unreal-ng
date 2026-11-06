@@ -101,13 +101,15 @@ void EmulatorAPI::getSettings(const HttpRequestPtr& req, std::function<void(cons
     io_accel["fast_disk"] = featureManager && featureManager->isEnabled(Features::kFastDisk);
     settings["io_acceleration"] = io_accel;
 
-    // Turbo (max speed) mode - also FeatureManager-backed, forced off and blocked
-    // from re-enabling while TTD recording is active (same gate as io_acceleration)
+    // Turbo (max speed) mode - also FeatureManager-backed; a TTD recording keeps it
     settings["turbo_mode"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
     // Host speed control, and whether the engine runs unthrottled right now
-    // (turbo_mode, or turbo tape warping a load); both locked while TTD records
+    // (turbo_mode, or turbo tape warping a load); the speed is locked while TTD records
     settings["speed"]        = static_cast<unsigned>(context->pCore ? context->pCore->GetHostSpeedMultiplier() : 1);
     settings["turbo_active"] = config.turbo_mode.Get();
+    // Host speed x the machine's own hardware turbo (TS-Conf 7/14 MHz...): the CPU clock the guest sees.
+    // Only "speed" is locked while TTD records; a guest switching its hardware turbo moves this one
+    settings["effective_speed"] = static_cast<unsigned>(context->pCore ? context->pCore->GetSpeedMultiplier() : 1);
     settings["turbo_audio"]  = config.turbo_mode_audio.Get();
 
     // Disk Interface settings
@@ -214,7 +216,7 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
         FeatureManager* featureManager = context->pFeatureManager;
         ret["name"] = "turbo_mode";
         ret["value"] = featureManager && featureManager->isEnabled(Features::kTurboMode);
-        ret["description"] = "Turbo (max speed) mode. Forced off and blocked from re-enabling while TTD recording is active.";
+        ret["description"] = "Turbo (max speed) mode. A TTD recording keeps it.";
     }
     else if (name == "speed")
     {
@@ -225,6 +227,14 @@ void EmulatorAPI::getSetting(const HttpRequestPtr& req, std::function<void(const
             ret["allowed"].append(m);
         ret["description"] = "Host speed multiplier (the emulated machine runs N times faster). Only 1 while TTD "
                              "records; a change on a stopped TTD session drops it.";
+    }
+    else if (name == "effective_speed")
+    {
+        ret["name"] = "effective_speed";
+        ret["value"] = static_cast<unsigned>(context->pCore ? context->pCore->GetSpeedMultiplier() : 1);
+        ret["read_only"] = true;
+        ret["description"] = "Host speed x the machine's hardware turbo (the CPU clock multiplier in effect). A guest "
+                             "can raise it while TTD records; the host speed stays 1.";
     }
     else if (name == "turbo_active")
     {
@@ -408,6 +418,12 @@ void EmulatorAPI::setSetting(const HttpRequestPtr& req, std::function<void(const
     {
         reply(HttpStatusCode::k400BadRequest, "Bad Request",
               "turbo_active is read-only (switch turbo with turbo_mode)");
+        return;
+    }
+    if (name == "effective_speed")
+    {
+        reply(HttpStatusCode::k400BadRequest, "Bad Request",
+              "effective_speed is read-only (host speed x the machine's hardware turbo; set the host part with speed)");
         return;
     }
 

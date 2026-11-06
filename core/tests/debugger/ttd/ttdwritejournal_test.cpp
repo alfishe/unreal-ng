@@ -649,3 +649,36 @@ TEST(TTDWriteJournal_Compression_Test, PagesOfAnotherSpaceRoundTripAndRamOnlyBlo
     for (const TTDWriteRecord& r : back)
         EXPECT_EQ(RecordPage(r), 7u);
 }
+
+/// The 8K-half bit (the Next's MMU: an odd 8K page in an even slot) survives a block; a block without such a record
+/// keeps the layout before the column, and one with flips but RAM pages only writes a zero page-high column first
+TEST(TTDWriteJournal_Compression_Test, EightKHalvesRoundTripAndBlocksWithoutThemKeepTheirLayout)
+{
+    std::vector<TTDWriteRecord> recs;
+    for (uint32_t i = 0; i < 21; i++)
+    {
+        TTDWriteRecord r = MakeRec(100 + i, static_cast<uint16_t>(0xC000 + i), static_cast<uint8_t>(i), 0x8000);
+        SetRecordPage(r, 7);
+        r.flip = (i % 3 == 1) ? 1 : 0;
+        recs.push_back(r);
+    }
+    std::vector<TTDWriteRecord> back;
+    ASSERT_TRUE(DecodeWriteBlock(EncodeWriteBlock(recs.data(), 21), 21, back));
+    for (uint32_t i = 0; i < 21; i++)
+    {
+        EXPECT_EQ(back[i].flip, recs[i].flip) << "record " << i;
+        EXPECT_EQ(RecordPage(back[i]), 7u) << "record " << i;
+    }
+    EXPECT_EQ(RecordOffset(back[1]), 0x2001u) << "the upper 8K half of page 7";
+    EXPECT_EQ(RecordOffset(back[0]), 0x0000u);
+
+    std::vector<TTDWriteRecord> plain(recs.begin(), recs.end());
+    for (TTDWriteRecord& r : plain)
+        r.flip = 0;
+    const std::vector<uint8_t> withFlip = EncodeWriteBlock(recs.data(), 21);
+    const std::vector<uint8_t> noFlip = EncodeWriteBlock(plain.data(), 21);
+    EXPECT_EQ(withFlip.size(), noFlip.size() + 6) << "3 bytes of zero page-high bits and 3 of flip bits";
+    ASSERT_TRUE(DecodeWriteBlock(noFlip, 21, back));
+    for (const TTDWriteRecord& r : back)
+        EXPECT_EQ(r.flip, 0u);
+}

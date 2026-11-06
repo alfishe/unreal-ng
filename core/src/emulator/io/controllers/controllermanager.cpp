@@ -1,10 +1,17 @@
 #include "controllermanager.h"
 
+#ifdef ENABLE_CONTROLLERS
+#include "haptics/hapticprofile.h"
+#endif
+
+#include <iterator>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/breakpointcondition.h"
+#include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -23,6 +30,7 @@
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/slots/card.h"
+#include "emulator/slots/cardcandidates.h"
 #include "emulator/slots/slotmanager.h"
 #include "emulator/sound/chips/iturbosounddevice.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
@@ -36,9 +44,31 @@ namespace controllers
 
 namespace
 {
+#ifdef ENABLE_CONTROLLERS
+/// A profile's `if:` checked when it is read: the language and the trigger's operands. A name that is not a register
+/// or a variable may be a label of the machine the profile is armed on: that check waits for the machine
+bool CheckHapticCondition(const std::string& text, uint8_t trigger, std::string& error)
+{
+    std::string why;
+    if (BreakpointConditionProgram::Compile(text, trigger, nullptr, why))
+        return true;
+    if (why.rfind("unknown name", 0) == 0)
+        return true;
+    error = why;
+    return false;
+}
+[[maybe_unused]] const bool kHapticConditionCheck = (SetHapticConditionCheck(&CheckHapticCondition), true);
+#endif
+
 /// v3: the host key overlay (8 half-rows) after the connectors
 constexpr uint8_t kControllersTTDVersion = 3;
 constexpr size_t kHostKeyRows = 8;
+/// The PC-only keys of a profile (`pc.delete` .. `pc.pagedown`, controllers/router/zxkeys.h; codes 0xE0..) have no place
+/// in the ZX matrix. They ride the same HostKeys events as rows 8 and 9 (five to a row), are held outside the TTD blob and
+/// its hash (their format stays v3) and reach a PS/2 sink only
+constexpr uint8_t kPcOnlyKeyBase = 0xE0;
+constexpr size_t kPcOnlyRows = 2;
+constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete, PcKey::Insert, PcKey::End, PcKey::Home, PcKey::PageUp, PcKey::PageDown};
 
 /// The key each control bit holds (kRight, kLeft, kDown, kUp, kFire), per wiring
 constexpr ZXKeysEnum kSinclair1Keys[5] = {ZXKEY_7, ZXKEY_6, ZXKEY_8, ZXKEY_9, ZXKEY_0};
@@ -107,6 +137,22 @@ bool Journaled(const Connector& connector)
     return connector.kind == ConnectorKind::KeyboardJoystick || connector.kind == ConnectorKind::Fuller;
 }
 
+/// The input role of a card's socket: the claim its card declares for the port the socket's device answers
+slots::InputRole InputOf(ConnectorKind kind)
+{
+    switch (kind)
+    {
+        case ConnectorKind::Fuller:
+            return slots::InputRole::FullerJoystick;
+        case ConnectorKind::Amx:
+            return slots::InputRole::AmxMouse;
+        case ConnectorKind::Kempston:
+            return slots::InputRole::KempstonJoystick;
+        default:
+            return slots::InputRole::None;
+    }
+}
+
 Connector MakeConnector(const std::string& id, const char* alias, ConnectorKind kind, bool fixed, RetroDeviceKind device,
                         std::vector<RetroDeviceKind> accepts)
 {
@@ -134,6 +180,10 @@ ControllerManager::~ControllerManager() = default;
 
 void ControllerManager::Rebuild()
 {
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        _candidates.clear();  // the slot set may have changed
+    }
     PortDecoder* decoder = _context ? _context->pPortDecoder : nullptr;
     const MEM_MODEL model = _context ? _context->config.mem_model : MM_PENTAGON;
     const std::vector<RetroDeviceKind> overlays = {RetroDeviceKind::SinclairJoystick, RetroDeviceKind::CursorJoystick,
@@ -145,13 +195,16 @@ void ControllerManager::Rebuild()
         // The Next's two DB9 connectors: the pad is part of the machine, its projection follows NR #05
         built.push_back(MakeConnector("next.left", "left", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick;  // #1F
         built.push_back(MakeConnector("next.right", "right", ConnectorKind::NextDb9, true, RetroDeviceKind::Md6Pad,
                                       {RetroDeviceKind::Md6Pad}));
+        built.back().input = slots::InputRole::KempstonJoystick2;  // #37
     }
     else if (decoder && decoder->HasKempstonJoystick())
     {
         built.push_back(MakeConnector("kempston", "", ConnectorKind::Kempston, true, RetroDeviceKind::KempstonJoystick,
                                       {RetroDeviceKind::KempstonJoystick}));
+        built.back().input = slots::InputRole::KempstonJoystick;
     }
 
     // The +2 / +2A / +3 joystick sockets are wired to the keyboard rows
@@ -181,6 +234,8 @@ void ControllerManager::Rebuild()
                     id = socket.id + "." + std::to_string(n);
                 built.push_back(MakeConnector(id, "", socket.kind, true, socket.device, {socket.device}));
                 built.back().owner = card.get();
+                built.back().input = InputOf(socket.kind);
+                built.back().source = card->SlotId();
             }
         }
     }
@@ -253,6 +308,24 @@ int ControllerManager::Find(const std::string& selector) const
     return FindLocked(selector);
 }
 
+int ControllerManager::FindForInput(slots::InputRole input, const std::string& source) const
+{
+    if (input == slots::InputRole::None)
+        return -1;
+    std::lock_guard<std::mutex> lock(_mutex);
+    int first = -1;
+    for (size_t i = 0; i < _connectors.size(); i++)
+    {
+        if (_connectors[i].input != input)
+            continue;
+        if (!source.empty() && _connectors[i].source == source)
+            return static_cast<int>(i);
+        if (first < 0)
+            first = static_cast<int>(i);
+    }
+    return first;
+}
+
 int ControllerManager::FindLocked(const std::string& selector) const
 {
     const std::string wanted = Lower(Trim(selector));
@@ -291,16 +364,9 @@ ControllerResult ControllerManager::PlugRefused(bool& defer) const
     defer = false;
     if (InputOwnedByReplay())
         return ControllerResult::Fail(ControllerError::OwnedByReplay, "recorded input drives the machine");
+    // A plug decides what the journal records: while recording it lands at the boundary, where the recording keeps it
     if (hooks && hooks->IsRecording())
-    {
-        // A plug decides what the journal records: it lands at the boundary, where the recording keeps it
-        if (!hooks->RecordsMediaChanges())
-        {
-            return ControllerResult::Fail(ControllerError::Recording,
-                                          "TTD v1 keeps no configuration changes: plug before the recording starts");
-        }
         defer = true;
-    }
     return ControllerResult::Success();
 }
 
@@ -670,15 +736,57 @@ void ControllerManager::AttachHapticFeed(const std::shared_ptr<IHapticFeed>& fee
     if (_context->pSoundManager != nullptr && !taps.empty())
         _context->pSoundManager->setHapticTaps(taps);
     const std::vector<HapticProbe> probes = feed->Probes();
+    std::vector<std::string> probeErrors;
     if (!probes.empty())
     {
         if (!_hapticProbes)
             _hapticProbes = std::make_unique<HapticProbes>(_context);
-        _hapticProbes->Arm(probes);
+        _hapticProbes->Arm(probes, &probeErrors);
     }
+    std::vector<std::string> conditions = feed->FrameConditions();
+    if (conditions.size() > HapticFrame::kMaxConditions)
+        conditions.resize(HapticFrame::kMaxConditions);
+    std::vector<std::string> conditionErrors(conditions.size());
+    BreakpointConditionContext dryRun;
+    const bool machine = _context->pCore != nullptr && _context->pMemory != nullptr;
+    if (machine)
+    {
+        dryRun.cpu = _context->pCore->GetZ80();
+        dryRun.memory = _context->pMemory;
+        dryRun.state = &_context->emulatorState;
+    }
+    const LabelManager* labels =
+        _context->pDebugManager != nullptr ? _context->pDebugManager->GetLabelManager() : nullptr;
+    for (size_t index = 0; index < conditions.size(); index++)
+    {
+        // At the frame end: no access, so no access operands (trigger 0)
+        std::string error;
+        _hapticConditions.push_back(BreakpointConditionProgram::Compile(conditions[index], 0, labels, error,
+                                                                        BreakpointConditionDialect::Unreal,
+                                                                        machine ? &dryRun : nullptr));
+        if (!_hapticConditions.back())
+            conditionErrors[index] = "condition: " + error;
+    }
+    _hapticConditionEvents.assign(_hapticConditions.size(), -1);
     const std::vector<GameEventInfo> events = feed->GameEvents();
     _gameEventsOn = !events.empty();
     _gameEvents.Define(events, feed->GameEventsProfile());
+    _gameEventNames.clear();
+    for (const GameEventInfo& event : events)
+        _gameEventNames.push_back(event.name);
+    for (size_t index = 0; index < events.size(); index++)
+    {
+        const GameEventInfo& event = events[index];
+        if (event.frameCondition >= 0 && static_cast<size_t>(event.frameCondition) < _hapticConditionEvents.size())
+        {
+            _hapticConditionEvents[static_cast<size_t>(event.frameCondition)] = static_cast<int>(index);
+            if (!conditionErrors[static_cast<size_t>(event.frameCondition)].empty())
+                _gameEvents.SetConditionError(index, conditionErrors[static_cast<size_t>(event.frameCondition)]);
+        }
+        else if (event.probe >= 0 && static_cast<size_t>(event.probe) < probeErrors.size() &&
+                 !probeErrors[static_cast<size_t>(event.probe)].empty())
+            _gameEvents.SetConditionError(index, probeErrors[static_cast<size_t>(event.probe)]);
+    }
     if (_hapticHeld.load(std::memory_order_acquire))
         feed->OnHapticHold(true);
 }
@@ -691,6 +799,8 @@ void ControllerManager::DetachHapticFeed()
     if (_hapticProbes)
         _hapticProbes->Disarm();
     _hapticWatches.clear();
+    _hapticConditions.clear();
+    _hapticConditionEvents.clear();
     if (_gameEventsOn)
         _gameEvents.Clear();
     _gameEventsOn = false;
@@ -768,95 +878,97 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         sound->takeHapticTaps();
     if (_hapticProbes && _hapticProbes->Armed())
         _hapticProbes->TakeFrame(summary);
+    if (!_hapticConditions.empty())
+        EvaluateHapticConditions(summary);
     feed->OnHapticFrame(summary);
     if (_gameEventsOn)
     {
         GameEventFrame events;
         events.frame = frame;
         if (feed->TakeGameEvents(events))
+        {
             _gameEvents.Record(events);
+            ScriptCallbackManager* callbacks = _context->pDebugManager ? _context->pDebugManager->GetScriptCallbacks() : nullptr;
+            if (callbacks && callbacks->WantsGameEvents())
+                callbacks->OnGameEvents(frame, events.fired, _gameEventNames, events.value.data());
+        }
+    }
+}
+
+void ControllerManager::EvaluateHapticConditions(HapticFrame& summary)
+{
+    BreakpointConditionContext context;
+    context.cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
+    context.memory = _context->pMemory;
+    context.state = &_context->emulatorState;
+    summary.conditionCount = static_cast<unsigned>(_hapticConditions.size());
+    for (size_t index = 0; index < _hapticConditions.size(); index++)
+    {
+        if (!_hapticConditions[index])
+            continue;
+        std::string why;
+        const BreakpointConditionResult result = _hapticConditions[index]->Evaluate(context, &why);
+        if (result == BreakpointConditionResult::True)
+            summary.conditionsHeld |= 1u << index;
+        else if (result == BreakpointConditionResult::Error)
+        {
+            // As a breakpoint's (conditional-breakpoints.md): marked once, never holds again until the profile is set
+            _hapticConditions[index].reset();
+            if (_hapticConditionEvents[index] >= 0)
+                _gameEvents.SetConditionError(static_cast<size_t>(_hapticConditionEvents[index]),
+                                              why + " (frame " + std::to_string(summary.frame) + ")");
+        }
     }
 }
 
 void ControllerManager::WatchPortReads(bool on)
 {
-    _watchRequest.store(on ? 1 : 2, std::memory_order_release);
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return;
+    DeviceAccessWatch& watch = _context->pPortDecoder->GetAccessWatch();
+    if (on)
+        watch.RequestWindow(kPortReadWatchFrames);
+    else
+        watch.CloseWindow();
 }
 
-PortReadEvidence ControllerManager::PortReads() const
+DeviceAccessEvidence ControllerManager::PortReads() const
 {
-    PortReadEvidence evidence = _watch.Evidence();
-    evidence.active = _watching.load(std::memory_order_acquire);
+    if (_context == nullptr || _context->pPortDecoder == nullptr)
+        return {};
+    DeviceAccessEvidence evidence = _context->pPortDecoder->GetAccessWatch().Evidence();
+    const SlotManager* slotManager = _context->pSlotManager;
+    if (slotManager == nullptr || slotManager->Current().machine == nullptr)
+        return evidence;
+    // The candidates of each board access of the window (cached per port and direction), then ranked by how well each
+    // card explains all of them
+    std::vector<slots::BoardAccess> accesses;
+    std::vector<DeviceAccessChannel*> boards;
+    {
+        std::lock_guard<std::mutex> lock(_candidateMutex);
+        for (DeviceAccessChannel& channel : evidence.channels)
+        {
+            if (channel.device != "board" || channel.frames == 0)
+                continue;
+            const uint32_t key = (uint32_t(channel.out) << 16) | channel.port;
+            auto it = _candidates.find(key);
+            if (it == _candidates.end())
+                it = _candidates
+                         .emplace(key, slots::CardCandidates(slotManager->Current().model,
+                                                             slotManager->Current().Fitted(), channel.port, channel.out))
+                         .first;
+            accesses.push_back({channel.port, channel.out, it->second});
+            boards.push_back(&channel);
+        }
+    }
+    slots::RankCardCandidates(accesses);
+    for (size_t i = 0; i < boards.size(); ++i)
+        boards[i]->candidates = std::move(accesses[i].candidates);
     return evidence;
-}
-
-namespace
-{
-/// The watch's register probe (PortReadRegisterProbe): an IN of the AY's data port (#FFFD as the 128K family decodes
-/// it) with R14 selected, an IN of the Next's #253B with NR #B2 selected. Runs only while the watch does, after the IN
-bool ProbeRegisterRead(const void* context, uint16_t port, PortReadClass& cls)
-{
-    const EmulatorContext* ctx = static_cast<const EmulatorContext*>(context);
-    if (port == 0x253B)
-    {
-        auto* next = dynamic_cast<PortDecoder_Next*>(ctx->pPortDecoder);
-        if (next == nullptr || next->Board().SelectedRegister() != 0xB2)
-            return false;
-        cls = PortReadClass::NextB2;
-        return true;
-    }
-    if ((port & 0xC002) != 0xC000 || ctx->pSoundManager == nullptr)
-        return false;
-    const ITurboSoundDevice* ay = ctx->pSoundManager->getTurboSound();
-    if (ay == nullptr || ay->getBusReadRegister() != 14)
-        return false;
-    cls = PortReadClass::AyR14;
-    return true;
-}
-}  // namespace
-
-void ControllerManager::ApplyWatchRequest()
-{
-    Z80* cpu = _context->pCore != nullptr ? _context->pCore->GetZ80() : nullptr;
-    const int request = _watchRequest.exchange(0, std::memory_order_acq_rel);
-    if (request == 1)
-    {
-        _watch.Reset();
-        // The row bits read the code after a half-row IN as the CPU sees it, without side effects
-        if (_context->pMemory != nullptr)
-            _watch.SetCodeReader(
-                [](const void* memory, uint16_t address) {
-                    return static_cast<Memory*>(const_cast<void*>(memory))->DirectReadFromZ80Memory(address);
-                },
-                _context->pMemory);
-        _watch.SetRegisterProbe(&ProbeRegisterRead, _context);
-        _watching.store(true, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(&_watch);
-        return;
-    }
-    if (!_watching.load(std::memory_order_relaxed))
-        return;
-    // While a tape plays the program is still loading: the watch starts counting when it stops
-    if (_context->pTape != nullptr && _context->pTape->IsPlaying())
-    {
-        _watch.Reset();
-        return;
-    }
-    _watch.EndFrame();
-    if (request == 2 || _watch.Evidence().framesObserved >= kPortReadWatchFrames)
-    {
-        _watching.store(false, std::memory_order_release);
-        if (cpu != nullptr)
-            cpu->SetPortReadWatch(nullptr);
-        _watch.SetCodeReader(nullptr, nullptr);
-        _watch.SetRegisterProbe(nullptr, nullptr);
-    }
 }
 
 void ControllerManager::OnFrame(uint64_t frame)
 {
-    ApplyWatchRequest();
     if (InputOwnedByReplay())
     {
         _wasOwned = true;
@@ -915,19 +1027,26 @@ void ControllerManager::OnFrame(uint64_t frame)
 
 void ControllerManager::SubmitHostKeys(const std::vector<uint8_t>& keys)
 {
-    std::array<uint8_t, kHostKeyRows> rows{};
+    std::array<uint8_t, kHostKeyRows + kPcOnlyRows> rows{};
     for (uint8_t key : keys)
     {
         uint8_t row = 0;
         uint8_t bit = 0;
-        if (Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(key), row, bit))
+        if (key >= kPcOnlyKeyBase)
+        {
+            const unsigned index = key - kPcOnlyKeyBase;
+            if (index < std::size(kPcOnlyKeys))
+                rows[kHostKeyRows + index / 5] =
+                    static_cast<uint8_t>(rows[kHostKeyRows + index / 5] | (1u << (index % 5)));
+        }
+        else if (Keyboard::MatrixPosition(static_cast<ZXKeysEnum>(key), row, bit))
             rows[row] = static_cast<uint8_t>(rows[row] | (1u << bit));
     }
-    for (uint8_t row = 0; row < kHostKeyRows; row++)
+    for (uint8_t row = 0; row < kHostKeyRows + kPcOnlyRows; row++)
     {
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            if (_hostKeys[row] == rows[row])
+            if ((row < kHostKeyRows ? _hostKeys[row] : _pcOnlyKeys[row - kHostKeyRows]) == rows[row])
                 continue;
         }
         ttd::TTDInputEvent ev;
@@ -976,18 +1095,89 @@ void ControllerManager::SubmitMouse(const MouseSample& mouse)
 
 bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
 {
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (row >= kHostKeyRows)
-        return false;
-    _hostKeys[row] = static_cast<uint8_t>(bits & 0x1F);
-    UpdateOverlay();
+    std::array<uint8_t, kHostKeyRows> rows{};
+    std::array<uint8_t, kPcOnlyRows> pcOnly{};
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (row >= kHostKeyRows + kPcOnlyRows)
+            return false;
+        if (row < kHostKeyRows)
+        {
+            _hostKeys[row] = static_cast<uint8_t>(bits & 0x1F);
+            UpdateOverlay();
+        }
+        else
+            _pcOnlyKeys[row - kHostKeyRows] = static_cast<uint8_t>(bits & 0x1F);
+        rows = _hostKeys;
+        pcOnly = _pcOnlyKeys;
+    }
+    // A machine whose software reads a PS/2 controller instead of the matrix gets the same keys as PC keys
+    IPs2KeySink* sink = _context && _context->pKeyboard ? _context->pKeyboard->GetPs2Sink() : nullptr;
+    if (!sink || !sink->WantsHostOverlayKeys())
+    {
+        _ps2HostKeys.clear();
+        return true;
+    }
+    std::vector<ZXKeysEnum> held;
+    for (unsigned code = 1; code < 0x100; code++)
+    {
+        uint8_t keyRow = 0;
+        uint8_t keyBit = 0;
+        const ZXKeysEnum zx = static_cast<ZXKeysEnum>(code);
+        if (Keyboard::MatrixPosition(zx, keyRow, keyBit) && keyRow < kHostKeyRows && (rows[keyRow] & (1u << keyBit)))
+            held.push_back(zx);
+    }
+    auto holds = [&held](ZXKeysEnum key) { return std::find(held.begin(), held.end(), key) != held.end(); };
+    // Caps Shift with 5 / 6 / 7 / 8 is the cursor key of the ZX keyboard: the PS/2 side gets the arrow, not Shift and a digit
+    static const std::pair<ZXKeysEnum, PcKey> kCursors[] = {{ZXKEY_5, PcKey::Left}, {ZXKEY_6, PcKey::Down},
+                                                            {ZXKEY_7, PcKey::Up}, {ZXKEY_8, PcKey::Right}};
+    std::vector<PcKey> wanted;
+    bool capsUsed = false;
+    std::vector<ZXKeysEnum> rest;
+    for (ZXKeysEnum zx : held)
+    {
+        PcKey arrow = PcKey::None;
+        if (holds(ZXKEY_CAPS_SHIFT))
+        {
+            for (const auto& cursor : kCursors)
+                if (cursor.first == zx)
+                    arrow = cursor.second;
+        }
+        if (arrow != PcKey::None)
+        {
+            wanted.push_back(arrow);
+            capsUsed = true;
+        }
+        else
+            rest.push_back(zx);
+    }
+    for (ZXKeysEnum zx : rest)
+    {
+        if (zx == ZXKEY_CAPS_SHIFT && capsUsed)
+            continue;
+        for (PcKey key : sink->PcKeysForZxKey(zx))
+            if (std::find(wanted.begin(), wanted.end(), key) == wanted.end())
+                wanted.push_back(key);
+    }
+    for (size_t index = 0; index < std::size(kPcOnlyKeys); index++)
+        if (pcOnly[index / 5] & (1u << (index % 5)))
+            wanted.push_back(kPcOnlyKeys[index]);
+    for (auto it = _ps2HostKeys.rbegin(); it != _ps2HostKeys.rend(); ++it)
+        if (std::find(wanted.begin(), wanted.end(), *it) == wanted.end())
+            sink->OnPcKey(*it, false);
+    for (PcKey key : wanted)
+        if (std::find(_ps2HostKeys.begin(), _ps2HostKeys.end(), key) == _ps2HostKeys.end())
+            sink->OnPcKey(key, true);
+    _ps2HostKeys = wanted;
     return true;
 }
 
 uint8_t ControllerManager::HostKeys(uint8_t row) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    return row < kHostKeyRows ? _hostKeys[row] : 0;
+    if (row >= kHostKeyRows)
+        return row < kHostKeyRows + kPcOnlyRows ? _pcOnlyKeys[row - kHostKeyRows] : uint8_t{0};
+    return _hostKeys[row];
 }
 
 /// endregion </Input>

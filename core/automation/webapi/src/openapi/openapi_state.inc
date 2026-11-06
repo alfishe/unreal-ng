@@ -32,7 +32,10 @@
         "when applicable, contended, writable + read_write: whether a CPU write reaches the page as the mapper decides - "
         "ROM, TS-Conf window 0 without W0_WE), paging_locked and trdos_active flags. Same report as CLI `paging`, Lua `paging_state()`, "
         "Python `paging_state()` and MCP `inspect_state` aspect `paging`. On PROFI the pDFFD latch decodes to "
-        "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7).";
+        "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7). On GMX `gmx` is the card's "
+        "register file: port_00 (scheme, fixrom, blkext, blkex2, pentagon_int, reconf_pending), port_7efd (rom_plane, "
+        "turbo, video_640x200, magic_blocked), port_78fd + page_8000, port_dffd + page_c000, port_7afd / port_7cfd + "
+        "scroll_start, trdos_page_1ffd and magic (frozen, frozen_7afd, frozen_7efd, shift).";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["required"] = true;
@@ -152,6 +155,25 @@
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["parameters"][0]["schema"]["type"] = "string";
     paths["/api/v1/emulator/{id}/state/fdc"]["get"]["responses"]["200"]["description"] = "Get Beta Disk WD1793 state";
+
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["summary"] = "List the device state reports this machine has";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["tags"].append("Device State");
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["description"] =
+        "The device catalog (DeviceState::Catalog): every state report the machine has (available true), in a fixed order, "
+        "each with id, title, a one-line summary taken from the report, the REST route under /api/v1/emulator/{id}/, the CLI "
+        "command, the Lua / Python function and the MCP inspect_state aspect. A front end lists the machine's devices from it "
+        "instead of probing every route.";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][1]["name"] = "all";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][1]["description"] =
+        "1: every report of the catalog, the absent ones with available false and why (description)";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["parameters"][1]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/state/devices"]["get"]["responses"]["200"]["description"] = "The machine's device reports";
 
     {
         struct NextRoute
@@ -878,8 +900,7 @@
         "'gs-module-dump.mod'; 404 when no upload has completed yet). NeoGS only (409 otherwise): sd_insert "
         "(needs 'path' to a raw SD image), sd_eject, flash_save (saves the reprogrammed flash); carried out on the "
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
-        "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary "
-        "(TTD v1: refused). "
+        "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary. "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
         "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
@@ -944,7 +965,7 @@
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =
-        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, sd_insert / sd_eject while TTD v1 records, "
+        "sd_insert / sd_eject / flash_save on a card that is not NeoGS, "
         "switch_personality refused by the slot plan (it would remove another card without replaceIfIncompatible) "
         "or while a TTD recording runs (the message names the session), "
         "or any of them while a TTD replay owns the machine";
@@ -955,7 +976,8 @@
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["tags"].append("Audio State");
     paths["/api/v1/emulator/{id}/state/audio/covox"]["get"]["description"] =
         "Covox or SoundDrive DAC. One report for every interface (DeviceState::Covox; CLI state audio covox, "
-        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB or quad SoundDrive), the ports this "
+        "Lua/Python audio_covox_state, MCP audio_covox): fitment (mono #FB, quad SoundDrive, or none: the Scorpion Covox #DD alone), printer_port "
+        "(the Scorpion Covox #DD answered), the ports this "
         "model's decoder routes to it (from its port map: port, mask, match, decode, gate), shared_with_beta128 "
         "(Beta-128 registers a DAC row also decodes, with shared_port_rule), the four DAC latches with mute state, "
         "the last left/right amplitude, sound_last_frame, dc_removal and synthesis_suppressed.";
@@ -996,6 +1018,10 @@
     paths["/api/v1/emulator/state/fdc"]["get"]["summary"] = "Get Beta Disk WD1793 state (active emulator)";
     paths["/api/v1/emulator/state/fdc"]["get"]["tags"].append("Disk State (Active)");
     paths["/api/v1/emulator/state/fdc"]["get"]["responses"]["200"]["description"] = "WD1793 state";
+
+    paths["/api/v1/emulator/state/devices"]["get"]["summary"] = "List the device state reports (active emulator)";
+    paths["/api/v1/emulator/state/devices"]["get"]["tags"].append("Device State (Active)");
+    paths["/api/v1/emulator/state/devices"]["get"]["responses"]["200"]["description"] = "The machine's device reports";
 
     paths["/api/v1/emulator/state/contention"]["get"]["summary"] = "Get memory contention state (active emulator)";
     paths["/api/v1/emulator/state/contention"]["get"]["tags"].append("Memory State");

@@ -4,6 +4,11 @@ This POC is **not** part of the shipping product. It answers one design
 question — which codec the TTD recorder should use — and feeds the result
 back into the production code. (Index of all POCs: [`../README.md`](../README.md).)
 
+> **Retired 2026-10-30.** v1 (`TimeTravelManager`) and the analyzer's v1 reader (`ttd_format.py`) were deleted in
+> Phase 6 of the TTD v2 migration, so `cpp/extract_real_buffers.py` cannot extract new buffers any more (it reads
+> v1 files); the codec benchmark still builds and runs on the stored `real_buffers.bin` if present. The finding
+> (zstd-1) stands and is what the engine uses.
+
 ## Layout
 
 ```

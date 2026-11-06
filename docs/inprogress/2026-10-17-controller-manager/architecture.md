@@ -61,7 +61,7 @@ flowchart TB
         CCTL["ControllerControl<br/>the verbs, one envelope"]
         DEVS["retro devices<br/>Joystick, SinclairJoystick, MdPad, Mouse, ..."]
         TTD["TimeTravelManager::SubmitLiveInput<br/>input journal"]
-        HEUR["PortReadWatch<br/>auto-profile evidence"]
+        HEUR["DeviceAccessWatch (ports/)<br/>auto-profile evidence"]
     end
     WK --> SVC
     BEF --> SVC
@@ -374,7 +374,7 @@ work at all while no device is connected and no binding is active (the keyboard 
 | Area | Path |
 |:--|:--|
 | Library | `core/controllers/` ([§3](#3-the-controllers-library)) |
-| Core manager and verbs | `core/src/emulator/io/controllers/`: `controllermanager.{h,cpp}`, `connector.{h,cpp}`, `controllercontrol.{h,cpp}`, `hostinputsource.h`, `portreadwatch.{h,cpp}` |
+| Core manager and verbs | `core/src/emulator/io/controllers/`: `controllermanager.{h,cpp}`, `connector.{h,cpp}`, `controllercontrol.{h,cpp}`, `hostinputsource.h`; the evidence: `core/src/emulator/ports/deviceaccesswatch.{h,cpp}` |
 | Retro devices | existing `io/joystick/joystick.*`, `io/mouse/*`; new `io/joystick/sinclairjoystick.*` (Sinclair and Cursor, on the keyboard matrix overlay), `fullerjoystick.*`, `timexjoystick.*`, `mdpad.*`, `io/mouse/amxmouse.*`, `io/lightgun/*` |
 | Automation | `core/automation/webapi/src/api/controllers_api.cpp`, `openapi_controllers*.inc`; `mcp/src/mcp-controllers.*`; `cli/src/commands/cli-processor-controllers.cpp`; Lua and Python bindings |
 | Qt | `unreal-qt/src/controllers/`: `controllersdialog.*`, `hostdevicelist.*`, `connectorlist.*`, `controllerpicture.*` (QGraphicsView), `patchcordoverlay.*`, `bindingtable.*`, `devicetestpanel.*`, `learnwizard.*`, `hotspoteditor.*`, `profilebar.*`, `controllertoast.*` |

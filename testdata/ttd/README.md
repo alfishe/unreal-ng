@@ -1,38 +1,26 @@
 # TTD fixture corpus
 
-Two corpora of the same sessions:
+Recorded `.ttd` sessions from real emulator runs.
 
-- **`engine/`**: recorded by the engine, the application's recorder since the
-  Phase 5 switch, in the engine's session file format (schema 2). Read by
-  `TimeTravelControllerCorpus_Test`
+- **`engine/`**: the corpus, recorded by the engine (the application's only
+  recorder since v1 was deleted, 2026-10-30) in the engine's session file
+  format (schema 2). Read by `TimeTravelControllerCorpus_Test`
   (`core/tests/debugger/ttd/timetravelcontroller_corpus_test.cpp`): each file
-  loads into an instance of its model with the engine as its recorder, every
-  visited checkpoint restores with no issue reported, and the session continues
-  from checkpoint 37 - the 25 checkpoints recorded live restore the machine
-  (CPU, chipset, every device, all of RAM) exactly as the recorded ones did.
-  The per-machine fixtures (TS-Conf, Sprinter) are in this folder too.
-- **this folder and `testdata/machines/*/ttd/`**: recorded by v1, in v1's
-  format (schema 1), the reference for v1's own tests until v1 leaves the
-  application (Phase 5, Step 4). The rest of this file is about them unless it
-  says otherwise.
+  loads into an instance of its model, every visited checkpoint restores with
+  no issue reported, and the session continues from checkpoint 37 - the 25
+  checkpoints recorded live restore the machine (CPU, chipset, every device,
+  all of RAM) exactly as the recorded ones did. The per-machine fixtures
+  (TS-Conf, Sprinter) are in this folder too. Also read by the analyzer
+  (`tools/verification/ttd-analyzer/`).
 
-`record_fixtures.py` asks the instance which recorder it runs (`backend` in
-`/ttd/status`): an engine recording goes to `engine/`. To re-record v1's corpus,
-start the application with `UNREAL_TTD_BACKEND=v1`.
+v1's recordings (schema 1: this folder's `*.ttd`, `testdata/machines/*/ttd/`
+and the `.ttd` files directly in `port-journals/`) were deleted with v1 and
+its reader (Phase 6, 2026-10-30).
 
-Recorded `.ttd` sessions from real emulator runs. They are read by:
-
-- the C++ test `TTD_Corpus_Test` (`core/tests/debugger/ttd/ttdcorpus_test.cpp`).
-  It loads every fixture here into an instance that already holds its own
-  TurboSound FM history, restores several checkpoints, checks that every
-  device matches the recording byte for byte, and replays 25 frames to check
-  the replay matches the recording exactly;
-- the analyzer (`tools/verification/ttd-analyzer/`);
-- the codec PoC (`tools/poc/010-ttd-compression/`) and the PoC GUI
-  (`tools/poc/027-ttd-gui/`).
+`record_fixtures.py` records into `engine/`.
 
 The fixtures are written by the production writer, so they are tied to the
-on-disk format: **a format change makes them stale, and `TTD_Corpus_Test`
+on-disk format: **a format change makes them stale, and the corpus test
 fails.** Don't convert old files; re-record them as described below.
 
 All paths in this file are relative to the project root.
@@ -41,20 +29,19 @@ All paths in this file are relative to the project root.
 
 | Fixture | Model | Starting point | Settle frames |
 |---|---|---|---|
-| `idle_session.ttd` | Pentagon 128K | cold boot, no snapshot: the recording is the boot, ending at the 128K menu | 0 |
-| `active_demo.ttd` | Pentagon 128K | `testdata/loaders/sna/Dizzy Y.sna` | 0 |
-| `demo_7threality.ttd` | Pentagon 128K | `testdata/loaders/sna/7threality.sna` | 100 |
-| `demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
-| `tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
-| [`../machines/tsconf/ttd/sprites.ttd`](../machines/tsconf/ttd/sprites.ttd) (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
-| [`../machines/sprinter/ttd/boot.ttd`](../machines/sprinter/ttd/boot.ttd) (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.06 Hotfix 2 at 21 MHz (re-recorded 2026-10-03 when the default moved back from 3.07 BETA 1); classic GS card swapped in (the GS behind the ISA ZX-bus adapter, since 2026-10-04) | 0 |
+| `engine/idle_session.ttd` | Pentagon 128K | cold boot, no snapshot: the recording is the boot, ending at the 128K menu | 0 |
+| `engine/active_demo.ttd` | Pentagon 128K | `testdata/loaders/sna/Dizzy Y.sna` | 0 |
+| `engine/demo_7threality.ttd` | Pentagon 128K | `testdata/loaders/sna/7threality.sna` | 100 |
+| `engine/demo_across-the-edge-second.ttd` | Pentagon 128K | `testdata/loaders/sna/across-the-edge-second.sna` | 100 |
+| `engine/tsfm_tech_support.ttd` | Pentagon 128K | `testdata/sound/tsfm/tech_support.sna` (TurboSound FM music) | 0 |
+| `engine/tsconf_sprites.ttd` (`--only tsconf_sprites`) | TS-Conf | `testdata/machines/tsconf/spg/sprites.spg` (16C frame drawn by a DMA copy every frame), classic GS card swapped in | 50 |
+| `engine/sprinter_boot.ttd` (`--only sprinter_boot`) | Sprinter Sp2000 | cold full start of the shipped config, no snapshot: the PLD load at 3.5 MHz, then the POST of the default BIOS 3.06 Hotfix 2 at 21 MHz (re-recorded 2026-10-03 when the default moved back from 3.07 BETA 1); classic GS card swapped in (the GS behind the ISA ZX-bus adapter, since 2026-10-04) | 0 |
 
 Each fixture records 300 frames (301 checkpoints). The table lives in code as
 `CORPUS` in `tools/verification/ttd-analyzer/scripts/record_fixtures.py`. To
 add or change a fixture, edit that list and this table together. A fixture of
-another machine lives in `testdata/machines/<machine>/ttd/` (the script's
-`FIXTURE_OPTIONS`); `TTD_Corpus_Test` runs it on a fresh machine of its
-recorded model.
+another machine takes its options from the script's `FIXTURE_OPTIONS`; the
+corpus test runs it on a fresh machine of its recorded model.
 
 ## ZX-MultiSound sessions (recorded by the tests, not stored)
 
@@ -69,9 +56,8 @@ process's scratch folder, load them like the stored files and delete them when t
 | `multisound-zxevo` | ZX-Evo (`ATM3`), ZX-MultiSound in `zxbus.1` (the YM2149 leaves its socket) | the same program (it measures the CPU clock - the ZX-Evo starts at 7 MHz - and times its MIDI bits to it) | 10 | 70 |
 
 Recorded as `record_fixtures.py` records a fixture: a fresh machine, 44.1 kHz core rate, Sound HQ and Screen HQ on,
-the snapshot, the settle frames, then a recording with the write journal. Each is recorded twice per test process at
-most: by v1 for `TTD_Corpus_Test`, `TTDSessionFile_Test` and `TTDV1Feeder_Test`, by the engine for
-`TimeTravelControllerCorpus_Test`. 70 frames (71 checkpoints) instead of 300: the SAM2695's state (292 KB raw) changes
+the snapshot, the settle frames, then a recording with the write journal. Each is recorded once per test process at
+most, by the engine (`TimeTravelControllerCorpus_Test` and the other tests that load it). 70 frames (71 checkpoints) instead of 300: the SAM2695's state (292 KB raw) changes
 in every checkpoint, and the corpus tests need 63 checkpoints. The tests build the replay machine from the session's
 header with the card in `zxbus.1` and the shipped default MIDI bank, which the sessions name
 (`core/tests/_helpers/ttdslotcards.h`). A change of the card or of the program needs no re-recording.
@@ -80,20 +66,19 @@ header with the card in `zxbus.1` and the shipped default MIDI bank, which the s
 
 Two real sessions with their port journals (every IN and OUT with its time
 and PC, ttd-port-read-journal.md) and the emulator's answers to a set of
-"when did the program ..." questions:
+"when did the program ..." questions. The recorder writes the sessions to
+`port-journals/engine/` and `expected.json` next to them:
 
 | Fixture | Model | Session | Journals |
 |---|---|---|---|
-| `dizzyx.ttd` | Pentagon 128K, classic GS | `testdata/loaders/z80/dizzyx.z80` (Dizzy X, AY music); keys 8, 0, 5, Q, SPACE pressed; 495 frames | 7,905 IN, 14,920 OUT, 16.8 KB of a 2.1 MB file |
-| `greenberet-load.ttd` | 128K, classic GS | `testdata/loaders/tap/greenberet.tap` loaded by the 128K menu's Tape Loader; 1,010 frames (20 s) of loading | 722,025 IN, 28,859 OUT, 156 KB of a 1.2 MB file |
+| `engine/dizzyx.ttd` | Pentagon 128K, classic GS | `testdata/loaders/z80/dizzyx.z80` (Dizzy X, AY music); keys 8, 0, 5, Q, SPACE pressed; 495 frames | 7,905 IN, 14,920 OUT, 16.8 KB of a 2.1 MB file |
+| `engine/greenberet-load.ttd` | 128K, classic GS | `testdata/loaders/tap/greenberet.tap` loaded by the 128K menu's Tape Loader; 1,010 frames (20 s) of loading | 722,025 IN, 28,859 OUT, 156 KB of a 1.2 MB file |
 | `expected.json` | | the WebAPI's answers (`POST /ttd/port-events`) to 27 questions, asked of the live session and of the saved file (checked equal) | |
 
-They are read by the C++ test `TimeTravelManager_PortJournalFixture_Test`
-(`core/tests/debugger/ttd/timetravelmanager_portjournal_test.cpp`: the
-emulator's file search must answer every question the same) and by the
-analyzer's `tests/test_port_search.py` (its `search` must too). They are not
-in the checkpoint corpus above (`TTD_Corpus_Test` reads `testdata/ttd/*.ttd`
-only).
+Their reader was v1's test (`TimeTravelManager_PortJournalFixture_Test`,
+deleted with v1) and the analyzer's `search`, which went with v1's reader;
+the engine's port-event search is checked by the engine's own tests. They are
+not in the checkpoint corpus above.
 
 Re-record them (the app with the WebAPI on port 8090, as below) with
 
@@ -113,11 +98,11 @@ with it.
    fixture and deletes it afterwards, and leaves any other instances alone.
 
    ```bash
-   ninja -C cmake-build-agent-release
+   tools/build/build.sh
    ./cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt &   # macOS
    ```
 
-2. Re-record the whole corpus into `testdata/ttd/`:
+2. Re-record the whole corpus into `testdata/ttd/engine/`:
 
    ```bash
    python3 tools/verification/ttd-analyzer/scripts/record_fixtures.py
@@ -132,8 +117,8 @@ with it.
 3. Validate the files and run the C++ gate:
 
    ```bash
-   for f in testdata/ttd/*.ttd testdata/ttd/engine/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
-   ./cmake-build-agent-release/bin/core-tests --gtest_filter='TTD_Corpus_Test.*:TimeTravelControllerCorpus_Test.*'
+   for f in testdata/ttd/engine/*.ttd; do tools/verification/ttd-analyzer/run.sh validate "$f"; done
+   tools/build/test.sh --gtest_filter='TimeTravelControllerCorpus_Test.*'
    ```
 
    An engine recording's file is not byte-identical to the previous one (its
@@ -154,13 +139,14 @@ machine or on what ran before:
   would pick that up.
 - **Core audio rate 44100 Hz, `soundhq` and `screenhq` on.** Without this, the
   app follows the host's audio device (often 48 kHz). SSG tick scheduling
-  depends on the output rate and the decimator mode, so a replay is exact
-  only with the same rate and mode as the recording. `TTD_Corpus_Test` runs
-  with these same settings.
+  depends on the output rate, so a replay is exact only with the recording's
+  rate. The decimator mode (`soundhq`) and the sound feature are pinned to the
+  recording's while a replay runs, so those matter only for what the fixture
+  sounds like. The corpus test runs with these same settings.
 - **The classic GS card in the GS slot.** The corpus was recorded while the
   shipped PENTAGON config had `GSType=Z80`; the shipped configs fit NeoGS
   since 2026-09-28, and a session loads only into the card it was recorded
-  with, so `TTD_Corpus_Test` fits the classic card before loading. The recorder
+  with, so the corpus test fits the classic card before loading. The recorder
   switches the slot to the classic card itself (`FIXTURE_OPTIONS`, `"gs": "z80"`),
   whatever the app is configured with (a NeoGS checkpoint carries the whole
   card, several MB, in every checkpoint).
@@ -193,25 +179,15 @@ a fresh one. That's handy for debugging, but the result is not reproducible.
 
 ```bash
 pip install -r tools/verification/ttd-analyzer/requirements.txt   # zstandard is required
-tools/verification/ttd-analyzer/run.sh info     testdata/ttd/tsfm_tech_support.ttd
-tools/verification/ttd-analyzer/run.sh validate testdata/ttd/tsfm_tech_support.ttd
+tools/verification/ttd-analyzer/run.sh info     testdata/ttd/engine/tsfm_tech_support.ttd
+tools/verification/ttd-analyzer/run.sh validate testdata/ttd/engine/tsfm_tech_support.ttd
 ```
 
-`info` prints the header, including the struct sizes to compare against the
-current build. A stale fixture shows its old sizes there, which is the quickest
-way to tell a stale fixture from a corrupt one.
-
-`validate` fails if any byte of the file is left unrecognized:
-
-- bytes after the last section;
-- unparsed CPU or chipset fields;
-- an unknown device ID or a device blob that won't decode;
-- a journal block that doesn't decode to exactly its directory entry (record
-  count, size, time range).
-
-It also decodes every referenced memory page and checks its checksum. The
-write journal has no checksum of its own, so a corrupt zstd frame is caught
-but a flipped byte that still decodes is not.
+`info` prints the file's summary: parts, memory regions, devices, checkpoints,
+the event and journal counts and the size of each record kind. `validate`
+reads every part and record of the file and fails on a damaged or cut one
+(`recover` tells how much of a cut file is still readable). A schema 1 (v1)
+file is refused with exit code 2.
 
 ## Status
 
@@ -319,7 +295,7 @@ writer for the analyzer's conformance test:
 | `v2/synthetic.ttd` | a synthetic 60-frame session in three segments, finished |
 | `v2/synthetic-unfinished.ttd` | the same, cut inside its last part (a crash while recording) |
 | `v2/synthetic-ancillary.ttd` | the same with records of an ancillary stream readers do not know (0x0100) |
-| `v2/active-demo-converted.ttd` | `active_demo.ttd` converted from schema 1 (D31) |
+| `v2/active-demo-converted.ttd` | `active_demo.ttd` converted from schema 1 (D31; the converter went with v1) |
 | `v2/expected.json` | what the C++ reader finds in each: checkpoints, versions, parts, events, bus records, finished, converted |
 
 Write them again after a format change (then `git add -f`, `*.ttd` is ignored):

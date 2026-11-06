@@ -141,10 +141,22 @@ JsonValue::Members* FindLayer(Layers& layers, const std::string& name)
 using Sources = std::map<std::string, std::string>;
 
 /// mapping-and-profiles.md §6.2: field by field; a target in the later binding replaces every target field before it
-void Merge(Layers& into, const Profile& profile, Sources& sources)
+/// `play@N` is the play layer of the N-th pad connected only (0: not a player layer); the other pads never see it
+int PlayerOfLayer(const std::string& layer)
 {
-    for (const auto& [layer, bindings] : profile.layers)
+    if (layer.rfind("play@", 0) != 0)
+        return 0;
+    return static_cast<int>(std::strtol(layer.c_str() + 5, nullptr, 10));
+}
+
+void Merge(Layers& into, const Profile& profile, Sources& sources, int player = 0)
+{
+    for (const auto& [jsonLayer, bindings] : profile.layers)
     {
+        const int layerPlayer = PlayerOfLayer(jsonLayer);
+        if (layerPlayer != 0 && layerPlayer != player)
+            continue;
+        const std::string layer = layerPlayer != 0 ? std::string("play") : jsonLayer;
         JsonValue::Members& members = *FindLayer(into, layer);
         for (const auto& [control, spec] : bindings)
         {
@@ -488,12 +500,12 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
         expand(*profile, chain, schemes[profile], expand);
     }
 
-    const auto mergeFor = [&](const ScopeTarget& target, const std::string& scope, bool top) {
+    const auto mergeFor = [&](const ScopeTarget& target, const std::string& scope, bool top, int player = 0) {
         Layers layers;
         Sources sources;
         JsonValue surface;
         const auto take = [&](const Profile& profile) {
-            Merge(layers, profile, sources);
+            Merge(layers, profile, sources, player);
             if (profile.kind == ProfileKind::Debug && !profile.haptics.IsNull())
                 surface = profile.haptics;  // the later (more specific) one wins whole
             if (!top)
@@ -508,6 +520,8 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
                 resolved.video = profile.video;
                 resolved.videoProfile = profile.id;
             }
+            if (!profile.joystickKeys.empty())
+                resolved.joystickKeys = profile.joystickKeys;
             if (profile.kind == ProfileKind::Play && !profile.haptics.IsNull())
             {
                 resolved.haptics = profile.haptics;
@@ -558,6 +572,20 @@ ResolvedProfiles ProfileStore::Resolve(const ProfileContext& context) const
         });
         if (deviceNamed)
             mergeFor(target, device.id, false);
+    }
+    // The pads of a `play@N` layer: the N-th pad connected gets the whole set with its own layer over the play layer
+    std::set<int> players;
+    for (const Profile* profile : selected)
+        for (const auto& layer : profile->layers)
+            if (const int player = PlayerOfLayer(layer.first); player != 0)
+                players.insert(player);
+    int padNumber = 0;
+    for (const HostDeviceInfo& device : context.devices)
+    {
+        if (!IsPad(device))
+            continue;
+        if (players.count(++padNumber) != 0)
+            mergeFor({device.family, device.id, device.layout, AliasesOf(device.id)}, device.id, false, padNumber);
     }
     return resolved;
 }
@@ -676,6 +704,8 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
                 {{"device", JsonValue::String(pin.device)}, {"connector", JsonValue::String(pin.connector)}}));
         root.Set("players", JsonValue::Array(std::move(players)));
     }
+    if (!profile.joystickKeys.empty())
+        root.Set("joystick_keys", JsonValue::String(profile.joystickKeys));
     if (!profile.options.GetMembers().empty())
         root.Set("options", profile.options);
 

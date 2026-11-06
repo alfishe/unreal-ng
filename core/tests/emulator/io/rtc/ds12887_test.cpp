@@ -241,6 +241,7 @@ TEST(Ds12887_Test, UpdateEndedFlagOncePerSecond)
 {
     Rtc rtc;
     rtc.Set(0x26, 0x01, 0x01, 0x10, 0x00, 0x00);
+    rtc.Write(Ds12887::kRegA, 0x20);  // no periodic rate: PF stays out of C
     EXPECT_EQ(rtc.Read(Ds12887::kRegC), 0x00);
 
     rtc.now += kSecond / 2 - 1;
@@ -272,11 +273,39 @@ TEST(Ds12887_Test, UpdateInProgressWindow)
     EXPECT_EQ(rtc.Read(Ds12887::kRegA) & 0x7F, 0x2F) << "UIP is read-only, bits 6-0 stored";
 }
 
+/// PF follows the rate select in emulated time, with or without PIE; /IRQ is low while a flag with its enable is
+/// set and rises when C is read. 1024 Hz (A = #26) is 32 ticks of the 32.768 kHz crystal: 976.5625 us
+TEST(Ds12887_Test, PeriodicFlagAndIrqPin)
+{
+    Rtc rtc;
+    rtc.Set(0x26, 0x01, 0x01, 0x10, 0x00, 0x00);
+    rtc.Read(Ds12887::kRegC);
+    rtc.now = rtc.now / 15625 * 15625 + 15625 + 1;   // 1 us past a periodic edge (16 periods = 15625 us)
+    EXPECT_EQ(rtc.Read(Ds12887::kRegC) & 0x40, 0x40) << "PF without PIE";
+    EXPECT_FALSE(rtc.chip.IsIrqAsserted()) << "PIE off: no IRQ";
+    EXPECT_FALSE(rtc.chip.IrqMayAssert());
+
+    rtc.Write(Ds12887::kRegB, 0x42);  // PIE
+    EXPECT_TRUE(rtc.chip.IrqMayAssert());
+    rtc.now += 900;
+    EXPECT_FALSE(rtc.chip.IsIrqAsserted()) << "less than one period later";
+    rtc.now += 100;
+    EXPECT_TRUE(rtc.chip.IsIrqAsserted()) << "the next edge pulls /IRQ low";
+    EXPECT_TRUE(rtc.chip.IsIrqAsserted()) << "held until C is read";
+    EXPECT_EQ(rtc.Read(Ds12887::kRegC) & 0xC0, 0xC0) << "IRQF + PF";
+    EXPECT_FALSE(rtc.chip.IsIrqAsserted()) << "the read releases it";
+
+    rtc.Write(Ds12887::kRegA, 0x66);  // divider reset: no periodic output
+    rtc.now += 10 * 977;
+    EXPECT_FALSE(rtc.chip.IsIrqAsserted());
+}
+
 /// AF rises when seconds / minutes / hours match; 11xxxxxx is don't-care
 TEST(Ds12887_Test, AlarmFlag)
 {
     Rtc rtc;
     rtc.Set(0x26, 0x01, 0x01, 0x10, 0x00, 0x00);
+    rtc.Write(Ds12887::kRegA, 0x20);  // no periodic rate: PF stays out of C
     rtc.Write(Ds12887::kSecondsAlarm, 0x02);
     rtc.Write(Ds12887::kMinutesAlarm, 0xC0);
     rtc.Write(Ds12887::kHoursAlarm, 0xFF);

@@ -1,4 +1,8 @@
 #include "breakpointeditor.h"
+
+#include <algorithm>
+
+#include "emulator/emulatorcontext.h"
 #include "emulator/remotecontrolguard.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include <QVBoxLayout>
@@ -8,6 +12,7 @@
 #include <QMessageBox>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QFontDatabase>
 #include <QInputDialog>
 
 BreakpointEditor::BreakpointEditor(std::shared_ptr<Emulator> emulator, Mode mode, QWidget* parent)
@@ -53,6 +58,16 @@ BreakpointEditor::~BreakpointEditor()
 {
 }
 
+void BreakpointEditor::addNextTypes()
+{
+    if (_typeCombo->count() > BRK_NEXTREG)
+        return;
+    _typeCombo->addItem("NextREG (ZX Next)");
+    _typeCombo->addItem("Beam (ZX Next)");
+    _typeCombo->addItem("Copper (ZX Next)");
+    _typeCombo->addItem("Magic opcode (ZX Next)");
+}
+
 void BreakpointEditor::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
@@ -61,14 +76,13 @@ void BreakpointEditor::setupUI()
     QHBoxLayout* typeLayout = new QHBoxLayout();
     QLabel* typeLabel = new QLabel("Type:");
     _typeCombo = new QComboBox();
-    // In BreakpointTypeEnum order: the index is the type
+    // In BreakpointTypeEnum order: the index is the type. The ZX Next kinds (the tail) only on a ZX Next
     _typeCombo->addItem("Memory");
     _typeCombo->addItem("Port");
     _typeCombo->addItem("Keyboard");
-    _typeCombo->addItem("NextREG (ZX Next)");
-    _typeCombo->addItem("Beam (ZX Next)");
-    _typeCombo->addItem("Copper (ZX Next)");
-    _typeCombo->addItem("Magic opcode (ZX Next)");
+    const EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: the dialog holds the shared_ptr
+    if (context && context->config.mem_model == MM_NEXT)
+        addNextTypes();
     
     typeLayout->addWidget(typeLabel);
     typeLayout->addWidget(_typeCombo);
@@ -206,6 +220,34 @@ void BreakpointEditor::setupUI()
     _magicBox->setLayout(magicLayout);
     mainLayout->addWidget(_magicBox);
     
+    // Condition: the core's language, checked while typed
+    _conditionRow = new QWidget();
+    QVBoxLayout* conditionLayout = new QVBoxLayout(_conditionRow);
+    conditionLayout->setContentsMargins(0, 0, 0, 0);
+    conditionLayout->setSpacing(2);
+    QHBoxLayout* conditionLine = new QHBoxLayout();
+    conditionLine->addWidget(new QLabel("Condition:"));
+    _conditionEdit = new QLineEdit();
+    _conditionEdit->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    _conditionEdit->setPlaceholderText("optional: stop only when it holds, e.g. A == 5 && HL >= #4000");
+    _conditionEdit->setToolTip(
+        "Stop only when the condition holds (empty: always).\n"
+        "Registers: A F B C D E H L, AF BC DE HL IX IY SP PC, the ' set, I R IM\n"
+        "Flags: Z NZ CY NC PE PO FM FP\n"
+        "Memory: M(address) a byte, W(address) a word\n"
+        "The access: VAL the value, ADDR the address or port, RD WR IN OUT\n"
+        "The machine: T FRAME HITS FD (#7FFD) DOS PG0..PG3\n"
+        "Operators: == != < > <= >=  && || !  & | ^ ~  + - * / %  << >>; x@prev the value at the last check\n"
+        "Numbers are decimal: 16384; hex is #4000, $4000 or 0x4000");
+    conditionLine->addWidget(_conditionEdit);
+    conditionLayout->addLayout(conditionLine);
+    _conditionStatus = new QLabel();
+    _conditionStatus->setWordWrap(true);
+    _conditionStatus->setTextFormat(Qt::RichText);
+    _conditionStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    conditionLayout->addWidget(_conditionStatus);
+    mainLayout->addWidget(_conditionRow);
+
     // Group selection
     QHBoxLayout* groupLayout = new QHBoxLayout();
     QLabel* groupLabel = new QLabel("Group:");
@@ -239,6 +281,11 @@ void BreakpointEditor::setupUI()
     // Active checkbox
     _activeCheck = new QCheckBox("Active");
     mainLayout->addWidget(_activeCheck);
+
+    // Count only: the hits are counted (the list shows them), the machine never stops
+    _countOnlyCheck = new QCheckBox("Count only (never stops)");
+    _countOnlyCheck->setToolTip("Memory, port, event and chip register breakpoints: count the hits without stopping");
+    mainLayout->addWidget(_countOnlyCheck);
     
     // Validation label
     _validationLabel = new QLabel();
@@ -264,6 +311,7 @@ void BreakpointEditor::setupUI()
             this, &BreakpointEditor::onAddressChanged);
     connect(_okButton, &QPushButton::clicked, 
             this, &BreakpointEditor::onAccept);
+    connect(_conditionEdit, &QLineEdit::textChanged, this, &BreakpointEditor::validateInput);
     for (QCheckBox* check : {_readCheck, _writeCheck, _executeCheck, _inCheck, _outCheck, _keyPressCheck, _keyReleaseCheck,
                              _nrReadCheck, _nrWriteCheck, _doorNextRegCheck, _doorPortCheck, _doorCopperCheck})
         connect(check, &QCheckBox::toggled, this, &BreakpointEditor::validateInput);
@@ -305,7 +353,9 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
 
     _descriptor = *bp;
     
-    // Set type
+    // Set type (a ZX Next kind made elsewhere still edits as itself)
+    if (bp->type >= _typeCombo->count())
+        addNextTypes();
     _typeCombo->setCurrentIndex(static_cast<int>(bp->type));
     
     // Set address
@@ -377,9 +427,14 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     
     // Set note
     _noteEdit->setText(QString::fromStdString(bp->note));
+    _loadedCondition = bp->condition ? QString::fromStdString(bp->condition->Source()) : QString();
+    if (bp->conditionFailed)
+        _loadedConditionError = QString::fromStdString(bp->conditionError);
+    _conditionEdit->setText(_loadedCondition);
     
     // Set active state
     _activeCheck->setChecked(bp->active);
+    _countOnlyCheck->setChecked(bp->tapSink == BRK_COUNT_TAP);
     
     // Update UI based on type
     onTypeChanged(_typeCombo->currentIndex());
@@ -396,6 +451,12 @@ void BreakpointEditor::onTypeChanged(int index)
     _beamBox->setVisible(type == BRK_BEAM);
     _magicBox->setVisible(type == BRK_MAGIC);
     _pageRow->setVisible(type == BRK_MEMORY);
+    _conditionRow->setVisible(type != BRK_KEYBOARD);
+    // The kinds a tap watches (BreakpointManager::AddBreakpoint refuses the others)
+    const bool countable = type == BRK_MEMORY || type == BRK_IO || type == BRK_EVENT || type == BRK_CHIPREG;
+    _countOnlyCheck->setVisible(countable);
+    if (!countable)
+        _countOnlyCheck->setChecked(false);
     const bool ranged = type == BRK_MEMORY || type == BRK_NEXTREG || type == BRK_COPPER;
     _endLabel->setVisible(ranged);
     _endEdit->setVisible(ranged);
@@ -444,7 +505,9 @@ void BreakpointEditor::validateInput()
                                                     : validateAddress(_addressEdit->text(), address)))
     {
         isValid = false;
-        errorMessage = "Invalid address format. Use 0xNNNN, $NNNN, #NNNN, or decimal.";
+        // Nothing typed yet is not a mistake: OK waits for it, no reproach
+        if (!_addressEdit->text().trimmed().isEmpty())
+            errorMessage = "Invalid address format. Use 0xNNNN, $NNNN, #NNNN, or decimal.";
     }
     else if (type == BRK_MEMORY && !(_readCheck->isChecked() || _writeCheck->isChecked() || _executeCheck->isChecked()))
     {
@@ -473,9 +536,82 @@ void BreakpointEditor::validateInput()
         errorMessage = "At least one door (NEXTREG, port, copper) must be selected.";
     }
 
+    // The condition last: a kind or access change can make it refused (RD on an execution breakpoint)
+    if (!checkCondition())
+        isValid = false;  // the reason is under the field
+
     // Update validation label and OK button state
     _validationLabel->setText(errorMessage);
     _okButton->setEnabled(isValid);
+}
+
+QString BreakpointEditor::SplitConditionError(const QString& error, int& column)
+{
+    QString message = error;
+    if (message.startsWith("condition: "))
+        message = message.mid(11);
+    column = 0;
+    static const QRegularExpression kColumn(" at column (\\d+)$");
+    const QRegularExpressionMatch match = kColumn.match(message);
+    if (match.hasMatch())
+    {
+        column = match.captured(1).toInt();
+        message.truncate(match.capturedStart());
+    }
+    if (!message.isEmpty())
+        message[0] = message[0].toUpper();
+    return message;
+}
+
+bool BreakpointEditor::checkCondition()
+{
+    const BreakpointTypeEnum type = static_cast<BreakpointTypeEnum>(_typeCombo->currentIndex());
+    const QString text = _conditionEdit->text();
+    if (type == BRK_KEYBOARD || text.trimmed().isEmpty())
+    {
+        _conditionStatus->setText(type == BRK_KEYBOARD ? QString()
+                                                       : "<span style='color:gray'>No condition: every hit stops.</span>");
+        _conditionEdit->setStyleSheet(QString());
+        return true;
+    }
+    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    if (!bpManager)
+        return true;
+    std::string error;
+    const BreakpointConditionPtr program = bpManager->CompileCondition(type, selectedAccess(type), text.toStdString(),
+                                                                       BreakpointConditionDialect::Unreal, error);
+    if (program)
+    {
+        // The canonical form shows how the operators bind (Unreal: comparisons before & | ^)
+        QString status = "<span style='color:green'>&#10003;</span> Stops when: <code>" +
+                         QString::fromStdString(program->Canonical()).toHtmlEscaped() + "</code>";
+        if (!_loadedConditionError.isEmpty() && text == _loadedCondition)
+            status += "<br><span style='color:#b06000'>It failed while running: " + _loadedConditionError.toHtmlEscaped() +
+                      ". OK sets it again.</span>";
+        _conditionStatus->setText(status);
+        _conditionEdit->setStyleSheet(QString());
+        return true;
+    }
+    int column = 0;
+    const QString message = SplitConditionError(QString::fromStdString(error), column);
+    QString html = "<span style='color:#c00000'>" + message.toHtmlEscaped() + "</span>";
+    if (column > 0)
+    {
+        // The text with the place marked: the word there (a name, a number), one character, or the end
+        const int at = std::min(column - 1, static_cast<int>(text.size()));
+        auto wordChar = [](QChar ch) { return ch.isLetterOrNumber() || ch == '_' || ch == '.' || ch == '#' || ch == '$'; };
+        int end = at < text.size() ? at + 1 : at;
+        if (at < text.size() && wordChar(text[at]))
+            while (end < text.size() && (wordChar(text[end]) || text[end] == '\''))
+                end++;
+        const QString mark = end > at ? text.mid(at, end - at) : QString(" ");
+        html += "<br><code>" + text.left(at).toHtmlEscaped() +
+                "<span style='background:#ffb0b0;color:#900000'><u>" + mark.toHtmlEscaped() + "</u></span>" +
+                text.mid(end).toHtmlEscaped() + "</code>";
+    }
+    _conditionStatus->setText(html);
+    _conditionEdit->setStyleSheet("QLineEdit { border: 1px solid #c00000; }");
+    return false;
 }
 
 uint8_t BreakpointEditor::selectedAccess(BreakpointTypeEnum type) const
@@ -619,6 +755,9 @@ void BreakpointEditor::onAccept()
     spec.address = address;
     spec.note = _descriptor.note;
     spec.group = _descriptor.group;
+    spec.stop = !_countOnlyCheck->isChecked();
+    if (type != BRK_KEYBOARD)
+        spec.condition = _conditionEdit->text().trimmed().toStdString();
     std::string error;
     uint16_t value = 0;
     const bool ranged = type == BRK_MEMORY || type == BRK_NEXTREG || type == BRK_COPPER;

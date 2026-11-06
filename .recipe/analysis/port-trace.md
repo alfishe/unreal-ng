@@ -154,7 +154,10 @@ Query params: `limit` (default 0 = all — beware multi-MB responses) and
 Event fields (verbose form): `index`, `timestamp` (t-state), `frame`,
 `raw_port`, `decoded_port`, `decode_rule` (the model's table index; 255 unmapped, 254 BDI fallback,
 253 no table, 252 no bus cycle: the Next's NEXTREG instruction as OUT #243B / #253B), `value`, `pc`, `direction`
-(`IN`/`OUT`), `device`, flag booleans (`decoded`, `had_handler`,
+(`IN`/`OUT`), `device` (the decoder's tag), `owner` (the device of the machine's registry whose port claim covers
+the access: a card's slot such as `zxbus.1`, a built-in's id such as `beta128`; `""` for the board's own ports; the
+same claims `GET /slots` lists; also in the CLI `porttrace dump` Owner column and the Lua / Python event tables),
+flag booleans (`decoded`, `had_handler`,
 `beta128_gated`, ...) and, on decoders with codes, `code` / `code_name`.
 The compact form (`ts`, `raw`, `dec`, `val`, `dev`, `flags`) is what the
 saved JSON file and the `readfile` endpoint (with `offset`/`count`) use.

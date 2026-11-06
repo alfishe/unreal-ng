@@ -1175,6 +1175,28 @@ Every debug memory callback knows who is on the bus:
 - **Headless:** `unreal-ng --headless --script test.lua --exit-on-script`
   returns the script's exit code.
 
+**Card writes from a hook (Q3, owner 2026-10-29).** A time travel track is immutable: what changes the machine
+after a seek is a fork, and the fork's track records it. A card hook writes the card the way a main CPU `logic` hook
+writes the machine:
+
+- `poke` (card memory as the card CPU sees it), `set_reg` (the card CPU's registers) and the byte a card read sees
+  (the sync hook's return value). `poke` / `set_reg` are made at the card's next instruction boundary (a register
+  set inside a step would be lost), the read's byte at once. Role `view`: refused while a session records or is
+  browsed. Role `logic`: while a session records each write is an input of the track. While a session is browsed nothing writes (a hook does not run in a
+  replay; seek + resume forks, and the fork records).
+- **Where it sits in the track.** The card runs behind the host and catches up at the host's port accesses and the
+  frame end; a replay repeats the same catch-ups, so the card's time in the frame (`totalGsCycles -
+  _frameStartGsCycles`, NeoGS `_runner.now() - _frameStartTicks`, both in the card state) places an edit exactly. The
+  record is a `DebuggerEdit` event at the main CPU's position of the hook (its payload `kEditCardBytes`,
+  `kEditCardCpu`, `kEditCardRead`: the card's CPU id, the card time in the frame, the address or port and the bytes).
+- **The frame.** The card's frame-end catch-up runs after the frame counter moved on: an edit made there names the
+  frame the card is in (`GeneralSoundCard::inFrameEndCatchUp`), and its event sits just past that frame's end.
+- **Replay.** At the first instruction of a frame the controller hands every card edit of that frame (two frames of
+  events from the cursor hold them) to the card's target (`DeliverCardEdits`), which takes the card's debug loop
+  while edits wait; the main cursor passes those events by. At the
+  boundary whose card time reaches an edit's, `poke` / `set_reg` are made; a read substitution replaces the byte of
+  the read at that card time and address. The hook itself does not run.
+
 ### 8A.8 Audio tools (AU1-AU6)
 
 - **Mute and solo (AU1)** are applied in `GSAudioOut` / the NeoGS mixer, on
@@ -1360,11 +1382,11 @@ sources before this design was fixed. Its claims, one by one:
 
 | Claim | Verdict | Evidence |
 |---|---|---|
-| The page register is port `#30` | **Wrong.** It is port `#00` on both GS and NeoGS. | Original GS port doc `materials/neogs/GS_PORTS.TXT` (CP866): "порт 0 — расширенная память"; `materials/neogs/ports.inc:38` `MPAG equ #00`; emulator `soundchip_gs.cpp:850`. |
+| The page register is port `#30` | **Wrong.** It is port `#00` on both GS and NeoGS. | Original GS port doc `materials/neogs/GS_PORTS.TXT` (CP866): "port 0 - extended memory"; `materials/neogs/ports.inc:38` `MPAG equ #00`; emulator `soundchip_gs.cpp:850`. |
 | MPAG low bits select `#8000-#BFFF`, high bits `#C000-#FFFF` | **Wrong for GS.** D0-D3 select one 32K page for the whole `#8000-#FFFF`; D4-D7 are unused. On NeoGS, normal mode sets PG2 = 2v, PG3 = 2v+1; only in extended mode (`GSCFG0.EXPAG`) do `MPAG` and `MPAGEX` set the two windows separately. | `GS_PORTS.TXT` lines 1-4; NeoGS `fpgaD/ports/ports.v:406-415`; current `fpga/current/ports/ports.v:416-429`. |
-| Window 0 (`#0000-#3FFF`) is switchable through a latch | **Wrong for GS** (always ROM 0). **Right for the current NeoGS FPGA**: PG0 at port `#20`, plus `GSCFG0.NOROM` for ROM / RAM. The older fpgaD fixes page 0. | `GS_PORTS.TXT` "#0000-#3FFF - первые 16Kb ПЗУ"; `fpga/current/memmap/memmap.v`, `ports.v:434-436`; `fpgaD/memmap/memmap.v`. |
+| Window 0 (`#0000-#3FFF`) is switchable through a latch | **Wrong for GS** (always ROM 0). **Right for the current NeoGS FPGA**: PG0 at port `#20`, plus `GSCFG0.NOROM` for ROM / RAM. The older fpgaD fixes page 0. | `GS_PORTS.TXT` "#0000-#3FFF - the first 16Kb of ROM"; `fpga/current/memmap/memmap.v`, `ports.v:434-436`; `fpgaD/memmap/memmap.v`. |
 | Window 1 is fixed RAM page 0 | **Wrong**: it is the upper half of MPAG 1 (16K RAM page 1). Settled by the original schematic, see §11 risk 7. | GS doc and Xpeccy (`gs.c:120`): first 16K of the first RAM page. NeoGS FPGA (`memmap.v`: `high_addr = 3`) and Unreal Speccy (`gsz80.cpp:132`, `GSRAM_M + 3*PAGE`, with RAM pages 0-1 holding the ROM copy): upper half of MPAG 1. Firmware probe (`INIT_L.a80:50-81`): expects `#7FFF` to alias `#FFFF` of some page. Emulator before the fix: upper half of MPAG 2. Original schematic `GeneralSound/v.1.0/GS_GENER.TXT`: the `0x4000` window decode and page 1 both select chip RAM1, and A14=1 picks its upper half. |
-| With MPAG 0, ROM page 0 is also visible at `#8000` | **Right.** MPAG 0 maps the 32K ROM to `#8000-#FFFF`: ROM 0 at `#8000`, ROM 1 at `#C000`. | `GS_PORTS.TXT` "страница 0 - ПЗУ"; emulator `applyBanking`; Xpeccy `gs.c:65-66`. |
+| With MPAG 0, ROM page 0 is also visible at `#8000` | **Right.** MPAG 0 maps the 32K ROM to `#8000-#FFFF`: ROM 0 at `#8000`, ROM 1 at `#C000`. | `GS_PORTS.TXT` "page 0 - ROM"; emulator `applyBanking`; Xpeccy `gs.c:65-66`. |
 | Physical address = page × 16K + (address & `#3FFF`); breakpoints and labels should be stored by physical address | **Right**, and the current breakpoint key does not do it (it keys page + CPU address). Adopted in §3.3. | `breakpointmanager.cpp:1406-1410`. |
 | NeoGS RAM is 2 MB, pages 0-127 | **Right for fpgaD, outdated for the current FPGA**, which has 8-bit pages and `mema21`: 4 MB, 256 pages. | `fpgaD/memmap/memmap.v` (7-bit `mode_pg`); `fpga/current/memmap/memmap.v` (8-bit, `mema21`). |
 | Flat ROM / RAM arrays plus four window pointers | **Already so** in the emulator (`_rom`, `_ram`, `_bankR[4]`, `_bankW[4]`). | `soundchip_gs.h:263-271`. |

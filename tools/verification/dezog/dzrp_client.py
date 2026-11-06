@@ -18,10 +18,25 @@ class DZRPCommand(IntEnum):
     CMD_READ_MEM = 8
     CMD_WRITE_MEM = 9
     CMD_SET_SLOT = 10
+    CMD_GET_TBBLUE_REG = 11
     CMD_SET_BORDER = 12
+    CMD_SET_BREAKPOINTS = 13
+    CMD_RESTORE_MEM = 14
+    CMD_LOOPBACK = 15
+    CMD_GET_SPRITES_PALETTE = 16
+    CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL = 17
+    CMD_GET_SPRITES = 18
+    CMD_GET_SPRITE_PATTERNS = 19
     CMD_READ_PORT = 20
     CMD_WRITE_PORT = 21
+    CMD_EXEC_ASM = 22
+    CMD_INTERRUPT_ON_OFF = 23
     CMD_GET_SUPPORTED_COMMANDS = 24
+    # ZX Next (DeZog 3.x): a bank is a Next 8K bank
+    CMD_READ_BANK_MEM = 25
+    CMD_WRITE_BANK_MEM = 26
+    CMD_SET_NEXTREGS = 27
+    CMD_READ_MEM_BLOCKS = 28
     CMD_ADD_BREAKPOINT = 40
     CMD_REMOVE_BREAKPOINT = 41
     CMD_ADD_WATCHPOINT = 42
@@ -31,6 +46,45 @@ class DZRPCommand(IntEnum):
     # Unreal-NG extensions (TTD-backed instruction history)
     CMD_GET_HISTORY_INFO = 0xE0
     CMD_GET_HISTORY_ENTRY = 0xE1
+
+class Reg(IntEnum):
+    """CMD_SET_REGISTER ids (DeZog Z80_REG)"""
+    PC = 0
+    SP = 1
+    AF = 2
+    BC = 3
+    DE = 4
+    HL = 5
+    IX = 6
+    IY = 7
+    AF2 = 8
+    BC2 = 9
+    DE2 = 10
+    HL2 = 11
+    IM = 13
+    F = 14
+    A = 15
+    C = 16
+    B = 17
+    E = 18
+    D = 19
+    L = 20
+    H = 21
+    IXL = 22
+    IXH = 23
+    IYL = 24
+    IYH = 25
+    F2 = 26
+    A2 = 27
+    C2 = 28
+    B2 = 29
+    E2 = 30
+    D2 = 31
+    L2 = 32
+    H2 = 33
+    R = 34
+    I = 35
+
 
 class DZRPNotification(IntEnum):
     NTF_PAUSE = 1
@@ -52,6 +106,8 @@ class DZRPClient:
     # Frames carry at least one seq byte; the server rejects >1MB command
     # payloads, so anything beyond this generous cap is wire corruption.
     MAX_FRAME_LEN = 16 * 1024 * 1024
+    # A command's reply (a full 64K read, a snapshot) comes well within this
+    COMMAND_TIMEOUT = 5.0
 
     def __init__(self, host: str = "localhost", port: int = 12000):
         self.host = host
@@ -65,7 +121,7 @@ class DZRPClient:
     def connect(self) -> bool:
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.settimeout(5.0)
+            self.sock.settimeout(self.COMMAND_TIMEOUT)
             self.sock.connect((self.host, self.port))
             return True
         except Exception as e:
@@ -203,6 +259,16 @@ class DZRPClient:
         resp = self._send_command(DZRPCommand.CMD_CONTINUE, payload)
         return not resp.nak
 
+    def cmd_continue_bps(self, bp1=None, bp2=None) -> bool:
+        """CMD_CONTINUE exactly as DeZog's sendDzrpCmdContinue builds it: each of bp1 / bp2 is a 64K address or
+        None (disabled); alternate command CONTINUE (0)"""
+        payload = b""
+        for bp in (bp1, bp2):
+            payload += bytes([0 if bp is None else 1]) + struct.pack("<H", 0 if bp is None else bp)
+        payload += bytes([0, 0, 0, 0, 0])
+        resp = self._send_command(DZRPCommand.CMD_CONTINUE, payload)
+        return not resp.nak and len(resp.payload) == 0
+
     def _send_raw_command(self, cmd_id: int, payload: bytes) -> DZRPResponse:
         """Send raw command (for testing unknown commands)."""
         return self._send_command(cmd_id, payload)
@@ -263,6 +329,50 @@ class DZRPClient:
         resp = self._send_command(DZRPCommand.CMD_WRITE_PORT,
                                   struct.pack("<H", port) + bytes([value & 0xFF]))
         return not resp.nak and len(resp.payload) == 0
+
+    def cmd_add_breakpoint_long(self, long_addr: int, condition: str = "") -> int:
+        """CMD_ADD_BREAKPOINT the way DeZog sends a long address: addr(2) + (bank+1)(1) + condition"""
+        return self.cmd_add_breakpoint(long_addr & 0xFFFF, (long_addr >> 16) & 0xFF, condition)
+
+    def cmd_get_tbblue_reg(self, reg: int) -> bytes:
+        """CMD_GET_TBBLUE_REG: register(1) -> value(1). Returns the raw payload"""
+        return self._send_command(DZRPCommand.CMD_GET_TBBLUE_REG, bytes([reg & 0xFF])).payload
+
+    def cmd_read_bank_mem(self, bank: int, offset: int, size: int) -> bytes:
+        """CMD_READ_BANK_MEM: bank(1) + offset(2) + size(2) -> the bytes"""
+        return self._send_command(DZRPCommand.CMD_READ_BANK_MEM,
+                                  bytes([bank & 0xFF]) + struct.pack("<HH", offset, size)).payload
+
+    def cmd_write_bank_mem(self, bank: int, offset: int, data: bytes) -> bytes:
+        """CMD_WRITE_BANK_MEM: bank(1) + offset(2) + data -> (empty)"""
+        return self._send_command(DZRPCommand.CMD_WRITE_BANK_MEM,
+                                  bytes([bank & 0xFF]) + struct.pack("<H", offset) + data).payload
+
+    def cmd_set_nextregs(self, pairs) -> bytes:
+        """CMD_SET_NEXTREGS: (register, value) pairs, written in order -> (empty)"""
+        return self._send_command(DZRPCommand.CMD_SET_NEXTREGS,
+                                  b"".join(bytes([r & 0xFF, v & 0xFF]) for r, v in pairs)).payload
+
+    def cmd_read_mem_blocks(self, blocks) -> bytes:
+        """CMD_READ_MEM_BLOCKS: length(4) + {addr(2) + size(2)}... -> the blocks one after the other"""
+        body = b"".join(struct.pack("<HH", a, n) for a, n in blocks)
+        return self._send_command(DZRPCommand.CMD_READ_MEM_BLOCKS, struct.pack("<I", len(body)) + body).payload
+
+    def cmd_get_sprites_palette(self, palette: int) -> bytes:
+        """CMD_GET_SPRITES_PALETTE: palette(1, 0 / 1) -> 256 x (rrrgggbb, 0000000b)"""
+        return self._send_command(DZRPCommand.CMD_GET_SPRITES_PALETTE, bytes([palette])).payload
+
+    def cmd_get_sprites_clip(self) -> bytes:
+        """CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL: -> xl, xr, yt, yb, control (NR #15)"""
+        return self._send_command(DZRPCommand.CMD_GET_SPRITES_CLIP_WINDOW_AND_CONTROL).payload
+
+    def cmd_get_sprites(self, index: int, count: int) -> bytes:
+        """CMD_GET_SPRITES: index(1) + count(1) -> count x 5 attribute bytes"""
+        return self._send_command(DZRPCommand.CMD_GET_SPRITES, bytes([index & 0xFF, count & 0xFF])).payload
+
+    def cmd_get_sprite_patterns(self, index: int, count: int) -> bytes:
+        """CMD_GET_SPRITE_PATTERNS: index(1) + count(1) -> count x 256 pattern bytes"""
+        return self._send_command(DZRPCommand.CMD_GET_SPRITE_PATTERNS, bytes([index & 0xFF, count & 0xFF])).payload
 
     def cmd_get_supported_commands(self) -> set:
         resp = self._send_command(DZRPCommand.CMD_GET_SUPPORTED_COMMANDS)
@@ -339,6 +449,8 @@ class DZRPClient:
             return DZRPPauseNotification(reason, addr, bank, message)
         except socket.timeout:
             return None
+        finally:
+            self.sock.settimeout(self.COMMAND_TIMEOUT)
 
 
 if __name__ == "__main__":

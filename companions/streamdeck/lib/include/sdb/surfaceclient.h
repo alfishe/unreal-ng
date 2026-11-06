@@ -137,6 +137,8 @@ public:
     }
     // The deck has a session now (its actions go over the socket); thread-safe
     [[nodiscard]] bool Joined(const std::string& serial) const;
+    // A companion token to join with (not the REST fallback): a deck's join will carry its context; thread-safe
+    [[nodiscard]] bool Paired() const { return _paired; }
 
     std::function<void(const std::string& line)> log;
 
@@ -196,6 +198,7 @@ private:
     std::map<std::string, std::string> _labels;  // action id -> catalogue label
 
     std::atomic<bool> _open{false};
+    std::atomic<bool> _paired{false};
     mutable std::mutex _statusMutex;
     std::map<std::string, std::string> _sessions;  // serial -> session, for the executors (under _statusMutex)
     json _status = json::object();

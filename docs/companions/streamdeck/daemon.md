@@ -9,7 +9,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 
 | Command | What |
 |:--|:--|
-| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) until a scenario is loaded for a deck |
+| `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the data directory's product scenario (`streamdeck/scenarios/unreal.deck.yaml`) on decks of the model it is made for and the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) on the others, until a scenario is loaded for a deck |
 | `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
 | `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
@@ -33,7 +33,9 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | `--parent PID[,PID]` | Live for these processes: stop when the last is gone or releases it ([below](#one-daemon-and-its-starters)) |
 | `--with-parent` | The same for the process that started it (all platforms) |
 | `--activity LOOK` | How every deck shows what other surfaces do, over the scenarios' own `settings.activity`: `scenario`, `off`, `flash`, `line` (unreal-qt passes its setting) |
+| `--idle` | No product scenario: the idle one on every deck until a scenario is loaded |
 | `--lock FILE` / `--no-lock` | Another single-instance lock file (default: [below](#one-daemon-and-its-starters)), or none (tests, a second daemon on purpose) |
+| `--ready-fd N` | Write `ready` to the inherited descriptor N (on Windows: the handle's value) once the automation port serves, then close it; unreal-qt's supervisor passes a pipe and looks at once instead of polling |
 
 ## The surface client
 
@@ -48,9 +50,10 @@ on the daemon's network loop (no thread of its own), with the token of `unreal-s
 | Readouts | `subscribe` with exactly what the scenario names: the readouts of the faces' `state` paths (`run.state.paused` -> `run.state`) and of the strips (`ttd` -> `ttd.position`, `run` -> `run.state`, `tape` -> `media.tape`, `target` -> `machine`), at 50 Hz with a TTD timeline, else 10 Hz. Values go into the faces (`Runtime::SetReadout`) and the strip ([below](#strip-readouts)); a deck with a session polls nothing (its REST poller thread ends) |
 | Contexts | `ctx` from the core moves the deck to the nearest menu declaring it (`Runtime::OnContext`); entering a menu with a `context` sends `ctx.set`. After a new instance (a machine replaced, unreal-qt restarted) the deck keeps its page and sends its context to the new instance |
 | Activity | `activity` (an action another surface ran on the target) flashes the visible keys bound to the same id; `settings.activity.strip: "line"` adds a quiet line "LABEL - surface" for `seconds`; `ttd.seek_by` is ignored by default (Q-3) |
-| Target | `target` (the instance the session drives: model, RAM, index, follow / pinned) is the strip's target line. A `{"view": n}` target the host refuses (`not_now`: no views on the surface topic yet) is joined again with `"follow"` |
+| Target | `target` (the instance the session drives: model, RAM, index, view, follow / view / instance) is the strip's target line. Each deck's session is a `TargetState` session on the host: unreal-qt's surfaces table and `PUT /api/v1/surfaces/sessions/{id}/pin` pin it, and the deck is told by `target`. A `{"view": n}` target the host cannot bind (`not_now`: a host without views; `Not Found`: no view `vN`) is joined again with `"follow"` |
 | Instances | The `instances` topic on the same connection: the host's instance list (`GET /api/v1/surface`) |
 | Reconnect | A dropped socket (unreal-qt quits or restarts) reconnects with backoff 0.25 s .. 5 s and joins every deck again; meanwhile the strips say `RECONNECTING` and the REST fallback serves |
+| Page | Each deck's menu path (by serial and scenario) is kept in `~/.config/unreal-streamdeck/deck-pages.json` whenever it changes (written through a temporary file): a restarted daemon opens the deck where it was (the longest prefix of the path the scenario still has) |
 | Revoked | `revoked` (or a handshake refused with 401: a token the host no longer knows) stops the client: every strip says `COMPANION REVOKED - TOUCH TO PAIR`, actions fail at once. The companion file is looked at every 2 s; a new token ([pairing](#pairing)) connects again |
 | Not paired | No companion file: REST only, every strip says `NOT PAIRED - TOUCH TO PAIR`, the file is watched the same way |
 
@@ -124,7 +127,8 @@ attached), Stream Deck Studio (it starts one when none answers). The daemon watc
 `EVFILT_PROC` on macOS, a pidfd on Linux, a process handle on Windows; looked at every 250 ms by the watcher thread) and
 stops cleanly when the last one is gone or gives its lease back (`DELETE /api/v1/parents/{pid}`): unreal-qt quitting
 leaves it running while a studio still holds it, and the other way round. A daemon started with no parent (by hand)
-is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal.
+is nobody's: leases come and go, it stays until `POST /api/v1/quit` or a signal. When it stops, the real deck is left dark with `UNREAL-NG STREAM DECK
+STOPPED` on the strip, not frozen on a page whose keys no longer answer.
 
 | Route | What |
 |:--|:--|
@@ -140,7 +144,8 @@ restarts, adoption) is in [the design](../../inprogress/2026-10-19-streamdeck-in
 
 ## The idle scenario
 
-Without a scenario every deck plays the idle one: the UnrealNG theme of the data directory
+Without a scenario (and with `--idle`, or on a deck of another model than the product scenario's, or without that
+file) a deck plays the idle one: the UnrealNG theme of the data directory
 (`$data/streamdeck/themes/unrealng`, [below](#data-directory)), laid out for the deck's model when the deck appears
 (`sdb/idlescenario.h`). Its keys are pictures only: pressing one does nothing (an empty `multi`).
 
@@ -157,7 +162,11 @@ Never the time-travel timeline: it is a strip readout, never keys (and idle has 
 theme's `ttd_strip.png` (`lcd_ttd` in `theme.json`) is a picture of that readout for the strip; the live one is the
 runtime's strip status (SD5). The brightness is the theme's (60). `GET /api/v1/decks/{serial}/scenario?document=true` shows the document made for
 that deck; a picture spread over several keys is one file with a region per key (`file.png#xywh=x,y,w,h`, below).
-`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows).
+`DELETE .../scenario` and `POST /api/v1/reload` make it again (an edited theme shows); for a deck on the product
+scenario `POST /api/v1/reload` reads that file again (`DaemonDecks::StartFileFor`).
+
+`UNREAL_STREAMDECK_USB=off` opens no USB deck: a test rig runs its own decks beside the user's daemon and deck
+([environment variables](../../emulator/environment-variables.md)).
 
 ## Data directory
 
@@ -181,7 +190,8 @@ The executable's path is the real one (links resolved: `/usr/bin` on the DEB, th
 `run` prints the folder it took (`data: ...`), or a note when there is none: then `$data` paths do not load and the
 idle screen is the drawn title. Every release package carries `data/streamdeck` where row 2 or 3 finds it:
 `UnrealNG.app/Contents/Resources/streamdeck`, `streamdeck/` beside the executables (Windows ZIP, Linux tarball,
-AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)).
+AppImage `usr/bin`), `/usr/lib/unreal-ng/streamdeck` (DEB) ([packaging.md §6](../../inprogress/2026-10-19-streamdeck-integration/packaging.md#6-data)),
+and beside it the test software the scenarios open as `$data/...`: `testsoft/`, `testtapes/`, `testsnapshots/`.
 
 Picture paths in faces and the strip (`face.image`, `strip.image`):
 
@@ -190,7 +200,8 @@ Picture paths in faces and the strip (`face.image`, `strip.image`):
 | `$data/streamdeck/...` | under the data directory |
 | `$icons/name.svg` | `$data/icons/name.svg` |
 | `...png#xywh=x,y,w,h` | a region of the file in its pixels ([W3C media fragment](https://www.w3.org/TR/media-frags/#naming-space), `pixel:` allowed); the parts of the region outside the picture are black |
-| anything else | as written (relative to the daemon's working directory) |
+| `$scenario/...`, a relative path | the scenario file's folder; in an included file its own folder (rebased onto the including file's when the include is resolved) |
+| anything else | as written |
 
 An image strip (`strip.content: image`) is drawn edge to edge, from the crumbs (or the left edge) to the right edge,
 aspect kept.
@@ -269,7 +280,7 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
 | `POST /api/v1/decks/{serial}/reconnect` | `{"away_ms": 0..60000}`: close the real deck's USB handle and open it again after that long (an unplug on purpose, [hot plug](#hot-plug)); 409 for an own deck |
 | `POST /api/v1/decks/{serial}/snapshot` | `{"path": file}`: every viewer of the deck saves a PNG there (a `Control` frame); answers how many viewers it went to, 409 when nobody views the deck |
-| `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now; the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
+| `GET /api/v1/state`, `/page`, `/nodes` | The runtime of one deck: menu stack, page, toggles, last actions; what the keys mean now (each page key's `on`, `value`, and `flash: true` while an activity flash lights it); the scenario's nodes (filters `tag`, `type`, `kind`, `menu`, `text`) |
 | `POST /api/v1/navigate`, `/press` | `{"to": back\|home\|node, "node"}`; a key by `node` id or `key` index (down and up). The answer is `/state` once the deck's device thread has applied it (its next step, ~10 ms; no fixed wait), with `deck` and `"applied": true`; a device thread that does not come round within 1 s answers 202, `"applied": false`, the state as it was (the request stays queued). An action the press starts runs on the runtime's worker: its result is in `last_actions` of a later `/state`. A node that is not on the page: 404 before anything is queued |
 | `POST /api/v1/reload` | Read the deck's file again, or `{"file"}` for another one (as `PUT .../scenario`) |
 | `GET /api/v1/scenario` | The deck's file and its document |
@@ -377,7 +388,7 @@ Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).
 | `emu-snapshot` (no `--api`), `emu-model`, `emu-record` | v1, against `unreal-streamdeck-studio --listen` | In v2 a viewer's model is the viewer's own choice (a mirror follows the deck, an own deck is picked in the studio or with its `PUT /api/v1/connection`) and recording is the studio's (`POST /api/v1/recording` on its port): there is nothing for the daemon to forward. They stay as the protocol tests of the v1 server, with `sdctl --device emu:...` |
 
 ```
-unreal-streamdeck run my-scenario.yaml &    # the default scenario ships with SD5; no file: the idle screen
+unreal-streamdeck run my-scenario.yaml &    # no file: the product scenario on its model, the idle screen elsewhere
 sdctl viewer --seconds 3                  # mirror of the first deck: replay, then live frames
 sdctl viewer --own neo --seconds 3        # a Neo of its own, with its own runtime
 ```

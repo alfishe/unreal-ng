@@ -22,6 +22,7 @@
 #include "check.h"
 #include "sdb/automation.h"
 #include "sdb/daemonlife.h"
+#include "sdb/deckpages.h"
 #include "sdb/device.h"
 #include "sdb/models.h"
 #include "sdb/pairing.h"
@@ -372,10 +373,51 @@ void TestNoticeTap()
     CHECK(taps == 1);
 }
 
+// ACC-6: a restarted daemon opens each deck on the page it showed. The runtime reports its path on every menu
+// change; the store keeps it per serial and scenario in a file another process reads back
+void TestDeckPages()
+{
+    const std::string file = Scratch("deck-pages.json").string();
+    std::vector<scn::Issue> issues;
+    const auto s = scn::Parse(json::parse(R"({"name": "t", "model": "plusxl",
+        "root": {"id": "home", "type": "menu", "title": "Home", "items": [
+            {"id": "time", "type": "menu", "title": "Time", "at": [0, 1], "items": [
+                {"id": "a", "type": "action", "title": "A", "at": [1, 1], "do": {"kind": "webapi", "path": "/a"}}]}]}})"),
+                              issues);
+    CHECK(s.has_value());
+    if (!s)
+        return;
+    const Model& m = *FindModelByName("plusxl");
+    scn::RuntimeOptions opt;
+    opt.syncActions = true;
+    {
+        DeckPages pages(file);
+        Device dev(m, std::make_unique<NullTransport>(), "S1");
+        scn::Runtime rt(dev, *s, nullptr, opt);
+        rt.RestorePath(pages.Get("S1", s->name));
+        rt.onPathChanged = [&pages](const std::string& scenario, const std::vector<std::string>& ids) {
+            pages.Set("S1", scenario, ids);
+        };
+        rt.Navigate({{"to", "node"}, {"node", "time"}});
+        rt.Step(0);
+        CHECK(rt.State()["path"] == json::array({"Home", "Time"}));
+    }
+    DeckPages again(file);  // the restarted daemon
+    CHECK(again.Get("S1", "t") == std::vector<std::string>({"home", "time"}));
+    CHECK(again.Get("S1", "other").empty());  // another scenario: its home
+    CHECK(again.Get("S2", "t").empty());
+    Device dev(m, std::make_unique<NullTransport>(), "S1");
+    scn::Runtime rt(dev, *s, nullptr, opt);
+    rt.RestorePath(again.Get("S1", s->name));
+    CHECK(rt.State()["path"] == json::array({"Home", "Time"}));
+    rt.RestorePath({"home", "gone"});  // a menu the scenario no longer has: the prefix that exists
+    CHECK(rt.State()["path"] == json::array({"Home"}));
+}
 }  // namespace
 
 void TestDaemonLife()
 {
+    TestDeckPages();
     std::printf("daemon life, pairing\n");
     TestLock();
     TestParents();

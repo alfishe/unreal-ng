@@ -14,6 +14,8 @@
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/readouts.h"
 #include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/video/screen.h"
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowdisplay.h"
 #include "pch.h"
@@ -195,7 +197,8 @@ TEST_F(PictureActions_Test, HeadlessTheWindowActionsAreListedAndSayThereIsNoWind
 {
     ActionRegistry& registry = ActionRegistry::Instance();
     for (const char* id : {"video.gpu_toggle", "video.crt_toggle", "video.crt_profile", "video.crt_param_by",
-                           "video.crt_params_reset", "video.blending", "video.blending_decay_by", "video.viewport",
+                           "video.crt_params_reset", "video.blending", "video.blending_decay_by", "video.temporal_toggle",
+                           "video.temporal_effect", "video.viewport",
                            "view.fullscreen", "view.scale", "view.toolbar", "view.status_bar", "view.next_layers",
                            "view.next_layers_mode", "view.next_layer", "hud.toggle", "hud.theme", "hud.notice",
                            "osd.keyboard_picture", "osd.keyboard_style"})
@@ -280,6 +283,47 @@ TEST_F(PictureActions_Test, CyclingActionsGoToANameOrTheNextAndRefuseWhatIsNotOf
     EXPECT_FALSE(Run("osd.keyboard_style", Press({{"style", "sketch"}})).ok) << "not a style";
     ASSERT_TRUE(Run("view.next_layers_mode", Press({{"mode", "winner"}})).ok);
     EXPECT_EQ(window->settings.nextLayersMode, "winner");
+}
+
+// As the GUI's Temporal Effects dialog: one switch, then one effect at a time (frame blending or the ZX DLSS
+// de-flicker); the choice is kept while the switch is off
+TEST_F(PictureActions_Test, TemporalEffectsAreOneSwitchAndOneEffectAtATime)
+{
+    auto window = std::make_shared<FakeWindow>();
+    ScopedWindow registered(window);
+    Screen* screen = _emulator->GetContext()->pScreen;
+    ASSERT_NE(screen, nullptr);
+    ASSERT_TRUE(Run("video.temporal_effect", Press({{"effect", "blend"}})).ok);  // the choice is process-wide
+
+    EXPECT_EQ(Toggle("video.temporal_toggle"), false);
+    ASSERT_TRUE(Run("video.temporal_toggle", Press()).ok);
+    EXPECT_TRUE(window->settings.blending) << "on: the chosen effect";
+    EXPECT_TRUE(screen->GetTemporalAlgorithm().empty());
+    EXPECT_EQ(Toggle("video.temporal_toggle"), true);
+
+    // The other effect while on: it switches at once and the first stops
+    ASSERT_TRUE(Run("video.temporal_effect", Press()).ok);
+    EXPECT_FALSE(window->settings.blending);
+    EXPECT_EQ(screen->GetTemporalAlgorithm(), "mod-tpgwafsd");
+    EXPECT_TRUE(ReadReadout(*_emulator, "video.temporal").find("dlss")->b);
+
+    // Off stops it and keeps the choice; on again runs the de-flicker, not the blending
+    ASSERT_TRUE(Run("video.temporal_toggle", Press()).ok);
+    EXPECT_FALSE(window->settings.blending);
+    EXPECT_TRUE(screen->GetTemporalAlgorithm().empty());
+    EXPECT_EQ(Toggle("video.temporal_toggle"), false);
+    EXPECT_EQ(ReadReadout(*_emulator, "video.temporal").find("effect")->s, "dlss");
+    ASSERT_TRUE(Run("video.temporal_toggle", Press({{"on", true}})).ok);
+    EXPECT_EQ(screen->GetTemporalAlgorithm(), "mod-tpgwafsd");
+    EXPECT_FALSE(window->settings.blending);
+
+    // A choice while off runs nothing until the switch
+    ASSERT_TRUE(Run("video.temporal_toggle", Press({{"on", false}})).ok);
+    ASSERT_TRUE(Run("video.temporal_effect", Press({{"effect", "blend"}})).ok);
+    EXPECT_FALSE(window->settings.blending);
+    EXPECT_TRUE(screen->GetTemporalAlgorithm().empty());
+    EXPECT_FALSE(ReadReadout(*_emulator, "video.temporal").find("dlss")->b);
+    EXPECT_EQ(Run("video.temporal_effect", Press({{"effect", "sepia"}})).error, "Bad Request");
 }
 
 TEST_F(PictureActions_Test, BlendingAndTheDialsMoveTheirValues)

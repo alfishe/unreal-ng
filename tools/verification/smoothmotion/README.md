@@ -2,7 +2,7 @@
 
 Measures how smoothly a smoothing filter (smooth motion of the
 [frame presenter](../../../docs/inprogress/2026-10-26-frame-presenter/README.md), or an experiment of
-[POC 039](../../poc/039-smoothing-filters/README.md)) shows motion, from the pictures alone: the source frames and the
+[POC 047](../../poc/047-smoothing-filters/README.md)) shows motion, from the pictures alone: the source frames and the
 pictures it put on the display, refresh by refresh. Built like the
 [ZX DLSS verification](../zxdlss/README.md): synthetic programs with a known answer, independent oracles, hard gates
 and a baseline.
@@ -51,7 +51,7 @@ motion has it at the refresh's time, sharp and whole. So per region that moves r
 ```
 # the scenes: build (or use the committed files), capture through the WebAPI, render the filters, measure
 SJASMPLUS=/path/to/sjasmplus testdata/video/smoothmotion/build.sh
-python3 -I tools/poc/039-smoothing-filters/capture.py --port <webapi> --out scratch/smoothcap --warmup 50 --frames 300 \
+python3 -I tools/poc/047-smoothing-filters/capture.py --port <webapi> --out scratch/smoothcap --warmup 50 --frames 300 \
     testdata/video/smoothmotion/smooth-speeds.sna
 FILTERS_RAW=1 scratch/2026-10-28-poc-039/filters scratch/smoothcap/smooth-speeds.rgba 352 288 300 \
     scratch/smoothcap/speeds data/rom/48.rom
@@ -70,7 +70,7 @@ The filters tool renders refresh r at `3 ms + r / 60 s`, frame k due at `k / 50 
 ## What the eye sees: `truth/`
 
 `smoothness.py` measures positions; [`truth/`](truth/) measures pictures against what the eye should see. It renders the
-[POC 039](../../poc/039-smoothing-filters/README.md) scenes (`scenes.py`: scrollers, parallax, sprites, text, dot
+[POC 047](../../poc/047-smoothing-filters/README.md) scenes (`scenes.py`: scrollers, parallax, sprites, text, dot
 matrices, animated shapes, flicker, overlays), whose motion is known at any time, and scores a filter's 60 Hz
 refreshes the way the eye integrates them: a 20 ms box per sample, the eye either following a moving element
 (pursuit) or resting (fixation).
@@ -85,7 +85,7 @@ refreshes the way the eye integrates them: a 20 ms box per sample, the eye eithe
 | `table.py` | pursuit / fixation per scene and filter |
 
 ```
-tools/poc/039-smoothing-filters/run.sh       # or build the filters tool alone, as run.sh does
+tools/poc/047-smoothing-filters/run.sh       # or build the filters tool alone, as run.sh does
 tools/verification/smoothmotion/truth/truth.sh <filters binary> off,blend,layers [scenes...]
 ```
 

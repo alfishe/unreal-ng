@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -12,8 +13,65 @@
 #include "emulator/platform.h"
 #include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
+#include "loaders/snapshot/snapshotimage.h"
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "loaders/snapshot/szx/loaderszx.h"
+
+namespace
+{
+/// The machine for a snapshot whose plan the running machine refused for want of memory (a 128K z80 on a 48K, a
+/// Pentagon 512 sna on a Pentagon 128): the one the file says it was made on, else what the refusal needs
+/// ("model:128K", "ram:512K"). False: neither names a machine this emulator has
+bool MachineForRefusal(const snapshot::Image& image, const snapshot::Report& plan, const CONFIG& running,
+                       std::string& model, uint32_t& ramKb)
+{
+    static const struct
+    {
+        const char* hint;
+        const char* model;
+        uint32_t ramKb;
+    } kMadeOn[] = {{"128k", "128k", 128},          {"plus2", "PLUS2", 128},
+                   {"plus2a", "PLUS2A", 128},      {"plus3", "PLUS3", 128},
+                   {"pentagon128", "PENTAGON", 128}, {"pentagon512", "PENTAGON", 512},
+                   {"pentagon1024", "PENTAGON", 1024}, {"scorpion256", "SCORPION", 256}};
+    for (const auto& m : kMadeOn)
+    {
+        if (image.machineHint == m.hint)
+        {
+            model = m.model;
+            ramKb = m.ramKb;
+            return true;
+        }
+    }
+    if (plan.needs.rfind("model:", 0) == 0)
+    {
+        const TMemModel* found = Config::FindModelByShortName(plan.needs.substr(6));
+        if (!found)
+            return false;
+        model = found->ShortName;
+        ramKb = found->defaultRAM;
+        return true;
+    }
+    if (plan.needs.rfind("ram:", 0) == 0)
+    {
+        const uint32_t wanted = static_cast<uint32_t>(std::strtoul(plan.needs.c_str() + 4, nullptr, 10));
+        // The running model with more RAM, else a Pentagon: the smallest size that holds the banks
+        for (const TMemModel* candidate : {Config::FindModelByEnum(running.mem_model), Config::FindModelByShortName("PENTAGON")})
+        {
+            for (uint32_t size = 128; candidate && size <= 4096; size *= 2)
+            {
+                if (size >= wanted && (candidate->AvailRAMs & size))
+                {
+                    model = candidate->ShortName;
+                    ramKb = size;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+}  // namespace
 
 bool SnapshotLauncher::RequiredModel(const std::string& path, std::string& model, uint32_t& ramKb, std::string& error)
 {
@@ -103,6 +161,28 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
     {
         out.message = error;
         return out;
+    }
+    if (need.model.empty())
+    {
+        // A z80 / sna names no model up front: the dry plan says whether this machine can hold it, and the file's
+        // machine hint which one can
+        snapshot::Image image;
+        snapshot::Report plan;
+        bool proceeds = true;
+        std::string planError;
+        snapshot::Options dryRun;
+        dryRun.commit = request.commit;
+        if (emulator->PlanSnapshot(request.path, dryRun, image, plan, proceeds, planError) && !proceeds &&
+            plan.refused && MachineForRefusal(image, plan, running, need.model, need.ramKb))
+        {
+            const TMemModel* target = Config::FindModelByShortName(need.model);
+            need.differs = true;
+            need.description = target ? szx::DescribeModel(target->Model, need.ramKb) : need.model;
+        }
+        else
+        {
+            need.model.clear();
+        }
     }
     out.requiredModel = need.model;
     out.requiredRamKb = need.ramKb;

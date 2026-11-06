@@ -51,6 +51,7 @@
 ///   bool     sleepAllowed() const;     // no NMI, no INT the CPU could take, no DMA, reset, clock change, trace
 ///   int64_t  sleepHardStop() const;    // the earliest event that is not quiet
 ///   void     onStepsSkipped(uint64_t); // the steps the sleep stood for (counters)
+///   void     onSlept(uint16_t head, int64_t start, uint64_t iterations); // one sleep (the histories' one record)
 /// and optionally (`kRunnerBatchQuietEvents = true`), so a long sleep does not walk its quiet events one by one:
 ///   bool     sleepQuietEventsBefore(int64_t end); // run every quiet event due before `end` at once and leave
 ///                                                 // nextEvent >= end; false: not now (the runner steps one)
@@ -62,6 +63,7 @@
 #include <type_traits>
 
 #include "3rdparty/unreal-z80/z80cpu.h"
+#include "gsdebughooks.h"
 
 template <class Card>
 class GSCardRunner
@@ -112,11 +114,46 @@ public:
     template <class Policy = void>
     void runTo(int64_t target)
     {
+        runLoop<Policy, false>(target, nullptr);
+    }
+
+    /// The execution history's loop: the fast loop's rounds with each instruction's PC told to the card first
+    /// (`card->recordExecStep(pc)`), no hooks; an idle sleep is one record (onSlept)
+    template <class Policy = void>
+    void runToRecord(int64_t target)
+    {
+        runLoop<Policy, false, true>(target, nullptr);
+    }
+
+    /// The debug loop (gs-debugger design §4.1): the same rounds, with the hooks asked before every instruction
+    /// and told every accepted INT / NMI, and no idle sleep (a breakpoint inside the poll loop must fire). The fast
+    /// loop is a separate instantiation: runTo compiles to the code it was before the hooks
+    template <class Policy = void>
+    void runToDebug(int64_t target, IGSDebugHooks* hooks)
+    {
+        _idle.valid = false;
+        runLoop<Policy, true>(target, hooks);
+        hooks->endRun(Z80CpuRegisterFilePtr(_cpu)->pc);
+    }
+
+    /// The firmware's idle loop is slept through (on by default; off steps it: comparison tests, diagnosis)
+    void setSleepOn(bool on)
+    {
+        _sleepOn = on;
+        _idle.valid = false;
+    }
+    /// Steps the sleeps stood for since bind (tests, diagnosis)
+    uint64_t stepsSlept() const { return _stepsSlept; }
+
+private:
+    template <class Policy, bool kDebug, bool kRecord = false>
+    void runLoop(int64_t target, [[maybe_unused]] IGSDebugHooks* hooks)
+    {
         // Locals, not members, across the opaque CPU calls: the compiler must
         // otherwise reload them after every call
         Card* const card = _card;
         Z80CPU* const cpu = _cpu;
-        if constexpr (kCanSleep)
+        if constexpr (kCanSleep && !kDebug)
         {
             _regs = Z80CpuRegisterFilePtr(cpu);  // the core's live register file (a host may attach its own)
             // Between two runs the host may have changed what the loop reads (a mailbox write, a reset, a restore,
@@ -158,6 +195,8 @@ public:
                 {
                     _now += units(t);
                     card->onNmiAccepted();
+                    if constexpr (kDebug)
+                        hooks->onEvent(GSCardEvent::Nmi, 0, 0);
                     continue;
                 }
             }
@@ -169,6 +208,8 @@ public:
                 {
                     _now += units(t);
                     card->onIntAccepted();
+                    if constexpr (kDebug)
+                        hooks->onEvent(GSCardEvent::Int, 0, 0);
                 }
             }
 
@@ -178,8 +219,16 @@ public:
                 continue;
             }
 
-            if constexpr (kCanSleep)
+            if constexpr (kDebug)
             {
+                hooks->beforeStep(Z80CpuRegisterFilePtr(cpu)->pc);
+                if (_now >= target)
+                    break;  // the park moved nothing; a defensive bound for hooks that run the card
+            }
+            else if constexpr (kCanSleep)
+            {
+                if constexpr (kRecord)
+                    card->recordExecStep(_regs->pc);
                 const uint16_t pcBefore = _regs->pc;
                 const int64_t stepStart = _now;
                 const int t = Z80CpuStep(cpu);
@@ -195,6 +244,8 @@ public:
                     onLoopHead(target);
                 continue;
             }
+            if constexpr (kRecord)
+                card->recordExecStep(Z80CpuRegisterFilePtr(cpu)->pc);
             const int t = Z80CpuStep(cpu);
             if (t <= 0)
                 break; // defensive: a stuck core must not hang the emulator
@@ -203,16 +254,6 @@ public:
         }
     }
 
-    /// The firmware's idle loop is slept through (on by default; off steps it: comparison tests, diagnosis)
-    void setSleepOn(bool on)
-    {
-        _sleepOn = on;
-        _idle.valid = false;
-    }
-    /// Steps the sleeps stood for since bind (tests, diagnosis)
-    uint64_t stepsSlept() const { return _stepsSlept; }
-
-private:
     // The card's public marks, not `requires(Card& c) { c.sleepAllowed(); }`: the hooks are private with this class a
     // friend, and MSVC 2019 answers such a requires-expression false (the sleep was compiled out there)
     static constexpr bool kCanSleep = requires { requires Card::kRunnerIdleSleep; };
@@ -312,6 +353,7 @@ private:
         Z80CpuSetTstates(_cpu, static_cast<uint32_t>(Z80CpuTstates(_cpu) + iterations * cycles));
         const uint64_t slept = static_cast<uint64_t>(iterations) * steps;
         card->onStepsSkipped(slept);
+        card->onSlept(_regs->pc, start, static_cast<uint64_t>(iterations));
         _stepsSlept += slept;
     }
 

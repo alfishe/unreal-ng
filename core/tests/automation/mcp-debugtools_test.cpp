@@ -13,6 +13,8 @@
 #include <string>
 #include <vector>
 
+#include "common/statenode_json.h"
+#include "debugger/callbacks/callbackcontrol.h"
 #include "mcp-tool-utils.h"
 #include "mcp-tools.h"
 
@@ -244,4 +246,579 @@ TEST_F(McpDebugTools_Test, AnalyzePerformance_GsPortTraceControlsThroughTheContr
     // It used to POST to the GET-only /state/audio/gs/porttrace: the start failed
     EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/control/audio/gs/porttrace"), nullptr);
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/state/audio/gs/porttrace"), nullptr);
+}
+
+/// analysis: one tool, the action picks the route; the core answer's text is the tool's text (content[] carries it)
+TEST_F(McpDebugTools_Test, Analysis_ActionsGoToTheirRoutesAndCarryTheText)
+{
+    Json::Value explainBody;
+    explainBody["text"] = "$80BC [RAM 2]: OpcodeFetch\n  frames 1..2";
+    explainBody["kinds"].append("OpcodeFetch");
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/explain?address=%2480BC&page=ram%3A1"] = {200, explainBody};
+
+    Json::Value args;
+    args["action"] = "explain";
+    args["address"] = "$80BC";
+    args["page"] = "ram:1";
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("OpcodeFetch\n  frames 1..2"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["kinds"][0].asString(), "OpcodeFetch");
+
+    args = Json::Value();
+    args["action"] = "explain";
+    args["address"] = 32956;  // an integer works too
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=32956"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "start";
+    args["level"] = "facts";
+    args["mode"] = "physical";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* start = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_EQ(start->body["level"].asString(), "facts");
+    EXPECT_EQ(start->body["mode"].asString(), "physical");
+
+    args = Json::Value();
+    args["action"] = "status";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/status"), nullptr);
+    args["action"] = "stop";
+    ASSERT_FALSE(Run("analysis", args).isError);
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/analysis/stop"), nullptr);
+}
+
+/// analysis build / cancel / explain what=routine (P2): the long build waits 20 s by default, record goes to start
+TEST_F(McpDebugTools_Test, Analysis_BuildCancelAndRoutineExplainGoToTheirRoutes)
+{
+    Json::Value buildBody;
+    buildBody["job"] = 3;
+    buildBody["state"] = "done";
+    buildBody["text"] = "L1 build job 3: replaying 50 recorded frames on an analysis instance; done";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/build"] = {200, buildBody};
+
+    Json::Value args;
+    args["action"] = "start";
+    args["record"] = true;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* start = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/start");
+    ASSERT_NE(start, nullptr);
+    EXPECT_TRUE(start->body["record"].asBool());
+
+    args = Json::Value();
+    args["action"] = "build";
+    args["frames"] = 100;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("L1 build job 3"), std::string::npos) << result.text;
+    const FakeCaller::RecordedCall* build = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/build");
+    ASSERT_NE(build, nullptr);
+    EXPECT_EQ(build->body["frames"].asUInt64(), 100u);
+    EXPECT_EQ(build->body["wait"].asUInt64(), 20000u) << "one call answers the result";
+
+    args = Json::Value();
+    args["action"] = "cancel";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/analysis/cancel"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "explain";
+    args["address"] = "$8000";
+    args["what"] = "routine";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/explain?address=%248000&what=routine"), nullptr);
+}
+
+/// analysis trace: the window and the file go to POST /analysis/trace as they are; the answer's text is the tool's
+TEST_F(McpDebugTools_Test, Analysis_TraceGoesToItsRouteWithTheWindow)
+{
+    Json::Value traceBody;
+    traceBody["instructions"] = 4211;
+    traceBody["text"] = "access trace 1001:5336 .. 1001:45336: 4211 instructions, 15820 bus cycles";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/trace"] = {200, traceBody};
+
+    Json::Value args;
+    args["action"] = "trace";
+    args["path"] = "/tmp/pass.uatr";
+    args["from_frame"] = 1001;
+    args["from_tinframe"] = 5336;
+    args["to_frame"] = 1001;
+    args["to_tinframe"] = 45336;
+    args["max_cycles"] = 100000;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("4211 instructions"), std::string::npos) << result.text;
+    const FakeCaller::RecordedCall* trace = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/trace");
+    ASSERT_NE(trace, nullptr);
+    EXPECT_EQ(trace->body["path"].asString(), "/tmp/pass.uatr");
+    EXPECT_EQ(trace->body["from_frame"].asUInt64(), 1001u);
+    EXPECT_EQ(trace->body["from_tinframe"].asUInt64(), 5336u);
+    EXPECT_EQ(trace->body["to_frame"].asUInt64(), 1001u);
+    EXPECT_EQ(trace->body["to_tinframe"].asUInt64(), 45336u);
+    EXPECT_EQ(trace->body["max_cycles"].asUInt64(), 100000u);
+    EXPECT_FALSE(trace->body.isMember("action")) << "only the route's options";
+}
+
+/// analysis query / export (P3): the query's options go into the URL, the export's into the body; export needs a format
+TEST_F(McpDebugTools_Test, Analysis_QueryAndExportGoToTheirRoutes)
+{
+    Json::Value queryBody;
+    queryBody["count"] = 1;
+    queryBody["text"] = "8000-80FF code           code-map       1000 observed";
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/query?kind=code&range=8000-80FF&limit=5"] = {200, queryBody};
+
+    Json::Value args;
+    args["action"] = "query";
+    args["kind"] = "code";
+    args["range"] = "8000-80FF";
+    args["limit"] = 5;
+    mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("code-map"), std::string::npos) << result.text;
+
+    args = Json::Value();
+    args["action"] = "query";
+    Run("analysis", args);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/analysis/query"), nullptr);
+
+    args = Json::Value();
+    args["action"] = "export";
+    args["format"] = "skool";
+    args["path"] = "/tmp/x.skool";
+    args["ranges"] = "8000-FFFF";
+    args["width"] = 16;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    const FakeCaller::RecordedCall* exported = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/export");
+    ASSERT_NE(exported, nullptr);
+    EXPECT_EQ(exported->body["format"].asString(), "skool");
+    EXPECT_EQ(exported->body["path"].asString(), "/tmp/x.skool");
+    EXPECT_EQ(exported->body["ranges"].asString(), "8000-FFFF");
+    EXPECT_EQ(exported->body["width"].asUInt64(), 16u);
+
+    args = Json::Value();
+    args["action"] = "export";
+    EXPECT_TRUE(Run("analysis", args).isError) << "export needs a format";
+}
+
+/// analysis gallery (P4): the options go into the body; the PNG comes back as an image content block, not as base64
+/// in the structured answer
+TEST_F(McpDebugTools_Test, Analysis_GalleryAnswersAnImage)
+{
+    Json::Value galleryBody;
+    galleryBody["png"] = "iVBORw0KGgo=";
+    galleryBody["width"] = 70;
+    galleryBody["text"] = "L2 gallery $8200-$82FF sprite 16x16x8: 8 frames, 290x70 PNG, 400 bytes";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/gallery"] = {200, galleryBody};
+
+    Json::Value args;
+    args["action"] = "gallery";
+    args["address"] = "$8200";
+    args["scale"] = 4;
+    args["kind"] = "sprite";
+    const mcp::ToolResult result = Run("analysis", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("16x16x8"), std::string::npos) << result.text;
+    EXPECT_EQ(result.imageData, "iVBORw0KGgo=");
+    EXPECT_EQ(result.imageMimeType, "image/png");
+    EXPECT_EQ(result.structured["png"].asString().find("iVBOR"), std::string::npos);
+    const FakeCaller::RecordedCall* gallery = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/gallery");
+    ASSERT_NE(gallery, nullptr);
+    EXPECT_EQ(gallery->body["address"].asString(), "$8200");
+    EXPECT_EQ(gallery->body["scale"].asUInt64(), 4u);
+    EXPECT_EQ(gallery->body["kind"].asString(), "sprite");
+
+    // The list: no image
+    galleryBody = Json::Value();
+    galleryBody["count"] = 2;
+    galleryBody["text"] = "L2 gallery: 2 graphics regions";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/gallery"] = {200, galleryBody};
+    args = Json::Value();
+    args["action"] = "gallery";
+    const mcp::ToolResult list = Run("analysis", args);
+    ASSERT_FALSE(list.isError) << list.text;
+    EXPECT_TRUE(list.imageData.empty());
+    EXPECT_NE(list.text.find("2 graphics regions"), std::string::npos) << list.text;
+}
+
+/// analysis L3 (P5): findings, review, experiment, cover go to their POST routes with every option as given; an
+/// experiment spec object reaches the body as an object (the WebAPI serializes it for the core)
+TEST_F(McpDebugTools_Test, Analysis_ReviewActionsForwardTheirOptions)
+{
+    // The dispatcher refuses an argument the schema does not name: every option the L3 actions forward is in it
+    const mcp::ToolDefinition* definition = _registry->Find("analysis");
+    ASSERT_NE(definition, nullptr);
+    for (const char* name : {"op", "id", "verdict", "label", "title", "comment", "by", "experiment", "status", "claim",
+                             "evidence", "spec", "finding", "parallel", "budget", "per_branch", "names", "reason",
+                             "offset", "kind"})
+        EXPECT_TRUE(definition->inputSchema["properties"].isMember(name)) << name;
+
+    Json::Value reviewBody;
+    reviewBody["text"] = "L3 review F7 (bug): ...";
+    _caller->routes["POST /api/v1/emulator/emu-1/analysis/review"] = {200, reviewBody};
+    Json::Value args;
+    args["action"] = "review";
+    args["op"] = "resolve";
+    args["id"] = "F7";
+    args["verdict"] = "ok";
+    args["label"] = "MainLoop";
+    args["experiment"]["frames"] = 2;
+    const mcp::ToolResult review = Run("analysis", args);
+    ASSERT_FALSE(review.isError) << review.text;
+    EXPECT_NE(review.text.find("L3 review F7"), std::string::npos) << review.text;
+    const FakeCaller::RecordedCall* resolved = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/review");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->body["op"].asString(), "resolve");
+    EXPECT_EQ(resolved->body["id"].asString(), "F7");
+    EXPECT_EQ(resolved->body["verdict"].asString(), "ok");
+    EXPECT_EQ(resolved->body["label"].asString(), "MainLoop");
+    EXPECT_TRUE(resolved->body["experiment"].isObject());
+
+    // A naming batch's names (an object), the queue by reason and offset, a kind change
+    args = Json::Value();
+    args["action"] = "review";
+    args["op"] = "resolve";
+    args["id"] = "N3";
+    args["names"]["$8068"] = "PlayerY";
+    args["kind"] = "text";
+    args["reason"] = "name";
+    args["offset"] = 40;
+    ASSERT_FALSE(Run("analysis", args).isError);
+    resolved = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/review");
+    ASSERT_NE(resolved, nullptr);
+    EXPECT_EQ(resolved->body["names"]["$8068"].asString(), "PlayerY");
+    EXPECT_EQ(resolved->body["kind"].asString(), "text");
+    EXPECT_EQ(resolved->body["reason"].asString(), "name");
+    EXPECT_EQ(resolved->body["offset"].asInt(), 40);
+
+    args = Json::Value();
+    args["action"] = "experiment";
+    args["spec"]["poke"]["$8100"] = 5;
+    args["spec"]["expect"]["screen"] = "changed";
+    args["finding"] = "F3";
+    args["parallel"] = 2;
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* experiment = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/experiment");
+    ASSERT_NE(experiment, nullptr);
+    EXPECT_EQ(experiment->body["spec"]["poke"]["$8100"].asInt(), 5);
+    EXPECT_EQ(experiment->body["finding"].asString(), "F3");
+    EXPECT_EQ(experiment->body["parallel"].asInt(), 2);
+
+    args = Json::Value();
+    args["action"] = "experiment";
+    EXPECT_TRUE(Run("analysis", args).isError) << "experiment needs a spec or a path";
+
+    args = Json::Value();
+    args["action"] = "findings";
+    args["format"] = "markdown";
+    args["kind"] = "bug";
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* findings = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/findings");
+    ASSERT_NE(findings, nullptr);
+    EXPECT_EQ(findings->body["format"].asString(), "markdown");
+    EXPECT_EQ(findings->body["kind"].asString(), "bug");
+
+    args = Json::Value();
+    args["action"] = "cover";
+    args["budget"] = 16;
+    args["per_branch"] = 4;
+    Run("analysis", args);
+    const FakeCaller::RecordedCall* cover = _caller->Last("POST", "/api/v1/emulator/emu-1/analysis/cover");
+    ASSERT_NE(cover, nullptr);
+    EXPECT_EQ(cover->body["budget"].asInt(), 16);
+    EXPECT_EQ(cover->body["per_branch"].asInt(), 4);
+}
+
+TEST_F(McpDebugTools_Test, Analysis_RefusesWithoutAddressOrOnAnHttpError)
+{
+    Json::Value args;
+    args["action"] = "explain";
+    EXPECT_TRUE(Run("analysis", args).isError) << "explain needs an address";
+
+    Json::Value conflict;
+    conflict["error"] = "Conflict";
+    conflict["message"] = "no access facts: the tracker level is counters";
+    _caller->routes["GET /api/v1/emulator/emu-1/analysis/explain?address=0x8000"] = {409, conflict};
+    args["address"] = "0x8000";
+    const mcp::ToolResult result = Run("analysis", args);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("409"), std::string::npos) << result.text;
+}
+
+TEST_F(McpDebugTools_Test, ControlExecution_ConditionsInTheArgumentsAndTheText)
+{
+    Json::Value added;
+    added["id"] = 7;
+    added["condition"] = "A == 7";
+    _caller->routes["POST /api/v1/emulator/emu-1/breakpoints"] = {201, added};
+    Json::Value feature;
+    feature["enabled"] = true;
+    _caller->routes["GET /api/v1/emulator/emu-1/feature/breakpoints"] = {200, feature};
+
+    Json::Value add;
+    add["action"] = "bp_add";
+    add["address"] = "0x8000";
+    add["condition"] = "a==7";
+    add["condition_dialect"] = "c";
+    const mcp::ToolResult result = Run("control_execution", add);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeCaller::RecordedCall* post = _caller->Last("POST", "/api/v1/emulator/emu-1/breakpoints");
+    ASSERT_NE(post, nullptr);
+    EXPECT_EQ(post->body["condition"].asString(), "a==7");
+    EXPECT_EQ(post->body["condition_dialect"].asString(), "c");
+    EXPECT_NE(result.text.find("#7 if A == 7"), std::string::npos) << "the text shows the condition: " << result.text;
+
+    Json::Value set;
+    set["action"] = "bp_condition";
+    set["bp_id"] = "7";
+    EXPECT_TRUE(Run("control_execution", set).isError) << "bp_condition needs a condition";
+    set["condition"] = "B == 0";
+    Json::Value answer;
+    answer["condition"] = "B == 0";
+    _caller->routes["PUT /api/v1/emulator/emu-1/breakpoints/7/condition"] = {200, answer};
+    const mcp::ToolResult changed = Run("control_execution", set);
+    ASSERT_FALSE(changed.isError);
+    EXPECT_EQ(_caller->Last("PUT", "/api/v1/emulator/emu-1/breakpoints/7/condition")->body["condition"].asString(),
+              "B == 0");
+    EXPECT_EQ(changed.text, "Condition set: B == 0");
+
+    Json::Value bp;
+    bp["id"] = 7;
+    bp["type"] = "memory";
+    bp["address"] = 0x8000;
+    bp["execute"] = true;
+    bp["active"] = true;
+    bp["hit_count"] = 2;
+    bp["match_count"] = 9;
+    bp["condition"] = "B == 0";
+    bp["condition_error"] = "no CPU (frame 3, PC #8000)";
+    Json::Value list;
+    list["breakpoints"].append(bp);
+    _caller->routes["GET /api/v1/emulator/emu-1/breakpoints"] = {200, list};
+    Json::Value ls;
+    ls["action"] = "bp_list";
+    const mcp::ToolResult listed = Run("control_execution", ls);
+    EXPECT_NE(listed.text.find("hits 2 matched 9 if B == 0 [condition failed: no CPU"), std::string::npos)
+        << listed.text;
+}
+
+/// The script callbacks' ops: the routes and bodies, and the text an agent sees is the CLI's (core callback_control)
+TEST_F(McpDebugTools_Test, ControlExecution_CallbacksListAndManage)
+{
+    CallbackInfo tap;
+    tap.id = 4;
+    tap.owner = "lua";
+    tap.label = "lives";
+    tap.target = "tap write #5C78 if MDT < MDT@prev";
+    tap.breakpointId = 12;
+    tap.state = CallbackState::Suspended;
+    tap.reason = "3 calls over 1000 us within 50 frames";
+    tap.budgetUs = 1000;
+    tap.ring = 256;
+    tap.stats.hits = 9;
+    tap.stats.calls = 9;
+    tap.stats.overruns = 3;
+    tap.stats.maxUs = 1800;
+    tap.stats.lastOverrunFrame = 77;
+    tap.stats.lastOverrunUs = 1800;
+    CallbackInfo event;
+    event.id = 5;
+    event.trigger = CallbackTrigger::GameEvent;
+    event.owner = "python";
+    event.target = "event died";
+    event.event = "died";
+    const StateNode report = callback_control::ListNode({tap, event});
+    _caller->routes["GET /api/v1/emulator/emu-1/callbacks"] = {200, StateNodeToJson(report)};
+
+    Json::Value args;
+    args["action"] = "callbacks";
+    const mcp::ToolResult listed = Run("control_execution", args);
+    ASSERT_FALSE(listed.isError) << listed.text;
+    EXPECT_EQ(listed.text, callback_control::FormatList(report)) << "the same text as the CLI's callback list";
+    EXPECT_NE(listed.text.find("#4 tap write #5C78 if MDT < MDT@prev (lua \"lives\") suspended"), std::string::npos)
+        << listed.text;
+    EXPECT_NE(listed.text.find("last overrun 1800 us at frame 77; reason: 3 calls over 1000 us"), std::string::npos)
+        << listed.text;
+    EXPECT_EQ(listed.structured["callbacks"].size(), 2u);
+
+    _caller->routes["GET /api/v1/emulator/emu-1/callbacks"] = {200, StateNodeToJson(callback_control::ListNode({}))};
+    EXPECT_NE(Run("control_execution", args).text.find("Script callbacks: 0 (a Lua or Python script registers them"),
+              std::string::npos);
+
+    Json::Value resume;
+    resume["action"] = "callback_resume";
+    EXPECT_TRUE(Run("control_execution", resume).isError) << "callback_resume needs callback_id";
+    resume["callback_id"] = 4;
+    tap.state = CallbackState::Active;
+    tap.reason.clear();
+    Json::Value answer;
+    answer["status"] = "success";
+    answer["message"] = "Callback 4 resumed";
+    answer["callback"] = StateNodeToJson(callback_control::InfoNode(tap));
+    _caller->routes["POST /api/v1/emulator/emu-1/callbacks/4/resume"] = {200, answer};
+    const mcp::ToolResult resumed = Run("control_execution", resume);
+    ASSERT_FALSE(resumed.isError);
+    EXPECT_EQ(resumed.text.rfind("Callback 4 resumed: #4 tap write #5C78", 0), 0u) << resumed.text;
+    EXPECT_NE(resumed.text.find(" active, "), std::string::npos) << resumed.text;
+
+    Json::Value policy;
+    policy["action"] = "callback_policy";
+    policy["callback_id"] = 4;
+    EXPECT_TRUE(Run("control_execution", policy).isError) << "callback_policy needs a policy";
+    policy["policy"] = "ignore";
+    ASSERT_FALSE(Run("control_execution", policy).isError);
+    const FakeCaller::RecordedCall* put = _caller->Last("PUT", "/api/v1/emulator/emu-1/callbacks/4/policy");
+    ASSERT_NE(put, nullptr);
+    EXPECT_EQ(put->body["policy"].asString(), "ignore");
+
+    Json::Value remove;
+    remove["action"] = "callback_remove";
+    remove["callback_id"] = 4;
+    Json::Value removed;
+    removed["status"] = "success";
+    removed["message"] = "Callback 4 removed";
+    removed["id"] = 4;
+    removed["removed"] = true;
+    _caller->routes["DELETE /api/v1/emulator/emu-1/callbacks/4"] = {200, removed};
+    const mcp::ToolResult gone = Run("control_execution", remove);
+    ASSERT_FALSE(gone.isError);
+    EXPECT_EQ(gone.text, "Callback 4 removed");
+
+    Json::Value missing;
+    missing["error"] = "Not Found";
+    missing["message"] = "No callback 9";
+    _caller->routes["DELETE /api/v1/emulator/emu-1/callbacks/9"] = {404, missing};
+    remove["callback_id"] = 9;
+    const mcp::ToolResult refused = Run("control_execution", remove);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("No callback 9"), std::string::npos) << refused.text;
+}
+
+/// The sound card CPU (cpuview.h) through MCP: inspect_state's cpu goes to the register, memory, code, map and
+/// breakpoint routes (not to the machine's banks), and a card CPU that is not there is said, not hidden
+TEST_F(McpDebugTools_Test, InspectState_CpuGoesToTheCardRoutes)
+{
+    Json::Value registers;
+    registers["cpu"] = "gs";
+    registers["special"]["pc"] = 0x0123;
+    _caller->routes["GET /api/v1/emulator/emu-1/registers?cpu=gs"] = {200, registers};
+    Json::Value windows;
+    windows["cpu"] = "gs";
+    Json::Value window;
+    window["start"] = 0x4000;
+    window["kind"] = "ram";
+    window["page"] = 1;
+    windows["windows"].append(window);
+    _caller->routes["GET /api/v1/emulator/emu-1/memory/map?view=address&min_run=64&max_blocks=48&cpu=gs"] = {200, windows};
+
+    Json::Value args;
+    args["aspects"].append("registers");
+    args["aspects"].append("memory_map");
+    args["aspects"].append("disasm");
+    args["aspects"].append("memory_banks");
+    args["cpu"] = "gs";
+    const mcp::ToolResult result = Run("inspect_state", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[registers] cpu gs:"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("the CPU's windows"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ram page 1"), std::string::npos) << result.text;
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/disasm?count=8&cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/state/memory"), nullptr) << "the banks stay the machine's";
+
+    Json::Value missing;
+    missing["message"] = "cpu ms not available: no card with a CPU in its slot";
+    _caller->routes["GET /api/v1/emulator/emu-1/registers?cpu=ms"] = {404, missing};
+    Json::Value absent;
+    absent["aspects"].append("registers");
+    absent["cpu"] = "ms";
+    const mcp::ToolResult refused = Run("inspect_state", absent);
+    EXPECT_NE(refused.text.find("[registers] unavailable: cpu ms not available"), std::string::npos) << refused.text;
+}
+
+TEST_F(McpDebugTools_Test, CardCpu_SetRegisterAndMemoryAccessNameTheCpu)
+{
+    Json::Value args;
+    args["action"] = "set_register";
+    args["name"] = "a";
+    args["value"] = 16;
+    args["cpu"] = "gs";
+    ASSERT_FALSE(Run("control_execution", args).isError);
+    EXPECT_NE(_caller->Last("PUT", "/api/v1/emulator/emu-1/registers/a?cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/registers?cpu=gs"), nullptr) << "the readback is the card's";
+
+    Json::Value read;
+    read["action"] = "read";
+    read["space"] = "gs";
+    read["offset"] = "0x4000";
+    read["length"] = 4;
+    const mcp::ToolResult readResult = Run("memory_access", read);
+    ASSERT_FALSE(readResult.isError) << readResult.text;
+    bool sawCardRead = false;
+    for (const FakeCaller::RecordedCall& call : _caller->calls)
+        sawCardRead |= call.method == "GET" && call.path.find("/memory/read/") != std::string::npos &&
+                       call.path.find("&cpu=gs") != std::string::npos;
+    EXPECT_TRUE(sawCardRead);
+    EXPECT_NE(readResult.text.find("the gs CPU's view"), std::string::npos) << readResult.text;
+
+    Json::Value write;
+    write["action"] = "write";
+    write["space"] = "gs";
+    write["offset"] = "0x4000";
+    write["hex"] = "0102";
+    const mcp::ToolResult written = Run("memory_access", write);
+    ASSERT_FALSE(written.isError) << written.text;
+    const FakeCaller::RecordedCall* post = _caller->Last("POST", "/api/v1/emulator/emu-1/memory/write");
+    ASSERT_NE(post, nullptr);
+    EXPECT_EQ(post->body["cpu"].asString(), "gs");
+    EXPECT_NE(written.text.find("into the gs CPU's view."), std::string::npos) << written.text;
+
+    Json::Value kept;
+    kept["bytes_written"] = 1;
+    _caller->routes["POST /api/v1/emulator/emu-1/memory/write"] = {200, kept};
+    const mcp::ToolResult partial = Run("memory_access", write);
+    EXPECT_NE(partial.text.find("Wrote 1 bytes into the gs CPU's view (1 kept by a read-only window)."),
+              std::string::npos)
+        << partial.text;
+}
+
+// A card CPU's step goes to the step routes with ?cpu=, its registers follow; the text names where the card and the
+// main CPU stand. Another run action refuses the card CPU
+TEST_F(McpDebugTools_Test, CardCpu_StepsGoToTheCardsRoutes)
+{
+    Json::Value reply;
+    reply["status"] = "success";
+    reply["message"] = "Step over of cpu gs completed";
+    reply["stop"]["cpu"] = "gs";
+    reply["stop"]["reason"] = "step";
+    reply["stop"]["cpu_pc"] = 0x4003;
+    reply["pc"] = 0x4003;
+    reply["sp"] = 0x7F00;
+    reply["main_pc"] = 0x3D2F;
+    reply["state"] = "paused";
+    _caller->routes["POST /api/v1/emulator/emu-1/stepover?cpu=gs"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "step_over";
+    args["cpu"] = "gs";
+    const mcp::ToolResult result = Run("control_execution", args);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/stepover?cpu=gs"), nullptr);
+    EXPECT_NE(_caller->Last("GET", "/api/v1/emulator/emu-1/registers?cpu=gs"), nullptr) << "the card's registers";
+    EXPECT_NE(result.text.find("Step over of cpu gs completed. Card CPU gs at $4003; main CPU at $3D2F."),
+              std::string::npos)
+        << result.text;
+
+    args["action"] = "step_n";
+    args["count"] = 5;
+    ASSERT_FALSE(Run("control_execution", args).isError);
+    const FakeCaller::RecordedCall* steps = _caller->Last("POST", "/api/v1/emulator/emu-1/steps?cpu=gs");
+    ASSERT_NE(steps, nullptr);
+    EXPECT_EQ(steps->body["count"].asUInt(), 5u);
+
+    args["action"] = "run_frame";
+    const mcp::ToolResult refused = Run("control_execution", args);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("a card CPU takes step, step_n, step_over and step_out"), std::string::npos)
+        << refused.text;
 }

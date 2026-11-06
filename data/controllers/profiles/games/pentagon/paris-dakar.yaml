@@ -1,0 +1,38 @@
+# Paris-Dakar (Zigurat 1988), the 128K TAP "PARI_DAK.TAP" (loads straight into the control menu: 0 TECLADO, then 0 JUGAR, a name
+# and ENTER, then 0 to train). Keyboard (the routines at #AFD0..#B016, found with TTD port-events): P right, O left, A brakes,
+# Q accelerates, M the gear (held together with Q the car pulls away: Q alone only revs the engine), G the road-book (G again closes
+# it), Z the trip-meter reset. Haptics (haptics.md §13 H5), found with TTD on a recorded run: the speed is the byte #963E (34 -> 54
+# -> 89 at the speedometer, exactly), written by one instruction (#84E8), and the obstacle hits run two entries of one handler, #6D6E
+# and #6DBD (both go on to #6DFE; the five large speed drops in the recording, 47 -> 0 and 51 -> 8, follow them within a few
+# frames, and a bike scraping along a wall repeats #6DBD every 20 frames).
+# Checked in real time (Q+M held, then 2.5 s of O / P in turn, 20 s): 1 hitl and 4 hitr, the first hit after 11 s of driving across
+# open ground. Known limits: the speed rises slowly (the car coasts at first), the fuel and engine-damage events are not mapped.
+schema: 1
+kind: play
+id: builtin/game/paris-dakar
+label: Paris-Dakar
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["a134b71dbd258e22f37874b6b904afca65550bbb7ca37c8592b9d2f081674cdc"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    rt.click:     { key: "Q+M", label: Accelerate }
+    lt.click:     { key: A, label: Brake }
+    south:        { key: M, label: Gear }
+    west:         { key: G, label: Road-book }
+    menu:         { key: ENTER, label: Select }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x963E", scale: 2.5 }
+    hitl:  { probe: exec, address: "0x6D6E" }
+    hitr:  { probe: exec, address: "0x6DBD" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: hitl, play: hit, scale: 0.9 }
+    - { on: hitr, play: hit, scale: 0.9 }

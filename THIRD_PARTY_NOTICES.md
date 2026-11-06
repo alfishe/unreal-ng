@@ -68,6 +68,15 @@ contributors) as the format reference; no MAME source is vendored.
 | stb_image | `companions/streamdeck/3rdparty/stb_image.h` | MIT / public domain | header (image loading) |
 | TooJpeg (commit 341de5c295e4), altered: the base of the JPEG encoder | `companions/streamdeck/lib/src/jpeg.cpp` (notice in the file) | zlib | static (JPEG encoder; arithmetic after libjpeg / libjpeg-turbo, IJG / BSD-3-Clause) |
 
+## Debuggers (`debuggers/`: `UNREAL_DEBUGGER_QT`, `UNREAL_TUI_DEBUGGERS`)
+
+| Component | Location | License | Use |
+|-----------|----------|---------|-----|
+| eCat3 debugger window (Mikhail Revzin, <https://github.com/Ptr314/ecat3>, `dev` @ 27a98108; adapted, see `tools/poc/041-ecat-debugger/`) | `debuggers/qt/ecat/` | GPL-3.0-or-later | static (unreal-debugger) |
+| FTXUI 7.1.0 | `debuggers/tui/lib/ftxui/` | MIT | static (terminal debuggers) |
+| Z80Ex 1.1.21 (the mock machine and its disassembler) | `debuggers/tui/lib/z80ex/` | GPL-2.0 ("Released under GNU GPL v2"; "or later" not stated) | static (terminal debuggers) |
+| SDL 3.4.18 (the pixel window; video and the 2D renderer only) | `lib/SDL/` (submodule; else an installed SDL3) | zlib | static (terminal debuggers, in every package) |
+
 ## Tools, tests and benchmarks only
 
 | Component | Location | License |
@@ -96,4 +105,7 @@ contributors) as the format reference; no MAME source is vendored.
 
 ## Items still being resolved (not compatible or unverified)
 
-* `data/fonts/consolas.ttf` — Microsoft Consolas is proprietary and must be replaced by an OFL font before publication.
+* `data/fonts/consolas.ttf` and `debuggers/qt/resources/fonts/Consolas.ttf` (the debugger window's font, from eCat3) —
+  Microsoft Consolas is proprietary and must be replaced by an OFL font before publication.
+* `debuggers/tui/lib/z80ex/` — Z80Ex states GPL v2 without "or later"; GPL-2.0-only code is not compatible with the
+  GPL-3.0 terminal debuggers it links into (unverified: upstream may intend "or later").

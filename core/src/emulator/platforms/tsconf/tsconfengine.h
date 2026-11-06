@@ -113,6 +113,8 @@ public:
     /// The raster tact the last finished instruction ended at (0 at the frame start): up to here a screen drawn
     /// after every instruction has drawn
     uint32_t StepEndRaster() const { return _stepEndRaster; }
+    /// While EmulatorContext::beamWatch: the raster tacts [from, to) the step just passed (platform-debugging P6)
+    std::function<void(uint32_t from, uint32_t to)> onBeam;
     /// A reset or a loaded state replaced TsConfState: the step end is where the engine's accounting stands (a state is taken
     /// between instructions, where the two are the same)
     void NoteStateApplied();
@@ -167,7 +169,6 @@ private:
     TsConfInterrupts& _interrupts;
     TsConfDma& _dma;
     TsConfMemory* _memory = nullptr;
-    uint32_t _cpuLineRunning = 0;  ///< CPU DRAM reads on the current line so far
     std::function<void(uint32_t)> _videoFlush;
     std::function<void()> _videoCatchUp;
     uint32_t _stepEndRaster = 0;  // derived from the CPU's clock at the step, not state

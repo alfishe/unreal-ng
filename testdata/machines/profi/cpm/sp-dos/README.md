@@ -18,7 +18,7 @@ MicroDOS) with the BIOS by V. Tereschenko, sold by TOO "Profi" (Moscow). The v3'
 - **Format:** TeleDisk, the Profi CP/M format ([`../README.md`](../README.md)): 5 x 1024-byte sectors, the boot
   sector R = 9 on cylinder 0 / side 0.
 - **Boot:** the boot word at `#102` of the boot sector is `#5D25` (offset 0), so it boots from both BIOS families:
-  on the v3 from the Kramis "Profi-DOS" entry, on the v5 from BIOS 2.0's "Загрузка системы CP/M". The loader
+  on the v3 from the Kramis "Profi-DOS" entry, on the v5 from BIOS 2.0's "Загрузка системы CP/M" (Loading the CP/M system). The loader
   sets `#DFFD = #B0` (hi-res, CP/M, RAM at #0000), copies itself to #0000 and reads the system with the VG93 on
   `#1F..#7F`, polling DRQ / INTRQ on the CP/M system port `#BF` and taking the bytes with `INI`.
 - **On the emulator (2026-10-03):** boots to the SP-DOS shell on `PROFI3` and `PROFI`

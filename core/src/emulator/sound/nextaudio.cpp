@@ -8,7 +8,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/soundmanager.h"
 
 namespace
@@ -105,6 +107,7 @@ void NextAudio::WriteSelect(uint8_t value)
             _selected = chip;
             _pan[chip] = static_cast<uint8_t>(((value >> 6) & 1) << 1 | ((value >> 5) & 1));
         }
+        RecordWrite(0xFFFD, value);
         return;
     }
     // psg_addr (turbosound.vhd 190): only bytes whose bits 7:5 are 0 are a register address; the chip keeps five bits and a register
@@ -113,6 +116,14 @@ void NextAudio::WriteSelect(uint8_t value)
         return;
     _addr[_selected] = value & 0x1F;
     _chips[_selected]->setRegister(value & 0x0F);
+    RecordWrite(0xFFFD, value);
+}
+
+void NextAudio::RecordWrite(uint16_t port, uint8_t value)
+{
+    if (_history && _history->On()) [[unlikely]]
+        RecordAYWrite(_context, *_history, port, value, static_cast<uint8_t>(_selected),
+                      port == 0xBFFD ? static_cast<uint8_t>(_addr[_selected] & 0x0F) : value);
 }
 
 void NextAudio::WriteData(uint8_t value)
@@ -122,6 +133,10 @@ void NextAudio::WriteData(uint8_t value)
     if (_held || (_addr[_selected] & 0x10))
         return;  // ym2149.vhd 123: `addr(4) = '0'`
     _chips[_selected]->writeCurrentRegister(value);
+    if (_context && _context->chipRegisterWatch) [[unlikely]]
+        ReportChipRegisterWrite(_context, SoundChipKind::Ay, static_cast<uint8_t>(_selected), _addr[_selected] & 0x0F,
+                                value);
+    RecordWrite(0xBFFD, value);
 }
 
 uint8_t NextAudio::ReadData()

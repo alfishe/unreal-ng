@@ -50,13 +50,33 @@ constexpr Function kMouseFunctions[] = { Function::KempstonMouse };
 
 // AY decode of the 128K class: A15 = 1, A1 = 0, A14 selects (128K service manual §1.7)
 constexpr PortClaim kAy128Claims[] = {
-    { .mask = 0xC002, .match = 0xC000, .dir = Dir::InOut, .port = 0xFFFD },
-    { .mask = 0xC002, .match = 0x8000, .dir = Dir::Out, .port = 0xBFFD },
+    { .mask = 0xC002, .match = 0xC000, .dir = Dir::InOut, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0xC002, .match = 0x8000, .dir = Dir::Out, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
 };
 
 // ULA #FE: A0 = 0
 constexpr PortClaim kUlaClaims[] = {
-    { .mask = 0x0001, .match = 0x0000, .dir = Dir::InOut, .port = 0x00FE },
+    { .mask = 0x0001, .match = 0x0000, .dir = Dir::InOut, .port = 0x00FE,
+      .channel = Channel::AddressBits, .channelMask = 0xFF00, .input = InputRole::KeyMatrix, .channelName = "row" },
+};
+
+// The keyboard decodes of the boards that differ from A0 = 0 (their port decoders' IsPort_FE)
+// Scorpion ZS-256 and its GMX: A0 = 0, A1 = 1, A5 = 1
+constexpr PortClaim kScorpionUlaClaims[] = {
+    { .mask = 0x0023, .match = 0x0022, .dir = Dir::InOut, .port = 0x00FE,
+      .channel = Channel::AddressBits, .channelMask = 0xFF00, .input = InputRole::KeyMatrix, .channelName = "row" },
+};
+// ATM Turbo 2+ v7.10: A2-A0 = 110
+constexpr PortClaim kAtm710UlaClaims[] = {
+    { .mask = 0x0007, .match = 0x0006, .dir = Dir::InOut, .port = 0x00FE,
+      .channel = Channel::AddressBits, .channelMask = 0xFF00, .input = InputRole::KeyMatrix, .channelName = "row" },
+};
+// ZX-Evolution (Baseconf, TS-Conf): the FPGA decodes the full low byte
+constexpr PortClaim kEvoUlaClaims[] = {
+    { .mask = 0x00FF, .match = 0x00FE, .dir = Dir::InOut, .port = 0x00FE,
+      .channel = Channel::AddressBits, .channelMask = 0xFF00, .input = InputRole::KeyMatrix, .channelName = "row" },
 };
 
 // Beta-128 in DOS mode: the WD1793 registers and the system register (full low byte: MAME, FUSE)
@@ -70,7 +90,8 @@ constexpr PortClaim kBetaClaims[] = {
 
 // Kempston joystick outside DOS, full low byte (ZX-Evo, unreal-ng)
 constexpr PortClaim kKempstonClaims[] = {
-    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .gate = Gate::NonDos },
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .gate = Gate::NonDos,
+      .input = InputRole::KempstonJoystick },
 };
 
 constexpr PortClaim kCovoxFbClaims[] = {
@@ -91,6 +112,40 @@ constexpr BusDef kSpectrum48Buses[] = {
     { .id = "edge", .kind = BusKind::SinclairEdge, .signals = kEdge48, .physicalSlots = 1,
       .arbitration = Arbitration::UlaOnly, .readRule = ReadRule::CardOverUla },
 };
+// The Kempston mouse the emulator fits by `[INPUT] Mouse=KEMPSTON` (no board of these has one): the standard decode,
+// A9 = 1 and A5-A0 = #1F, A8 / A10 the register, off while TR-DOS is selected
+// (PortDecoder::Default_IsPort_KempstonMouse).
+// The low byte #1F stays with a Kempston joystick: its decode is checked first, so the claims name the #xxDF family
+// and its two mirrors, declared as `MachineDef::fitted` (the attribution takes them before the built-ins)
+constexpr PortClaim kStdMouseClaims[] = {
+    { .mask = 0x02FF, .match = 0x02DF, .dir = Dir::In, .gate = Gate::NonDos, .port = 0xFBDF,
+      .input = InputRole::KempstonMouse },
+    { .mask = 0x02FF, .match = 0x029F, .dir = Dir::In, .gate = Gate::NonDos, .port = 0xFB9F,
+      .input = InputRole::KempstonMouse },
+    { .mask = 0x02FF, .match = 0x025F, .dir = Dir::In, .gate = Gate::NonDos, .port = 0xFB5F,
+      .input = InputRole::KempstonMouse },
+};
+// ATM Turbo 2 / 2+: an external ZX-bus mouse on the exact low byte #DF, A8 / A10 the register
+// (PortDecoder_ATM710::IsPort_KempstonMouse)
+constexpr PortClaim kAtmMouseClaims[] = {
+    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::In, .port = 0xFBDF, .input = InputRole::KempstonMouse },
+};
+constexpr const char* kStdMouseName = "Kempston mouse (fitted by `[INPUT] Mouse=`)";
+constexpr BuiltInDef kStdMouseFitted[] = {
+    { .id = "kempston-mouse", .name = kStdMouseName, .functions = kMouseFunctions, .claims = kStdMouseClaims },
+};
+constexpr BuiltInDef kAtmMouseFitted[] = {
+    { .id = "kempston-mouse", .name = kStdMouseName, .functions = kMouseFunctions, .claims = kAtmMouseClaims },
+};
+
+// The Beta 128 the 48K-BETA128 variant fits on the edge connector (machinevariants.cpp): it answers only in DOS mode,
+// so on a plain 48K (no TR-DOS ROM, never in DOS mode) the claims name ports nothing drives
+constexpr BuiltInDef kSpectrum48Fitted[] = {
+    { .id = "kempston-mouse", .name = kStdMouseName, .functions = kMouseFunctions, .claims = kStdMouseClaims },
+    { .id = "beta128", .name = "Beta 128 (WD1793, fitted by the 48K-BETA128 variant)", .functions = kBetaFunctions,
+      .claims = kBetaClaims },
+};
+
 constexpr BuiltInDef kSpectrum48BuiltIns[] = {
     { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
 };
@@ -117,14 +172,86 @@ constexpr BuiltInDef kSpectrum128BuiltIns[] = {
 };
 // The Next board's own Kempston decode: the low byte #1F (and #37 for the right connector, NR #05; zxnext.vhd)
 constexpr PortClaim kNextKempstonClaims[] = {
-    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .port = 0x001F },
-    { .mask = 0x00FF, .match = 0x0037, .dir = Dir::In, .port = 0x0037 },
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::In, .port = 0x001F, .input = InputRole::KempstonJoystick },
+    { .mask = 0x00FF, .match = 0x0037, .dir = Dir::In, .port = 0x0037, .input = InputRole::KempstonJoystick2 },
+};
+// The Next board's own devices, as PortDecoder_Next decodes them (its port report, portdecoder_next_reports.cpp):
+// named so that their port accesses and histories are theirs. No functions: none of them takes a card's place
+constexpr PortClaim kNextRegClaims[] = {
+    { .mask = 0xFFFF, .match = 0x243B, .port = 0x243B, .channel = Channel::Select, .input = InputRole::NextReg,
+      .channelName = "reg" },
+    { .mask = 0xFFFF, .match = 0x253B, .port = 0x253B, .channel = Channel::Indexed, .input = InputRole::NextReg,
+      .channelName = "reg" },
+};
+constexpr PortClaim kNextMouseClaims[] = {
+    { .mask = 0xFFFF, .match = 0xFADF, .dir = Dir::In, .port = 0xFADF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFBDF, .dir = Dir::In, .port = 0xFBDF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFFDF, .dir = Dir::In, .port = 0xFFDF, .input = InputRole::KempstonMouse },
+};
+constexpr PortClaim kNextDmaClaims[] = {
+    { .mask = 0x00FF, .match = 0x006B, .port = 0x006B },  // zxnDMA
+    { .mask = 0x00FF, .match = 0x000B, .port = 0x000B },  // Z80 DMA
+};
+// A15:A11 = 00010, A10 xor (A9 and A8) = 1, A7:A0 = #3B: #133B, #143B, #153B, #163B (and their mirrors in A10:A8)
+constexpr PortClaim kNextUartClaims[] = {
+    { .mask = 0xFFFF, .match = 0x133B, .port = 0x133B },
+    { .mask = 0xFFFF, .match = 0x143B, .port = 0x143B },
+    { .mask = 0xFFFF, .match = 0x153B, .port = 0x153B },
+    { .mask = 0xFFFF, .match = 0x163B, .port = 0x163B },
+};
+constexpr PortClaim kNextCtcClaims[] = { { .mask = 0xF8FF, .match = 0x183B, .port = 0x183B } };
+constexpr PortClaim kNextI2cClaims[] = {
+    { .mask = 0xFFFF, .match = 0x103B, .port = 0x103B },
+    { .mask = 0xFFFF, .match = 0x113B, .port = 0x113B },
+};
+constexpr PortClaim kNextLayer2Claims[] = { { .mask = 0xFFFF, .match = 0x123B, .port = 0x123B } };
+constexpr PortClaim kNextSpriteClaims[] = {
+    { .mask = 0xFFFF, .match = 0x303B, .port = 0x303B },
+    { .mask = 0x00FF, .match = 0x0057, .dir = Dir::Out, .port = 0x0057 },
+    { .mask = 0x00FF, .match = 0x005B, .dir = Dir::Out, .port = 0x005B },
+};
+constexpr PortClaim kNextUlaPlusClaims[] = {
+    { .mask = 0xFFFF, .match = 0xBF3B, .dir = Dir::Out, .port = 0xBF3B, .channel = Channel::Select,
+      .channelName = "reg" },
+    { .mask = 0xFFFF, .match = 0xFF3B, .port = 0xFF3B, .channel = Channel::Indexed, .channelName = "reg" },
+};
+constexpr PortClaim kNextDivMmcClaims[] = { { .mask = 0x00FF, .match = 0x00E3, .port = 0x00E3 } };
+constexpr PortClaim kNextSpiClaims[] = {
+    { .mask = 0x00FF, .match = 0x00E7, .dir = Dir::Out, .port = 0x00E7 },
+    { .mask = 0x00FF, .match = 0x00EB, .port = 0x00EB },
+};
+// Soundrive 1 / 2, Covox, Profi Covox, GS Covox, SpecDrum (NR #08 bit 3 and the per-port enables); #1F and #DF after
+// the joystick's and the mouse's claims: the board answers them by its enables
+constexpr PortClaim kNextDacClaims[] = {
+    { .mask = 0x00FF, .match = 0x001F, .dir = Dir::Out, .port = 0x001F },
+    { .mask = 0x00FF, .match = 0x000F, .dir = Dir::Out, .port = 0x000F },
+    { .mask = 0x00FF, .match = 0x004F, .dir = Dir::Out, .port = 0x004F },
+    { .mask = 0x00FF, .match = 0x005F, .dir = Dir::Out, .port = 0x005F },
+    { .mask = 0x00FF, .match = 0x00F1, .dir = Dir::Out, .port = 0x00F1 },
+    { .mask = 0x00FF, .match = 0x00F3, .dir = Dir::Out, .port = 0x00F3 },
+    { .mask = 0x00FF, .match = 0x00F9, .dir = Dir::Out, .port = 0x00F9 },
+    { .mask = 0x00FF, .match = 0x00FB, .dir = Dir::Out, .port = 0x00FB },
+    { .mask = 0x00FF, .match = 0x003F, .dir = Dir::Out, .port = 0x003F },
+    { .mask = 0x00FF, .match = 0x00B3, .dir = Dir::Out, .port = 0x00B3 },
+    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::Out, .port = 0x00DF },
 };
 constexpr BuiltInDef kNextBuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kAy128Claims },
     { .id = "ula", .name = "ULA `#FE` (keyboard, beeper, border)", .claims = kUlaClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick (two connectors, `#1F` / `#37`)",
       .functions = kKempstonFunctions, .claims = kNextKempstonClaims },
+    { .id = "nextreg", .name = "NextREG select / data (`#243B` / `#253B`)", .claims = kNextRegClaims },
+    { .id = "kempston-mouse", .name = "Kempston mouse (`#FADF`, `#FBDF`, `#FFDF`)", .claims = kNextMouseClaims },
+    { .id = "dma", .name = "zxnDMA (`#6B`; Z80 DMA mode `#0B`)", .claims = kNextDmaClaims },
+    { .id = "uart", .name = "UARTs: ESP and Pi (`#133B`-`#163B`)", .claims = kNextUartClaims },
+    { .id = "ctc", .name = "CTC, eight channels (`#183B`-`#1F3B`)", .claims = kNextCtcClaims },
+    { .id = "i2c", .name = "I2C: RTC (`#103B` SCL, `#113B` SDA)", .claims = kNextI2cClaims },
+    { .id = "layer2", .name = "Layer 2 control (`#123B`)", .claims = kNextLayer2Claims },
+    { .id = "sprites", .name = "Sprites (`#303B`, attributes `#57`, patterns `#5B`)", .claims = kNextSpriteClaims },
+    { .id = "ula-plus", .name = "ULA+ (`#BF3B`, `#FF3B`)", .claims = kNextUlaPlusClaims },
+    { .id = "divmmc", .name = "DivMMC control (`#E3`)", .claims = kNextDivMmcClaims },
+    { .id = "spi", .name = "SPI: the SD cards (`#E7` select, `#EB` data)", .claims = kNextSpiClaims },
+    { .id = "dac", .name = "DACs: Soundrive, Covox, SpecDrum", .claims = kNextDacClaims },
 };
 constexpr Src kSpectrum128Sources[] = { Src::SinclairWiki128Edge, Src::Spectrum128ServiceManual, Src::Wos128kFaq };
 constexpr Src kPlus2Sources[] = { Src::SinclairWiki128Edge, Src::SinclairWikiPlus2, Src::Wos128kFaq };
@@ -171,12 +298,15 @@ constexpr BusDef kPentagonBuses[] = {
 };
 // AY BDIR / BC1 from DD6: A15 = 1, A13 = 1, A1 = 0, A14 selects
 constexpr PortClaim kPentagonAyClaims[] = {
-    { .mask = 0xE002, .match = 0xE000, .dir = Dir::InOut, .port = 0xFFFD },
-    { .mask = 0xE002, .match = 0xA000, .dir = Dir::Out, .port = 0xBFFD },
+    { .mask = 0xE002, .match = 0xE000, .dir = Dir::InOut, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0xE002, .match = 0xA000, .dir = Dir::Out, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
 };
 // Pentagon-1024SL built-in Kempston: A5 = 0, A0 = 1
 constexpr PortClaim kPentagonKempstonClaims[] = {
-    { .mask = 0x0021, .match = 0x0001, .dir = Dir::In, .gate = Gate::NonDos, .port = 0x001F },
+    { .mask = 0x0021, .match = 0x0001, .dir = Dir::In, .gate = Gate::NonDos, .port = 0x001F,
+      .input = InputRole::KempstonJoystick },
 };
 constexpr BuiltInDef kPentagonBuiltIns[] = {
     { .id = "ay", .name = "YM2149 / AY-3-8910", .socket = "ay-socket", .functions = kAyFunctions,
@@ -184,6 +314,7 @@ constexpr BuiltInDef kPentagonBuiltIns[] = {
     { .id = "beta128", .name = "Beta-128 (VG93)", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
       .claims = kPentagonKempstonClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
 };
 constexpr Src kPentagonSources[] = { Src::Pentagon22Schematic, Src::Pentagon22Cpld, Src::BcIg7, Src::MamePentagon };
 
@@ -205,17 +336,46 @@ constexpr BusDef kProfScorpionBuses[] = {
 };
 // The #FD group: A0 = 1, A1 = 0, A5 = 1, A15 / A14 select (Turbo+ netlist)
 constexpr PortClaim kScorpionAyClaims[] = {
-    { .mask = 0xC023, .match = 0xC021, .dir = Dir::InOut, .port = 0xFFFD },
-    { .mask = 0xC023, .match = 0x8021, .dir = Dir::Out, .port = 0xBFFD },
+    { .mask = 0xC023, .match = 0xC021, .dir = Dir::InOut, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0xC023, .match = 0x8021, .dir = Dir::Out, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
+};
+// The printer port's data latch (#DD) and the Covox DAC on it ([SOUND] CovoxDD, on by default: Scorpion Covox
+// software expects it). Yellow board: A0 = 1, A1 = 0, A2 = 1, A5 = 0 (Xpeccy scorpion.c
+// {0x0027, 0x00dd}); Turbo+: A2 not decoded (Xpeccy {0x0023, 0x00dd}, MAME scorpion.cpp Centronics mirror #FFDC).
+// Covox::PrinterDecodeOf is the same decode
+constexpr PortClaim kScorpionPrinterClaims[] = {
+    { .mask = 0x0027, .match = 0x0005, .dir = Dir::Out, .port = 0x00DD },
+};
+constexpr PortClaim kProfScorpionPrinterClaims[] = {
+    { .mask = 0x0023, .match = 0x0001, .dir = Dir::Out, .port = 0x00DD },
 };
 constexpr BuiltInDef kScorpionBuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kScorpionAyClaims },
     { .id = "beta128", .name = "Beta-128 (WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
       .claims = kKempstonClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kScorpionPrinterClaims },
+};
+constexpr BuiltInDef kProfScorpionBuiltIns[] = {
+    { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kScorpionAyClaims },
+    { .id = "beta128", .name = "Beta-128 (WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
+    { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
+      .claims = kKempstonClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kProfScorpionPrinterClaims },
 };
 constexpr Src kScorpionSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction,
                                      Src::SpectrumExpert02, Src::MameScorpion };
+// GmxApollonov is history only: the 1999 article said the classic General Sound does not work with the card, the
+// official site then named the firmware of 20.04.99 as the fix, and current GMX software (Puzzle Bobble 2024) plays
+// through a GS, so the slots carry no rule against it
+constexpr Src kGmxSources[] = { Src::ScorpionPortGuide, Src::ScorpionYellowReconstruction, Src::MameScorpion,
+                                Src::GmxApollonov };
 constexpr Src kProfScorpionSources[] = { Src::ScorpionTurboPlusNetlist, Src::ScorpionProfRom, Src::ScorpionPortGuide,
                                          Src::MameScorpion };
 
@@ -250,6 +410,7 @@ constexpr BuiltInDef kAtm450BuiltIns[] = {
     { .id = "beta128", .name = "Beta-128 (1818VG93)", .functions = kBetaFunctions, .claims = kBetaClaims },
     { .id = "covox", .name = "Covox / printer `#FB`", .kind = BuiltInKind::Switchable, .claims = kCovoxFbClaims },
     { .id = "adc", .name = "ADC `#7DFD`", .claims = kAtmAdcClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
 };
 constexpr BuiltInDef kAtm710BuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912", .kind = BuiltInKind::Socketed, .socket = "ay-socket", .chip = "AY-3-8912",
@@ -258,6 +419,7 @@ constexpr BuiltInDef kAtm710BuiltIns[] = {
     { .id = "ide", .name = "ATM IDE", .functions = kAtmIdeFunctions, .claims = kAtmIdeClaims },
     { .id = "covox", .name = "Covox / printer `#FB`", .kind = BuiltInKind::Switchable, .claims = kCovoxFbClaims },
     { .id = "adc", .name = "ADC `#7DFD`", .claims = kAtmAdcClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kAtm710UlaClaims },
 };
 constexpr Src kAtm450Sources[] = { Src::AtmMicroArtManual, Src::AtmSchematicSheet6 };
 constexpr Src kAtm710Sources[] = { Src::RepoSlotsResearchMachines, Src::AtmMicroArtManual };
@@ -323,11 +485,13 @@ constexpr BusDef kTsconfBuses[] = {
 
 // The ZX-Evo AY is one YM2149 chip in a socket, decoded by the FPGA on the full low byte
 constexpr PortClaim kEvoAyClaims[] = {
-    { .mask = 0xC0FF, .match = 0xC0FD, .dir = Dir::InOut, .port = 0xFFFD },
-    { .mask = 0xC0FF, .match = 0x80FD, .dir = Dir::Out, .port = 0xBFFD },
+    { .mask = 0xC0FF, .match = 0xC0FD, .dir = Dir::InOut, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0xC0FF, .match = 0x80FD, .dir = Dir::Out, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
 };
 constexpr PortClaim kEvoMouseClaims[] = {
-    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::In, .port = 0xFADF },
+    { .mask = 0x00FF, .match = 0x00DF, .dir = Dir::In, .port = 0xFADF, .input = InputRole::KempstonMouse },
 };
 constexpr Function kSdZcFunctions[] = { Function::SdZc };
 constexpr PortClaim kSdZcClaims[] = {
@@ -372,6 +536,7 @@ constexpr BuiltInDef kAtm3BuiltIns[] = {
     { .id = "covox", .name = "Covox `#FB` (passed to the slots)", .kind = BuiltInKind::Switchable,
       .claims = kCovoxFbClaims },
     { .id = "com", .name = "COM port (AVR 16550)", .functions = kSerialEfFunctions, .claims = kEvoComClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kEvoUlaClaims },
 };
 constexpr BuiltInDef kTsconfBuiltIns[] = {
     { .id = "ay", .name = "YM2149 in a socket", .kind = BuiltInKind::Socketed, .socket = "ay-socket",
@@ -389,6 +554,18 @@ constexpr BuiltInDef kTsconfBuiltIns[] = {
       .claims = kCovoxFbClaims },
     { .id = "zifi", .name = "ZiFi (ESP8266 behind a 16550, `#00EF-#C9EF`, `#F8EF-#FFEF`)",
       .functions = kSerialEfFunctions, .claims = kZifiClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kEvoUlaClaims },
+};
+// The Scorpion's built-ins and the Z-Controller SD the GMX firmware drives (GMX design 2.7)
+constexpr BuiltInDef kGmxBuiltIns[] = {
+    { .id = "ay", .name = "AY-3-8912", .socket = "ay-socket", .functions = kAyFunctions, .claims = kScorpionAyClaims },
+    { .id = "beta128", .name = "Beta-128 (WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
+    { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
+      .claims = kKempstonClaims },
+    { .id = "sd-zc", .name = "Z-Controller SD", .functions = kSdZcFunctions, .claims = kSdZcClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kScorpionUlaClaims },
+    { .id = "covox-dd", .name = "Covox on the printer port `#DD`", .kind = BuiltInKind::Switchable,
+      .claims = kScorpionPrinterClaims },
 };
 constexpr Src kAtm3Sources[] = { Src::ZxevoSchematicRevC, Src::BaseconfZbus, Src::BaseconfZports };
 constexpr Src kTsconfSources[] = { Src::ZxevoSchematicRevC, Src::TsconfZbus, Src::TsconfZports, Src::TsconfTune,
@@ -432,6 +609,7 @@ constexpr BuiltInDef kProfiBuiltIns[] = {
     { .id = "rtc", .name = "RTC", .functions = kRtcFunctions },
     { .id = "ide", .name = "IDE (extended map)", .functions = kProfiIdeFunctions },
     { .id = "covox", .name = "Covox `#5F` / `#3F`", .kind = BuiltInKind::Switchable, .claims = kProfiCovoxClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
 };
 constexpr BuiltInDef kProfi3BuiltIns[] = {
     { .id = "ay", .name = "AY-3-8912 (optional socket)", .kind = BuiltInKind::Socketed, .socket = "ay-socket",
@@ -440,6 +618,7 @@ constexpr BuiltInDef kProfi3BuiltIns[] = {
     { .id = "ppi8255", .name = "8255 (Centronics, Kempston)", .functions = kKempstonFunctions,
       .claims = kKempstonClaims },
     { .id = "covox", .name = "Covox `#5F` / `#3F`", .kind = BuiltInKind::Switchable, .claims = kProfiCovoxClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
 };
 constexpr Src kProfiSources[] = { Src::Insanity08Profi, Src::ZxReviewFedinProfi, Src::KarabasProPalette,
                                   Src::RepoProfi1024, Src::RepoSlotsResearchMachines };
@@ -462,9 +641,9 @@ constexpr PortClaim kSprinterCovoxClaims[] = {
     { .mask = 0x00FF, .match = 0x004E, .dir = Dir::InOut },
 };
 constexpr PortClaim kSprinterMouseClaims[] = {
-    { .mask = 0xFFFF, .match = 0xFADF, .dir = Dir::In },
-    { .mask = 0xFFFF, .match = 0xFBDF, .dir = Dir::In },
-    { .mask = 0xFFFF, .match = 0xFFDF, .dir = Dir::In },
+    { .mask = 0xFFFF, .match = 0xFADF, .dir = Dir::In, .port = 0xFADF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFBDF, .dir = Dir::In, .port = 0xFBDF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFFDF, .dir = Dir::In, .port = 0xFFDF, .input = InputRole::KempstonMouse },
 };
 constexpr BuiltInDef kSprinterBuiltIns[] = {
     { .id = "ay", .name = "AY (FPGA)", .kind = BuiltInKind::Switchable, .socket = "ay-socket",
@@ -477,6 +656,7 @@ constexpr BuiltInDef kSprinterBuiltIns[] = {
       .claims = kSprinterMouseClaims },
     { .id = "kempston-joystick", .name = "Kempston joystick", .kind = BuiltInKind::Switchable,
       .functions = kKempstonFunctions, .claims = kKempstonClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
 };
 constexpr Src kSprinterSources[] = { Src::SprinterSchematic, Src::SprinterHard, Src::RepoSprinterHardware,
                                      Src::RepoSprinterIsa };
@@ -485,33 +665,38 @@ constexpr Src kSprinterSources[] = { Src::SprinterSchematic, Src::SprinterHard, 
 
 constexpr MachineDef kMachines[] = {
     { .model = MM_SPECTRUM48, .name = "48K", .variant = "Sinclair 16K / 48K", .buses = kSpectrum48Buses,
-      .builtIns = kSpectrum48BuiltIns, .sources = kSpectrum48Sources },
+      .builtIns = kSpectrum48BuiltIns, .fitted = kSpectrum48Fitted, .sources = kSpectrum48Sources },
     { .model = MM_SPECTRUM128, .name = "128K", .variant = "Sinclair 128K (UK / Spanish)", .buses = kSpectrum128Buses,
-      .builtIns = kSpectrum128BuiltIns, .sources = kSpectrum128Sources },
+      .builtIns = kSpectrum128BuiltIns, .fitted = kStdMouseFitted, .sources = kSpectrum128Sources },
     { .model = MM_PLUS2, .name = "PLUS2", .variant = "Amstrad grey +2", .buses = kPlus2Buses,
-      .builtIns = kSpectrum128BuiltIns, .sources = kPlus2Sources },
+      .builtIns = kSpectrum128BuiltIns, .fitted = kStdMouseFitted, .sources = kPlus2Sources },
     { .model = MM_PLUS2A, .name = "PLUS2A", .variant = "Amstrad +2A", .buses = kPlus3Buses,
-      .builtIns = kPlus2ABuiltIns, .sources = kPlus3Sources },
+      .builtIns = kPlus2ABuiltIns, .fitted = kStdMouseFitted, .sources = kPlus3Sources },
     { .model = MM_PLUS3, .name = "PLUS3", .variant = "Amstrad +3", .buses = kPlus3Buses,
-      .builtIns = kPlus3BuiltIns, .sources = kPlus3Sources },
+      .builtIns = kPlus3BuiltIns, .fitted = kStdMouseFitted, .sources = kPlus3Sources },
     { .model = MM_PENTAGON, .name = "PENTAGON", .variant = "Pentagon 128 (1991): no expansion connector, ZX-bus retrofitted",
-      .buses = kPentagonBuses, .builtIns = kPentagonBuiltIns, .sources = kPentagonSources },
+      .buses = kPentagonBuses, .builtIns = kPentagonBuiltIns, .fitted = kStdMouseFitted,
+      .sources = kPentagonSources },
     { .model = MM_SCORP, .name = "SCORPION", .variant = "Scorpion ZS-256 yellow board", .buses = kScorpionBuses,
-      .builtIns = kScorpionBuiltIns, .sources = kScorpionSources },
+      .builtIns = kScorpionBuiltIns, .fitted = kStdMouseFitted, .sources = kScorpionSources },
     { .model = MM_PROFSCORP, .name = "PROFSCORP", .variant = "Scorpion ZS-256 Turbo+ with ProfROM",
-      .buses = kProfScorpionBuses, .builtIns = kScorpionBuiltIns, .sources = kProfScorpionSources },
+      .buses = kProfScorpionBuses, .builtIns = kProfScorpionBuiltIns, .fitted = kStdMouseFitted,
+      .sources = kProfScorpionSources },
+    // The card sits in the CPU socket of a yellow board (GMX design 2.1): the host buses and built-ins stay
+    { .model = MM_GMX, .name = "GMX", .variant = "Scorpion ZS-256 with the GMX card", .buses = kScorpionBuses,
+      .builtIns = kGmxBuiltIns, .fitted = kStdMouseFitted, .sources = kGmxSources },
     { .model = MM_ATM450, .name = "ATM450", .variant = "ATM Turbo 2 v4.50", .buses = kAtm450Buses,
-      .builtIns = kAtm450BuiltIns, .sources = kAtm450Sources },
+      .builtIns = kAtm450BuiltIns, .fitted = kAtmMouseFitted, .sources = kAtm450Sources },
     { .model = MM_ATM710, .name = "ATM710", .variant = "ATM Turbo 2+ v7.10", .buses = kAtm710Buses,
-      .builtIns = kAtm710BuiltIns, .sources = kAtm710Sources },
+      .builtIns = kAtm710BuiltIns, .fitted = kAtmMouseFitted, .sources = kAtm710Sources },
     { .model = MM_ATM3, .name = "ATM3", .variant = "ZX-Evolution rev C, Baseconf", .buses = kAtm3Buses,
       .builtIns = kAtm3BuiltIns, .sources = kAtm3Sources },
     { .model = MM_TSL, .name = "TSL", .variant = "ZX-Evolution rev C, TS-Conf (FREE_IORQ off)", .buses = kTsconfBuses,
       .builtIns = kTsconfBuiltIns, .sources = kTsconfSources },
     { .model = MM_PROFI, .name = "PROFI", .variant = "Profi v5", .buses = kProfiBuses, .builtIns = kProfiBuiltIns,
-      .sources = kProfiSources },
+      .fitted = kStdMouseFitted, .sources = kProfiSources },
     { .model = MM_PROFI3, .name = "PROFI3", .variant = "Profi v3.2", .buses = kProfiBuses, .builtIns = kProfi3BuiltIns,
-      .sources = kProfi3Sources },
+      .fitted = kStdMouseFitted, .sources = kProfi3Sources },
     // The bare personality (N2): the 128K board's buses and built-ins until the Next's own devices exist, plus its
     // Kempston decode (PortDecoder_Next answers #1F / #37: a Kempston card there would double it)
     { .model = MM_NEXT, .name = "NEXT", .variant = "ZX Spectrum Next (bare personality: 128K board)",

@@ -1,0 +1,32 @@
+# Deathchase (Micromega 1983), the TAP "DEATHCHA.TAP". It must be loaded from 48 BASIC (on a 128K machine pick "48 BASIC" in the
+# menu, then LOAD ""; the 128K ROM loses the game after the title) and with the fast tape loading off: the last block is headerless,
+# and a fast-loaded one makes the loader wait on the tape for ever. In the menu 1 = KEYBOARD. Keys (the two routines at #66AF and
+# #68F5, found with TTD port-events): 9 steers left, 8 steers right (the steering position is the byte #5DEC, 0 left, 1 centre, 2 right),
+# any key of the bottom row (Space, Symbol Shift, M, N, B) fires. Haptics (haptics.md §13 H5), found with TTD on a recorded run, the
+# coverage of rare code blocks against the key log: #6711 is the collision entry (the bike hits a tree: it ran once, 60 frames before
+# the LIVES digit at #6987 went from 3 to 2, from the routine that ends at #6760) (#6859 ran in the windows of the first Space press only: it is the start of the run, not a shot). The only beeper writer (#6011) plays the engine all the time, so the sound says nothing.
+# Checked in real time (three Space presses, then 9 held 20 s): 1 crash after 4 s of 9 (the screenshot shows LIVES 2), no more
+# while the bike kept turning in the open. Known limits: the shot and the kill of an enemy are not events yet.
+schema: 1
+kind: play
+id: builtin/game/deathchase
+label: Deathchase
+match:
+  machines: [PENTAGON, 128K, 48K]
+  file_sha256: ["75e72f406af12d1d277d27a02ab3fd597b3b98675148994aa80278f8c20c035a"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: "9" }
+    dpad.right:   { key: "8" }
+    lstick.left:  { key: "9" }
+    lstick.right: { key: "8" }
+    south:        { key: SPACE, label: Fire }
+    rt.click:     { key: SPACE, label: Fire }
+    menu:         { key: "1", label: Keyboard }
+haptics:
+  sources:
+    crash: { probe: exec, address: "0x6711" }
+  rules:
+    - { on: crash, play: explosion, scale: 0.9 }

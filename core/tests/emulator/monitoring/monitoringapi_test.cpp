@@ -11,7 +11,10 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/monitoring/clientstats.h"
+#include "emulator/monitoring/hostdevices.h"
 #include "emulator/monitoring/monitoringapi.h"
+#include "emulator/ports/deviceaccesswatch.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/video/windowview.h"
 
 #include <algorithm>
@@ -92,6 +95,48 @@ TEST_F(MonitoringApi_Test, AnInstancesNameAnswersItsFieldsAndUnknownsAreNotFound
     ASSERT_TRUE(indexed.Ok()) << "an index names the instance too";
 }
 
+// The device access watch on every plane: the name carries the channels with their sites, `all` only how many; the
+// value follows the watch's revision (a folded frame, a start, a stop)
+TEST_F(MonitoringApi_Test, DevicesAccessCarriesTheChannelsAndAllTheirCount)
+{
+    monitoring::Reply off = monitoring::Call("devices.access", Args());
+    ASSERT_TRUE(off.Ok());
+    EXPECT_TRUE(off.body.find("available")->b);
+    EXPECT_FALSE(off.body.find("active")->b);
+    EXPECT_FALSE(off.body.find("continuous")->b);
+
+    DeviceAccessWatch& watch = _emulator->GetContext()->pPortDecoder->GetAccessWatch();
+    watch.Start();
+    watch.Record(0x001F, 0xFF, false, false, 0x8000);  // IN #1F from 0x8000: the Pentagon's Kempston
+    watch.EndFrame();
+    const monitoring::Reply on = monitoring::Call("devices.access", Args());
+    ASSERT_TRUE(on.Ok());
+    EXPECT_TRUE(on.body.find("active")->b);
+    EXPECT_EQ(Int(on.body, "frames_observed"), 1);
+    const StateNode* channels = on.body.find("channels");
+    ASSERT_NE(channels, nullptr);
+    ASSERT_EQ(channels->items.size(), 1u);
+    const StateNode& kempston = channels->items[0];
+    EXPECT_EQ(kempston.find("device")->s, "kempston-joystick");
+    EXPECT_EQ(kempston.find("input")->s, "kempston-joystick");
+    EXPECT_EQ(kempston.find("dir")->s, "in");
+    EXPECT_EQ(Int(kempston, "frames"), 1);
+    const StateNode* sites = kempston.find("sites");
+    ASSERT_NE(sites, nullptr);
+    ASSERT_EQ(sites->items.size(), 1u);
+    EXPECT_EQ(Int(sites->items[0], "pc"), 0x8000);
+
+    const monitoring::Reply all = monitoring::Call("all", Args());
+    ASSERT_TRUE(all.Ok());
+    const StateNode* summary = all.body.find("instances")->items[0].find("devices.access");
+    ASSERT_NE(summary, nullptr);
+    EXPECT_EQ(Int(*summary, "channel_count"), 1);
+    EXPECT_EQ(summary->find("channels"), nullptr) << "the list stays with the name";
+
+    watch.Stop();
+    EXPECT_FALSE(monitoring::Call("devices.access", Args()).body.find("active")->b) << "a new revision";
+}
+
 TEST_F(MonitoringApi_Test, BreakpointGroupsListEachGroupWithItsIds)
 {
     BreakpointManager* breakpoints = _emulator->GetContext()->pDebugManager->GetBreakpointsManager();
@@ -109,6 +154,17 @@ TEST_F(MonitoringApi_Test, BreakpointGroupsListEachGroupWithItsIds)
     EXPECT_EQ(groups->items[1].find("name")->s, "loader");
     EXPECT_EQ(Int(groups->items[1], "total"), 1);
     EXPECT_EQ(Int(groups->items[1], "active"), 0);
+    EXPECT_EQ(reply.body.find("cpu")->s, "main");
+
+    // One CPU's groups: the sound card CPU's are its own (none here), an unknown CPU is refused
+    StateNode card = Args();
+    card["cpu"] = "gs";
+    const monitoring::Reply gs = monitoring::Call("breakpoint_groups", card);
+    ASSERT_TRUE(gs.Ok());
+    EXPECT_EQ(gs.body.find("cpu")->s, "gs");
+    EXPECT_TRUE(gs.body.find("groups")->items.empty());
+    card["cpu"] = "z81";
+    EXPECT_EQ(monitoring::Call("breakpoint_groups", card).status, 400);
 
     // The summary follows the change (the cache is keyed by the manager's revision)
     const monitoring::Reply summary = monitoring::Call("debug.breakpoints", Args());
@@ -130,6 +186,32 @@ TEST_F(MonitoringApi_Test, TheNamesAreSurfaceReadoutsAndMediaDiskSaysDirty)
     ASSERT_NE(drives, nullptr);
     ASSERT_FALSE(drives->items.empty()) << "a Pentagon has Beta 128 drives";
     EXPECT_NE(drives->items[0].find("dirty"), nullptr);
+}
+
+/// controllers.devices is the process's: the owner's published devices, available false without an owner
+TEST(MonitoringApiDevices_Test, ControllersDevicesIsWhatTheOwnerPublished)
+{
+    monitoring::HostDevices& board = monitoring::HostDevices::Instance();
+    board.Withdraw();
+    EXPECT_TRUE(monitoring::IsProcessName("controllers.devices"));
+    monitoring::Reply reply = monitoring::Call("controllers.devices", StateNode::Object());
+    ASSERT_TRUE(reply.Ok());
+    EXPECT_FALSE(reply.body.find("available")->b) << "no host input owner in the test";
+    EXPECT_EQ(reply.body.find("devices"), nullptr);
+
+    StateNode devices = StateNode::Array();
+    StateNode pad = StateNode::Object();
+    pad["id"] = "fake:1";
+    devices.push(pad);
+    board.Publish(devices, 7);
+    reply = monitoring::Call("controllers.devices", StateNode::Object());
+    ASSERT_TRUE(reply.Ok());
+    EXPECT_TRUE(reply.body.find("available")->b);
+    EXPECT_EQ(reply.body.find("revision")->i, 7);
+    ASSERT_EQ(reply.body.find("devices")->items.size(), 1u);
+    EXPECT_EQ(reply.body.find("devices")->items[0].find("id")->s, "fake:1");
+    board.Withdraw();
+    EXPECT_FALSE(monitoring::ReadProcess("controllers.devices").find("available")->b);
 }
 
 TEST_F(MonitoringApi_Test, HostClientsCountWhatThePlanesReport)
@@ -180,4 +262,32 @@ TEST_F(MonitoringApi_Test, VideoPresentIsThePublishedWindowWithoutCounters)
     EXPECT_DOUBLE_EQ(display->find("original_hz")->d, 60.0);
     EXPECT_DOUBLE_EQ(display->find("machine_hz")->d, 48.83);
     EXPECT_NE(monitoring::Call("all", Args()).body.find("video"), nullptr);
+}
+
+/// MCP tool calls per tool and action (the dispatcher's observer feeds ClientStats::ToolCall): host.clients.mcp.tools
+TEST_F(MonitoringApi_Test, HostClientsCountMcpToolCallsPerAction)
+{
+    monitoring::ClientStats& clients = monitoring::ClientStats::Instance();
+    const auto before = clients.ReadToolCalls();
+    const uint64_t explainsBefore =
+        before.count("analysis") && before.at("analysis").actions.count("explain") ? before.at("analysis").actions.at("explain") : 0;
+    clients.ToolCall("analysis", "explain");
+    clients.ToolCall("analysis", "explain");
+    clients.ToolCall("analysis", "status");
+    clients.ToolCall("search_api", "");
+
+    const monitoring::Reply reply = monitoring::Call("host.clients", StateNode::Object());
+    const StateNode* mcp = reply.body.find("mcp");
+    ASSERT_NE(mcp, nullptr);
+    const StateNode* tools = mcp->find("tools");
+    ASSERT_NE(tools, nullptr);
+    const StateNode* analysis = tools->find("analysis");
+    ASSERT_NE(analysis, nullptr);
+    const StateNode* actions = analysis->find("actions");
+    ASSERT_NE(actions, nullptr);
+    EXPECT_EQ(Int(*actions, "explain"), static_cast<int64_t>(explainsBefore) + 2);
+    EXPECT_GE(Int(*analysis, "calls"), 3);
+    const StateNode* search = tools->find("search_api");
+    ASSERT_NE(search, nullptr);
+    EXPECT_GE(Int(*search->find("actions"), "(none)"), 1);
 }

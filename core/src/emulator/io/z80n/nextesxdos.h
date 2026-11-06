@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,9 @@
 class NextEsxDos final : public IRst8Trap
 {
 public:
+    /// Told of every RST 8 the trap is asked about, before it serves it: the call byte and the return address
+    std::function<void(uint8_t call, uint16_t returnAddress)> onCall;
+
     static constexpr unsigned kHandles = 16;
     static constexpr uint8_t kFirstHandle = 1;  ///< handle numbers are kFirstHandle + slot
     static constexpr size_t kPathMax = 256;

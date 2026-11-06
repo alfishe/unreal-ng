@@ -53,6 +53,7 @@ struct ResolvedProfiles
     std::vector<std::pair<std::string, std::vector<EffectiveBinding>>> effective;
     std::map<std::string, ConnectorPlan> connectors;  ///< what the machine's connectors should hold
     std::vector<PlayerPin> players;
+    std::string joystickKeys;           ///< the most specific play profile's `joystick_keys`, "" = none
     std::vector<std::string> applied;   ///< the profile ids of the "" scope, lowest first
     std::vector<std::string> warnings;  ///< bindings dropped because their merge does not compile
     /// The game haptics of the most specific play profile that has a `haptics` section (whole, not merged), and its id

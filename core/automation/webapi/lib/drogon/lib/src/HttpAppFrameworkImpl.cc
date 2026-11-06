@@ -21,6 +21,8 @@
 #include <json/json.h>
 #include <trantor/utils/AsyncFileLogger.h>
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include "AOPAdvice.h"
 #include "ConfigLoader.h"
 #include "DbClientManager.h"
@@ -1038,21 +1040,51 @@ void HttpAppFrameworkImpl::quit()
     if (getLoop()->isRunning() && running_.exchange(false))
     {
         getLoop()->queueInLoop([this]() {
-            // Release members in the reverse order of initialization
-            listenerManagerPtr_->stopListening();
-            listenerManagerPtr_.reset();
-            StaticFileRouter::instance().reset();
-            HttpControllersRouter::instance().reset();
-            pluginsManagerPtr_.reset();
-            redisClientManagerPtr_.reset();
-            dbClientManagerPtr_.reset();
-            getLoop()->quit();
-            for (trantor::EventLoop *loop : ioLoopThreadPool_->getLoops())
-            {
-                loop->quit();
-            }
-            ioLoopThreadPool_->wait();
+            // stopListening() only queues the connections' close on the IO
+            // loops. Destroying the servers right away left the IO loops
+            // calling the close/connection callbacks of destroyed objects
+            // (crash in TcpServer's close callback with open keep-alive and
+            // WebSocket connections). So: let the IO loops handle the close,
+            // then the notifications it queued on this loop, then tear down.
+            listenerManagerPtr_->stopListening([this]() { drainIoLoops(); });
+            getLoop()->queueInLoop([this]() {
+                // The notifications ran: the IO loops now destroy the
+                // connections, which still call back into the servers
+                drainIoLoops();
+                // Release members in the reverse order of initialization
+                listenerManagerPtr_.reset();
+                StaticFileRouter::instance().reset();
+                HttpControllersRouter::instance().reset();
+                pluginsManagerPtr_.reset();
+                redisClientManagerPtr_.reset();
+                dbClientManagerPtr_.reset();
+                getLoop()->quit();
+                for (trantor::EventLoop *loop : ioLoopThreadPool_->getLoops())
+                {
+                    loop->quit();
+                }
+                ioLoopThreadPool_->wait();
+            });
         });
+    }
+}
+
+void HttpAppFrameworkImpl::drainIoLoops()
+{
+    // Returns when every IO loop has run what was queued on it before this
+    // call. Bounded: a handler stuck in a loop must not block the shutdown.
+    std::vector<std::future<void>> done;
+    for (trantor::EventLoop *loop : ioLoopThreadPool_->getLoops())
+    {
+        auto barrier = std::make_shared<std::promise<void>>();
+        done.push_back(barrier->get_future());
+        loop->queueInLoop([barrier]() { barrier->set_value(); });
+    }
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    for (auto &f : done)
+    {
+        f.wait_until(deadline);
     }
 }
 

@@ -23,10 +23,12 @@
 /// Readouts: the whole vocabulary of readouts.h (`ttd.position`, `run.state`, `machine`, `media.*`, `audio.mute`,
 /// `debug.mode`, `toggle.*`).
 ///
-/// The instance a session acts on (its binding): `target` "follow" (default) follows the WebAPI's rule - the selected
-/// instance, else the only one - and is re-evaluated when instances come and go or the selection changes;
-/// {"instance": id or index} pins one. Views ({"view": …}), the `pin` op and the focused-view rule are the Stream Deck
-/// integration's TargetState (SD4, targeting.md): `{"view":…}` is answered `not_now` until then.
+/// The instance a session acts on (its binding) is actions::TargetState's (SD4, targeting.md §10.1): every join opens a
+/// TargetState session (its id is the surface's `session`), so the host's surfaces table lists the deck and
+/// `PUT /api/v1/surfaces/sessions/{id}/pin` pins it. `target` "follow" (default) follows the focused view, else the
+/// selected instance, else the only one; {"view": id} or {"instance": id or index} pins one; the `pin` op
+/// ({"op":"pin","target":…}) changes it, answered by `target`. A change of the target (focus, pin, an instance gone)
+/// sends `target`, then the new instance's `ctx` and a full readout.
 
 #include <json/json.h>
 
@@ -36,6 +38,8 @@
 #include <set>
 #include <string>
 #include <vector>
+
+#include "emulator/actions/targetstate.h"
 
 class WsHub;
 struct WsConnection;
@@ -54,15 +58,18 @@ struct SurfaceSession
     std::string name;
     std::string model;
     std::string serial;
-    bool pinned = false;   ///< target {"instance": …}; else it follows
+    actions::TargetHandle target;  ///< its TargetState session (id = `session`); dropping it closes that
+    std::string mode = "follow";   ///< the target's mode and view as last sent (a change sends `target`)
+    std::string view;
     std::string instance;  ///< the bound instance; "" none (no machine, or the pinned one is gone)
     std::string context;   ///< the context as last sent in welcome / ctx
     /// Readouts
     std::vector<std::string> patterns;  ///< as subscribed (names, prefixes): expanded again on a rebind
     std::set<std::string> readouts;     ///< the names they match on the bound instance
     double hz = 10;
-    std::chrono::steady_clock::time_point sentAt{};
+    std::chrono::steady_clock::time_point sentAt{};  ///< the last send of its values (the rate's clock)
     bool full = false;                         ///< send every subscribed value at the next tick
+    uint8_t stale = 0;                         ///< WsHub::kStaleEvent / kStaleFrame: what to read again
     std::map<std::string, std::string> sent;   ///< readout -> its value as last sent (compact JSON)
     /// join.features
     bool activity = false;   ///< `activity`: the other surfaces' actions on the bound instance
@@ -92,6 +99,8 @@ public:
     void Action(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     void Subscribe(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     void Unsubscribe(WsConnection& connection, const Json::Value& message, WsOutbox& out);
+    /// {"op":"pin","target":"follow"|{"view":…}|{"instance":…}}: answered by `target` (or an error)
+    void Pin(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     /// With `session`: that surface ends, the socket stays; without: every surface ends and the socket closes
     void Bye(WsConnection& connection, const Json::Value& message, WsOutbox& out);
     /// endregion </Ops>
@@ -100,14 +109,12 @@ public:
     /// NC_SURFACE_CONTEXT: `ctx` when the session is bound to `instance`
     void Context(WsConnection& connection, SurfaceSession& session, const std::string& instance,
                  const std::string& context, const std::string& by, WsOutbox& out);
-    /// Instances came or went, the selection changed: a following session whose instance changed gets `target`, the
-    /// new instance's `ctx` and a full readout at the next tick; a pinned one whose instance is gone, `target` null
-    void Rebind(WsConnection& connection, SurfaceSession& session, const std::string& followed, WsOutbox& out);
+    /// The targets moved (NC_SURFACE_TARGET, instances, the selection): a session whose TargetState target changed
+    /// gets `target`; a new instance, its `ctx` and a full readout at the next tick. True when `target` was sent
+    bool Rebind(WsConnection& connection, SurfaceSession& session, WsOutbox& out, const Json::Value& rid = {});
     /// The tick: changed readouts of the bound instance when the session is due
-    void Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings,
+    void Deliver(WsConnection& connection, SurfaceSession& session, const WsReadings& readings, uint8_t want,
                  std::chrono::steady_clock::time_point now, WsOutbox& out);
-    /// Due at `now` (has readouts and its interval passed, or a full send is pending)
-    static bool Due(const SurfaceSession& session, std::chrono::steady_clock::time_point now);
     /// `activity` (an action another surface ran on the bound instance), at most kActivityPerSecond a second;
     /// `entry` is the feed's entry as the protocol sends it (ActivityEntryNode), `surfaceSession` who ran it
     void Activity(WsConnection& connection, SurfaceSession& session, const Json::Value& entry,
@@ -130,7 +137,8 @@ public:
     static std::vector<std::string> ReadoutNamesOf(const std::string& instance);
 
 private:
-    void Bind(SurfaceSession& session, const std::string& instance, WsConnection& connection, WsOutbox& out);
+    void Bind(SurfaceSession& session, const std::string& instance, WsConnection& connection, WsOutbox& out,
+              const Json::Value& rid);
     /// The surface an op names: `session`, else the connection's only one; null with the error in `out`
     SurfaceSession* SessionOf(WsConnection& connection, const Json::Value& message, WsOutbox& out,
                               const Json::Value& rid = Json::Value());
@@ -138,5 +146,4 @@ private:
     static std::vector<std::string> Expand(SurfaceSession& session);
 
     WsHub& _hub;
-    uint64_t _nextSession = 1;
 };

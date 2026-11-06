@@ -62,7 +62,7 @@
     },
     {
       "control": "dpad.up",
-      "label": "D-pad",
+      "label": "D-pad \u2191",
       "shape": {
         "rect": [
           712,
@@ -81,7 +81,7 @@
     },
     {
       "control": "dpad.down",
-      "label": "D-pad",
+      "label": "D-pad \u2193",
       "shape": {
         "rect": [
           712,
@@ -100,7 +100,7 @@
     },
     {
       "control": "dpad.left",
-      "label": "D-pad",
+      "label": "D-pad \u2190",
       "shape": {
         "rect": [
           638,
@@ -119,7 +119,7 @@
     },
     {
       "control": "dpad.right",
-      "label": "D-pad",
+      "label": "D-pad \u2192",
       "shape": {
         "rect": [
           761,
@@ -161,7 +161,7 @@
     },
     {
       "control": "rstick.click",
-      "label": "Right pad",
+      "label": "Right pad click",
       "shape": {
         "circle": [
           1311,
@@ -202,7 +202,7 @@
     },
     {
       "control": "lstick.click",
-      "label": "Stick",
+      "label": "Stick click",
       "shape": {
         "circle": [
           896,

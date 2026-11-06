@@ -33,12 +33,13 @@ Feature: [docs/inprogress/2026-10-18-control-surfaces](../../../docs/inprogress/
 | A2 | Steps = counts per turn at 12, 36, 72, 360 | equal | `counts_per_detent = 1` |
 | A3 | Auto Trigger 3 at n steps: one click per count | yes | device-local detents usable |
 | A4 | Repeat Count r: plays r or r + 1 times | to measure | the `tick` / `double` mapping |
-| A5 | Waveform 4 (buzz continuous): length vs Cutoff | to measure | the `buzz` pattern; whether a limit buzz needs a stop |
+| A5 | Waveform 4 (buzz continuous): length vs Cutoff | partly, 2026-10-28: output reports queue in the Dial (ten buzzes written in 300 ms play far longer than one), waveform 2 (stop) ends the queue; the length vs Cutoff not measured | the `buzz` pattern; a limit buzz needs pacing and a stop after an overflow (`SurfaceDialPlays`) |
 | A6 | Free wheel without losing resolution: Auto Trigger 1 (none) with steps kept | no clicks, counts unchanged | `clicks: false` |
 | A7 | Output report → felt click | < 30 ms | NFR-2 |
 
 ## Tools
 
+- `dialqueue.c` (here): `dialqueue <n> <waveform> [stop-after-ms]`, n plays back to back, then a stop (A5).
 - `dialhaptic.c` (here): `get`, `feature <steps> <auto> <cutoff> <retrigger> [repeat]`, `play <repeat> <waveform> <retrigger>`.
 - `docs/inprogress/2026-10-17-controller-manager/probes/hiddump.c 300 091B`: descriptor and input reports. It drops
   consecutive duplicate reports, so same-direction turns collapse; A2 and A7 need a capture without that filter

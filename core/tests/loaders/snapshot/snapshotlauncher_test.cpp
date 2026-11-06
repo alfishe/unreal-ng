@@ -1,10 +1,12 @@
 /// @file snapshotlauncher_test.cpp
 /// @brief SnapshotLauncher (snapshot pipeline P7, PLAN #84): what a file needs of the running machine, and when the launcher
 /// replaces the machine. An .spg switches to TS-Conf unless told not to; an .szx saved on another model is refused unless the
-/// caller says switch_model=true or the configuration has [SNAPSHOT] SwitchModel=1.
+/// caller says switch_model=true or the configuration has [SNAPSHOT] SwitchModel=1. A .z80 / .sna the running machine cannot
+/// hold (a 128K file on a 48K) follows the same rule: the machine it was made on, else what the plan's refusal needs.
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
@@ -123,4 +125,75 @@ TEST_F(SnapshotLauncher_Test, WhatAFileNeeds)
 
     EXPECT_FALSE(SnapshotLauncher::NeedOf("missing.szx", MM_PENTAGON, 128, need, error));
     EXPECT_FALSE(error.empty());
+}
+
+namespace
+{
+/// A 48K and the snapshots that need more: the plan refuses them, the launcher names the machine
+class SnapshotLauncher48_Test : public SnapshotLauncher_Test
+{
+protected:
+    void SetUp() override
+    {
+        _spectrum48 = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError, RamPowerOn::Zero);
+        ASSERT_NE(_spectrum48, nullptr);
+        _request.emulatorId = _spectrum48->GetId();
+    }
+
+    SnapshotLoadResult LoadOn48(const std::string& file, std::optional<bool> switchModel)
+    {
+        _request.path = TestPathHelper::GetTestDataPath(file);
+        _request.switchModel = switchModel;
+        return SnapshotLauncher::Load(_request);
+    }
+
+    Emulator* _spectrum48 = nullptr;
+};
+}  // namespace
+
+TEST_F(SnapshotLauncher48_Test, A128kZ80IsRefusedByDefaultWithTheMachineItNeeds)
+{
+    const SnapshotLoadResult result = LoadOn48("loaders/z80/libspectrum/synth-128.z80", std::nullopt);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.modelMismatch);
+    EXPECT_EQ(result.requiredModel, "128k");
+    EXPECT_NE(result.message.find("switch_model"), std::string::npos) << result.message;
+    EXPECT_EQ(EmulatorManager::GetInstance()->GetEmulatorIds().size(), 1u) << "nothing was replaced";
+}
+
+TEST_F(SnapshotLauncher48_Test, A128kZ80AskedToSwitchLoadsOnTheMachineItWasMadeOn)
+{
+    const struct
+    {
+        const char* file;
+        MEM_MODEL model;
+    } cases[] = {{"loaders/z80/libspectrum/synth-128.z80", MM_SPECTRUM128},
+                 {"loaders/z80/libspectrum/synth-pentagon.z80", MM_PENTAGON},
+                 {"loaders/z80/libspectrum/synth-plus3.z80", MM_PLUS3}};
+    for (const auto& c : cases)
+    {
+        SetUp();
+        const SnapshotLoadResult result = LoadOn48(c.file, true);
+        ASSERT_TRUE(result.ok) << c.file << ": " << result.message;
+        EXPECT_TRUE(result.modelSwitched) << c.file;
+        ASSERT_NE(result.emulator, nullptr);
+        EXPECT_EQ(result.emulator->GetContext()->config.mem_model, c.model) << c.file;
+        EXPECT_FALSE(result.report.refused) << c.file;
+    }
+}
+
+TEST_F(SnapshotLauncher48_Test, A128kSnaAskedToSwitchLoadsOnA128k)
+{
+    const SnapshotLoadResult result = LoadOn48("loaders/sna/action.sna", true);
+    ASSERT_TRUE(result.ok) << result.message;
+    EXPECT_TRUE(result.modelSwitched);
+    EXPECT_EQ(result.emulator->GetContext()->config.mem_model, MM_SPECTRUM128);
+}
+
+TEST_F(SnapshotLauncher48_Test, A48kZ80LoadsWithoutASwitch)
+{
+    const SnapshotLoadResult result = LoadOn48("loaders/z80/newbench.z80", true);
+    EXPECT_TRUE(result.ok) << result.message;
+    EXPECT_FALSE(result.modelSwitched);
+    EXPECT_TRUE(result.requiredModel.empty());
 }

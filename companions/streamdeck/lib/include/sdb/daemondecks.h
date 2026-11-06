@@ -52,8 +52,10 @@ class DaemonDecks
 public:
     struct Options
     {
-        std::string startFile;       // the daemon's start scenario ("" = the built-in idle one)
-        bool watchStart = false;     // reload decks playing it when it (or an include) changes (--watch)
+        std::string startFile;         // the daemon's start scenario ("" = defaultFile, else idle)
+        std::string defaultFile = {};  // with no startFile: played on decks of the model it was made for (the
+                                       // data directory's product scenario); other models get the idle one
+        bool watchStart = false;       // reload decks playing it when it (or an include) changes (--watch)
         std::string version = "1.0";
         int applyTimeoutMs = 1000;  // /press, /navigate: the longest wait for the device thread's step (then 202)
     };
@@ -74,8 +76,11 @@ public:
 
     // Loads the start scenario (once, before the decks come).
     bool LoadStart(std::string* error);
-    // A copy of the start scenario for a new deck of `model` (the idle one is laid out for it).
+    // A copy of the start scenario for a new deck of `model`: the start file, else the default file when it was made
+    // for that model, else the idle one laid out for it.
     [[nodiscard]] scn::Scenario StartScenario(const Model* model = nullptr) const;
+    // The file StartScenario(model) plays ("" = the idle scenario).
+    [[nodiscard]] std::string StartFileFor(const Model* model) const;
     [[nodiscard]] const std::string& StartFile() const
     {
         return _options.startFile;
@@ -144,6 +149,7 @@ private:
 
     Options _options;
     std::optional<scn::Scenario> _start;
+    std::optional<scn::Scenario> _default;  // Options::defaultFile, loaded when there is no start file
     std::vector<std::string> _startFiles;
     mutable std::mutex _mutex;  // _decks, _hub, _nextOrder
     std::map<std::string, Entry> _decks;

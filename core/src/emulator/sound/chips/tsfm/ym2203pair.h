@@ -576,11 +576,14 @@ public:
     void loadChipState(int index, const uint8_t*& cur);
 
     /// The timeline tail (kTimelineStateSize bytes): render cursor and pending SSG writes, relative to the synced
-    /// master clock
+    /// master clock. While the pair still adopts the CPU's clock (after a reset) the synced clock means nothing:
+    /// relative to the axis origin then (the reset anchored the cursor there, and a write syncs first, so none is
+    /// pending)
     void saveTimeline(uint8_t*& cur) const;
-    /// Rebuilds the timeline around host tick `base` (the restored CPU position): the pair is synced there (no
-    /// adopt), the cursor and the pending writes land at their offsets
-    void loadTimeline(const uint8_t*& cur, uint64_t base);
+    /// Rebuilds the timeline around host tick `base` (the restored CPU position): the pair is synced there, the
+    /// cursor and the pending writes land at their offsets. `adopt` (the saved pair still adopted the CPU's clock):
+    /// the timeline lands on the axis origin and the next sync adopts the host's position, as the original's did
+    void loadTimeline(const uint8_t*& cur, uint64_t base, bool adopt = false);
 
     /// The pair's own blob (kStateSize): chips, timeline, ratio phase and the per-channel render phase. Output
     /// content (word queues, filter histories) is flushed on load, as the TSFM does

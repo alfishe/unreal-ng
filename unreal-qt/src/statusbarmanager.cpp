@@ -636,7 +636,15 @@ void StatusBarManager::setControllers(HostControllers* controllers)
         _joystick->setCursor(Qt::PointingHandCursor);
         connect(_joystick, &StatusIndicator::clicked, this, &StatusBarManager::controllersRequested);
     }
+    if (_controllers != nullptr)
+        QObject::disconnect(_controllers, &QObject::destroyed, this, nullptr);
     _controllers = controllers;
+    // Whoever deletes the controllers, the 200 ms refresh must not reach a dead object: it forgets it with it
+    if (controllers != nullptr)
+        connect(controllers, &QObject::destroyed, this, [this, controllers]() {
+            if (_controllers == controllers)
+                _controllers = nullptr;
+        });
 }
 
 void StatusBarManager::updateJoystick(EmulatorContext* context)

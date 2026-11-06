@@ -368,7 +368,7 @@ public:
 - **Fingerprint as named fields.** `TTDConfigFingerprint` (`engine/ttdconfigfingerprint.h`) is a list of named values instead of a fixed struct, so a model adds its board options without a format change and `Compare` names each difference with both values. `CaptureConfigFingerprint` (`ttdconfigcapture.h`) reads:
   - `machine.model`, `machine.ram_kb` (these two change what a restore gives: Degraded);
   - `timing.frame`, `.line`, `.int_start`, `.int_length`, `.frame_duration_us`, `.clock_units`;
-  - `sound.core_rate`, `.decimator_high_fidelity`, `.gs_ram_kb`, `render.sound_hq`, `.screen_hq`;
+  - `sound.core_rate`, `.decimator_high_fidelity`, `.gs_ram_kb`, `render.sound_hq`, `.screen_hq`, `.sound_generation` (2026-10-28: sound off as the devices got it at the frame start; the TurboSound FM's render mode, pinned to the recording's in a replay, so a change while recording must be a cut);
   - `fdc.turbo_vg`; the board options from the model's own decoder (`PortDecoder::AddTTDBoardSettings`: the Sprinter's `fast_start` / `turbo_allowed` / `accel_int_suspend`, the Profi board switches), so shared code names no model (Sprinter isolation rule);
   - `rom.signature`: FNV-1a of the whole ROM region, every model's ROM set, the Sprinter BIOS flash among them; hashed once per session (the ROM set cannot change within one, D39).
   The device set and its firmware are not repeated: the device table compares them on every restore (Phase 2).

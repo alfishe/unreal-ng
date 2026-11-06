@@ -164,7 +164,7 @@ TEST_F(TTD_Reverse_Executor_Test, ReverseContinue_EmptyBreakpointSet_NoMatch)
 
     _ttd->SeekTo(_ttd->SessionEndPosition());
 
-    auto r = _ttd->ReverseContinue({});
+    auto r = _ttd->ReverseContinue(std::vector<uint16_t>{});
     EXPECT_FALSE(r.matched);
 }
 

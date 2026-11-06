@@ -99,6 +99,46 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
+== gmx
+model 11
+mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
+turbosound 2 fm
+gs NeoGS
+covox dd
+network.card 0 comport 0
+port 0000 00FF/0000 GMX configuration: scheme, RECONF, FIXROM, BLKEXT, INT type
+port 001F FFFF/001F Beta128 FDC status/command
+port 0033 FFFF/0033 Registered peripheral device
+port 003F FFFF/003F Beta128 FDC track
+port 0057 00FF/0057 Z-Controller SD data
+port 005F FFFF/005F Beta128 FDC sector
+port 0077 00FF/0077 Z-Controller SD chip select (reads #00)
+port 007F FFFF/007F Beta128 FDC data
+port 00B3 FFFF/00B3 Registered peripheral device
+port 00BB FFFF/00BB Registered peripheral device
+port 00DD 0027/0005 Scorpion Covox (8-bit DAC on the printer data latch, write only)
+port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 1FFD D027/1025 RAM 0 at #0000, Shadow Monitor, RAM page bit 3, TR-DOS page
+port 78FD FF27/7825 GMX #8000 RAM page (stored XOR 2); IN: page, BRD1, magic bit
+port 7AFD FF27/7A25 GMX scroll start low (bits 7-4); IN: paging status, BRD0
+port 7CFD FF27/7C25 GMX scroll start high (bits 13-8)
+port 7EFD FF27/7E25 GMX turbo, ROM plane, 640x200, MagEnable; IN: status
+port 7FFD D027/5025 Memory paging (host Scorpion, after the GMX file)
+port BFFD C002/8000 AY / TurboSound data
+port DFFD FF27/DF25 GMX RAM page bits 4-6 at #C000
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FF1F FFFF/FF1F Kempston joystick interface
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+fulldecode 00FF/00C4 slot 1
+fulldecode 00FF/00C5 slot 1
+fulldecode 00FF/00C6 slot 1
+fulldecode 00FF/00C7 slot 1
+fulldecode 00FF/007E slot 1
+fulldecode 00FF/007F slot 1
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 15:39 17:50 18:95 23:14 35:52 54:44 56:22 notRecorded 0
 == next
 model 16
 mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]
@@ -153,7 +193,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == pentagon512k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -184,7 +224,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
 == profi
 model 8
 mixer [Beeper] [AY] [COVOX]
@@ -233,7 +273,7 @@ model 10
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
-covox quad
+covox dd
 network.card 0 comport 0
 port 001F FFFF/001F Beta128 FDC status/command
 port 0033 FFFF/0033 Registered peripheral device
@@ -242,6 +282,7 @@ port 005F FFFF/005F Beta128 FDC sector
 port 007F FFFF/007F Beta128 FDC data
 port 00B3 FFFF/00B3 Registered peripheral device
 port 00BA 00FE/00BA SMUC board (EEPROM / RTC / PIC / IDE window)
+port 00DD 0023/0001 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
 port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
@@ -259,13 +300,13 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == scorpion
 model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
 turbosound 2 fm
 gs NeoGS
-covox quad
+covox dd
 network.card 0 comport 0
 port 001F FFFF/001F Beta128 FDC status/command
 port 0033 FFFF/0033 Registered peripheral device
@@ -274,6 +315,7 @@ port 005F FFFF/005F Beta128 FDC sector
 port 007F FFFF/007F Beta128 FDC data
 port 00B3 FFFF/00B3 Registered peripheral device
 port 00BB FFFF/00BB Registered peripheral device
+port 00DD 0027/0005 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
 port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
@@ -290,7 +332,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:107 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:34 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == spectrum128
 model 2
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -310,7 +352,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == spectrum2
 model 17
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -330,7 +372,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == spectrum2a
 model 18
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -351,7 +393,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 13:16 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 13:16 35:52 56:22 notRecorded 0
 == spectrum3
 model 3
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -374,7 +416,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 13:16 14:42 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 13:16 14:42 35:52 56:22 notRecorded 0
 == spectrum48
 model 1
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -393,7 +435,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 4:107 7:20 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 4:109 7:20 35:52 56:22 notRecorded 0
 == sprinter
 model 19
 mixer [Beeper] [AY] [NeoGS] [NeoGS MP3] [Covox-Blaster]
@@ -462,6 +504,6 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 1:72 2:34 3:21 4:107 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
 == zx-diagnostics
 config turbosound 1 gs 4 moonsound 1 covoxFB 0 sd 1 network.card 0

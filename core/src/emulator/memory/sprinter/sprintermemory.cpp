@@ -2,7 +2,10 @@
 
 #include "sprintermemory.h"
 
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulator.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/sprinter/sprinterwaits.h"
@@ -279,6 +282,23 @@ void SprinterMemory::AcceleratorWrite(uint16_t addr, uint8_t value)
     if (_feature_ttd_enabled && _action[bank] != BankAction::Graphics)
         TtdNoteAccess(_bank_ram_page_cache[bank], addr, value, true);
     OnWrite(addr, value);
+    if (AcceleratorWatched()) [[unlikely]]
+        ReportAcceleratorAccess(true, addr, value);
+}
+
+bool SprinterMemory::AcceleratorWatched() const
+{
+    return _feature_breakpoints_enabled && _context->pCore && _context->pCore->GetZ80()->isDebugMode;
+}
+
+void SprinterMemory::ReportAcceleratorAccess(bool write, uint16_t addr, uint8_t value)
+{
+    if (!_context->pDebugManager || !_context->pEmulator)
+        return;
+    BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
+    const uint16_t id = write ? brk.HandleMemoryWrite(addr, value) : brk.HandleMemoryRead(addr, value);
+    if (id != BRK_INVALID)
+        _context->pEmulator->OnBreakpointHit(id, addr, write ? BreakpointHitKind::AccelWrite : BreakpointHitKind::AccelRead);
 }
 
 void SprinterMemory::RefreshZxShadow(uint8_t window)

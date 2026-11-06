@@ -372,6 +372,8 @@ bool NextEsxDos::HandleRst8(Z80& cpu)
     // The RST pushed the address of the call byte that follows it
     const uint16_t ret = static_cast<uint16_t>(_host.Peek(cpu.sp) | (_host.Peek(static_cast<uint16_t>(cpu.sp + 1)) << 8));
     const uint8_t id = _host.Peek(ret);
+    if (onCall)
+        onCall(id, ret);
     if (id < 0x80)
         return false;  // RST 8 : DEFB code, a 48K ROM error report: the ROM's own
 

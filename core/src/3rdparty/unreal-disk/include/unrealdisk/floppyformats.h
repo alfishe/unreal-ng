@@ -63,8 +63,8 @@ public:
     static std::vector<std::string> Extensions();
 
     /// The format of the file at `path`: "trd", "scl", "fdi", "udi", "dsk",
-    /// "td0", "mgt", "rawpc", "hfe", "scp" or "hobeta". Signatures decide; then
-    /// the size (a raw PC floppy is 737 280 or 1 474 560 bytes); the extension
+    /// "td0", "mgt", "rawpc", "mb02", "mdos", "hfe", "scp" or "hobeta". Signatures decide; then
+    /// the size (a raw PC floppy is 737 280 or 1 474 560 bytes) and the MB-02 / MDOS boot sectors; the extension
     /// only breaks the tie for formats without either (TRD, MGT).
     /// Empty when nothing matches
     static std::string Probe(const std::string& path);

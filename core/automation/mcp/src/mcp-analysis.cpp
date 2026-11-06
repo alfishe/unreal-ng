@@ -23,12 +23,47 @@
 //   aylog {op}                          → POST /ay/log {action, capacity?}, GET /ay/log
 //   pchist {op}                         → POST /debug/pchist {enabled}, GET /debug/pchist?depth=
 //   analyzers {op, name}                → GET /analyzers, PUT /analyzer/{name}, GET|DELETE /analyzer/{name}/events
+//   memory_counters {space, start, length|end, addresses, view, kinds, min, limit}
+//                                       → GET /profiler/memory/counters?space=&format=top|sparse|dense&...
+//   memory_watch {op, name, start, length, port, mask, callers, values}
+//                                       → GET|POST|DELETE /profiler/memory/watches, DELETE /profiler/memory/watches/{name}
+//
+// analysis actions (the analysis layers, core analysis::Execute behind the routes):
+//   start {level?, mode?, record?} → POST /analysis/start
+//   stop                  → POST /analysis/stop
+//   status                → GET  /analysis/status
+//   build {frames?, from_frame?, from_tinframe?, to_frame?, path?, wait?} → POST /analysis/build (wait default
+//                         20000 ms: one call answers the result; the window: analysis-layers.md#stages-and-windows)
+//   cancel                → POST /analysis/cancel
+//   trace {path, from_frame?, from_tinframe?, to_frame?, to_tinframe?, max_cycles?} → POST /analysis/trace (the CPU
+//                         access trace of a window, written to path)
+//   explain {address, page?, what?} → GET /analysis/explain?address=&page=&what=
+//   query {kind?, range?, limit?}   → GET /analysis/query?kind=&range=&limit=      (L2 claims, P3)
+//   export {format, path?, ranges?, width?} → POST /analysis/export                (the L2 draft)
+//   gallery {address?, kind?, scale?, path?, limit?} → POST /analysis/gallery     (P4: graphics, one as a PNG:
+//                                                    an MCP image content block)
+//   findings {op?, kind?, status?, range?, limit?, format?, path?, claim?, evidence?, by?, title?}
+//                         → POST /analysis/findings  (P5: the L3 findings register; op add: a note)
+//   review {op?, id?, verdict?, label?, title?, comment?, kind?, names?, by?, experiment?, ranges?, reason?, offset?,
+//           limit?}
+//                         → POST /analysis/review    (P5: the review queue; next, list, show, resolve)
+//   experiment {spec | path, finding?, parallel?} → POST /analysis/experiment (P5: spec an object or an array)
+//   cover {budget?, per_branch?, frames?, parallel?, limit?, ranges?} → POST /analysis/cover (P5: directed coverage)
+// The answer's "text" (shared with the CLI) is the tool's text.
 //
 // Drogon-free; all calls go through the loopback IApiCaller.
 
 #include "mcp-analysis.h"
 
+#include <algorithm>
+#include <cstdio>
+#include <sstream>
+
 #include "mcp-tool-utils.h"
+
+#include <map>
+#include <string>
+#include <vector>
 
 namespace mcp
 {
@@ -392,6 +427,92 @@ std::string SummarizeLineBudget(const Json::Value& m)
     return out.str();
 }
 
+/// The counters of GET /profiler/memory/counters as lines an agent reads ("0x5C00 r=3 w=1 x=0", the page for phys)
+std::string DescribeMemoryCounters(const Json::Value& body)
+{
+    std::ostringstream out;
+    out << "space " << body.get("space", "").asString() << ", session " << body.get("session_state", "").asString();
+    if (!body.get("allocated", true).asBool())
+        out << " (no counters yet: start the memory profiler)";
+    const Json::Value& totals = body["totals"];
+    out << "; window totals r=" << totals.get("reads", 0).asUInt64() << " w=" << totals.get("writes", 0).asUInt64()
+        << " x=" << totals.get("executes", 0).asUInt64();
+    auto hex = [](uint32_t value) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "0x%04X", value);
+        return std::string(text);
+    };
+    if (body.isMember("counters"))
+    {
+        const Json::Value& counters = body["counters"];
+        const uint32_t start = body.get("start", 0).asUInt();
+        const Json::ArrayIndex n = counters["reads"].size();
+        out << "\n" << n << " cells from " << hex(start);
+        const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(n, 64);
+        for (Json::ArrayIndex i = 0; i < shown; i++)
+            out << "\n" << hex(start + i) << " r=" << counters["reads"][i].asUInt() << " w=" << counters["writes"][i].asUInt()
+                << " x=" << counters["executes"][i].asUInt();
+        if (shown < n)
+            out << "\n... " << (n - shown) << " more in structuredContent";
+        return out.str();
+    }
+    const Json::Value& cells = body["cells"];
+    out << "\n" << cells.size() << " cell(s)";
+    if (body.isMember("matched"))
+        out << " of " << body["matched"].asUInt() << " at or above min " << body.get("min", 1).asUInt() << " ("
+            << body.get("kinds", "rwx").asString() << ")" << (body.get("truncated", false).asBool() ? ", truncated" : "");
+    for (const Json::Value& cell : cells)
+    {
+        out << "\n" << hex(cell[0].asUInt());
+        if (cell.size() > 4)
+            out << " (" << cell[4].asString() << " " << hex(cell[0].asUInt() % 0x4000) << ")";
+        out << " r=" << cell[1].asUInt() << " w=" << cell[2].asUInt() << " x=" << cell[3].asUInt();
+    }
+    return out.str();
+}
+
+/// The watches of /profiler/memory/watches as lines: counts, the top callers and values
+std::string DescribeMemoryWatches(const Json::Value& body)
+{
+    std::ostringstream out;
+    const Json::Value& watches = body["watches"];
+    if (watches.empty())
+        return "no watches";
+    auto hex = [](uint32_t value, int digits) {
+        char text[16];
+        std::snprintf(text, sizeof(text), "0x%0*X", digits, value);
+        return std::string(text);
+    };
+    bool first = true;
+    for (const Json::Value& watch : watches)
+    {
+        if (!first)
+            out << "\n";
+        first = false;
+        out << watch["name"].asString() << ": ";
+        if (watch["kind"].asString() == "port")
+            out << "port " << hex(watch["port"].asUInt(), 4) << " mask " << hex(watch["mask"].asUInt(), 4);
+        else
+            out << "region " << hex(watch["start"].asUInt(), 4) << " +" << watch["length"].asUInt();
+        out << " r=" << watch["reads"].asUInt() << " w=" << watch["writes"].asUInt();
+        if (watch.isMember("executes"))
+            out << " x=" << watch["executes"].asUInt();
+        for (const char* key : {"callers", "values"})
+        {
+            const Json::Value& list = watch[key];
+            if (list.empty())
+                continue;
+            out << "; " << key << ":";
+            const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(list.size(), 8);
+            for (Json::ArrayIndex i = 0; i < shown; i++)
+                out << " " << hex(list[i][0].asUInt(), std::string(key) == "callers" ? 4 : 2) << "x" << list[i][1].asUInt();
+            if (shown < list.size())
+                out << " ...";
+        }
+    }
+    return out.str();
+}
+
 void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -401,7 +522,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
                                "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
-                               "analyzers"})
+                               "analyzers", "memory_counters", "memory_watch"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -419,7 +540,14 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "pause, resume, clear, status), gs_trace the General Sound port trace step by step (op: start, stop, pause, "
         "resume, clear, events), aylog the AY register log (op: start + capacity?, stop, clear, status, read + limit?), "
         "pchist the PC history (op: on, off, read + depth?), analyzers the analyzers (op: list, enable, disable, events, "
-        "clear; name: trdos, editor-input, coverage, aylog, audiocapture).";
+        "clear; name: trdos, editor-input, coverage, aylog, audiocapture). "
+        "memory_counters reads the memory profiler's per-address read / write / execute counters (start it with "
+        "profiler memory start): space cpu (the CPU's 64K view), phys (all physical pages; cells name their page), ram, "
+        "or a page ram5 / rom2 / cache0; a window start + length (or end), or addresses \"0x5C00,0x8000-0x80FF\"; view top "
+        "(heaviest first, default), sparse (touched cells in address order) or dense; kinds r / w / x mix the weight; "
+        "min, limit. memory_watch counts a region of CPU addresses or a partially decoded port (mask 0x00FF = any port "
+        "with that low byte, e.g. 0x1F Kempston, 0xFE keyboard), with callers (PCs) and values: op add (name + start + "
+        "length, or name + port + mask?, callers?, values?), remove (name), clear, list (default).";
     schema["properties"]["profiler"]["type"] = "string";
     schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
@@ -428,7 +556,31 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["op"]["type"] = "string";
     schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers: the operation";
     schema["properties"]["name"]["type"] = "string";
-    schema["properties"]["name"]["description"] = "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture)";
+    schema["properties"]["name"]["description"] =
+        "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture); memory_watch: the watch's name";
+    schema["properties"]["space"]["type"] = "string";
+    schema["properties"]["space"]["description"] = "memory_counters: cpu (default), phys, ram, or a page ram5 / rom2 / cache0";
+    schema["properties"]["length"]["type"] = "string";
+    schema["properties"]["length"]["description"] = "memory_counters: window cells (default: to the space's end); memory_watch add: region bytes";
+    schema["properties"]["addresses"]["type"] = "string";
+    schema["properties"]["addresses"]["description"] = "memory_counters: exactly these cells, \"0x5C00,#5C08,0x8000-0x80FF\"";
+    schema["properties"]["view"]["type"] = "string";
+    schema["properties"]["view"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* view : {"top", "sparse", "dense"})
+        schema["properties"]["view"]["enum"].append(view);
+    schema["properties"]["view"]["description"] = "memory_counters: top (heaviest first, default), sparse or dense";
+    schema["properties"]["kinds"]["type"] = "string";
+    schema["properties"]["kinds"]["description"] = "memory_counters: the counters a cell's weight sums: r, w, x or a mix (default rwx)";
+    schema["properties"]["min"]["type"] = "integer";
+    schema["properties"]["min"]["description"] = "memory_counters top / sparse: cells whose weight is at least this (default 1)";
+    schema["properties"]["port"]["type"] = "string";
+    schema["properties"]["port"]["description"] = "memory_watch add: the port (0x1F, 0xFE, 0x7FFD)";
+    schema["properties"]["mask"]["type"] = "string";
+    schema["properties"]["mask"]["description"] = "memory_watch add: the port's address lines compared (default 0xFFFF; 0x00FF: the low byte)";
+    schema["properties"]["callers"]["type"] = "boolean";
+    schema["properties"]["callers"]["description"] = "memory_watch add: count the PC of every access";
+    schema["properties"]["values"]["type"] = "boolean";
+    schema["properties"]["values"]["description"] = "memory_watch add: count the values read and written";
     schema["properties"]["depth"]["type"] = "integer";
     schema["properties"]["depth"]["description"] = "pchist read: entries, newest first (default 64)";
     schema["properties"]["capacity"]["type"] = "integer";
@@ -882,6 +1034,89 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "memory_counters")
+            {
+                auto text = [](const Json::Value& value) {
+                    return value.isString() ? value.asString() : (value.isNull() ? std::string() : value.asString());
+                };
+                std::string view = args.get("view", "top").asString();
+                if (view != "top" && view != "sparse" && view != "dense")
+                {
+                    done(ToolResult::Error("view: top, sparse or dense"));
+                    return;
+                }
+                std::string query = "/profiler/memory/counters?space=" + UrlEncodeSegment(args.get("space", "cpu").asString()) +
+                                    "&format=" + view;
+                for (const char* key : {"start", "end", "length", "addresses", "kinds"})
+                    if (args.isMember(key) && !text(args[key]).empty())
+                        query += std::string("&") + key + "=" + UrlEncodeSegment(text(args[key]));
+                if (args.isMember("min"))
+                    query += "&min=" + std::to_string(args["min"].asUInt());
+                const unsigned limit = args.isMember("limit") ? args["limit"].asUInt() : 32u;
+                if (view != "dense")
+                    query += "&limit=" + std::to_string(limit == 0 ? 1u : limit);
+                ResolveAndForward(args, "GET", query, nullptr, caller, "Memory counters",
+                                  [done](ToolResult result) {
+                                      if (!result.isError)
+                                          result.text += "\n" + DescribeMemoryCounters(result.structured);
+                                      done(std::move(result));
+                                  });
+                return;
+            }
+
+            if (action == "memory_watch")
+            {
+                const std::string op = args.get("op", "list").asString();
+                const std::string name = args.get("name", "").asString();
+                auto describe = [done](ToolResult result) {
+                    if (!result.isError)
+                        result.text += "\n" + DescribeMemoryWatches(result.structured);
+                    done(std::move(result));
+                };
+                if (op == "list")
+                {
+                    ResolveAndForward(args, "GET", "/profiler/memory/watches", nullptr, caller, "Memory watches", describe);
+                    return;
+                }
+                if (op == "clear")
+                {
+                    ResolveAndForward(args, "DELETE", "/profiler/memory/watches", nullptr, caller, "Memory watches cleared", done);
+                    return;
+                }
+                if (name.empty())
+                {
+                    done(ToolResult::Error("memory_watch " + op + " requires 'name'"));
+                    return;
+                }
+                if (op == "remove")
+                {
+                    ResolveAndForward(args, "DELETE", "/profiler/memory/watches/" + UrlEncodeSegment(name), nullptr, caller,
+                                      "Memory watch '" + name + "' removed", done);
+                    return;
+                }
+                if (op != "add")
+                {
+                    done(ToolResult::Error("op: add, remove, clear or list"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                body["name"] = name;
+                for (const char* key : {"start", "length", "port", "mask"})
+                    if (args.isMember(key))
+                        body[key] = args[key].isString() ? args[key] : Json::Value(std::to_string(args[key].asUInt()));
+                for (const char* key : {"callers", "values"})
+                    if (args.isMember(key))
+                        body[key] = args[key].asBool();
+                if (!body.isMember("start") && !body.isMember("port"))
+                {
+                    done(ToolResult::Error("memory_watch add needs start (+ length) for a region or port (+ mask)"));
+                    return;
+                }
+                ResolveAndForward(args, "POST", "/profiler/memory/watches", &body, caller, "Memory watch '" + name + "' added",
+                                  describe);
+                return;
+            }
+
             if (action == "profiler" || action == "gs_trace" || action == "aylog" || action == "pchist" || action == "analyzers")
             {
                 const std::string op = args.get("op", action == "analyzers" ? "list" : "status").asString();
@@ -1011,7 +1246,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
                                             "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set, profiler, gs_trace, aylog, "
-                                            "pchist, analyzers"));
+                                            "pchist, analyzers, memory_counters, memory_watch"));
         });
 }
 
@@ -1023,5 +1258,355 @@ void RegisterAnalyzePerformance(ToolRegistry& registry)
 }
 
 /// endregion </analyze_performance>
+
+/// region <analysis>
+
+void RegisterAnalysis(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["action"]["type"] = "string";
+    schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* action : {"start", "stop", "status", "build", "cancel", "explain", "query", "export",
+                               "gallery", "findings", "review", "experiment", "cover", "trace"})
+        schema["properties"]["action"]["enum"].append(action);
+    schema["properties"]["action"]["description"] =
+        "start: switch on memory tracking with per-byte access facts and start a fresh session (level, mode; "
+        "record=true also starts the recording build needs); stop: end it, the facts stay readable; status: what the "
+        "session holds and the L1 build; build: replay the recording on a muted analysis instance into L1 (routines, "
+        "call graph, loops, fields, data flow; waits up to 'wait' ms, default 20000, then answers the job state); "
+        "cancel: stop a running build; explain: a routine's fact sheet (profile, loops, fields, callers, registers, a "
+        "disassembly excerpt) when L1 has a routine at the address, otherwise what is known of one byte - how it was "
+        "accessed (opcode or operand fetch, data or stack read / write, block instruction, written while code), the "
+        "last instruction that read and wrote it, the frames, the values written, the counters and the labels; "
+        "query: L2 regions (what the bytes are: code, text, records with fields, tables, variables, unused source, "
+        "each with geometry, users, evidence and a confidence 0..1000) as a compact table; export: the L2 draft as a "
+        "SkoolKit ctl (sna2skool.py -c) or a relocatable skool, the record fields / geometry JSON, the relocation "
+        "layout, a symbol file or the region map; gallery: the graphics L2 found (fonts, sprites, tiles, screens and "
+        "back buffers, level maps) with their geometry, or with an address the one there drawn as a PNG (an image "
+        "block: check the width, height, frames and mask by eye); findings: the L3 register, every L2 claim, conflict, "
+        "candidate bug, unnamed hot routine, unknown area, note and experiment with evidence and a status (observed, "
+        "inferred, refuted, confirmed), ids F1.. in a fixed order (op add: a note of yours); review: the queue of "
+        "findings that need a decision (op next, the default: the next item with a fact sheet under 1 KB; list; show "
+        "id; resolve id with verdict ok / wrong / skip and a label, title or comment that go into the draft export, "
+        "optionally with an experiment); experiment: poke bytes / set registers / press keys on a muted clone from "
+        "the recording, run N frames, check memory, the screen, watched addresses or new code (the source machine is "
+        "never touched; the result marks the finding observed or refuted); cover: flip branches the session took one "
+        "way only by holding the byte they test or pressing the keys they read, and report the new code; trace: the "
+        "CPU access trace of a window of the recording (from_frame / from_tinframe .. to_frame / to_tinframe, default "
+        "one frame, at most 3000): every instruction with its registers and every fetch, read, write and port access "
+        "with its T-state, and the start memory, written to path for scripts (routine animations, who drew a pixel)";
+    schema["properties"]["level"]["type"] = "string";
+    schema["properties"]["level"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["level"]["enum"].append("facts");
+    schema["properties"]["level"]["enum"].append("counters");
+    schema["properties"]["level"]["description"] = "start: facts (default) or counters only";
+    schema["properties"]["mode"]["type"] = "string";
+    schema["properties"]["mode"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["mode"]["enum"].append("z80");
+    schema["properties"]["mode"]["enum"].append("physical");
+    schema["properties"]["mode"]["description"] =
+        "start: z80 (default, the 64K address space) or physical (per RAM / ROM page: banked code apart)";
+    schema["properties"]["record"]["type"] = "boolean";
+    schema["properties"]["record"]["description"] = "start: also start the TTD recording that build replays";
+    schema["properties"]["frames"]["type"] = "integer";
+    schema["properties"]["frames"]["description"] =
+        "build: replay at most this many frames (default: the whole recording); cover: frames per attempt (default 50)";
+    schema["properties"]["path"]["type"] = "string";
+    schema["properties"]["path"]["description"] =
+        "build: write the L1 JSON to this file; export: write the draft there; gallery: the PNG (none: the answer "
+        "carries it)";
+    schema["properties"]["kind"]["type"] = "string";
+    schema["properties"]["kind"]["description"] =
+        "query: all (default), conflicts, or a region kind (code, data, text, font, sprite, tile, screen, level_map, "
+        "buffer, init_table, records, variable, pointer_table, handler_table, rng_state, music_data, packed, unused, "
+        "untouched, ...); gallery: all, font, sprite, tile, screen or level_map; review resolve: what the draft makes "
+        "of the finding's range (code, data, text, font, sprite, tile, screen, variable, pointer_table, "
+        "handler_table, rng, music, packed, level_map, unused)";
+    schema["properties"]["range"]["type"] = "string";
+    schema["properties"]["range"]["description"] = "query: hex start-end, e.g. 8000-83FF (default the whole 64K)";
+    schema["properties"]["limit"]["type"] = "integer";
+    schema["properties"]["limit"]["description"] =
+        "query, gallery, findings: the most rows (default 200); review: the queue's cap (default 40); cover: branches";
+    schema["properties"]["offset"]["type"] = "integer";
+    schema["properties"]["offset"]["description"] = "review list / next: items of the queue to skip (paging, default 0)";
+    schema["properties"]["reason"]["type"] = "string";
+    schema["properties"]["reason"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* reason : {"all", "bug", "conflict", "unnamed-hot", "low-confidence", "unknown", "entry", "name"})
+        schema["properties"]["reason"]["enum"].append(reason);
+    schema["properties"]["reason"]["description"] =
+        "review list / next: only the items of this reason (default all; entry: entry candidates, name: naming "
+        "batches)";
+    schema["properties"]["scale"]["type"] = "integer";
+    schema["properties"]["scale"]["description"] = "gallery: integer zoom of the PNG, 1..8 (default 2)";
+    schema["properties"]["format"]["type"] = "string";
+    schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* format : {"ctl", "skool", "fields", "geometry", "layout", "symbols", "map", "table", "markdown",
+                               "jsonl"})
+        schema["properties"]["format"]["enum"].append(format);
+    schema["properties"]["format"]["description"] =
+        "export: the file to write (ctl ... map); findings: table (default), markdown (zx-reaper re/findings.md) or "
+        "jsonl";
+    schema["properties"]["ranges"]["type"] = "string";
+    schema["properties"]["ranges"]["description"] =
+        "export, review, cover: hex Z80 ranges, comma separated (default 4000-FFFF), e.g. 5900-59FF,8000-FFFF";
+    schema["properties"]["width"]["type"] = "integer";
+    schema["properties"]["width"]["description"] = "export: bytes per DEFB line (default 8)";
+    schema["properties"]["wait"]["type"] = "integer";
+    schema["properties"]["wait"]["description"] = "build: milliseconds to wait for the result (0..30000, default 20000)";
+    schema["properties"]["from_frame"]["type"] = "integer";
+    schema["properties"]["from_frame"]["description"] =
+        "build: replay a window of the recording from this frame (a stage: an arrival's frame; the draft decodes from "
+        "the memory at the window's start)";
+    schema["properties"]["from_tinframe"]["type"] = "integer";
+    schema["properties"]["from_tinframe"]["description"] = "build: the point inside from_frame in TTD time units, as time_travel's tinframe (an arrival's tinframe)";
+    schema["properties"]["to_frame"]["type"] = "integer";
+    schema["properties"]["to_frame"]["description"] =
+        "build: the window ends before this frame (default: the end); trace: the frame the window ends in (default "
+        "from_frame + 1)";
+    schema["properties"]["to_tinframe"]["type"] = "integer";
+    schema["properties"]["to_tinframe"]["description"] = "trace: the point inside to_frame the window ends before (TTD units)";
+    schema["properties"]["max_cycles"]["type"] = "integer";
+    schema["properties"]["max_cycles"]["description"] = "trace: the most bus cycles written (default 8000000)";
+    schema["properties"]["what"]["type"] = "string";
+    schema["properties"]["what"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* what : {"auto", "routine", "byte"})
+        schema["properties"]["what"]["enum"].append(what);
+    schema["properties"]["what"]["description"] =
+        "explain: auto (default; the routine when L1 has one at the address), routine (L1 fact sheet) or byte (L0)";
+    schema["properties"]["address"]["type"] = "string";  // an integer works too (AddressArg)
+    schema["properties"]["address"]["description"] =
+        "explain, gallery: $80BC, #80BC, 0x80BC, 80BCh, decimal or a label name (gallery: the region to draw)";
+    schema["properties"]["page"]["type"] = "string";
+    schema["properties"]["page"]["description"] =
+        "explain: the page (absolute index, ram:N or rom:N); L0 in physical mode (default the page mapped at the "
+        "address now), L1 picks the routine of that page";
+    schema["properties"]["op"]["type"] = "string";
+    schema["properties"]["op"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* op : {"list", "add", "next", "show", "resolve"})
+        schema["properties"]["op"]["enum"].append(op);
+    schema["properties"]["op"]["description"] =
+        "findings: list (default) or add (a note: claim, range, status, evidence, by); review: next (default), list, "
+        "show (id) or resolve (id + verdict / label / title / comment / kind / experiment; a naming batch: names)";
+    schema["properties"]["id"]["type"] = "string";
+    schema["properties"]["id"]["description"] = "review show / resolve: the finding (F12) or the naming batch (N3)";
+    schema["properties"]["verdict"]["type"] = "string";
+    schema["properties"]["verdict"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* verdict : {"ok", "wrong", "skip"})
+        schema["properties"]["verdict"]["enum"].append(verdict);
+    schema["properties"]["verdict"]["description"] =
+        "review resolve: ok (the finding is confirmed), wrong (refuted) or skip (out of the queue, undecided)";
+    schema["properties"]["label"]["type"] = "string";
+    schema["properties"]["label"]["description"] = "review resolve: the routine's / entry's label in the draft (an identifier)";
+    schema["properties"]["title"]["type"] = "string";
+    schema["properties"]["title"]["description"] = "review resolve: the entry title in the draft; findings add: the note's title";
+    schema["properties"]["comment"]["type"] = "string";
+    schema["properties"]["comment"]["description"] = "review resolve: a comment the draft puts in the entry";
+    schema["properties"]["by"]["type"] = "string";
+    schema["properties"]["by"]["description"] = "findings add, review resolve: who decided (default agent)";
+    schema["properties"]["status"]["type"] = "string";
+    schema["properties"]["status"]["description"] =
+        "findings: list only this status, or the status of a note added (observed, inferred, refuted, confirmed)";
+    schema["properties"]["claim"]["type"] = "string";
+    schema["properties"]["claim"]["description"] = "findings add: the note's sentence";
+    schema["properties"]["evidence"]["type"] = "string";
+    schema["properties"]["evidence"]["description"] = "findings add: evidence, ';' separated";
+    for (const char* name : {"spec", "experiment", "names"})
+        for (const char* type : {"object", "array", "string"})
+            schema["properties"][name]["type"].append(type);
+    schema["properties"]["spec"]["description"] =
+        "experiment: one spec or an array of them (or their JSON text): {\"poke\": {\"$8100\": 5}, \"regs\": "
+        "{\"a\": 1}, \"input\": [{\"frame\": 0, \"key\": \"q\"}], \"from\": \"start\" | \"end\" | "
+        "\"frame:N\", \"frames\": 50, \"watch\": [{\"pc\": \"$8130\", \"as\": \"rare\"}, {\"write\": "
+        "\"$8101\"}], \"expect\": {\"rare\": \"reached\", \"mem:$8101\": \"$AA\", \"screen\": "
+        "\"changed\", \"new_code\": \">0\"}, \"finding\": \"F12\"}";
+    schema["properties"]["experiment"]["description"] =
+        "review resolve: an experiment spec (as for spec) whose result marks the finding";
+    schema["properties"]["names"]["description"] =
+        "review resolve of a naming batch (N3): {\"$9000\": \"PlayerY\", \"$9A10\": {\"label\": \"MovePlayer\", "
+        "\"title\": \"Move the player\"}} or [{\"at\": \"$9000\", \"label\": ..., \"title\": ...}] (or its JSON "
+        "text); the batch's subjects left out are skipped";
+    schema["properties"]["finding"]["type"] = "string";
+    schema["properties"]["finding"]["description"] = "experiment: the finding the result marks (none: a new experiment finding)";
+    schema["properties"]["parallel"]["type"] = "integer";
+    schema["properties"]["parallel"]["description"] = "experiment, cover: clones run at once (1..8, default by the cores)";
+    schema["properties"]["budget"]["type"] = "integer";
+    schema["properties"]["budget"]["description"] = "cover: experiments in all (default 64)";
+    schema["properties"]["per_branch"]["type"] = "integer";
+    schema["properties"]["per_branch"]["description"] = "cover: attempts per branch (default 8)";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["default"] = "auto";
+    schema["required"].append("action");
+
+    registry.Register(
+        "analysis",
+        "Program analysis from what the emulated CPU does: per-byte access facts (code vs operand vs data vs stack, "
+        "who reads and writes a byte, which values, when, self-modified code) and L1 code behaviour built from a "
+        "recording (routines with their data ranges, ports, time share and registers; call graph; loops; record "
+        "fields); L2 structure from L1 (regions with kinds, fields and confidence) to query and export as a SkoolKit "
+        "draft, see the graphics it found (gallery); start (record=true for L1), run the program, build, then explain "
+        "addresses, query regions, export the draft; status shows what was recorded. L3 review: findings (the "
+        "register), review (the queue of decisions; resolve writes into the draft), experiment (poke / keys / regs "
+        "on a muted clone, then checks), cover (flip one-sided branches).",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const std::string action = args["action"].asString();
+            // The core answer's text is the readable answer; the target goes in front
+            auto withText = [done](ToolResult result) {
+                if (!result.isError && result.structured.isObject() && result.structured.isMember("text"))
+                    result.text = result.text + "\n" + result.structured["text"].asString();
+                done(std::move(result));
+            };
+            if (action == "start")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"level", "mode"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                if (args.isMember("record"))
+                    body["record"] = args["record"];
+                ResolveAndForward(args, "POST", "/analysis/start", &body, caller, "Analysis started", withText);
+                return;
+            }
+            if (action == "build")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"frames", "wait", "from_frame", "from_tinframe", "to_frame"})
+                    if (args.isMember(name))
+                        body[name] = args[name];  // a number or its text: the core checks it
+                if (!args.isMember("wait"))
+                    body["wait"] = 20000;
+                if (args.isMember("path"))
+                    body["path"] = args["path"].asString();
+                ResolveAndForward(args, "POST", "/analysis/build", &body, caller, "Analysis build", withText);
+                return;
+            }
+            if (action == "cancel")
+            {
+                ResolveAndForward(args, "POST", "/analysis/cancel", nullptr, caller, "Analysis build cancelled", withText);
+                return;
+            }
+            if (action == "stop")
+            {
+                ResolveAndForward(args, "POST", "/analysis/stop", nullptr, caller, "Analysis stopped", withText);
+                return;
+            }
+            if (action == "status")
+            {
+                ResolveAndForward(args, "GET", "/analysis/status", nullptr, caller, "Analysis status", withText);
+                return;
+            }
+            if (action == "explain")
+            {
+                if (!args.isMember("address") || AddressArg(args["address"]).empty())
+                {
+                    done(ToolResult::Error("explain needs address ($80BC, 0x80BC, decimal or a label)"));
+                    return;
+                }
+                std::string suffix = "/analysis/explain?address=" + UrlEncodeSegment(AddressArg(args["address"]));
+                if (args.isMember("page") && !AddressArg(args["page"]).empty())
+                    suffix += "&page=" + UrlEncodeSegment(AddressArg(args["page"]));
+                if (args.isMember("what") && !args["what"].asString().empty())
+                    suffix += "&what=" + UrlEncodeSegment(args["what"].asString());
+                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Analysis explain", withText);
+                return;
+            }
+            if (action == "query")
+            {
+                std::string suffix = "/analysis/query";
+                char sep = '?';
+                for (const char* name : {"kind", "range", "limit"})
+                    if (args.isMember(name) && !AddressArg(args[name]).empty())
+                    {
+                        suffix += sep + std::string(name) + "=" + UrlEncodeSegment(AddressArg(args[name]));
+                        sep = '&';
+                    }
+                ResolveAndForward(args, "GET", suffix, nullptr, caller, "Analysis query", withText);
+                return;
+            }
+            if (action == "export")
+            {
+                if (!args.isMember("format") || args["format"].asString().empty())
+                {
+                    done(ToolResult::Error("export needs format (ctl, skool, fields, geometry, layout, symbols, map)"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"format", "path", "ranges"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                if (args.isMember("width"))
+                    body["width"] = args["width"];
+                ResolveAndForward(args, "POST", "/analysis/export", &body, caller, "Analysis export", withText);
+                return;
+            }
+            if (action == "gallery")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"kind", "path"})
+                    if (args.isMember(name))
+                        body[name] = args[name].asString();
+                if (args.isMember("address") && !AddressArg(args["address"]).empty())
+                    body["address"] = AddressArg(args["address"]);
+                for (const char* name : {"scale", "limit"})
+                    if (args.isMember(name))
+                        body[name] = args[name];
+                // The PNG goes out as an image content block (the model sees it); structuredContent keeps the rest
+                auto withImage = [withText](ToolResult result) {
+                    if (!result.isError && result.structured.isObject() && !result.structured["png"].asString().empty())
+                    {
+                        result.imageData = result.structured["png"].asString();
+                        result.imageMimeType = "image/png";
+                        result.structured["png"] = "[base64 picture: see the image content block]";
+                    }
+                    withText(std::move(result));
+                };
+                ResolveAndForward(args, "POST", "/analysis/gallery", &body, caller, "Analysis gallery", withImage);
+                return;
+            }
+            if (action == "trace")
+            {
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"path", "from_frame", "from_tinframe", "to_frame", "to_tinframe", "max_cycles"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                ResolveAndForward(args, "POST", "/analysis/trace", &body, caller, "Analysis access trace", withText);
+                return;
+            }
+            if (action == "findings" || action == "review" || action == "experiment" || action == "cover")
+            {
+                // Every option goes through as given (numbers, strings, booleans; spec / experiment / names objects or
+                // arrays):
+                // the core checks them
+                static const std::map<std::string, std::vector<const char*>> kOptions = {
+                    {"findings", {"op", "kind", "status", "range", "limit", "format", "path", "claim", "evidence", "by",
+                                  "title"}},
+                    {"review", {"op", "id", "verdict", "label", "title", "comment", "kind", "names", "by", "experiment",
+                                "ranges", "reason", "offset", "limit"}},
+                    {"experiment", {"spec", "path", "parallel", "finding"}},
+                    {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges"}},
+                };
+                Json::Value body(Json::objectValue);
+                for (const char* name : kOptions.at(action))
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                if (action == "experiment" && !body.isMember("spec") && !body.isMember("path"))
+                {
+                    done(ToolResult::Error("experiment needs spec (an object, an array or their JSON text) or path"));
+                    return;
+                }
+                static const std::map<std::string, std::string> kTitles = {
+                    {"findings", "Analysis findings"}, {"review", "Analysis review"},
+                    {"experiment", "Analysis experiment"}, {"cover", "Analysis coverage"}};
+                ResolveAndForward(args, "POST", "/analysis/" + action, &body, caller, kTitles.at(action), withText);
+                return;
+            }
+            done(ToolResult::Error("unknown action '" + action +
+                                   "': start, stop, status, build, cancel, explain, query, export, gallery, findings, "
+                                   "review, experiment, cover or trace"));
+        });
+}
+
+/// endregion </analysis>
 
 } // namespace mcp

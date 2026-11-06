@@ -713,9 +713,17 @@ void HudModel::setCategoryFilter(std::function<bool(const char*)> filter)
 
 bool HudModel::isCategoryEnabled(const char* categoryId) const
 {
-    if (!_categoryFilter)
+    // The filter is installed after construction (observers are already live on the MessageCenter worker), so
+    // copy it under the lock and call the copy outside it: reading the std::function while setCategoryFilter()
+    // assigns it crashed in the handler thunk (null call target)
+    std::function<bool(const char*)> filter;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        filter = _categoryFilter;
+    }
+    if (!filter)
         return true;  // No filter = all enabled
-    return _categoryFilter(categoryId);
+    return filter(categoryId);
 }
 
 void HudModel::subscribeFeatureObserver()

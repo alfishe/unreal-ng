@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-10-19 |
-| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the scenario pipeline 2026-10-22 (§9); the default scenario waits for its spec (§9) |
+| **Status** | v2 implemented 2026-10-20 (SD5, the parts without the surface topic); the scenario pipeline 2026-10-22 (§9); the default scenario ships 2026-10-26 (§9) |
 | **Base** | `*.deck.json` v1 (`streamdeck-emulator/docs/scenario-editor/03-technical-design.md §2`, `streamdeck-bridge/include/sdb/scenario.hpp`) |
 
 v2 adds fields; a v1 file loads (its `webapi` steps keep working through the REST escape hatch, §2) and the studio
@@ -115,7 +115,8 @@ tree's `data/`, absent in a release; `$user` = `~/.unreal-ng` (the core's `FileH
 is relative to the scenario's folder, not the working directory; a root that is not there leaves the path as written.
 A region of a file (`#xywh=x,y,w,h`) spreads one picture over several keys. Validation: an unknown root (`$nowhere/`)
 is an error, an absolute path a warning; the studio's image picker writes `$data/...` or a path relative to the
-scenario. Still open: includes rebasing the relative pictures of an included file onto its own folder.
+scenario. An included file's relative pictures and `$scenario` paths name its own folder: resolving the include
+rebases them onto the including file's (`scn::io::RebasePaths`, done 2026-10-31).
 
 Rule: the TTD timeline is a strip readout, never keys (`strip.status: "ttd"`, the strip's picture `lcd_ttd` of the
 theme); no scenario, theme or idle screen spreads it over keys.
@@ -253,17 +254,18 @@ that calls it is S4.
 ## 6. The palette
 
 - The studio's palette comes from the live catalogue; offline from `$data/streamdeck/catalogue.json`, generated at
-  build time (a small tool dumps the core registry's `List()`, as the device database is compiled in), so the palette
-  always matches the shipped core.
+  build time (`tools/actioncatalogue`: the core registry's `List()` plus the Qt client's actions the core declares,
+  `actions::GuiActionDeclarations`), so the palette always matches the shipped core.
 - Presets: one per catalogue action (id, label, group, a default face from the action's icon hint), plus the generic
   presets. Faces for unreal-ng actions use unreal-qt's icons (`$icons`), so the deck looks like the GUI.
 
 Done 2026-10-20: `sdb/catalogue.h` (parse the route's reply or the file, load, fetch, `cat::Check`: an unknown id, a
 held action without `hold` (an action with a `hold?` param is a tap unless its params hold), a delta on a press, a
 text action without text, as warnings). `data/streamdeck/catalogue.json` ships (95 actions, a snapshot of a running
-unreal-qt, GUI actions included; `tools/make_deck_scenario.py --fetch-catalogue URL` refreshes it); generating it at
-build time from the core registry is still open. The studio's palette has one preset per catalogue action (category
-`unreal-ng: <group>`, a face from the group's icon); the inspector's picker can take the running emulator's catalogue;
+unreal-qt, GUI actions included; `tools/make_deck_scenario.py --fetch-catalogue URL` refreshes it); since 2026-10-31
+the build writes it from the core registry (`action-catalogue` target; the checked-in file follows). The studio's
+palette has one preset per catalogue action (category `unreal-ng: <group>`, a face from the group's icon); the
+inspector's picker can take the running emulator's catalogue;
 `unreal-streamdeck scenario check` warns against it.
 
 ## 7. Contexts on menus
@@ -321,6 +323,12 @@ goes back. The product scenario's monitoring page is one.
 
 ## 9. The default scenario
 
+**Ships (2026-10-26):** `data/streamdeck/scenarios/unreal.deck.yaml`, built by `deckflow.py` from
+`src/unreal.spec.yaml` (the screen map of every menu sits above it in the spec, written by `deckflow build`), is what
+`unreal-streamdeck run` plays without a file on decks of the model it is made for (Stream Deck + XL); other models
+get the idle scenario, `--idle` gives the idle one everywhere ([daemon.md](../../companions/streamdeck/daemon.md#commands)).
+The history below is how it got there.
+
 **Waits (owner, 2026-10-20):** most of the old deck content is test material. Order: (1) audit the icons and build one
 icon set, (2) a document with every use case and its menu hierarchy mapped to icons, (3) only then the scenarios,
 generated from that document's spec. No default scenario ships until then; the machinery below is done.
@@ -351,5 +359,6 @@ generated from that document's spec. No default scenario ships until then; the m
 - Software keys reference `$testdata` only in developer builds; the release scenario uses the software that ships in
   `data/` (`testsoft`, `testtapes`), and the generator checks every path exists. Found 2026-10-20: `data/testsoft`,
   `testtapes` and `testsnapshots` (about 1 MB) are in no package and not in a build's `bin/` (`$data` is the folder
-  holding `streamdeck/`): shipping them beside `streamdeck/` is SD8's.
+  holding `streamdeck/`): shipping them beside `streamdeck/` is SD8's. Done 2026-11-01: every package and a build's
+  `bin/` carry them beside `streamdeck/` ([packaging.md §6](packaging.md#6-data)).
 - The release scenario contains no `shell`, `open`, `keys` and no `webapi` step (ACC-5).

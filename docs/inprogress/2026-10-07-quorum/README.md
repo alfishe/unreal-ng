@@ -5,7 +5,7 @@
 ## What this is
 
 The Quorum (Russian "Кворум"; the ROM carries "1994 Quorum Ltd." and the menu "ROM-MENU QUORUM V.4.2 27.06.1997", and
-the ZXMAK2 source calls the board "БК-04") is a Spectrum clone with a partial I/O decode of its own, its own 64K ROM (system menu, TR-DOS, 128 editor, 48 BASIC), a built-in
+the ZXMAK2 source calls the board "БК-04", BK-04) is a Spectrum clone with a partial I/O decode of its own, its own 64K ROM (system menu, TR-DOS, 128 editor, 48 BASIC), a built-in
 WD1793 floppy controller at its own ports (`#80..#85`), an extra 48-key keyboard matrix (`#7E`), and a control port
 `#00` that maps RAM over the ROM, selects the ROM page and write-protects memory. It exists in several RAM sizes (128K
 and 1024K in UnrealSpeccy; 64K, 256K, 128K and 1024K in the ZXMAK2 family).
@@ -42,7 +42,7 @@ and are open questions with recommendations ([research-quorum-reference-consensu
 
 All facts in these documents come from sources that were read for this design:
 
-- UnrealSpeccy (Quorum support added in the 0.3x line, "Добавлена поддержка quorum 128/1024" in its news file):
+- UnrealSpeccy (Quorum support added in the 0.3x line, "Добавлена поддержка quorum 128/1024" ("added quorum 128/1024 support") in its news file):
   [io.cpp](https://github.com/alfishe/unreal-speccy/blob/HEAD/io.cpp),
   [memory.cpp](https://github.com/alfishe/unreal-speccy/blob/HEAD/memory.cpp),
   [config.cpp](https://github.com/alfishe/unreal-speccy/blob/HEAD/config.cpp),

@@ -28,7 +28,7 @@ The two tables are in [testdata/machines/profi/decoder/](../../../../testdata/ma
 | Part | Wiring |
 |:--|:--|
 | PROM address A0..A7 | ADR5, ADR6, A2, ROM14 (v4/v5) or ADR15 (v3.2), ADR7, ADR1, ADR0, /CPM; /CS = /IORQ. A2 = 0 only while TR-DOS is paged in and CP/M is off (v5: D32 = NAND(DISK, /CP-M); v3.2: BAS of the U30 latch, held high by CP/M) |
-| Outputs, v4/v5 | data bit 3 = system register, 2 = VG93, 1 = extended group (ИД4 by ADR4..ADR2: FDC, 8255, IDE, COM, P4, -, -, RTC), 0 = 8255 |
+| Outputs, v4/v5 | data bit 3 = system register, 2 = VG93, 1 = extended group (ИД4 / ID4 by ADR4..ADR2: FDC, 8255, IDE, COM, P4, -, -, RTC), 0 = 8255 |
 | Outputs, v3.2 | data bit 0 = system register, 1 = VG93, 2 = the data bus buffer on `#7FFD`, 3 = 8255 |
 
 The two files number their data bits in opposite orders. Each order is the only one under which its table makes

@@ -12,7 +12,6 @@
 
 // Forward declaration
 class OpcodeProfiler;
-class PortReadWatch;
 
 /// region <Structures>
 
@@ -506,6 +505,7 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     const MemoryInterface* OverlayDbgMemIf;            // Debug + host bus overlay
     const MemoryInterface* OverlayFastContendedMemIf;  // Fast + contention + host bus overlay
     const MemoryInterface* OverlayDbgContendedMemIf;   // Debug + contention + host bus overlay
+    const MemoryInterface* ReadTapMemIf;               // Any fast one above + the read filter (only while read taps are armed)
     /// Currently selected memory interface. Written only by
     /// Core::SelectMemoryInterface (under its lock); read on every access
     const MemoryInterface* MemIf;
@@ -551,6 +551,11 @@ protected:
     // tracker's CallTraceBuffer; the session state is polled live, the cached
     // flag only avoids the lookup when the calltrace feature is off
     bool _feature_calltrace_enabled = false;
+
+    // The memory tracker's access context byte (AccessContext, memoryaccessfacts.h) while its level is Facts, else
+    // null: after each opcode fetch the instruction's class (stack / block / plain) is stored there, and the INT / NMI
+    // acceptance marks its pushes. Off, it costs one null test per instruction
+    std::atomic<uint8_t*> _accessContextSink{nullptr};
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -572,6 +577,7 @@ public:
     void NotifyMachineM1(uint16_t address);      // run machineM1Hook (out of line, see m1_cycle)
     uint8_t in(uint16_t port);       // the value the CPU gets (TTD port-read journal applied)
     uint8_t inFromBus(uint16_t port);  // the value the bus drives (devices, floating bus)
+    void TraceIn(uint16_t port, uint8_t value);  // the trace hook's IN event (see inTraceT)
     void out(uint16_t port, uint8_t val);
     void retn();
 
@@ -637,6 +643,9 @@ public:
     ///   'N' one internal (no-MREQ) T-state, fired at its start with the address on the bus (value 0)
     /// Used by bus-phase timing tests (io_phase_test / bus_phase tests).
     std::function<void(char type, uint16_t addr, uint8_t value)> busTraceHook;
+    /// The T of an IN cycle's bus answer (IORQ, before the waits after it): the 'I' event fires at this T with the
+    /// byte the CPU takes, which is known only after the port journal / RZX playback (Z80::in)
+    decltype(t) inTraceT = 0;
 
     /// Optional pre-decode port hook (see IPortInterceptor); null on stock
     /// machines - one pointer check per IN/OUT. Set it with SetPortInterceptor
@@ -678,21 +687,12 @@ public:
         UpdateInResultHooks();
     }
 
-    /// The controllers' port-read evidence (ControllerManager, retro-devices.md §6): told the port of every IN while
-    /// the watch runs. Null otherwise; tested behind _inResultHooks. Set on the machine's thread only
-    PortReadWatch* portReadWatch = nullptr;
-    void SetPortReadWatch(PortReadWatch* watch)
-    {
-        portReadWatch = watch;
-        UpdateInResultHooks();
-    }
-
 private:
-    /// Something observes the result of an IN (the port interceptor, a read-cycle latch, the port-read watch)
+    /// Something observes the result of an IN (the port interceptor, a read-cycle latch)
     bool _inResultHooks = false;
     void UpdateInResultHooks()
     {
-        _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr || portReadWatch != nullptr;
+        _inResultHooks = portInterceptor != nullptr || readCycleLatch != nullptr;
     }
 
 public:
@@ -1039,6 +1039,8 @@ public:
     /// region <Feature Cache>
     void UpdateFeatureCache();
     OpcodeProfiler* GetOpcodeProfiler() { return _opcodeProfiler; }
+    /// The memory tracker's access context byte (level Facts) or null (MemoryAccessTracker::SetLevel)
+    void SetAccessContextSink(uint8_t* sink) { _accessContextSink.store(sink, std::memory_order_relaxed); }
     /// endregion </Feature Cache>
 
     /// region <Register Access API>
@@ -1078,4 +1080,7 @@ public:
     /// Maskable interrupts accepted since the CPU was made (HandleINT; the monitoring planes' interrupts per frame).
     /// Statistics only: not machine state, not in snapshots or TTD checkpoints
     uint64_t interruptsAccepted = 0;
+    /// ... of them, those accepted while halted since the last reset (a HALT-paced loop; the TTD timeline's `halt`
+    /// tag reads its growth between frames). Statistics only
+    uint64_t interruptsAcceptedHalted = 0;
 };

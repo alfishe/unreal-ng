@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "debugger/search/memorysearch.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/memory/devicememory.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -55,6 +56,18 @@ Result Bytes(EmulatorContext* context, const std::string& space, uint32_t addres
     if (length == 0 || length > kMaxLength)
     {
         result.error = "the length must be 1 to 65536";
+        return result;
+    }
+    // A sound card CPU's view (cpuview.h): its four windows as they are paged now
+    if (space == "gs" || space == "ms")
+    {
+        const DebugCpuId cpu = space == "gs" ? DebugCpuId::GS : DebugCpuId::MultiSoundGS;
+        result.space = space;
+        result.address = address;
+        if (address > 0xFFFF)
+            result.error = "a CPU address is 0 to #FFFF";
+        else if (!CpuView::Read(context, cpu, static_cast<uint16_t>(address), length, result.bytes))
+            result.error = "cpu " + space + " not available: no card with a CPU in its slot";
         return result;
     }
     MemorySearchRequest where;

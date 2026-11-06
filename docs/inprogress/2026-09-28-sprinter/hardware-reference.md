@@ -39,7 +39,7 @@ including the port addresses, can change at run time (MAN §1.2-1.4).
 |---|---|---|
 | Normal speed | 42 MHz / 12 = 3.5 MHz | MAME `sprinter.cpp:1957` |
 | Turbo | ×6 = 21 MHz; switched by the CNF/SYS port (§5) when bit 1 = 1: bit 0 = turbo on/off; a keyboard "turbo" key (F12 in MAME) can force it off | INC `SP2000.inc:226-300`; MAME `sprinter.cpp:864-871`, `:1767-1771`; PLD `KBD.TDF` output `KB_F12` |
-| Memory waits in turbo | main RAM is not fast enough for 21 MHz: every RAM access is stretched to the next 6-clock slot (MAME models "align to a multiple of 6 clocks, then +6 − cycle length"). Fast RAM has no waits | MAN §1 ("КЭШ … без тактов ожидания"); MAME `sprinter.cpp:1720-1731` |
+| Memory waits in turbo | main RAM is not fast enough for 21 MHz: every RAM access is stretched to the next 6-clock slot (MAME models "align to a multiple of 6 clocks, then +6 − cycle length"). Fast RAM has no waits | MAN §1 ("КЭШ … без тактов ожидания", "cache … without wait states"); MAME `sprinter.cpp:1720-1731` |
 | Port waits in turbo | the DCP lookup costs a RAM access; in turbo the PLD holds WAIT "depending on the needed cycle length" | MAN §13.1; MAME `sprinter.cpp:581`, `:704` (`do_mem_wait(4)`) |
 | "Original ZX waits" | ALL_MODE bit 2 = 0 (and no turbo): accesses to `#4000-#7FFF`, or to window 3 while `#7FFD` bit 2 is set (`V_RAM = PN2`: pages 4-7), wait while the video counter bit `CT5` = 0: a fixed **4 T** cycle (`CT[2..0]` counts mod 6: 24 clocks low, 24 high), the same on every line, not the ULA pattern: 2, 1, 0 or 0 T by where T2 falls. Set by the launcher's `/origin` (ALL_MODE `#FA`) | PLD `SP2_ACEX.TDF:558-559` (`WAIT_ORIG`, the `UPDATE` build; that the release was built from it is unverified), `VIDEO2.TDF:280-298`, `DCP.TDF:577`; INC `SP2000.inc:550-560`; [research-zx-mode.md](research-zx-mode.md) §7.3. Modeled in unreal-ng since 2026-10-02 (`SprinterOrigWaits`, S8 Z3; the phase follows from the PLD: INT is a `CT5` rise, waits 0, 2, 1, 0 T by T1 from INT mod 4, tdd-zx-mode §3.3), not by MAME |
 | Interrupt vector | the INT acknowledge reads `#FF` (IM 2 tables must cover it) | MAME `sprinter.cpp:1961` |
@@ -60,7 +60,7 @@ that lives **inside the PLD** as one of its "internal ports" (§4.3):
 
 Sources: MAN §3.1, §13.2 (p. 31); INC `SP2000.inc:527-534`, `:1520-1560`; MAME `sprinter.cpp:360-379`.
 The page registers can be read back (`IN A,(#E2)`), which the BIOS uses to save and restore
-windows (MAN §13.2: "Порты страниц ОЗУ открыты как на запись, так и на чтение").
+windows (MAN §13.2: "Порты страниц ОЗУ открыты как на запись, так и на чтение", "the RAM page ports are open for both writing and reading").
 
 ### 3.2 Spectrum compatibility of window 3
 

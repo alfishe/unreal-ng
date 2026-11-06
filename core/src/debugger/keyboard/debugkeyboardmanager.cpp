@@ -52,7 +52,7 @@ DebugKeyboardManager::~DebugKeyboardManager()
 /// region <Journalled matrix mutation>
 
 /// Live input is refused while the TTD journal owns input: a replay, or the machine
-/// re-executing recorded history (TimeTravelManager::OwnsInput)
+/// re-executing recorded history (TimeTravelController::OwnsInput)
 bool DebugKeyboardManager::IsInputOwnedByJournal() const
 {
     // An RZX playback owns input as well (its recording answers every IN)
@@ -62,7 +62,7 @@ bool DebugKeyboardManager::IsInputOwnedByJournal() const
 }
 
 /// The one place every automation path changes the matrix. With TTD present the change
-/// goes through TimeTravelManager::SubmitLiveInput: refused while the journal owns input,
+/// goes through TimeTravelController::SubmitLiveInput: refused while the journal owns input,
 /// applied on the machine's thread at an instruction boundary and journalled there while
 /// recording. Timed operations (tap, combo, type, sequences) used to call Keyboard
 /// directly and were missing from the journal.
@@ -1016,6 +1016,7 @@ void DebugKeyboardManager::InitializeKeyNameMap()
     _keyNameMap["sym"] = ZXKEY_SYM_SHIFT;
     _keyNameMap["symshift"] = ZXKEY_SYM_SHIFT;
     _keyNameMap["sym_shift"] = ZXKEY_SYM_SHIFT;
+    _keyNameMap["symbol_shift"] = ZXKEY_SYM_SHIFT;  // the pair of caps_shift
     _keyNameMap["ss"] = ZXKEY_SYM_SHIFT;   // Shorthand alias
     
     // Special keys

@@ -89,7 +89,33 @@ bool NextBoardSupported(std::string* reason)
     return true;
 }
 
+/// A 48K with the Technology Research Beta 128 disk interface on its edge connector: the interface's own TR-DOS 5.03
+/// ROM (the version the 48K Beta 128 shipped with) pages in on an M1 at #3Dxx and out on an M1 at #4000 and above;
+/// the WD1793 #1F #3F #5F #7F and the system register #FF answer only while it is paged in. No #7FFD
+/// (.recipe/machines/48k-beta128.md)
+constexpr const char* kBeta128TrDosRom = "rom\\trdos503.rom";
+
+void Apply48kBeta128(CONFIG& config)
+{
+    config.trdos_present = true;
+    std::snprintf(config.dos_rom_path, sizeof(config.dos_rom_path), "%s", kBeta128TrDosRom);
+}
+
+bool Is48kBeta128(const CONFIG& config)
+{
+    return config.mem_model == MM_SPECTRUM48 && config.trdos_present && config.dos_rom_path[0] != '\0';
+}
+
+bool Beta128Supported(std::string* reason)
+{
+    (void)reason;
+    return true;
+}
+
 const std::vector<MachineVariant> kVariants = {
+    {"48K-BETA128", "ZX-Spectrum 48k + Beta 128 (TR-DOS 5.03)",
+     "ZX-Spectrum 48k with the Beta 128 disk interface: TR-DOS 5.03 paged in at #3Dxx, 4 floppy drives, no #7FFD",
+     "48K", 48, Apply48kBeta128, Is48kBeta128, Beta128Supported},
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
      ApplyTsConfVdac2, IsTsConfVdac2, TsConfVdac2Supported},
@@ -111,6 +137,8 @@ struct Alias
     const char* name;
 };
 const Alias kAliases[] = {
+    {"48K-TRDOS", "48K-BETA128"},
+    {"48K-BETA", "48K-BETA128"},
     {"TSCONF-VDAC2", "TSL-VDAC2"},
     {"PROFIPLUS", "PROFI-PLUS"},
     {"NEXT-ISSUE2", "NEXT-KS1"},

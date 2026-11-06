@@ -776,3 +776,73 @@ TEST(ControllersUi_Test, LearnWizardFollowsTheSessionTheDeviceAnswers)
     DeviceDatabase::SetUser("", error);
     service.Stop();
 }
+
+
+/// The picture is drawn once into a cache: a new size, a new set and a new pixel ratio redraw it, a hidden widget
+/// drops it; every frame is the one a fresh widget draws
+TEST(ControllersUi_Test, PictureCacheFollowsSizeSetAndPixelRatio)
+{
+    ControllerPicture::SetUserDir(ShippedControllers());
+    const auto frame = [](ControllerPicture& picture, qreal ratio) {
+        QImage image((picture.size() * ratio), QImage::Format_ARGB32_Premultiplied);
+        image.setDevicePixelRatio(ratio);
+        image.fill(Qt::black);
+        picture.render(&image);
+        return image;
+    };
+    const auto fresh = [&frame](const char* set, QSize size, qreal ratio,
+                                const std::map<std::string, float>& live = {}) {
+        ControllerPicture picture;
+        picture.setCompact(true);
+        picture.resize(size);
+        EXPECT_TRUE(picture.load(set));
+        picture.setLive(live);
+        return frame(picture, ratio);
+    };
+    ControllerPicture picture;
+    picture.setCompact(true);
+    picture.resize(100, 75);
+    ASSERT_TRUE(picture.load("kempston-joystick"));
+    const QImage plain = fresh("kempston-joystick", QSize(100, 75), 1);
+    EXPECT_EQ(frame(picture, 1), plain);
+    picture.setLive({{"fire", 1.0f}});
+    EXPECT_EQ(frame(picture, 1), fresh("kempston-joystick", QSize(100, 75), 1, {{"fire", 1.0f}}))
+        << "lit over the cache";
+    picture.setLive({});
+    EXPECT_EQ(frame(picture, 1), plain) << "the light leaves no trace in the cache";
+    EXPECT_EQ(frame(picture, 2), fresh("kempston-joystick", QSize(100, 75), 2)) << "another pixel ratio redraws";
+    picture.resize(120, 66);
+    EXPECT_EQ(frame(picture, 1), fresh("kempston-joystick", QSize(120, 66), 1)) << "a new size redraws";
+    ASSERT_TRUE(picture.load("sinclair-joystick"));
+    const QImage other = fresh("sinclair-joystick", QSize(120, 66), 1);
+    EXPECT_EQ(frame(picture, 1), other) << "a new set redraws";
+    picture.show();
+    picture.hide();
+    EXPECT_EQ(frame(picture, 1), other) << "drawn again after a hide dropped the cache";
+    ControllerPicture::SetUserDir(QString());
+}
+
+/// Every callout of a shipped picture names one control: four "D-pad" or two "LS" would not say which is which
+TEST(ControllersUi_Test, ShippedPicturesNameEveryCalloutOnce)
+{
+    const QDir images(ShippedControllers() + "/images");
+    int views = 0;
+    for (const QString& set : images.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+        for (const QString& name : QDir(images.filePath(set)).entryList({"*.hotspots.json"}))
+        {
+            QFile file(images.filePath(set + "/" + name));
+            ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+            std::map<QString, QString> seen;
+            for (const QJsonValue& value : QJsonDocument::fromJson(file.readAll()).object().value("controls").toArray())
+            {
+                const QJsonObject control = value.toObject();
+                const QString label = control.value("label").toString();
+                const QString id = control.value("control").toString();
+                const auto [it, fresh] = seen.emplace(label, id);
+                EXPECT_TRUE(fresh) << (set + "/" + name).toStdString() << ": \"" << label.toStdString()
+                                   << "\" names " << it->second.toStdString() << " and " << id.toStdString();
+            }
+            ++views;
+        }
+    EXPECT_GT(views, 50);
+}

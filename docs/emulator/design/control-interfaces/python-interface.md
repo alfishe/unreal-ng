@@ -69,6 +69,15 @@ python->start();
 python->executePython("print('Hello from embedded Python!')");
 ```
 
+Code sent to the interpreter (`POST /api/v1/python/exec`, the CLI `python` command) runs in `__main__`: its functions
+and callbacks see its top-level names, and the names stay for the next call, as in the Lua console. Its `print`
+output comes back with the answer.
+
+Code sent by `POST /api/v1/python/exec` or `/python/file` acts in the sender's automation session on a machine the
+sender holds (its `X-Unreal-Session`, or its implicit session, an MCP agent's too): its control calls pass without a
+`take_control()`, and `release_control()` leaves the sender's session in place
+([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
+
 ### Machine Identity and Lifecycle
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
@@ -366,7 +375,8 @@ class Emulator:
     def audio_levels(self) -> dict: ...              # every row's and channel's peak, active, mute, solo (topic audio.mixer)
     # get_sound_character() / set_sound_character(name, value) also serve ay_stereo, ay_chip, fm_trim_db,
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
-    # audio_capture_start(seconds=1.0, source="") records one mixer device's own buffer
+    # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
+    # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
@@ -495,9 +505,24 @@ def companion_revoke(id: str) -> int:
         timers, register banks) or the wavetable half (part='pcm': 24 slots with envelopes).
         available=False without the card; ValueError for another part"""
 
+    def devices_state(self, all: bool = False) -> dict:
+        """The device catalog: {available, reports[{id, title, available, summary, route, cli, script, mcp}]},
+        the state reports this machine has; `script` names the method here that returns each.
+        all=True: the absent ones too, available False with description (why)"""
+
     def fdc_state(self) -> dict:
         """Beta Disk WD1793 report: registers, status_bits, last_command, fsm_state,
-        signals (intrq/drq), beta128_register, density, selected_drive, drives[4]"""
+        signals (intrq/drq), beta128_register, density, selected_drive, drives[4],
+        history (the command history) and history_state"""
+
+    # Device histories by registry id (../debugger/device-history.md): off / ring / capture, a JSON Lines stream.
+    # An unknown device raises KeyError, a bad mode or stream file ValueError
+    def history_list(self) -> dict: ...
+    def history(self, device: str, last: int = 0) -> dict: ...
+    def history_config(self, device: str, mode: str = None, limit: int = None, stream: str = None,
+                       stream_limit: int = None) -> dict: ...
+    def history_clear(self, device: str) -> dict: ...
+    def history_pause(self, device: str, paused: bool = True) -> dict: ...  # hold / go on
 
     def contention_state(self) -> dict:
         """Memory contention report: rule (none/ula48/ula128/gatearray), applicable, switch,
@@ -546,6 +571,14 @@ def companion_revoke(id: str) -> int:
     def set_register(self, name: str, value: int) -> bool:
         """False for an unknown name or a value im (0-2) / iff1, iff2 (0-1) cannot hold;
         8-bit registers take the low byte"""
+
+    # cpu="gs" ("ms": the MultiSound's) on get_registers, get_register, set_register, mem_read, mem_write and
+    # disasm reads and writes the sound card CPU (card_time instead of t; disasm from its PC, no labels);
+    # memory_map("gs") is its four windows {cpu, windows: [{start, size, kind, page, offset}]}. ValueError for
+    # another name, RuntimeError when no card with a CPU is in the slot or for an edit in the recorded past.
+    # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
+    # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
+    # or {ok: False, error}
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -591,7 +624,7 @@ emu.tape_load("/path/to/game.tap")   # .tap/.tzx/.spc/.sta/.ltp/.zxt, or a folde
 emu.tape_eject()                      # the tape leaves the tape slot (while TTD records: at the next frame boundary)
 
 # Transport (same semantics as `tape play|pause|stop|rewind|seek`)
-emu.tape_play()    # start at consumption cursor; resumes in place when paused
+emu.tape_play()    # start at consumption cursor; resumes in place when paused; queued for a tape still landing
 emu.tape_pause()   # freeze mid-block (idempotent); False when not playing
 emu.tape_stop()    # terminal stop: invalidates the loaded image
 emu.tape_rewind()  # rewind to block 0, image kept
@@ -649,11 +682,18 @@ emu.media_eject("B", discard=True, async_=True)          # "async" is a Python k
 emu.media_info("sd"); emu.media_formats(kind="floppy"); emu.media_save("A"); emu.media_export("sd", "/tmp/card.img")
 emu.media_targets("/discs/dna_nemo.iso")                 # where a file can go: file, targets, default, refusal
 emu.media_discard("A"); emu.media_rescan("sd"); emu.media_create("B"); emu.media_protect("A", True)
-emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, FAT partitions
+emu.media_volumes("hd")                                  # the file systems: TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MDOS, FAT partitions
 emu.media_files("A", "SHELL", recursive=True)            # a directory's entries; volume="p1" picks a volume
 emu.media_read("A", "read_me.txt", out="/tmp/r.txt")     # base64 data, or written to out
 data = emu.media_read_bytes("hd", "AUTOEXEC.BAT", volume="p1")  # bytes; RuntimeError when it fails
-emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto a TR-DOS / +3DOS floppy; in_="prog.bin" a host file
+emu.media_write("A", "PROG.C", b"\xf3\xc9", start=0x8000)  # onto any file system of the disk; in_="prog.bin" a host file
+emu.media_rename("A", "PROG.C", "GAME.C")                 # a bare name stays in its directory; "/x" moves a file or a directory (iS-DOS, FAT)
+emu.media_delete("hd", "OLD.TXT", volume="p1")
+emu.media_mkdir("hd", "GAMES/NEW", parents=True)          # a FAT directory, an iS-DOS catalogue
+emu.media_mkdir("A", "WORK", continuous=True, blocks=4)   # an iS-DOS continuous catalogue of 4 blocks
+emu.media_delete("hd", "GAMES", recursive=True)           # a directory with its contents
+emu.media_attrib("hd", "GAME.COM", attributes="+R-H", time="2026-10-26 14:30")  # FAT RHSA, iS-DOS RWHD, +3DOS RSA
+emu.media_label("hd", "WORK DISK")                         # FAT label, TR-DOS title, iS-DOS device name
 emu.media(verb, slot, path, **options)                   # any verb
 ```
 
@@ -758,8 +798,8 @@ emu.controllers_match(path="/games/elite.tzx")           # {matches: [{id, how}]
 ```
 
 `controllers_haptics(device="")`, `controllers_rumble(device, effect="identify")`, `controllers_output(device,
-**options)`, `controllers_light(device, color)`, `controllers_haptics_probe(kind, address, page=, port_mask=,
-play=)` (a haptic probe with its rule in the loaded game's user profile), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
+**options)`, `controllers_light(device, color)`, `controllers_haptics_trial(text="",
+clear=False)` (events and rules tried on the loaded game for this session, never written), `controllers_match(path=)`, `controllers_role(device, role)`, `controllers_pin(device, pin)`,
 `controllers_identify(device)`, `controllers_player(device, connector=None)`, `controllers_probe(**options)`,
 `controllers_reports(device)`, `controllers_database(**lookup)`, `controllers_database_save(text)`,
 `controllers_database_delete(id)`, `controllers_database_import(text, save=True)`, `controllers_learn(device,
@@ -1012,7 +1052,7 @@ print(emu.feature_get("turbotape"))    # True
 emu.feature_set("turbomode", True)     # turbo mode (same switch as `setting speed unlimited`)
 ```
 
-`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `turbomode` while a recording runs, and `fasttape`, `turbotape`, `fastdisk` while a recording runs, history is replayed, or the machine sits in history. A held feature reads as `False`, and `feature_set(name, True)` on it returns `False`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
+`feature_list()` and `feature_get()` report the state in effect. Time-travel debugging holds some features off: `fastdisk` while a recording runs, history is replayed, or the machine sits in history; `fasttape`, `turbotape` while history is replayed or the machine sits in history (the engine's recording keeps them, and turbo mode). A held feature reads as `False`, and `feature_set(name, True)` on it returns `False`. The full list of features, aliases and defaults: [command-interface.md §5](./command-interface.md#5-feature-management--configuration).
 
 ### Speed and Turbo
 
@@ -1158,10 +1198,26 @@ id = emu.bp_nextreg_write(0x40, to=0x44, doors="copper", value=0x01, vmask=0x03,
 id = emu.bp_magic("ed_ff")         # ZX Next: stop after the magic opcode ED FF (or "dd_01") ran
 id = emu.bp_beam(99, hc=255)        # ZX Next: the beam passes line 99 (the copper's counter) at pixel clock 255
 id = emu.bp_copper(12, to=14)       # ZX Next: the copper completes list instruction 12..14
+id = emu.bp(0x0038, cpu="gs")       # the sound card CPU's (General Sound / NeoGS); bp_remove(id, cpu="gs"), bp_list(cpu="gs") ...
+                                    # cpu="ms": the MultiSound card's General Sound, the same way
+id = emu.bp_event("card_command", value=0x23)  # a GS event (int, nmi, reset, page, card_*, dac_fetch, clock_change,
+                                    # dma_start, dma_done, gscfg0, host_*; the ZX Next's cpu_int, cpu_nmi,
+                                    # esxdos_call, divmmc_map, zxndma_start, ...: the main CPU's);
+                                    # cpu= defaults to the kind's side; ValueError with the reason when refused
+id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register write by the main CPU (ay, fm, saa,
+                                    # opl4, opl4wave, dac, cbl); end= a range end, unit= one chip of the kind
+id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
+                                    # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
+                                    # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
 emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp_hits(id)                     # the hit count; -1 for an unknown id
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
+id = emu.bp_write(0x5C78, condition="VAL == 0")  # a condition (bp / bp_read / bp_write / bp_port_*; dialect="c");
+                                    # ValueError with the reason when it does not compile
+emu.bp_condition(id, "VAL == 80")   # change it ("" clears): True; False for an unknown id; ValueError for a bad text
 emu.bp_group(id, "game")            # group, created on use; switched on / off together (CLI bpgroup)
 id = emu.bp_key("space")            # keyboard: the first keyboard read that sees SPACE go down; on="release" / "both",
                                     # key="any"; hits=, group=, note=
@@ -1174,7 +1230,34 @@ emu.trace("opcode", "start")        # profilers and traces (tracecontrol): opcod
 emu.trace("audio", "start", seconds=2, source="ay1")  # resume | pause_toggle | clear | status -> {name, state, can_pause}
 emu.bp_count()
 print(emu.bp_list())                # the text table: "to 0x80FF", "in ram32", "mask 0x00FF", "hits >=50", "(hit 12x)"
-emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one
+emu.bp_status()                     # the last hit, see below; 'hit_count', and 'page' = {'kind', 'page'} for a physical one;
+                                    # with a condition also 'condition', 'match_count', 'condition_error'
+```
+
+### Script Callbacks
+
+Called back on a tap (a memory or port access, with an optional condition, a machine event or a sound chip's
+register write; never stops the machine), on a
+breakpoint's stop, or on a game event of the controller profile. The function runs on the Python thread under the
+GIL, from a ring of hits with a register snapshot each (deferred mode). Full reference:
+[docs/features/script-callbacks.md](../../../features/script-callbacks.md).
+
+```python
+id = emu.on_tap(lambda hit: print(hit["value"], hit["regs"]["hl"]), "write", 0x5C78, condition="MDT < 5",
+                label="lives")      # kind: exec, read, write, port_in, port_out; to=, page=, mask=, dialect=;
+                                    # policy= (suspend | disable | ignore), budget_us=, ring=; ValueError when refused
+id = emu.on_tap(fn, "event", event="fdc_command", value=0x80, vmask=0xE0)  # a machine event; hit["arg"] the detail
+id = emu.on_tap(fn, "chipreg", 7, chip="ay")  # a sound chip's register write; to=, unit=, value=, vmask=, condition=
+id = emu.on_breakpoint(fn, 3)       # breakpoint 3 still stops
+id = emu.on_game_event(fn, "died")  # hit["event"], hit["value"]
+emu.callbacks()                     # [{id, on, owner, label, target, policy, state, reason, hits, dropped, calls, ...}]
+emu.callback_resume(id); emu.callback_policy(id, "ignore"); emu.callback_remove(id)
+ue.callbacks_run()                  # run the waiting hits now (a script looping on the Python thread)
+# A str instead of fn: Lua source for the emulator's hook state (mode="frame" by default, or "sync"; instructions=)
+id = emu.on_tap("return function(hit) shared_set('lives', hit.value) end", "write", 0x5C78, mode="sync")
+# role="logic": the hook's poke / set_reg land at the next instruction boundary, recorded by TTD and replayed
+id = emu.on_tap("return function(hit) poke(0x5C78, 5) end", "write", 0x5C78, mode="sync", role="logic")
+emu.shared_get("lives"); emu.shared_set("limit", 3); emu.callback_hooks()
 ```
 
 ### DebugManager Class
@@ -1314,11 +1397,25 @@ emu.memory_profiler_clear()    # Clear all data
 status = emu.memory_profiler_status()
 # Returns: {'feature_enabled': True, 'capturing': True, 'session_state': 'capturing', 'tracking_mode': 'physical'}
 
-# Data retrieval
-pages = emu.memory_profiler_pages(limit=20)   # Get per-page access summaries
-counters = emu.memory_profiler_counters(page=5, mode='physical')  # Address-level counters
-regions = emu.memory_profiler_regions()       # Monitored region statistics
-emu.memory_profiler_save('/path/output', format='yaml')  # Save data to file
+# Per-address counters (MemoryCounters, docs/emulator/design/debugger/memory-counters.md)
+hot = emu.memory_counters(space="cpu", view="top", kinds="x", limit=16)   # hot code, heaviest first
+for address, reads, writes, executes in hot["cells"]:
+    print(f"{address:04X} r={reads} w={writes} x={executes}")
+banks = emu.memory_counters(space="phys", view="top", kinds="w")          # cell // 0x4000 = absolute page
+touched = emu.memory_counters(space="ram5", view="sparse", min=1)         # every touched cell of RAM 5
+cells = emu.memory_counters(addresses="0x5C00,0x5C08,0x8000-0x800F")      # exactly these cells
+r, w, x = emu.memory_counter(0x5C08)                                      # one cell (space="cpu")
+# Window: start=, length= (0: to the end); view="dense" gives every cell; ValueError with the reason
+
+# Watches (MemoryWatch): regions of CPU addresses and partially decoded ports, with callers / values
+emu.memory_watch_add("sysvars", 0x5C00, 0xC0, callers=True)
+emu.memory_watch_port("kempston", 0x1F, 0x00FF, values=True)   # every port with low byte 0x1F
+emu.memory_watch_port("keys", 0xFE, 0x00FF, callers=True)
+for watch in emu.memory_watches():   # [{name, kind, start/length or port/mask, reads, writes, executes, callers, values}]
+    print(watch["name"], watch["reads"], watch["writes"], watch["callers"])
+emu.memory_watch_remove("sysvars")
+emu.memory_watch_clear()
+# Session control on every plane: emu.trace("memory", "start") (also stop / pause / resume / clear / status)
 ```
 
 ### Call Trace Profiler
@@ -1391,7 +1488,7 @@ Module functions, by emulator id (default: the selected machine). A model switch
 
 `Emulator.rzx_stop()` and `Emulator.rzx_status()` act on that machine; `Emulator.snapshot_load("game.rzx")` plays a recording on it as it is.
 
-`unreal.snapshot_load(path, emulator_id="", switch_model=True)` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first (`emulator_id` is the new one). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
+`unreal.snapshot_load(path, emulator_id="", switch_model=None, commit="")` returns `{ok, message, emulator_id, model_switched, previous_emulator_id, required_model}`: a TS-Conf program (`.spg`) on another model switches the machine to TS-Conf first unless `switch_model=False` (`emulator_id` is the new one); an `.szx` of another model, or a `.z80` / `.sna` the machine cannot hold (a 128K file on a 48K: the machine its header names), switches with `switch_model=True` and is refused otherwise ([webapi-interface.md](./webapi-interface.md) has the rule). `Emulator.snapshot_load` is bound to its machine and raises `RuntimeError` for such a file instead.
 
 ```python
 r = unreal.rzx_play("games/greenberet.rzx")          # on a 48K: switches to a 128K
@@ -1404,13 +1501,13 @@ print(unreal.rzx_status(r["emulator_id"])["summary"])
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
 
-**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (`snapshot_load` only on v1: on the engine a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (on v1 also `tape_load`, `disk_create`, `gs_switch_personality`, and the `slots_*` functions answer `status: 'recording'`; on the engine a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session; `disk_load` on v1 returns `success: False` with the reason in `message`); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
+**Session rules** — read [command-interface.md → TTD Session Rules](./command-interface.md#ttd-session-rules). In short: states are `idle`, `recording`, `detached`; seek/step/find-last/reverse methods are refused by the core while recording (`ttd_seek` returns `reached: False` with `halt_reason: 'out_of_range'`, the boolean methods return `False`, `ttd_find_last` / `ttd_reverse_continue` return `None`), so call `ttd_stop()` first; `ttd_start()` switches the `timetravel` feature on by itself; while recording (a snapshot load is part of the recording), `ttd_invalidate`, `ttd_set_journal_enabled` raise `RuntimeError` with the reason (a tape / disk / media change is an event of the recording at the next frame boundary, the others end the session); on a stopped session loads, disk create, ROM reload, a host speed change and `ttd_invalidate()` drop the history, while a reset keeps it; `feature_set` switching `timetravel` / `debugmode` off stops the recording cleanly (history kept, `last_stop_reason` in `ttd_status()`); while recording, the host speed is locked to 1x and turbo / fast tape / turbo tape / fast disk are off; `tinframe` counts T-states at the machine's top CPU clock (plain T-states without a hardware turbo, ×2 on Scorpion/ATM Turbo 2+, ×4 on ZX-Evo - see Time in the session rules).
 
 ```python
 try:
     emu.tape_load('game.tap')
 except RuntimeError as refusal:
-    print(refusal)   # v1 only: Cannot insert a tape while TTD is recording: ... stop the recording first.
+    print(refusal)   # a refused call raises with the reason
 ```
 
 Unlike the WebAPI, these methods do not pause the emulator for you: call `emu.pause()` before browsing history. Failures are reported in the return value (`False`, `None`, or a dict with `error`), not as exceptions — except an out-of-range `phys_page`, which raises `ValueError`, and a refusal to protect a running recording, which raises `RuntimeError`.
@@ -1507,7 +1604,7 @@ orders of magnitude slower.
 **Navigation:**
 
 ```python
-emu.ttd_seek(4823)                          # frame 4823's end on the engine ({4824, 0}), its start on v1
+emu.ttd_seek(4823)                          # frame 4823's end ({4824, 0})
 emu.ttd_seek(frame=4823, tinframe=14982)    # (frame, tinframe); tinframe=0 is the frame's start
 # -> {'reached': True,
 #     'arrived_at': {'frame': 4823, 'tinframe': 14982},
@@ -1549,6 +1646,16 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    None only when nothing matched and no marker stopped the search.
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
+
+# One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
+hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
+# {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
+#  'count': 500, 'truncated': True, 'next_before': 336512000, ...}
+more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['next_before'])
+# When did each of these PCs last run: one hit per PC (its newest), the walk ends once each has one
+last = emu.ttd_reverse_continue([0x8200, 0x9A10, 0xC000], first_per_pc=True)
+# {'hits': [...], 'count': 2, 'pcs_without_hit': [39440], ...}
+# phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 
 **Reverse search:**
@@ -1580,8 +1687,13 @@ result = emu.ttd_find_last(
     pc_to=0x8000,
     before_frame=4823,         # search at or before this point (default: current position)
     before_tin=0,
-    phys_page=5                # 0..255: one physical RAM page (ValueError otherwise)
+    phys_page=5                # 0..255 or 'rom': one physical RAM page (ValueError otherwise)
 )
+
+# Every write that changed the byte, newest first, with the byte it replaced; the machine stays
+changes = emu.ttd_find_last(addr=0x5B00, changes_only=True, all=True, limit=500)
+# {'hits': [{'frame': 4823, 'tinframe': 14982, 't': ..., 'value': 3, 'old_value': 2, 'pc': ..., ...}, ...],
+#  'count': 41, 'truncated': False, ...}   keywords: all, changes_only, limit, before (machine T), from_frame
 
 # The Sprinter's video RAM / fast RAM: space='vram' | 'cache', the address an offset in it
 result = emu.ttd_find_last(addr=0x4805, space='vram')
@@ -1596,7 +1708,7 @@ result = emu.ttd_find_last(addr=0x4805, space='vram')
 
 **When did the program ... (port events):** `ttd_port_events(event, arg=None, **options)` searches the port journals - every IN and OUT with its time and PC - without replay. Events, arguments and options: [command-interface.md → Port events](./command-interface.md).
 
-Output below is from the recorded fixture `testdata/ttd/port-journals/dizzyx.ttd` (Dizzy X):
+Output below is from the recorded fixture `testdata/ttd/port-journals/engine/dizzyx.ttd` (Dizzy X):
 
 ```python
 r = emu.ttd_port_events('key', 'space')        # when the game saw SPACE pressed
@@ -1606,7 +1718,7 @@ r = emu.ttd_port_events('key', 'space')        # when the game saw SPACE pressed
 w = emu.ttd_port_events('ay-write', 7, **{'from': 200, 'to': '260:0', 'limit': 100})
 # 60 hits, one a frame: the mixer written from PC 0xC176, 'ay_register': 7
 
-f = emu.ttd_port_events('key', '5', file='testdata/ttd/port-journals/dizzyx.ttd')
+f = emu.ttd_port_events('key', '5', file='testdata/ttd/port-journals/engine/dizzyx.ttd')
 # a saved session, searched without loading it
 
 edges = emu.ttd_port_events('ear', limit=100000)['hits']        # every tape edge the loader saw
@@ -1628,10 +1740,14 @@ for m in emu.ttd_markers():                 # replay barriers
 
 emu.ttd_bookmark_add('before crash')                        # at the current position
 emu.ttd_bookmark_add('umt entry', frame=4823, tinframe=14982)
-# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ...}
-#    or {'added': False, 'error': '...'}
-for bm in emu.ttd_bookmarks():              # time-sorted
-    print(bm['frame'], bm['tinframe'], bm['label'])
+emu.ttd_bookmark_add('lives', 212, 31540, note='the life counter drops', tags=['lives'], watch=['#A13C'])
+# -> {'added': True, 'label': ..., 'frame': ..., 'tinframe': ..., 'bookmark': {...}, 'text': ...}
+#    or {'added': False, 'error': '...'}; context=False skips the moment's registers / instruction / watched bytes
+for bm in emu.ttd_bookmarks():              # time-sorted; ttd_bookmarks(tag='lives'): one tag
+    print(bm['frame'], bm['tinframe'], bm['label'], bm['note'], bm['context'])
+emu.ttd_bookmark_note('lives', note='only on contact', append=True, add_tags=['enemy'])   # also tags, remove_tags, rename
+e = emu.ttd_bookmark_export(format='markdown', tag='lives', title='Green Beret')        # or 'profile', 'json'
+print(e['text'])                            # path='...' writes it too: e['path'], e['bytes']
 emu.ttd_bookmark_delete('before crash')     # -> bool
 emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_marker included) plus 'bookmark'
                                             # ('error' for an unknown label)
@@ -1679,14 +1795,75 @@ scan = emu.ttd_coverage_scan(kind='executed', addr_from=0x0038, addr_to=0x0040,
 #  'matching_frames': 3, 'scanned_frames': 183, 'truncated': False,
 #  'covered_from': 18, 'covered_to': 197, 'index_available': True}
 
+# The newest matches first, as runs of consecutive frames; a cut list carries the cursor
+runs = emu.ttd_coverage_scan(kind='executed', addr_from=0x8200, addr_to=0x8200, phys_page=2,
+                             order='newest', ranges=True, limit=50)
+# {'ranges': [[190, 192], [180, 180], ...], 'order': 'newest', 'exact': True, 'truncated': True,
+#  'next_to_frame': 87, 'first_match': 3, 'last_match': 192, ...}
+# exact=False without phys_page: the offset matched on every page; phys_page='rom' is the ROM's bucket
+
 # The Sprinter's video RAM by its own offsets (space='vram' / 'cache': offsets inside one 16 KB page)
 scan = emu.ttd_coverage_scan(kind='written', space='vram', addr_from=0x4805, addr_to=0x4805)
+
+# Rare code in one call: addresses executed in at most max_frames frames, as blocks with those frames
+rare = emu.ttd_coverage_rare(max_frames=2, addr_from=0x8000, addr_to=0xFFFF, limit=50)
+# {'rare_keys': 41, 'distinct_keys': 2310, 'rare_blocks': 6, 'truncated': False,
+#  'blocks': [{'addr_from': '0x9A10', 'addr_to': '0x9A2C', 'phys_page': 2, 'page_offset_from': '0x1A10', ...,
+#              'keys': 11, 'frame_count': 1, 'frames': [1834]}, ...]}
+
+# In which frames did a game profile's probes fire: a replay of the window, the machine put back
+probes = emu.ttd_probe_frames([{'probe': 'exec', 'address': 0x8A14},
+                               {'probe': 'write', 'address': 0x5F20, 'if': 'VAL < MDT'}], from_frame=100)
+# {'from_frame': 100, 'to_frame': 2400, 'replayed_frames': 2301, 'pruned_frames': 0, 'truncated': False,
+#  'probes': [{'probe': 'exec', 'address': '0x8A14', 'frame_count': 14, 'hit_count': 14,
+#              'frames': [120, 388, ...], 'hits': [1, 1, ...]}, ...]}
+# One probe: a dict instead of the list; limit=N frames per probe; no history: a dict with error
 
 # A memory at a past checkpoint, and what changed between two - from the store, no seek
 at = emu.ttd_memory_at('ram5', frame=150, offset=0x1C78, length=2)   # tinframe=T: a point inside the frame (ram, vram, cache)
 # {'space': 'ram', 'offset': 89208, 'length': 2, 'frame': 150, 'at_frame': 150, 'exact': True, 'hex': '6500'}
+# ram / ramN offsets are physical. space='cpu': Z80 addresses, what the CPU saw at frame:tinframe, with the banks
+cpu = emu.ttd_memory_at('cpu', frame=150, offset=0xC000, length=16, tinframe=20000)
+# Without frame: the machine now ({'live': True, 'at_tinframe': ...}), no recording needed
+now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
+# {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+
+timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
+# {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],
+#   'keys': ['A'], 'busiest_frame': ..., ...}, ...], 'events': [...], 'missing': [{'fact': 'writes', ...}], ...}
+
+# Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
+# also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
+chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+# {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
+#   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
+
+# When did it happen: kind 'mem' / 'screen' / 'exec' / 'port' / 'border' / 'key', keyword options as the WebAPI
+# query (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask,
+# key, pressed, order='first'|'last', from_frame, to_frame, limit, max_frames, text)
+down = emu.ttd_find_event('mem', addr=0xA130, cond='decreased', limit=3)
+# {'event': {'kind': 'mem', 'cond': 'decreased', ...}, 'hits': [{'frame': 1834, 'tinframe': 21980, 'pc': 35348,
+#   'text': 'ld (hl),a', 'before': 3, 'after': 2, 'why': '(#A130 RAM 2) #03 -> #02  decreased'}, ...],
+#  'more': True, 'next_from_frame': ..., 'frames_scanned': ..., 'frames_replayed': 3, 'ms': ...}
+first_run = emu.ttd_find_event('exec', addr=0x8A14, text=True)
+
+# What one frame did: frame=None (the current one), sections='time,routines,interrupt,paging,ports,memory,screen,
+# input,markers' (default all), limit=8, text=False
+f = emu.ttd_explain_frame(1204, sections='time,routines,memory', limit=4)
+# {'frame': 1204, 'frame_t': 69888, 'instructions': 18312, 'time': {'isr': 6210, 'halt': 21700, 'code': ...},
+#  'routines': [{'pc': 35348, 'calls': 1, 't': 31220, 'own_t': 2110, 'insns': 4812, 'caller': 32771, ...}, ...],
+#  'memory': [{'region': 'screen pixels', 'addr': 18432, 'changed': 1024, 'writers': [...]}, ...], 'ms': ...}
+
+# What differs between two moments: from_frame, keyword from_tinframe, to_frame, to_tinframe (default: the current
+# position), sections='cpu,paging,memory,screen,devices,between' (default all), limit=16, writers=True, text=False
+d = emu.ttd_diff(1201, to_frame=1204, sections='cpu,memory')
+# {'from': {'frame': 1201, 'tinframe': 0}, 'to': {'frame': 1204, 'tinframe': 0}, 'backwards': False,
+#  'registers': [{'name': 'PC', 'before': 32776, 'after': 32777}, ...],
+#  'memory': {'changed': 2, 'pages': 1, 'ranges': [{'region': 'ram', 'page': 2, 'offset': 8192, 'address': 40960,
+#   'length': 1, 'before': [3], 'after': [6], 'last_write': {'frame': 1203, 'pc': 32780, 'text': 'inc (hl)', ...}}],
+#   'more': 0}, 'writer_searches': 2, 'ms': ...}
 
 summary = emu.ttd_coverage_summary(from_frame=1, to_frame=500, kind=None, bucket_size=50, limit=100)
 # {'from_frame': 1, 'to_frame': 500, 'covered_from': 18, 'covered_to': 497,
@@ -1710,6 +1887,14 @@ return a dict; on failure the dict carries an `error` string.
 emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+
+# Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
+# condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs
+emu.run_until(text="PRESS", max_frames=500)    # {'met', 'outcome', 'frames', 'frame', 'pc', 'ms', 'hit', 'text'}
+emu.run_until(condition="M(#5C3A)==1", screen="stable", stable_frames=50, match="all")
+emu.watch_add(text="GAME OVER", label="over")  # {'id', 'watch', 'text'}; a hit pauses at that frame end
+emu.watches()                                  # {'count', 'watches', 'text'}
+emu.watch_remove(1)                            # or "all"
 
 # The paced run (core RunPacer, command-interface.md §2.1): a frame / lines / an instruction per interval,
 # stops at a breakpoint. A refusal raises RuntimeError ("Run-control held: ...")
@@ -1822,7 +2007,7 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   on-screen keyboard, the machine's sound, one video frame per emulated frame);
                                      #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
-                                     #   picture_height= (0..4320, GPU), width= / height= (the frame), layout=
+                                     #   hardware, fit, picture_height= (0..4320, GPU), width= / height= (the frame), layout=
                                      #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
                                      #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples'} or {'ok': False, ...}
 emu.window_record_frames(100)        # a paused machine runs 100 frames, every one recorded; the status with 'ran'
@@ -1902,6 +2087,50 @@ emu.listing_load("game.lst")
 emu.listing_source_at()              # source line at PC; emu.listing_source_at(0x8100)
 emu.listing_step_line()              # run until the source line changes (~2 s budget)
 emu.listing_run_to_line(120)         # run to first code byte of line 120 (~10 s budget)
+```
+
+### Analysis layers
+
+The L0 access facts, the L1 build and the L2 structure of the [analysis layers](../../analysis/analysis-layers.md) through the shared
+core handler (`analysis::Execute`): the answer is a dict of its fields plus `text` (the CLI's lines); a refusal is
+`{"ok": False, "error": <why>}`.
+
+```python
+emu.analysis("start")                                  # level facts, mode z80, a fresh session
+emu.analysis("start", level="counters", mode="physical")
+emu.analysis("status")                                 # {state, level, mode, frame, facts {...}, text}
+r = emu.analysis("explain", address="$80BC")           # or address=0x80BC, a label name
+print(r["text"]); r["kinds"], r["last_writer"], r["written"]
+emu.analysis("explain", address=0xC000, page="ram:3")  # physical mode: the page
+emu.analysis("stop")                                   # the facts stay readable
+
+# L1: record, build from the recording (a job), then routine fact sheets
+emu.analysis("start", record=True)                     # also a TTD recording
+emu.run_frames(500)
+job = emu.analysis("build", wait=20000)                # {job, state, bundle, progress, ready, text}; frames=, path=
+emu.analysis("build", from_frame=1200, from_tinframe=3500, to_frame=4000)  # a window: one stage (analysis-layers.md#stages-and-windows)
+sheet = emu.analysis("explain", address=0x0038)        # L1 ready: {what: "routine", routine {...}, text: the sheet}
+emu.analysis("explain", address=0x0038, what="byte")   # the L0 byte facts as before
+emu.analysis("cancel")                                 # a running build; refused when none runs
+
+# L2 (made by the build): the detectors' claims and the draft
+q = emu.analysis("query", kind="records", range="8000-83FF", limit=20)  # {kind, range, regions [...], count, truncated, text}
+emu.analysis("query", kind="conflicts")                # pairs {a, b} of clashing claims
+ctl = emu.analysis("export", format="ctl")["content"]  # the control file in the answer
+emu.analysis("export", format="skool", path="game.skool", ranges="5900-59FF,8000-FFFF", width=8)
+g = emu.analysis("gallery", kind="sprite")             # the graphics found: {regions [...], count, truncated, text}
+png = emu.analysis("gallery", address=0x8200, scale=4)["png"]  # one drawn: base64 PNG; width, height, frames
+emu.analysis("gallery", address="$8200", path="sprite.png")    # or written to a file
+emu.analysis("trace", path="scratch/pass.uatr", from_frame=1001, to_frame=1003)  # the CPU access trace of a window
+
+# L3 (the review): findings register, review queue, experiments on muted clones, directed coverage
+emu.analysis("findings", kind="bug")                   # {count, total, by_kind, by_status, findings [...], text}
+emu.analysis("findings", format="markdown", path="re/findings.md")
+item = emu.analysis("review")                          # the next item: {item, sheet, sheet_bytes, queue, text}
+emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label="MainLoop", title="The main loop")
+emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
+             "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
+emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 
 ### Enumerations

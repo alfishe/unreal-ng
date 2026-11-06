@@ -269,7 +269,7 @@ Source: `zxpoly-emul/src/main/resources/com/igormaznitsa/zxpoly/rom/`, `TestROM/
   `.prom`.
 - **Web search** (English and Russian): no ZX-Poly content published outside
   the zxpoly repository.
-- **zx-pk.ru thread** ["Игры под ZX-Poly"](https://zx-pk.ru/threads/28517-igry-pod-zx-poly.html)
+- **zx-pk.ru thread** ["Games for ZX-Poly"](https://zx-pk.ru/threads/28517-igry-pod-zx-poly.html)
   (3 pages, 2017–2019): the author's posts about OFC, Buratino, ZX-Word and
   Flying Shark, all linking to the repository; no attachments.
 - **[speccy.info/ZX-Poly](https://speccy.info/ZX-Poly):** project history

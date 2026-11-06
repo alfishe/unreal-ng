@@ -129,8 +129,7 @@ copies the 256-byte line buffer into a copy, 16 T-states per byte.
 
 ### `GENMAP`: pixels to bytes
 
-"делает из экрана сдвинутые копии, чтобы HL=YX" - "makes shifted copies out of the screen, so that
-HL = YX".
+"Makes shifted copies out of the screen, so that HL = YX" (the author's comment).
 
 ```asm
 GENMAP0
@@ -142,7 +141,7 @@ GENMAP0
         POP HL
         PUSH HL
 GENMAP1
-;A=байт левее (картинка будет сдвинута на 8 вправо)
+;A=the byte to the left (the picture will be shifted 8 to the right)
         LD C,(HL)
         INC L
         DUP 8
@@ -163,7 +162,7 @@ in ZX screen order.
 
 ### `GSROTTAB`: eight sampling patterns
 
-"координаты битов в порядке 7..0" - "coordinates of the bits in the order 7..0". Each pattern is 8
+"Coordinates of the bits in the order 7..0". Each pattern is 8
 words `#yyxx`: a line offset and an x offset (signed bytes) for bits 7 down to 0. The author drew
 each one. The first:
 
@@ -202,7 +201,7 @@ GENROTBITS
         INC HL
         PUSH HL
         SET 7,D
-;копируем 7-е биты в буфер
+;copy the 7th bits into the buffer
         LD HL,GSGENROTBUF
 GENROT1
         DUP 8
@@ -324,7 +323,7 @@ All positions are 8.8 fixed point: `IX` = X, `IY` = Y, integer parts in `IXH` / 
 | per screen line (1 pixel) | `(-sin a, cos a) * 1` | `sin32768 * 2 / 256`, sign-extended |
 | start of the picture | centre - 128 px along the line - 96 px along the column | `CENTERX`, `CENTERY` and 3 or 4 subtractions of the 32-pixel vectors |
 
-"коррекция центра" - "centre correction". `CENTERY` is a constant `#80`; nothing writes it.
+"Centre correction". `CENTERY` is a constant `#80`; nothing writes it.
 `CENTERX` moves every picture:
 
 ```asm
@@ -363,7 +362,7 @@ operands:
         JP GSROTOK
 ```
 
-The author's own outline: "генератор ... генератор ест 9275 тактов" - "generator ... the generator
+The author's own outline: "generator ... the generator
 eats 9275 T-states". His outline ends with `JP (IX)`, but the code writes `JP GSROTOK`.
 
 The `n` and `m` are not constants. `MKROT` adds the 8.8 step to `IX` / `IY` 32 times and writes
@@ -441,20 +440,18 @@ The logo is not drawn as a picture. It is turned into code, once per buffer. The
 description:
 
 ```
-;DE=образец экрана                    (DE = the sample screen)
-;HX=смещение рабочего экрана относительно DE   (HX = offset of the working screen relative to DE)
-;LX=высота                            (LX = height)
-;если атрибут 7, то все 0 затереть (байт из лого прямо в AND)
-                                      (if the attribute is 7, clear all the 0 bits:
-                                       the logo byte goes straight into AND)
-;иначе прямо пишем байты              (otherwise write the bytes directly)
+;DE=the sample screen
+;HX=offset of the working screen relative to DE
+;LX=height
+;if the attribute is 7, clear all the 0 bits (the logo byte goes straight into AND)
+;otherwise write the bytes directly
 ```
 
 `IX` carries two parameters at once: `LD IX,GSSCR1-(GSLOGO+#300)+#C0`. The low byte of
 `GSSCR1-(GSLOGO+#300)` is 0, so `IXH` is the buffer's offset and `IXL` = `#C0` = 192 lines.
 
-For each line, `MKLOGO` first finds the leftmost column that has logo content ("находим начало
-линии" - "find the start of the line"). A column has content if its attribute is not 7, or if its
+For each line, `MKLOGO` first finds the leftmost column that has logo content ("find the start of
+the line"). A column has content if its attribute is not 7, or if its
 pixel byte is not `#FF`. Then it emits:
 
 | Logo cell | Emitted code | T-states |
@@ -467,7 +464,7 @@ pixel byte is not `#FF`. Then it emits:
 
 Trailing `INC L`s after the last written byte are dropped (`MLOGHL`), and a line without content
 produces nothing. The opcodes are written partly as characters: `'~'` (`#7E`, `LD A,(HL)`), `'w'`
-(`#77`, `LD (HL),A`), `','` (`#2C`, `INC L`). "можно ускорить через RES" - "could be sped up with
+(`#77`, `LD (HL),A`), `','` (`#2C`, `INC L`). "Could be sped up with
 RES".
 
 So cells with attribute 7 are a mask: where the logo has a 0 bit, the rotating background is
@@ -480,18 +477,18 @@ cleared; where it has 1, the background shows through. Coloured cells are plain 
 ```asm
 GSLOOP
 gsdrawscr=$+1
-        LD A,1                  ;рисуем в SCR2
+        LD A,1                  ;drawing into SCR2
         XOR 1
-        LD (gsdrawscr),A        ;теперь рисуем в SCR1
-;потом дадим его ZX'у
+        LD (gsdrawscr),A        ;now drawing into SCR1
+;then we give it to the ZX
         CALL GSEFFECT
         ...                     ; map block 4, call the stamper for this buffer
         ...                     ; the handshake (chapter 3)
         JP GSLOOP
 ```
 
-"рисуем в SCR2" - "drawing into SCR2"; "теперь рисуем в SCR1" - "now drawing into SCR1"; "потом
-дадим его ZX'у" - "then we give it to the ZX". After drawing, the loop waits for command 0, stops
+"Drawing into SCR2"; "now drawing into SCR1"; "then
+we give it to the ZX". After drawing, the loop waits for command 0, stops
 the DMA, and waits for 1 (or 2, which returns from the effect). It then points the DMA at
 `#0000` or `#2000` and starts it. [3.2](03-the-frame.md) quotes that part in full.
 
@@ -524,7 +521,7 @@ rotator alone. It resets the card, sends `GSPROG` with GS commands `#18`/`#19` a
 `#13`. It uploads one data page (`#50`, nothing the rotator uses) and the two code pages by
 ZX-DMA. Then it installs the resident loop and the IM 2 handler, starts the music, and runs effect
 page `#B0` from frame 896 to 1772. Page `#B1` holds `JR $`, to stop after the effect. The four
-"зачем-то" ("for some reason") GS commands and "не помогает" ("does not help") are the same as in
+"for some reason" GS commands and "does not help" are the same as in
 the demo's start ([2.4](02-the-start.md)).
 
 The build switches at the top select variants:

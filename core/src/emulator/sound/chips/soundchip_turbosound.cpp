@@ -7,8 +7,11 @@
 #include <cstring>
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "debugger/breakpoints/chipregister.h"
 #include "emulator/cpu/core.h"
+#include "emulator/emulatorcontext.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/chips/ayhistory.h"
 #include "emulator/sound/soundmanager.h"
 
 /// region <Emulation events>
@@ -652,29 +655,20 @@ void SoundChip_TurboSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             const uint8_t reg = _currentChip->getCurrentRegisterIndex();
             _currentChip->latchRegister(reg, value, static_cast<uint64_t>(_lastSeenT));
             queueSsgWrite(_currentChip == _chip0 ? 0 : 1, reg, value);
+            if (_context && _context->chipRegisterWatch) [[unlikely]]
+                ReportChipRegisterWrite(_context, SoundChipKind::Ay, _currentChip == _chip0 ? 0 : 1, reg, value);
             break;
         }
         default:
             return;  // Not an AY port — no tap
     }
 
-    // Automation tap (MCP M7j): fires after the write so `chip` identifies the
-    // chip that received it (chip-switch commands report the newly active chip)
-    if (_logSink) [[unlikely]]
+    // The AY history: after the write, so `chip` is the chip that received it (chip-switch commands report the
+    // newly active chip)
+    if (_history && _history->On()) [[unlikely]]
     {
-        AYLogRecord record;
-        record.port = port;
-        record.value = value;
-        record.chip = (_currentChip == _chip1) ? 1 : 0;
-        record.reg = (port == PORT_BFFD) ? _currentChip->getCurrentRegister() : value;
-        if (_context && _context->pCore)
-        {
-            const Z80* z80 = _context->pCore->GetZ80();
-            record.pc = z80->m1_pc;     // PC of the OUT instruction, not the next one
-            record.tacts = z80->t;      // T-states within the current frame
-            record.frame = _context->emulatorState.frame_counter;
-        }
-        _logSink(_logSinkContext, record);
+        RecordAYWrite(_context, *_history, port, value, _currentChip == _chip1 ? 1 : 0,
+                      port == PORT_BFFD ? _currentChip->getCurrentRegister() : value);
     }
 }
 /// endregion </PortDevice interface methods>

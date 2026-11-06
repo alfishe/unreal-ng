@@ -75,7 +75,10 @@
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["summary"] = "Get address-level access counters";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["tags"].append("Memory Profiler");
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["description"] =
-        "Get detailed read/write/execute counters for each address within a page or Z80 address space.";
+        "Read/write/execute counters of each cell (MemoryCounters): space cpu (default), phys (every physical page; "
+        "cells carry the page name), ram or a page (ram5, rom2, cache0); a window (start + length or end) or a list "
+        "(addresses); format top / sparse / dense / binary (three little-endian uint32 arrays). Without space and "
+        "addresses, with format dense or sparse, the older mode / page form.";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["parameters"][0]["required"] = true;
@@ -98,7 +101,13 @@
             {"start", "First address (z80) or page offset (physical), decimal or 0x hex; default 0"},
             {"end", "Last address or offset, inclusive; default the end of the space or page"},
             {"format", "dense (default): counters.reads/writes/executes arrays indexed from start; sparse: "
-                       "addresses [[address, reads, writes, executes], ...] for touched addresses only"}};
+                       "the touched cells; top: the heaviest cells first; binary: the dense window as octet-stream"},
+            {"space", "cpu, phys, ram or a page (ram5, rom2, cache0); selects the MemoryCounters form"},
+            {"length", "Cells in the window (default: to the end of the space)"},
+            {"addresses", "Exactly these cells: 0x5C00,#5C08,23560,0x8000-0x80FF (at most 65536)"},
+            {"kinds", "The counters a cell's weight sums: r, w, x or a mix (default rwx)"},
+            {"min", "sparse / top: cells whose weight is at least this (default 1)"},
+            {"limit", "sparse / top: at most this many cells (default 4096, at most 1048576)"}};
         for (const auto& e : extra)
         {
             Json::Value p;
@@ -113,17 +122,51 @@
     paths["/api/v1/emulator/{id}/profiler/memory/counters"]["get"]["responses"]["200"]["description"] =
         "Address-level access counters";
 
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["summary"] = "[Planned] Get monitored region statistics";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["x-planned"] = true;  // designed, not registered yet: the server answers 404
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["tags"].append("Memory Profiler");
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["description"] =
-        "Get access statistics for all monitored memory regions.";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["name"] = "id";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["in"] = "path";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["required"] = true;
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/profiler/memory/regions"]["get"]["responses"]["200"]["description"] =
-        "Monitored region statistics";
+    {
+        const std::string watches = "/api/v1/emulator/{id}/profiler/memory/watches";
+        const std::string one = watches + "/{name}";
+        auto idParam = [](Json::Value& op) {
+            Json::Value p;
+            p["name"] = "id";
+            p["in"] = "path";
+            p["required"] = true;
+            p["schema"]["type"] = "string";
+            op["parameters"].append(p);
+            op["tags"].append("Memory Profiler");
+        };
+        Json::Value& list = paths[watches]["get"];
+        list["summary"] = "List the memory watches";
+        list["description"] = "Every watch (MemoryWatch) with reads, writes, executes (regions) and the callers and values "
+                              "as [key, count], most frequent first";
+        idParam(list);
+        list["responses"]["200"]["description"] = "{moment, count, watches}";
+        list["responses"]["503"]["description"] = "No coherent moment within 500 ms";
+        Json::Value& add = paths[watches]["post"];
+        add["summary"] = "Add a memory watch";
+        add["description"] = "{name, start, length}: CPU addresses start..start+length-1 (up to 0xFFFF); or {name, port, "
+                             "mask}: the ports whose address lines in mask equal port's (mask default 0xFFFF; 0x00FF the "
+                             "low byte). callers / values (bool) count the PCs / the values, max_callers (100), "
+                             "max_values (256). Counts while the memory session captures";
+        idParam(add);
+        add["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        add["responses"]["200"]["description"] = "The added watch";
+        add["responses"]["400"]["description"] = "A bad name, a taken name, a region past 0xFFFF, a zero mask";
+        Json::Value& clear = paths[watches]["delete"];
+        clear["summary"] = "Remove every memory watch";
+        idParam(clear);
+        clear["responses"]["200"]["description"] = "Removed";
+        Json::Value& remove = paths[one]["delete"];
+        remove["summary"] = "Remove one memory watch";
+        idParam(remove);
+        Json::Value p;
+        p["name"] = "name";
+        p["in"] = "path";
+        p["required"] = true;
+        p["schema"]["type"] = "string";
+        remove["parameters"].append(p);
+        remove["responses"]["200"]["description"] = "Removed";
+        remove["responses"]["404"]["description"] = "No watch of that name";
+    }
 
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["summary"] = "Save access data to file";
     paths["/api/v1/emulator/{id}/profiler/memory/save"]["post"]["tags"].append("Memory Profiler");

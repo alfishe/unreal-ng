@@ -16,6 +16,7 @@
 #include "emulator/platforms/tsconf/tsconfdma.h"
 #include "emulator/platforms/tsconf/tsconfarbiter.h"
 #include "emulator/platforms/tsconf/tsconfengine.h"
+#include "emulator/platforms/tsconf/tsconfhistory.h"
 #include "emulator/platforms/tsconf/tsconfinterrupts.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
 #include "emulator/ports/portdecoder.h"
@@ -94,6 +95,16 @@ public:
     /// ROM128, so #7FFD bit 4 picks the BASIC) with #7FFD decoded as on a 128K (LCK128 = 128K). The reset leaves the normal
     /// mode: window 0 is ROM page 0, whatever #7FFD says, and bits 7:6 of #7FFD add page bits
     void EnterSpectrum128Paging(uint16_t pc) override;
+
+    /// RM_DOS, the disk autostart's quick reset (Core::ResetKeepingClock): straight into TR-DOS, as TS-BIOS hands over
+    /// when "Reset to" names ROM #00 and the disk is booted from TR-DOS. Mapped mode, ROM128 = 1, PAGE0 = 0 and DOS on:
+    /// window 0 is ROM page 1, TR-DOS 5.04T of zxevo.rom. #7FFD decodes as on a 128K. Every other mode leaves the reset
+    /// as it is: the CPU starts in TS-BIOS (ROM page 0), which reads its settings and boots what they name
+    void ApplyBootROMDefaults(ROMModeEnum mode) override;
+    /// SYS_CONFIG[1:0], the CPU clock TS-BIOS (or the program) set: the quick reset skips TS-BIOS, so the clock it
+    /// chose is put back after the reset
+    uint16_t GetClockSelect() const override;
+    void RestoreClockSelect(uint16_t select) override;
 
     /// SYS_CONFIG selects 3.5, 7 or 14 MHz
     uint8_t TtdClockUnits() const override { return 4; }
@@ -263,6 +274,9 @@ private:
     void ApplyIdeStall();
     void ApplyExternalIoStall(uint16_t port, PortArm arm);
     void InstallInterrupts();
+    /// platform-debugging P6: the DMA's RAM bytes against the page watchpoints, the beam against the beam breakpoints
+    void ReportDmaAccess(bool write, uint32_t byteAddress, uint8_t value);
+    void WatchBeam(uint32_t from, uint32_t to);
     void RefreshFmWindow();
     void ApplyClock();
     void ApplyVideoPage();
@@ -284,6 +298,14 @@ private:
     TsConfState _ts{};
     TsConfInterrupts _interrupts{_context, _ts};
     TsConfDma _dma{_ts, _interrupts};
+    /// The register writes and the DMA transfers (tsconfhistory.h), named by the registers' registry id
+    TsRegisterHistory _registerHistory{ &_context->histories, [this]() { return RegistersDevice(); },
+                                        "TS-Conf register writes", 4096 };
+    TsDmaHistory _dmaHistory{ &_context->histories, [this]() { return RegistersDevice() + ".dma"; },
+                              "TS-Conf DMA transfers", 1024 };
+    std::string RegistersDevice() const;
+    void RecordRegister(uint8_t reg, uint8_t value);
+    bool _dmaRunningAtWrite = false;
     TsConfEngine _engine{_context, _ts, _interrupts, _dma};
     TsConfArbiter _arbiter{_engine};
     TsConfMemory* _tsMemory = nullptr;

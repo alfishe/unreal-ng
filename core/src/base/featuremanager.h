@@ -34,6 +34,7 @@ constexpr const char* const kOpcodeProfiler = "opcodeprofiler";
 constexpr const char* const kTimeTravel = "timetravel";
 constexpr const char* const kOverscan = "overscan";
 constexpr const char* const kPortTrace = "porttrace";
+constexpr const char* const kDeviceAccess = "deviceaccess";
 constexpr const char* const kZXDLSS = "zxdlss";
 constexpr const char* const kFastTape = "fasttape";
 constexpr const char* const kTurboTape = "turbotape";
@@ -62,6 +63,7 @@ constexpr const char* const kOpcodeProfilerAlias = "op";
 constexpr const char* const kTimeTravelAlias = "ttd";
 constexpr const char* const kOverscanAlias = "osc";
 constexpr const char* const kPortTraceAlias = "pt";
+constexpr const char* const kDeviceAccessAlias = "dacc";
 constexpr const char* const kZXDLSSAlias = "dlss";
 constexpr const char* const kFastTapeAlias = "ftape";
 constexpr const char* const kTurboTapeAlias = "ttape";
@@ -97,6 +99,10 @@ constexpr const char* const kOverscanDesc =
     "Pentagon overscan mode (384x304). Shows invisible border areas for demo development. Pentagon only.";
 constexpr const char* const kPortTraceDesc =
     "Structured port I/O trace recorder (ring buffer of IN/OUT events for peripheral diagnostics).";
+constexpr const char* const kDeviceAccessDesc =
+    "Device access watch: every port access counted per device of the slot registry and per channel (half-row, "
+    "register), with the bits the code tests and the code sites, over a 50-frame window. A media load opens a 30 s "
+    "window without it; on, it counts all the time.";
 constexpr const char* const kZXDLSSDesc =
     "ZX DLSS: the renderer also records what it drew (plane B: color index, ink/paper, attribute the beam used, "
     "screen or border) for temporal video analysis. Needs ScreenHQ. Zero cost when off.";
@@ -198,7 +204,7 @@ public:
     /// @brief Why setFeature(idOrAlias, enabled) would be refused right now, as one
     /// sentence a user can act on; empty when it would not be (or the feature is unknown).
     /// TTD holds features while it records or replays: see isTtdRecordingActive /
-    /// isTtdTimelineBound, and TimeTravelManager::RecordingGuard for the capture flags.
+    /// isTtdTimelineBound, and TimeTravelController::RecordingGuard for the capture flags.
     std::string refusalReason(const std::string& idOrAlias, bool enabled) const;
     std::vector<FeatureInfo> listFeatures() const;
     void setDefaults();
@@ -211,8 +217,9 @@ public:
     /// @brief True while the machine is bound to a TTD timeline: recording, replaying
     /// history (seek/step) or positioned in it (Detached). Features that change what
     /// the guest code does (fasttape, turbotape, fastdisk) are off for all of it, or a
-    /// replay would diverge from what was recorded. Pacing-only acceleration (turbo
-    /// mode, speed) is locked by isTtdRecordingActive() alone.
+    /// replay would diverge from what was recorded - except fasttape and turbotape in the
+    /// engine's recording at its live head, which records the tape trap as an edit. Pacing-only acceleration (turbo
+    /// mode, speed) is locked by isTtdRecordingActive() alone (the engine keeps turbo).
     bool isTtdTimelineBound() const;
     /// @brief True while an RZX recording plays: fasttape, turbotape and fastdisk
     /// read as off (they change the CPU path the recording follows)
@@ -222,7 +229,8 @@ public:
     /// instrumented memory path whatever the 'debugmode' feature says: the manager holds debug mode on while the
     /// machine replays and gives the feature its say back after. The one writer of Z80::isDebugMode (M4)
     void OnModeChanged(const coordinator::ModeState& from, const coordinator::ModeState& to) override;
-    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, or the taps' hold
+    /// @brief Debug mode as the CPU runs it: the feature, a replay's hold, the taps' hold, or the breakpoints' hold
+    /// with the 'breakpoints' feature on
     bool debugModeInEffect() const;
     /// @brief Read taps are armed, or write taps on a machine without the fast write's hook
     /// (BreakpointManager::ApplyTapDemand, breakpoint-taps §4): the CPU runs the debug path and memory breakpoints are
@@ -230,6 +238,17 @@ public:
     /// off takes effect too). Emulation thread or CPU held
     void setTapDebugHold(bool on);
     bool tapDebugHold() const;
+    /// @brief A collector that runs on the debug path is on (memory tracking, call trace, opcode profiler): with
+    /// debug mode off it stops and the tracker frees what it gathered. Whoever gives debug mode back without having
+    /// asked for these (a TTD recording that stops, the BASIC editor monitor, the Qt debugger window going away)
+    /// leaves it on while this holds. Breakpoints do not hold it: they gather nothing
+    bool debugCaptureOn() const;
+
+    /// @brief An active stopping breakpoint exists (BreakpointManager::ApplyTapDemand): while 'breakpoints' is on, the
+    /// CPU runs the debug path whatever 'debugmode' says, so the breakpoint fires (a hidden debugger window switching
+    /// 'debugmode' off cannot leave it accepted and inert). No breakpoints: 'debugmode' alone decides
+    void setBreakpointDebugHold(bool on);
+    bool breakpointDebugHold() const;
 
     EmulatorContext* context() const
     {
@@ -240,6 +259,14 @@ private:
     /// True when TTD or an RZX playback forces this feature off (see isTtdTimelineBound /
     /// isTtdRecordingActive / isRzxPlaying)
     bool isMaskedByTtd(const std::string& id) const;
+    /// The TTD backend keeps turbo mode and the fast loaders in a recording (ITimeTravelHooks::RecordsShortcuts)
+    bool ttdRecordsShortcuts() const;
+    /// Turbo mode is held off: a recording that locks acceleration and does not keep it (RecordsShortcuts false)
+    bool ttdLocksTurboMode() const;
+    /// Fast tape, turbo tape or fast disk (@p id) is held off: bound to a timeline, except fast tape and turbo tape
+    /// in the engine's recording at its live head (the tape trap is a recorded edit there); fast disk also while a
+    /// black box records
+    bool ttdLocksFastLoader(const std::string& id) const;
 
     /// Find a feature by id or alias. Caller must hold _mutex.
     FeatureInfo* findFeature(const std::string& idOrAlias);
@@ -255,13 +282,14 @@ private:
     void applyDebugMode();
     bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
     bool _tapDebugHold = false;     ///< taps need the debug path (setTapDebugHold)
+    bool _breakpointDebugHold = false;  ///< stopping breakpoints exist (setBreakpointDebugHold)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo
     std::unordered_map<std::string, std::string> _aliases;   // alias -> id
     mutable bool _dirty = false;                             // Track if the state changed and save is required
 
-    // TTD recording lock, driven only by TimeTravelManager (onTtdRecordingStarted /
+    // TTD recording lock, driven only by TimeTravelController (onTtdRecordingStarted /
     // onTtdRecordingStopped) - not by the 'timetravel' feature toggle, which merely
     // arms the capture machinery. Masking needs no saved states: the stored feature
     // values are untouched and show through again once the lock is released.

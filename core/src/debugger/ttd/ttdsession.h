@@ -1,13 +1,11 @@
 #pragma once
 
 /// @file ttdsession.h
-/// @brief The instance's time-travel session, whichever implementation runs it
-/// (Phase 5): the engine's TimeTravelController when the instance has one
-/// (EmulatorContext::pTimeTravelController), v1's TimeTravelManager otherwise.
-/// Both offer the same methods, so a caller writes its code once, as a generic
-/// lambda. The core talks through ITimeTravelHooks and the surfaces through
-/// TTDControl; this is for the few clients that need more (the Qt panel, the
-/// DeZog and GDB adapters, a few CLI reports).
+/// @brief The instance's time-travel session, the engine's TimeTravelController
+/// (EmulatorContext::pTimeTravelController). The core talks through
+/// ITimeTravelHooks and the surfaces through TTDControl; this is for the few
+/// clients that need more (the Qt panel, the DeZog and GDB adapters, a few CLI
+/// reports).
 ///
 /// Worked example:
 ///   const uint64_t end = ttd::WithTimeTravelSession(context, 0ull, [](auto& session) {
@@ -19,7 +17,6 @@
 #include <vector>
 
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "emulator/emulatorcontext.h"
 
 namespace ttd
@@ -28,18 +25,15 @@ namespace ttd
 /// True when @p context has a time-travel session object
 inline bool HasTimeTravelSession(const EmulatorContext* context)
 {
-    return context && (context->pTimeTravelController || context->pTimeTravelManager);
+    return context && context->pTimeTravelController;
 }
 
-/// Call @p f with the instance's session (TimeTravelController& or
-/// TimeTravelManager&); @p fallback when there is none
+/// Call @p f with the instance's session; @p fallback when there is none
 template <class R, class F>
 R WithTimeTravelSession(EmulatorContext* context, R fallback, F&& f)
 {
     if (context && context->pTimeTravelController)
         return f(*context->pTimeTravelController);
-    if (context && context->pTimeTravelManager)
-        return f(*context->pTimeTravelManager);
     return fallback;
 }
 
@@ -49,14 +43,12 @@ void WithTimeTravelSession(EmulatorContext* context, F&& f)
 {
     if (context && context->pTimeTravelController)
         f(*context->pTimeTravelController);
-    else if (context && context->pTimeTravelManager)
-        f(*context->pTimeTravelManager);
 }
 
-/// The instance's session as one object for clients that keep the v1 call
-/// shape (`mgr->Method()`): the Qt panel and status bar, the DeZog adapter, the
-/// CLI and GDB reports. Each call goes to whichever implementation runs it.
-/// Valid while the instance lives; false (operator bool) when it has none
+/// The instance's session as one object for clients that call it as
+/// `mgr->Method()`: the Qt panel and status bar, the DeZog adapter, the CLI
+/// and GDB reports. Valid while the instance lives; false (operator bool) when
+/// it has none
 class TTDSessionRef
 {
 public:
@@ -68,7 +60,7 @@ public:
     // State and status
     TTDSessionState GetState() const { return Call(TTDSessionState::Idle, [](auto& s) { return s.GetState(); }); }
     bool IsRecording() const { return Call(false, [](auto& s) { return s.IsRecording(); }); }
-    /// A background session (the black box, a debugger's history; v1: its DebuggerLive mode)
+    /// A background session (the black box, a debugger's history)
     bool IsBackgroundSession() const { return Call(false, [](auto& s) { return s.IsBackgroundSession(); }); }
     TTDSessionInfo ReadSessionInfo() const { return Call(TTDSessionInfo{}, [](auto& s) { return s.ReadSessionInfo(); }); }
     TTDSessionInfo GetSessionInfo() const { return Call(TTDSessionInfo{}, [](auto& s) { return s.GetSessionInfo(); }); }
@@ -87,9 +79,7 @@ public:
     }
     const TTDExternalEventJournal& GetExternalEvents() const
     {
-        if (_context->pTimeTravelController)
-            return _context->pTimeTravelController->GetExternalEvents();
-        return _context->pTimeTravelManager->GetExternalEvents();
+        return _context->pTimeTravelController->GetExternalEvents();
     }
 
     // Actions

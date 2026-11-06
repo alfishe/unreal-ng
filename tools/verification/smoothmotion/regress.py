@@ -15,7 +15,7 @@ import json
 import os
 import sys
 
-# Experiments of POC 039 that move whole pictures (static damage is their known flaw, measured, not gated)
+# Experiments of POC 047 that move whole pictures (static damage is their known flaw, measured, not gated)
 EXPERIMENTS = {"pan-global", "pan-strips"}
 TOLERANCE = {"jstep": 0.05, "ghost": 0.05, "tear": 0.005, "pic": 0.01}
 

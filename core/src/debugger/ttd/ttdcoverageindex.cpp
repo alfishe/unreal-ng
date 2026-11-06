@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <istream>
+#include <iterator>
 #include <ostream>
 
 #include "ttdcompression.h"
@@ -427,14 +428,15 @@ bool TTDCoverageIndex::MaterializeBlock(size_t kindIdx, uint32_t blockIdx) const
 
 uint32_t TTDCoverageIndex::FindBlockForFrame(size_t kindIdx, uint64_t frame) const
 {
+    // Blocks are sealed (and loaded) in frame order: the last block starting at or before the frame
     const std::vector<Block>& blocks = _blocks[kindIdx];
-    for (size_t i = 0; i < blocks.size(); ++i)
+    auto after = std::upper_bound(blocks.begin(), blocks.end(), frame,
+                                  [](uint64_t f, const Block& b) { return f < b.baseFrame; });
+    if (after != blocks.begin())
     {
-        if (frame >= blocks[i].baseFrame &&
-            frame < blocks[i].baseFrame + blocks[i].frameCount)
-        {
-            return static_cast<uint32_t>(i);
-        }
+        const Block& b = *std::prev(after);
+        if (frame < b.baseFrame + b.frameCount)
+            return static_cast<uint32_t>(std::prev(after) - blocks.begin());
     }
 
     // Might be in the block still being accumulated.

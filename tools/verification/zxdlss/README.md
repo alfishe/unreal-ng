@@ -36,7 +36,8 @@ ninja -C build zxdlss-render zxdlss-bench
 ```
 
 With the emulator core in the build (the default root build) `zxdlss-render`
-also reads TTD files; the machine configs and ROMs are copied next to the binary.
+also reads TTD files (the engine's session format; v1 files are refused since v1 was deleted); the
+machine configs and ROMs are copied next to the binary.
 
 ## Render
 
@@ -154,7 +155,7 @@ A 50 Hz frame is 20 ms. Stages (1 thread): translation + masks 1.5 ms, pixel
 stage 1.2 ms, two-page render 2.4 ms, the rest < 1 ms.
 
 Intel i7-11850H (8 cores, Linux, gcc, SSE2 kernels), `zxdlss-render --ttd
-testdata/ttd/demo_across-the-edge-second.ttd --alg mod-tpgwafsd` (field render on
+testdata/ttd/engine/demo_across-the-edge-second.ttd --alg mod-tpgwafsd` (field render on
 ~30 % of frames), and two recordings without flicker (`demo_7threality`,
 `active_demo`), ms/frame of the algorithm:
 

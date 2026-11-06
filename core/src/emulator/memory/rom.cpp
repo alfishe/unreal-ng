@@ -154,7 +154,7 @@ std::string ROM::GetROMFilename()
             result = config.next_rom_path;
             break;
         case MM_GMX:
-            assert("Not implemented");
+            result = config.gmx_rom_path;
             break;
         default:
             break;
@@ -319,8 +319,14 @@ bool ROM::LoadROM()
 			romname = config.next_rom_path;
 			break;
 	    case MM_GMX:
-            assert("Not implemented");
-            break;
+			// The 512 KB flash, eight 64 KB planes in the Scorpion page order; the plane at power-on is 0 (the GMX
+			// loader). ScorpionMemory repoints the four roles at the plane #7EFD selects (design 2.4)
+			memory.base_128_rom = memory.ROMPageHostAddress(0);
+			memory.base_sos_rom = memory.ROMPageHostAddress(1);
+			memory.base_sys_rom = memory.ROMPageHostAddress(2);
+			memory.base_dos_rom = memory.ROMPageHostAddress(3);
+			romname = config.gmx_rom_path;
+			break;
 	    default:
 	        break;
 
@@ -439,6 +445,22 @@ bool ROM::LoadROM()
                 {
                     MLOGERROR("Incorrect ROM size. Should be 16 KB. Found %d", loadedBanks * PAGE_SIZE);
                     result = false;
+                }
+                else if (config.trdos_present && config.dos_rom_path[0] != '\0')
+                {
+                    // A Beta 128 on the edge connector brings its own TR-DOS ROM ([ROM] TRDOS=, the 48K-BETA128
+                    // variant): page 1, paged in at #3Dxx (Memory::IsDosAvailable)
+                    std::string dosPath = config.dos_rom_path;
+                    if (LoadROM(dosPath, memory.ROMPageHostAddress(1)) != 1)
+                    {
+                        MLOGERROR("Unable to load the Beta 128 TR-DOS ROM from file: '%s'", config.dos_rom_path);
+                        result = false;
+                    }
+                    else
+                    {
+                        memory.base_dos_rom = memory.ROMPageHostAddress(1);
+                        _ROMBanksLoaded = 2;
+                    }
                 }
             }
 			else if (config.mem_model == MM_SPECTRUM128 || config.mem_model == MM_PLUS2)
@@ -715,6 +737,39 @@ std::string ROM::GetROMTitle(const std::string& signature)
     return result;
 }
 
+std::string ROM::GetROMPageTitle(uint8_t page)
+{
+    if (!_context || !_context->pMemory)
+        return "";
+
+    Memory& memory = *_context->pMemory;
+    const uint8_t* data = memory.ROMPageHostAddress(page);
+    if (!data)
+        return "";
+
+    // Blank pages first: a 512 KB flash has several, all alike, and a "= ROM page N" on each says nothing
+    const auto filledWith = [data](uint8_t value) {
+        return std::all_of(data, data + 0x4000, [value](uint8_t b) { return b == value; });
+    };
+    if (filledWith(0xFF))
+        return "Empty (all #FF)";
+    if (filledWith(0x00))
+        return "Empty (all #00)";
+
+    std::string title = GetROMTitle(CalculateSignature(data, 0x4000));
+    for (int lower = 0; lower < page; lower++)
+    {
+        const uint8_t* other = memory.ROMPageHostAddress(static_cast<uint8_t>(lower));
+        if (other && std::memcmp(other, data, 0x4000) == 0)
+        {
+            title += StringHelper::Format(" (= ROM page %d)", lower);
+            break;
+        }
+    }
+
+    return title;
+}
+
 std::string ROM::GetROMPageRole(uint8_t page) const
 {
     static const char* PENTAGON_SCORP_ROLES[] =
@@ -744,7 +799,8 @@ std::string ROM::GetROMPageRole(uint8_t page) const
     switch (config.mem_model)
     {
         case MM_SPECTRUM48:
-            return "48K BASIC ROM";
+            return (page == 1 && _context->pMemory && _context->pMemory->base_dos_rom != nullptr) ? "TR-DOS ROM"
+                                                                                                   : "48K BASIC ROM";
         case MM_SPECTRUM128:
         case MM_PLUS2:
             return (page == 0) ? "128K Editor/Menu ROM" : "48K BASIC ROM";
@@ -753,6 +809,21 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_PROFSCORP:
             return (page < 4) ? PENTAGON_SCORP_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_GMX:
+        {
+            // gmx644.rom / gmx.rom plane map (roms.md 1.1): 0 = the loader and the FPGA schemes, 1 = the Pentagon
+            // scheme's ROMs, 4 and 7 = the Scorpion scheme's, 5 = the shadow monitor, the rest firmware utilities
+            // Scorpion page order inside a plane: 128 editor, 48 BASIC, service, TR-DOS (rom.cpp MM_SCORP)
+            static const char* const SCORPION_ORDER_ROLES[4] = {"128K Editor/Menu ROM", "48K BASIC ROM", "Service ROM",
+                                                                "TR-DOS ROM"};
+            const int plane = (page / 4) & 7;
+            const int role = page % 4;
+            if (plane == 1 || plane == 4 || plane == 7)
+                return StringHelper::Format("GMX plane %d: %s", plane, SCORPION_ORDER_ROLES[role]);
+            static const char* const PLANE_NAMES[8] = {"loader / FPGA schemes", "", "GMX test", "data",
+                                                       "", "shadow monitor", "monitor utilities", ""};
+            return StringHelper::Format("GMX plane %d page %d: %s", plane, role, PLANE_NAMES[plane]);
+        }
         case MM_ATM450:
             return (page < 4) ? ATM450_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));

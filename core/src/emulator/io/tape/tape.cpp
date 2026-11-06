@@ -1,10 +1,13 @@
 #include "tape.h"
+#include "emulator/readoutschanged.h"
 
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/tape/tapecatalog.h"
+#include "emulator/io/tape/tapeslot.h"
+#include "emulator/media/mediamanager.h"
 #include "emulator/io/tape/tapepulsegen.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/tape/loader_tape.h"
@@ -49,10 +52,13 @@ void Tape::startTape()
     _lastTapeBit = false;
     _framesNotListened = 0;
     MLOGINFO("Tape started");
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::stopTape()
 {
+    _playWhenAttached = false;   // a stop drops a play still waiting for its tape
+
     // Phase 2 Item 6 - see startTape() for rationale.
     if (_context && _context->pTimeTravelHooks)
         _context->pTimeTravelHooks->RecordExternalEvent(
@@ -78,6 +84,7 @@ void Tape::stopTape()
 
     _currentClockCount = 0;
     _lastTapeBit = false;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::stopPlayback()
@@ -106,6 +113,7 @@ void Tape::stopPlayback()
     _currentPulseIdxInBlock = 0;
     _currentOffsetWithinPulse = 0;
     _lastTapeBit = false;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::pausePlayback()
@@ -143,6 +151,7 @@ void Tape::pausePlayback()
     // be consumed as one giant pulse. 0 is the "re-seed on next read" marker
     // honored by getTapeStreamBit().
     _currentClockCount = 0;
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 void Tape::ResumePlaybackAfterPoll()
@@ -217,6 +226,13 @@ void Tape::AttachImage(const TapeImage* image, const std::string& sourcePath, co
     _attachedFormatId = formatId;
     _attachGeneration++;
     _context->coreState.tapeFilePath = sourcePath;
+    // A play asked for while this tape was on its way: it starts now, from its first block
+    if (_playWhenAttached && !_context->ttdReplayActive)
+    {
+        _playWhenAttached = false;
+        if (EnsureImageLoaded())
+            StartPlaybackAtCursor();
+    }
 }
 
 void Tape::DetachImage()
@@ -226,6 +242,25 @@ void Tape::DetachImage()
     _attachedPath.clear();
     _attachedFormatId.clear();
     _context->coreState.tapeFilePath.clear();
+}
+
+TapePlayResult Tape::Play()
+{
+    if (!EnsureImageLoaded())
+    {
+        MediaManager* media = _context ? _context->pMediaManager : nullptr;
+        if (media == nullptr || !media->HasIncoming(TapeSlot::kId))
+            return TapePlayResult::NoBlocks;
+        _playWhenAttached = true;
+        return TapePlayResult::Queued;
+    }
+    if (GetPlaybackState() == TapePlaybackState::Paused)
+    {
+        ResumePlaybackFromPause();
+        return TapePlayResult::Resumed;
+    }
+    StartPlaybackAtCursor();
+    return TapePlayResult::Started;
 }
 
 bool Tape::EnsureImageLoaded()
@@ -478,6 +513,7 @@ bool Tape::SeekToBlock(size_t index)
     _currentTapeBlockIndex = index;
 
     MLOGINFO("Tape seek: block %zu of %zu", index, _tapeBlocks.size());
+    NotifyReadoutsChanged(_context, "tape");
     return true;
 }
 
@@ -528,6 +564,7 @@ void Tape::ResumePlaybackFromPause()
 
     MLOGINFO("Tape resumed at block %zu, pulse %zu (manual)",
              _currentTapeBlockIndex, _currentOffsetWithinPulse);
+    NotifyReadoutsChanged(_context, "tape");  // the transport: a deck shows it, paused too
 }
 
 /// endregion </Playback state, position and seek>

@@ -81,6 +81,11 @@ TEST(HapticProfile_Test, ParsesAndRefusesWhatItCannotDo)
         {R"({"sources": {"s": {"probe": "write", "address": 1, "word": true}}})", "on a value probe"},
         {R"({"sources": {"s": {"probe": "value", "address": "0xFFFF", "word": true}}})", "second byte"},
         {R"({"source": {}})", "unknown field"},
+        {R"({"sources": {"s": {"probe": "exec", "address": 1, "if": "A =="}}})", "'if' the condition ends after '==': a value is missing at column 5"},
+        {R"({"sources": {"s": {"probe": "write", "address": 1, "each_write": true, "if": "RD == 1"}}})",
+         "RD (the address read) exists only on"},
+        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": "VAL == 1"}}})", "VAL (the value read or written) exists only on"},
+        {R"({"sources": {"s": {"probe": "value", "address": 1, "if": 7}}})", "'if'"},
     };
     for (const Bad& entry : bad)
     {
@@ -98,6 +103,42 @@ TEST(HapticProfile_Test, ParsesAndRefusesWhatItCannotDo)
     text.replace(text.find("\"decreased\""), 11, "\"sometimes\"");
     EXPECT_FALSE(ParseProfile(text, profile, error)) << "the profile refuses a bad haptics section";
     EXPECT_NE(error.find("haptics.sources.died"), std::string::npos) << error;
+}
+
+TEST(HapticProfile_Test, Rule_PlayerPlaysOnTheNthPadOnly)
+{
+    std::vector<std::pair<HostDeviceId, RumbleLevels>> writes;
+    HapticMixer mixer(
+        [&writes](const HostDeviceId& device, const RumbleLevels& levels) {
+            writes.emplace_back(device, levels);
+            return true;
+        },
+        false, FixedMixerClock());
+    const char* text = R"({"sources": {"died": {"probe": "write", "address": "0x5f20", "when": "decreased"}},
+        "rules": [{"on": "died", "play": "life-lost", "player": 2}]})";
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(text, section, error)) << error;
+    HapticProfile haptics;
+    ASSERT_TRUE(ParseHapticProfile(section, haptics, error)) << error;
+    EXPECT_EQ(haptics.rules[0].player, 2);
+    for (const char* bad : {R"("player": 9)", R"("player": 1.5)", R"("player": -1)"})
+    {
+        const std::string wrong = std::string(R"({"sources": {"d": {"probe": "write", "address": 1}},
+            "rules": [{"on": "d", "play": "tick", )") + bad + "}]}";
+        ASSERT_TRUE(ParseJson(wrong, section, error)) << error;
+        HapticProfile refused;
+        EXPECT_FALSE(ParseHapticProfile(section, refused, error)) << bad;
+        EXPECT_NE(error.find("'player'"), std::string::npos) << error;
+    }
+
+    ProfileHaptics feed(
+        haptics, "game/two-players", mixer, [] { return std::vector<HostDeviceId>{"first", "second"}; }, nullptr,
+        [](const HostDeviceId& device) { return device == "first" ? 1 : 2; });
+    feed.OnHapticFrame(Frame(3, 0));
+    feed.OnHapticFrame(Frame(2, 0));
+    EXPECT_EQ(mixer.Written("first"), RumbleLevels{}) << "the rule is the second player's";
+    EXPECT_GT(mixer.Written("second").low, 0.0f) << "life-lost on the handle motors";
 }
 
 TEST(HapticProfile_Test, Haptics_ProbeWriteDecreased)

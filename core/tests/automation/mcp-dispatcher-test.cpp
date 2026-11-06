@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <utility>
+#include <vector>
 #include <string>
 
 #include "mcp-dispatcher.h"
@@ -253,21 +254,22 @@ TEST_F(McpDispatcher_Test, UnknownMethod_IsMethodNotFound)
 // tools/list and tools/call
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentyFiveTools)
+TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentySixTools)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 25u);
+    EXPECT_EQ(tools.size(), 27u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
                               "signature_info",
                               "debug_code",       "analyze_performance", "capture_media",  "search_api",
                               "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
+                              "device_history",
                               "companion_manage", "controllers",       "actions",           "streamdeck",
-                              "audio_mixer"};
+                              "audio_mixer",      "analysis"};
     for (const char* name : expected)
     {
         bool found = false;
@@ -304,6 +306,29 @@ TEST_F(McpDispatcher_Test, ToolsCall_RoutesThroughToolHandlerWithDualContent)
     EXPECT_FALSE(response["result"]["content"][0]["text"].asString().empty());
     EXPECT_TRUE(response["result"].isMember("structuredContent"));
     EXPECT_FALSE(response["result"].isMember("isError"));
+}
+
+// The observer sees every call of a known tool with its action (the host counts them: host.clients.mcp.tools)
+TEST_F(McpDispatcher_Test, ToolsCall_ObserverSeesToolAndAction)
+{
+    std::vector<std::pair<std::string, std::string>> seen;
+    _dispatcher->SetToolCallObserver(
+        [&seen](const std::string& tool, const std::string& action) { seen.emplace_back(tool, action); });
+
+    Json::Value params;
+    params["name"] = "analysis";
+    params["arguments"]["action"] = "status";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    Json::Value noAction;
+    noAction["name"] = "search_api";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", noAction));
+    Json::Value unknown;
+    unknown["name"] = "no_such_tool";
+    DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", unknown));
+
+    ASSERT_EQ(seen.size(), 2u) << "an unknown tool is not counted";
+    EXPECT_EQ(seen[0], std::make_pair(std::string("analysis"), std::string("status")));
+    EXPECT_EQ(seen[1], std::make_pair(std::string("search_api"), std::string()));
 }
 
 // By default content[] holds the human-readable text only; response_format "json" adds the structuredContent
@@ -373,6 +398,82 @@ TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesResponseFormat)
     ASSERT_GT(tools.size(), 0u);
     for (const Json::Value& tool : tools)
         EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("response_format")) << tool["name"].asString();
+}
+
+// Answer budgets: every tool takes max_chars; a long answer fits, says what it left out, and its JSON says so too
+TEST_F(McpDispatcher_Test, ToolsCall_MaxCharsFitsTheWholeAnswer)
+{
+    Json::Value emulators(Json::arrayValue);
+    for (int i = 0; i < 300; i++)
+    {
+        Json::Value emulator;
+        emulator["id"] = "emu-" + std::to_string(i);
+        emulator["state"] = "paused";
+        emulator["model"] = "ZX-Spectrum 128K";
+        emulators.append(emulator);
+    }
+    Json::Value listBody;
+    listBody["emulators"] = emulators;
+    _caller->routes["GET /api/v1/emulator"] = {200, listBody};
+
+    Json::Value params;
+    params["name"] = "emulator_manage";
+    params["arguments"]["action"] = "list";
+    const Json::Value whole = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    const std::string wholeText = whole["result"]["content"][0]["text"].asString();
+    ASSERT_GT(wholeText.size(), 2000u) << "the fixture must not fit";
+
+    params["arguments"]["max_chars"] = 1000;
+    params["arguments"]["response_format"] = "json";
+    const Json::Value fitted = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_FALSE(fitted["result"]["isError"].asBool()) << fitted.toStyledString();
+    const Json::Value& content = fitted["result"]["content"];
+    ASSERT_EQ(content.size(), 2u);
+    size_t chars = 0;
+    for (const Json::Value& block : content)
+        chars += block["text"].asString().size();
+    EXPECT_LE(chars, 1000u) << "text and JSON together";
+    const std::string text = content[0]["text"].asString();
+    EXPECT_EQ(text.substr(0, 40), wholeText.substr(0, 40)) << "the first line stays";
+    EXPECT_NE(text.find("left out for max_chars=1000; narrow the call"), std::string::npos) << text;
+    const Json::Value& structured = fitted["result"]["structuredContent"];
+    EXPECT_LT(structured["emulators"].size(), 300u);
+    EXPECT_GT(structured["emulators"].size(), 0u);
+    EXPECT_EQ(structured["truncated"]["omitted"]["emulators"].asUInt(), 300u - structured["emulators"].size());
+    EXPECT_EQ(structured["truncated"]["max_chars"].asUInt(), 1000u) << "the note names the budget asked for";
+
+    // Text only: content[] gets the whole budget, and structuredContent (read instead of it) the whole budget too
+    params["arguments"].removeMember("response_format");
+    const Json::Value textOnly = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+    ASSERT_EQ(textOnly["result"]["content"].size(), 1u);
+    EXPECT_LE(textOnly["result"]["content"][0]["text"].asString().size(), 1000u);
+    EXPECT_GT(textOnly["result"]["content"][0]["text"].asString().size(), text.size()) << "more than a third";
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    const std::string json = Json::writeString(writer, textOnly["result"]["structuredContent"]);
+    EXPECT_LE(json.size(), 1000u);
+    EXPECT_GT(json.size(), 700u) << "not just what the text left over";
+}
+
+TEST_F(McpDispatcher_Test, ToolsCall_BadMaxCharsIsAToolErrorBeforeTheToolRuns)
+{
+    for (const Json::Value& bad : {Json::Value(10), Json::Value("lots"), Json::Value(-5)})
+    {
+        Json::Value params;
+        params["name"] = "emulator_manage";
+        params["arguments"]["action"] = "list";
+        params["arguments"]["max_chars"] = bad;
+        const Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/call", params));
+        ASSERT_TRUE(response["result"]["isError"].asBool()) << bad.toStyledString();
+        EXPECT_NE(response["result"]["content"][0]["text"].asString().find("max_chars must be"), std::string::npos);
+    }
+}
+
+TEST_F(McpDispatcher_Test, ToolsList_EveryToolTakesMaxChars)
+{
+    Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("tools/list"));
+    for (const Json::Value& tool : response["result"]["tools"])
+        EXPECT_TRUE(tool["inputSchema"]["properties"].isMember("max_chars")) << tool["name"].asString();
 }
 
 // A screenshot with include_image comes as an MCP image block (the model sees the picture); the JSON echo does not
@@ -520,17 +621,18 @@ TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 // resources
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ResourcesList_ContainsNineResources)
+TEST_F(McpDispatcher_Test, ResourcesList_ContainsTenResources)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/list"));
 
     const Json::Value& resources = response["result"]["resources"];
     ASSERT_TRUE(resources.isArray());
-    EXPECT_EQ(resources.size(), 9u);
+    EXPECT_EQ(resources.size(), 10u);
 
     const char* expectedUris[] = {"unreal://keyboard-layout", "unreal://basic-reference", "unreal://z80-isa",
                                   "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state",
-                                  "unreal://machine/profi",   "unreal://machine/tsconf",  "unreal://machine/sprinter"};
+                                  "unreal://machine/profi",   "unreal://machine/tsconf",  "unreal://machine/sprinter",
+                                  "unreal://machine/gmx"};
     for (const char* uri : expectedUris)
     {
         bool found = false;

@@ -114,7 +114,7 @@ bool Core::Init()
     // and ProfROM bus-cycle silicon, TS-Conf the one that maps its windows
     // from TsConfState and models its CPU cache; everything else stays on the
     // generic one
-    if (_config->mem_model == MM_SCORP || _config->mem_model == MM_PROFSCORP)
+    if (IsScorpionModel(_config->mem_model))
         _memory = new ScorpionMemory(_context);
     else if (_config->mem_model == MM_TSL)
         _memory = new TsConfMemory(_context);
@@ -524,6 +524,8 @@ bool Core::Init()
     {
         // A fitted card that cannot be built refuses the machine with the reason (SlotManager::BuildError)
         result = _slotManager->BuildCards();
+        if (_portDecoder)
+            _portDecoder->BuildAccessObservers();  // the histories and the access watch of the slots now
         if (!result)
             _initError = _slotManager->BuildError();
     }
@@ -770,6 +772,14 @@ void Core::SelectMemoryInterface()
             _z80->MemIf = own;
     }
 
+    // Read taps without the debug mode (breakpoint-taps §5): the read-tap interface over the one chosen, which it
+    // reads through. The debug interfaces tell the taps themselves
+    if (!debug && _memory->ReadTapDemand())
+    {
+        _memory->SetReadTapInner(_z80->MemIf);
+        _z80->MemIf = _z80->ReadTapMemIf;
+    }
+
     // The +2A/+3 gate array contends memory cycles only
     _z80->ioContention = (contended && !_ulaContention->IsGateArray()) ? _ulaContention : nullptr;
     _z80->idleContention = _z80->ioContention;  // the ULA contends internal cycles too, the gate array does not
@@ -869,6 +879,8 @@ const char* Core::GetMemoryInterfaceName() const
     if (!_z80)
         return "none";
     const MemoryInterface* m = _z80->MemIf;
+    if (m == _z80->ReadTapMemIf)
+        return "fast_read_tap";
     if (m == _z80->OverlayDbgContendedMemIf)
         return "debug_contended_overlay";
     if (m == _z80->OverlayFastContendedMemIf)
@@ -905,8 +917,10 @@ void Core::ResetKeepingClock(ROMModeEnum mode)
 
 void Core::Reset(ROMModeEnum mode)
 {
-    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM)
-    _mode = mode;
+    // Set default ROM according to config settings (can be overriden for advanced platforms like TS-Conf and ATM).
+    // The model may start elsewhere: the GMX card always starts in its loader, a disk autostart's RM_DOS included
+    // until the firmware has booted (PortDecoder_ScorpionGMX::ResolveResetROMMode)
+    _mode = _portDecoder ? _portDecoder->ResolveResetROMMode(mode) : mode;
 
     // The battery clock keeps its time over the reset, which restarts the emulated time it runs on
     if (Ds12887* rtc = _portDecoder ? _portDecoder->RtcChip() : nullptr)
@@ -1017,7 +1031,7 @@ uint16_t Core::GetCPUFrequencyMultiplier()
 bool Core::CanSetSpeedMultiplier(uint8_t multiplier) const
 {
     // A TTD recording captures the machine at real speed: only 1x while it is
-    // active (TimeTravelManager forces 1x on entry and restores the setting on exit)
+    // active (TimeTravelController forces 1x on entry and restores the setting on exit)
     if (multiplier != 1 && _context->pFeatureManager && _context->pFeatureManager->isTtdRecordingActive())
         return false;
     // A history the user recorded keeps the speed it was recorded at: a change would drop it (Timing)

@@ -183,6 +183,17 @@ Built (2026-10-23):
   writes and OUTs in order (`probeEvents`, the first 64; for a write, the byte before and after).
 - **A write undone within one frame.** `write` with `each_write` sees every write, so a decrease followed by the
   restore in the same frame fires. A frame-end watch never sees it.
+- **Conditions (`if:`, 2026-10-26).** Any source can take `if:`, a condition in the core language
+  ([conditional-breakpoints.md](../../features/conditional-breakpoints.md)).
+  - On a breakpoint probe it is the tap's condition, checked at the access with its operands (`MDT`, `VAL`, `PORT`):
+    `{probe: write, address: 0x5f20, each_write: true, if: "MDT < M(#5F21)"}`. A hit it rejects is not counted.
+  - On any other source it is checked at the frame end, on the registers and memory there (no access operands); the
+    source fires only when it holds. A gated source still reads its byte and runs its filters.
+  - `x@prev` is x at the previous check: `if: "M(#5F20) < M(#5F20)@prev"`.
+  - The profile is checked when it is read (the language, the operands of the source's kind) and again when it is
+    armed on a machine (the labels). A condition the machine refuses or that fails at run time never fires; its event
+    shows the reason in `condition_error` (`game.events`).
+  - An `each_write` probe's byte before is then the byte of the last write the condition held for.
 - **Port probes.** `port-in` / `port-out` take `port` and `port_mask`. `port-out` can also take `value` / `mask` on the
   written byte: `{probe: port-out, port: 0xFE, port_mask: 0x01, value: 2, mask: 7}` is a red border.
 - **Cost.** Measured in §12.
@@ -199,8 +210,11 @@ Built (2026-10-23):
     screen's check, so the plain write still tests one byte). With a write tap armed every write tests the write
     filter bit; only a marked address goes on to the resolve. No debug mode. The Next writes through its own slot
     table: there write taps hold the debug path (`Memory::SupportsWriteTapHook`).
-  - Read probes need the debug memory path: `FeatureManager::setTapDebugHold` holds the debug mode on while they are
-    armed (with the CPU held, §8), and the memory's breakpoint cache follows it.
+  - Read probes: the read-tap interface (`Z80::ReadTapMemIf`, 2026-11-04). While read taps are armed
+    `Core::SelectMemoryInterface` puts it over the fast interface it chose (plain, contended, overlay): every access
+    goes through that one, then reads and opcode fetches test the read filter's bit, and a marked address goes on to
+    the resolve with the byte the CPU got. No debug mode; the plain fast read is untouched. The Next brings its own
+    memory interface (`SupportsReadTapHook` false): there read taps still hold the debug path.
   - How a frame's hits reach the feed: the tap's hit calls `HapticProbes::OnTap` on the emulation thread (a counter
     per probe, the write's bytes); the frame end hands the counters to the feed (`TakeFrame`) and clears them; the
     feed turns them into its rules' effects on the controllers' thread.
@@ -231,6 +245,7 @@ An effect is a short program with an envelope and a target:
 | `target` | `handle.low`, `handle.high`, `trigger.left`, `trigger.right`, `hd.left`, `hd.right`, `all`; with fallbacks (`trigger.right\|handle.high`) |
 | `shape` | `pulse`, `adsr`, `ramp`, `pattern` (a list of on/off/level steps), `follow` (track a continuous value) |
 | `priority` | the mixer ducks lower priorities while a higher one plays |
+| `player` | `1`..`8`: the rule plays on the N-th pad connected only (the numbering of the profile's `play@N` layers, [mapping-and-profiles.md §9](mapping-and-profiles.md#9-two-players-and-more)); absent: on every pad of the instance |
 | `hd` | optional, used only on voice-coil devices: frequency, waveform (`sine`, `square`, `noise`), or a CoreHaptics AHAP file shipped with the profile |
 
 Built (2026-10-23), the HD frequency:
@@ -250,7 +265,15 @@ Built (2026-10-23), the HD frequency:
 ### 6.2 Built-in effect library
 
 `tick`, `knock`, `thump`, `explosion`, `engine` (follow), `heartbeat` (pattern), `hit`, `life-lost`, `pickup`,
-`shot`, `rumble-strip`. Profiles reference them by id and may override fields.
+`shot`, `rumble-strip`, `impact`. Profiles reference them by id and may override fields. `impact` is a hard front on
+every actuator at once (both handle motors at full, both triggers at 0.8, 1 ms attack, about 100 ms): a bullet that
+hits the hero, where `hit` is too soft. `whip` / `whip-left` are a lash: a crack on the high motor and the trigger of the
+side it flies to (120 ms), and `whip-drag` / `whip-drag-left` the drag of a continuous source (a `frame` source holds
+it as long as the lash is out).
+
+A rule may carry `if: {source: <a value source>, equals: 0..255}`: it plays only while the byte that source watches
+equals the number at the frame the event fires (the direction a hero faces: `if: {source: facing, equals: 2}`). The
+profile `builtin/game/montana-mike` uses it for the whip's side.
 
 ### 6.3 Mixer
 
@@ -297,20 +320,18 @@ The addresses above are an illustration of the format, not verified values for t
 
 The sources are game facts, not haptic ones, so a play profile may write them as its top-level `events:` (the same
 fields; `haptics.sources` stays accepted, both are one list, a name in both is an error). Every source is a game
-event: the `game.events` monitor ([breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) publishes each live
-frame's fired events and watched values on every plane (REST, the WebSocket topic, a deck key's `show:`, CLI, Lua,
+event: the `game.events` monitor ([breakpoint taps §7](../2026-10-26-breakpoint-taps/README.md)) publishes each
+frame's fired events (live, or stepped by `run_frames` on a paused machine: its probes hear those frames too) and watched values on every plane (REST, the WebSocket topic, a deck key's `show:`, CLI, Lua,
 Python, MCP), with or without a haptic device; the rules are one consumer of them. Dizzy X's built-in profile uses
 `events:`.
 
-- **Authoring**: the Advanced dialog has a "Haptics" tab with a live meter per source and per actuator, and
-  "Add probe from debugger": a watch or breakpoint in the debugger can be turned into a probe with one click.
-  - Built (2026-10-23): the breakpoint list's context menu has **Add as Haptic Probe**. It turns an exec, read or
-    write breakpoint, or a port-in or port-out one, into a source of the loaded game's user profile
-    (`user/game-<sha16>`) with a rule that plays `hit`. A page breakpoint keeps its page.
-  - A write probe sees every write (`each_write`, `when: changed`).
-  - The first probe copies the haptics that play now into the user profile, so the probe adds to the game's profile
-    and does not replace it.
-  - The menu entry runs the `haptics_probe` host verb (§11): the surfaces and the menu write the same file.
+- **Authoring**: a game's events are found by an agent through WebAPI / MCP
+  ([the game-haptics recipe](../../../.recipe/input/game-haptics.md)), not by hand in the debugger (owner
+  2026-11-03); the Advanced dialog's "Haptics" tab shows a live meter per source and per actuator. The candidate events
+  are tried with the session trial (`haptics_trial`, §11): the `events:` / `haptics:` of the profile to be, laid over
+  the loaded game's haptics in memory, read back through `game.events`, then written as the profile file. The
+  debugger's **Add as Haptic Probe** and the `haptics_probe` verb that wrote `user/game-<sha16>` files are removed
+  (2026-11-03): a file left in the user folder shadowed the shipped profile.
 - **Sharing**: profiles in `data/controllers/profiles/` (built-in, reviewed) and the user folder; the same format for
   both.
 - **Device independence**: profiles name abstract targets; a device without trigger motors plays the fallback.
@@ -522,14 +543,19 @@ haptics` / `controllers rumble`, WebAPI `GET /api/v1/controllers/haptics`, `POST
 `controllers_haptics()` / `controllers_rumble()`. The effects are one table (`haptics/testeffects.h`) that the
 dialog's Test haptics also plays. Mode, strength, gate and stop are still to come.
 
-Built (2026-10-23): the host verb `haptics_probe` (`kind` exec / read / write / port-in / port-out, `address`, `page`,
-`port_mask`, `play`). It adds a probe with its rule to the loaded game's user profile and answers `id`, `source` and
-`path`; without a program loaded from a file it is `unavailable`. It is on every plane:
+Built (2026-11-03, in place of `haptics_probe`): the host verb `haptics_trial`, the session trial of game haptics.
 
-- CLI `controllers haptics_probe <kind> <address> [page= port_mask= play=]`;
-- WebAPI `POST /api/v1/controllers/haptics_probe`, in OpenAPI, and a socket `call` like every route;
-- MCP `controllers` action `haptics_probe`;
-- Python `controllers_haptics_probe(kind, address, ...)`.
+- `text` is a play profile's `events:` and `haptics:` (YAML, or JSON when it starts with `{`), the same fields a game
+  profile file has. It is checked as the profile it makes with the game's haptics would be (`ParseHapticTrial`): a
+  rule may name the game's sources, an event may replace one.
+- It lies over the haptics the profiles resolve for the loaded game (`OverlayHaptics`: its sources replace those of
+  the same name, its rules follow the game's) and is armed at once; `game.events` shows its events, the pads play its
+  rules. `context` / `match` say `<profile>+trial` and `session trial` in `haptics_reason`.
+- Memory only: never written to a profile file. `clear` drops it; loading another program drops it too.
+- Without options it answers the trial in effect: `active`, `sources`, `trial`, `haptics_profile`, `haptics_reason`.
+- On every plane: CLI `controllers haptics_trial [<file>|clear]`; WebAPI `POST /api/v1/controllers/haptics_trial`
+  (`{text}`, `{clear: true}`, `{}`), in OpenAPI, and a socket `call`; MCP `controllers` action `haptics_trial`;
+  Python `controllers_haptics_trial(text="", clear=False)`.
 
 Lua is excluded, as decided.
 
@@ -541,6 +567,7 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 |:--|:--|
 | `Haptics_AyEnvelopeOnset` | R13 writes with shape 0 produce one `explosion` event per restart, none on repeated R13 with the same value if the game does not restart |
 | `Haptics_LowbandFilter` | a synthetic 60 Hz burst passes, a 2 kHz tone does not (built: `HapticFilters_Test`, with the envelope, onset, probe parse and evaluation, DSP defaults and Add-probe tests) |
+| `SessionTrialLaysOverTheGameHaptics` | `HapticFilters_Test`: a trial's events replace the game's sources of the same name, its rules follow the game's, what a profile would refuse it refuses; `HostInputControl_Test.HapticsTrialLaysOverAndClearsWithoutAFile`: applied at once, read back, cleared, nothing written |
 | `Haptics_ProbeWriteDecreased` | a test program decrementing a byte fires `died` once per decrement and never on increment |
 | `Haptics_GateOnSeek` | a seek closes the gate within the same frame; the fake driver records zero within 10 ms (built: `HapticFeed_Test`, the zero is written inside `SeekTo`) |
 | `Haptics_NotJournaled` | a recording with haptics active has no extra journal events; frame hashes equal with the feed on and off (built: `HapticFeed_Test`, every probe and three taps, ten frames) |
@@ -553,6 +580,7 @@ A companion client (Steam Deck, phone) may receive the effect stream and play it
 | `Haptics_NoCostWhenIdle` | no ring pushes when no device with actuators is bound |
 
 | `ExecProbesKeepTheFastMemoryPath` | an exec probe fires once a frame with no debug mode and the fast memory interface; detaching releases `Z80::execTapHold` |
+| `BreakpointTaps_Test.ReadTapSeesTheMarkedReadsOffTheDebugPath` / `ReadTapOnTheDebugPathIsToldOnce` / `BreakpointTapsNext_Test.ReadTapsTakeTheDebugPathOnTheNext` | a read tap hears data and operand reads with the byte read and no debug mode; with the debug mode on the debug read tells it once; the Next keeps the debug path |
 | `WriteProbesKeepTheFastMemoryPath` | a write-each probe sees both writes of a change undone in the frame, with the bytes before and after, with no debug mode and the fast memory interface |
 | `DizzyXJumpsAndLandsOnce` | the real Dizzy X (testdata): its profile found by the file's hash, one jump fires `jump` and `land` in one frame each and nothing else |
 
@@ -570,7 +598,13 @@ interleaved rounds of both binaries, the lower quartile (the machine was shared,
 | `BM_HapticProbeDizzy/4`: the profile's four exec probes | 720 µs (+13 %) | 613 µs | 634 µs (within noise) |
 
 A 20 ms frame keeps over 96 % of the core free in every case. With nothing armed the fast write tests one hook byte as
-before (the event-rule screen's check moved into it): no change measured. Read probes still take the debug path.
+before (the event-rule screen's check moved into it): no change measured.
+
+Read probes (2026-11-04), `BM_HapticReadProbeFrame` (48K, read probes from FRAMES, which the interrupt's `INC (HL)`
+reads every frame), 6 interleaved rounds of both binaries, medians on a loaded machine (the no-probe frame measured
+255 µs there): the debug hold 323 µs (`/1`) and 346 µs (`/16`), the read-tap interface 284 µs and 282 µs (about +11 %
+over no probe: one more indirect call per access and one filter bit per read). The other benchmarks within ±4 %
+(their paths unchanged).
 
 ## 13. Phases and open points
 
@@ -602,8 +636,25 @@ and prove a game's triggers: [the game-haptics recipe](../../../.recipe/input/ga
 | `builtin/game/chase-hq-gs` | CHASE_GS (General Sound version) | the speed, crash, hit and turbo above; its effect requests go to the GS |
 | `builtin/game/chase-hq-demo` | CHASEHQD (Sinclair User demo, variables #514 lower) | the speed word #9D36, #9F8E, #A1B0, #8327, as above; the pad drives its Sinclair joystick keys |
 | `builtin/game/dizzy-x` | `testdata/loaders/sna/Dizzy X.sna` (2026-10-26; Sinclair 6 7 8 9 0 only) | exec #795A (jump starts) → `tick` on the high motor; #7A97 (lands from a fall) → `knock` on the low motor; #847A (energy taken) → `hit`; #8B80 (life lost) → `life-lost`. The game requests a sound by writing its number to #767D: every writer is an event (the method: [game-haptics recipe](../../../.recipe/input/game-haptics.md)) |
+| `builtin/game/aliens-neoplasma-2` | ANP2.nex v1.6.1 (a Next NEX from the SD card; the v1.6 demo has its own document) | exec page 5 #29D3 (jump) → `tick` on the high motor; #29F4 (landing) → `knock` on the low motor; the energy byte #7F70 (page 5 #3F70) decreased → `hit`; reaching 0 (every death: bullet, gas, water, fall) → `life-lost`; exec page 2 #37AA (an enemy bullet kills the hero, found in a TTD recording of the owner: the energy goes 5 → 0 from #B7AE, past #B27D and #B1C2) → `impact`, a hard front on every actuator (both triggers too). #B1C2 (water) stays an event only |
 
 Each profile also binds the pad: the game's keys on the d-pad, the left stick and the face buttons.
+
+Racing games (2026-10-28 / 29), each found by TTD on a recorded run and checked in real time through
+`/monitor/game.events`; the images are in `software/games/haptics/racing/` (README with hash and source). All of them
+have the speed as a `value` probe on the low motor (`engine`):
+
+| Profile | Image | Events |
+|:--|:--|:--|
+| `builtin/game/turbo-esprit` | tape (Erbe) | speed `#75F7`; exec `#F57F` (fire) → `shot`, `#EC94` (crash) → `hit`, `#A08C` (penalty) → `tick` |
+| `builtin/game/super-hang-on-{beginner,junior,senior,expert}` | 4 archive.org snapshots (each build has its own addresses) | speed; crash → `explosion`; off-road and overtakes not mapped |
+| `builtin/game/jet-bike-simulator` | tape (48K) | speed; `hit` → `thump`; write `#881F` (buoy) → `tick`, `#8820` (lap) → `pickup` |
+| `builtin/game/hard-drivin` | snapshot | speed `#965B`; exec `#F5E1` (wreck) → `explosion`; value `#951E` (off the road) → `rumble-strip` |
+| `builtin/game/overlander` | snapshot | speed `#F019`; exec `#7297` (crash) → `explosion`, `#5FE3` (shot) → `shot`; exec `#7524` (kill reward) → `pickup` |
+| `builtin/game/badlands` | snapshot | speed `#E5F3`; write `#E5FF` raised (hit) → `hit`; exec `#B877` (missile) → `shot`; the drones take no hit path |
+| `builtin/game/test-drive-ii` | snapshot | speed `#F058`; exec `#88C7` (traffic collision) → `explosion`; cliff and police not mapped |
+| `builtin/game/pole-position` | snapshot | speed `#9802`; exec `#9A24` (crash) → `explosion` |
+| `builtin/game/cisco-heat` | snapshot | speed `#5BB3`; exec `#9BE6` (grass) → `rumble-strip`, `#9137` (crash sound set-up) → `explosion` |
 
 - Matching by content signature: `match.signatures` (indexed as `sig:` keys) already parses next to `file_sha256`;
   once `swsignature` gives a release's content signature, a document lists it there and the hash lists can go.

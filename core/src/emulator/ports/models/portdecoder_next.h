@@ -4,6 +4,8 @@
 #include <map>
 #include <memory>
 
+#include "debugger/breakpoints/breakpointcondition.h"
+#include "emulator/sound/chips/gs/gsdebughooks.h"
 #include "emulator/bus/bustap.h"
 #include "emulator/io/z80n/nextboard.h"
 #include "emulator/io/z80n/nextdma.h"
@@ -26,6 +28,7 @@
 #include <vector>
 
 #include "emulator/ports/models/portdecoder_spectrum128.h"
+#include "emulator/io/z80n/nexthistory.h"
 
 class ScreenNext;
 
@@ -35,7 +38,7 @@ class ScreenNext;
 class BreakpointManager;
 enum class BreakpointHitKind : uint8_t;
 
-class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine
+class PortDecoder_Next : public PortDecoder_Spectrum128, public INextMachine, public IBreakpointConditionMachine
 {
 public:
     PortDecoder_Next() = delete;
@@ -58,6 +61,8 @@ public:
     void PerformReset(bool hard) override;
     void SystemClockChanged() override;
     void SetCpuSpeed(uint8_t ratio) override;
+    /// TTD time units: 3.5 / 7 / 14 / 28 MHz (NR #07), one unit is a T-state at 28 MHz
+    uint8_t TtdClockUnits() const override { return 8; }
     void SetMachineTiming(uint8_t timing) override;
     void SetContentionDisabled(bool disabled) override;
     void ResetContentionDisabled() override;
@@ -106,6 +111,11 @@ public:
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
+    /// IBreakpointConditionMachine: NR(x), the copper's beam (VC / HC) and its PC (CPC) in breakpoint conditions
+    bool NextRegister(uint8_t reg, uint8_t& value) const override;
+    bool Beam(uint16_t& line, uint16_t& hc) const override;
+    bool CopperPc(uint16_t& pc) const override;
+
     /// The SPI port pair #E7 (select) / #EB (data): one SD card per select line (NR #0A bit 5 swaps them)
     static constexpr uint16_t kPortSpiSelect = 0x00E7;
     static constexpr uint16_t kPortSpiData = 0x00EB;
@@ -146,6 +156,11 @@ public:
     bool SpiByteInFlight() const { return _spiPendingValid; }
     uint8_t SpiLastReceived() const { return _spiRx; }
 
+    /// NextReg: the register #243B selected; the rest as every machine
+#pragma push_macro("slots")
+#undef slots
+    int SelectedIndex(slots::InputRole role) const override;
+#pragma pop_macro("slots")
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
@@ -319,6 +334,12 @@ private:
     NextMagicPort _magicPort;
     NextExtendedInput _extendedInput;  ///< the keyboard's extended keys and the pads' extra buttons; the machine's PS/2 sink
     void RecordInt(NextIntEvent event);
+    /// platform-debugging P5: a DMA access through the main CPU's watchpoints (in debug mode); a machine event to the
+    /// main CPU's event breakpoints (while one is set); the DMA's start and end, told when its activity changed
+    void ReportDmaAccess(bool write, uint16_t address, uint8_t value);
+    void NoteMachineEvent(GSCardEvent kind, uint8_t value, int arg = -1);
+    void NoteDmaActivity();
+    bool _dmaWasActive = false;
     void RecordSdEvent(unsigned card, const SdTraceEvent& event);
     std::unique_ptr<NextBoard> _board;
     std::unique_ptr<NextInterruptSource> _interrupts;
@@ -346,6 +367,10 @@ private:
     NextCtc _ctc;
     NextUart _uart;
     NextDma _dma;
+    // The histories beside the journals (nexthistory.h), registered while the decoder lives
+    history::DeviceHistory<NextCopperRecord> _copperHistory{ "copper", "instructions the copper completes", 4096 };
+    history::DeviceHistory<NextDmaRecord> _dmaHistory{ "dma", "blocks the DMA finishes", 1024 };
+    history::DeviceHistory<NextUartRecord> _uartHistory{ "uart", "bytes the UARTs send and receive", 4096 };
     bool _dmaRequestLate = false;  // the enable came in this instruction: the bus goes over after the next one's M1
     std::unique_ptr<NextAudio> _audio;
     bool WriteDacPort(uint16_t port, uint8_t value);

@@ -19,12 +19,18 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
+#include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/keyboard/keyboard.h"
 #include "emulator/mainloop.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
@@ -341,4 +347,184 @@ TEST_F(HaltedIdle_Test, DemoScorpionShippedCards)
 {
     SoundCardScope shippedSound;
     Compare("SCORPION", "loaders/sna/eyeache1.sna", 0, true);
+}
+
+// Debug mode and a TTD recording (docs/inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md, C): the idle
+// runs while no breakpoint, tap or access count watches the HALT, and changes nothing there either
+namespace
+{
+template <class Run>   // HaltedIdle_Test::Run
+void DebugMode(Run& run)
+{
+    run.context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    run.context->pMemory->UpdateFeatureCache();
+}
+}  // namespace
+
+TEST_F(HaltedIdle_Test, HaltLoopPentagonDebugMode)
+{
+    _setup = [](Run& run) { DebugMode(run); };
+    Compare("PENTAGON", nullptr, 0x8000, true);
+}
+
+TEST_F(HaltedIdle_Test, HaltLoopPentagonTtdRecording)
+{
+    _setup = [](Run& run) {
+        DebugMode(run);
+        run.context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        run.context->pMemory->UpdateFeatureCache();
+        ASSERT_TRUE(run.context->pTimeTravelController->StartRecording());
+    };
+    Compare("PENTAGON", nullptr, 0x8000, true);
+    if (HasFailure())
+        return;
+
+    // The coverage index holds the HALT in every frame of both sessions, the idle's included
+    ttd::TimeTravelController* perStep = _perStep.context->pTimeTravelController;
+    ttd::TimeTravelController* inOneGo = _inOneGo.context->pTimeTravelController;
+    perStep->StopRecording();
+    inOneGo->StopRecording();
+    ASSERT_EQ(inOneGo->GetCheckpointCount(), perStep->GetCheckpointCount());
+    const auto scan = [](ttd::TimeTravelController* ttd) {
+        return ttd->QueryCoverageScan(0, UINT64_MAX, ttd::TTDCoverageKind::Executed, 0x8001, 0x8001, std::nullopt,
+                                      100000, false, false);
+    };
+    const ttd::TTDCoverageScanResult a = scan(perStep);
+    const ttd::TTDCoverageScanResult b = scan(inOneGo);
+    EXPECT_GT(a.matchingFrames, 100u);
+    EXPECT_EQ(b.frames, a.frames);
+}
+
+// A replay idles as the recording did: seeks into the middle of frames (a checkpoint restore and a replay to the
+// point) land on the same CPU and memory with the idle and without, and the idle ran during the replays
+TEST_F(HaltedIdle_Test, HaltLoopPentagonTtdReplay)
+{
+    _setup = [](Run& run) {
+        DebugMode(run);
+        run.context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        run.context->pMemory->UpdateFeatureCache();
+        ASSERT_TRUE(run.context->pTimeTravelController->StartRecording());
+    };
+    Compare("PENTAGON", nullptr, 0x8000, true, 20);
+    if (HasFailure())
+        return;
+
+    const auto replay = [](Run& run) {
+        ttd::TimeTravelController* ttd = run.context->pTimeTravelController;
+        ttd->StopRecording();
+        const uint64_t first = ttd->GetSessionInfo().sessionStartFrame;
+        const uint64_t last = ttd->SessionEndPosition().frame;
+        std::vector<uint64_t> states;
+        for (uint64_t f = first; f < last; f += 3)
+            for (const uint32_t tin : {1000u, 30000u, 69000u})
+            {
+                EXPECT_TRUE(ttd->SeekTo({f, tin}));
+                const uint8_t* ram = run.context->pMemory->RAMPageAddress(0);
+                states.push_back(Fnv(ram, size_t(8) * 0x4000, CpuHash(run.context)));
+            }
+        return states;
+    };
+    const uint64_t before = _inOneGo.z80->haltedIdleFetchesInOneGo;
+    const std::vector<uint64_t> perStep = replay(_perStep);
+    const std::vector<uint64_t> inOneGo = replay(_inOneGo);
+    EXPECT_EQ(_perStep.z80->haltedIdleFetchesInOneGo, 0u);
+    EXPECT_GT(_inOneGo.z80->haltedIdleFetchesInOneGo - before, 1000u) << "the replays idled";
+    ASSERT_EQ(inOneGo.size(), perStep.size());
+    for (size_t i = 0; i < perStep.size(); ++i)
+        EXPECT_EQ(inOneGo[i], perStep[i]) << "seek " << i;
+}
+
+// A replay that plays recorded keys idles up to each key's time and applies it there: keys pressed and released
+// inside halted stretches, read by the loop after every interrupt (the A-G half-row summed into #9000)
+TEST_F(HaltedIdle_Test, HaltLoopPentagonTtdReplayWithInput)
+{
+    static const uint8_t kKeyLoop[] = {
+        0xFB,              // +0  EI
+        0x76,              // +1  HALT
+        0x3E, 0xFD,        // +2  LD A,#FD
+        0xDB, 0xFE,        // +4  IN A,(#FE)
+        0x21, 0x00, 0x90,  // +6  LD HL,#9000
+        0x86,              // +9  ADD A,(HL)
+        0x77,              // +10 LD (HL),A
+        0xE6, 0x17,        // +11 AND #17
+        0xD3, 0xFE,        // +13 OUT (#FE),A
+        0x18, 0xEF,        // +15 JR +0
+    };
+    const auto record = [](Run& run) {
+        DebugMode(run);
+        run.context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+        run.context->pMemory->UpdateFeatureCache();
+        for (size_t i = 0; i < sizeof(kKeyLoop); i++)
+            run.context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), kKeyLoop[i]);
+        run.z80->pc = 0x8000;
+        ttd::TimeTravelController* ttd = run.context->pTimeTravelController;
+        ASSERT_TRUE(ttd->StartRecording());
+        DebugKeyboardManager* keys = run.context->pDebugManager->GetKeyboardManager();
+        static const ZXKeysEnum kKeys[] = {ZXKEY_A, ZXKEY_S, ZXKEY_D, ZXKEY_F, ZXKEY_G};
+        for (uint32_t frame = 0; frame < 20; frame++)
+        {
+            const ZXKeysEnum key = kKeys[frame % 5];
+            run.emulator->RunTStates(5000u + 2311u * frame, true);  // inside the HALT: the loop runs about 120 T
+            keys->PressKey(key);
+            run.emulator->RunTStates(9000u + 517u * frame, true);
+            if (frame % 3 != 2)
+                keys->ReleaseKey(key);  // else held over the interrupt and read
+            run.emulator->RunTStates(run.z80->_frameLimit - run.z80->t, true);
+        }
+        ttd->StopRecording();
+        EXPECT_GE(ttd->GetInputJournal().Size(), 30u);
+    };
+    for (Run* run : {&_perStep, &_inOneGo})
+    {
+        Start(*run, "PENTAGON", run == &_inOneGo, nullptr, 0x8000);
+        ASSERT_FALSE(HasFatalFailure());
+        record(*run);
+        ASSERT_FALSE(HasFatalFailure());
+    }
+    ASSERT_NE(_perStep.context->pMemory->DirectReadFromZ80Memory(0x9000), 0) << "the loop never read a key";
+
+    const auto replay = [](Run& run) {
+        ttd::TimeTravelController* ttd = run.context->pTimeTravelController;
+        const uint64_t first = ttd->GetSessionInfo().sessionStartFrame;
+        const uint64_t last = ttd->SessionEndPosition().frame;
+        std::vector<uint64_t> states;
+        for (uint64_t f = first; f < last; f++)
+            for (const uint32_t tin : {4000u, 12000u, 26000u, 69000u})
+            {
+                EXPECT_TRUE(ttd->SeekTo({f, tin}));
+                uint8_t rows[8];
+                for (uint8_t r = 0; r < 8; r++)
+                    rows[r] = run.context->pKeyboard->MatrixRow(r);
+                const uint8_t* ram = run.context->pMemory->RAMPageAddress(0);
+                states.push_back(Fnv(rows, sizeof(rows), Fnv(ram, size_t(8) * 0x4000, CpuHash(run.context))));
+            }
+        return states;
+    };
+    const uint64_t before = _inOneGo.z80->haltedIdleFetchesInOneGo;
+    const std::vector<uint64_t> perStep = replay(_perStep);
+    const std::vector<uint64_t> inOneGo = replay(_inOneGo);
+    EXPECT_EQ(_perStep.z80->haltedIdleFetchesInOneGo, 0u);
+    EXPECT_GT(_inOneGo.z80->haltedIdleFetchesInOneGo - before, 1000u) << "the replays idled";
+    ASSERT_EQ(inOneGo.size(), perStep.size());
+    for (size_t i = 0; i < perStep.size(); ++i)
+        EXPECT_EQ(inOneGo[i], perStep[i]) << "seek " << i / 4 << " at " << i % 4;
+}
+
+// A breakpoint on the HALT or a read watch on the byte after it sees every idle fetch: one per step
+TEST_F(HaltedIdle_Test, HaltLoopDebugModeWatchedRunsPerStep)
+{
+    for (const bool exec : {true, false})
+    {
+        Start(_inOneGo, "PENTAGON", true, nullptr, 0x8000);
+        ASSERT_FALSE(HasFatalFailure());
+        DebugMode(_inOneGo);
+        BreakpointManager* brk = _inOneGo.context->pDebugManager->GetBreakpointsManager();
+        const uint16_t id = exec ? brk->AddExecutionBreakpoint(0x8001) : brk->AddMemReadBreakpoint(0x8002);
+        ASSERT_NE(id, BRK_INVALID);
+        const uint64_t before = _inOneGo.z80->haltedIdleFetchesInOneGo;
+        _inOneGo.emulator->RunNFrames(20, /*skipBreakpoints=*/true);
+        EXPECT_EQ(_inOneGo.z80->haltedIdleFetchesInOneGo, before) << (exec ? "execution breakpoint" : "read watch");
+        EmulatorTestHelper::CleanupEmulator(_inOneGo.emulator);
+        _inOneGo = Run{};
+    }
 }

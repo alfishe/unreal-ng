@@ -4,6 +4,7 @@
 #include <string>
 
 #include "check.h"
+#include "sdb/datadir.h"
 #include "sdb/scenario.h"
 #include "sdb/scenarioio.h"
 #include "sdb/scenarioops.h"
@@ -130,6 +131,57 @@ void TestSubtrees()
         json::parse(R"({ "id": "o", "type": "include", "file": "lib/outer.deck.json", "at": [2, 2] })");
     res = io::ResolveIncludes(h2, dir, &err);
     CHECK(res && ops::FindNode(*res, "o.inner.step"));
+    // pictures and $scenario paths of an included file name its own folder: rebased onto the including file's (the
+    // run document has one folder), through a nested include too; other roots, absolute paths, fragments and the
+    // include's own overrides stay
+    std::filesystem::create_directories(dir / "lib" / "shared" / "icons");
+    std::ofstream(dir / "lib" / "shared" / "icons" / "a.png") << "png";
+    Write(dir / "lib" / "shared" / "pics.deck.json",
+          json::parse(R"({ "model": "plusxl", "root": { "id": "pics", "type": "menu",
+        "strip": { "content": "image", "image": "strip.png" }, "items": [
+        { "id": "a", "type": "action", "at": [0, 0], "face": { "image": "icons/a.png#xywh=0,0,8,8", "svg": "../b.svg" },
+          "do": { "kind": "action", "id": "media.open", "params": { "path": "$scenario/media/t.tap" } } },
+        { "id": "b", "type": "action", "at": [0, 1], "face": { "image": "$scenario/c.png", "label": "icons/a.png" },
+          "face_on": { "image": "$data/streamdeck/x.png", "svg": "/abs/d.svg" },
+          "do": { "kind": "webapi", "path": "/y" } } ] } })"));
+    Write(dir / "lib" / "pictures.deck.json",
+          json::parse(R"({ "model": "plusxl", "root": { "id": "outer", "type": "menu", "items": [
+        { "id": "p", "type": "include", "file": "shared/pics.deck.json", "at": [0, 1] } ] } })"));
+    json h4 = host;
+    h4["root"]["items"][2] = json::parse(
+        R"({ "id": "pp", "type": "include", "file": "lib/pictures.deck.json", "at": [2, 2], "face": { "image": "own.png" } })");
+    Write(dir / "pictures-host.deck.json", h4);
+    res = io::LoadResolved(dir / "pictures-host.deck.json", &err);
+    CHECK(res.has_value());
+    if (res)
+    {
+        const json* a = ops::FindNode(*res, "pp.p.a");
+        const json* b = ops::FindNode(*res, "pp.p.b");
+        const json* pics = ops::FindNode(*res, "pp.p");
+        CHECK(a && (*a)["face"]["image"] == "lib/shared/icons/a.png#xywh=0,0,8,8" && (*a)["face"]["svg"] == "lib/b.svg");
+        CHECK(a && (*a)["do"]["params"]["path"] == "$scenario/lib/shared/media/t.tap");
+        CHECK(b && (*b)["face"]["image"] == "$scenario/lib/shared/c.png" && (*b)["face"]["label"] == "icons/a.png");
+        CHECK(b && (*b)["face_on"]["image"] == "$data/streamdeck/x.png" && (*b)["face_on"]["svg"] == "/abs/d.svg");
+        CHECK(pics && (*pics)["strip"]["image"] == "lib/shared/strip.png");
+        CHECK((*ops::FindNode(*res, "pp"))["face"]["image"] == "own.png");
+        CHECK(Parses(*res));
+        if (a)  // the rebased picture is the file, from the host's folder
+        {
+            const std::string at = (*a)["face"]["image"].get<std::string>();
+            CHECK(std::filesystem::exists(data::Resolve(at.substr(0, at.find('#')), dir)));
+        }
+    }
+    // a document written to another folder (the studio's run file): its own relative pictures follow
+    {
+        json run = *io::LoadResolved(dir / "lib" / "shared" / "pics.deck.json", &err);
+        io::RebasePaths(run["root"], dir / "lib" / "shared", dir / "run");
+        CHECK((*ops::FindNode(run, "a"))["face"]["image"] == "../lib/shared/icons/a.png#xywh=0,0,8,8");
+        CHECK((*ops::FindNode(run, "b"))["face"]["image"] == "$scenario/../lib/shared/c.png");
+        CHECK((*ops::FindNode(run, "b"))["face_on"]["svg"] == "/abs/d.svg");
+    }
+    // included from the same folder: nothing to rebase
+    res = io::LoadResolved(dir / "lib" / "shared" / "pics.deck.json", &err);
+    CHECK(res && (*ops::FindNode(*res, "a"))["face"]["image"] == "icons/a.png#xywh=0,0,8,8");
     // cycle
     Write(
         dir / "lib" / "a.json",

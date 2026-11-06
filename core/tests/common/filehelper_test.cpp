@@ -1387,7 +1387,8 @@ TEST_F(FileHelper_Test, AbsolutePath_Lexical_AllShapes)
     // drive's cwd is known here, so test them for the current drive only.
     if (kIsWindows && drive.size() == 2)
     {
-        cases.push_back({drive, cwd, cwd});
+        const std::string cwdDir = cwd == drive ? cwd + kSep : cwd;  // a drive root keeps its separator ("C:\")
+        cases.push_back({drive, cwdDir, cwdDir});
         cases.push_back({drive + "file.sna", cwd + kSep + "file.sna", cwd + "/file.sna"});
         cases.push_back({drive + "a\\..\\b", cwd + kSep + "b", cwd + "/b"});
     }

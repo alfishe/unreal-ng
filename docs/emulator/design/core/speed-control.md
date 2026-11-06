@@ -124,6 +124,19 @@ Covox and the FDC keep their own clocks.
   converted to the audio time base. At ratio 1 (every machine without a turbo) both
   helpers return without dividing.
 
+**Reading the composed multiplier.** `Core::GetHostSpeedMultiplier()` is the host factor
+alone (the one `speed` sets and TTD locks to 1); `Core::GetSpeedMultiplier()` is the
+effective one, host × `hw_turbo_ratio`. A guest raising its hardware turbo while TTD
+records therefore moves the second and leaves the first at 1, which is correct, not a
+breach of the lock. Every automation plane reports the composed value read-only:
+
+| Plane | Where |
+|---|---|
+| CLI | `setting effective_speed` (alias `effective`), and the `effective` line of `setting list` |
+| WebAPI | `effective_speed` in `GET /settings` and `GET /settings/effective_speed` (PUT answers 400) |
+| Lua / Python | `get_speed().effective` |
+| WebSocket / MCP | `emulator.stats` `cpu.multiplier` |
+
 **Audio rule** (the fix for the "hard resync – dropped … overfilled audio" storm under
 Scorpion turbo, 2026-09-10): the sound path never sees the hardware factor.
 

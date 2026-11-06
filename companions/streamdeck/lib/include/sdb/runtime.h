@@ -93,6 +93,11 @@ public:
 
     // Called for nav {to: scenario, file} (the owner loads the file and calls reload).
     std::function<void(const std::string&)> onSwitchScenario;
+    // The menu path changed (the scenario's name, the stack's ids root first): the daemon keeps it per deck, so a
+    // restarted daemon opens the deck where it was. Called on the device thread; it must only store, never wait
+    std::function<void(const std::string& scenario, const std::vector<std::string>& ids)> onPathChanged;
+    // Before Run: open the deck on the stack these ids name (the longest prefix that exists in the scenario)
+    void RestorePath(const std::vector<std::string>& ids);
 
     // State-bound faces (scenarios.md §4): a readout's value (true = face_on); value faces (§4.2): the value shown.
     // Pushed by the surface client (S4 / SD4) or polled from the host (ActionHost::Readout) while nobody pushes it.
@@ -115,6 +120,10 @@ public:
     void SetTarget(const json& target);
     // A lasting line on the strip, over the menu's content ("" clears it): "COMPANION REVOKED - TOUCH TO PAIR"
     void SetNotice(const std::string& text);
+    // The daemon ends: the deck is left saying so (keys dark, the strip `text`) rather than frozen on a page whose
+    // keys no longer answer. After Run returned, on the thread that ran it; a deck that dropped off on the way gets
+    // up to 2 s to come back for it
+    void ShowStopped(const std::string& text);
     [[nodiscard]] std::string Notice() const;
     // A tap on the strip while a notice shows (NOT PAIRED, REVOKED, a pairing's state): this instead of the page's
     // tap (the daemon starts a pairing). Set before Run; called on the device thread with the runtime's lock held:

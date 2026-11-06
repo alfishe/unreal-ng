@@ -34,6 +34,9 @@
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
+#include "emulator/sound/chips/gs/gsdebughooks.h"
+#include "debugger/history/exechistory.h"
+#include "3rdparty/unreal-z80/z80cpu.h"     // Z80CpuRegisters
 
 /// Which personality is fitted (introspection/switching; GSCardImplementation
 /// names the implementation, GSTypeKind the config input that selected it)
@@ -373,6 +376,88 @@ public:
     virtual std::string firmwareDescription() const { return isROMLoaded() ? "Loaded (32 KB)" : "Missing (zero-filled)"; }
     virtual uint16_t getCPUReg(GSCpuRegister) const { return 0; }
 
+    /// region <Card CPU debugging (gs-debugger design §3.1, §4)>
+    /// The card CPU runs its debug loop and debug bus callbacks while `hooks` is set, the fast ones with nullptr.
+    /// Called between two runs only (the machine's CPU held, the card on an instruction boundary). False on cards
+    /// without a CPU
+    virtual bool setDebugHooks(IGSDebugHooks* hooks)
+    {
+        (void)hooks;
+        return false;
+    }
+    /// A card CPU debugger's hooks (GSCardTarget): bound as they are, or behind the execution history's recorder while
+    /// that history is on. The same contract as setDebugHooks
+    bool setDebuggerHooks(IGSDebugHooks* hooks)
+    {
+        _debuggerHooks = hooks;
+        return bindHooks();
+    }
+    /// The history the card CPU's instructions go to (`<slot>.cpu`, exechistory.h): the machine's (SoundManager) or
+    /// the slot card's; nullptr detaches. Bound at the next run
+    void attachExecHistory(history::DeviceHistory<ExecRecord>* history, const EmulatorContext* context)
+    {
+        _execHistory = history;
+        _execContext = context;
+    }
+    /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
+    history::DeviceHistory<ExecRecord>* execHistory() const
+    {
+        return _execHistory;
+    }
+    /// The instruction at `pc` into the execution history (the runner's record loop, the recorder)
+    void recordExecStep(uint16_t pc);
+    /// The idle loop at `head` slept through `iterations` times: one record (ExecRecord::idle) while recording
+    void recordExecIdle(uint16_t head, uint64_t iterations);
+    /// The 16K page behind a card CPU address now (as the emulation maps it, not a table). Flash and ROM count as
+    /// ROM pages
+    struct CardPage
+    {
+        enum Kind : uint8_t { Rom = 0, Ram = 1, None = 0xFF };  // the values of MemoryBankModeEnum
+        Kind kind = None;
+        uint8_t page = 0;
+        uint16_t offset = 0;
+    };
+    virtual CardPage mapCardAddress(uint16_t addr) const
+    {
+        (void)addr;
+        return {};
+    }
+    /// 16K pages of a kind the card CPU can map (0: none, or no CPU)
+    virtual uint32_t cardPageCount(CardPage::Kind kind) const
+    {
+        (void)kind;
+        return 0;
+    }
+    /// The card CPU's full register file; false without a CPU
+    virtual bool cardRegisters(Z80CpuRegisters& out) const
+    {
+        (void)out;
+        return false;
+    }
+    /// Card time in the card's own unit and that unit's rate (classic GS: 12 MHz cycles; NeoGS: 120 MHz ticks)
+    virtual int64_t cardTime() const { return 0; }
+    virtual double cardUnitsPerSecond() const { return 0.0; }
+    /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
+    /// same instruction of the frame
+    virtual int64_t cardFrameTime() const { return 0; }
+    /// The card runs to the ZX frame's end (handleFrameEnd): the frame counter already names the next frame
+    virtual bool inFrameEndCatchUp() const { return false; }
+    /// A script's write to card memory as the card CPU's write would land (a ROM or flash window keeps its byte):
+    /// no bus side effect (no DAC latch, no flash command). False without a CPU or on a read-only window
+    virtual bool pokeCardMemory(uint16_t addr, uint8_t value)
+    {
+        (void)addr;
+        (void)value;
+        return false;
+    }
+    /// The card CPU's full register file, set between two instructions; false without a CPU
+    virtual bool setCardRegisters(const Z80CpuRegisters& regs)
+    {
+        (void)regs;
+        return false;
+    }
+    /// endregion </Card CPU debugging>
+
     /// region <Diagnostics: activity counters + port/DAC trace>
     /// Cheap always-on counters - the first thing to check when triaging
     /// "is the card doing anything at all" (CLI/WebAPI/MCP/Lua/Python all
@@ -385,6 +470,8 @@ public:
     /// Structured event trace (host ports, card-side activity, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session
     /// model but scoped to this card. See gsporttrace.h.
+    /// The history the trace records into (gsporttrace.h): the machine's (SoundManager), nullptr for the card's own
+    virtual void attachPortTrace(GSHistory* history) = 0;
     virtual void startPortTrace() = 0;
     virtual void stopPortTrace() = 0;
     virtual void pausePortTrace() = 0;
@@ -450,4 +537,75 @@ protected:
     bool _hostGainUnity = true;   ///< every gain at unity: the output path is the card's own, untouched
     bool _hostGainDirty = false;  ///< a gain changed: the card emits its level again at the next frame start
     /// endregion </Host channel gains>
+
+protected:
+    /// Before a card run (the card on a boundary): the execution history switched on or off since the last run puts
+    /// its recorder in or takes it out. One load and a compare a run, never per instruction
+    void syncExecHistory()
+    {
+        if (_execHistory && _execHistory->On() != _execBound) [[unlikely]]
+            bindHooks();
+    }
+    /// The run records its instructions without a debugger's hooks: the record loop (GSCardRunner::runToRecord).
+    /// Only asked after the hooks' test, so the fast loop pays one more test a run
+    bool execRecording() const;
+
+private:
+    /// The hooks the card runs with while its execution history is on and a debugger's hooks are bound: each
+    /// instruction into the history, then the debugger's hooks as they would be called alone (without a debugger the
+    /// card runs its record loop instead, no hooks at all)
+    class ExecRecorder final : public IGSDebugHooks
+    {
+    public:
+        explicit ExecRecorder(GeneralSoundCard& card) : _card(card) {}
+        IGSDebugHooks* inner = nullptr;
+
+        void beforeStep(uint16_t pc) override;
+        void endRun(uint16_t pc) override
+        {
+            if (inner)
+                inner->endRun(pc);
+        }
+        uint8_t onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value) override
+        {
+            return inner ? inner->onMemoryRead(pc, addr, value) : value;
+        }
+        void onMemoryWrite(uint16_t pc, uint16_t addr, uint8_t value) override
+        {
+            if (inner)
+                inner->onMemoryWrite(pc, addr, value);
+        }
+        uint8_t onPortIn(uint16_t pc, uint16_t port, uint8_t value) override
+        {
+            return inner ? inner->onPortIn(pc, port, value) : value;
+        }
+        void onPortOut(uint16_t pc, uint16_t port, uint8_t value) override
+        {
+            if (inner)
+                inner->onPortOut(pc, port, value);
+        }
+        void onEvent(GSCardEvent kind, uint16_t port, uint8_t value) override
+        {
+            if (inner)
+                inner->onEvent(kind, port, value);
+        }
+        void onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value) override
+        {
+            if (inner)
+                inner->onBusMasterWrite(master, ramPage, offset, value);
+        }
+
+    private:
+        GeneralSoundCard& _card;
+    };
+
+    /// The debugger's hooks alone, or the recorder in front of them while the history is on; the result of
+    /// setDebugHooks
+    bool bindHooks();
+
+    history::DeviceHistory<ExecRecord>* _execHistory = nullptr;
+    const EmulatorContext* _execContext = nullptr;
+    IGSDebugHooks* _debuggerHooks = nullptr;
+    bool _execBound = false;
+    ExecRecorder _execRecorder{ *this };
 };

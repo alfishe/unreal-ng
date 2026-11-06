@@ -12,7 +12,7 @@
 #include "common/inifile.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -69,7 +69,7 @@ void FeatureManager::clear()
     _dirty = true;
 }
 
-/// @brief True while the TTD recording lock is held (TimeTravelManager engages it
+/// @brief True while the TTD recording lock is held (TimeTravelController engages it
 /// on entering Recording and holds it until the session returns to Idle)
 bool FeatureManager::isTtdRecordingActive() const
 {
@@ -93,6 +93,12 @@ bool FeatureManager::debugModeInEffect() const
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     if (_replayDebugHold || _tapDebugHold)
         return true;
+    if (_breakpointDebugHold)
+    {
+        auto breakpointsIt = _features.find(Features::kBreakpoints);
+        if (breakpointsIt != _features.end() && breakpointsIt->second.enabled)
+            return true;
+    }
     auto debugIt = _features.find(Features::kDebugMode);
     return debugIt != _features.end() && debugIt->second.enabled;
 }
@@ -123,6 +129,35 @@ bool FeatureManager::tapDebugHold() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
     return _tapDebugHold;
+}
+
+bool FeatureManager::debugCaptureOn() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    for (const char* id : {Features::kCallTrace, Features::kMemoryTracking, Features::kOpcodeProfiler})
+    {
+        auto it = _features.find(id);
+        if (it != _features.end() && it->second.enabled)
+            return true;
+    }
+    return false;
+}
+
+void FeatureManager::setBreakpointDebugHold(bool on)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_breakpointDebugHold == on)
+            return;
+        _breakpointDebugHold = on;
+    }
+    applyDebugMode();
+}
+
+bool FeatureManager::breakpointDebugHold() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _breakpointDebugHold;
 }
 
 void FeatureManager::applyDebugMode()
@@ -156,6 +191,30 @@ bool FeatureManager::isTtdTimelineBound() const
         return true;
     return _context->pTimeTravelHooks &&
            _context->pTimeTravelHooks->GetState() == ttd::TTDSessionState::Detached;
+}
+
+bool FeatureManager::ttdRecordsShortcuts() const
+{
+    return _context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->RecordsShortcuts();
+}
+
+bool FeatureManager::ttdLocksTurboMode() const
+{
+    return isTtdRecordingActive() && !ttdRecordsShortcuts();
+}
+
+bool FeatureManager::ttdLocksFastLoader(const std::string& id) const
+{
+    // Fast disk also compresses the WD1793's timing outside its trap (WD1793::isFastDiskArmed): no edit records
+    // that, a replay with it off would run another FDC. Held for every recording, a black box too
+    if (id == Features::kFastDisk)
+        return isTtdTimelineBound() || (_context && _context->pTimeTravelHooks && _context->pTimeTravelHooks->IsRecording());
+    if (!isTtdTimelineBound())
+        return false;
+    // The engine records the tape trap as an edit, and turbo tape only takes the pacing away: the live head of a
+    // recording keeps them, a replay applies the edits instead (and the machine sitting in history keeps them off
+    // until it records again)
+    return !(ttdRecordsShortcuts() && _context->pTimeTravelHooks->IsRecording() && !_context->ttdReplayActive);
 }
 
 void FeatureManager::onTtdRecordingStarted()
@@ -396,13 +455,13 @@ std::string FeatureManager::refusalReason(const std::string& idOrAlias, bool ena
         return "Cannot enable " + id + " while an RZX recording plays: it changes what the guest code does, so the "
                "playback would leave the recorded path. Stop the playback first.";
     }
-    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && isTtdTimelineBound())
+    if ((id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape) && ttdLocksFastLoader(id))
     {
         return "Cannot enable " + id + " while TTD is recording or replaying history: it changes what the guest "
                "code does, so the replay would no longer match the recording. Stop the recording, or leave the "
                "history, first.";
     }
-    if (id == Features::kTurboMode && isTtdRecordingActive())
+    if (id == Features::kTurboMode && ttdLocksTurboMode())
     {
         return "Cannot enable turbo mode while TTD is recording: a recording must show the code running at real "
                "speed. Stop the recording first.";
@@ -421,9 +480,9 @@ bool FeatureManager::isMaskedByTtd(const std::string& id) const
     // Shortcuts read as OFF for the whole timeline binding (recording, replay, Detached);
     // turbo mode only while recording
     if (id == Features::kFastDisk || id == Features::kFastTape || id == Features::kTurboTape)
-        return isTtdTimelineBound() || isRzxPlaying();
+        return ttdLocksFastLoader(id) || isRzxPlaying();
     if (id == Features::kTurboMode)
-        return isTtdRecordingActive();
+        return ttdLocksTurboMode();
     return false;
 }
 
@@ -445,7 +504,7 @@ void FeatureManager::syncTurboModeWithTtdState()
     // Recording forces turbo off regardless of the stored desired state; the
     // desired state itself is left untouched so it can be restored verbatim
     // once recording stops (same masking approach as isEnabled() above).
-    if (isTtdRecordingActive())
+    if (ttdLocksTurboMode())
         wantsTurbo = false;
 
     if (_context->pCore->IsTurboMode() != wantsTurbo)
@@ -574,6 +633,13 @@ void FeatureManager::setDefaults()
                      "",
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryDebug});
+    registerFeature({Features::kDeviceAccess,
+                     Features::kDeviceAccessAlias,
+                     Features::kDeviceAccessDesc,
+                     false,  // OFF by default (owner 2026-11-02): always-on only after the hot-path A/B
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryAnalysis});
     registerFeature({Features::kZXDLSS,
                      Features::kZXDLSSAlias,
                      Features::kZXDLSSDesc,

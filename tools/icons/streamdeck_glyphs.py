@@ -387,6 +387,9 @@ ACTIONS = {
     'video.overscan_toggle': {'face': 'video.overscan', 'face_on': 'video.overscan.on',
                               'state': 'toggle.video.overscan_toggle'},
     'video.temporal': {'face': 'video.temporal', 'face_on': 'video.temporal.on', 'state': 'toggle.video.temporal'},
+    'video.temporal_toggle': {'face': 'video.temporal', 'face_on': 'video.temporal.on',
+                              'state': 'toggle.video.temporal_toggle'},
+    'video.temporal_effect': {'face': 'video.blending'},
     'dbg.mode_toggle': {'face': 'dbg.mode', 'face_on': 'dbg.mode.on', 'state': 'debug.mode.enabled'},
     'dbg.open': {'face': 'debug.menu'},
     'dbg.breakpoints_clear': {'face': 'dbg.breakpoints_clear'},
@@ -516,6 +519,8 @@ PRUNED = {
     'ttd.scrub_back': 'a level action of the GUI (held stick / trigger), not a key press',
     'ttd.scrub_forward': 'a level action of the GUI (held stick / trigger), not a key press',
     'run.pace_by': 'a dial (delta) action',
+    'run.pace_shuttle_faster': 'a level action (a spring-loaded shuttle ring), not a key press',
+    'run.pace_shuttle_slower': 'a level action (a spring-loaded shuttle ring), not a key press',
     'video.crt_param_by': 'a dial (delta) action',
     'video.blending_decay_by': 'a dial (delta) action',
 }

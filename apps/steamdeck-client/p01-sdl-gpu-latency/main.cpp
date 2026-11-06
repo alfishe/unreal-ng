@@ -2,7 +2,8 @@
 //
 // Per display refresh: acquire the swapchain image -> CopyPresentedFramebuffer straight into a mapped
 // transfer buffer (cycle) -> upload to the frame texture -> one linear blit (fills the screen, aspect kept, crop)
-// -> submit. No shaders yet (P-07 ports the CRT pass).
+// -> submit. With a CRT preset (--crt <key>, or WebAPI /video/window crt_profile=shader:<key>) the frame goes through
+// the libretro passes of unreal-qt (crtpreset.h) at the picture's size first.
 //
 // Default program: a border flip on Kempston fire (A / D-pad fire / Space), polled in a tight loop, so the
 // border changes within a few T-states of the port read. The app logs, per press, the time from the SDL
@@ -11,8 +12,8 @@
 // counter step (0 = repeated frame, 2+ = a frame skipped).
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
-//                       [--delay 0..3] [--crop full|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
-//                       [--headless] [--boot] [--sound-haptics]
+//                       [--crop full|sides|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
+//                       [--headless] [--boot] [--sound-haptics] [--crt <preset key>]
 //
 // Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
 // (UNREAL_WEBAPI_PORT). --headless runs the emulator and automation only, no window and no GPU (a container, an
@@ -27,18 +28,22 @@
 //
 // Logs: ~/steamdeck-poc-logs/p01-*.csv. Quit: Esc; the border test also View + Menu, --boot / --file the Steam menu.
 
+#include "crtpreset.h"
 #include "deckcontrollers.h"
 #include "emuhost.h"
 #include "emulator/emulator.h"
 #include "emulator/video/displaygeometry.h"
+#include "emulator/video/windowview.h"
 #include "timinglog.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -52,13 +57,13 @@ struct Options
     std::string present = "vsync";
     std::string crop = "full";
     uint32_t framesInFlight = 1;
-    int presentDelay = 0;
     double seconds = 0;
     double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
     bool headless = false;   // no window, no GPU: the emulator and automation only
     bool boot = false;       // the ROM boots: no border test program
     bool soundHaptics = false;   // no game profile: the motors follow the sound (off: the game profiles' events only)
+    std::string crt;         // a CRT preset key (shaders/crt/<key>), "" = none
 };
 
 struct Rect { uint32_t x, y, w, h; };
@@ -70,6 +75,8 @@ Rect CropRect(const std::string& crop, uint32_t w, uint32_t h)
     {
         if (crop == "deckfit")
             return {16, 44, 320, 200};
+        if (crop == "sides")   // the border cut above and below only: 352x264, the 4:3 of a whole frame's width
+            return {0, 12, 352, 264};
         if (crop == "paper")
             return {48, 48, 256, 192};
     }
@@ -83,6 +90,213 @@ Rect Fit(double aspect, uint32_t dw, uint32_t dh)
     const uint32_t h = std::min(dh, static_cast<uint32_t>(dw / aspect + 0.5));
     return {(dw - w) / 2, (dh - h) / 2, w, h};
 }
+
+/// The window's display settings for the automation surfaces (WebAPI / CLI / MCP /video/window): the CRT preset is
+/// the one setting the Deck client has. The surfaces call from their threads; the render loop picks the change up
+class DisplayProvider : public IWindowViewProvider
+{
+public:
+    DisplayProvider(std::vector<std::string> presets, std::string emulatorId, const std::string& initial)
+        : _presets(std::move(presets)), _emulatorId(std::move(emulatorId))
+    {
+        _last = !initial.empty() ? initial
+              : std::find(_presets.begin(), _presets.end(), "crt-lottes") != _presets.end() ? "crt-lottes"
+              : _presets.empty() ? "" : _presets.front();
+        _active = !initial.empty();
+    }
+
+    /// The preset to draw with, "" = none
+    std::string Wanted()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _active ? _last : std::string();
+    }
+
+    /// TEMPORARY (D-pad preview): the next (+1) or previous (-1) entry of "none" + the presets, wrapping. Returns the
+    /// label to show: "<n>/<count> <key>" or "none"
+    std::string Step(int delta)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const int count = static_cast<int>(_presets.size()) + 1;   // + "none"
+        const auto found = std::find(_presets.begin(), _presets.end(), _last);
+        const int current = !_active || found == _presets.end() ? 0 : static_cast<int>(found - _presets.begin()) + 1;
+        const int next = (current + delta + count) % count;
+        _active = next != 0;
+        if (_active)
+            _last = _presets[next - 1];
+        return _active ? std::to_string(next) + "/" + std::to_string(count - 1) + " " + _last : "none";
+    }
+
+    /// The render loop could not load `key`: back to no preset
+    void Failed(const std::string& key)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_last == key)
+            _active = false;
+    }
+
+    bool GrabWindowView(const std::string&, WindowViewGrab&, std::string& error) override
+    {
+        error = "The Deck client does not grab its window (use the screenshot source \"screen\")";
+        return false;
+    }
+
+    bool GetWindowDisplay(WindowDisplaySettings& out, std::string&) override
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        Report(out);
+        return true;
+    }
+
+    bool SetWindowDisplay(const WindowDisplayChange& change, WindowDisplaySettings& out, std::string& error) override
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (change.gpu && !*change.gpu)
+        {
+            error = "The Deck client draws with the GPU only";
+            return false;
+        }
+        if (change.blending.value_or(false))
+        {
+            error = "The Deck client has no temporal blending";
+            return false;
+        }
+        // A profile other than "none" switches the effects on; crt on alone takes the last preset back
+        if (change.crtProfile)
+        {
+            _active = *change.crtProfile != "none";
+            if (_active)
+                _last = change.crtProfile->substr(std::strlen(kShader));
+        }
+        if (change.crt)
+            _active = *change.crt && !_last.empty();
+        Report(out);
+        return true;
+    }
+
+private:
+    static constexpr const char* kShader = "shader:";
+
+    void Report(WindowDisplaySettings& out) const
+    {
+        out.backend = "gpu";
+        out.gpuAvailable = true;
+        out.gpu = true;
+        out.crt = _active;
+        out.crtProfile = _active ? kShader + _last : "none";
+        out.crtProfiles = {"none"};
+        for (const std::string& key : _presets)
+            out.crtProfiles.push_back(kShader + key);
+        out.emulatorId = _emulatorId;
+    }
+
+    std::mutex _mutex;
+    const std::vector<std::string> _presets;
+    const std::string _emulatorId;
+    std::string _last;     // the preset crt=on takes
+    bool _active = false;
+};
+
+/// TEMPORARY (D-pad preview): a line of text over the picture, drawn with SDL's built-in 8x8 debug font on a software
+/// surface, uploaded as a texture and blitted opaque (SDL_GPU's blit has no blending) for a few seconds
+class OsdLabel
+{
+public:
+    static constexpr int kScale = 3;                       // the 8x8 glyphs at 24x24 px: readable on the Deck
+    static constexpr int kMargin = 8;                      // px around the text inside the box
+    static constexpr uint64_t kShowNs = 3'000'000'000ull;  // how long a label stays up
+
+    void Show(SDL_GPUDevice* device, SDL_GPUCommandBuffer* cmd, const std::string& text, uint64_t nowNs)
+    {
+        Release(device);
+        const int glyph = static_cast<int>(SDL_DEBUG_TEXT_FONT_CHARACTER_SIZE);
+        _w = static_cast<uint32_t>(text.size() * glyph * kScale + 2 * kMargin);
+        _h = static_cast<uint32_t>(glyph * kScale + 2 * kMargin);
+        SDL_Surface* surface = SDL_CreateSurface(_w, _h, SDL_PIXELFORMAT_RGBA32);
+        if (!surface)
+            return;
+        if (SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(surface))
+        {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            SDL_SetRenderScale(renderer, kScale, kScale);
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderDebugText(renderer, static_cast<float>(kMargin) / kScale, static_cast<float>(kMargin) / kScale,
+                                text.c_str());
+            SDL_FlushRenderer(renderer);
+            SDL_DestroyRenderer(renderer);
+        }
+        SDL_GPUTextureCreateInfo ti{};
+        ti.type = SDL_GPU_TEXTURETYPE_2D;
+        ti.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        ti.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        ti.width = _w;
+        ti.height = _h;
+        ti.layer_count_or_depth = 1;
+        ti.num_levels = 1;
+        _texture = SDL_CreateGPUTexture(device, &ti);
+        SDL_GPUTransferBufferCreateInfo bi{};
+        bi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        bi.size = _w * _h * 4;
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device, &bi);
+        if (_texture && transfer)
+        {
+            auto* mapped = static_cast<uint8_t*>(SDL_MapGPUTransferBuffer(device, transfer, false));
+            for (uint32_t row = 0; mapped && row < _h; ++row)   // the surface's pitch may be wider than w * 4
+                std::memcpy(mapped + static_cast<size_t>(row) * _w * 4,
+                            static_cast<const uint8_t*>(surface->pixels) + static_cast<size_t>(row) * surface->pitch,
+                            static_cast<size_t>(_w) * 4);
+            SDL_UnmapGPUTransferBuffer(device, transfer);
+            SDL_GPUCopyPass* pass = SDL_BeginGPUCopyPass(cmd);
+            SDL_GPUTextureTransferInfo src{};
+            src.transfer_buffer = transfer;
+            src.pixels_per_row = _w;
+            src.rows_per_layer = _h;
+            SDL_GPUTextureRegion dst{};
+            dst.texture = _texture;
+            dst.w = _w;
+            dst.h = _h;
+            dst.d = 1;
+            SDL_UploadToGPUTexture(pass, &src, &dst, false);
+            SDL_EndGPUCopyPass(pass);
+            _until = nowNs + kShowNs;
+        }
+        if (transfer)
+            SDL_ReleaseGPUTransferBuffer(device, transfer);   // released after the copy is recorded: SDL defers it
+        SDL_DestroySurface(surface);
+    }
+
+    /// On top of the picture, top left; after the main blit (it clears the swapchain)
+    void Draw(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* swapchain, uint64_t nowNs) const
+    {
+        if (!_texture || nowNs >= _until)
+            return;
+        SDL_GPUBlitInfo blit{};
+        blit.source.texture = _texture;
+        blit.source.w = _w;
+        blit.source.h = _h;
+        blit.destination.texture = swapchain;
+        blit.destination.x = kMargin;
+        blit.destination.y = kMargin;
+        blit.destination.w = _w;
+        blit.destination.h = _h;
+        blit.load_op = SDL_GPU_LOADOP_LOAD;
+        blit.filter = SDL_GPU_FILTER_NEAREST;
+        SDL_BlitGPUTexture(cmd, &blit);
+    }
+
+    void Release(SDL_GPUDevice* device)
+    {
+        if (_texture)
+            SDL_ReleaseGPUTexture(device, _texture);
+        _texture = nullptr;
+    }
+
+private:
+    SDL_GPUTexture* _texture = nullptr;
+    uint32_t _w = 0, _h = 0;
+    uint64_t _until = 0;
+};
 
 } // namespace
 
@@ -116,10 +330,10 @@ int main(int argc, char** argv)
         else if (k == "--file") opt.file = v;
         else if (k == "--present") opt.present = v;
         else if (k == "--fif") opt.framesInFlight = static_cast<uint32_t>(std::stoi(v));
-        else if (k == "--delay") opt.presentDelay = std::stoi(v);
         else if (k == "--crop") opt.crop = v;
         else if (k == "--seconds") opt.seconds = std::stod(v);
         else if (k == "--autofire") opt.autofireMs = std::stod(v);
+        else if (k == "--crt") opt.crt = v;
     }
 
     const bool hosted = !opt.headless && (opt.boot || !opt.file.empty());   // the controllers library has the pads
@@ -172,7 +386,6 @@ int main(int argc, char** argv)
     }
     if (!emu.OpenAudio(&error))
         SDL_Log("audio: %s", error.c_str());
-    emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
     emu.Start();
 
     if (opt.headless)
@@ -213,6 +426,40 @@ int main(int argc, char** argv)
     SDL_SetGPUSwapchainParameters(device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, presentMode);
     SDL_SetGPUAllowedFramesInFlight(device, opt.framesInFlight);
 
+    // CRT presets (crt-convert.py next to the binary): SPIR-V, so Vulkan only
+    const char* base = SDL_GetBasePath();
+    const std::string crtRoot = std::string(base ? base : "") + "shaders/crt";
+    const bool spirv = (SDL_GetGPUShaderFormats(device) & SDL_GPU_SHADERFORMAT_SPIRV) != 0;
+    const std::vector<std::string> presets = spirv ? deckpoc::CrtPreset::Available(crtRoot) : std::vector<std::string>();
+    if (!opt.crt.empty() && std::find(presets.begin(), presets.end(), opt.crt) == presets.end())
+    {
+        SDL_Log("CRT preset %s not in %s", opt.crt.c_str(), crtRoot.c_str());
+        opt.crt.clear();
+    }
+    auto display = std::make_shared<DisplayProvider>(presets, emu.Get()->GetId(), opt.crt);
+    WindowView::SetProvider(display);
+    deckpoc::CrtPreset crt;
+    std::string crtKey;   // the loaded preset
+    // TEMPORARY (D-pad preview): D-pad left / right (router actions crt.prev / crt.next, see README) or the arrow keys
+    constexpr uint64_t kCrtStepThrottleNs = 300'000'000ull;   // at most one preset step per 300 ms
+    int crtStep = 0;
+    OsdLabel osd;
+    std::string osdText;
+    uint64_t osdNs = 0;
+    if (controllers)
+        controllers->SetActionSink([&crtStep, held = std::array<bool, 2>{}](const std::string& action,
+                                                                           bool pressed) mutable {
+            const int which = action == "crt.next" ? 0 : action == "crt.prev" ? 1 : -1;
+            if (which < 0)
+                return;
+            SDL_Log("action %s %s", action.c_str(), pressed ? "down" : "up");
+            // One step per physical press: the same press can arrive twice (a binding in more than one profile
+            // layer), a step is taken on the edge only
+            if (pressed && !held[which])
+                crtStep = which == 0 ? 1 : -1;
+            held[which] = pressed;
+        });
+
     SDL_GPUTexture* frameTexture = nullptr;
     SDL_GPUTransferBuffer* transfer = nullptr;
     uint32_t texW = 0, texH = 0;
@@ -222,8 +469,8 @@ int main(int argc, char** argv)
     frameLog.Open(deckpoc::LogPath("p01-frames", "csv"), "acquire_wait_us,copy_us,submit_us,emu_frame,emu_step,audio_queued,underruns,swapchain_ok,border_white,swapchain_w,swapchain_h,window_flags");
     deckpoc::CsvLog pressLog;
     pressLog.Open(deckpoc::LogPath("p01-presses", "csv"), "event_ns,first_frame_submit_ns,software_latency_ms,frames_waited");
-    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u delay=%d crop=%s gpu=%s video=%s audio_rate=%u",
-                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.presentDelay, opt.crop.c_str(),
+    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u crop=%s gpu=%s video=%s audio_rate=%u",
+                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.crop.c_str(),
                  SDL_GetGPUDeviceDriver(device), SDL_GetCurrentVideoDriver(), emu.AudioRate());
 
     SDL_Gamepad* pad = nullptr;
@@ -263,6 +510,8 @@ int main(int argc, char** argv)
             case SDL_EVENT_KEY_DOWN:
             case SDL_EVENT_KEY_UP:
                 if (e.key.key == SDLK_ESCAPE) quit = true;
+                if (e.key.down && !e.key.repeat && e.key.key == SDLK_RIGHT) crtStep = 1;
+                if (e.key.down && !e.key.repeat && e.key.key == SDLK_LEFT) crtStep = -1;
                 if (e.key.key == SDLK_SPACE && !e.key.repeat) setFire(e.key.down, e.key.timestamp);
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -358,20 +607,51 @@ int main(int argc, char** argv)
             SDL_UploadToGPUTexture(copyPass, &src, &dst, true);
             SDL_EndGPUCopyPass(copyPass);
 
+            if (crtStep != 0 && deckpoc::NowNs() - osdNs < kCrtStepThrottleNs)
+                crtStep = 0;   // too soon after the last step: dropped, not queued
+            if (crtStep != 0)
+            {
+                osdText = display->Step(crtStep);
+                crtStep = 0;
+                osdNs = deckpoc::NowNs();
+                osd.Show(device, cmd, osdText, osdNs);
+                SDL_Log("CRT: %s", osdText.c_str());
+            }
+            const std::string wanted = display->Wanted();
+            if (wanted != crtKey)
+            {
+                crtKey = wanted;
+                crt.Release();
+                if (!crtKey.empty() && !crt.Load(device, crtRoot + "/" + crtKey, &error))
+                {
+                    SDL_Log("CRT preset %s: %s", crtKey.c_str(), error.c_str());
+                    display->Failed(crtKey);
+                    crtKey.clear();
+                }
+            }
+
             const Rect s = CropRect(opt.crop, texW, texH);
-            // Stored pixels are not square (TS-Conf: 720x288): the shape comes from DisplayGeometry, as in unreal-qt
+            // Stored pixels are not square (TS-Conf: 720x288): the shape comes from DisplayGeometry, as in unreal-qt.
+            // A CRT preset draws on a whole multiple of the source lines and resamples that to this size (crtpreset.h)
             const Rect d = Fit(DisplayGeometry::WindowAspect(static_cast<uint16_t>(texW), static_cast<uint16_t>(texH),
                                                              static_cast<uint16_t>(s.w), static_cast<uint16_t>(s.h)),
                                sw, sh);
             SDL_GPUBlitInfo blit{};
             blit.source.texture = frameTexture;
             blit.source.x = s.x; blit.source.y = s.y; blit.source.w = s.w; blit.source.h = s.h;
+            if (SDL_GPUTexture* shaded = crt.Loaded() ? crt.Render(cmd, frameTexture, s.x, s.y, s.w, s.h, d.w, d.h) : nullptr)
+            {
+                // The preset drew at the picture's size: 1:1 onto the screen
+                blit.source.texture = shaded;
+                blit.source.x = 0; blit.source.y = 0; blit.source.w = d.w; blit.source.h = d.h;
+            }
             blit.destination.texture = swapchain;
             blit.destination.x = d.x; blit.destination.y = d.y; blit.destination.w = d.w; blit.destination.h = d.h;
             blit.load_op = SDL_GPU_LOADOP_CLEAR;
             blit.clear_color = SDL_FColor{0, 0, 0, 1};
             blit.filter = SDL_GPU_FILTER_LINEAR;   // a fractional scale: nearest would make uneven pixel columns
             SDL_BlitGPUTexture(cmd, &blit);
+            osd.Draw(cmd, swapchain, deckpoc::NowNs());
         }
         SDL_SubmitGPUCommandBuffer(cmd);
         const uint64_t t2 = deckpoc::NowNs();
@@ -407,7 +687,10 @@ int main(int argc, char** argv)
                  deckpoc::Describe(deckpoc::ComputeSamples(softwareLatencies)).c_str());
     SDL_Log("software latency: %s", deckpoc::Describe(deckpoc::ComputeSamples(softwareLatencies)).c_str());
 
+    WindowView::SetProvider(nullptr);
     controllers.reset();   // the motors stop, the Deck's lizard mode comes back
+    osd.Release(device);
+    crt.Release();
     emu.Stop();
     if (frameTexture) SDL_ReleaseGPUTexture(device, frameTexture);
     if (transfer) SDL_ReleaseGPUTransferBuffer(device, transfer);

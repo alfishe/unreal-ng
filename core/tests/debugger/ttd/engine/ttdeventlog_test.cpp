@@ -1,7 +1,7 @@
 /// @file ttdeventlog_test.cpp
 /// @brief The engine's event log and payload store (Phase 3, Step 1): order,
-/// cursors, roles (a sealed replay has no barriers but v1 records without
-/// their data), v1 input records packed losslessly, payloads kept while
+/// cursors, roles (a sealed replay has no barriers but markers without
+/// their data), input journal records packed losslessly, payloads kept while
 /// referenced
 
 #include <gtest/gtest.h>
@@ -66,17 +66,17 @@ TEST(TTDEventLog_Test, ASealedReplayHasNoBarriers_OnlyV1RecordsWithoutData)
     ev.kind = TTDEventKind::MediaWrite;
     EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Fact) << "the replay writes again, held from the host";
     ev.kind = TTDEventKind::DebuggerEdit;
-    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "a v1 edit carries no bytes";
+    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "an edit without its bytes is a barrier";
     const uint8_t bytes[] = {0x3E, 0x01};
     ev.payload = payloads.Store(bytes, 2);
-    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "a v1 edit's payload is its reason text";
+    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "an edit whose payload is its reason text is a barrier";
     ev.args[0] = kEditCarriesData;
     EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Input) << "an edit with its bytes replays";
     ev.args[0] = 0;
     payloads.Release(ev.payload);
     ev.payload = {};
     ev.kind = TTDEventKind::HardwareReset;
-    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "v1 files only (D39)";
+    EXPECT_EQ(TTDEventLog::RoleOf(ev), TTDEventRole::Barrier) << "converted v1 files only (D39)";
 
     TTDEventLog log(payloads);
     ev.kind = TTDEventKind::MediaWrite;

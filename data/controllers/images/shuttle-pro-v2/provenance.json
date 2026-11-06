@@ -1,0 +1,33 @@
+{
+  "family": "shuttle-pro-v2",
+  "images": [
+    {
+      "view": "front",
+      "title": "Contour ShuttlePRO v2, black",
+      "source": "tools/poc/033-vector-controller-pictures/generate.py",
+      "author": "unreal-ng",
+      "licence": "same as the repository",
+      "terms": "vector drawing from measured dimensions; photos used as references only, nothing traced",
+      "retouch": "none; platform logos left out (D5)",
+      "references": [
+        {
+          "what": "size 109 x 196 x 29 mm (retail listings)",
+          "source": "https://www.bhphotovideo.com/c/product/298670-REG/contour_design_00498_0_shuttlepro_v2_nle.html (and Multitronic, Managerit listings)",
+          "retrieved": "2026-10-28"
+        },
+        {
+          "what": "Contour's front view of the ShuttlePRO v2: the outline (trace.py, the left half mirrored), the positions and sizes of the keys, the ring and the jog wheel on a 5 mm grid",
+          "source": "https://www.contourdesign.com/product/shuttlepro-v2/ (product photo ShuttleProV2FRONT_Originalratio_1920x2880)",
+          "author": "Contour Design",
+          "use": "measured geometry only (trace.py outline, positions on a 5 mm grid); no pixels shipped",
+          "retrieved": "2026-10-28"
+        },
+        {
+          "what": "the key numbering K1-K15 by rows",
+          "source": "https://github.com/agraef/ShuttlePRO (example.shuttlerc)",
+          "retrieved": "2026-10-28"
+        }
+      ]
+    }
+  ]
+}

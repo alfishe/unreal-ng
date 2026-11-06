@@ -1,7 +1,7 @@
 // The run / step / time-travel actions of steppingactions.cpp (Stream Deck use cases D1, D2, D3, D5): the time-travel
 // scanline unit (ttd.step_back_scanline, reverse-step scanlines), the bookmarks' previous / next, the last write to an
 // address (a param or the debugger's cursor) with the seek there, the history's ends, ttd.seek_by in the units the curve
-// does not cover and the scrub unit, on both time-travel backends; then the runs to a place and the pace on a started
+// does not cover and the scrub unit, on the time-travel controller; then the runs to a place and the pace on a started
 // machine
 
 #include "pch.h"
@@ -15,7 +15,6 @@
 #include "_helpers/testwaithelper.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/timetravelcontroller.h"
-#include "debugger/ttd/timetravelmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/builtinactions.h"
@@ -43,6 +42,15 @@ ActionValue Delta(double delta, StateNode params = StateNode::Object())
     value.kind = ValueKind::Delta;
     value.delta = delta;
     value.params = std::move(params);
+    return value;
+}
+
+ActionValue Level(double level)
+{
+    ActionValue value;
+    value.kind = ValueKind::Level;
+    value.pressed = level > 0;
+    value.level = level;
     return value;
 }
 
@@ -128,16 +136,16 @@ TEST(DebuggerCursors_Test, PanesPerInstanceAClearAndTheInstanceGoing)
     DropSteppingState("i2");
 }
 
-/// region <Time travel on both backends>
+/// region <Time travel>
 
 /// Each test inits a bare instance and records 6-8 frames of a write loop on it: boot-bound, about 40-60 ms
 
-class SteppingTtd_Test : public ::testing::TestWithParam<bool>
+class SteppingTtd_Test : public ::testing::Test
 {
 protected:
     Emulator* _emulator = nullptr;
     EmulatorContext* _context = nullptr;
-    std::unique_ptr<ttd::TimeTravelController> _controller;
+    ttd::TimeTravelController* _controller = nullptr;
     std::unique_ptr<TestRegistry> _registry;
     uint64_t _first = 0;
     uint64_t _end = 0;
@@ -147,13 +155,8 @@ protected:
         _emulator = new Emulator(LoggerLevel::LogError);
         ASSERT_TRUE(_emulator->Init());
         _context = _emulator->GetContext();
-        if (GetParam())
-        {
-            _controller = std::make_unique<ttd::TimeTravelController>(_context);
-            _context->pTimeTravelHooks = _controller.get();
-            _context->ttdWriteSink = _controller.get();
-            _context->pTimeTravelController = _controller.get();
-        }
+        _controller = _context->pTimeTravelController;
+        ASSERT_NE(_controller, nullptr);
         _registry = std::make_unique<TestRegistry>(_emulator);
     }
 
@@ -161,13 +164,7 @@ protected:
     {
         _registry.reset();
         if (_controller)
-        {
             _controller->StopRecording();
-            _context->pTimeTravelHooks = _context->pTimeTravelManager;
-            _context->ttdWriteSink = _context->pTimeTravelManager;
-            _context->pTimeTravelController = nullptr;
-            _controller.reset();
-        }
         if (_emulator)
         {
             _emulator->Stop();
@@ -214,10 +211,7 @@ protected:
     }
 };
 
-INSTANTIATE_TEST_SUITE_P(Backends, SteppingTtd_Test, ::testing::Values(false, true),
-                         [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Engine" : "V1"; });
-
-TEST_P(SteppingTtd_Test, ReverseStepTakesScanlinesOfTheMachinesLine)
+TEST_F(SteppingTtd_Test, ReverseStepTakesScanlinesOfTheMachinesLine)
 {
     Record(8);
     const unsigned line = _context->config.t_line;
@@ -238,9 +232,9 @@ TEST_P(SteppingTtd_Test, ReverseStepTakesScanlinesOfTheMachinesLine)
     EXPECT_EQ(Ttd("reverse-step", {{"scanlines", "x"}}).error, ttd::TTDControlError::BadRequest);
 }
 
-TEST_P(SteppingTtd_Test, ScanlineStepsGoBackAndForwardOneLine)
+TEST_F(SteppingTtd_Test, ScanlineStepsGoBackAndForwardOneLine)
 {
-    EXPECT_EQ(_registry->Run("ttd.step_back_scanline", Press()).error, "not_now") << "record first";
+    EXPECT_EQ(_registry->Run("ttd.step_back_scanline", Press()).error, "not_now") << actions::kNoHistory;
     Record(8);
     const unsigned line = _context->config.t_line;
     Seek(_first + 4, 2000);
@@ -259,7 +253,7 @@ TEST_P(SteppingTtd_Test, ScanlineStepsGoBackAndForwardOneLine)
     EXPECT_EQ(_registry->Run("ttd.step_back_scanline", Press(Params({{"count", 0}}))).error, "Bad Request");
 }
 
-TEST_P(SteppingTtd_Test, BookmarksPreviousAndNextAndTheirEnds)
+TEST_F(SteppingTtd_Test, BookmarksPreviousAndNextAndTheirEnds)
 {
     Record(8);
     EXPECT_EQ(_registry->Run("ttd.bookmark_next", Press()).error, "Conflict") << "no bookmarks";
@@ -292,7 +286,7 @@ TEST_P(SteppingTtd_Test, BookmarksPreviousAndNextAndTheirEnds)
     EXPECT_EQ(Int(result.body, "count"), 2);
 }
 
-TEST_P(SteppingTtd_Test, TheLastWriteToTheCursorsAddressAndTheSeekThere)
+TEST_F(SteppingTtd_Test, TheLastWriteToTheCursorsAddressAndTheSeekThere)
 {
     Record(6);
     Seek(_end - 1, 0);
@@ -321,7 +315,7 @@ TEST_P(SteppingTtd_Test, TheLastWriteToTheCursorsAddressAndTheSeekThere)
     EXPECT_FALSE(result.body.find("found")->b);
 }
 
-TEST_P(SteppingTtd_Test, TheHistorysStartAndEnd)
+TEST_F(SteppingTtd_Test, TheHistorysStartAndEnd)
 {
     Record(6);
     Seek(_first + 3, 0);
@@ -332,7 +326,7 @@ TEST_P(SteppingTtd_Test, TheHistorysStartAndEnd)
     EXPECT_GE(_context->pTimeTravelHooks->PublishedCursor().frame, _end - 1);
 }
 
-TEST_P(SteppingTtd_Test, SeekByInInstructionsTStatesAndTheChosenUnit)
+TEST_F(SteppingTtd_Test, SeekByInInstructionsTStatesAndTheChosenUnit)
 {
     Record(8);
     Seek(_first + 4, 1000);
@@ -372,7 +366,7 @@ TEST_P(SteppingTtd_Test, SeekByInInstructionsTStatesAndTheChosenUnit)
     EXPECT_EQ(result.body.find("unit")->s, "batch");
 }
 
-/// endregion </Time travel on both backends>
+/// endregion </Time travel>
 
 /// region <Runs to a place and the pace (a started machine)>
 
@@ -476,6 +470,33 @@ TEST_F(SteppingRun_Test, ThePixelTheListingAndThePaceActions)
     EXPECT_TRUE(PaceReadout(_emulator->GetId()).find("running")->b);
     ASSERT_TRUE(_registry->Run("run.pace_stop", Press()).ok);
     EXPECT_EQ(_registry->Toggle("run.pace_toggle"), std::optional<bool>(false));
+}
+
+/// Boot-bound (a started machine): about 20 ms
+TEST_F(SteppingRun_Test, AShuttleRingMovesThePaceFromWhereItIs)
+{
+    ASSERT_TRUE(_registry->Run("run.to_pixel", Press()).ok);
+    auto preset = [this] { return PaceReadout(_emulator->GetId()).find("preset")->s; };
+    ASSERT_TRUE(_registry->Run("run.pace_set", Press(Params({{"preset", "frame"}}))).ok);
+
+    // The ShuttlePRO's ring: 7 positions a side, level n / 7; each position further a preset
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(1.0 / 7)).ok);
+    EXPECT_EQ(preset(), "100lines") << "a slight turn: one preset finer than where it was, not the finest";
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(3.0 / 7)).ok);
+    EXPECT_EQ(preset(), "1line") << "two positions further: two presets";
+    for (const double back : {2.0 / 7, 1.0 / 7, 0.0})
+        ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(back)).ok);
+    EXPECT_EQ(preset(), "1line") << "the spring's return changes nothing";
+
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_slower", Level(1.0 / 7)).ok);
+    EXPECT_EQ(preset(), "1op") << "turned again from the centre: on from where it is";
+
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(1.0)).ok);
+    EXPECT_EQ(preset(), "25fps") << "the full turn the other way: seven presets coarser";
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(0)).ok);
+    ASSERT_TRUE(_registry->Run("run.pace_shuttle_faster", Level(1.0)).ok);
+    EXPECT_EQ(preset(), "full") << "up to full speed, and no further";
+    EXPECT_FALSE(PaceReadout(_emulator->GetId()).find("running")->b);
 }
 
 /// Boot-bound (a started machine): about 20 ms

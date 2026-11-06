@@ -8,7 +8,7 @@
 
 /// The "when did the program ..." queries over hand-built port journals
 /// (ttdportsearch.h). The same queries on a recorded machine are in
-/// timetravelmanager_portjournal_test.cpp.
+/// timetravelcontroller_portjournal_test.cpp.
 namespace
 {
 using ttd::BuildPortEventQuery;

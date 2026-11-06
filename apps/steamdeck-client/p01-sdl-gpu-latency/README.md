@@ -16,8 +16,8 @@ Each display refresh the app:
 4. does one linear-filter blit that fills the screen keeping the aspect ratio, with crop;
 5. submits.
 
-The core paces itself (core-clocked). The display-locked tick is P-04. Present delay is 0 by
-default (`Screen::SetPresentDelayFrames`). Audio goes from the core's callback into an SDL3 audio
+The core paces itself (core-clocked). The display-locked tick is P-04. The screen serves the frame
+due by the audio clock (no present delay setting). Audio goes from the core's callback into an SDL3 audio
 stream at the device rate, and the stream fill is reported as the DRC occupancy.
 
 The default guest program is a tight loop, poked at `#8000`:
@@ -35,7 +35,7 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 
 ```bash
 # Deck, Game Mode, non-Steam game: ~/steamdeck-poc/p01-sdl-gpu-latency  (Launch Options below)
---present vsync --fif 1 --delay 0 --crop full          # baseline
+--present vsync --fif 1 --crop full          # baseline
 --present vsync --fif 2                                # smoother, +1 frame?
 --present mailbox --fif 1                              # if gamescope offers it
 --crop deckfit                                         # 320x200 x4 = 1280x800
@@ -46,6 +46,7 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 --headless                                             # no window, no GPU: the emulator and its WebAPI only (SSH, a container)
 --boot                                                 # the ROM boots instead of the border test (the "Unreal NG" app)
 --sound-haptics                                        # no game profile with haptics: the motors follow the sound (off by default)
+--crt crt-lottes                                       # start with a CRT preset (shaders/crt/<key>, see below)
 ```
 
 With `--boot` or `--file` the input goes through the controller manager (`common/deckcontrollers.h`), as in unreal-qt:
@@ -56,6 +57,19 @@ a life lost); without one they stay still unless `--sound-haptics` makes them fo
 "Haptics from the sound" (off by default: a tune's bass line keeps them running). Every control can be bound to any ZX target (a connector's
 control, keys, a macro, the mouse, an action) in a profile or over WebAPI `/controllers`. SDL's gamepad layer stays
 off then; the border test keeps it (A / D-pad on Kempston).
+
+
+CRT effects: the 19 libretro presets of unreal-qt (`data/shaders/crt`), converted to SPIR-V at build time
+(`common/crt-convert.py`, needs `glslangValidator`) and run on SDL_GPU (`common/crtpreset.h`) at the picture's size
+before the blit; Vulkan only. They switch live over every automation surface, as in unreal-qt:
+
+```
+curl -X PUT http://<deck>:8090/api/v1/emulator/<id>/video/window -d '{"crt_profile":"shader:crt-lottes"}'
+curl -X PUT http://<deck>:8090/api/v1/emulator/<id>/video/window -d '{"crt":false}'
+```
+
+`GET .../video/window` lists the profiles (`none` and `shader:<key>`). The client has no software path and no
+temporal blending: `gpu=off` and `blending=on` are refused; the window grab (screenshot source `window`) is not offered.
 
 Built with automation (the default) the instance is driven over the network: WebAPI on `:8090`
 ([README.md, Remote control](../README.md#remote-control-webapi-mcp)).

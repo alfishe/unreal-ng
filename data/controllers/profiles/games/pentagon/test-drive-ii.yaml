@@ -1,0 +1,63 @@
+# Test Drive II: The Duel (Accolade 1989), the 48K Z80 snapshot "Test_Drive_II_The_Duel_1989_Accolade.z80" (archive.org zx_*). The
+# snapshot sits on the car-choice screens: SPACE then ENTER lead to the options page; Z toggles the controls (Joystick /
+# Keyboard: take Keyboard), ENTER starts the race (2.6 miles, clock at the top). The game's own key scan #7F8B (flags in #8270,
+# used by #8065..#8137): Q steers left, W right, L accelerates, K brakes, SPACE changes gear; P pauses and X (row FEFE) quits.
+# The speed dial does not coast down: it holds the speed reached until K brakes. Haptics (haptics.md §13 H5), found with TTD on
+# a recorded run, matching the dial reading by reading: the speed is the byte #F058 = dial / 4 (0 to 22 at 88, 24 at about 96;
+# a drop of a few units at a time is a gear change). The writer is #8168.
+# The traffic collision: #88C7 (ld a,#FF / ld (#FCE6),a, in the per-car overlap test #8890..#88EC) sets the collision flag
+# once per crash, then the game shows "You have N Lives Left." and the per-car reset loop #88D8 zeroes the speed.
+# Checked in real time (L held 32 s, random Q / W every 0.8 s): the level follows the dial (0.71 to 0.81 at cruise).
+# The other incidents are found from their messages (the strings in RAM, then the code that loads them): #8230 (ld hl,#8272 "You
+# have blown your engine", then it jumps to the life-loss #6E0B), #8DED (ld hl,#8E71 "You have been given a ticket for
+# speeding", the police), #9E4E (ld hl,#FC48 "You ran out of gas"); each is run once per incident. Checked in real time
+# (L held 90 s): #9E4E fired once at the "You ran out of gas" screen; the ticket and the blown engine did not occur in the run, so
+# those two rest on the message-pointer loads only. Their conditions, read from the code and not reproduced in play: `blown` is the
+# engine over-revved in neutral (the key bit 2 branch #8251..#825F adds 8 to the rev byte #FB1D each frame while the gear byte #FB20
+# is 0, over the limit #4F), but the auto gearbox engages a gear first (in 30 s of play with poked gear 0 the byte reached 40 at most);
+# `ticket` is the police stop (#8DE2 runs only while the police routine is active, with the car at a standstill, #F057 = 0), which
+# needs a police car on the road: none appeared in about 8 minutes of runs, and patching the police state byte did not call it.
+# Every death goes through the flag #FCE6 (set at #88C9 by a traffic car, at #70EF by a roadside object; #6EE2 then returns 3 to the
+# life-loss #6DF5): #70ED (ld a,#FF before the #70EF store, in the scenery loop #7000, ix+0 = object type) is the `object` event:
+# checked in real time (L held, steering right for 20 s): it fired once, at a cactus in the desert, the life was lost.
+# The cliff / wall: #88F6 (reached by the two jumps #8857 and #8873 of the overlap test when the lateral position #F05D:#F05A passes
+# the limit on a side whose barrier flag in #FCEB is set; it zeroes the speed and returns 3 like a crash) is the `cliff` event. Reached by
+# skipping three sections (the distance byte #F05C set to #A7D4 ends a section), then steering off the road in section 4 (5.6 miles,
+# a red rock wall at the side): in 12 rounds `cliff` fired 23 times and the lives counter fell 23 times, one for one, with no `crash`.
+# Known limits: the desert beside the road costs no speed; `blown` and `ticket` were not reproduced in play (7 sections, no police car).
+schema: 1
+kind: play
+id: builtin/game/test-drive-ii
+label: Test Drive II
+match:
+  machines: [48K, 128K, PENTAGON]
+  file_sha256: ["3a0ad44f69d648c20e4f25ccc94440f29b06ba672018dd4b11c6918c799a2b56"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: Q }
+    dpad.right:   { key: W }
+    lstick.left:  { key: Q }
+    lstick.right: { key: W }
+    rt.click:     { key: L, label: Accelerate }
+    lt.click:     { key: K, label: Brake }
+    south:        { key: SPACE, label: Gear }
+    menu:         { key: ENTER, label: Start }
+haptics:
+  sources:
+    speed: { probe: value, address: "0xF058", scale: 9 }
+    crash: { probe: exec, address: "0x88C7" }
+    blown: { probe: exec, address: "0x8230" }
+    ticket: { probe: exec, address: "0x8DED" }
+    dry:   { probe: exec, address: "0x9E4E" }
+    object: { probe: exec, address: "0x70ED" }
+    cliff: { probe: exec, address: "0x88F6" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: crash, play: explosion, scale: 0.9 }
+    - { on: blown, play: explosion, scale: 0.6 }
+    - { on: ticket, play: hit, scale: 0.5 }
+    - { on: dry, play: thump, scale: 0.4 }
+    - { on: object, play: explosion, scale: 0.8 }
+    - { on: cliff, play: explosion, scale: 0.7 }

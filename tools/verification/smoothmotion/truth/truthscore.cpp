@@ -1,4 +1,4 @@
-// What the eye sees against the truth: renders of a POC 039 scene (tools/poc/039-smoothing-filters/scenes.py), whose
+// What the eye sees against the truth: renders of a POC 047 scene (tools/poc/047-smoothing-filters/scenes.py), whose
 // motion is known at any time, against the scene itself moving continuously.
 //
 // The eye integrates the light of the last 20 ms (a box, 10 subsamples 2 ms apart) and either follows an element at

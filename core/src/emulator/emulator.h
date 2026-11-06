@@ -25,6 +25,7 @@
 #include "corestate.h"
 #include "cpu/z80.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/targets/debugcpuid.h"
 #include "emulator/config.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "emulator/cpu/core.h"
@@ -42,7 +43,7 @@ class BreakpointManager;
 
 namespace ttd
 {
-enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelmanager.h
+enum class TTDGuardedAction : uint8_t;  // debugger/ttd/timetravelhooks.h
 class TTDSessionPort;                   // debugger/ttd/ttdsessionport.h
 }
 
@@ -198,6 +199,11 @@ public:
         uint16_t breakpointId = 0xFFFF;
         uint16_t address = 0;
         BreakpointHitKind kind = BreakpointHitKind::Execute;
+        /// Whose breakpoint: another CPU's (a card) stopped the machine at that CPU's instruction `cpuPc`
+        DebugCpuId cpu = DebugCpuId::Main;
+        uint16_t cpuPc = 0;
+        /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
+        bool step = false;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -209,6 +215,7 @@ public:
             Pause,        ///< a pause request (a client, the GUI)
             Breakpoint,   ///< a breakpoint (`breakpoint`)
             Step,         ///< a direct step / run ended
+            Watch,        ///< an armed frame watch held at a frame end (framewatch::Manager::LastPause says which)
         } reason = Reason::None;
         BreakpointStop breakpoint;
     };
@@ -294,7 +301,7 @@ private:
     // in flight) before the emulation thread has left MainLoop::Run() - a second
     // caller that skips its own Stop() because IsRunning() already reads false
     // (e.g. EmulatorManager::RemoveEmulatorInstance()) could free Core's Screen /
-    // SoundManager / TimeTravelManager while that thread is still mid-frame.
+    // SoundManager / TimeTravelController while that thread is still mid-frame.
     std::mutex _stopMutex;
     volatile bool _isDebug = false;
     std::atomic<bool> _isReleased{false};
@@ -453,8 +460,7 @@ public:
     void SetSpeedChangeInterceptor(std::function<bool(uint8_t)> interceptor);
 
     /// @brief Why a recording-destructive action is refused right now (empty when allowed) -
-    /// ITimeTravelHooks::RecordingGuard: the TTD v1 backend's refusals, which the coordinator's owner of the
-    /// emulator's operations reports (goes with v1). Surfaces ask the coordinator instead (Ask*)
+    /// ITimeTravelHooks::RecordingGuard. Surfaces ask the coordinator instead (Ask*)
     std::string RecordingGuard(ttd::TTDGuardedAction action) const;
 
     /// @brief Run an edit of the machine made by a tool (a script, a debugger surface: memory, registers, ports,
@@ -503,6 +509,9 @@ public:
     void SetAudioDeviceSampleRate(uint32_t rate);
     void ClearAudioCallback();
 
+    /// The master mute: an instance starts muted; the GUI (its bound instance) or an automation plane unmutes it
+    void SetHostAudioMuted(bool muted);
+
     /// Realtime device/ring monitoring state (nullptr = no device attached)
     const AudioDeviceDescriptor* GetAudioDeviceDescriptor() const;
 
@@ -521,7 +530,7 @@ public:
     /// Why @p change would be refused right now (empty: it would go ahead), asked of the machine state coordinator:
     /// a refusal is logged with the caller's source and the sentence the operation itself gives. For a surface about
     /// to prepare the change (an upload, a staged file, a dialog). While a TTD recording runs the engine says empty
-    /// (the change will be an event of the recording); TTD v1 refuses. @p drive: the floppy drive; @p what: the file
+    /// (the change will be an event of the recording). @p drive: the floppy drive; @p what: the file
     std::string AskMediaChange(MediaChange change, uint8_t drive = 0, const std::string& what = {});
     /// Why replacing this machine by another model, or moving another machine's state into it, would be refused right
     /// now (empty: it would go ahead), asked of the machine state coordinator (a refusal is logged). @p what: for the
@@ -592,6 +601,9 @@ public:
     /// when the file is not a snapshot this emulator can read
     bool InspectSnapshot(const std::string& path, const snapshot::Options& options, StateNode& result,
                          std::string& error);
+    /// The same dry plan, as data: the file's image and the plan's report; `proceeds` = the load would go ahead
+    bool PlanSnapshot(const std::string& path, const snapshot::Options& options, snapshot::Image& image,
+                      snapshot::Report& plan, bool& proceeds, std::string& error);
     /// The snapshot pipeline's report of the last load: the commit that ran (or the refusal and why), the verdicts that
     /// led to it, the format's per-block outcomes, warnings. Read it after the load returned
     const snapshot::Report& LastSnapshotReport() const { return _lastSnapshotReport; }
@@ -631,23 +643,10 @@ public:
     /// `ext` (no dot, any case) is an RZX recording
     static bool IsRzxExtension(const std::string& ext);
 
-    /// Which time-travel implementation records and replays on instances
-    /// created from now on (Phase 5): the engine's controller (the default) or
-    /// v1's manager. Both objects exist on every instance; the selected one is
-    /// what the core (hooks, write sink) and the verbs (TTDControl) drive. The
-    /// core-tests binary selects V1 (v1's own tests, the reference); tests of
-    /// the engine select it per test
-    enum class TimeTravelBackend : uint8_t
-    {
-        Engine,
-        V1
-    };
-    static void SetDefaultTimeTravelBackend(TimeTravelBackend backend);
     /// Where the engine writes each recording as it records (a folder per session under it,
     /// ttdrecordingfolders.h) for instances created from now on. The application sets
     /// ~/.unreal-ng/ttd (ttd::RecordingsRoot); empty (the default, tests): nothing is written
     static void SetDefaultTtdRecordingRoot(const std::string& root);
-    static TimeTravelBackend DefaultTimeTravelBackend();
     /// Save the machine's snapshot view as .sna, .z80 or .szx (by the extension): pauses, waits until the machine has parked, writes.
     /// False = refused or failed, and LastSaveResult() says why (the machine's state is untouched); nothing is written then
     bool SaveSnapshot(const std::string& path);
@@ -659,10 +658,9 @@ public:
     /// A tape file (any TapeLoaderRegistry format) or a folder into the tape
     /// slot, at once; the deck stops and plays the new tape from its start.
     /// While a TTD recording runs it is an event of the recording: it lands at the next frame boundary
-    /// (TTD v1: refused)
     bool LoadTape(const std::string& path, std::string* error = nullptr);
     /// The tape out of the deck. While a TTD recording runs it is an event of the recording: it lands at the next frame
-    /// boundary (TTD v1: refused)
+    /// boundary
     bool EjectTape(std::string* error = nullptr);
     /// `ext` (no dot, any case) is a format a tape loader reads
     static bool IsTapeExtension(const std::string& ext);
@@ -674,8 +672,7 @@ public:
     ///               drive 0 today (unreal-qt/src/mainwindow.cpp) - that is a UI default, not a
     ///               limitation of this method; every other caller (WebAPI, CLI, MCP, Lua, Python)
     ///               must pass the drive the caller actually asked for.
-    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
-    /// refused)
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary
     bool LoadDisk(const std::string& path, uint8_t drive = 0, std::string* error = nullptr);
 
     /// Take the disk out of `drive` (0-3, A-D) and free it; the other drives are untouched.
@@ -683,7 +680,7 @@ public:
     ///              dirty disk stays in and `error` says so
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// An empty drive is not an error. Like LoadDisk, while a TTD recording runs it is an event of the recording: it
-    /// lands at the next frame boundary (TTD v1: refused)
+    /// lands at the next frame boundary
     bool EjectDisk(uint8_t drive, bool force = false, std::string* error = nullptr);
 
     /// Layout of a blank disk from CreateBlankDisk()
@@ -705,8 +702,7 @@ public:
     /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
-    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary (TTD v1:
-    /// refused)
+    /// While a TTD recording runs the insert is an event of the recording: it lands at the next frame boundary
     struct BlankDiskResult
     {
         BlankDiskFormat format = BlankDiskFormat::Unformatted;
@@ -758,6 +754,10 @@ public:
 
     // Controlled emulator behavior
     void RunSingleCPUCycle(bool skipBreakpoints = true);
+    /// One instruction that always executes: the execution breakpoint at PC is passed (no hit, no count) as when
+    /// stepping on from a stop on it; breakpoints and watchpoints the instruction reaches still fire (ZEsarUX's
+    /// cpu-step, a debugger's step at a breakpoint it did not stop on)
+    void StepPastBreakpointAtPc();
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
@@ -780,6 +780,12 @@ public:
     /// skipBreakpoints = false: a breakpoint ends the run first (run to the cursor; LastDirectStop says which)
     void RunUntilCondition(std::function<bool(const Z80State&)> predicate, uint64_t maxTStates = 0,
                            bool notifyDebugger = true, bool skipBreakpoints = true);
+    /// Runs whole frames until `atFrameEnd` holds at a frame end (the next frame's first instruction not run yet),
+    /// `maxFrames` frame ends passed, or the run halts (a breakpoint with skipBreakpoints false, an abort). `atStart`
+    /// runs once the run holds the CPU, before the first step (a watcher takes its baseline there); false ends the run
+    /// before any step (a refused spec). Returns the frame ends passed; `met` tells whether atFrameEnd held (framewatch::RunUntil)
+    unsigned RunFramesUntil(unsigned maxFrames, const std::function<bool()>& atStart,
+                            const std::function<bool()>& atFrameEnd, bool skipBreakpoints, bool& met);
 
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame
@@ -978,6 +984,17 @@ public:
     /// execution breakpoint the emulator is stopped at does not stop the run's first instruction (stepping
     /// on from a breakpoint)
     bool OnBreakpointHit(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
+    /// A breakpoint of another CPU (`breakpoints` that CPU's, gs-debugger design §4) at that CPU's instruction
+    /// boundary: the machine pauses with both positions - the main CPU wherever it stands (inside a host port access
+    /// or at the frame end), the other at `cpuPc` - and this thread parks until Resume(). A direct run records the
+    /// stop and ends after its current instruction
+    void OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoints, uint16_t breakpointId, uint16_t address,
+                               BreakpointHitKind kind, uint16_t cpuPc);
+    /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
+    /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
+    void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
+    /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
+    void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked
     const BreakpointStop& LastDirectStop() const { return _directStop; }
     bool IsDestroying();  // Thread-safe check for destruction state

@@ -28,7 +28,10 @@ GENERATOR = "tools/poc/033-vector-controller-pictures/generate.py"
 SETS = {
     "xbox-series": xbox.series,
     "xbox-one": xbox.one,
+    "xbox-elite-1": xbox.elite1,
+    "xbox-elite-1-cross": lambda: xbox.elite1("cross"),
     "xbox-elite-2": xbox.elite2,
+    "xbox-elite-2-disc": lambda: xbox.elite2("disc"),
     "dualsense": lambda: playstation.dualsense(),
     "dualshock-4": lambda: dualshock.dualshock4(),
     "8bitdo-ultimate": lambda: eightbitdo.ultimate(),
@@ -103,6 +106,9 @@ def problems(name, pic, written):
         if "circle" in shape:
             cx, cy, r = shape["circle"]
             box = (cx - r, cy - r, cx + r, cy + r)
+        elif "polygon" in shape:
+            xs, ys = [x for x, _ in shape["polygon"]], [y for _, y in shape["polygon"]]
+            box = (min(xs), min(ys), max(xs), max(ys))
         else:
             x, y, w, h = shape["rect"]
             box = (x, y, x + w, y + h)

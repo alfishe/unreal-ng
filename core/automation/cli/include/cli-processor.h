@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include <emulator/emulator.h>
 #include "emulator/execution/executionarbiter.h"
 #include "common/uuid.h"
@@ -99,6 +101,9 @@ private:
     void HandleStepOver(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStepOut(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSkipUntil(const ClientSession& session, const std::vector<std::string>& args);
+    /// Frame watches (cli-processor-watch.cpp): run_until key=value ..., watch add|list|del
+    void HandleRunUntil(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWatch(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunTStates(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunToScanline(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRunNScanlines(const ClientSession& session, const std::vector<std::string>& args);
@@ -161,8 +166,12 @@ private:
     void HandleBPActivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPDeactivate(const ClientSession& session, const std::vector<std::string>& args);
     void HandleKeyBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleEventBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleChipRegisterBreakpoint(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPToggle(const ClientSession& session, const std::vector<std::string>& args);
     void HandleBPNote(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleBPCondition(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleCallback(const ClientSession& session, const std::vector<std::string>& args);
     /// bpon / bpoff / bpclear / bptoggle on a selection BreakpointSelection names (a kind such as nextreg, beam, keyboard;
     /// group:<name>); false when `text` is not one (the caller answers)
     bool ApplyBreakpointSelection(const ClientSession& session, BreakpointManager& manager, const std::string& text,
@@ -202,6 +211,7 @@ private:
     void HandleVideoViewport(const ClientSession& session, Emulator& emulator, const std::vector<std::string>& args);
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
@@ -345,6 +355,16 @@ private:
     // is left is the note. False with the reason in `error`
     bool ParseBreakpointArgs(const std::vector<std::string>& args, size_t addressIndex, size_t flagsFrom,
                              BreakpointSpec& spec, std::string& error) const;
+    // `--cpu main|gs|ms` anywhere in a breakpoint command: taken out of `args`, the CPU in `cpu` (main without it).
+    // False after the reply when the name is not one
+    bool TakeCpuOption(const ClientSession& session, std::vector<std::string>& args, DebugCpuId& cpu) const;
+    // The breakpoints of that CPU (a card's: gs-debugger design §3.1)
+    static BreakpointManager* BreakpointsOf(Emulator& emulator, DebugCpuId cpu);
+    // `--cpu gs|ms` on registers / memory / disasm (gs-debugger design §7.1): the sound card CPU's answer, true when
+    // this replied (a card CPU, a bad name, a card that is not there). `--cpu main` runs `again` without the option
+    bool HandleCardCpuCommand(const ClientSession& session, Emulator& emulator, const char* command,
+                              const std::vector<std::string>& args,
+                              const std::function<void(const std::vector<std::string>&)>& again);
     // Adds the breakpoint and says what was set ("Breakpoint #3 set at 0x8000 ...") or why not
     std::string AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what);
 
@@ -380,6 +400,7 @@ private:
     void HandleMedia(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-bus slots: buses, slots, cards; plug / remove / set applied by a restart (cli-processor-slots.cpp, SlotControl)
     void HandleSlots(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleControllers(const ClientSession& session, const std::vector<std::string>& args);
     /// action [list | run <id> [value] [param=val ..]]: the core ActionRegistry (cli-processor-action.cpp)
     void HandleAction(const ClientSession& session, const std::vector<std::string>& args);
@@ -390,6 +411,7 @@ private:
     void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)
     void HandleMultiSound(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleWildSound(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMidi(const ClientSession& session, const std::vector<std::string>& args);
     // CD audio of the ATAPI CD drives (cli-processor-cdaudio.cpp, CdAudioControl)
     void HandleCdAudio(const ClientSession& session, const std::vector<std::string>& args);
@@ -478,6 +500,13 @@ private:
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDProbeFrames(const ClientSession& session, EmulatorContext* context,
+                              const std::vector<std::string>& args);
+    void HandleTTDTimeline(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDDiffMoments(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

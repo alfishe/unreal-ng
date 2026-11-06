@@ -16,11 +16,15 @@
 #include "debugger/joystick/debugjoystickmanager.h"
 #include "emulator/io/controllers/controllermanager.h"
 #include "debugger/mouse/debugmousemanager.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/callbacks/scriptcallbacks.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
+#include "emulator/ports/portdecoder.h"
 #include "emulator/media/mediamanager.h"
 #include "stdafx.h"
 
@@ -504,6 +508,13 @@ void MainLoop::CompleteFrame()
     if (_context->pCore)
         _context->pCore->OnNetworkFrameDevices();
 
+    // Board devices on their own clock (the ATM Turbo 2+ and Profi keyboard controllers, a COM peer, flash timers)
+    // catch up to the frame end here, before the checkpoint: it holds them caught up, so a restore at the frame
+    // start equals the machine that ran into it (a lazy device behind its clock is the same machine, not the same
+    // bytes)
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->OnFrameEnd();
+
     if (_context->pTimeTravelHooks)
     {
         try
@@ -512,7 +523,7 @@ void MainLoop::CompleteFrame()
         }
         catch (const std::exception& e)
         {
-            MLOGERROR("TimeTravelManager::OnFrameBoundary failed: %s", e.what());
+            MLOGERROR("TimeTravelController::OnFrameBoundary failed: %s", e.what());
         }
     }
 
@@ -541,6 +552,12 @@ void MainLoop::CompleteFrame()
         _context->pDebugManager->GetJoystickManager()->OnFrame();
     }
 
+    // The device access watch: the frame's counts into its window (nothing while it is off). A tape still playing
+    // is the program still loading
+    if (_context->pPortDecoder)
+        _context->pPortDecoder->GetAccessWatch().OnFrameBoundary(_context->pTape != nullptr &&
+                                                                 _context->pTape->IsPlaying());
+
     // Host controllers: the frame's sample of every connector the host drives (journaled input, after the checkpoint)
     if (_context->pControllerManager)
         _context->pControllerManager->OnFrame(_state->frame_counter);
@@ -552,9 +569,14 @@ void MainLoop::CompleteFrame()
         _context->pCore->OnNetworkFrame();
     }
 
-    // Board devices on their own clock (ATM Turbo 2+ keyboard controller)
-    if (_context->pPortDecoder)
-        _context->pPortDecoder->OnFrameEnd();
+    // Armed frame watches (debugger/watch/framewatch.h), last: they see the frame as every hook above left it. Not in
+    // a TTD silent replay (a seek re-runs frames that already happened). Off: one relaxed load
+    if (_context->pDebugManager && !_context->ttdReplayActive)
+    {
+        framewatch::Manager* watches = _context->pDebugManager->GetFrameWatches();
+        if (watches && watches->Armed())
+            watches->OnFrameEnd(_state->frame_counter);
+    }
 }
 
 void MainLoop::RestartFrame()
@@ -697,7 +719,7 @@ void MainLoop::OnFrameEnd()
         //
         // TTD silent-replay suppression (parent TDD §8.2 + Appendix C, same
         // contract as the NC_VIDEO_FRAME_REFRESH gate below): a throwaway
-        // replay pass (ReplayWithinFrame / TimeTravelManager::
+        // replay pass (ReplayWithinFrame / TimeTravelController::
         // ComposeDisplay) can cross a real frame boundary while
         // ttdReplayActive is set. Latching there advances the present-slot
         // ring (Screen::_presentLatchCounter) for a frame nobody asked to
@@ -878,6 +900,18 @@ void MainLoop::OnFrameEnd()
         {
             // Log error but don't crash - message center failure shouldn't stop emulation
             MLOGERROR("MessageCenter post failed: %s", e.what());
+        }
+    }
+
+    // Script hooks (frame callbacks, the hooks' time and the unpaced state): not in a throwaway TTD replay pass
+    if (_context->pDebugManager && !_context->ttdReplayActive)
+    {
+        ScriptCallbackManager* callbacks = _context->pDebugManager->GetScriptCallbacks();
+        if (callbacks != nullptr && callbacks->WantsFrameEnd())
+        {
+            const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch());
+            callbacks->OnFrameEnd(static_cast<uint64_t>(now.count()), _context->config.frame_duration_us);
         }
     }
 

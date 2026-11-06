@@ -23,6 +23,15 @@ public:
     virtual void BeforeSectorWrite(const std::string& slot, uint64_t lba, IBlockDevice& below) = 0;
 };
 
+/// Told after a guest read reached a medium's image (a replayed read is not one); @p below is the stack under the
+/// tap, which the observer may read without being recorded. Called on the emulation thread
+class IMediaReadObserver
+{
+public:
+    virtual ~IMediaReadObserver() = default;
+    virtual void OnSectorRead(const std::string& slot, uint64_t lba, IBlockDevice& below) = 0;
+};
+
 class MediaReadTap : public IBlockDevice
 {
 public:
@@ -30,11 +39,14 @@ public:
 
     /// @p journal: where the media manager keeps the current journal (null = none)
     /// @p writes: told before every write (null = none)
-    void Bind(IMediaReadJournal* const* journal, std::string slot, IMediaWriteObserver* writes = nullptr)
+    /// @p reads: told after every read that reached the image (null = none)
+    void Bind(IMediaReadJournal* const* journal, std::string slot, IMediaWriteObserver* writes = nullptr,
+              IMediaReadObserver* reads = nullptr)
     {
         _journal = journal;
         _slot = std::move(slot);
         _writes = writes;
+        _reads = reads;
     }
 
     uint64_t SectorCount() const override { return _base->SectorCount(); }
@@ -46,6 +58,8 @@ public:
         const bool ok = _base->ReadSector(lba, dst);
         if (journal && ok && !journal->Playing())
             journal->Record(_slot, lba, dst, kSectorSize);
+        if (ok && _reads)
+            _reads->OnSectorRead(_slot, lba, *_base);
         return ok;
     }
     bool WriteSector(uint64_t lba, const uint8_t* src) override
@@ -73,4 +87,5 @@ private:
     IMediaReadJournal* const* _journal = nullptr;
     std::string _slot;
     IMediaWriteObserver* _writes = nullptr;
+    IMediaReadObserver* _reads = nullptr;
 };

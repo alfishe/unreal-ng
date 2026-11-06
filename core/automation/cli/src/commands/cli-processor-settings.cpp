@@ -13,6 +13,7 @@
 #include <sstream>
 #include <thread>
 
+#include "emulator/readoutschanged.h"
 #include "cli-processor.h"
 
 namespace
@@ -60,6 +61,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
 
     // The live host speed setting; config.speed_multiplier is only the ini startup value
     const int hostSpeed = context->pCore ? context->pCore->GetHostSpeedMultiplier() : config.speed_multiplier;
+    // Host speed x the machine's own hardware turbo (TS-Conf 7/14 MHz...): the CPU clock the guest sees
+    const int effectiveSpeed = context->pCore ? context->pCore->GetSpeedMultiplier() : hostSpeed;
 
     // If no arguments, show all settings (list)
     if (args.empty())
@@ -89,6 +92,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         else
             ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
+        ss << "  effective     = " << effectiveSpeed
+           << "x  (read-only: host speed x the machine's hardware turbo)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
         ss << NEWLINE;
@@ -152,6 +157,8 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         else
             ss << hostSpeed << "x";
         ss << "  (CPU speed multiplier: 1, 2, 4, 8, 16, unlimited)" << NEWLINE;
+        ss << "  effective     = " << effectiveSpeed
+           << "x  (read-only: host speed x the machine's hardware turbo)" << NEWLINE;
         ss << "  turbo_audio   = " << (config.turbo_mode_audio ? "on" : "off") << "  (Enable audio in turbo mode)"
            << NEWLINE;
         ss << NEWLINE;
@@ -221,6 +228,12 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
                 ss << hostSpeed << "x" << NEWLINE;
             ss << "Description: Maximum CPU speed multiplier (1, 2, 4, 8, 16, unlimited)" << NEWLINE;
         }
+        else if (settingName == "effective_speed" || settingName == "effective")
+        {
+            ss << "effective_speed = " << effectiveSpeed << "x" << NEWLINE;
+            ss << "Description: Read-only. Host speed x the machine's hardware turbo (the CPU clock multiplier in effect)"
+               << NEWLINE;
+        }
         else if (settingName == "turbo_audio")
         {
             ss << "turbo_audio = " << (config.turbo_mode_audio ? "on" : "off") << NEWLINE;
@@ -278,7 +291,12 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
     std::stringstream ss;
 
     // Handle non-boolean settings first
-    if (settingName == "speed" || settingName == "max_cpu_speed")
+    if (settingName == "effective_speed" || settingName == "effective")
+    {
+        ss << "Error: effective_speed is read-only (host speed x the machine's hardware turbo; set the host part "
+              "with 'setting speed')" << NEWLINE;
+    }
+    else if (settingName == "speed" || settingName == "max_cpu_speed")
     {
         if (valueLower == "unlimited" || valueLower == "max")
         {
@@ -480,6 +498,7 @@ void CLIProcessor::HandleSetting(const ClientSession& session, const std::vector
         ss << "Use 'setting' to see all available settings" << NEWLINE;
     }
 
+    NotifyReadoutsChanged(emulator->GetId(), "settings");  // the set.* toggles a deck shows
     session.SendResponse(ss.str());
 }
 

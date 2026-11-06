@@ -8,6 +8,7 @@
 #include "emulator/platforms/tsconf/tsconfengine.h"
 #include "emulator/platforms/tsconf/tsconfgeometry.h"
 #include "emulator/platforms/tsconf/tsconfstate.h"
+#include "emulator/platforms/tsconf/vdac2card.h"
 #include "emulator/ports/models/portdecoder_tsconf.h"
 #include "emulator/video/videofamily.h"
 
@@ -166,6 +167,46 @@ PictureRect ScreenTSConf::WorkingWindow() const
     return PictureRect{static_cast<uint16_t>((win.x0 - TsConfGeometry::kFirstVisibleDot) * 2),
                      static_cast<uint16_t>(win.y0 - TsConfGeometry::kFirstVisibleLine),
                      static_cast<uint16_t>(win.w * 2), win.h};
+}
+
+void ScreenTSConf::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const
+{
+    out.clear();
+    auto* decoder = _context ? dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder) : nullptr;
+    if (!decoder)
+        return Screen::DescribeDisplayedMemory(out);
+    const TsConfState& ts = decoder->GetState();
+    const uint32_t vConfig = ts.regs[TsConfReg::VConfig];
+    const uint32_t vPage = ts.regs[TsConfReg::VPage];
+    const uint32_t tConfig = ts.regs[TsConfReg::TConfig];
+    auto ram = [&](uint32_t page, uint32_t offset, uint32_t bytes) { out.push_back({nullptr, page * 0x4000u + offset, bytes}); };
+    auto bitmap = [&](uint32_t page) { ram(page & 0xF8u, 0, 0x20000); };   // 512 x 512 at 4 bpp
+    if ((vConfig & 0x20) == 0)   // the graphics layer is on
+        switch (vConfig & 0x03)
+        {
+            case 0: ram(vPage, 0, 6912); break;                 // ZX
+            case 1: bitmap(vPage); break;                       // 16 colours: 128 KB
+            case 2: ram(vPage & 0xF0u, 0, 0x40000); break;      // 256 colours: 256 KB
+            default:                                           // text: 16 KB, the 2 KB font at V_PAGE ^ 1
+                ram(vPage, 0, 0x4000);
+                ram(vPage ^ 1u, 0, 0x800);
+                break;
+        }
+    if (tConfig & 0x60)
+        ram(ts.regs[TsConfReg::TMapPage], 0, 0x4000);
+    if (tConfig & 0x20)
+        bitmap(ts.regs[TsConfReg::T0GPage]);
+    if (tConfig & 0x40)
+        bitmap(ts.regs[TsConfReg::T1GPage]);
+    if (tConfig & 0x80)
+        bitmap(ts.regs[TsConfReg::SGPage]);
+    if (const Vdac2Card* card = decoder->GetVdac2Card(); card && card->IsShowing())
+    {
+        out.push_back({"vdac2.RAM_G", 0, 0x100000});
+        out.push_back({"vdac2.DL0", 0, 0x2000});
+        out.push_back({"vdac2.DL1", 0, 0x2000});
+        out.push_back({"vdac2.REG", 0, 0x1000});
+    }
 }
 
 ScreenState ScreenTSConf::DescribeScreenState() const

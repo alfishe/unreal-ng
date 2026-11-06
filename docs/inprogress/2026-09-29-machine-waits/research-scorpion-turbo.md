@@ -147,6 +147,7 @@ Q7 @MC7 (buried)`.
 | H1M | H1M | 1 = video owns the DRAM (the CPU address mux DD15/DD16 555КП11 is disabled, /E = H1M) | |
 
 TURBOSC.DOC confirms that DD38 is a read latch. The upgrade replaces "DD38 было 1533ИР23 … надо 1533ИР22"
+("DD38 was 1533ИР23 … must be 1533ИР22")
 (an edge-triggered '374 becomes a transparent '373), with "RAM → 1_DD38" (/OE) and "WR_BUFF → 11_DD38" (LE).
 
 ## 2. Timing model
@@ -344,7 +345,7 @@ Traced on the schematic (crop-hcounter-bc.png, crop-brd.png):
   - Line sync: `CC- = NAND(DD8-1 /Q, H7, !H6)` → DD4 = 8..11 of the BC- = 0 half.
   - **Line layout from the window start: 0-127 T paper window, 128-159 right border, 160-191 HSYNC,
     192-223 left border.**
-  - The legend on the schematic reads "BC\ - Бордюр". BC- is low in the border.
+  - The legend on the schematic reads "BC\ - Бордюр" ("BC\ - border"). BC- is low in the border.
 - **Vertical.**
   - Parts: DD5/DD6 (V0-V7, clocked by BC- rising, the window start). /PE = NAND(V7, V6) (DD12-3). The load
     value is BK- ? 72 : 0 (DD5 D3 and DD6 D2 are tied to BK-). DD8-2 (ТМ2) toggles on the same pulse, and
@@ -426,7 +427,7 @@ Open questions:
   Either SC15.3 relied on fast DRAM or the model misses something. SC15.1's forced wait avoids the problem.
   This is the main reason to prefer SC15.1 as the default.
 - **Q3. INT length** (B6- source not traced). Displayed-pixel lag vs the fetch window was not traced.
-- **Q4. The schematic is a 2005-06 redraw by deathsoft** from a scan plus "Графика-М" (post #1). It may
+- **Q4. The schematic is a 2005-06 redraw by deathsoft** from a scan plus "Графика-М" (Grafika-M) (post #1). It may
   contain errors; posts #2-#24 fix some. The counter wiring used here (DD3/DD4/DD8-1/DD14-2, DD5/DD6/DD8-2,
   DD13-2) is self-consistent: it gives exactly 448 × 312 = 69888 T.
 - **Q5.** Yellow boards with the Turbo+ upgrade differ on EPLD pins 3, 4 and 5 (post #38). Their equations

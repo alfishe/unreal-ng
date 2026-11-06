@@ -280,6 +280,52 @@ the video wall, the focus order, the followed instance, surface sessions with pi
 [targeting.md §10](../2026-10-19-streamdeck-integration/targeting.md#10-as-built-sd4-2026-10-20). The router of the
 Dial and the pads still follows its window's bound instance (the same instance while a process has one window).
 
+### 6.3 As built (S5, 2026-10-29): every surface follows the context
+
+The context is the one state all surfaces share (owner 2026-10-29: the Dial is one controller among many; a pad
+scrubs and debugs as well): the Stream Deck, the Dial, the ShuttlePRO, the pads and the GUI read and set the same
+`ContextState`, and none keeps a mode of its own beside it.
+
+- `InputRouter::SetContext(instance, context, set)`: `set` is false for the default. A player device is a debugger
+  remote while its instance's context `FollowsIntoDebug`: `debug` and `debug.*` always, `ttd` and `ttd.*` when
+  somebody set it. A history alone (the default `ttd`) keeps the pads in the game; the Stream Deck's Time page
+  (`context: ttd` in the product scenario), the TTD panel focused or a `ctx.set ttd` take them into the history with
+  the context's layer above `debug` (`pad-default`: the d-pad by frames in `@ttd`, by seconds in `@ttd.timecode`).
+  `InputRouter::SetDebugFocus` is gone: the debugger window focused sets `debug` instead.
+- The owner pushes every instance's context, not only the bound one's: a device pinned to an instance follows that
+  instance (`HostControllers::followContext`, on `NC_SURFACE_CONTEXT` and the 250 ms poll). When the bound
+  instance's pads go into the debugger or come back, their debug profiles are applied or dropped
+  (`ProfileContext::debugLayer` = the Debug layer key switch or the context; the host verb `context` reports it as
+  `debug_layer`) and the status bar says so.
+- A pad's layer key is a setter: its own `debug` layer going up or down reaches the owner through
+  `InputRouter::SetLayerSink`; up sets `debug` (by `host-device:<id>`) unless the context has the pads in the
+  debugger already, down restores what it replaced unless another setter changed it meanwhile. A pad gone with the
+  key held counts as down.
+- The GUI: the debugger window focused sets `debug` (a pane `debug.<pane>`; a `debug.*` somebody set stays), the
+  TTD panel focused `ttd`; the focus in another window of the application returns what the GUI set to the default.
+  The TTD panel shown no longer sets `ttd` (a panel open beside a game keeps the pads in it).
+- Tests: `InputRouter_Test.Context_*` (the rule, a pad following its instance and back, a pinned pad following its
+  own, the layer key reported once each way and on removal); `acceptance.py` ACC-2 checks the pads follow the deck's
+  Debugger and Time pages and come back home.
+- An action runs on its device's instance (fixed 2026-10-31): the router names it in `ActionEvent::instance` (the
+  pinned instance, else the followed one; none while the window has no machine), and the GUI submits it there, so a
+  pad pinned to another instance steps and seeks that instance under that instance's context. The GUI's own actions
+  (`gui`: the debugger panes, the screenshot, the windows) act on this window's machine only and are refused, with a
+  notice, for a device that drives another. Test: `InputRouter_Test.Actions_NameTheDevicesInstance`.
+- Left: headless there is no owner of `HostInputService` (Q-3).
+- One client owns the devices (owner 2026-10-29, after a Dial buzzing in the debugger: three unreal-qt processes
+  had it open, one of them in `ttd` with its `edge` / `barrier` buzz marks). Every windowed client opens the same
+  devices, so the one the user activated last owns them: `ClientQueue` is the list of process ids, the last
+  activated first, in `<temp>/unreal-ng-controllers-<user>.owners` (a `QLockFile` around each edit, a `QSaveFile`
+  write); activating the application claims, quitting leaves, the 250 ms poll follows it, and a queue with no live
+  process is taken by the first client to see it. A windowless session (offscreen, minimal) never claims (and opens no devices unless `UNREAL_WINDOWLESS_DEVICES` lets it).
+  `HostInputService::SetOwner(false)` suspends the router (`InputRouter::SetSuspended`: the controls are let go, the
+  held actions released, the events dropped, the feel followed but not sent), stops the motors and writes nothing to
+  a device (rumble, patterns, clicks, steps, lights; a light keeps the colour asked for); the owner again, each device
+  gets its feel and its light back. The host verb `context` reports it as `owner`. Tests:
+  `InputRouter_Test.Suspended_ReleasesHeldAndDropsEvents`, `ClientQueue_Test.*`,
+  `Surfaces_Test.Service_NotTheOwnerWritesNothingAndTakesTheFeelBack`.
+
 ## 7. The TTD published cursor and readouts
 
 `GetPublishedSessionInfo` copies a struct under a mutex at most every 100 ms and only after an observer asked
@@ -300,8 +346,8 @@ virtual TTDCursor PublishedCursor() const = 0;
   pair (`GetFrameTStates()` grows with the turbo multiplier, `emulatorcontext.h`), so turbo does not change the time
   code (Pentagon 3.5 MHz / 71680 T = 48.83 Hz).
 - Readouts in v1: `ttd.position` = the cursor plus `fps`; `run.state` = `running` / `paused` and the speed.
-- The hub reads them at the highest `max_hz` any session asked for (≤ 50) and sends a session the values that
-  changed since its last message. No subscriber: no tick.
+- The hub reads them when they are marked stale (events, the instance's frames; websocket-interface §4.2), at
+  most at a session's `max_hz` (≤ 50), and sends a session the values that changed since its last message.
 
 ### 7.1 As built (S2, 2026-10-20)
 
@@ -341,8 +387,8 @@ The protocol is in [protocol.md](protocol.md).
 - Binding: `follow` is the WebAPI's rule (the selected instance, else the only one) until `TargetState` (SD4) gives
   the focused view; `{"instance": …}` pins. The hub re-evaluates on `NC_EMULATOR_INSTANCE_CREATED` / `DESTROYED` /
   `NC_EMULATOR_SELECTION_CHANGED`.
-- The hub tick of §11 is not a thread: one `runEvery` timer on the WebAPI's main loop, armed while somebody
-  subscribes (§7's rule: the highest `max_hz`, nothing without a subscriber).
+- The hub tick of §11 is not a thread: it runs on the WebAPI's main loop when a value is marked stale, plus a
+  one-shot timer for values held back by `max_hz` (2026-11-03: no more `runEvery` beat).
 - The default context flip (Q-7) posts `NC_SURFACE_CONTEXT` by `default` (`ContextState::HistoryChanged`, called by
   both TTD backends when the cursor's `history` flips), so the Qt follower of S3 gets it too.
 - Details and what is not built: [protocol.md §10](protocol.md#10-as-built-s4-2026-10-20).

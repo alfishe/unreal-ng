@@ -111,7 +111,7 @@
     },
     {
       "control": "dpad.up",
-      "label": "D-pad",
+      "label": "D-pad \u2191",
       "shape": {
         "rect": [
           250,
@@ -130,7 +130,7 @@
     },
     {
       "control": "dpad.down",
-      "label": "D-pad",
+      "label": "D-pad \u2193",
       "shape": {
         "rect": [
           250,
@@ -149,7 +149,7 @@
     },
     {
       "control": "dpad.left",
-      "label": "D-pad",
+      "label": "D-pad \u2190",
       "shape": {
         "rect": [
           172,
@@ -168,7 +168,7 @@
     },
     {
       "control": "dpad.right",
-      "label": "D-pad",
+      "label": "D-pad \u2192",
       "shape": {
         "rect": [
           325,

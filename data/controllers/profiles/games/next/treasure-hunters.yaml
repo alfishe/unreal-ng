@@ -1,0 +1,49 @@
+# Treasure Hunters 1.1 (ZX Next NEX, sha256 5bdb22dd...). A platformer: the pirate runs, jumps, swings a sword and swims
+# (the bar turns white under water: the air runs out and drains the health), collects diamonds (the counter x666 counts
+# the ones that are left) and meets chompers. Started from NextZXOS's Browser (card + cwd = the game folder; its bin/
+# data opens fine); it reaches the menu in a few seconds of real time.
+# Controls (the game's menu line and play): Q A O P move (Q jumps, A ducks, O left, P right) or the cursor keys 5 6 7 8,
+# SPACE swings the sword, E or M opens the Island Map (SPACE closes it).
+# The input routine (IM 2 handler, #646D) builds the Kempston port #1F byte OR'ed with keys; Q and 7 set the up and fire
+# bits together.
+# Haptics (haptics.md §13 H5). Found by per-frame coverage (idle baseline of 150 frames, three presses of each key,
+# addresses that ran in the same one or two frames of every press) and by counter / memory diffs; proved in real time with
+# the game.events monitor (the frame-stepped API does not tell the exec probes):
+#   jump   #81B1  the hero's vertical speed is set (neg / ld (ix+#0E),a): 5 taps = 5, walking and idle = 0
+#   land   #9489  the landing branch of the jump: 5 taps = 5
+#   attack #94F4  the sword swing: 5 taps = 5, 3 fast taps = 3, a jump and walking = 0
+#   pickup #608F  the diamond counter, a word that counts down: each diamond writes it once (3 diamonds = 3)
+#   hurt   #91C5  the health byte (#3A = 58 full, 0 = dead; page 7 at #8000): it drops by 4 to 22 per chomper bite and
+#                 by 1 per frame while the air is out under water, so a drowning gives a run of small hits
+#   died   #91C5  the same byte written to 0 (death by a bite or by drowning, then the level loads again)
+# Left out: #6BBA / #6C69, the sound effect routine every action calls (a jump, a sword swing and a diamond all reach it).
+# Not tried: the green / red diamond kinds apart, doors, the Continue entry of the menu.
+schema: 1
+kind: play
+id: builtin/game/treasure-hunters
+label: Treasure Hunters
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["5bdb22ddd5a31c11c4a18a333e8f2e64b24789f2b0dcaa107bd4ce411ff98d91"]
+layers:
+  play:
+    south: { key: SPACE, label: Sword }
+    west:  { key: M, label: Island map }
+    east:  { key: E, label: Island map }
+    north: { key: "7", label: Up + fire }
+events:
+  jump:   { probe: exec, address: "0x81B1" }
+  land:   { probe: exec, address: "0x9489" }
+  attack: { probe: exec, address: "0x94F4" }
+  pickup: { probe: write, address: "0x608F", when: decreased }
+  hurt:   { probe: write, address: "0x91C5", when: decreased }
+  died:   { probe: write, address: "0x91C5", when: "==", value: 0 }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: land, play: knock, target: handle.low }
+    - { on: attack, play: shot, target: handle.high }
+    - { on: pickup, play: pickup, scale: 1.7 }
+    - { on: hurt, play: hit }
+    - { on: died, play: life-lost }

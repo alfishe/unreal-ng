@@ -1,0 +1,91 @@
+
+Busy soft: MB-02 disk image analyser 1.02
+
+Disk System 308 þF02-V30þþþþþþþþ
+  82 tracks, 11 sec/track, 2 surfaces, 1 sec/cluster, 4 sec/FAT
+
+  Capacity              kB         bytes
+  ********              **         *****
+  Total ............  1804       1847296
+  System ...........     2          2048
+  Undefined ........     0             0
+  Errors ...........     0             0
+    CRC errors .....     0             0
+    RNF errors .....     0             0
+    Other errros ...     0             0
+  Free .............  1586       1624064
+    Virgin .........  1586       1624064
+    Deleted ........     0             0
+  Used .............   216        221184
+    Useful .........   183.98     188399
+    Unusable .......    32.01      32785
+
+  Directories
+      0. System dir                 
+      1. To ramdisk                 
+      2. Small demo                 
+
+  Directory   0. System dir                 
+        1:3:Masterboot:25600:2048
+        2:3:BSdos308  :32768:23450
+        3:3:di        :32768:1024
+        4:0:fi        :    0:1514
+        5:3:cdd       :16384:1500
+        6:3:cdc       :23296:243
+        7:0:ccd       :  305:305
+        8:3:tma       :22528:16
+        9:3:lsh       :23296:59
+       10:3:tma       :22528:16
+       11:3:d80       :32768:5452
+       12:3:128       :18432:700
+       13:0:info      :    0:930
+       14:3:ff17      :24200:2681
+       15:3:setup     :32768:4144
+       16:3:clock     :32768:116
+       17:3:mclock    :24576:4558
+       18:3:hodiny    :24576:4687
+       19:3:lendir    :18432:665
+       20:3:redisk    :32768:1337
+       21:0:setcrc    :    0:1133
+       22:3:autosys   :24200:511
+       23:0:autoexe   :    0:138
+       24:3:dos2dos   :24576:3000
+       25:3:mrs09e25  :54496:10346
+       26:3:mrs09v02  :49520:15069
+       27:3:ramdrive  :32768:621
+       28:3:ramdinit  :32768:446
+       29:3:ramdroff  :23264:12
+
+  Directory   1. To ramdisk                 
+        1:3:di        :32768:1024
+        2:0:fi        :    0:1514
+        3:3:cdd       :16384:1500
+        4:3:cdc       :23296:243
+        5:0:ccd       :  305:305
+        6:3:tma       :22528:16
+        7:3:lsh       :23296:59
+        8:3:tma       :22528:16
+        9:3:d80       :32768:5452
+       10:3:128       :18432:700
+       11:0:info      :    0:930
+       12:3:ff17      :24200:2681
+       13:3:setup     :32768:4144
+       14:3:clock     :32768:116
+       15:3:mclock    :24576:4558
+       16:3:hodiny    :24576:4687
+       17:3:lendir    :18432:665
+       18:3:redisk    :32768:1337
+       19:0:setcrc    :    0:1133
+       20:3:dos2dos   :24576:3000
+       21:3:mrs09e25  :54496:10346
+       22:3:mrs09v02  :49520:15069
+
+  Directory   2. Small demo                 
+        1:0:hopsasa   :    0:1762
+        2:3:hudba24   :33280:4866
+        3:3:nbc-imp   :49152:2377
+        4:3:mbdosee   :40960:326
+        5:3:thebest   :16384:6144
+        6:3:welcome   :40000:1364
+        7:3:bbicons   :49152:12288
+        8:3:cdebusy   :22528:768

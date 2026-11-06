@@ -1,4 +1,6 @@
 #include "dzrpserver.h"
+
+#include "dezogcondition.h"
 #include "platform-sockets.h"
 #include <cstring>
 #include <iostream>
@@ -353,6 +355,16 @@ Response Server::handleCommand(const Command& cmd)
             return handleGetHistoryInfo(cmd);
         case CommandId::CMD_GET_HISTORY_ENTRY:
             return handleGetHistoryEntry(cmd);
+        case CommandId::CMD_SET_BREAKPOINTS:
+            return handleSetBreakpoints(cmd);
+        case CommandId::CMD_RESTORE_MEM:
+            return handleRestoreMem(cmd);
+        case CommandId::CMD_LOOPBACK:
+            return handleLoopback(cmd);
+        case CommandId::CMD_EXEC_ASM:
+            return handleExecAsm(cmd);
+        case CommandId::CMD_INTERRUPT_ON_OFF:
+            return handleInterruptOnOff(cmd);
         default:
             return makeNak(cmd.seqNo);
     }
@@ -634,7 +646,16 @@ Response Server::handleAddBreakpoint(const Command& cmd)
         std::string condition = Protocol::readNulString(
             cmd.payload.data() + 3, cmd.payload.size() - 3);
 
-        bpId = m_debug->addBreakpoint(addr, bank, condition);
+        // DeZog checks the condition on every pause anyway; the core form only spares the pauses where it is
+        // false. What does not translate is set without a condition (DeZog alone decides)
+        std::string coreCondition;
+        std::string reason;
+        if (!condition.empty() && !translateCondition(condition, coreCondition, reason))
+            std::cout << "[DZRP] Condition '" << condition << "' is checked by DeZog only (" << reason << ")\n";
+        if (!coreCondition.empty())
+            bpId = m_debug->addBreakpoint(addr, bank, coreCondition);
+        if (!bpId)
+            bpId = m_debug->addBreakpoint(addr, bank, "");
         m_breakpoints[bpId] = addr;
     }
 
@@ -961,6 +982,60 @@ void Server::notifyPause(BreakReason reason, uint16_t addr, uint8_t bank,
             return;
         totalSent += static_cast<size_t>(sent);
     }
+}
+
+/// CMD_SET_BREAKPOINTS: long addresses (3 bytes each) -> the byte at each. dezogif patches an RST there and answers
+/// the byte it replaced; the breakpoints here are the emulator's own, so nothing is patched and the byte is the
+/// memory's (dzrpbufferremote.ts sendDzrpCmdSetBreakpoints)
+Response Server::handleSetBreakpoints(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    for (size_t i = 0; i + 3 <= cmd.payload.size(); i += 3)
+    {
+        const uint16_t addr = Protocol::readU16LE(cmd.payload.data() + i);
+        const std::vector<uint8_t> byte = m_debug->readMemory(addr, 1);
+        resp.payload.push_back(byte.empty() ? 0 : byte[0]);
+    }
+    return resp;
+}
+
+/// CMD_RESTORE_MEM: puts back the bytes CMD_SET_BREAKPOINTS replaced. Nothing was replaced (see above): writing the
+/// bytes back would undo what the program wrote there since, so an empty ACK
+Response Server::handleRestoreMem(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    return resp;
+}
+
+/// CMD_LOOPBACK: the payload back (a transport test)
+Response Server::handleLoopback(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload = cmd.payload;
+    return resp;
+}
+
+/// CMD_EXEC_ASM: error(1) + F A C B E D L H. Running code sent by the debugger is not supported: error 1, zeros
+Response Server::handleExecAsm(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    resp.payload.assign(9, 0);
+    resp.payload[0] = 1;
+    return resp;
+}
+
+/// CMD_INTERRUPT_ON_OFF: on(1) -> an empty ACK
+Response Server::handleInterruptOnOff(const Command& cmd)
+{
+    Response resp;
+    resp.seqNo = cmd.seqNo;
+    if (!cmd.payload.empty())
+        m_debug->setInterrupts(cmd.payload[0] != 0);
+    return resp;
 }
 
 } // namespace dzrp

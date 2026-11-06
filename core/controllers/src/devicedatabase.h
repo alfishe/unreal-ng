@@ -10,8 +10,10 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "hid/hidusage.h"
 #include "hostdevice.h"
 
 namespace controllers
@@ -54,6 +56,8 @@ struct DeviceMatch
         std::string hat;  ///< "" the layout's ("dpad")
         std::vector<std::pair<uint16_t, std::string>> consumer;
         std::vector<Bit> bits;
+        std::vector<HidUsage> usages;  ///< `usages`: fields read the family's way
+        bool anyApplication = false;   ///< `"application": "any"`: a Consumer Control's fields too
     } hid;
     bool ignore = false;  ///< a device to filter out (the macOS synthetic pad)
     /// It takes a player connector (a pad, a stick); false for a control surface (the Surface Dial): `"player": false`
@@ -90,6 +94,9 @@ public:
 
     /// The families' ids, in file order
     std::vector<std::string> FamilyIds() const;
+    /// VID:PID of every product of the control surface families (`"player": false`, not ignored): a backend opens
+    /// them by id, since their collections are not a pad's (the ShuttlePRO is a Consumer Control)
+    std::vector<std::pair<uint16_t, uint16_t>> SurfaceProducts() const;
 
     /// The built-in database (data/controllers/devices.json as built)
     static const DeviceDatabase& Builtin();

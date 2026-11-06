@@ -79,6 +79,18 @@ TEST_F(DeviceImport_Test, ImportVerb_SavesMergedOverAUserPhotoAndTheLookupUsesIt
 {
     namespace fs = std::filesystem;
     const fs::path root = TestPathHelper::GetUniqueTestScratchPath("device-import");
+    // The path is per process, so --gtest_repeat meets the previous pass's files: start and end clean
+    std::error_code removeError;
+    fs::remove_all(root, removeError);
+    struct Cleanup
+    {
+        fs::path dir;
+        ~Cleanup()
+        {
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+        }
+    } cleanup{root};
     DirOwner owner(root.string());
     HostInputControl control(owner);
 

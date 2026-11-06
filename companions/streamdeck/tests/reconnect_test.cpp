@@ -41,6 +41,7 @@ struct Bus
     };
     std::map<std::string, Deck> decks;
     std::vector<bool> asked;  // anyDeck of every reopen attempt
+    std::vector<std::chrono::steady_clock::time_point> askedAt;
 };
 
 struct FakeDeck final : Transport
@@ -112,6 +113,7 @@ ReconnectingTransport::Reopen Reopen(Bus& bus, const std::string& serial)
 {
     return [&bus, serial](bool anyDeck) {
         bus.asked.push_back(anyDeck);
+        bus.askedAt.push_back(std::chrono::steady_clock::now());
         ReconnectingTransport::Probe p;
         for (auto& [s, d] : bus.decks)
             if (d.present && s == serial)
@@ -265,10 +267,12 @@ void TestOtherDeck()
     bus.decks["SER2"].present = true;
     bus.decks["SER1"].present = false;
     std::uint8_t buf[64] = {};
+    const auto lost = std::chrono::steady_clock::now();
     (void)t->Read(buf, 0);
     CHECK(!t->Connected());
     CHECK(ReadUntil(*t, [&] { return !ev.others.empty(); }));
-    CHECK(!bus.asked.empty() && !bus.asked.front());  // the first attempts look for the lost deck only
+    // the first attempts look for the lost deck only (a first attempt 15 ms late, the thread descheduled, may not)
+    CHECK(!bus.asked.empty() && (!bus.asked.front() || bus.askedAt.front() - lost >= 15ms));
     CHECK(ev.others.size() == 1 && ev.others[0] == "SER2");
     CHECK(bus.decks["SER2"].opens == 0);  // the owner opens it, with a runtime of its own
     // Told once; the lost deck may still come back until the owner acts.

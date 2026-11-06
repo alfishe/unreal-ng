@@ -126,7 +126,7 @@ std::string NoHistory(Emulator& emulator, const ActionValue& value)
     if (std::string why = NoTtd(emulator, value); !why.empty())
         return why;
     return emulator.GetContext()->pTimeTravelHooks->PublishedCursor().history ? std::string()
-                                                                                : std::string("record first");
+                                                                                : std::string(kNoHistory);
 }
 
 const StateNode* Param(const ActionValue& value, const char* name)
@@ -281,7 +281,7 @@ ActionResult SeekBy(const ActionCall& call)
 
     const ttd::TTDCursor cursor = context->pTimeTravelHooks->PublishedCursor();
     if (!cursor.history)
-        return ActionResult::Failure("not_now", "record first");
+        return ActionResult::Failure("not_now", kNoHistory);
     const double fps = ttd::TTDFrameRate(context);
     const int64_t frames = SeekFrames(curve, call.value.delta, rate, fps);
     const uint64_t from = cursor.frame;
@@ -452,6 +452,12 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
         r.unavailable = NoTtd;
         return r;
     };
+    // The verbs that move through or mark a recorded history: unavailable until one is recorded (running or stopped)
+    auto historyRules = [&rules](uint32_t scope, bool needsPause = false) {
+        ActionRules r = rules(scope, needsPause);
+        r.unavailable = NoHistory;
+        return r;
+    };
 
     // 3.1 Run control
     const char* run = "Run";
@@ -527,18 +533,18 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
             return FromTtd(ttd::TTDControl(context).Execute({recording ? "stop" : "start", {}}));
         },
         ttdRules(0));
-    add("ttd.step_back_frame", "Back one frame", ttdGroup, ValueKind::Press, verb("step-back"), ttdRules(ScopeRewind));
+    add("ttd.step_back_frame", "Back one frame", ttdGroup, ValueKind::Press, verb("step-back"), historyRules(ScopeRewind));
     add("ttd.step_forward_frame", "Forward one frame", ttdGroup, ValueKind::Press, verb("step-forward"),
-        ttdRules(ScopeRewind));
+        historyRules(ScopeRewind));
     add("ttd.step_back_instruction", "Back one instruction", ttdGroup, ValueKind::Press,
-        verb("step-instruction", {{"dir", "back"}}), ttdRules(ScopeDebug, true));
+        verb("step-instruction", {{"dir", "back"}}), historyRules(ScopeDebug, true));
     add("ttd.step_forward_instruction", "Forward one instruction", ttdGroup, ValueKind::Press,
-        verb("step-instruction", {{"dir", "forward"}}), ttdRules(ScopeDebug, true));
-    add("ttd.reverse_step", "Reverse step", ttdGroup, ValueKind::Press, verb("reverse-step"), ttdRules(ScopeDebug));
+        verb("step-instruction", {{"dir", "forward"}}), historyRules(ScopeDebug, true));
+    add("ttd.reverse_step", "Reverse step", ttdGroup, ValueKind::Press, verb("reverse-step"), historyRules(ScopeDebug));
     add("ttd.reverse_continue", "Reverse continue", ttdGroup, ValueKind::Press, verb("reverse-continue"),
-        ttdRules(ScopeDebug));
-    add("ttd.bookmark_add", "Add a bookmark", ttdGroup, ValueKind::Press, verb("bookmark-add"), ttdRules(ScopeDebug));
-    add("ttd.resume_live", "Resume live", ttdGroup, ValueKind::Press, verb("resume"), ttdRules(ScopeRewind));
+        historyRules(ScopeDebug));
+    add("ttd.bookmark_add", "Add a bookmark", ttdGroup, ValueKind::Press, verb("bookmark-add"), historyRules(ScopeDebug));
+    add("ttd.resume_live", "Resume live", ttdGroup, ValueKind::Press, verb("resume"), historyRules(ScopeRewind));
     // An encoder's turn (the Surface Dial): a frame or an instruction per step, clockwise forward
     add("ttd.jog_frames", "Jog frames", ttdGroup, ValueKind::Delta,
         [](const ActionCall& call) {
@@ -547,7 +553,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
                 return ActionResult::Success();
             return MoveFrames(call.emulator->GetContext(), frames);
         },
-        ttdRules(ScopeRewind));
+        historyRules(ScopeRewind));
     add("ttd.jog_instructions", "Jog instructions", ttdGroup, ValueKind::Delta,
         [](const ActionCall& call) {
             const auto steps = static_cast<int64_t>(std::llround(call.value.delta));
@@ -563,7 +569,7 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
             result.body["steps"] = count;
             return result;
         },
-        ttdRules(ScopeDebug, true));
+        historyRules(ScopeDebug, true));
     {
         // A dial's seek with an acceleration curve, clamped to the history, with the marks it crossed (actions.md §2)
         ActionRules r = rules(ScopeRewind);

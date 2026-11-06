@@ -420,7 +420,7 @@ sent on the ZX UART (`FW/PROTOCOL.md:199`).
 | Copy | Firmware | Host |
 |---|---|---|
 | svn (2026-09-30) | 1.27 | current kernel/SDK/C described above |
-| [alfishe/NedoOS](https://github.com/alfishe/NedoOS) | identical to svn (`diff -rq` empty for `kapps/common/espnet`; md5 equal for `kernel/espnet*.asm`, `_sdk/espnet.asm`, `espnet.c`); git `4aa24778` "espnet 1.27 Исправлено подключение к wifi" 2026-09-21 | same |
+| [alfishe/NedoOS](https://github.com/alfishe/NedoOS) | identical to svn (`diff -rq` empty for `kapps/common/espnet`; md5 equal for `kernel/espnet*.asm`, `_sdk/espnet.asm`, `espnet.c`); git `4aa24778` "espnet 1.27 Исправлено подключение к wifi" ("fixed the wifi connection") 2026-09-21 | same |
 | [alfishe/NedoOS-dev](https://github.com/alfishe/NedoOS-dev) | 1.24 (git `e480df29`) | older host |
 
 Firmware 1.24 → 1.27 differences (diff of `FW/` against NedoOS-dev):

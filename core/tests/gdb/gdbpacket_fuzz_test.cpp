@@ -47,13 +47,17 @@ TEST_F(GDBPacketFuzzTest, InterruptCharacter)
     EXPECT_TRUE(reader.hasInterrupt());
 }
 
-TEST_F(GDBPacketFuzzTest, InterruptMidPacket)
+// Inside a packet 0x03 is data: an X packet's binary bytes ('#' escaped as '}' 0x03), not an interrupt
+TEST_F(GDBPacketFuzzTest, ByteThreeInsideAPacketIsData)
 {
-    reader.feed('$');
-    reader.feed('g');
-    reader.feed('\x03');
-    EXPECT_TRUE(reader.hasInterrupt());
-    EXPECT_FALSE(reader.isComplete());
+    const std::string data = std::string("X0,1:}") + '\x03';
+    for (char c : GDBPacket::encode(data))
+        reader.feed(c);
+    EXPECT_FALSE(reader.hasInterrupt());
+    ASSERT_TRUE(reader.isComplete());
+    EXPECT_TRUE(reader.isChecksumValid());
+    EXPECT_EQ(reader.extractData(), data);
+    EXPECT_EQ(GDBPacket::unescapeBinary(data.substr(5)), std::vector<uint8_t>{'#'});
 }
 
 TEST_F(GDBPacketFuzzTest, InvalidHexInChecksum)

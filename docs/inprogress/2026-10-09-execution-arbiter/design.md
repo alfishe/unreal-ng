@@ -284,9 +284,23 @@ Owner decisions, 2026-10-09:
     `yours` only to that client. An id is a bearer token: another client never sees it.
   - **A session header is no pass by itself.** A request whose `X-Unreal-Session` does not hold the machine it
     changes (expired, taken over, another machine's) meets the gate like an un-sessioned one.
+  - **A script acts in the session of the client that sent it** (2026-11-02, after an MCP agent's `/lua/exec` card
+    step was refused `held_by_other` by the agent's own implicit session). `POST /api/v1/lua/exec`, `/lua/file`,
+    `/python/exec` and `/python/file` live outside `/emulator/{id}`, so the gate never saw the sender. Now, for
+    every machine, the sender's session (its `X-Unreal-Session` if that holds the machine, else its implicit
+    session, by identity) is lent to the script for the run (`execution::script::BorrowedSessions`): the script's
+    control calls pass as the sender's own, `take_control()` in it succeeds at once, `release_control()` leaves the
+    sender's session in place. After the run the script has no session of its own again. A machine the sender does
+    not hold is untouched: there the script opens its own implicit session as before.
   - **Code.** `EmulatorContext::EnterImplicitRunControl` / `ReleaseImplicitRunControl`; the classification in
     `core/src/emulator/execution/automationgate.h`; the WebAPI sync advice; `CLIProcessor::PassAutomationGate`;
     `execution::script::Check`.
+- **Debugger clients (owner, 2026-11-03).** The separate debuggers (unreal-debugger `--connect`, unreal-tui-debugger
+  and its TS-Conf fork) are the user, not automation: they say `X-Unreal-Source: debugger`, their changes open no
+  session (neither an implicit nor an explicit one), so opening one never locks the GUI or the other debuggers; the
+  changes are broadcast to every client (`debug.events`, `run.state`, the GUI's binding) and the arbiter's queue
+  orders the commands. While any session holds the machine their changes are refused `held_by_other`, as the GUI is
+  locked (`webapi_session::IsDebuggerClient`, the WebAPI gate).
 - **The GUI while a session is open.** Every control action is disabled: toolbar, menus, shortcuts, debugger
   buttons, speed control, TTD widget, media panel, file drops. Viewing works. The one active action is
   **Take back control**.

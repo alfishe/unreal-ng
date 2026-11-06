@@ -110,7 +110,7 @@ So `WR==5C78 && HL==500` or "break when `#34` is written anywhere" (`MDT==34 && 
 
 **Pain points**
 - **Hex-only, digit-first literals** (`0DFFD` not `DFFD`, no `#FFFD`) and C precedence trip users constantly — acknowledged in the docs themselves ("Please do RTFM" is the actual error dialog).
-- **cbp and access breakpoints don't compose** in the classic version: users on the tslabs forum explicitly asked for it — *"Я хочу возможность добавлять это в условия … остановка если И запись в определенную ячейку И например HL=500"* and *"точки останова при выводе чего-нить на аигрек/бипер"*. The fork's `RD/WR/MDT` operands were the answer.
+- **cbp and access breakpoints don't compose** in the classic version: users on the tslabs forum explicitly asked for it — *"I want to be able to add this to the conditions … stop if a write to a given cell AND, for example, HL=500"* and *"breakpoints on output of anything to the AY/beeper"*. The fork's `RD/WR/MDT` operands were the answer.
 - `OUT`/`IN`/`VAL` fire only on the *next* instruction boundary (values latched in `io.cpp`, checked in `debug_events`, then reset), so you stop after the I/O instruction, not at it.
 - Any active cbp forces the slow debug core for the whole session (`isbrk()`), and all 16 expressions are evaluated before every instruction — noticeable slowdown.
 - cbp expressions are not saved to `bpx.ini`; only r/w/x address breakpoints persist.
@@ -119,4 +119,4 @@ So `WR==5C78 && HL==500` or "break when `#34` is written anywhere" (`MDT==34 && 
 
 ## Sources
 
-[mkoloberdin/unrealspeccy](https://github.com/mkoloberdin/unrealspeccy) · [doc/unreal_e.txt](https://github.com/mkoloberdin/unrealspeccy/blob/master/doc/unreal_e.txt) · [tslabs/zx-evo](https://github.com/tslabs/zx-evo) · [TS Forum: Unreal Speccy — обсуждение нового функционала](https://forum.tslabs.info/viewtopic.php?f=29&t=321) · [Документация UnrealSpeccy (nedoos.ru)](http://nedoos.ru/index.php/14-all/programmistam/24-dokumentatsiya-unrealspeccy)
+[mkoloberdin/unrealspeccy](https://github.com/mkoloberdin/unrealspeccy) · [doc/unreal_e.txt](https://github.com/mkoloberdin/unrealspeccy/blob/master/doc/unreal_e.txt) · [tslabs/zx-evo](https://github.com/tslabs/zx-evo) · [TS Forum: Unreal Speccy — discussion of new features](https://forum.tslabs.info/viewtopic.php?f=29&t=321) · [UnrealSpeccy documentation (nedoos.ru)](http://nedoos.ru/index.php/14-all/programmistam/24-dokumentatsiya-unrealspeccy)

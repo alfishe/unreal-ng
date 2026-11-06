@@ -104,6 +104,15 @@ TEST_F(DebugKeyboardManager_test, ResolveKeyName_SpecialKeys)
     EXPECT_EQ(key, ZXKEY_SYM_SHIFT);
 }
 
+/// The long shift names come in pairs: a script that sends caps_shift may send symbol_shift too
+TEST_F(DebugKeyboardManager_test, ResolveKeyName_ShiftNamePairs)
+{
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("caps_shift"), ZXKEY_CAPS_SHIFT);
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("symbol_shift"), ZXKEY_SYM_SHIFT);
+    EXPECT_EQ(DebugKeyboardManager::ResolveKeyName("SYMBOL_SHIFT"), ZXKEY_SYM_SHIFT);
+    EXPECT_FALSE(DebugKeyboardManager::IsKnownKeyName("symbolshift_x")) << "an unknown name is refused, not dropped";
+}
+
 TEST_F(DebugKeyboardManager_test, ResolveKeyName_InvalidKey)
 {
     auto key = DebugKeyboardManager::ResolveKeyName("invalid_key");

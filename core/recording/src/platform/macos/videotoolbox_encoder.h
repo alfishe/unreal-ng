@@ -95,6 +95,7 @@ private:
     uint32_t _scale = 1;        // Integer nearest-neighbor upscale
     float _fps = 50.0f;
     bool _useHEVC = false;
+    bool _useProRes = false;  ///< "prores": ProRes 4444 in a .mov
     bool _hasAudio = true;
     bool _isRecording = false;
     uint32_t _audioChannels = 2;

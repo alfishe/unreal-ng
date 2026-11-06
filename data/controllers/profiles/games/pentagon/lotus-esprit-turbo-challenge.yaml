@@ -1,0 +1,37 @@
+# Lotus Esprit Turbo Challenge (Gremlin Graphics 1990), the Erbe TZX "Lotus Esprit Turbo Challenge - Side A (Erbe).tzx" (128K tape
+# loader: Tape Loader, about 25000 frames; press keys through the spec screens to GAME OPTIONS). The options screen takes the Sinclair
+# keys (8 down, 9 up, 6 / 7 or O / P to change a line, 0 fire); move to "Start the Game" and fire with 0, then Space fire again through
+# the information and race screens (the race screens need several presses). In the race the gas is automatic ("Automatic Accelerate");
+# the game's own information screen lists O left, P right, Space slow down, H wait, Q go. Haptics (haptics.md §13 H5), found with TTD on
+# a recorded run (the speed by sampling RAM against the HUD, the car struct by find-last): the player's car struct sits at #5B00, the speed
+# is the byte #5B2A (about 1.75 times the HUD figure, 201 at 115); #5B2D is only the steering direction. #DA1A is the drag step
+# of the speed (minus 8, only when the car is off the road: 0 runs on the road, 17 in 4 s on the grass), so it is felt as a tick.
+# Checked in real time (4 s on the road, 4 s O, 5 s P): drag 0, 17, 28; the speed level falls from 0.9 to 0.3 on the grass. Known
+# limits: the collisions with the roadside rocks and the rival cars are not found yet, the fuel and the gear are not events.
+schema: 1
+kind: play
+id: builtin/game/lotus-esprit-turbo-challenge
+label: Lotus Esprit Turbo Challenge
+match:
+  machines: [PENTAGON, 128K]
+  file_sha256: ["0b28c3cdc4030b413c32a8ce03f4f82ad7182ecb65c5539e89109188727755da"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    lstick:       { none: true }
+    dpad.left:    { key: O }
+    dpad.right:   { key: P }
+    lstick.left:  { key: O }
+    lstick.right: { key: P }
+    dpad.up:      { key: "9" }
+    dpad.down:    { key: "8" }
+    lt.click:     { key: SPACE, label: Slow down }
+    south:        { key: "0", label: Fire }
+    east:         { key: SPACE, label: Fire }
+haptics:
+  sources:
+    speed: { probe: value, address: "0x5B2A", scale: 1.1 }
+    drag:  { probe: exec, address: "0xDA1A" }
+  rules:
+    - { on: speed, play: engine, target: handle.low }
+    - { on: drag, play: tick, scale: 0.4, target: handle.low }

@@ -99,6 +99,9 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stepover", &CLIProcessor::HandleStepOver},  // Execute instruction, skip calls
                         {"stepout", &CLIProcessor::HandleStepOut},      // Run until current subroutine returns
                         {"skip_until", &CLIProcessor::HandleSkipUntil},  // Fast-forward until PC reaches target
+                        {"run_until", &CLIProcessor::HandleRunUntil},    // Whole frames until a frame watch's rules hold
+                        {"watch", &CLIProcessor::HandleWatch},           // Armed frame watches: add, list, del
+                        {"watches", &CLIProcessor::HandleWatch},         // Alias for watch (list by default)
                         {"run_tstates", &CLIProcessor::HandleRunTStates},        // Run N t-states
                         {"run_to_scanline", &CLIProcessor::HandleRunToScanline}, // Run to scanline N
                         {"run_scanlines", &CLIProcessor::HandleRunNScanlines},   // Run N scanlines
@@ -144,7 +147,12 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"bpoff", &CLIProcessor::HandleBPDeactivate},     // Deactivate breakpoints
                         {"bptoggle", &CLIProcessor::HandleBPToggle},      // Toggle a selection of breakpoints
                         {"bkey", &CLIProcessor::HandleKeyBreakpoint},     // Keyboard breakpoint (the program sees a key)
+                        {"bevent", &CLIProcessor::HandleEventBreakpoint}, // General Sound protocol event breakpoint
+                        {"bchip", &CLIProcessor::HandleChipRegisterBreakpoint}, // sound chip register write breakpoint
                         {"bpnote", &CLIProcessor::HandleBPNote},          // Set a breakpoint's note
+                        {"bpcond", &CLIProcessor::HandleBPCondition},     // Set a breakpoint's condition
+                        {"callback", &CLIProcessor::HandleCallback},      // The scripts' callbacks: list, resume, remove, policy
+                        {"callbacks", &CLIProcessor::HandleCallback},     // Alias for callback (list by default)
 
                         {"open", &CLIProcessor::HandleOpen},
                         {"exit", &CLIProcessor::HandleExit},
@@ -177,6 +185,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"video", &CLIProcessor::HandleVideo},                // Video debug translation (layout/pixel/address/text)
                         {"frame_cost", &CLIProcessor::HandleFrameCost},      // Halt/active frame cost stats
                         {"coverage", &CLIProcessor::HandleCoverage},          // Code coverage control/queries
+                        {"analysis", &CLIProcessor::HandleAnalysis},          // Analysis layers: start/stop/status/explain
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
@@ -235,6 +244,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // ZX-bus slots: buses, slots, cards (plug / remove / set restart the machine)
                         {"slots", &CLIProcessor::HandleSlots},
+                        {"history", &CLIProcessor::HandleHistory},
                         // Joystick connectors: the retro devices plugged into them, live input (ControllerControl)
                         {"controllers", &CLIProcessor::HandleControllers},
                         {"action", &CLIProcessor::HandleAction},
@@ -246,6 +256,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // ZX-MultiSound card and its MIDI synthesizer
                         {"multisound", &CLIProcessor::HandleMultiSound},
+                        {"wildsound", &CLIProcessor::HandleWildSound},
                         {"midi", &CLIProcessor::HandleMidi},
 
                         // CD audio of the ATAPI CD drives
@@ -687,7 +698,11 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  steps <count> - Execute 1 to N CPU instructions" << NEWLINE;
     oss << "  stepover      - Execute instruction, skip calls and subroutines" << NEWLINE;
     oss << "  stepout       - Run until the current subroutine returns" << NEWLINE;
+    oss << "  ... --cpu gs|ms - step [count] / steps / stepover / stepout of the sound card CPU: the machine runs" << NEWLINE;
+    oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  run_until key=value ...       - Frames until if= / text= / screen= / event= holds ('run_until help')" << NEWLINE;
+    oss << "  watch add|list|del            - Armed frame watches: a hit pauses and is pushed as watch_hit" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
     oss << "  memory <addr> - View memory at address" << NEWLINE;
     oss << "  find <hex-pattern, ?? = any> [--space S] [--mask HEX] [--from N] [--to N] [--align 1|2] [--max N] - Search memory" << NEWLINE;
@@ -706,11 +721,16 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  bbeam <line> [--hc N] - Break when the beam passes a place (ZX Next)" << NEWLINE;
     oss << "  bmagic <edff|dd01>    - Break after the magic opcode ED FF / DD 01 ran (ZX Next)" << NEWLINE;
     oss << "  bcopper <index> - Break when the copper completes a list instruction (ZX Next)" << NEWLINE;
+    oss << "  bevent <kind> [--value V] - Break on a General Sound / NeoGS event (card_command, host_data, int, ...)" << NEWLINE;
+    oss << "  bchip <chip> <reg> [--value V] - Break on a sound chip register write (ay, fm, saa, opl4, opl4wave, dac, cbl)" << NEWLINE;
     oss << "  bplist        - List all breakpoints" << NEWLINE;
+    oss << "  --cpu gs|ms   - On bp / wp / bport / bplist / bpclear / bpon / bpoff / bptoggle / bphits / bpgroup /" << NEWLINE;
+    oss << "                  bpnote / bpcond: the sound card CPU's breakpoints, ms the MultiSound's GS (default: main)" << NEWLINE;
     oss << "  bpclear       - Clear breakpoints" << NEWLINE;
     oss << "  bpgroup <add|remove|list> <group> [bp_id] - Manage breakpoint groups" << NEWLINE;
     oss << "  bpon <all|group <name>|id <id>>        - Activate breakpoints" << NEWLINE;
     oss << "  bpoff <all|group <name>|id <id>>       - Deactivate breakpoints" << NEWLINE;
+    oss << "  callback [list|resume <id>|remove <id>|policy <id> <suspend|disable|ignore|unpaced>] - Script callbacks (Lua / Python on_tap ...)" << NEWLINE;
     oss << "  memory <hex address> [length]          - Dump memory contents" << NEWLINE;
     oss << "  debugmode <on|off>                     - Toggle debug memory mode (affects performance)" << NEWLINE;
     oss << NEWLINE;
@@ -813,6 +833,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  frame_cost             - Halt/active cost of the last frame + averages" << NEWLINE;
     oss << "  coverage start|stop|clear|status|gaps [args] - Code coverage" << NEWLINE;
     oss << "  coverage export [<path>] [--start A] [--end B] [--merge] - SkoolKit code execution map ($HHHH lines)" << NEWLINE;
+    oss << "  analysis start [facts|counters] [z80|physical]|stop|status - Analysis layers: L0 access facts" << NEWLINE;
+    oss << "  analysis explain <addr> [page] [--json] - What L0 knows of a byte: kinds, last reader/writer, frames, values" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
@@ -841,6 +863,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  slots plug <slot> <card> [opt=val ..] [--replace] [--dry-run] - e.g. plug zxbus.next multisound" << NEWLINE;
     oss << "  slots remove <slot> | set <slot> opt=val .. | gs <gs|gs-lw|neogs> | matrix [table]" << NEWLINE;
     oss << "  slots help             - All verbs and flags" << NEWLINE;
+    oss << "  history [<device> [N]]  - Device histories (FDC commands, ...): list, or a device's newest N" << NEWLINE;
+    oss << "  history <device> mode <off|ring|capture> [limit=N] [stream=<file>] [stream_limit=N] | clear | pause | resume" << NEWLINE;
     oss << NEWLINE;
     oss << "Controllers (joystick connectors and the retro devices in them):" << NEWLINE;
     oss << "  controllers [list]     - Connectors, devices, what is held" << NEWLINE;
@@ -856,6 +880,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;
+    oss << "  wildsound [--json]         - Sprinter ISA Wild Sound: mode, stream, storage, track, XM player, AY" << NEWLINE;
     oss << "  midi [--json]          - MIDI line, bank, 16 parts (program, volume, notes sounding)" << NEWLINE;
     oss << "  midi panic             - Every voice of the synthesizer stops" << NEWLINE;
     oss << NEWLINE;

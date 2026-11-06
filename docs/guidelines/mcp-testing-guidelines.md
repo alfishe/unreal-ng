@@ -11,6 +11,8 @@ say what to test, with what, and when.
 - So the default text (`response_format: "text"`) carries the data, not a headline: the bytes of a read, the listing,
   one line per breakpoint / label / trace event, `key=value` fields of a small result (`FlatFields`, `AppendFields`).
   `response_format: "json"` adds the whole `structuredContent` as JSON text (cut at 64 KB) for the rest.
+- `max_chars` on any call fits the whole answer (text and JSON) in that many characters and names what it left out;
+  a test that checks a long answer can also check it with a budget (the first line stays, the note is there).
 - A large result gets filters and a line limit with a note on how to narrow it (`manage_symbols list`: `name`, `from`,
   `to`, `limit`), not a 300 KB JSON that the echo cuts in half.
 - Pictures go as an MCP `image` content block (`capture_media screenshot` with `include_image`), never as base64 text.

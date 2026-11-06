@@ -54,6 +54,13 @@ TEST(AutomationGate_Test, RunsWritesMediaInputAndBreakpointsChangeIt)
     EXPECT_TRUE(ChangesMachine("POST", "/resume?x=1"));
     // A prefix is a whole segment: /profilers is not /profiler
     EXPECT_TRUE(ChangesMachine("POST", "/profilers"));
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/start"));     // a recording on this machine, a replay, experiments
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/experiment"));
+    // The analysis model's actions too: findings / export / gallery write host files by `path`, so a companion needs
+    // its debug scope for them, and review resolutions are debugger work
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/review"));
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/export"));
+    EXPECT_TRUE(ChangesMachine("POST", "/analysis/trace"));  // a replay on a clone, a host file by `path`
 }
 
 TEST(AutomationGate_Test, CliCommandsByTheirChangingForms)

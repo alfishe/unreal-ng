@@ -83,6 +83,14 @@ TEST(BlockAdvisory_Test, SdSlot_FlagsMbrImage)
     EXPECT_FALSE(note.empty());
 }
 
+/// An SD boot path that finds the first FAT partition (folderMbr: Baseconf, GMX, Next) takes an MBR image
+TEST(BlockAdvisory_Test, SdSlotReadingPartitions_AcceptsMbrImage)
+{
+    MemoryDisk disk(204800);
+    WriteMbr(disk);
+    EXPECT_TRUE(DescribeBlockLayoutMismatch(disk, kSdTags, /*sdReadsMbr*/ true).empty());
+}
+
 TEST(BlockAdvisory_Test, UnrelatedSlot_NeverChecked)
 {
     MemoryDisk disk(204800);  // zero-filled, no signature at all

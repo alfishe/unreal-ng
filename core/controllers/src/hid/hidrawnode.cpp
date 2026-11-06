@@ -69,6 +69,8 @@ HidrawUse HidrawUseFor(const LinuxPadFacts& facts)
 {
     if (SurfaceDial::Handles(facts.vendor, facts.product))
         return HidrawUse::Output;
+    if (facts.surface)
+        return HidrawUse::Input;
     HidrawUse use = HidrawUse::None;
     // Over USB the Elite is xpad's (a USB driver, no HID device, no hidraw node): its paddles are evdev buttons
     if (facts.bluetooth && facts.family == "xbox-elite-2")
@@ -217,11 +219,17 @@ const char* const kHidrawRulesHint =
     "sudo udevadm control --reload && sudo udevadm trigger, then reconnect the device";
 
 std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText,
-                              const std::string& family)
+                              const std::string& family, bool surface)
 {
     std::string what = "The Surface Dial's clicks and detents need";
     std::string without;
-    if (HasUse(use, HidrawUse::Protocol) && family == "gamecube-adapter")
+    if (HasUse(use, HidrawUse::Input) && surface)
+    {
+        what = "The control surface's controls need";
+        without = " Until then none of them is seen: its evdev node is not read (hid-input loses the return of a "
+                  "relative control to rest, such as a shuttle ring's).";
+    }
+    else if (HasUse(use, HidrawUse::Protocol) && family == "gamecube-adapter")
     {
         what = "The GameCube adapter's controllers need";
         without = " No kernel driver serves the adapter (it has no input device): until then its controllers are not "

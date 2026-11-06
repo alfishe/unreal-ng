@@ -24,8 +24,14 @@
 ///   0x0D (D)                 bit 7 VRT (battery good), always 0x80
 ///   0x0E and up              general-purpose RAM (up to the configured cell count)
 ///
-/// Deliberate simplifications (no machine here wires the IRQ or SQW pins):
-///   - the periodic flag PF is never raised; RS bits are stored only
+/// Interrupts: PF from the divider (rate select RS3-RS0 of A, counted in the 32.768 kHz crystal's ticks of
+/// emulated time, so it runs while SET holds the time and in the Fixed mode too), UF at each second's update, AF on
+/// an alarm match; IRQF = a flag with its enable in B, and the /IRQ pin is low while IRQF is set (IsIrqAsserted),
+/// until the guest reads C. The SMUC wires /IRQ to its 8259's IR0. Worked example (the SMUC firmware's interrupt
+/// test): A = #26 (1024 Hz), B = #56 (PIE, UIE): PF rises every 32 crystal ticks = 976.5625 us of emulated time
+///
+/// Deliberate simplifications:
+///   - no SQW pin output
 ///   - of the divider bits DV only the reset (11x) acts: it holds the clock,
 ///     and the first update after it comes half a second later - the datasheet
 ///     way to start the clock on an exact second. Oscillator-off codes do not
@@ -85,6 +91,7 @@ public:
 
     /// Register C bits
     static constexpr uint8_t kCIrq = 0x80;
+    static constexpr uint8_t kCPeriodic = 0x40;
     static constexpr uint8_t kCAlarm = 0x20;
     static constexpr uint8_t kCUpdateEnded = 0x10;
 
@@ -167,6 +174,10 @@ public:
 
     /// region <Battery-backed RAM>
     size_t GetCellCount() const { return _cellCount; }
+    /// The /IRQ pin: low (true) while a flag of C is set with its enable in B; brings the flags up to now first
+    bool IsIrqAsserted();
+    /// An interrupt is enabled in B: /IRQ may fall without a guest access (the PIC polls the pin while true)
+    bool IrqMayAssert() const { return (_cells[kRegB] & 0x70) != 0; }
     /// Raw cell (host side, no clock semantics): NVRAM images and EvoAvr
     uint8_t GetCell(uint8_t index) const { return _cells[index & _addressMask]; }
     void SetCell(uint8_t index, uint8_t value) { _cells[index & _addressMask] = value; }
@@ -175,6 +186,9 @@ public:
     /// power-on contents when the file is missing or has the wrong size
     bool LoadNvram(const std::string& path);
     bool SaveNvram(const std::string& path) const;
+    /// The same image in memory (GetCellCount() bytes), for a board that keeps it in a file with other parts (SMUC)
+    bool LoadNvramImage(const uint8_t* image, size_t size);
+    std::vector<uint8_t> NvramImage() const;
     /// The cells as the device memory region "cmos" (debugger additions tdd §4): a read is side-effect free
     /// (PeekRegister), a write is a guest write (WriteRegister: the time registers set the clock). A chip with more
     /// memory adds its own regions (EvoAvr: "eeprom")
@@ -183,7 +197,7 @@ public:
 
     /// region <TTD>
     /// Complete chip state: cells, address latch, flags, time base
-    static constexpr size_t kStateSize = 80 + kMaxCells;
+    static constexpr size_t kStateSize = 88 + kMaxCells;
     void SaveState(uint8_t* dst) const;
     void LoadState(const uint8_t* src);
     /// endregion </TTD>
@@ -205,8 +219,10 @@ protected:
     /// Current chip time, microseconds since 1970 civil
     int64_t ChipMicros() const;
     int64_t ReferenceMicros() const;
-    /// Raise UF (and AF on an alarm match) when a second boundary has passed
+    /// Raise UF (and AF on an alarm match) when a second boundary has passed, PF when a periodic one has
     void UpdateFlags();
+    /// Raise PF when the divider's periodic output has ticked since the last look (emulated time)
+    void UpdatePeriodicFlag();
     uint8_t ReadTimeRegister(uint8_t index) const;
     void WriteTimeRegister(uint8_t index, uint8_t value);
     uint8_t Encode(int value) const;
@@ -228,7 +244,9 @@ protected:
     size_t _cellCount;
     uint8_t _addressMask;
     uint8_t _address = 0;
-    uint8_t _flagsC = 0;          ///< pending C flags (UF / AF)
+    uint8_t _flagsC = 0;          ///< pending C flags (PF / AF / UF)
+    bool _periodicValid = false;  ///< _periodicIndex holds a look at the running divider
+    int64_t _periodicIndex = 0;   ///< periodic periods elapsed in emulated time at the last look
     uint8_t _dayOfWeekOffset = 0; ///< guest day-of-week minus the calendar's, mod 7
     uint8_t _centuryRegister = 0;
 

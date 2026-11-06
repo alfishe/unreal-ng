@@ -67,7 +67,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `learn` | Built: the learn wizard as data (`LearnSession`, `HostInputService::StartLearn`): `step` = `start` (`controls`), `status`, `sample` (`control`, `value`: a scripted press), `skip`, `back`, `finish` (`name`, `save`: the map, its `gamecontrollerdb` line, the user family), `cancel`. While it runs the device's events answer the prompts and reach nothing else. Not on MCP. |
 | `haptics` | Built: per device whether the emulator drives its motors (`available`, else the `reason`), its `actuators` and the test `effects` (`id`, `label`, `ms`). Planned: mode (`off`, `game`, `always`) and strength per device, the gate state, `stop` all ([haptics.md §11](haptics.md#11-surfaces)). |
 | `rumble` | Built: play a test effect on a device (`device`, `effect`: `identify` by default, `low`, `high`, `clicks`, `left-trigger`, `right-trigger`, `swell`; a Surface Dial: `identify`, `click`, `clicks`, `buzz`), the dialog's Test haptics ([haptics.md §10](haptics.md#10-ui)). |
-| `haptics_probe` | Built: a haptic probe (`kind`: `exec`, `read`, `write`, `port-in`, `port-out`; `address`, `page`, `port_mask`) with a rule that plays `play` (`hit` by default) in the loaded game's user profile; the debugger's Add as Haptic Probe ([haptics.md §7](haptics.md#7-haptic-profiles)). |
+| `haptics_trial` | Built: the session trial of game haptics (`text`: a play profile's `events:` / `haptics:`, YAML or JSON; `clear`; neither: read it), laid over the loaded game's haptics in memory and armed at once, never written; another program drops it ([haptics.md §11](haptics.md#11-surfaces)). Replaced `haptics_probe` (2026-11-03). |
 | `aliases` | Built: the device aliases (`from`, `to`, `connected`, `name`): a `gc:` device promoted to its IOHID id keeps its profiles ([architecture.md §5](architecture.md)); `unalias` (`id` = the old id) forgets one, saved to `aliases.yaml` and applied at once (`unknown-alias` 404 when there is none). Lua reaches them through `controllers_host` only. |
 | `light` | Built: set a pad's light colour (`device`, `color`: `#RRGGBB`, `r,g,b` or `off`), a DualSense / DualShock 4 light bar, where the OS lets the emulator set it; `unavailable` with the reason elsewhere. |
 
@@ -102,8 +102,36 @@ Where they come from:
 | Python | `controllers_host("devices")` | `controllers_light(device, color)` |
 | Lua | `controllers_host("devices")` | `controllers_light(device, color)` |
 
-No topic pushes the host devices yet (`devices` is a call; a `controllers.devices` topic for arrivals, battery and
-notices is left, TODO.md).
+### The `controllers.devices` topic (built)
+
+The `devices` reply, pushed: a client (the Stream Deck, a status page, an agent) subscribes instead of polling `devices`
+for arrivals, a battery or a notice. The value is `{available, revision, devices: [...]}` with the `devices` entries;
+`available` is false where no host input owner runs (no Qt client in the process). The same value is the monitoring
+name `controllers.devices` (the process's, as `host.stats`), so every plane reads it the one way it reads monitoring:
+
+| Plane | Read | Pushed |
+|:--|:--|:--|
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor/controllers.devices"}` | topic `controllers.devices` (no `instance`), at once on `subscribe`, then each change |
+| REST | `GET /api/v1/monitor/controllers.devices` (and `devices` in `GET /api/v1/monitor`) | - |
+| CLI | `monitor controllers.devices` (a line per device: id, name, battery, notice; `--json`) | - |
+| MCP | `inspect_state` aspect `monitor` (a `host devices` line: name, id, battery, notice) | - |
+| Python | `emu.monitor("controllers.devices")` | - |
+| Lua | `monitor("controllers.devices")` (P3) | - |
+
+How it costs nothing while nothing changes:
+
+- The owner publishes, the planes read a copy (`monitoring::HostDevices`): a read is a short lock and a copy, never a
+  request to the GUI thread, as `devices` itself is.
+- The owner's 250 ms poll asks `DevicesFeed` (`core/controllers/src/devicesfeed.h`) whether to build the reply again:
+  only after an arrival, a departure or a promotion (`HostInputService::Revision`), a host verb that may change it
+  (`HostInputControl::Changes`: role, pin, player, light, a database entry; the read verbs do not count), or 2 s since
+  the last build (the battery, notice and light, which the backends refresh on their own threads every 10-30 s).
+  Otherwise the poll is two integer compares. A built reply with the same bytes publishes nothing.
+- A publish posts `NC_CONTROLLER_DEVICES_CHANGED`; the hub reads the topic on that notification only (Events cadence:
+  never on a timer, never on an emulated frame).
+
+Measured (`DevicesFeed_Test`, the WebSocket hub's `ControllersDevicesPushesWhatTheOwnerPublishesAndNothingElse`): one
+build per 2 s with nothing changing, and no hub read on frames.
 
 ## 3. Selectors
 
@@ -174,7 +202,7 @@ POST   /api/v1/controllers/{verb}            save {text} | delete {id} | apply {
                                              | database_import {text, save?} | player {device, connector?}
                                              | role {device, role} | pin {device, pin} | identify {device}
                                              | learn {device, step, ...} | unalias {id}
-                                             | haptics_probe {kind, address, page?, port_mask?, play?}
+                                             | haptics_trial {text?, clear?}
 GET    /api/v1/controllers/{verb}            probe?device=.. | reports?device=.. | aliases | match?path=..
        (built: HostInputControl, core/controllers/src/hostinputcontrol.h; the wrong method answers 405)
 POST   /api/v1/controllers/host/{device}/{verb}              role | pin | identify | learn (built)
@@ -244,6 +272,7 @@ build a `HostRequest`; the CLI and Python reach `scheme` through `controllers sc
 | Notification | When |
 |:--|:--|
 | `NC_CONTROLLER_HOST_CHANGED` | a host device connected, disconnected, changed role or pin |
+| `NC_CONTROLLER_DEVICES_CHANGED` | built: the `controllers.devices` value changed (no payload, process-wide), posted by `monitoring::HostDevices` on the owner's thread |
 | `NC_CONTROLLER_CONNECTOR_CHANGED` | plug or unplug on a connector (revision increments); built in C1c: `ControllerConnectorPayload` (emulator id, connector id, device kind or `none`, revision), posted after the manager's lock is released; a rebuild of the connector list posts once with an empty connector id |
 | `NC_CONTROLLER_AUTO_DECIDED` | the auto decision changed (the toast listens) |
 | `NC_CONTROLLER_LAYER` | the debug layer was entered or left (the status bar listens) |

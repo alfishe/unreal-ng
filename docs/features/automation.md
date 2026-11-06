@@ -143,7 +143,7 @@ asm files [A-D] | detect <path> | decode <path> | encode <text-file> --codec c |
 #### Media Operations
 ```
 open <file>             # Auto-detect and load file
-snapshot load <file> [--switch|--no-switch] [--commit <name>]   # Load a snapshot; --switch / --no-switch: replace the machine when the file needs another model (an SPG does by default, an SZX of another model only with --switch); --commit chooses who writes the machine
+snapshot load <file> [--switch|--no-switch] [--commit <name>]   # Load a snapshot; --switch / --no-switch: replace the machine when the file needs another model (an SPG does by default; an SZX of another model, or a Z80 / SNA the machine cannot hold, only with --switch); --commit chooses who writes the machine
 snapshot inspect <file> [--commit <name>]              # What loading would do here (contents, plan); writes nothing
 snapshot save <file>    # Save snapshot (.sna/.z80/.szx, by extension); a refusal says why and what would work
 snapshot formats        # Which formats this machine can be saved in right now, and why not
@@ -365,7 +365,7 @@ Snapshot formats: [docs/file-formats/snapshots](../file-formats/snapshots/README
 | POST | `/emulators/{id}/open` | Load file |
 | POST | `/emulators/{id}/snapshot/save` | Save snapshot; the machine is stopped first; a refusal (400) carries `reason`, `needs` and `formats` |
 | GET | `/api/v1/emulator/{id}/snapshot/formats` | Which snapshot formats this machine can be saved in right now, and why not |
-| POST | `/api/v1/emulator/{id}/snapshot/load` | Load a snapshot (path or upload); optional `commit`; the answer's `report` says what was done or why it was refused |
+| POST | `/api/v1/emulator/{id}/snapshot/load` | Load a snapshot (path or upload); optional `commit`, `switch_model` (a file for another machine: an SPG switches unless `false`, an SZX of another model or a Z80 / SNA the machine cannot hold only with `true`; the answer then has the new `emulator_id`); the answer's `report` says what was done or why it was refused |
 | POST | `/api/v1/emulator/{id}/snapshot/inspect` | What loading a snapshot would do on this machine (its image and the plan); nothing is written |
 | GET | `/emulators/{id}/snapshot/info` | Snapshot status and the last load's `report` |
 | POST | `/api/v1/emulator/{id}/snapshot/transfer` | Move the running state into another instance, in memory ([below](#machine-state-transfer)) |

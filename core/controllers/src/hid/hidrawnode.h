@@ -96,6 +96,10 @@ struct LinuxPadFacts
     /// The family's HID map names controls hid-input does not put on the pad's evdev node: vendor bits (no usage at
     /// all). Read through hidraw. Its consumer usages are KEY_* on the pad's node (LinuxGenericButton)
     bool hidExtras = false;
+    /// A control surface of the database (DeviceDatabase::SurfaceProducts, not the Dial): all its controls come from
+    /// the reports, decoded by the family's HID map. hid-input's guess at it is not read: it drops the zero of a
+    /// relative usage, so a spring-loaded shuttle declared relative never returns to the centre
+    bool surface = false;
 };
 
 /// The hidraw uses of a device (bits). The kernel driver is preferred where it has the path: the PlayStation pads
@@ -143,8 +147,9 @@ extern const char* const kHidrawRulesHint;
 /// @p family (the device database's) words Input for the DualSense Edge, whose paddles and Fn buttons it is, and
 /// Protocol for the GameCube adapter
 /// (any other named family: its vendor bits; empty: the Elite 2 paddles)
+/// @p surface: the device is a control surface (LinuxPadFacts::surface), whose Input is all its controls
 std::string HidrawUnavailable(HidrawUse use, const std::string& node, int error, const std::string& errorText,
-                              const std::string& family = {});
+                              const std::string& family = {}, bool surface = false);
 
 /// The open() access a use needs: Input reads, Protocol reads and writes, the others write
 bool HidrawUseReads(HidrawUse use);

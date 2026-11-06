@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "emulator/readoutschanged.h"
 
 #include "mediamanager.h"
 
@@ -30,10 +31,11 @@
 #include "emulator/io/storage/cd/cdimage.h"
 #include "emulator/io/storage/mediareadtap.h"
 #include "emulator/media/mediawritegate.h"
+#include "emulator/media/guestprogramwatch.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
 #include "common/stringhelper.h"
-#include "debugger/ttd/timetravelmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/storage/sessionwritemap.h"
@@ -161,23 +163,6 @@ class MediaManager::MediaOpOwner : public coordinator::IOpOwner
 {
 public:
     explicit MediaOpOwner(MediaManager& manager) : _manager(manager) {}
-
-    /// TTD v1 keeps no media change events (NoteMediaChange): while it records, a change is refused as before M3.
-    /// Goes with v1
-    std::string Refusal(const coordinator::MachineOp& op) const override
-    {
-        EmulatorContext* context = _manager._context;
-        ttd::ITimeTravelHooks* ttd = context ? context->pTimeTravelHooks : nullptr;
-        if (op.endRecording || !ttd || ttd->RecordsMediaChanges())
-            return {};
-        const ttd::TTDGuardedAction action = op.kind == coordinator::OpKind::DiskCreate ? ttd::TTDGuardedAction::CreateDisk
-                                             : op.media == coordinator::MediaClass::Tape ? ttd::TTDGuardedAction::LoadTape
-                                                                                         : ttd::TTDGuardedAction::LoadDisk;
-        std::string refusal = ttd->RecordingGuard(action);
-        if (!refusal.empty() && op.media == coordinator::MediaClass::Any && op.kind != coordinator::OpKind::DiskCreate)
-            refusal = "the media set is fixed while a TTD recording runs; end the recording first";
-        return refusal;
-    }
 
     bool Prepare(const coordinator::MachineOp& op, coordinator::OpStage& stage) override
     {
@@ -529,7 +514,7 @@ MediaResult MediaManager::OpenForSlot(const std::string& slotId, const MediaSour
     // actually reads (MBR-partitioned vs. raw FAT)? Never refuses the insert
     if ((medium->Kind() == MediaKind::Block) && medium->Block())
     {
-        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags);
+        std::string mismatch = DescribeBlockLayoutMismatch(*medium->Block(), descriptor.tags, descriptor.folderMbr);
         if (!mismatch.empty())
             medium->Report().push_back(std::move(mismatch));
     }
@@ -815,7 +800,8 @@ MediaTransferReport MediaManager::AdoptMediaSet(MediaTransfer transfer)
             if (HostWriteHold* hold = state.attached->Hold())
                 hold->SetHolding(_holdHostWrites);
             if (MediaReadTap* tap = state.attached->ReadTap())
-                tap->Bind(&_readJournal, entry.slotId, this);
+                tap->Bind(&_readJournal, entry.slotId, this, &_guestProgramWatch);
+            _guestProgramWatch.Reset(entry.slotId);
             if (CdImage* cd = state.attached->Cd())
                 cd->BindReadJournal(&_readJournal, entry.slotId);
             state.slot->Attach(*state.attached);
@@ -944,15 +930,17 @@ MediaResult MediaManager::SetWriteProtect(const std::string& slotId, bool on)
     // While the user's recording runs the toggle is an event of the recording: it lands at the next frame boundary,
     // where a replay meets it again (M3, gap 12)
     const ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
-    if (ttd && ttd->RecordsMediaChanges() && ttd->IsRecording())
+    if (ttd && ttd->IsRecording())
     {
         state.pendingProtect = on;
         _revision++;
+        NotifyReadoutsChanged(_context, "media.protect");
         return MediaResult::Success();
     }
     state.pendingProtect.reset();
     ApplyProtect(slotId, state, on);
     _revision++;
+    NotifyReadoutsChanged(_context, "media.protect");
     return MediaResult::Success();
 }
 
@@ -1356,6 +1344,7 @@ void MediaManager::NoteWrite(const std::string& slotId, const char* detail)
     if (it == _slots.end())
         return;
     SlotState& state = it->second;
+    _guestProgramWatch.Forget(slotId);  // the card's files may be new after a write
     MarkWrite(state);
     // A replay records nothing: the writes are the recording's
     if ((_context && _context->ttdReplayActive) || state.writeEventThisFrame)
@@ -1379,6 +1368,7 @@ void MediaManager::BeforeSectorWrite(const std::string& slotId, uint64_t lba, IB
     if (it == _slots.end())
         return;
     SlotState& state = it->second;
+    _guestProgramWatch.Forget(slotId);
     MarkWrite(state);
     if (!KeepsVersions() || state.undo.Has(state.writtenFrames, MediaUndoLog::Unit::Sector, lba))
         return;
@@ -1568,6 +1558,13 @@ Medium* MediaManager::GetMedium(const std::string& slotId)
     return it == _slots.end() ? nullptr : it->second.attached.get();
 }
 
+bool MediaManager::HasIncoming(const std::string& slotId) const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    return it != _slots.end() && it->second.incoming != nullptr;
+}
+
 /// region <Helpers>
 
 void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::vector<std::unique_ptr<Medium>>& retired)
@@ -1605,7 +1602,8 @@ void MediaManager::ApplySlot(const std::string& slotId, SlotState& state, std::v
         if (HostWriteHold* hold = state.attached->Hold())
             hold->SetHolding(_holdHostWrites);
         if (MediaReadTap* tap = state.attached->ReadTap())
-            tap->Bind(&_readJournal, slotId, this);
+            tap->Bind(&_readJournal, slotId, this, &_guestProgramWatch);
+        _guestProgramWatch.Reset(slotId);
         if (CdImage* cd = state.attached->Cd())
             cd->BindReadJournal(&_readJournal, slotId);
         state.slot->Attach(*state.attached);

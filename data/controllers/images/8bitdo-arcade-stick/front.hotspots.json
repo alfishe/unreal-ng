@@ -9,7 +9,7 @@
   "controls": [
     {
       "control": "dpad.up",
-      "label": "Stick",
+      "label": "Stick \u2191",
       "shape": {
         "circle": [
           517,
@@ -27,7 +27,7 @@
     },
     {
       "control": "dpad.down",
-      "label": "Stick",
+      "label": "Stick \u2193",
       "shape": {
         "circle": [
           517,
@@ -45,7 +45,7 @@
     },
     {
       "control": "dpad.left",
-      "label": "Stick",
+      "label": "Stick \u2190",
       "shape": {
         "circle": [
           388,
@@ -63,7 +63,7 @@
     },
     {
       "control": "dpad.right",
-      "label": "Stick",
+      "label": "Stick \u2192",
       "shape": {
         "circle": [
           646,

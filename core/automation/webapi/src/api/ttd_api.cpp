@@ -105,8 +105,9 @@ static std::map<std::string, std::string> OptionsFromQuery(const HttpRequestPtr&
     return options;
 }
 
-/// A JSON body's scalar members as TTDControl options (null: absent). False when a
-/// member is an object or an array: the verbs take scalars only
+/// A JSON body's scalar members as TTDControl options (null: absent); an array of scalars (tags, watched
+/// addresses) as its items joined by commas. False when a member is an object or holds one: the verbs take
+/// scalars and lists only
 static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std::string>& options,
                             std::function<void(const HttpResponsePtr&)>& callback)
 {
@@ -118,11 +119,28 @@ static bool OptionsFromJson(const HttpRequestPtr& req, std::map<std::string, std
         const Json::Value& v = (*json)[name];
         if (v.isNull())
             continue;
+        if (v.isArray())
+        {
+            std::string joined;
+            bool scalars = true;
+            for (const Json::Value& item : v)
+            {
+                scalars = scalars && !item.isObject() && !item.isArray() && !item.isNull();
+                if (scalars)
+                    joined += (joined.empty() ? "" : ",") + (item.isBool() ? (item.asBool() ? "true" : "false")
+                                                                            : item.asString());
+            }
+            if (scalars)
+            {
+                options[name] = joined;
+                continue;
+            }
+        }
         if (v.isObject() || v.isArray())
         {
             Json::Value error;
             error["error"]   = "Bad Request";
-            error["message"] = "'" + name + "' must be a number, a string or true / false";
+            error["message"] = "'" + name + "' must be a number, a string, true / false or a list of them";
             auto resp = HttpResponse::newHttpJsonResponse(error);
             resp->setStatusCode(HttpStatusCode::k400BadRequest);
             addCorsHeaders(resp);
@@ -326,20 +344,22 @@ void EmulatorAPI::getTTDMarkers(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/{id}/ttd/bookmarks
 ///
-/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label" } ] }
+/// Response: { "count": N, "bookmarks": [ { "frame", "tinframe", "label", "note", "tags", "context", "watch" } ] }
 /// Time-sorted. Unlike /ttd/markers these entries never halt a seek.
 void EmulatorAPI::getTTDBookmarks(const HttpRequestPtr& req,
                                   std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    (void)req;
-    RespondTTD(id, "bookmarks", {}, callback);
+    // ?tag=T (only the bookmarks with that tag), &text=true (one line per bookmark)
+    RespondTTD(id, "bookmarks", OptionsFromQuery(req, "bookmarks"), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/bookmarks
 ///
-/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional) }
-/// When frame is omitted the bookmark is placed at the current position.
+/// Body: { "label": "umt entry", "frame": F (optional), "tinframe": T (optional), "note": "...", "tags": ["a", "b"]
+/// or "a,b", "watch": ["#A130", "#A140:4"] or "#A130,#A140:4", "context": true (default) }
+/// When frame is omitted the bookmark is placed at the current position. The context (registers, the
+/// instruction, its page, the paging latch) and the watched bytes are taken at the bookmark's moment.
 /// Labels are keys: non-empty, at most 63 characters, unique per session.
 ///
 /// Status codes:
@@ -353,6 +373,37 @@ void EmulatorAPI::postTTDBookmark(const HttpRequestPtr& req,
     std::map<std::string, std::string> options;
     if (OptionsFromJson(req, options, callback))
         RespondTTD(id, "bookmark-add", std::move(options), callback);
+}
+
+/// @brief PUT /api/v1/emulator/{id}/ttd/bookmarks/{label} (only the fields given change)
+///
+/// Body: { "note": "...", "append": true (add the note as a new line), "tags": [...] (replace), "add_tags": [...],
+/// "remove_tags": [...], "rename": "new label" }. 200 with the bookmark, 400 for a broken bound, 404 for an unknown
+/// label, 409 for a rename onto an existing label.
+void EmulatorAPI::putTTDBookmark(const HttpRequestPtr& req,
+                                 std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id, const std::string& label) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    options["label"] = label;
+    RespondTTD(id, "bookmark-note", std::move(options), callback);
+}
+
+/// @brief GET or POST /api/v1/emulator/{id}/ttd/export-bookmarks (beside export-clip: not under bookmarks/{label})
+///
+/// Query (GET) or body (POST): format = markdown (a WALKTHROUGH section, default) | profile (YAML comment lines for a
+/// game profile's header) | json, tag, title, path (written there as well). Response: { "format", "count", "text",
+/// "path", "bytes" }. The machine does not move.
+void EmulatorAPI::exportTTDBookmarks(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    std::map<std::string, std::string> options = OptionsFromQuery(req, "bookmark-export");
+    if (req->method() == drogon::Post && !OptionsFromJson(req, options, callback))
+        return;
+    RespondTTD(id, "bookmark-export", std::move(options), callback);
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/ttd/bookmarks/{label}
@@ -420,10 +471,13 @@ void EmulatorAPI::loadTTD(const HttpRequestPtr& req,
 ///         "newest", "from", "to" ("F" or "F:T"), "port", "port_mask",
 ///         "value", "value_mask", "match", "trigger", "ay_register";
 ///         "file": a .ttd path on the emulator's machine - searched without
-///         loading it, the current session is not touched }
+///         loading it, the current session is not touched; "context": each
+///         hit's registers at its instruction, replayed (default on, off while
+///         a recording runs) }
 /// Response: { "event", "direction": "in"|"out", "count", "truncated",
-///             "scanned", "hits": [ { "index", "frame", "tinframe", "port",
-///             "value", "pc", "ay_register"? } ] }
+///             "scanned", "context", "hits": [ { "index", "frame", "tinframe",
+///             "port", "value", "pc", "ay_register"?, "rows"?, "keys"?,
+///             "registers"?, "stack_top"?, "context_error"? } ] }
 void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
                                 std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
@@ -437,9 +491,10 @@ void EmulatorAPI::portEventsTTD(const HttpRequestPtr& req,
 ///
 /// A memory at a past checkpoint from the engine's store, without seeking (memory-spaces design, step 3).
 /// Body: { "space": "ram" | "ramN" | a region name or alias ("sprinter.vram", "vram", "neogs.ram", ...), "frame",
-///         "offset" (default 0), "length" (default 256, at most 65536) }
+///         "offset" (default 0), "length" (default 256, at most 65536) }; space "cpu": Z80 addresses as the CPU saw
+///         them at frame / tinframe
 /// Response: { "space" (the engine's region), "offset", "length", "frame", "at_frame" (the checkpoint read, the
-///             newest at or before frame), "exact", "hex" }
+///             newest at or before frame), "exact", "hex" }; space "cpu" adds "banks"
 void EmulatorAPI::memoryAtTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
@@ -497,12 +552,59 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
         RespondTTD(id, "reverse-step", std::move(options), callback);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/probe-frames
+///
+/// Body: { "probes": [{ "probe": "exec"|"read"|"write"|"port-in"|"port-out", "address", "end"?, "page"?,
+///         "port_mask"?, "if"? }, ...] } (at most 16, a game profile's probe shape), or one probe's fields at the top
+///         level; "from_frame"?, "to_frame"?, "limit"? (frames listed per probe, default 1000).
+///
+/// Response: { "from_frame", "to_frame", "replayed_frames", "pruned_frames", "barrier_frames": [...],
+///             "blocked_by_marker"?, "probes": [{ ..., "error"?, "frame_count", "hit_count", "frames": [...],
+///             "hits": [...], "truncated" }], "truncated", "next_from_frame"? }. The machine stays where it stood.
+void EmulatorAPI::probeFramesTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    // probes: a JSON array of probe objects; the verb takes it as JSON text. The other members are scalars
+    std::map<std::string, std::string> options;
+    auto json = req->getJsonObject();
+    if (json && json->isObject())
+    {
+        for (const std::string& name : json->getMemberNames())
+        {
+            const Json::Value& v = (*json)[name];
+            if (v.isNull())
+                continue;
+            if (name == "probes" && v.isArray())
+            {
+                Json::StreamWriterBuilder writer;
+                writer["indentation"] = "";
+                options[name] = Json::writeString(writer, v);
+                continue;
+            }
+            if (v.isObject() || v.isArray())
+            {
+                Json::Value error;
+                error["error"]   = "Bad Request";
+                error["message"] = "'" + name + "' must be a number, a string or true / false (probes: an array)";
+                auto resp = HttpResponse::newHttpJsonResponse(error);
+                resp->setStatusCode(k400BadRequest);
+                addCorsHeaders(resp);
+                callback(resp);
+                return;
+            }
+            options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+        }
+    }
+    RespondTTD(id, "probe-frames", std::move(options), callback);
+}
+
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-continue
 ///
-/// Body: { "pcs": [int, ...] }  — non-empty list of reverse breakpoints.
+/// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
+///         "from_frame"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
 ///
-/// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int,
-///             "blocked_by_marker"?: { ... } }
+/// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int, "t": int, "phys_page": int|"rom",
+///             "blocked_by_marker"?: { ... } }; with all: { "hits": [...], "count", "truncated", "next_before"? }
 void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
@@ -523,7 +625,44 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
     std::string pcs;
     for (const Json::Value& pc : (*json)["pcs"])
         pcs += (pcs.empty() ? "" : ",") + (pc.isString() ? pc.asString() : pc.isIntegral() ? pc.asString() : std::string("?"));
-    RespondTTD(id, "reverse-continue", {{"pcs", pcs}}, callback);
+    // The other members (phys_page, all, limit, before_frame, before_tin, before, from_frame) are scalars
+    std::map<std::string, std::string> options{{"pcs", pcs}};
+    for (const std::string& name : json->getMemberNames())
+    {
+        const Json::Value& v = (*json)[name];
+        if (name == "pcs" || v.isNull())
+            continue;
+        if (v.isArray())
+        {
+            std::string joined;
+            bool scalars = true;
+            for (const Json::Value& item : v)
+            {
+                scalars = scalars && !item.isObject() && !item.isArray() && !item.isNull();
+                if (scalars)
+                    joined += (joined.empty() ? "" : ",") + (item.isBool() ? (item.asBool() ? "true" : "false")
+                                                                            : item.asString());
+            }
+            if (scalars)
+            {
+                options[name] = joined;
+                continue;
+            }
+        }
+        if (v.isObject() || v.isArray())
+        {
+            Json::Value error;
+            error["error"]   = "Bad Request";
+            error["message"] = "'" + name + "' must be a number, a string, true / false or a list of them";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        options[name] = v.isBool() ? (v.asBool() ? "true" : "false") : v.asString();
+    }
+    RespondTTD(id, "reverse-continue", std::move(options), callback);
 }
 
 void EmulatorAPI::getTTDCoverageProbe(const HttpRequestPtr& req,
@@ -540,11 +679,51 @@ void EmulatorAPI::getTTDCoverageScan(const HttpRequestPtr& req,
     RespondTTD(id, "coverage-scan", OptionsFromQuery(req, "coverage-scan"), callback);
 }
 
+void EmulatorAPI::getTTDCoverageRare(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    RespondTTD(id, "coverage-rare", OptionsFromQuery(req, "coverage-rare"), callback);
+}
+
 void EmulatorAPI::getTTDCoverageSummary(const HttpRequestPtr& req,
                                         std::function<void(const HttpResponsePtr&)>&& callback,
                                         const std::string& id) const
 {
     RespondTTD(id, "coverage-summary", OptionsFromQuery(req, "coverage-summary"), callback);
+}
+
+void EmulatorAPI::getTTDTimeline(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    RespondTTD(id, "timeline", OptionsFromQuery(req, "timeline"), callback);
+}
+
+void EmulatorAPI::getTTDCauseChain(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    RespondTTD(id, "cause-chain", OptionsFromQuery(req, "cause-chain"), callback);
+}
+
+void EmulatorAPI::getTTDFindEvent(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    RespondTTD(id, "find-event", OptionsFromQuery(req, "find-event"), callback);
+}
+
+void EmulatorAPI::getTTDExplainFrame(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    RespondTTD(id, "explain-frame", OptionsFromQuery(req, "explain-frame"), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/ttd/diff
+/// What differs between two moments (docs/inprogress/2026-11-03-ttd-diff-moments): registers, latches, the slot
+/// mapping, memory ranges with the last write in between, screen, devices, the time, keys and markers in between
+void EmulatorAPI::getTTDDiffMoments(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    RespondTTD(id, "diff", OptionsFromQuery(req, "diff"), callback);
 }
 
 }  // namespace v1

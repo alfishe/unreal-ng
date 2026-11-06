@@ -222,8 +222,16 @@ flowchart TB
    Python `controllers_match`) tells which profiles match and how; `context` carries the signatures, `game_matches`
    ([id, how], strongest first) and `haptics_reason`. Measured on the vtrd.in collection by
    [POC 034](../../../tools/poc/034-media-signatures/README.md).
-2. **Port-read heuristic.** The core's `PortReadWatch` ([architecture.md §13](architecture.md#13-code-placement))
-   counts the guest's reads per frame, smoothed, from the end of loading for up to 30 s of play:
+   A program the client did not load itself (a NEX or SNX started from NextZXOS's Browser, a snapshot picked in a
+   menu) reaches the same keys through the guest's reads: `GuestProgramWatch` (core, `emulator/media`) sits on the
+   read tap of every block medium; 16 consecutive sectors read inside one program file (NEX, SNX, SNA, Z80, SZX, TAP,
+   TZX, TRD, SCL, SP, found through the volume's FAT) make it post `NC_GUEST_PROGRAM` with the file's bytes, and the
+   Qt client computes the signatures from them as for a file it loaded, so the game profile applies by its hash with
+   no manual choice. The same file read again within 3 s is one load; a write to the card makes the file map built
+   again at the next run.
+2. **Port-read heuristic.** The core's device access watch ([retro-devices.md §6](retro-devices.md#6-port-read-evidence))
+   counts the guest's reads per frame for the input roles that the machine's slot claims declare. It runs from the
+   end of loading for up to 30 s of play, or all the time with the feature `deviceaccess`:
 
    | Evidence | Decision |
    |:--|:--|
@@ -314,6 +322,17 @@ events:
 haptics:
   rules:
     - { on: jump, play: tick, target: handle.high }
+```
+
+An event can take `if:`, a condition in the
+[breakpoint condition language](../../features/conditional-breakpoints.md): a breakpoint probe (`exec`, `read`,
+`port-in`, `port-out`, `write` with `each_write`) checks it at the access, any other source at the frame end. `x@prev`
+is x at the previous check ([haptics.md §5](haptics.md)):
+
+```yaml
+events:
+  shot:     { probe: exec, address: "0x8A10", if: "A != 0" }
+  lostlife: { probe: value, address: "0x767F", if: "M(#767F) < M(#767F)@prev" }
 ```
 
 ### 7.2 Play profile: a Next MD6 game, two pads
@@ -428,6 +447,13 @@ line.
 Writing a new game profile step by step (finding the game's keys and haptic triggers, the header comment, the index,
 the tests): [the game-haptics recipe](../../../.recipe/input/game-haptics.md).
 
+### 7.5a Keys of the keys-joystick: `joystick_keys`
+
+A play profile may name the keys of the core's keyboard-as-joystick (the QAOP-style `JoystickKeys=` option) for the
+games that read it: `joystick_keys: "up:q,down:a,left:o,right:p,fire:m"`. The most specific play profile wins; while the
+port-read watch decides on the keyboard joystick, the profile's keys replace the option's default, and the pad's d-pad
+needs no key bindings of its own (Exolon: `fire:space`, or `fire:m` for the Exolon-M release).
+
 ### 7.6 Schemes: `extends`
 
 Most games of the 1980s use one of a few control schemes: Kempston, Sinclair 1 or 2, Cursor, QAOP + Space, OPQA + M,
@@ -527,5 +553,14 @@ picture shows those callouts as "not wired on this board".
   left + right. The keyboard is a third device and can be a player too.
 - Two identical pads are told apart by `HostDeviceId` ([architecture.md §5](architecture.md#5-device-identity-and-merging)).
   The dialog's **Identify** button rumbles the pad (or flashes its LED) and highlights it in the list.
+- **Keys of the second player (2026-10-31).** A play profile's layer `play@N` (`play@2`) is the play layer of the N-th pad
+  connected (keyboards and mice do not count; the number of `auto:N` and of the player LEDs): that pad gets its own scope
+  holding the whole set, the `play@N` bindings over `play` field by field. The other pads never see the layer. A haptic
+  rule with `player: N` ([haptics.md §6](haptics.md#6-effects)) plays on that pad only. A game that tells its players by
+  keys (a fighting game: one key set each) binds the first pad in `play` and the second in `play@2`
+  (`games/sprinter/tmnt-fighters.yaml`: pad 1 the Kempston joystick and V G B H J, pad 2 the cursor keys and `pc.*`).
+- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` name keys the ZX matrix has no
+  place for. They travel as HostKeys rows 8 and 9, are held outside the TTD blob (its format and hash stay as they were)
+  and reach a machine whose input is a PS/2 keyboard (Sprinter) only; elsewhere they do nothing.
 - With several emulator instances, each device follows its instance assignment
   ([architecture.md §9](architecture.md#9-several-emulator-instances)); two players on two machines is two pins.

@@ -1378,7 +1378,7 @@ void EmulatorManager::TrackRetired(const std::shared_ptr<Emulator>& emulator)
                    _retired.end());
     const auto now = std::chrono::steady_clock::now();
     _retired.push_back(RetiredInstance{emulator, emulator->GetId(), now, now, false});
-    if (!_retiredWatchdog.joinable() && !_retiredWatchdogStop)
+    if (!_retiredWatchdog.joinable() && !_retiredWatchdogStop && !_retiredWatchdogClosed)
         _retiredWatchdog = std::thread([this]() { WatchRetired(); });
     _retiredCv.notify_all();
 }
@@ -1414,11 +1414,14 @@ void EmulatorManager::WatchRetired()
     }
 }
 
-void EmulatorManager::StopRetiredWatchdog()
+void EmulatorManager::StopRetiredWatchdog(bool final)
 {
     {
         std::lock_guard<std::mutex> lock(_retiredMutex);
         _retiredWatchdogStop = true;
+        // A removal racing the destructor must not start the thread again: ~thread on a joinable one is terminate
+        if (final)
+            _retiredWatchdogClosed = true;
     }
     _retiredCv.notify_all();
     if (_retiredWatchdog.joinable() && _retiredWatchdog.get_id() != std::this_thread::get_id())
@@ -1463,7 +1466,7 @@ EmulatorManager::~EmulatorManager()
 {
     // Ensure all emulators are properly shut down before destruction
     ShutdownAllEmulators();
-    StopRetiredWatchdog();   // ShutdownAllEmulators returns early when there is nothing to shut down
+    StopRetiredWatchdog(true);   // ShutdownAllEmulators returns early when there is nothing to shut down
     
     // Clear the emulators map
     std::lock_guard<std::mutex> lock(_emulatorsMutex);
