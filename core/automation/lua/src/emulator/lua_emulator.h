@@ -90,6 +90,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -7379,6 +7380,35 @@ public:
                                                              : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The CPU time profile through profile::Execute (profilecontrol.h): cpuprofile(op, opts) with op start | stop |
+        // reset | mark | status | report | frames | export; opts a table ({stack=, beam=, frames=, ring_kib=, stream=,
+        // reset=} / {name=, drop=} / {since=, top=, sort=, callers=, beam=} / {last=, top=} / {format=, path=,
+        // since=}) or, for mark the name, for report the top, for frames the last, for export the format. The answer:
+        // the reply's fields plus text; a refusal: ok = false, error = why
+        lua.set_function("cpuprofile", [this](sol::this_state ts, sol::optional<std::string> op,
+                                              sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = op.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            profile::Reply reply;
+            if (!emulator)
+                reply.error = profile::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = profile::Execute(*emulator, verb,
+                                         opts ? SymbolOptions(*opts, verb == "mark"     ? "name"
+                                                                     : verb == "report" ? "top"
+                                                                     : verb == "frames" ? "last"
+                                                                     : verb == "export" ? "format"
+                                                                                        : "")
+                                              : profile::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

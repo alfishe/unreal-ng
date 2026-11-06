@@ -77,6 +77,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /control/audio/gs/porttrace",
     "POST /control/audio/midi",
     "POST /control/isa",
+    "POST /cpuprofile/{op}",
     "POST /history/{device}/clear",
     "POST /history/{device}/config",
     "POST /history/{device}/pause",

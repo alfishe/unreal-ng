@@ -1676,6 +1676,24 @@ emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) through the shared core handler (`profile::Execute`): a table of
+the answer's fields plus `text`; a refusal is `{ok = false, error = <why>}`. A string as the second argument is the
+mark's name (`mark`), the top (`report`), the last (`frames`) or the format (`export`).
+
+```lua
+emu.cpuprofile("start")                                -- cells + call stack + per-frame series
+emu.cpuprofile("start", {beam = true, reset = true})
+emu.run_frames(500)
+local r = emu.cpuprofile("report", {top = 10})       -- { window, routines = {{name, entry, self, inclusive, ...}}, text }
+print(r.text)
+emu.cpuprofile("mark", "level2")
+emu.cpuprofile("report", {since = "level2"})
+emu.cpuprofile("export", {format = "kit", path = "work/p1/profile-l1.json"})
+emu.cpuprofile("stop")
+```
+
 ## Usage Examples
 
 ### Register Dump Macro
