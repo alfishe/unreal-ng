@@ -30,6 +30,7 @@
 #include "framehistory.h"
 #include "framesource.h"
 #include "gpupasstimes.h"
+#include "platform/presenterrecovery.h"
 #include "slangpresetrunner.h"
 #include "smoothmotiongpu.h"
 
@@ -77,9 +78,6 @@ public:
     /// The game's picture cadence from its profile (nullptr: none): with Mode::Interpolate, the steps between the
     /// game's own pictures
     void setGameVideo(const smoothmotion::GameVideo* game) { _smooth.SetGame(game); }
-    /// The smooth motion in effect (Off without frames in order)
-    smoothmotion::Mode smoothMotion() const { return smoothActive() ? _smooth.GetMode() : smoothmotion::Mode::Off; }
-    const smoothmotion::SmoothMotion::Stats& smoothMotionStats() const { return _smooth.GetStats(); }
 
     /// Thread-safe cut of every paint path into the emulator's framebuffer
     /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
@@ -87,9 +85,7 @@ public:
     /// MessageCenter worker; paints after it simply find no source.
     void clearFrameSource();
 
-    /// The window shows its frames through the native presenter (decided at construction)
-    bool nativePresent() const { return _native; }
-    /// The presenter and its on-screen timing, one line (empty without the native presenter)
+    /// The presenter and its on-screen timing, one line (empty without the native presenter, unless it failed: why)
     QString presenterStatus() const;
     /// The presenter's on-screen timing and smooth motion's counters, for the automation
     WindowPresentStats presentStats() const;
@@ -202,11 +198,14 @@ private:
     bool prepareContext();
     bool recreateLostContext();  ///< after a graphics reset: a new context, every GL object made anew
     void releaseGLObjects();     ///< the screen's GL objects and the native presenter (a context current)
-    void hangGL();               ///< UNREAL_TEST_GPU_HANG=gl: GL work that never ends (the recovery test)
+    void hangGL();               ///< UNREAL_TEST_GPU_HANG=gl: GL work that never ends (UNREAL_TEST_HOOKS builds)
+    /// The native presenter given up (`why`): GL presents for the rest of the window's life (macOS: on a GL surface)
+    void fallBackToGl(const std::string& why);
     /// GL way: draw the frame due at the next refresh and swap
     void renderGL();
-    /// Native way: draw the frame due at now + lead into an IOSurface and present it at its target; then the timer
-    /// for the next frame. `force`: present even with no new frame (a setting, the HUD, a resize)
+    /// Native way: draw the frame due at now + lead into the presenter's shared texture (macOS an IOSurface, Windows a
+    /// D3D11 texture) and present it at its target; then the timer for the next frame. `force`: present even with no
+    /// new frame (a setting, the HUD, a resize). The presenter's failures go through _recovery
     void renderNative(bool force);
     /// Native way: the timer for the next frame (its target - lead), or a poll while frames may come
     void scheduleNative();
@@ -230,6 +229,8 @@ private:
     /// Native way: how long before a frame's target it is drawn and handed over: the presenter's (NativePresenter::
     /// LeadNs), unless UNREAL_PRESENT_LEAD_MS sets it
     int64_t presentLeadNs() const;
+    /// Refreshes with nothing new after which the refresh loop stops (a quarter second, at least 15)
+    int idleLimit() const;
     /// After a swap: the next refresh, while frames are pending
     void onFrameSwapped();
     void setupVSync();
@@ -273,14 +274,12 @@ private:
     QTimer* _syncTimer = nullptr;                         ///< auto: updateVideoSync twice a second (VRR engaging)
     QTimer* _presentTimer = nullptr;              ///< native way: the next frame's present
     bool _presentPending = false;                 ///< native way: a forced present asked for
-    int64_t _presentFailingSinceNs = 0;           ///< native way: BeginFrame failing since (0: it works)
-    uint64_t _presentFailures = 0;                ///< ... the pictures not presented since
-    static constexpr int64_t PRESENTER_RESTART_NS = 2'000'000'000;  ///< ... this long: a new presenter
+    bool _presentHidden = false;                  ///< native way: occluded or minimized, nothing drawn (a slow poll)
+    bool _toldWaiting = false;                    ///< native way: "waits for its surface" told for this stall
+    PresenterRecovery _recovery;                  ///< native way: restarts, retries, the fall back to GL
+    std::string _presenterFallback;               ///< why GL presents in place of the native presenter (empty: not)
     int64_t _glHangAtNs = 0;                      ///< UNREAL_TEST_GPU_HANG=gl: when the window's GL work hangs
-    int _presenterRetries = 0;                    ///< a presenter made anew: tries left before GL presents
-    static constexpr int PRESENTER_RETRIES = 20;  ///< ... one every PRESENTER_RETRY_MS
-    static constexpr int PRESENTER_RETRY_MS = 500;
-    static constexpr int PRESENTER_NEW_WINDOW_AFTER = 2;  ///< ... failed tries before a new native window (Windows)
+    int64_t _presentFailAtNs = 0;                 ///< UNREAL_TEST_PRESENT_FAIL: BeginFrame fails from then on
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
     int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
     int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
@@ -328,8 +327,8 @@ private:
     bool _smoothTraced = false;                       ///< UNREAL_SMOOTH_TRACE is set
     bool _smoothUsed = false;     ///< the last updateTexture's picture was smooth motion's
     bool _smoothChanged = false;  ///< and another one than before
-    uint64_t _smoothDrained = 0;
-    uint32_t _smoothLag = 0;  // the lag (refreshes) of the run of late presents the last drain answered  ///< presents handed over before the last refresh left out (a late one: renderNative)
+    uint64_t _smoothDrained = 0;  ///< presents handed over before the last refresh left out (a late one: renderNative)
+    uint32_t _smoothLag = 0;      ///< the lag (refreshes) of the run of late presents the last drain answered
     int64_t _smoothRefreshNs = 0;  ///< native way on a refresh grid: the refresh drawn for (0: no grid)
     uint64_t _smoothPictures = 0;  ///< smooth motion's pictures presented: their numbers for the presenter's beat count
     int64_t _smoothPeriodNs = 0;
