@@ -143,6 +143,29 @@ TEST(DisplayRate_Test, MeterIgnoresUnsteadyFrames)
     EXPECT_EQ(meter.Hz(), 0.0);
 }
 
+/// Turbo frames come steady too (a fast host at a fixed turbo rate): they never become the machine's rate, and the
+/// display rate never switches for them
+TEST(DisplayRate_Test, MeterKeepsTheRateThroughSteadyTurboFrames)
+{
+    FrameRateMeter meter;
+    int64_t t = 1'000'000'000;
+    EXPECT_TRUE(meter.Push(t, 20'480'000));
+    // The window passes no period for a frame timed by its latch (the GL window) ...
+    for (int i = 0; i < 100; i++)
+        EXPECT_FALSE(meter.Push(t += 10'000'000)) << "frame " << i;  // 100 Hz, exactly steady
+    EXPECT_DOUBLE_EQ(meter.Hz(), 48.83);
+    // ... or says what it is (the software window)
+    for (int i = 0; i < 100; i++)
+        EXPECT_FALSE(meter.PushUnpaced());
+    EXPECT_DOUBLE_EQ(meter.Hz(), 48.83);
+
+    // A screen no clock times at all (no period ever): the targets' median is the rate; turbo on it stays unknown
+    FrameRateMeter unpaced;
+    for (int i = 0; i < 100; i++)
+        EXPECT_FALSE(unpaced.PushUnpaced());
+    EXPECT_EQ(unpaced.Hz(), 0.0);
+}
+
 TEST(DisplayRate_Test, VideoSyncTakesTheFirstStepTheDisplayAllows)
 {
     // VRR first, whatever the rates

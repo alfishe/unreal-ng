@@ -245,7 +245,11 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
                 if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
                 {
                     _meteredSerial = info.serial;
-                    _frameRate.Push(info.targetNs, info.source == FrameClockSource::Latch ? 0 : info.periodNs);
+                    // A turbo frame (timed by its latch) says nothing about the machine's rate
+                    if (info.source == FrameClockSource::Latch)
+                        _frameRate.PushUnpaced();
+                    else
+                        _frameRate.Push(info.targetNs, info.periodNs);
                 }
                 updateVideoSync();
             }
