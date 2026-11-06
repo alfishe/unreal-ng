@@ -16,6 +16,7 @@
 ///   - `end`.
 /// - `frames.rgba`, `refreshes.rgba`: the pixels, RGBA, width * height * 4 bytes each.
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -56,6 +57,13 @@ public:
             return false;
         if (!_started)
         {
+            // Armed: look for the file at most every kStartPollNs, not at every refresh
+            const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch())
+                                    .count();
+            if (_lastStartCheckNs != 0 && now - _lastStartCheckNs < kStartPollNs)
+                return false;
+            _lastStartCheckNs = now;
             std::FILE* start = std::fopen((_folder + "/start").c_str(), "r");
             if (!start)
                 return false;
@@ -151,6 +159,8 @@ private:
     bool _active = false;
     bool _done = false;
     bool _started = false;
+    static constexpr int64_t kStartPollNs = 250'000'000;
+    int64_t _lastStartCheckNs = 0;
     bool _reserved = false;
     std::string _text;
     std::vector<uint32_t> _frames;

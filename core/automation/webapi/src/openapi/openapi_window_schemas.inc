@@ -20,8 +20,8 @@
         field("emulator", "string", "The emulator the window shows, \"\" when none");
         field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
         field("smooth_motion", "string",
-              "The shown instance's [VIDEO] SmoothMotion: off, blend or interpolate (the picture between two frames on a "
-              "fixed display)");
+              "The shown instance's [VIDEO] SmoothMotion: off, blend, interpolate or auto (the picture between two "
+              "frames on a fixed display; auto: View > Video Synchronization, present.sync says the step in effect)");
         field("effects_device", "string", "The shown instance's [VIDEO] EffectsDevice: gpu or cpu (the same bits)");
         field("present_policy", "string", "The shown instance's [VIDEO] PresentPolicy: auto, vrr or vsync");
         field("display_rate", "string", "The shown instance's [VIDEO] DisplayRate: keep or match");
@@ -41,10 +41,20 @@
             pf("vrr", "boolean",
                "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
                "policy and the display decide");
+            pf("sync", "object",
+               "View > Video Synchronization (smooth_motion auto): {mode (the step in effect: off (not asked), vrr, "
+               "display_rate, interpolate), reason (why the steps before it are not; \"\" for vrr and off)}");
             pf("refresh_hz", "object", "{min, max}: the display's refresh range (min 0: a variable range whose low end the system does not report, Windows)");
             pf("clock", "string",
                "The clock the frame on screen was timed by: audio (when its sound is heard), emulated (no audio device "
                "delivering), latch (turbo, a run not paced to real time), none (untimed)");
+            pf("timing", "object",
+               "How the frames are timed: {delay_clamped (the frame timed last: its sound comes later than the screen "
+               "holds its frames, a long audio path or a large lip-sync trim, so it is due max_delay_ms after its "
+               "frame's end and the picture leads its sound), max_delay_ms, clamped_frames, early (refreshes that "
+               "found no frame due yet: start up), carried (steps of the clock carried and paid back slowly: a device "
+               "came or went, an underrun), cuts (breaks of the frame sequence: a pause, a seek, turbo), carry_ms (the "
+               "carry being paid back now)}");
             for (const char* count : {"presented", "shown", "dropped", "late"})
                 pf(count, "integer", "Presents since the start: handed over, on screen, never on screen, a refresh late");
             pf("lead_ms", "number", "The adaptive lead: how long before its time a frame is drawn and handed over");

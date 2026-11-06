@@ -726,20 +726,14 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
     }
     if (const JsonValue* video = root.Find("video"))
     {
-        // The game's picture cadence (§7.7): a play profile's, its picture_ready one of its events
+        // The game's picture cadence (§7.7): a play profile's
         if (profile.kind != ProfileKind::Play)
         {
             error = "'video' belongs to a play profile";
             return false;
         }
-        // The events are kept as haptics.sources (above), where a dumped profile writes them back
-        std::vector<std::string> events;
-        if (const JsonValue* sources = profile.haptics.IsObject() ? profile.haptics.Find("sources") : nullptr;
-            sources != nullptr && sources->IsObject())
-            for (const auto& [name, spec] : sources->GetMembers())
-                events.push_back(name);
         VideoProfile parsed;
-        if (!ParseVideoProfile(*video, &events, parsed, error))
+        if (!ParseVideoProfile(*video, parsed, error))
             return false;
         profile.video = *video;
     }

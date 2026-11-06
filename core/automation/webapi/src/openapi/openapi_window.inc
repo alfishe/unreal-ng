@@ -65,8 +65,8 @@
             field("blending_weights", "string", "equal or exponential (newer frames stronger)");
             field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
             field("smooth_motion", "string",
-                  "off, blend or interpolate: the shown instance's smooth motion until it restarts ([VIDEO] "
-                  "SmoothMotion keeps the default)");
+                  "off, blend, interpolate or auto (View > Video Synchronization): the shown instance's smooth "
+                  "motion until it restarts ([VIDEO] SmoothMotion keeps the default)");
             field("effects_device", "string", "gpu or cpu: where smooth motion's steps run (the same bits)");
             field("present_policy", "string",
                   "auto, vrr or vsync: how the native presenter shows the frames (auto: each at its time on a VRR "

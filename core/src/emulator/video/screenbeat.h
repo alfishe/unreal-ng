@@ -55,9 +55,9 @@ public:
             const int64_t span = targetNs - _lastTargetNs;
             if (span > 0 && onScreen >= 0 && span < kGapNs && onScreen < kGapNs)
             {
-                // The pair's span over the refresh: floor / ceil of it is the beat (the frames between, if any, count as
-            // never shown below)
-            const double per = static_cast<double>(span) / static_cast<double>(refreshNs);
+                // The pair's span over the refresh: floor / ceil of it is the beat (the frames between, if any, count
+                // as never shown below)
+                const double per = static_cast<double>(span) / static_cast<double>(refreshNs);
                 const double lo = std::floor(per);
                 const double hi = std::ceil(per);
                 const double count = std::round(static_cast<double>(onScreen) / static_cast<double>(refreshNs));

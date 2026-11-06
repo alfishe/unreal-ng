@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -134,9 +135,11 @@ inline VideoSync PickVideoSync(bool vrr, double displayHz, double machineHz, Vid
 /// The machine's frame rate. A frame paced to real time (the audio or the emulated clock) brings the machine's
 /// nominal period (`periodNs`, from its frame length and clock: a Pentagon's 71 680 T at 3.5 MHz is 48.83 Hz): that
 /// is the rate. The targets themselves wander by a few percent (the audio clock's steps, a remote session's audio),
-/// so measuring them gives a rate a little off that a 1 % agreement check rarely confirms. Without a period (an
-/// external picture's source not timed yet) the rate is the median of the last target periods once they agree.
-/// Turbo, a pause or a seek pass no period and break the agreement; the rate stays the last one
+/// so measuring them gives a rate a little off that a 1 % agreement check rarely confirms. Without a period (a screen
+/// no frame clock times: an external picture's source not timed yet) the rate is the median of the last target
+/// periods once they agree. A frame timed by its latch (turbo, a run not paced to real time) says nothing about the
+/// machine's rate: it breaks the agreement and the rate stays the last one (PushUnpaced). Once a paced frame came, a
+/// frame without a period counts as such
 class FrameRateMeter
 {
 public:
@@ -149,36 +152,51 @@ public:
     {
         if (periodNs > 0)
         {
-            _periods.clear();
+            _paced = true;
+            _count = 0;
             _last = targetNs;
             return Set(std::round(1e9 / static_cast<double>(periodNs) * 100.0) / 100.0, 0.005);
         }
+        if (_paced)
+            return PushUnpaced();
         if (_last != 0 && targetNs > _last)
         {
-            _periods.push_back(targetNs - _last);
-            if (_periods.size() > kPeriods)
-                _periods.erase(_periods.begin());
+            _periods[_next] = targetNs - _last;
+            _next = (_next + 1) % kPeriods;
+            _count = std::min(_count + 1, kPeriods);
         }
         _last = targetNs;
-        if (_periods.size() < kPeriods)
+        if (_count < kPeriods)
             return false;
-        std::vector<int64_t> sorted = _periods;
+        // No allocation per frame: the ring sorted in a copy on the stack
+        std::array<int64_t, kPeriods> sorted = _periods;
         std::sort(sorted.begin(), sorted.end());
-        const double median = static_cast<double>(sorted[sorted.size() / 2]);
-        const double low = static_cast<double>(sorted[sorted.size() / 4]);
-        const double high = static_cast<double>(sorted[sorted.size() * 3 / 4]);
+        const double median = static_cast<double>(sorted[kPeriods / 2]);
+        const double low = static_cast<double>(sorted[kPeriods / 4]);
+        const double high = static_cast<double>(sorted[kPeriods * 3 / 4]);
         if (median <= 0.0 || high - low > median * kSpread)
             return false;
         // The rate at 0.01 Hz: the audio clock's trim moves the periods by a few ppm
         return Set(std::round(1e9 / median * 100.0) / 100.0, 0.05);
     }
 
+    /// A frame not paced to real time (timed by its latch: turbo): the periods so far no longer agree with what comes
+    /// next; the rate stays. Never a change
+    bool PushUnpaced()
+    {
+        _count = 0;
+        _last = 0;
+        return false;
+    }
+
     double Hz() const { return _hz; }
     void Reset()
     {
-        _periods.clear();
+        _count = 0;
+        _next = 0;
         _last = 0;
         _hz = 0.0;
+        _paced = false;
     }
 
 private:
@@ -191,7 +209,10 @@ private:
         return true;
     }
 
-    std::vector<int64_t> _periods;
+    std::array<int64_t, kPeriods> _periods{};  // a ring: the last kPeriods target periods
+    size_t _next = 0;
+    size_t _count = 0;
     int64_t _last = 0;
     double _hz = 0.0;
+    bool _paced = false;  // a paced frame came since the reset
 };

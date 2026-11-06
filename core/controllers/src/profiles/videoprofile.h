@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "emulator/video/smoothmotion.h"  // GameMode: header-only use (the library does not link the core)
 #include "profiles/json.h"
 
 namespace controllers
@@ -19,18 +20,19 @@ struct VideoProfile
     using Rect = std::array<int, 4>;
 
     unsigned picturePeriod = 1;  ///< frames per picture, 1..16
-    std::string smooth = "off";  ///< off | cadence | carry
+    smoothmotion::GameMode smooth = smoothmotion::GameMode::Off;  ///< off | cadence | carry
     Rect window{};               ///< the play area; all zero = the whole frame
     std::vector<Rect> exclude;   ///< inside the window, left alone (score, status row)
-    std::string pictureReady;    ///< picture_ready.on: an event of the profile (empty: none)
 
     bool operator==(const VideoProfile& o) const = default;
 };
 
-/// `video` as written into @p out; false with the reason. @p events: the event names of the same profile, which
-/// `picture_ready.on` must be one of (nullptr: not checked, the section was checked with its profile)
-bool ParseVideoProfile(const JsonValue& value, const std::vector<std::string>* events, VideoProfile& out,
-                       std::string& error);
+/// `video` as written into @p out; false with the reason
+bool ParseVideoProfile(const JsonValue& value, VideoProfile& out, std::string& error);
+
+/// The words of `video.smooth`, in GameMode order: smoothmotion::GameModeName's (videoprofile_test holds them to it;
+/// the library uses the core's headers only, so it cannot call smoothmotion::ParseGameMode)
+inline constexpr const char* kVideoSmoothWords[] = {"off", "cadence", "carry"};
 
 /// The window and every region inside a @p width x @p height frame (the presenter's check against the machine's
 /// framebuffer); false with the reason

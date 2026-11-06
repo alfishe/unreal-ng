@@ -228,6 +228,31 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
               "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion off, "
               "present vsync (vsync), lip sync -40 ms, scale 2x, hud on (retro_zx)");
+
+    // How the frames are timed: the screen's counters, a delay it cannot hold named in the line
+    PresentTimingStats timing;
+    timing.delayClamped = true;
+    timing.maxDelayNs = 184'320'000;
+    timing.clampedFrames = 50;
+    timing.early = 2;
+    timing.carried = 1;
+    timing.cuts = 4;
+    timing.carryNs = -1'500'000;
+    FillPresentTiming(fake.settings.present, timing);
+    const StateNode timed = WindowDisplay::Report(fake.settings)["present"];
+    const StateNode* node = timed.find("timing");
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(node->find("delay_clamped")->b);
+    EXPECT_DOUBLE_EQ(node->find("max_delay_ms")->d, 184.32);
+    EXPECT_EQ(node->find("clamped_frames")->i, 50);
+    EXPECT_EQ(node->find("early")->i, 2);
+    EXPECT_EQ(node->find("carried")->i, 1);
+    EXPECT_EQ(node->find("cuts")->i, 4);
+    EXPECT_DOUBLE_EQ(node->find("carry_ms")->d, -1.5);
+    EXPECT_NE(WindowDisplay::Summary(fake.settings)
+                  .find("video delay held at 184 ms (the sound comes later: the picture leads it)"),
+              std::string::npos)
+        << WindowDisplay::Summary(fake.settings);
 }
 
 TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)

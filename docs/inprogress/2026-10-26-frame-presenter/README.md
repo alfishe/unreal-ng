@@ -142,6 +142,11 @@ target(n) = a + b x W(n) + offset
 - Temporal effects (ZX DLSS, the gigascreen mixer) need their look-ahead before the target. They do not move the
   target. If an effect needs more time than the audio delay leaves, the audio delay grows by that much (the DRC
   target).
+- **A delay longer than the screen holds frames** (12 present slots): a sound heard more than 9 frames after its
+  frame's end (a Bluetooth headset at 200-300 ms, a large lip-sync trim) cannot be waited for, the frame would be
+  overwritten first. The target is held at 9 frames after the frame's end (`Screen::kMaxVideoDelayFrames`), so the
+  frames keep their cadence and the picture leads its sound by the rest; the present report's
+  `timing.delay_clamped` and `video.present`'s `delay.clamped` say so.
 - **Without a running audio device** (no device, another instance has the sound, a held output) the emulated clock
   stands in: the frame's end is `MainLoop`'s frame deadline, plus one period of delay (or the ZX DLSS look-ahead). In
   turbo the latch time is used. Muting through the mixer does not stop the device, so the audio clock stays.
@@ -766,8 +771,8 @@ Each phase lands on its own with tests and docs.
    - `[VIDEO] SmoothMotion`, `[VIDEO] EffectsDevice`, `UNREAL_SMOOTH_MOTION`, `UNREAL_EFFECTS_DEVICE`.
    - The profile's `video:` section (`core/controllers/src/profiles/videoprofile.{h,cpp}`): play profiles only, the
      most specific one wins whole; `HostControllers::gameVideoChanged` hands it to the screen, checked against the
-     framebuffer size. `picture_ready` is parsed and checked against the profile's events; the engine still finds a
-     game's pictures by the frames that changed.
+     framebuffer size. The engine finds a game's pictures by the frames that changed; a `picture_ready` field naming
+     the profile's "picture drawn" event is a future item (not parsed: a profile with it is refused).
    - The drafting tool (`tools/smoothmotion/capture.py`, `draft-video-profile.py`) and the profiles of Darkwing Duck
      (period 5, the lives row excluded), Thundercats (4) and Garfield (3).
    - Flickering blocks held as the frame due (section 4.4); the adaptive lead shared by the Metal and DXGI presenters

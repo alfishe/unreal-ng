@@ -1,5 +1,7 @@
 #include "frameclock.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 
 const char* FrameClockSourceName(FrameClockSource source)
@@ -38,13 +40,24 @@ FrameTimingResult FrameClock::Next(const FrameTimingInput& in)
         raw = in.latchNs + in.latchDelayNs;
     }
     raw += in.offsetNs;
+    // The screen holds a frame only so long: a sound heard later than that cannot be waited for
+    int64_t limit = INT64_MAX;
+    if (in.maxDelayNs > 0)
+    {
+        limit = (in.haveEmulated ? in.emulatedNs : in.latchNs) + in.maxDelayNs;
+        if (raw > limit)
+        {
+            raw = limit;
+            result.clamped = true;
+        }
+    }
 
     const int64_t period = in.periodNs > 0 ? in.periodNs : 20'000'000;
     const int64_t step = raw - (_lastRawNs + period);  // how far this frame's time left the cadence
     // Turbo frames have no cadence to keep, and leaving turbo starts a new one
-    const bool cut = !_started || in.latchNs - _lastLatchNs > GAP_PERIODS * period ||
+    const bool cut = !_started || in.latchNs - _lastLatchNs > kGapPeriods * period ||
                      result.source == FrameClockSource::Latch || _lastSource == FrameClockSource::Latch ||
-                     std::llabs(step) > MAX_CARRY_NS;
+                     std::llabs(step) > kMaxCarryNs;
 
     int64_t target = raw;
     if (cut)
@@ -55,19 +68,19 @@ FrameTimingResult FrameClock::Next(const FrameTimingInput& in)
     }
     else
     {
-        if (result.source != _lastSource || std::llabs(step) > JUMP_NS)
+        if (result.source != _lastSource || std::llabs(step) > kJumpNs)
         {
             // Carry the step: this frame keeps the cadence of the last one
             _carryNs = _lastTargetNs + period - raw;
             _stats.carried++;
         }
-        if (_carryNs > SLEW_NS)
-            _carryNs -= SLEW_NS;
-        else if (_carryNs < -SLEW_NS)
-            _carryNs += SLEW_NS;
+        if (_carryNs > kSlewNs)
+            _carryNs -= kSlewNs;
+        else if (_carryNs < -kSlewNs)
+            _carryNs += kSlewNs;
         else
             _carryNs = 0;
-        target = raw + _carryNs;
+        target = std::min(raw + _carryNs, limit);
         // Never out of order, never two frames at one time
         if (target < _lastTargetNs + period / 2)
             target = _lastTargetNs + period / 2;
@@ -87,6 +100,8 @@ FrameTimingResult FrameClock::Next(const FrameTimingInput& in)
     else
         _stats.latchFrames++;
     _stats.carryNs = _carryNs;
+    _stats.clamped += result.clamped ? 1 : 0;
+    _stats.lastClamped = result.clamped;
     _stats.source = result.source;
 
     result.targetNs = target;

@@ -100,6 +100,8 @@ void MainWindow::fillPresentSettings(WindowDisplaySettings& s) const
                                             : DisplayRate::Keep);
     }
     s.present = _screenWrapper->presentStats();
+    if (context && context->pScreen)
+        FillPresentTiming(s.present, context->pScreen->GetPresentTimingStats());
     // The presenter measures against the frame's target, which carries the lip-sync trim: the offset to the sound takes
     // it out
     if (context && s.present.shown > 0)
@@ -463,7 +465,7 @@ std::string presentKey(const WindowDisplaySettings& s)
         << std::lround(p.minRefreshHz * 100) << '|' << std::lround(p.maxRefreshHz * 100) << '|' << s.smoothMotion
         << '|' << p.smooth << '|' << p.smoothDevice << '|' << p.game << '|' << s.displayRate << '|' << p.displayState
         << '|' << p.displayReason << '|' << std::lround(p.displayHz * 100) << '|' << std::lround(p.originalHz * 100)
-        << '|' << p.sync;
+        << '|' << p.sync << '|' << p.delayClamped;
     // Not the machine's rate: measured, it moves by hundredths every second (48.57, 48.78, 48.84 Hz), and every change
     // published the whole settings; it goes out with the next publish
     return key.str();

@@ -227,6 +227,31 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     NumberText(std::round(sound.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
         }
         line += ", clock " + present.get("clock", "none").asString();
+        // How the frames are timed: a delay the screen cannot hold (the picture leads its sound), the clock's steps
+        const Json::Value& timing = present["timing"];
+        if (timing.isObject())
+        {
+            if (timing.get("delay_clamped", false).asBool())
+                line += ", video delay held at " +
+                        NumberText(std::round(timing.get("max_delay_ms", 0.0).asDouble() * 10) / 10) +
+                        " ms: the sound comes later, the picture leads it (" +
+                        std::to_string(timing.get("clamped_frames", 0).asUInt64()) + " frames)";
+            line += ", " + std::to_string(timing.get("early", 0).asUInt64()) + " refreshes before any frame was due, " +
+                    std::to_string(timing.get("carried", 0).asUInt64()) + " clock steps carried, " +
+                    std::to_string(timing.get("cuts", 0).asUInt64()) + " cuts";
+        }
+        // The GPU time of the window's passes (what a slow refresh costs)
+        const Json::Value& gpu = present["gpu_ms"];
+        if (gpu.isObject())
+            for (const char* pass : {"smooth", "picture"})
+            {
+                const Json::Value& times = gpu[pass];
+                if (!times.isObject() || times.get("measured", 0).asUInt64() == 0)
+                    continue;
+                line += std::string(", gpu ") + pass + " p50 " +
+                        NumberText(std::round(times.get("p50", 0.0).asDouble() * 100) / 100) + " max " +
+                        NumberText(std::round(times.get("max", 0.0).asDouble() * 100) / 100) + " ms";
+            }
         // [VIDEO] DisplayRate: the display's mode switched for the machine, or why not
         const Json::Value& display = present["display"];
         const std::string state = display.get("state", "keep").asString();

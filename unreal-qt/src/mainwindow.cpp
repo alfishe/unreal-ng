@@ -2877,7 +2877,7 @@ void MainWindow::applyGameVideo()
     const controllers::ResolvedProfiles& resolved = _hostControllers->Resolved();
     controllers::VideoProfile video;
     std::string error;
-    if (resolved.video.IsNull() || !controllers::ParseVideoProfile(resolved.video, nullptr, video, error))
+    if (resolved.video.IsNull() || !controllers::ParseVideoProfile(resolved.video, video, error))
     {
         if (!error.empty())
             qWarning("video: %s: %s", resolved.videoProfile.c_str(), error.c_str());
@@ -2896,7 +2896,7 @@ void MainWindow::applyGameVideo()
     }
     smoothmotion::GameVideo game;
     game.picturePeriod = static_cast<int>(video.picturePeriod);
-    smoothmotion::ParseGameMode(video.smooth.c_str(), game.mode);
+    game.mode = video.smooth;
     const auto rect = [](const controllers::VideoProfile::Rect& r) { return smoothmotion::Rect{r[0], r[1], r[2], r[3]}; };
     game.window = rect(video.window);
     for (const controllers::VideoProfile::Rect& r : video.exclude)

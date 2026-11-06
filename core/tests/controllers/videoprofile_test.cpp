@@ -1,9 +1,10 @@
 /// @file videoprofile_test.cpp
 /// @brief A game profile's `video:` section (mapping-and-profiles.md §7.7): parsed and checked with the reason, only on
-/// a play profile, `picture_ready` naming one of the profile's events, the most specific profile's whole section
-/// resolved, kept by a save.
+/// a play profile, the most specific profile's whole section resolved, kept by a save.
 
 #include <gtest/gtest.h>
+
+#include <iterator>
 
 #include "profiles/profilestore.h"
 #include "profiles/videoprofile.h"
@@ -24,8 +25,7 @@ bool Parse(const std::string& video, VideoProfile& out, std::string& error)
     JsonValue value;
     if (!ParseYaml(video, value, error))
         return false;
-    const std::vector<std::string> events = {"picture_done"};
-    return ParseVideoProfile(value, &events, out, error);
+    return ParseVideoProfile(value, out, error);
 }
 }  // namespace
 
@@ -34,15 +34,14 @@ TEST(VideoProfile_Test, ParsesTheSection)
     VideoProfile video;
     std::string error;
     ASSERT_TRUE(Parse("picture_period: 5\nsmooth: cadence\nwindow: [32, 24, 256, 160]\n"
-                      "exclude: [[32, 168, 256, 16]]\npicture_ready: { on: picture_done }\n",
+                      "exclude: [[32, 168, 256, 16]]\n",
                       video, error))
         << error;
     EXPECT_EQ(video.picturePeriod, 5u);
-    EXPECT_EQ(video.smooth, "cadence");
+    EXPECT_EQ(video.smooth, smoothmotion::GameMode::Cadence);
     EXPECT_EQ(video.window, (VideoProfile::Rect{32, 24, 256, 160}));
     ASSERT_EQ(video.exclude.size(), 1u);
     EXPECT_EQ(video.exclude[0], (VideoProfile::Rect{32, 168, 256, 16}));
-    EXPECT_EQ(video.pictureReady, "picture_done");
 
     ASSERT_TRUE(Parse("smooth: carry\n", video, error)) << error;
     EXPECT_EQ(video.picturePeriod, 1u) << "the defaults";
@@ -61,8 +60,7 @@ TEST(VideoProfile_Test, InvalidSectionsSayWhy)
         {"window: [0, 0, 256]\n", "window is [x, y, width, height]"},
         {"window: [0, 0, 0, 16]\n", "the width and the height above 0"},
         {"window: [32, 24, 256, 160]\nexclude: [[0, 0, 8, 8]]\n", "exclude[0] is outside video.window"},
-        {"picture_ready: { on: nothing }\n", "no event 'nothing'"},
-        {"picture_ready: picture_done\n", "picture_ready is {on: <event>}"},
+        {"picture_ready: { on: picture_done }\n", "unknown field 'picture_ready'"},
         {"speed: 2\n", "unknown field 'speed'"},
     };
     for (const auto& [text, reason] : cases)
@@ -83,14 +81,10 @@ TEST(VideoProfile_Test, ProfilesCarryAndResolveIt)
 {
     ProfileStore store;
     std::string error;
-    // picture_ready names one of the profile's events
-    EXPECT_FALSE(store.AddText(Game("user/no-event", "aa01", "video:\n  picture_ready: { on: picture_done }\n"),
-                               ProfileScope::User, error));
-    EXPECT_NE(error.find("no event 'picture_done'"), std::string::npos) << error;
-    ASSERT_TRUE(store.AddText(Game("user/darkwing", "aa02",
-                                   "events:\n  picture_done: { probe: exec, address: \"0x8A3C\" }\n"
-                                   "video:\n  picture_period: 2\n  smooth: carry\n"
-                                   "  picture_ready: { on: picture_done }\n"),
+    // A bad section fails its profile
+    EXPECT_FALSE(store.AddText(Game("user/bad", "aa01", "video:\n  smooth: blend\n"), ProfileScope::User, error));
+    EXPECT_NE(error.find("smooth is off, cadence or carry"), std::string::npos) << error;
+    ASSERT_TRUE(store.AddText(Game("user/darkwing", "aa02", "video:\n  picture_period: 2\n  smooth: carry\n"),
                               ProfileScope::User, error))
         << error;
     // A debug profile has no picture cadence
@@ -106,9 +100,9 @@ TEST(VideoProfile_Test, ProfilesCarryAndResolveIt)
     ASSERT_FALSE(resolved.video.IsNull());
     EXPECT_EQ(resolved.videoProfile, "user/darkwing");
     VideoProfile video;
-    ASSERT_TRUE(ParseVideoProfile(resolved.video, nullptr, video, error)) << error;
+    ASSERT_TRUE(ParseVideoProfile(resolved.video, video, error)) << error;
     EXPECT_EQ(video.picturePeriod, 2u);
-    EXPECT_EQ(video.smooth, "carry");
+    EXPECT_EQ(video.smooth, smoothmotion::GameMode::Carry);
 
     // A save keeps it
     const Profile* profile = store.Find("user/darkwing");
@@ -116,4 +110,23 @@ TEST(VideoProfile_Test, ProfilesCarryAndResolveIt)
     Profile again;
     ASSERT_TRUE(ParseProfile(ProfileStore::Dump(*profile), again, error)) << error;
     EXPECT_EQ(again.video.Dump(), profile->video.Dump());
+}
+
+/// The profile's words are smooth motion's own (smoothmotion::ParseGameMode, what the presenter runs): the library
+/// keeps a list of them, held to the engine's here
+TEST(VideoProfile_Test, SmoothWordsAreSmoothMotions)
+{
+    ASSERT_EQ(std::size(kVideoSmoothWords), static_cast<size_t>(smoothmotion::GameMode::Carry) + 1);
+    for (size_t i = 0; i < std::size(kVideoSmoothWords); i++)
+    {
+        const auto mode = static_cast<smoothmotion::GameMode>(i);
+        EXPECT_STREQ(kVideoSmoothWords[i], smoothmotion::GameModeName(mode));
+        smoothmotion::GameMode parsed = smoothmotion::GameMode::Off;
+        ASSERT_TRUE(smoothmotion::ParseGameMode(kVideoSmoothWords[i], parsed));
+        EXPECT_EQ(parsed, mode);
+        VideoProfile video;
+        std::string error;
+        ASSERT_TRUE(Parse(std::string("smooth: ") + kVideoSmoothWords[i] + "\n", video, error)) << error;
+        EXPECT_EQ(video.smooth, mode);
+    }
 }

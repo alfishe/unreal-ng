@@ -2975,6 +2975,45 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheNewSettingsAndTheir
         EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
 }
 
+/// The present report's timing and GPU times are in the text: an agent may see nothing else
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["timing"]["delay_clamped"] = true;
+    present["timing"]["max_delay_ms"] = 184.32;
+    present["timing"]["clamped_frames"] = 1200;
+    present["timing"]["early"] = 3;
+    present["timing"]["carried"] = 2;
+    present["timing"]["cuts"] = 1;
+    present["gpu_ms"]["smooth"]["p50"] = 0.4123;
+    present["gpu_ms"]["smooth"]["max"] = 1.25;
+    present["gpu_ms"]["smooth"]["measured"] = 600;
+    present["gpu_ms"]["picture"]["measured"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"clock audio", "video delay held at 184.3 ms: the sound comes later, the picture leads it (1200 frames)",
+                             "3 refreshes before any frame was due, 2 clock steps carried, 1 cuts",
+                             "gpu smooth p50 0.41 max 1.25 ms"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+    EXPECT_EQ(read.text.find("gpu picture"), std::string::npos) << "a pass never measured is left out: " << read.text;
+
+    // In reach: no clamp named
+    settings["present"]["timing"]["delay_clamped"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult fits = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(fits.isError) << fits.text;
+    EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_CrtParamsAndViewport_UseTheirRoutes)
 {
     Json::Value params;

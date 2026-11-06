@@ -484,14 +484,11 @@ Most games draw a picture every 2nd-5th frame; the presenter can smooth the step
 without added latency, and the profile says how, instead of the presenter guessing at run time:
 
 ```yaml
-events:
-  picture_done: { probe: exec, address: "0x8A3C" }   # optional: the game's "frame drawn" point
 video:
-  picture_period: 5                 # frames per picture (the usual one; picture_ready refines it)
+  picture_period: 5                 # frames per picture (the usual one)
   smooth: cadence                   # off | cadence | carry
   window: [32, 24, 256, 160]        # play area on the framebuffer: x, y, width, height
   exclude: [[32, 168, 256, 16]]     # regions inside the window left alone (score, status row)
-  picture_ready: { on: picture_done }   # optional: each picture's frame exactly, even when the period varies
 ```
 
 - `smooth`: `cadence` interpolates to the next picture once it is in the presenter's lookahead; `carry` carries the
@@ -499,11 +496,10 @@ video:
   interpolate`.
 - `window` / `exclude` in framebuffer pixels of the machine's video mode, border included (the coordinates
   `capture/framebuffer` returns). Outside the window the presenter shows the frame as it is.
-- `picture_ready` names an event of the same profile (`events:`), the probe the haptic rules use; without it the
-  presenter takes a burst of changed frames as one picture and `picture_period` as the expected distance.
+- The presenter takes a burst of changed frames as one picture and `picture_period` as the expected distance.
 - The section applies only with `[VIDEO] SmoothMotion = interpolate`; the owner's switch stays the global one.
 - Validation: `picture_period` 1..16, `window` inside the largest framebuffer of the profile's machines, `exclude`
-  inside `window`, `picture_ready.on` an existing event. A profile without `video:` is unchanged.
+  inside `window`; any other field is refused. A profile without `video:` is unchanged.
 - Drafting: `tools/smoothmotion/capture.py` captures frames of the game in play through the WebAPI (`run_frame` +
   `capture/framebuffer`); `tools/smoothmotion/draft-video-profile.py` measures the period (the median distance
   between pictures, a burst of changed frames one picture), the window (the 8x8 blocks that change on the game's
