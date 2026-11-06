@@ -27,14 +27,17 @@ class TTDCursorCell
 public:
     /// Store `cursor` (its `paused` is not stored: read it live). Equal to the last one: nothing changes. True when
     /// `history` flipped (a history appeared or went; before the first write there was none): the backend tells the
-    /// surface context (NoteHistoryChange), whose default follows the history
-    bool Publish(const TTDCursor& cursor)
+    /// surface context (NoteHistoryChange), whose default follows the history. `changed`: set when a new value was
+    /// stored (the readers of a frame's state are told: NotifyFramePublished)
+    bool Publish(const TTDCursor& cursor, bool* changed = nullptr)
     {
         std::lock_guard<std::mutex> lock(_writer);
         TTDCursor value = cursor;
         value.paused = false;
         if (_written && value == _last)
             return false;
+        if (changed != nullptr)
+            *changed = true;
         const bool flipped = (_written && _last.history) != value.history;
         _last = value;
         _written = true;

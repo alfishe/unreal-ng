@@ -1,7 +1,9 @@
 #include "companion-event-hub.h"
 
 #include "3rdparty/message-center/messagecenter.h"
+#include "emulator/execution/companionactions.h"
 #include "emulator/platform.h"
+#include "emulator/readoutschanged.h"
 
 #include <set>
 #include <sstream>
@@ -24,11 +26,12 @@ Json::Value Error(const std::string& error, const std::string& message)
     return out;
 }
 
-/// What can change an instance's entry in `me`: its state, who holds it, the companions, the instance list
+/// What can change an instance's entry in `me`: its state, who holds it, the companions, the instance list, the
+/// instance a surface follows (NC_READOUTS_CHANGED of time travel besides: Start)
 const char* const kTriggers[] = {
     NC_EMULATOR_STATE_CHANGE,    NC_RUN_CONTROL_CHANGED,         NC_COMPANION_CHANGED,
     NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED, NC_EMULATOR_SELECTION_CHANGED,
-    NC_FEATURE_CHANGED,
+    NC_FEATURE_CHANGED,          NC_SURFACE_TARGET,
 };
 }  // namespace
 
@@ -57,6 +60,58 @@ void CompanionEventHub::Start()
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     for (const char* topic : kTriggers)
         _observers.emplace_back(topic, messageCenter.AddObserver(topic, [this](int, Message*) { Refresh(); }));
+    // Time travel's state (recording, a history appearing or going) decides rewind and the speed lock; the other
+    // areas (the mixer, the tape, ...) are not in `me`
+    _observers.emplace_back(NC_READOUTS_CHANGED, messageCenter.AddObserver(NC_READOUTS_CHANGED, [this](int, Message* m) {
+        const auto* payload = m != nullptr ? dynamic_cast<ReadoutsChangedPayload*>(m->obj) : nullptr;
+        if (payload != nullptr && payload->area.compare(0, 3, "ttd") == 0)
+            Refresh();
+    }));
+}
+
+void CompanionEventHub::SetTimer(Arm arm)
+{
+    std::lock_guard<std::mutex> lock(_timerMutex);
+    _arm = std::move(arm);
+    _timerGeneration++;
+    _timerAt.reset();
+    _timerDelay = 0;
+}
+
+double CompanionEventHub::TimerDelay()
+{
+    std::lock_guard<std::mutex> lock(_timerMutex);
+    return _timerAt ? _timerDelay : 0;
+}
+
+void CompanionEventHub::ArmNext(bool anybody)
+{
+    const std::optional<std::chrono::milliseconds> left = anybody ? companion::NextTimedChange() : std::nullopt;
+    std::lock_guard<std::mutex> lock(_timerMutex);
+    if (!left || !_arm)
+    {
+        _timerGeneration++;  // an armed task finds itself stale
+        _timerAt.reset();
+        _timerDelay = 0;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto at = now + *left;
+    if (_timerAt && *_timerAt <= at && *_timerAt > now)
+        return;  // armed for an earlier moment: it arms again for this one
+    const uint64_t generation = ++_timerGeneration;
+    _timerAt = at;
+    _timerDelay = std::chrono::duration<double>(*left).count();
+    _arm(_timerDelay, [this, generation] {
+        {
+            std::lock_guard<std::mutex> fired(_timerMutex);
+            if (generation != _timerGeneration)
+                return;
+            _timerAt.reset();
+            _timerDelay = 0;
+        }
+        Refresh();
+    });
 }
 
 void CompanionEventHub::Stop()
@@ -216,6 +271,7 @@ void CompanionEventHub::SendSnapshot(const void* client, const char* op)
     }
     if (send)
         send(text);
+    ArmNext(true);  // a lease or a cooldown under way: its end is pushed too
 }
 
 void CompanionEventHub::Refresh()
@@ -231,7 +287,10 @@ void CompanionEventHub::Refresh()
         snapshot = _snapshot;
     }
     if (targets.empty())
+    {
+        ArmNext(false);
         return;
+    }
 
     // Built outside the lock: `me` reads every instance
     std::vector<std::optional<Json::Value>> views;
@@ -302,4 +361,5 @@ void CompanionEventHub::Refresh()
     for (const Close& close : closes)
         if (close)
             close();
+    ArmNext(true);
 }
