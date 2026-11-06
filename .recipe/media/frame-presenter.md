@@ -28,7 +28,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
 - **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl` / `software`),
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
-  `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, renders,
+  `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
   blended, interpolated, motion_fields, on_device, held_flicker}, `display` {state, reason, hz, original_hz,
   machine_hz}. The counters cover the native presenter's last 600 presents; the GL and software paths have no screen
   times (they stay 0).
