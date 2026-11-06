@@ -70,8 +70,8 @@ CPUs later). Layers, the higher wins where claims overlap (as the label sets), i
 |:--|:--|:--|
 | `user` | highest | the debugger UI and the planes (mark as code / data, rename) |
 | `profile:<id>` | high | the matched profile's `memory:` section when media loads and the profile matches; dropped on another match |
-| `analysis` | middle | an L2 run (`RegionStore` claims, confidence kept) on request |
-| `runtime` | low | derived on query from L0 facts / coverage when tracking is on: opcode fetch = code start, operand fetch = code, read but never executed = data; no new hot-path work |
+| `analysis` | middle | the instance's last L2 run (`RegionStore` claims on their pages, confidence kept; the `untouched` filler left out; decoded instructions as entries), taken on its own when a new build is there; `SetLayer(analysis)` puts other content in its place until cleared |
+| `runtime` | low | derived at each query from the L0 facts (level `facts`; Z80 mode: CPU places, physical mode: page places) or, without them, the coverage: fetched = code, opcode fetch = instruction start, data / stack access only = data; coverage starts at most 4 bytes apart join into one stretch. No new hot-path work (the window's kinds read under one lock), no revision step while the program runs |
 | `bundle:<rom>` | lowest | ROM symbol bundles (`data/symbols/manifest.json`) gain regions next to their labels |
 
 Queries (resolve a Z80 address through the current paging, then look up by physical key):
@@ -80,7 +80,7 @@ Queries (resolve a Z80 address through the current paging, then look up by physi
 |:--|:--|
 | `At(address)` | the winning claim: kind, layer, source, title, confidence |
 | `Ranges(from, to)` | the CPU range as spans of one winning claim each, flattened by priority (the view's colouring and the disassembler's rows); `claimStart` when a span begins at its claim's first byte |
-| `Anchors(from, to)`, `IsInstructionStart(address)` | instruction starts known for certain: entries and the first byte of a winning code claim (labels on code and runtime opcode fetches join with step 3) |
+| `Anchors(from, to)`, `IsInstructionStart(address)` | instruction starts known for certain: entries of every layer (runtime opcode fetches and L2 instructions included) unless a higher layer claims the byte as no code, and the first byte of a winning code claim |
 | `Comments(from, to)` | one comment per address, the highest layer's |
 | `Mark(range, kind, title)` / `Unmark(range)` / `SetComment` | the `user` layer. A mark is made on the pages the CPU shows now (one claim per window it crosses; the part after a window boundary or a cut starts no instruction); `cpuView` marks the CPU addresses instead |
 | `Revision()` | grows on every change, for redraws |
@@ -121,7 +121,7 @@ and the `user` labels into the profile's `memory:` section (or a new profile wit
 |:--|:--|
 | 1 | Move game profiles to `data/software/` (loader, index, packaging, docs); `memory:` section parsed, validated, kept and saved back (`MemoryProfile_Test`) |
 | 2 | `MemoryMarkup` with layers, physical keys, queries; profile layer + profile label set on a match (done: `MemoryMarkup_Test`, `MemoryProfile_Test.LaidOverAMachineAndTakenBack`) |
-| 3 | Runtime layer from L0 facts / coverage; analysis layer from L2 |
+| 3 | Runtime layer from L0 facts / coverage; analysis layer from L2 (done: `MemoryMarkup_Test.Runtime*`, `AnalysisLayerFollowsTheLastBuild`) |
 | 4 | Planes; save to profile |
 | 5 | Consumers: disassembler window (anchors, data rows), memory viewer colouring |
 
@@ -129,8 +129,6 @@ and the `user` labels into the profile's `memory:` section (or a new profile wit
 
 - The user's own game profiles stay in `<user config>/unreal-ng/controllers/profiles/games/` (step 1 moved the
   shipped ones only); whether they follow to `<user config>/unreal-ng/software/`.
-
 - Physical keys of other machines (Sprinter, ATM, Next pages) go through the same absolute page index; card CPUs get
   their own store.
-- Whether the analysis layer refreshes on its own after an L2 run or only on request.
 </content>

@@ -184,6 +184,10 @@ public:
     /// Copies for a reader on another thread: false when there is no such entry (not allocated, page not touched)
     bool ReadZ80(uint16_t address, ByteFacts& out) const;
     bool ReadPhysical(uint16_t page, uint16_t offset, ByteFacts& out) const;
+    /// The kinds alone of @p count bytes from @p address / @p offset on (the markup's runtime layer reads a window at
+    /// once); false as above, the physical range is cut at the page end
+    bool ReadZ80Kinds(uint16_t address, size_t count, uint8_t* out) const;
+    bool ReadPhysicalKinds(uint16_t page, uint16_t offset, size_t count, uint8_t* out) const;
 
     /// The pages that have facts (physical mode), ascending
     std::vector<uint16_t> TouchedPages() const;

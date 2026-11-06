@@ -4,8 +4,15 @@
 #include <map>
 
 #include "3rdparty/digestpp/digestpp.hpp"
+#include "debugger/analyzers/analysis/analysisjobs.h"
+#include "debugger/analyzers/analyzermanager.h"
+#include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/debugmanager.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/memoryaccessfacts.h"
+#include "emulator/memory/memoryaccesstracker.h"
 
 namespace markup
 {
@@ -45,7 +52,76 @@ void Subtract(const Place& place, uint16_t cutLo, uint16_t cutHi, std::vector<Pl
         out.push_back(right);
     }
 }
+
+constexpr uint16_t kFirstCachePage = MAX_RAM_PAGES;
+constexpr uint16_t kFirstMiscPage = MAX_RAM_PAGES + MAX_CACHE_PAGES;
+constexpr uint16_t kFirstRomPage = MAX_RAM_PAGES + MAX_CACHE_PAGES + MAX_MISC_PAGES;
+
+/// The absolute page (the tracker's, the analysis' PhysKey) of a RAM / ROM / cache page
+uint16_t AbsolutePage(Space space, uint16_t page)
+{
+    return space == Space::Rom ? static_cast<uint16_t>(kFirstRomPage + page)
+           : space == Space::Cache ? static_cast<uint16_t>(kFirstCachePage + page)
+                                   : page;
+}
+
+/// The page of an absolute page; false for the misc page and past the table
+bool PageOf(uint16_t absolute, Space& space, uint16_t& page)
+{
+    if (absolute < kFirstCachePage)
+    {
+        space = Space::Ram;
+        page = absolute;
+    }
+    else if (absolute < kFirstMiscPage)
+    {
+        space = Space::Cache;
+        page = static_cast<uint16_t>(absolute - kFirstCachePage);
+    }
+    else if (absolute >= kFirstRomPage && absolute < MAX_PAGES)
+    {
+        space = Space::Rom;
+        page = static_cast<uint16_t>(absolute - kFirstRomPage);
+    }
+    else
+        return false;
+    return true;
+}
+
+constexpr uint8_t kCodeKinds = AccessKind::OpcodeFetch | AccessKind::OperandFetch;
+constexpr uint8_t kDataKinds = AccessKind::DataRead | AccessKind::DataWrite | AccessKind::StackRead |
+                               AccessKind::StackWrite | AccessKind::BlockAccess;
+/// The longest Z80 instruction: executed addresses at most this far apart are one stretch of code
+constexpr uint16_t kLongestInstruction = 4;
 }  // namespace
+
+LayerContent FromStructure(const analysis::L2Result& l2)
+{
+    LayerContent layer;
+    layer.source = "analysis";
+    for (const analysis::Region& region : l2.store.Regions())
+    {
+        Claim claim;
+        if (region.kind == analysis::RegionKind::Untouched ||
+            !PageOf(analysis::KeyPage(region.lo), claim.place.space, claim.place.page))
+            continue;
+        claim.place.lo = analysis::KeyOffset(region.lo);
+        claim.place.hi = analysis::KeyOffset(region.hi);
+        claim.kind = region.kind;
+        claim.title = region.title.empty() ? region.label : region.title;
+        claim.confidence = region.confidence;
+        layer.claims.push_back(std::move(claim));
+    }
+    for (const analysis::CodeLine& line : l2.code)
+    {
+        Place place;
+        if (!PageOf(analysis::KeyPage(line.key), place.space, place.page))
+            continue;
+        place.lo = place.hi = analysis::KeyOffset(line.key);
+        layer.entries.push_back(place);
+    }
+    return layer;
+}
 
 const char* LayerName(Layer layer)
 {
@@ -83,13 +159,133 @@ void MemoryMarkup::ClearLayer(Layer layer)
 LayerContent MemoryMarkup::GetLayer(Layer layer) const
 {
     std::lock_guard<std::mutex> lock(_lock);
+    if (layer == Layer::Analysis)
+    {
+        RefreshStructureLocked();
+        const LayerContent& set = _layers[static_cast<int>(Layer::Analysis)];
+        return set.source.empty() ? _fromStructure : set;
+    }
     return _layers[static_cast<int>(layer)];
 }
 
 uint64_t MemoryMarkup::Revision() const
 {
     std::lock_guard<std::mutex> lock(_lock);
+    RefreshStructureLocked();
     return _revision;
+}
+
+void MemoryMarkup::RefreshStructureLocked() const
+{
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    if (!emulator)
+        return;
+    std::shared_ptr<const analysis::L2Result> l2 = analysis::L1Jobs::Instance().Structure(emulator->GetId());
+    if (l2 == _structure)
+        return;
+    _structure = std::move(l2);
+    _fromStructure = _structure ? FromStructure(*_structure) : LayerContent{};
+    _revision++;
+}
+
+void MemoryMarkup::ViewOf(const std::vector<Window>& windows, bool derive, View& view) const
+{
+    RefreshStructureLocked();
+    for (int i = 0; i < kLayerCount; i++)
+        view.layers[i] = &_layers[i];
+    const LayerContent& analysisSet = _layers[static_cast<int>(Layer::Analysis)];
+    if (analysisSet.source.empty())
+        view.layers[static_cast<int>(Layer::Analysis)] = &_fromStructure;
+    if (derive)
+    {
+        view.runtime = _layers[static_cast<int>(Layer::Runtime)];
+        if (view.runtime.source.empty())
+            view.runtime.source = "runtime";
+        DeriveRuntime(windows, view.runtime);
+        view.layers[static_cast<int>(Layer::Runtime)] = &view.runtime;
+    }
+}
+
+void MemoryMarkup::DeriveRuntime(const std::vector<Window>& windows, LayerContent& out) const
+{
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    if (!memory)
+        return;
+    const MemoryAccessTracker& tracker = memory->GetAccessTracker();
+    const bool facts = tracker.GetLevel() == TrackerLevel::Facts;
+    const bool z80View = tracker.GetTrackingMode() == TrackingMode::Z80AddressSpace;
+    CoverageAnalyzer* coverage = nullptr;
+    if (!facts && _context->pDebugManager && _context->pDebugManager->GetAnalyzerManager())
+        coverage = _context->pDebugManager->GetAnalyzerManager()->getAnalyzer<CoverageAnalyzer>("coverage");
+    if (!facts && !coverage)
+        return;
+
+    std::vector<uint8_t> kinds;
+    for (const Window& window : windows)
+    {
+        const size_t size = static_cast<size_t>(window.hi - window.lo) + 1;
+        kinds.assign(size, 0);
+        // Physical facts name the page: claims on it; Z80 facts and the coverage name CPU addresses
+        const bool onPage = facts && !z80View;
+        if (facts && z80View)
+        {
+            if (!tracker.ReadZ80FactKinds(window.lo, size, kinds.data()))
+                continue;
+        }
+        else if (onPage)
+        {
+            if (!window.mapped ||
+                !tracker.ReadPhysicalFactKinds(AbsolutePage(window.space, window.page), window.offset, size,
+                                               kinds.data()))
+                continue;
+        }
+        else
+        {
+            // The coverage knows the instruction starts: the bytes up to the next one close by are their operands
+            size_t previous = SIZE_MAX;
+            for (size_t i = 0; i < size; i++)
+            {
+                if (!coverage->isExecuted(static_cast<uint16_t>(window.lo + i)))
+                    continue;
+                kinds[i] = static_cast<uint8_t>(AccessKind::OpcodeFetch);
+                if (previous != SIZE_MAX && i - previous <= kLongestInstruction)
+                    for (size_t j = previous + 1; j < i; j++)
+                        kinds[j] = static_cast<uint8_t>(AccessKind::OperandFetch);
+                previous = i;
+            }
+        }
+
+        auto placeOf = [&](size_t first, size_t last) {
+            if (onPage)
+                return Place{window.space, window.page, static_cast<uint16_t>(window.offset + first),
+                             static_cast<uint16_t>(window.offset + last)};
+            return Place{Space::Cpu, 0, static_cast<uint16_t>(window.lo + first),
+                         static_cast<uint16_t>(window.lo + last)};
+        };
+        // Code where the CPU fetched, data where it only read or wrote; one claim per run of one class
+        auto classOf = [&kinds](size_t i) { return (kinds[i] & kCodeKinds) ? 1 : (kinds[i] & kDataKinds) ? 2 : 0; };
+        size_t i = 0;
+        while (i < size)
+        {
+            const int cls = classOf(i);
+            size_t end = i;
+            while (end + 1 < size && classOf(end + 1) == cls)
+                end++;
+            if (cls != 0)
+            {
+                Claim claim;
+                claim.place = placeOf(i, end);
+                claim.kind = cls == 1 ? analysis::RegionKind::Code : analysis::RegionKind::Data;
+                claim.title = cls == 1 ? "executed" : "accessed";
+                claim.continues = cls == 1 && !(kinds[i] & AccessKind::OpcodeFetch);
+                out.claims.push_back(std::move(claim));
+            }
+            i = end + 1;
+        }
+        for (size_t b = 0; b < size; b++)
+            if (kinds[b] & AccessKind::OpcodeFetch)
+                out.entries.push_back(placeOf(b, b));
+    }
 }
 
 std::vector<MemoryMarkup::Window> MemoryMarkup::WindowsOf(uint16_t from, uint16_t to) const
@@ -166,17 +362,17 @@ bool MemoryMarkup::GuardHolds(const Claim& claim) const
     return digestpp::sha256().absorb(bytes.data(), bytes.size()).hexdigest() == claim.sha256;
 }
 
-std::vector<Span> MemoryMarkup::RangesLocked(uint16_t from, uint16_t to) const
+std::vector<Span> MemoryMarkup::RangesLocked(const View& view, const std::vector<Window>& windows, uint16_t from,
+                                             uint16_t to) const
 {
     std::vector<Span> spans;
     if (from > to)
         return spans;
-    const std::vector<Window> windows = WindowsOf(from, to);
 
     std::vector<Piece> pieces;
     for (int layer = 0; layer < kLayerCount; layer++)
     {
-        const std::vector<Claim>& claims = _layers[layer].claims;
+        const std::vector<Claim>& claims = view.layers[layer]->claims;
         for (size_t i = 0; i < claims.size(); i++)
         {
             bool checked = false;
@@ -254,13 +450,13 @@ std::vector<Span> MemoryMarkup::RangesLocked(uint16_t from, uint16_t to) const
             last = &piece;
             continue;
         }
-        const Claim& claim = _layers[piece.layer].claims[piece.index];
+        const Claim& claim = view.layers[piece.layer]->claims[piece.index];
         Span span;
         span.lo = piece.lo;
         span.hi = piece.hi;
         span.kind = claim.kind;
         span.layer = static_cast<Layer>(piece.layer);
-        span.source = _layers[piece.layer].source;
+        span.source = view.layers[piece.layer]->source;
         span.title = claim.title;
         span.confidence = claim.confidence;
         span.claimStart = piece.start == piece.lo;
@@ -272,14 +468,22 @@ std::vector<Span> MemoryMarkup::RangesLocked(uint16_t from, uint16_t to) const
 
 std::vector<Span> MemoryMarkup::Ranges(uint16_t from, uint16_t to) const
 {
+    if (from > to)
+        return {};
+    const std::vector<Window> windows = WindowsOf(from, to);
     std::lock_guard<std::mutex> lock(_lock);
-    return RangesLocked(from, to);
+    View view;
+    ViewOf(windows, true, view);
+    return RangesLocked(view, windows, from, to);
 }
 
 std::optional<Span> MemoryMarkup::At(uint16_t address) const
 {
+    const std::vector<Window> windows = WindowsOf(address, address);
     std::lock_guard<std::mutex> lock(_lock);
-    std::vector<Span> spans = RangesLocked(address, address);
+    View view;
+    ViewOf(windows, true, view);
+    std::vector<Span> spans = RangesLocked(view, windows, address, address);
     if (spans.empty())
         return std::nullopt;
     return spans.front();
@@ -287,20 +491,33 @@ std::optional<Span> MemoryMarkup::At(uint16_t address) const
 
 std::vector<uint16_t> MemoryMarkup::Anchors(uint16_t from, uint16_t to) const
 {
-    std::lock_guard<std::mutex> lock(_lock);
     std::vector<uint16_t> anchors;
     if (from > to)
         return anchors;
-    for (const Span& span : RangesLocked(from, to))
+    const std::vector<Window> windows = WindowsOf(from, to);
+    std::lock_guard<std::mutex> lock(_lock);
+    View view;
+    ViewOf(windows, true, view);
+    const std::vector<Span> spans = RangesLocked(view, windows, from, to);
+    for (const Span& span : spans)
         if (span.kind == analysis::RegionKind::Code && span.claimStart)
             anchors.push_back(span.lo);
-    const std::vector<Window> windows = WindowsOf(from, to);
-    for (const LayerContent& layer : _layers)
-        for (const Place& entry : layer.entries)
+    // An entry stands unless a higher layer says the byte is no code
+    auto overruled = [&spans](uint16_t address, int layer) {
+        auto it = std::upper_bound(spans.begin(), spans.end(), address,
+                                   [](uint16_t a, const Span& span) { return a < span.lo; });
+        if (it == spans.begin())
+            return false;
+        --it;
+        return address <= it->hi && it->kind != analysis::RegionKind::Code && static_cast<int>(it->layer) > layer;
+    };
+    for (int layer = 0; layer < kLayerCount; layer++)
+        for (const Place& entry : view.layers[layer]->entries)
             for (const Window& window : windows)
             {
                 uint16_t lo = 0, hi = 0;
-                if (InWindow(Place{entry.space, entry.page, entry.lo, entry.lo}, window, lo, hi))
+                if (InWindow(Place{entry.space, entry.page, entry.lo, entry.lo}, window, lo, hi) &&
+                    !overruled(lo, layer))
                     anchors.push_back(lo);
             }
     std::sort(anchors.begin(), anchors.end());
@@ -316,13 +533,15 @@ bool MemoryMarkup::IsInstructionStart(uint16_t address) const
 
 std::vector<CommentAt> MemoryMarkup::Comments(uint16_t from, uint16_t to) const
 {
-    std::lock_guard<std::mutex> lock(_lock);
     std::map<uint16_t, CommentAt> byAddress;
     if (from > to)
         return {};
     const std::vector<Window> windows = WindowsOf(from, to);
+    std::lock_guard<std::mutex> lock(_lock);
+    View view;
+    ViewOf(windows, false, view);
     for (int layer = 0; layer < kLayerCount; layer++)
-        for (const Note& note : _layers[layer].comments)
+        for (const Note& note : view.layers[layer]->comments)
             for (const Window& window : windows)
             {
                 uint16_t lo = 0, hi = 0;
