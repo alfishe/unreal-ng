@@ -24,7 +24,9 @@ usage: [.recipe/machines/gmx.md](../../../.recipe/machines/gmx.md); the software
   the 24C16 kept in `[SMUC] NvramFile` (the settings folder), a first power-on starts from `NvramInitial`
   (`data/configs/gmx/smuc-nvram-initial.bin`, what the monitor itself writes into blank cells, so CMOS and NVRAM
   checksums pass). The fast test lists "128 bytes CMOS found, NVRAM found, Interrupt controller found, Modem
-  found"; HDD and SD "not found" only while no medium is inserted ([evidence/](evidence/))
+  found" with `[SMUC] Isa=MODEM`; HDD and SD "not found" only while no medium is inserted ([evidence/](evidence/)).
+  2026-11-05: the shipped config leaves the slot empty (`Isa=NONE`, a typical board): the window shares `#7FFE` with
+  the Space - B row, and with the DOS ports open a modem's scratch register answered there (VPlayer paused on every key)
 - [x] Phase 8 (2026-11-01): software and the hard disk. A disk autostart right after power-on waits for the
   firmware boot (its end: the first 48 BASIC KEY-SCAN, `IN #FE` at `#0296` on the plane's 48 ROM page, frame 338 on
   6.44 and 313 on 5.00; the monitor-call stub's `#7EFD = #40` at frame 112 is too early), then does the quick reset into the plane's TR-DOS with drive A on the floppy (`#7FBA` D7; a reset
