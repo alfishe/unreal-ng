@@ -121,3 +121,18 @@ TEST(VideoSyncWindow_Test, TheCellsStayPutWhileTheValuesChange)
     EXPECT_EQ(window.size(), size);
     EXPECT_EQ(window.readout("off_beat"), "");
 }
+
+TEST(VideoSyncWindow_Test, TheDisplayRateSaysHowManyRefreshesAFrameTakes)
+{
+    WindowDisplaySettings now = Quiet();
+    now.present.sync = "display_rate";
+    now.present.displayHz = 50.0;
+    now.present.machineHz = 50.0;
+    VideoSyncWindow window([&now]() { return now; });
+    window.refresh();
+    EXPECT_TRUE(window.readout("mode").endsWith("each frame for a refresh")) << window.readout("mode").toStdString();
+
+    now.present.displayHz = 100.0;
+    window.refresh();
+    EXPECT_TRUE(window.readout("mode").endsWith("each frame for 2 refreshes")) << window.readout("mode").toStdString();
+}

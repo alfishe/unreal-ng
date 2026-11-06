@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "emulator/video/presentpolicy.h"
 
@@ -16,7 +19,7 @@
 ///   tearing allowed for VRR (dxgipresenter.cpp)
 ///
 /// BeginFrame, PresentFrame and the destructor on the thread whose GL context draws (the GUI thread); the rest from
-/// any thread.
+/// any thread (what they read of the window system is cached on the GUI thread).
 class NativePresenter
 {
 public:
@@ -34,6 +37,7 @@ public:
         double errorMax = 0.0;
         double gpuWaitP50 = 0.0;  ///< the wait for GL's draw before the native pass
         double gpuWaitMax = 0.0;
+        uint64_t gpuWaitTimeouts = 0;  ///< GL's draw not done in time: the picture not presented (Metal)
         double drawableWaitP50 = 0.0;  ///< the wait for a free drawable / back buffer
         double drawableWaitMax = 0.0;
         double minRefreshHz = 0.0;  ///< the display's range (min = max: fixed)
@@ -92,8 +96,55 @@ public:
 
     /// Why the last BeginFrame gave no framebuffer (empty: none failed)
     virtual std::string LastFailure() const { return {}; }
+    /// The device is gone (a GPU reset removed it): BeginFrame fails from now on, only a new presenter presents
+    virtual bool Lost() const { return false; }
 
     virtual Stats GetStats() const = 0;
     /// One line for the log
     virtual std::string Describe() const = 0;
 };
+
+/// The presenters' shared bookkeeping (nativepresenter.cpp): the sample rings their statistics come from and the
+/// UNREAL_PRESENT_TRACE file. Not locked: each presenter keeps them under its own statistics mutex
+namespace presentstats
+{
+/// The last presents the percentiles cover
+constexpr size_t kWindow = 600;
+
+/// The last kWindow samples (ms)
+class Ring
+{
+public:
+    void Add(double value);
+    const std::vector<double>& Values() const { return _values; }
+
+private:
+    std::vector<double> _values;
+    size_t _next = 0;
+};
+
+/// The `q` quantile of `values` (0 when empty)
+double Percentile(std::vector<double> values, double q);
+/// Stats::window and the error, GL wait and drawable wait percentiles from copies of the rings
+void Fill(NativePresenter::Stats& s, std::vector<double> errors, std::vector<double> gpuWaits,
+          std::vector<double> drawableWaits);
+
+/// UNREAL_PRESENT_TRACE (environment-variables.md): one line per present, "serial atNs submittedNs screenNs latchNs
+/// plannedNs wokeNs drawableWaitNs" (steady clock ns; screenNs 0: never on screen). The first presenter of the process
+/// starts the file, a later one (made anew after a GPU reset) appends: the lines before the reset stay
+class Trace
+{
+public:
+    Trace();
+    ~Trace();
+    Trace(const Trace&) = delete;
+    Trace& operator=(const Trace&) = delete;
+
+    bool Active() const { return _file != nullptr; }
+    void Write(const NativePresenter::TraceInfo& info, int64_t atNs, int64_t submittedNs, int64_t screenNs,
+               int64_t drawableWaitNs);
+
+private:
+    FILE* _file = nullptr;
+};
+}  // namespace presentstats

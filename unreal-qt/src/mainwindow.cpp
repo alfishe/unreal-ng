@@ -212,7 +212,8 @@ ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
             return false;
         if (info)
             *info = shown;
-        if (shown.latchNs != 0)
+        // A refresh asks with `info`; a grab (a screenshot, no info) is not a frame reaching the screen
+        if (info && shown.latchNs != 0)
         {
             // Signed EMA: unsigned (sample - prev) wraps when the new sample is smaller, exploding the average
             const int64_t sample = std::clamp<int64_t>((hostNs - shown.latchNs) / 1000, 0, 1000000);

@@ -24,6 +24,31 @@ namespace
 constexpr int kFirstRecheckMs = 1000;
 constexpr int kNextRecheckMs = 2000;
 constexpr int kRechecks = 5;
+
+#ifdef Q_OS_WIN
+/// The display adapters on the desktop and which one is primary: WM_DISPLAYCHANGE also comes for a mode change (the
+/// window's own display rate switch, [VIDEO] DisplayRate = match, on every focus change), which brings no other GPU
+QString DisplayAdapters()
+{
+    QString adapters;
+    DISPLAY_DEVICEW device{};
+    device.cb = sizeof device;
+    for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &device, 0); i++)
+    {
+        if (device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
+            adapters += QString::fromWCharArray(device.DeviceName) + QLatin1Char('=') +
+                        QString::fromWCharArray(device.DeviceString) +
+                        ((device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) ? QStringLiteral("*;")
+                                                                             : QStringLiteral(";"));
+        device = {};
+        device.cb = sizeof device;
+    }
+    return adapters;
+}
+
+/// DisplayAdapters as the last WM_DISPLAYCHANGE left them (one main window)
+QString gDisplayAdapters;
+#endif
 }  // namespace
 
 void MainWindow::watchDisplayChanges()
@@ -43,6 +68,7 @@ void MainWindow::watchDisplayChanges()
     HWND window = reinterpret_cast<HWND>(winId());
     if (WTSRegisterSessionNotification(window, NOTIFY_FOR_THIS_SESSION))
         _sessionNotifyWindow = window;
+    gDisplayAdapters = DisplayAdapters();
 #endif
 }
 
@@ -62,7 +88,16 @@ bool MainWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
 #ifdef Q_OS_WIN
     const MSG* msg = static_cast<const MSG*>(message);
     if (msg && msg->message == WM_DISPLAYCHANGE)
-        scheduleGpuRecheck("the display configuration changed");
+    {
+        // A mode change (another rate or resolution) leaves the adapters as they were: no GPU to ask for (the probe
+        // costs ~80 ms on the GUI thread)
+        const QString adapters = DisplayAdapters();
+        if (adapters != gDisplayAdapters)
+        {
+            gDisplayAdapters = adapters;
+            scheduleGpuRecheck("the display configuration changed");
+        }
+    }
     else if (msg && msg->message == WM_WTSSESSION_CHANGE)
     {
         if (msg->wParam == WTS_CONSOLE_CONNECT)

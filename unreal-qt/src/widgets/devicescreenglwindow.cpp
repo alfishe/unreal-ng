@@ -63,6 +63,9 @@ bool UseNativePresenter()
     return false;
 #endif
 }
+
+/// Native way, occluded or minimized: the poll that notices the window shown again
+constexpr int kHiddenPollMs = 100;
 }  // namespace
 
 DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _native(UseNativePresenter())
@@ -86,18 +89,31 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
         connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
     }
     _smoothTraced = smoothmotion::TraceWriter::FromEnvironment(_smoothTrace);
+#ifdef UNREAL_TEST_HOOKS
     // UNREAL_TEST_GPU_HANG=gl:<s>: the recovery test, the window's GL work never ends that long from now
     if (const QByteArray hang = qgetenv("UNREAL_TEST_GPU_HANG"); hang.startsWith("gl:"))
         _glHangAtNs = SteadyNowNs() + static_cast<int64_t>(hang.mid(3).toInt()) * 1'000'000'000;
+    // UNREAL_TEST_PRESENT_FAIL=<s>: the native presenter's BeginFrame fails from that long from now on (its restarts
+    // and the fall back to GL)
+    if (const QByteArray fail = qgetenv("UNREAL_TEST_PRESENT_FAIL"); !fail.isEmpty())
+        _presentFailAtNs = SteadyNowNs() + static_cast<int64_t>(fail.toInt()) * 1'000'000'000;
+#endif
     // [VIDEO] DisplayRate: the display's mode follows the application's focus and the window's display
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this]() { updateDisplayRate(); });
     connect(this, &QWindow::screenChanged, this, [this]() {
         restoreDisplayRate("the window moved to another display");
         updateDisplayRate();
+        updateVideoSync();
     });
+    // Twice a second while frames come to a shown window (VRR engaging, the machine's rate); it stops once it is idle
+    // or hidden, frames to a shown window start it again (refresh, Expose)
     _syncTimer = new QTimer(this);
     _syncTimer->setInterval(500);
-    connect(_syncTimer, &QTimer::timeout, this, [this]() { updateVideoSync(); });
+    connect(_syncTimer, &QTimer::timeout, this, [this]() {
+        updateVideoSync();
+        if (_idleRefreshes > idleLimit() || !isExposed())
+            _syncTimer->stop();
+    });
 }
 
 bool DeviceScreenGLWindow::prepareContext()
@@ -139,9 +155,12 @@ bool DeviceScreenGLWindow::recreateLostContext()
 {
     qWarning() << "DeviceScreenGLWindow: the GL context was lost (a graphics reset); the screen's GL objects and the"
                << "native presenter are made anew";
-    // The presenter first, as when it stops presenting: its slots and interop registrations go with the old device
+    // The presenter first, as when it stops presenting: its slots and interop registrations go with the old device.
+    // A restart of the native presenter: too many of them and GL presents (renderNative)
     _presenter.reset();
-    _presenterRetries = PRESENTER_RETRIES;
+    if (_native && !_recovery.Restart(SteadyNowNs()))
+        _presenterFallback = "lost its GL context too often (" + std::to_string(PresenterRecovery::kMaxRestarts + 1) +
+                             " graphics resets or restarts within a minute)";
     auto context = std::make_unique<QOpenGLContext>();
     context->setFormat(surfaceFormat());
     context->setShareContext(QOpenGLContext::globalShareContext());
@@ -175,7 +194,6 @@ bool DeviceScreenGLWindow::recreateLostContext()
     _gradedSerial = ~0ull;
     _modelTablesUploaded = false;
     _modelSerial = ~0ull;
-    _presentFailingSinceNs = 0;
     return true;
 }
 
@@ -222,6 +240,8 @@ void DeviceScreenGLWindow::doneCurrent()
 
 void DeviceScreenGLWindow::update()
 {
+    if (_isShuttingDown)
+        return;
     if (_native)
     {
         // Frames flowing: the next timed present draws the change; else a present at once
@@ -255,28 +275,41 @@ void DeviceScreenGLWindow::renderNative(bool force)
 {
     if (_isShuttingDown || !isExposed() || !handle() || !prepareContext())
     {
-        static bool told = false;
-        if (!_isShuttingDown && !told)
+        // Once per stall: the surface or the context is not there yet
+        if (!_isShuttingDown && !_toldWaiting)
         {
-            told = true;
+            _toldWaiting = true;
             qInfo() << "DeviceScreenGLWindow: native present waits: exposed" << isExposed() << "handle"
                     << (handle() != nullptr) << "context" << (_context != nullptr);
         }
         return;
     }
+    _toldWaiting = false;
     force = force || _presentPending;
     _presentPending = false;
     if (!_presenter)
     {
-        _presenter = NativePresenter::Create(reinterpret_cast<void*>(winId()));
-        if (!_presenter && _presenterRetries > 0)
+        if (!_recovery.GlOnly())
+            _presenter = NativePresenter::Create(reinterpret_cast<void*>(winId()));
+        if (!_presenter)
         {
+            const bool restarted = _recovery.RetriesLeft() > 0;
+            const PresenterRecovery::CreateFailure next =
+                _recovery.GlOnly() ? PresenterRecovery::CreateFailure::FallBack : _recovery.CreateFailed();
+            if (next == PresenterRecovery::CreateFailure::FallBack)
+            {
+                if (_presenterFallback.empty())
+                    _presenterFallback = restarted ? "was not made again after it stopped (" +
+                                                         std::to_string(PresenterRecovery::kRetries) + " tries)"
+                                                   : "is not available for the window";
+                fallBackToGl(_presenterFallback);
+                return;
+            }
             // Made anew after it stopped (a GPU reset): the system may still hold the window for a moment
-            _presenterRetries--;
-            qWarning() << "DeviceScreenGLWindow: the native presenter not made again yet," << _presenterRetries
+            qWarning() << "DeviceScreenGLWindow: the native presenter not made again yet," << _recovery.RetriesLeft()
                        << "tries left";
 #ifdef _WIN32
-            if (_presenterRetries == PRESENTER_RETRIES - PRESENTER_NEW_WINDOW_AFTER)
+            if (next == PresenterRecovery::CreateFailure::RetryNewWindow)
             {
                 // The old device may hold the window's swap chain for good (a device the GPU reset removed: its
                 // swap chain refused, E_ACCESSDENIED, seen on .101): a new native window takes the next one
@@ -287,27 +320,28 @@ void DeviceScreenGLWindow::renderNative(bool force)
                 setVisible(visible);
             }
 #endif
-            _presentTimer->start(PRESENTER_RETRY_MS);
+            _presentTimer->start(PresenterRecovery::kRetryMs);
             return;
         }
-        if (!_presenter)
-        {
-#ifdef __APPLE__
-            qWarning() << "DeviceScreenGLWindow: no Metal presenter for the window";
-#else
-            // The window is a GL surface: present with GL from here on
-            qWarning() << "DeviceScreenGLWindow: no native presenter for the window, presenting with GL";
-            _native = false;
-            _presentTimer->stop();
-            requestUpdate();
-#endif
-            return;
-        }
-        _presenterRetries = 0;
+        _recovery.Created();
         _presenter->SetPolicy(_presentPolicy);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
     }
+
+    // Occluded or minimized: the system would drop every present. Nothing is copied, interpolated or drawn (the GPU
+    // rests); a slow poll notices the window shown again, a forced repaint waits for it. Latches keep it polling, a
+    // paused machine stops it as an idle one (the window's Expose starts it again)
+    if (!_presenter->IsVisible())
+    {
+        _presentPending = _presentPending || force;
+        _presentHidden = true;
+        _smoothRefreshNs = 0;
+        _idleRefreshes++;
+        scheduleNative();
+        return;
+    }
+    _presentHidden = false;
 
     // The frame due a lead from now: drawn now, shown at its own target
     const int64_t now = SteadyNowNs();
@@ -364,11 +398,11 @@ void DeviceScreenGLWindow::renderNative(bool force)
         }
         _smoothDrained = _presenter->Presented();
     }
-    // Occluded: the system would drop every present; the texture keeps up, the GPU rests
-    if ((newFrame || force) && _presenter->IsVisible())
+    if (newFrame || force)
     {
         const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
-        if (_presenter->BeginFrame(pixels.width(), pixels.height()) != 0)
+        const bool failHook = _presentFailAtNs != 0 && now >= _presentFailAtNs;  // UNREAL_TEST_PRESENT_FAIL
+        if (!failHook && _presenter->BeginFrame(pixels.width(), pixels.height()) != 0)
         {
             if (pixels != _glSize)
             {
@@ -389,43 +423,46 @@ void DeviceScreenGLWindow::renderNative(bool force)
                 trace.targetNs = _smoothRefreshNs;
             }
             _presenter->PresentFrame(at, trace);
-            if (_presentFailingSinceNs != 0)
-            {
-                qInfo().noquote() << "DeviceScreenGLWindow: presenting again after"
-                                  << (now - _presentFailingSinceNs) / 1'000'000 << "ms," << _presentFailures
-                                  << "pictures not presented";
-                _presentFailingSinceNs = 0;
-            }
+            if (const int64_t failedNs = _recovery.Presented(now); failedNs > 0)
+                qInfo().noquote() << "DeviceScreenGLWindow: presenting again after" << failedNs / 1'000'000 << "ms,"
+                                  << _recovery.Failures() << "pictures not presented";
         }
         else if (pixels.isEmpty())
         {
             // A window of no size has nothing to present
         }
-        else if (_presentFailingSinceNs == 0)
-        {
-            // Every failure is told: a picture not presented is a black or frozen window
-            _presentFailingSinceNs = now;
-            _presentFailures = 1;
-            qWarning().noquote() << "DeviceScreenGLWindow: picture not presented:"
-                                 << QString::fromStdString(_presenter->LastFailure());
-        }
-        else if (now - _presentFailingSinceNs <= PRESENTER_RESTART_NS)
-        {
-            _presentFailures++;
-        }
         else
         {
-            // No framebuffer for a while (seen once on .101 after a snapshot load: the presenter thread idle, every
-            // BeginFrame failing, the window black until a restart): a new presenter, made on the next paint
-            qWarning().noquote() << "DeviceScreenGLWindow: no picture presented for"
-                                 << (now - _presentFailingSinceNs) / 1'000'000 << "ms (" << _presentFailures + 1
-                                 << "tries):" << QString::fromStdString(_presenter->LastFailure())
-                                 << "; the native presenter is made anew";
-            _presentFailingSinceNs = 0;
-            _presenter.reset();
-            _presenterRetries = PRESENTER_RETRIES;
-            update();  // the timer's present at once makes it
-            return;
+            const int64_t failingSinceNs = _recovery.FailingSinceNs();
+            const bool lost = _presenter->Lost();
+            const std::string failure = failHook ? "UNREAL_TEST_PRESENT_FAIL" : _presenter->LastFailure();
+            switch (_recovery.BeginFailed(now, lost))
+            {
+                case PresenterRecovery::BeginFailure::First:
+                    // Told: a picture not presented is a black or frozen window
+                    qWarning().noquote() << "DeviceScreenGLWindow: picture not presented:"
+                                         << QString::fromStdString(failure);
+                    break;
+                case PresenterRecovery::BeginFailure::Wait:
+                    break;
+                case PresenterRecovery::BeginFailure::Restart:
+                    // No framebuffer for a while (seen once on .101 after a snapshot load: the presenter thread idle,
+                    // every BeginFrame failing, the window black until a restart), or the device gone: a new
+                    // presenter, made on the next paint
+                    qWarning().noquote() << "DeviceScreenGLWindow: no picture presented"
+                                         << (lost ? QStringLiteral("(the device is gone)")
+                                                  : QStringLiteral("for %1 ms").arg((now - failingSinceNs) / 1'000'000))
+                                         << "(" << _recovery.Failures() << "tries):" << QString::fromStdString(failure)
+                                         << "; the native presenter is made anew";
+                    _presenter.reset();
+                    update();  // the timer's present at once makes it
+                    return;
+                case PresenterRecovery::BeginFailure::FallBack:
+                    _presenterFallback = "stopped presenting " + std::to_string(PresenterRecovery::kMaxRestarts + 1) +
+                                         " times within a minute (" + failure + ")";
+                    fallBackToGl(_presenterFallback);
+                    return;
+            }
         }
     }
 
@@ -449,13 +486,53 @@ void DeviceScreenGLWindow::renderNative(bool force)
     scheduleNative();
 }
 
+void DeviceScreenGLWindow::fallBackToGl(const std::string& why)
+{
+    qWarning().noquote() << "DeviceScreenGLWindow: the native presenter" << QString::fromStdString(why)
+                         << "- presenting with GL from now on";
+    _presenter.reset();  // the context current (renderNative)
+    _native = false;
+    _presentTimer->stop();
+    _presentHidden = false;
+    _smoothRefreshNs = 0;
+#ifdef __APPLE__
+    // The window is a Metal surface: GL presents on a GL one. Not inside the event that got here (an Expose)
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            const bool visible = isVisible();
+            destroy();
+            setSurfaceType(QSurface::OpenGLSurface);
+            create();
+            setVisible(visible);
+            requestUpdate();
+        },
+        Qt::QueuedConnection);
+#else
+    requestUpdate();
+#endif
+}
+
+int DeviceScreenGLWindow::idleLimit() const
+{
+    return std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
+}
+
 void DeviceScreenGLWindow::scheduleNative()
 {
     if (_isShuttingDown)
         return;
     const int64_t now = SteadyNowNs();
     int64_t wakeNs = 0;
-    const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
+    const int idleLimit = this->idleLimit();
+    if (_presentHidden)
+    {
+        if (_idleRefreshes > idleLimit)
+            return;
+        _presentPlannedNs = 0;
+        _presentTimer->start(kHiddenPollMs);
+        return;
+    }
     if (_smoothRefreshNs != 0)
     {
         // Smooth motion on a fixed display: the next refresh's picture, while frames come
@@ -485,6 +562,8 @@ QString DeviceScreenGLWindow::presenterStatus() const
 {
     if (_presenter)
         return QString::fromStdString(_presenter->Describe());
+    if (!_presenterFallback.empty())
+        return QStringLiteral("GL swapBuffers: the native presenter %1").arg(QString::fromStdString(_presenterFallback));
     return {};
 }
 
@@ -645,9 +724,11 @@ bool DeviceScreenGLWindow::probeGPUAccelerationOnce(QString& rendererName)
 
 DeviceScreenGLWindow::~DeviceScreenGLWindow()
 {
+    _isShuttingDown = true;  // nothing starts the timers again (detach's update)
     _displaySwitch.reset();  // the display's own mode back
     if (_presentTimer)
         _presentTimer->stop();
+    _syncTimer->stop();
     if (!makeCurrent())
     {
         detach();
@@ -742,11 +823,13 @@ void DeviceScreenGLWindow::updateVideoSync()
     }
     bool vrr = false;
     double displayHz = 0.0;
+    double presenterMinHz = 0.0;
     if (_presenter)
     {
         const NativePresenter::Stats s = _presenter->GetStats();
         vrr = s.vrr;
         displayHz = s.maxRefreshHz;
+        presenterMinHz = s.minRefreshHz;
     }
     if (_displayState == "matched" && _displayHz > 0.0)
         displayHz = _displayHz;
@@ -766,9 +849,11 @@ void DeviceScreenGLWindow::updateVideoSync()
     std::string reason;
     if (sync != VideoSync::Vrr)
     {
-        reason = !_presenter ? "no VRR: the window presents with GL (no present-at-time)"
+        reason = !_presenter && !_presenterFallback.empty()
+                     ? "no VRR: the native presenter " + _presenterFallback + ", the window presents with GL"
+                 : !_presenter                            ? "no VRR: the window presents with GL (no present-at-time)"
                  : _presentPolicy == PresentPolicy::Vsync ? "no VRR: present policy vsync"
-                 : _presenter->GetStats().minRefreshHz >= displayHz * 0.99
+                 : presenterMinHz >= displayHz * 0.99
                      ? "no VRR: the display's refreshes stay on their grid (a fixed display, or its variable refresh "
                        "is off for this window: in the background, a remote session)"
                      : "no VRR: the display's variable refresh did not engage";
@@ -922,6 +1007,8 @@ void DeviceScreenGLWindow::refresh()
     // A source without serials (the legacy buffer, a ZX-Poly display) has a new frame now
     _textureNeedsUpdate = true;
     _idleRefreshes = 0;
+    if (_smoothAuto && !_syncTimer->isActive() && isExposed())
+        _syncTimer->start();
     if (_native)
     {
         // The timer runs while frames come; started again after an idle stop
@@ -939,8 +1026,7 @@ void DeviceScreenGLWindow::onFrameSwapped()
     // pending stops it (a paused machine); the next latch starts it again
     if (_isShuttingDown || !isExposed())
         return;
-    const int idleLimit = std::max(15, static_cast<int>(1e9 / static_cast<double>(refreshPeriodNs()) / 4.0));
-    if (_idleRefreshes <= idleLimit)
+    if (_idleRefreshes <= idleLimit())
         requestUpdate();
 }
 
@@ -1531,6 +1617,7 @@ void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* 
 
 }  // namespace
 
+#ifdef UNREAL_TEST_HOOKS
 void DeviceScreenGLWindow::hangGL()
 {
     // A vertex shader that never ends (vertices run whatever is drawn): the system resets the GPU after its timeout
@@ -1564,6 +1651,11 @@ void main() { color = vec4(1.0); }
     program.release();
     glFlush();
 }
+#else
+void DeviceScreenGLWindow::hangGL()
+{
+}
+#endif
 
 void DeviceScreenGLWindow::paintGL()
 {
@@ -1940,6 +2032,8 @@ bool DeviceScreenGLWindow::event(QEvent* event)
         case QEvent::Expose:
             if (isExposed())
             {
+                if (_smoothAuto && !_syncTimer->isActive() && !_isShuttingDown)
+                    _syncTimer->start();
                 if (_native)
                     renderNative(true);
                 else

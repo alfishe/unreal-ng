@@ -28,6 +28,9 @@ option(ENABLE_DEZOG_AUTOMATION "Enable DeZog (DZRP) debug server automation" ON)
 option(ENABLE_ZESARUX_AUTOMATION "Enable ZEsarUX (ZRCP) debug server automation" ON)
 # MCP server automation shares the WebAPI drogon app; effective only when WebAPI is on
 option(ENABLE_MCP_AUTOMATION "Enable MCP server automation (requires WebAPI)" ON)
+# The screen's test hooks (UNREAL_TEST_GPU_HANG, UNREAL_TEST_PRESENT_FAIL: a GPU hung on purpose, a presenter failing),
+# for the recovery tests: in test builds, never in a release package (TESTS=OFF)
+option(UNREAL_TEST_HOOKS "Compile the screen's test hooks into unreal-qt" ${TESTS})
 
 # Recording support (audio/video capture)
 # Use option() instead of set(FORCE) so that command-line -DENABLE_RECORDING=OFF is respected
@@ -302,6 +305,10 @@ if (ENABLE_RECORDING)
         "${ROOT_DIR}/core/recording/src"
     )
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_RECORDING)
+endif ()
+
+if (UNREAL_TEST_HOOKS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE UNREAL_TEST_HOOKS)
 endif ()
 
 # Debug configuration
@@ -796,6 +803,14 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/videosyncwindow_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/videosyncwindow.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/videosyncwindow.h"
+        # The native presenters' adaptive lead, the screen window's presenter recovery, their shared statistics
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentlead_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presentlead.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presenterrecovery_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.h"
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
@@ -804,8 +819,7 @@ if (TESTS)
         # The DXGI presenter made anew for the same window (a real window and interop: skips without them)
         list(APPEND UNREAL_QT_TEST_SOURCES
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/dxgipresenter_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/dxgipresenter.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.h")
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/dxgipresenter.cpp")
     endif()
     add_executable(unreal-qt-tests ${UNREAL_QT_TEST_SOURCES})
     set_target_properties(unreal-qt-tests PROPERTIES
@@ -834,6 +848,9 @@ if (TESTS)
     )
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
+    endif()
+    if (UNREAL_TEST_HOOKS)
+        target_compile_definitions(unreal-qt-tests PRIVATE UNREAL_TEST_HOOKS)
     endif()
     if (WIN32)
         target_link_libraries(unreal-qt-tests PRIVATE d3d11 dxgi d3dcompiler gdi32)

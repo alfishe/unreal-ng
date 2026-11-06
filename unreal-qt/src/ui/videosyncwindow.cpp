@@ -273,9 +273,12 @@ void VideoSyncWindow::refresh()
     if (p.sync == "vrr")
         mode = tr("VRR: each frame at its own time");
     else if (p.sync == "display_rate")
-        mode = tr("Display rate: %1, each frame for %2 refresh(es)")
-                   .arg(Hz(displayHz))
-                   .arg(p.machineHz > 0.0 ? qRound(displayHz / p.machineHz) : 1);
+    {
+        const int refreshes = p.machineHz > 0.0 ? std::max(1, qRound(displayHz / p.machineHz)) : 1;
+        mode = refreshes == 1
+                   ? tr("Display rate: %1, each frame for a refresh").arg(Hz(displayHz))
+                   : tr("Display rate: %1, each frame for %n refreshes", nullptr, refreshes).arg(Hz(displayHz));
+    }
     else if (p.sync == "interpolate")
         mode = tr("Interpolation: a picture per refresh on the fixed %1").arg(Hz(p.maxRefreshHz));
     else
