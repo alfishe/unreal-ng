@@ -46,6 +46,7 @@
 #include "common/timehelper.h"
 #include "emulator/video/screenbeat.h"
 #include "platform/presentlead.h"
+#include "widgets/framesource.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -111,40 +112,19 @@ Fn FromProc(FARPROC proc)
     return fn;
 }
 
-int64_t SteadyNs()
-{
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
-        .count();
-}
-
-/// Statistics window: the last presents
-constexpr size_t kStatsWindow = 600;
 /// Shared textures: one being drawn, one waiting for its time, one being copied
 constexpr size_t kSlots = 3;
 /// The Present call itself, started this much before the frame's time
 constexpr int64_t kPresentCostNs = 300'000;
 /// Vblank intervals kept for the VRR check
 constexpr size_t kVBlankWindow = 120;
+/// The vblank thread publishes their median for RefreshGrid every this many vblanks
+constexpr int kVBlankPeriodEvery = 16;
+/// The presenter's destructor waits this long for the vblank thread, then leaves it (blocked in the kernel's wait
+/// while no vblank comes: a monitor asleep or gone); it ends at the next vblank
+constexpr int kVBlankJoinMs = 200;
 /// The adaptive lead's first margin (LeadNs): the wake's slack (~1.5 ms), the draw and the copy into the back buffer
 constexpr int64_t kLeadStartNs = 8'000'000;
-
-double Percentile(std::vector<double> v, double q)
-{
-    if (v.empty())
-        return 0.0;
-    std::sort(v.begin(), v.end());
-    const size_t i = static_cast<size_t>(q * static_cast<double>(v.size() - 1) + 0.5);
-    return v[std::min(i, v.size() - 1)];
-}
-
-void AddSample(std::vector<double>& ring, size_t& next, double value)
-{
-    if (ring.size() < kStatsWindow)
-        ring.push_back(value);
-    else
-        ring[next] = value;
-    next = (next + 1) % kStatsWindow;
-}
 
 /// The refresh rate of the monitor the window is on (Hz, 0 = unknown)
 double MonitorRefreshHz(HWND hwnd)
@@ -160,10 +140,201 @@ double MonitorRefreshHz(HWND hwnd)
     return static_cast<double>(dm.dmDisplayFrequency);
 }
 
+/// A present's HRESULT that means the device is gone: only a new device presents again
+bool DeviceGone(HRESULT hr)
+{
+    return hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DEVICE_HUNG ||
+           hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
+}
+
+/// A present handed to the presenter thread, then waiting for its vblank
+struct Pending
+{
+    int64_t submittedNs = 0;
+    int64_t askedNs = 0;
+    int64_t atNs = 0;
+    int64_t handedNs = 0;  // PresentFrame handed it over (the lead's "ahead")
+    uint64_t number = 0;   // its count from 1 (PresentLead)
+    int64_t drawableWaitNs = 0;
+    NativePresenter::TraceInfo trace;
+};
+
+/// What the vblank thread touches, shared with it: the kernel's vblank wait has no timeout, so a presenter going while
+/// no vblank comes (a monitor asleep or gone) leaves the thread blocked there and goes; the thread ends at the next
+/// vblank. The presenter's statistics live here too, under statsMutex
+struct Feedback
+{
+    explicit Feedback(HWND window) : hwnd(window) {}
+
+    const HWND hwnd;
+    std::atomic<bool> stop{false};
+    std::mutex doneMutex;
+    std::condition_variable doneCv;
+    bool done = false;  // the vblank thread ended (doneMutex)
+
+    std::atomic<double> refreshHz{0.0};
+    std::atomic<bool> panelFollows{false};   // the vblanks follow the presents (CheckVrr; at first: tearing supported)
+    std::atomic<int64_t> lastVBlankNs{0};    // the newest vblank (RefreshGrid)
+    std::atomic<int64_t> vblankPeriodNs{0};  // the vblank intervals' median (RefreshGrid; 0: too few yet)
+    PresentLead lead{kLeadStartNs};
+
+    mutable std::mutex statsMutex;
+    std::deque<Pending> pending;
+    presentstats::Ring errors;
+    presentstats::Ring gpuWaits;
+    presentstats::Ring drawableWaits;
+    ScreenBeat beat;
+    std::vector<double> vblankIntervals;
+    std::vector<double> presentIntervals;
+    std::string vblankError;
+    std::string vrrNote;
+    std::string failure;  // the last BeginFrame failure
+    uint64_t presented = 0;
+    uint64_t shown = 0;
+    uint64_t dropped = 0;
+    presentstats::Trace trace;  // UNREAL_PRESENT_TRACE
+};
+
+void SetVBlankError(Feedback& fb, const char* error)
+{
+    std::lock_guard<std::mutex> lock(fb.statsMutex);
+    fb.vblankError = error;
+}
+
+/// Vblank thread: the first vblank after each present is its screen time
+void RunVBlanks(const std::shared_ptr<Feedback>& shared)
+{
+    Feedback& fb = *shared;
+    // The wake after the vblank event is the measurement's error: the highest priority there is
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
+    auto open = FromProc<OpenAdapterFn>(GetProcAddress(gdi, "D3DKMTOpenAdapterFromHdc"));
+    auto wait = FromProc<WaitVBlankFn>(GetProcAddress(gdi, "D3DKMTWaitForVerticalBlankEvent"));
+    auto close = FromProc<CloseAdapterFn>(GetProcAddress(gdi, "D3DKMTCloseAdapter"));
+    if (!open || !wait || !close)
+    {
+        SetVBlankError(fb, "no D3DKMT vblank wait");
+        return;
+    }
+    // The adapter of the window's monitor, opened again when the window moves to another monitor or the wait fails
+    // (a display mode change, a session moved between RDP and the console)
+    D3dkmtWaitForVerticalBlankEvent w{};
+    HMONITOR monitor = nullptr;
+    int64_t checkedNs = 0;
+    int64_t last = 0;
+    int sincePeriod = 0;
+    const auto closeAdapter = [&] {
+        if (w.hAdapter)
+        {
+            D3dkmtCloseAdapter ca{w.hAdapter};
+            close(&ca);
+        }
+        w = {};
+        monitor = nullptr;
+        last = 0;
+    };
+    const auto fail = [&](const char* what, LONG status) {
+        char text[96];
+        std::snprintf(text, sizeof text, "%s 0x%08lX", what, static_cast<unsigned long>(status));
+        SetVBlankError(fb, text);
+        closeAdapter();
+        std::unique_lock<std::mutex> lock(fb.doneMutex);
+        fb.doneCv.wait_for(lock, std::chrono::milliseconds(200), [&] { return fb.stop.load(); });
+    };
+    while (!fb.stop)
+    {
+        const int64_t now = SteadyNowNs();
+        if (!w.hAdapter || now - checkedNs > 1'000'000'000)
+        {
+            checkedNs = now;
+            HMONITOR current = MonitorFromWindow(fb.hwnd, MONITOR_DEFAULTTONEAREST);
+            if (current != monitor || !w.hAdapter)
+            {
+                closeAdapter();
+                MONITORINFOEXW mi{};
+                mi.cbSize = sizeof mi;
+                GetMonitorInfoW(current, &mi);
+                HDC dc = CreateDCW(nullptr, mi.szDevice, nullptr, nullptr);
+                D3dkmtOpenAdapterFromHdc oa{};
+                oa.hDc = dc;
+                const LONG status = dc ? open(&oa) : -1;
+                if (dc)
+                    DeleteDC(dc);
+                if (status != 0)
+                {
+                    fail("D3DKMTOpenAdapterFromHdc", status);
+                    continue;
+                }
+                w.hAdapter = oa.hAdapter;
+                w.VidPnSourceId = oa.VidPnSourceId;
+                monitor = current;
+                fb.refreshHz = MonitorRefreshHz(fb.hwnd);
+                SetVBlankError(fb, "");
+            }
+        }
+        if (const LONG status = wait(&w); status != 0)
+        {
+            fail("D3DKMTWaitForVerticalBlankEvent", status);
+            continue;
+        }
+        if (fb.stop)
+            break;
+        const int64_t v = SteadyNowNs();
+        std::lock_guard<std::mutex> lock(fb.statsMutex);
+        if (last != 0)
+        {
+            fb.vblankIntervals.push_back(static_cast<double>(v - last) / 1e6);
+            if (fb.vblankIntervals.size() > kVBlankWindow)
+                fb.vblankIntervals.erase(fb.vblankIntervals.begin());
+            if (++sincePeriod >= kVBlankPeriodEvery && fb.vblankIntervals.size() >= kVBlankWindow / 2)
+            {
+                sincePeriod = 0;
+                fb.vblankPeriodNs.store(
+                    static_cast<int64_t>(presentstats::Percentile(fb.vblankIntervals, 0.50) * 1e6),
+                    std::memory_order_relaxed);
+            }
+        }
+        last = v;
+        fb.lastVBlankNs.store(v, std::memory_order_relaxed);
+        // The presents before this vblank: the newest is on screen from it, the others were replaced
+        size_t before = 0;
+        while (before < fb.pending.size() && fb.pending[before].submittedNs < v)
+            before++;
+        if (before == 0)
+            continue;
+        // A panel following the presents (VRR) has the vblank at the end of the scan-out the present started
+        const double refreshHz = fb.refreshHz;
+        const double topHz = refreshHz > 0.0 ? refreshHz : 60.0;
+        const int64_t screen = fb.panelFollows ? v - static_cast<int64_t>(1e9 / topHz) : v;
+        for (size_t i = 0; i < before; i++)
+        {
+            const Pending& p = fb.pending[i];
+            const bool shown = i + 1 == before;
+            if (shown)
+            {
+                fb.shown++;
+                fb.errors.Add(static_cast<double>(screen - p.askedNs) / 1e6);
+                // The lead from the frame's own time: a window that handed it over late was late too. Handed over
+                // a refresh or more before its time and still late: the compositor held it, more lead cannot help
+                const int64_t asked = p.atNs > 0 ? p.atNs : p.askedNs;
+                fb.lead.Shown(screen - asked, p.number, std::max(asked, p.handedNs) - p.handedNs);
+                fb.beat.Shown(p.trace.picture, p.trace.targetNs, screen, static_cast<int64_t>(1e9 / topHz));
+            }
+            else
+            {
+                fb.dropped++;
+            }
+            fb.trace.Write(p.trace, p.atNs, p.submittedNs, shown ? screen : 0, p.drawableWaitNs);
+        }
+        fb.pending.erase(fb.pending.begin(), fb.pending.begin() + static_cast<std::ptrdiff_t>(before));
+    }
+    closeAdapter();
+}
+
 class DxgiPresenter final : public NativePresenter
 {
 public:
-    explicit DxgiPresenter(HWND hwnd) : _hwnd(hwnd) {}
+    explicit DxgiPresenter(HWND hwnd) : _hwnd(hwnd), _fb(std::make_shared<Feedback>(hwnd)) {}
 
     ~DxgiPresenter() override
     {
@@ -172,9 +343,20 @@ public:
         _wake.Notify();
         if (_presentThread.joinable())
             _presentThread.join();
-        _vblankStop = true;
         if (_vblankThread.joinable())
-            _vblankThread.join();
+        {
+            bool done = false;
+            {
+                std::unique_lock<std::mutex> lock(_fb->doneMutex);
+                _fb->stop = true;
+                _fb->doneCv.notify_all();
+                done = _fb->doneCv.wait_for(lock, std::chrono::milliseconds(kVBlankJoinMs), [&] { return _fb->done; });
+            }
+            if (done)
+                _vblankThread.join();
+            else
+                _vblankThread.detach();  // blocked in the vblank wait; it holds what it touches
+        }
         // GL objects and interop registrations in the drawing context (current: the window's destructor)
         for (Slot& s : _slots)
             ReleaseSlot(s);
@@ -195,8 +377,6 @@ public:
             _context->ClearState();
             _context->Flush();
         }
-        if (_trace)
-            fclose(_trace);
     }
 
     bool Init()
@@ -294,18 +474,25 @@ public:
         }
 
         _vrr = _tearing && Policy() != PresentPolicy::Vsync;
-        _panelFollows = _tearing;
-        _refreshHz = MonitorRefreshHz(_hwnd);
-        if (const QByteArray path = qgetenv("UNREAL_PRESENT_TRACE"); !path.isEmpty())
-            _trace = std::fopen(path.constData(), "w");
+        _fb->panelFollows = _tearing;
+        _fb->refreshHz = MonitorRefreshHz(_hwnd);
+#ifdef UNREAL_TEST_HOOKS
         // UNREAL_TEST_GPU_HANG=d3d:<s>: the recovery test, the first presenter's GPU work never ends that long from
         // now (once: the presenter made anew presents on)
         static std::atomic<bool> hangArmed{false};
         if (const QByteArray hang = qgetenv("UNREAL_TEST_GPU_HANG"); hang.startsWith("d3d:") && !hangArmed.exchange(true))
-            _hangAtNs = SteadyNs() + static_cast<int64_t>(hang.mid(4).toInt()) * 1'000'000'000;
+            _hangAtNs = SteadyNowNs() + static_cast<int64_t>(hang.mid(4).toInt()) * 1'000'000'000;
+#endif
 
         _presentThread = std::thread([this] { RunPresent(); });
-        _vblankThread = std::thread([this] { RunVBlanks(); });
+        _vblankThread = std::thread([fb = _fb] {
+            RunVBlanks(fb);
+            {
+                std::lock_guard<std::mutex> lock(fb->doneMutex);
+                fb->done = true;
+            }
+            fb->doneCv.notify_all();
+        });
         return true;
     }
 
@@ -319,6 +506,9 @@ public:
         QOpenGLContext* gl = QOpenGLContext::currentContext();
         if (width <= 0 || height <= 0 || !gl)
             return 0;
+        // The device gone: a new presenter is needed, no waiting
+        if (Lost())
+            return Failed("the D3D11 device is gone (a GPU reset)");
         QOpenGLFunctions* f = gl->functions();
 
         // The next slot the presenter thread is not copying; all three queued: wait for one
@@ -336,10 +526,11 @@ public:
                 }
                 return false;
             };
-            if (!_freeCv.wait_for(lock, std::chrono::milliseconds(100), found))
+            if (!_freeCv.wait_for(lock, std::chrono::milliseconds(100), [&] { return found() || Lost(); }) || Lost())
             {
                 char why[96];
-                std::snprintf(why, sizeof why, "no free slot (%zu queued for the presenter thread)", _queue.size());
+                std::snprintf(why, sizeof why, "no free slot (%u queued for the presenter thread)%s",
+                              static_cast<unsigned>(_queue.size()), Lost() ? ", the D3D11 device is gone" : "");
                 lock.unlock();
                 return Failed(why);
             }
@@ -363,8 +554,13 @@ public:
 
     std::string LastFailure() const override
     {
-        std::lock_guard<std::mutex> lock(_statsMutex);
-        return _failure;
+        std::lock_guard<std::mutex> lock(_fb->statsMutex);
+        return _fb->failure;
+    }
+
+    bool Lost() const override
+    {
+        return _removed.load(std::memory_order_acquire) != S_OK;
     }
 
     void PresentFrame(int64_t atNs, const TraceInfo& trace) override
@@ -374,19 +570,23 @@ public:
         _drawing = false;
         Slot& slot = _slots[_current];
         // The unlock flushes GL and hands the texture to D3D
-        const int64_t unlock0 = SteadyNs();
+        const int64_t unlock0 = SteadyNowNs();
         _unlockObjects(_interopDevice, 1, &slot.interop);
-        const double unlockMs = static_cast<double>(SteadyNs() - unlock0) / 1e6;
+        const int64_t handed = SteadyNowNs();
+        const double unlockMs = static_cast<double>(handed - unlock0) / 1e6;
+        uint64_t number = 0;
+        {
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            number = ++_fb->presented;
+            _fb->gpuWaits.Add(unlockMs);
+        }
         {
             std::lock_guard<std::mutex> lock(_queueMutex);
             slot.queued = true;
-            _queue.push_back({_current, atNs, trace});
+            _queue.push_back({_current, atNs, handed, number, trace});
         }
         _queueCv.notify_one();
         _wake.Notify();
-        std::lock_guard<std::mutex> lock(_statsMutex);
-        _presented++;
-        AddSample(_gpuWaits, _gpuWaitNext, unlockMs);
     }
 
     bool IsVisible() const override
@@ -395,14 +595,14 @@ public:
             return false;
         // DXGI said occluded: try again half a second later (a present tells)
         const int64_t occluded = _occludedNs.load(std::memory_order_relaxed);
-        return occluded == 0 || SteadyNs() - occluded > 500'000'000;
+        return occluded == 0 || SteadyNowNs() - occluded > 500'000'000;
     }
 
     /// The presenter thread presents at the time itself; the window draws a margin before, adapted to the load
     /// (PresentLead: from 8 ms, 4 to 20 ms)
     int64_t LeadNs(int64_t refreshPeriodNs) const override
     {
-        return _lead.Margin(refreshPeriodNs);
+        return _fb->lead.Margin(refreshPeriodNs);
     }
 
     /// auto: VRR while the vblanks follow the presents, else vsync (CheckVrr); vrr: Present(0, ALLOW_TEARING) at the
@@ -411,30 +611,25 @@ public:
     {
         _policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
         _vrr = _tearing && policy != PresentPolicy::Vsync;
-        std::lock_guard<std::mutex> lock(_statsMutex);
-        _vrrNote.clear();
+        std::lock_guard<std::mutex> lock(_fb->statsMutex);
+        _fb->vrrNote.clear();
     }
 
     /// The vblank thread's last vblank and their interval (the monitor's rate before there are enough of them);
-    /// false while presenting for VRR
+    /// false while presenting for VRR. Lock-free: the vblank thread publishes both
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override
     {
-        const int64_t last = _lastVBlankNs.load(std::memory_order_relaxed);
+        const int64_t last = _fb->lastVBlankNs.load(std::memory_order_relaxed);
         if (last == 0 || _vrr)
             return false;
-        double periodMs = 0.0;
-        {
-            std::lock_guard<std::mutex> lock(_statsMutex);
-            if (_vblankIntervals.size() >= kVBlankWindow / 2)
-                periodMs = Percentile(_vblankIntervals, 0.50);
-        }
-        const double hz = _refreshHz;
-        if (periodMs <= 0.0 && hz > 0.0)
-            periodMs = 1000.0 / hz;
-        if (periodMs <= 0.0)
+        int64_t period = _fb->vblankPeriodNs.load(std::memory_order_relaxed);
+        const double hz = _fb->refreshHz;
+        if (period <= 0 && hz > 0.0)
+            period = static_cast<int64_t>(1e9 / hz);
+        if (period <= 0)
             return false;
         refreshNs = last;
-        periodNs = static_cast<int64_t>(periodMs * 1e6);
+        periodNs = period;
         return true;
     }
 
@@ -443,32 +638,25 @@ public:
         Stats s;
         std::vector<double> errors, waits, drawableWaits;
         {
-            std::lock_guard<std::mutex> lock(_statsMutex);
-            errors = _errors;
-            waits = _gpuWaits;
-            drawableWaits = _drawableWaits;
-            s.presented = _presented;
-            s.shown = _shown;
-            s.dropped = _dropped;
-            const ScreenBeat::Stats beat = _beat.GetStats();
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            errors = _fb->errors.Values();
+            waits = _fb->gpuWaits.Values();
+            drawableWaits = _fb->drawableWaits.Values();
+            s.presented = _fb->presented;
+            s.shown = _fb->shown;
+            s.dropped = _fb->dropped;
+            const ScreenBeat::Stats beat = _fb->beat.GetStats();
             s.beatFrames = beat.frames;
             s.offBeat = beat.offBeat;
             s.soundOffsetP50 = beat.offsetP50Ms;
             s.soundOffsetP99 = beat.offsetP99Ms;
         }
-        s.late = _lead.Late();
-        s.leadMs = static_cast<double>(_lead.MarginNs()) / 1e6;
-        s.window = static_cast<uint32_t>(errors.size());
-        s.errorP50 = Percentile(errors, 0.50);
-        s.errorP99 = Percentile(errors, 0.99);
-        s.errorMax = errors.empty() ? 0.0 : *std::max_element(errors.begin(), errors.end());
-        s.gpuWaitP50 = Percentile(waits, 0.50);
-        s.gpuWaitMax = waits.empty() ? 0.0 : *std::max_element(waits.begin(), waits.end());
-        s.drawableWaitP50 = Percentile(drawableWaits, 0.50);
-        s.drawableWaitMax = drawableWaits.empty() ? 0.0 : *std::max_element(drawableWaits.begin(), drawableWaits.end());
+        s.late = _fb->lead.Late();
+        s.leadMs = static_cast<double>(_fb->lead.MarginNs()) / 1e6;
+        presentstats::Fill(s, std::move(errors), std::move(waits), std::move(drawableWaits));
         // Windows reports no VRR range: while the panel follows the frames its low end is not known (0)
-        s.maxRefreshHz = _refreshHz;
-        s.minRefreshHz = _vrr ? 0.0 : _refreshHz.load();
+        s.maxRefreshHz = _fb->refreshHz;
+        s.minRefreshHz = _vrr ? 0.0 : _fb->refreshHz.load();
         s.visible = IsVisible();
         s.vrr = _vrr;
         return s;
@@ -480,25 +668,27 @@ public:
         double vblankP50 = 0.0;
         std::string vrrNote, vblankError;
         {
-            std::lock_guard<std::mutex> lock(_statsMutex);
-            vblankP50 = Percentile(_vblankIntervals, 0.50);
-            vrrNote = _vrrNote;
-            vblankError = _vblankError;
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            vblankP50 = presentstats::Percentile(_fb->vblankIntervals, 0.50);
+            vrrNote = _fb->vrrNote;
+            vblankError = _fb->vblankError;
         }
         const char* mode = _vrr ? "VRR, Present(0, ALLOW_TEARING) at the time" : "vsync, Present(0) at the time";
-        char line[480];
+        char line[512];
         std::snprintf(
             line, sizeof line,
             "DXGI %s (policy %s, tearing %s%s): %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead "
             "%.1f ms); error p50 %.2f p99 "
             "%.2f max %.2f ms; GL unlock p50 %.2f max %.2f ms; back buffer wait p50 %.2f max %.2f ms; display "
-            "%.0f Hz, vblank interval p50 %.2f ms (%s)%s%s",
-            mode, PresentPolicyName(Policy()), _tearing ? "supported" : "not supported", vrrNote.empty() ? "" : (", " + vrrNote).c_str(),
-            static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
-            static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs, s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
-            s.drawableWaitP50, s.drawableWaitMax, _refreshHz.load(), vblankP50,
-            _panelFollows ? "the panel follows the frames" : "a fixed grid",
-            vblankError.empty() ? "" : ("; " + vblankError).c_str(), s.visible ? "" : "; occluded");
+            "%.0f Hz, vblank interval p50 %.2f ms (%s)%s%s%s",
+            mode, PresentPolicyName(Policy()), _tearing ? "supported" : "not supported",
+            vrrNote.empty() ? "" : (", " + vrrNote).c_str(), static_cast<unsigned long long>(s.presented),
+            static_cast<unsigned long long>(s.shown), static_cast<unsigned long long>(s.dropped),
+            static_cast<unsigned long long>(s.late), s.leadMs, s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50,
+            s.gpuWaitMax, s.drawableWaitP50, s.drawableWaitMax, _fb->refreshHz.load(), vblankP50,
+            _fb->panelFollows ? "the panel follows the frames" : "a fixed grid",
+            vblankError.empty() ? "" : ("; " + vblankError).c_str(), s.visible ? "" : "; occluded",
+            Lost() ? "; the device is gone" : "");
         return line;
     }
 
@@ -518,14 +708,8 @@ private:
     {
         size_t slot = 0;
         int64_t atNs = 0;
-        TraceInfo trace;
-    };
-    struct Pending
-    {
-        int64_t submittedNs = 0;
-        int64_t askedNs = 0;
-        int64_t atNs = 0;
-        int64_t drawableWaitNs = 0;
+        int64_t handedNs = 0;
+        uint64_t number = 0;
         TraceInfo trace;
     };
 
@@ -562,8 +746,8 @@ private:
         if (n > 0 && n < static_cast<int>(sizeof line))
             std::snprintf(line + n, sizeof line - n, ", last error %lu, device %s 0x%08lX", error,
                           removed == S_OK ? "ok" : "removed", static_cast<unsigned long>(removed));
-        std::lock_guard<std::mutex> lock(_statsMutex);
-        _failure = line;
+        std::lock_guard<std::mutex> lock(_fb->statsMutex);
+        _fb->failure = line;
         return 0;
     }
 
@@ -633,6 +817,17 @@ private:
         return true;
     }
 
+    /// Presenter thread: the device gone (`reason`, the first one kept): BeginFrame fails at once from now on, the window
+    /// makes a new presenter without waiting
+    void LatchRemoved(HRESULT reason)
+    {
+        HRESULT expected = S_OK;
+        if (_removed.compare_exchange_strong(expected, FAILED(reason) ? reason : DXGI_ERROR_DEVICE_REMOVED))
+            qWarning("DxgiPresenter: the D3D11 device is gone (0x%08lX): presenting stops",
+                     static_cast<unsigned long>(reason));
+        _freeCv.notify_all();
+    }
+
     void RunPresent()
     {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
@@ -642,6 +837,7 @@ private:
         {
             Item item;
             bool replaced = false;
+            bool lost = false;
             {
                 std::unique_lock<std::mutex> lock(_queueMutex);
                 _queueCv.wait(lock, [&] { return _stop || !_queue.empty(); });
@@ -649,28 +845,35 @@ private:
                     break;
                 item = _queue.front();
                 _queue.pop_front();
+                // The device gone: nothing presents any more, the slot is free again
+                lost = Lost();
                 // A later frame already due: this one would be replaced before any refresh
-                replaced = !_queue.empty() && _queue.front().atNs <= SteadyNs();
-                if (replaced)
+                replaced = !lost && !_queue.empty() && _queue.front().atNs <= SteadyNowNs();
+                if (replaced || lost)
                     _slots[item.slot].queued = false;
+            }
+            if (lost)
+            {
+                _freeCv.notify_all();
+                continue;
             }
             if (replaced)
             {
                 _freeCv.notify_all();
-                std::lock_guard<std::mutex> lock(_statsMutex);
-                _dropped++;
+                std::lock_guard<std::mutex> lock(_fb->statsMutex);
+                _fb->dropped++;
                 continue;
             }
 
             // Max frame latency 1: a back buffer is free once the previous present was taken
-            const int64_t wait0 = SteadyNs();
+            const int64_t wait0 = SteadyNowNs();
             WaitForSingleObjectEx(_waitable, 100, TRUE);
-            const int64_t drawableWaitNs = SteadyNs() - wait0;
+            const int64_t drawableWaitNs = SteadyNowNs() - wait0;
             if (GiveWayToTheNext(item))
             {
                 _freeCv.notify_all();
-                std::lock_guard<std::mutex> lock(_statsMutex);
-                _dropped++;
+                std::lock_guard<std::mutex> lock(_fb->statsMutex);
+                _fb->dropped++;
             }
             const bool copied = CopyToBackBuffer(_slots[item.slot]);
             {
@@ -679,35 +882,47 @@ private:
             }
             _freeCv.notify_all();
             if (!copied)
+            {
+                // ResizeBuffers / GetBuffer refused: a device the GPU reset removed says so here
+                if (const HRESULT reason = _device->GetDeviceRemovedReason(); FAILED(reason))
+                    LatchRemoved(reason);
                 continue;
+            }
 
-            if (item.atNs > SteadyNs() + kPresentCostNs)
+            if (item.atNs > SteadyNowNs() + kPresentCostNs)
             {
                 TimeHelper::WaitUntilPrecise(
                     std::chrono::steady_clock::time_point(std::chrono::nanoseconds(item.atNs - kPresentCostNs)),
                     [this] { return _stop.load(); }, &_wake);
             }
             const bool vrr = _vrr;
-            const int64_t submitted = SteadyNs();
+            const int64_t submitted = SteadyNowNs();
             const HRESULT hr = _swap->Present(0, vrr ? DXGI_PRESENT_ALLOW_TEARING : 0);
+            if (DeviceGone(hr))
+            {
+                const HRESULT reason = _device->GetDeviceRemovedReason();
+                LatchRemoved(FAILED(reason) ? reason : hr);
+                continue;
+            }
             if (hr == DXGI_STATUS_OCCLUDED)
-                _occludedNs = SteadyNs();
+                _occludedNs = SteadyNowNs();
             else
                 _occludedNs = 0;
             {
-                std::lock_guard<std::mutex> lock(_statsMutex);
-                AddSample(_drawableWaits, _drawableWaitNext, static_cast<double>(drawableWaitNs) / 1e6);
-                _pending.push_back({submitted, std::max(item.atNs, submitted), item.atNs, drawableWaitNs, item.trace});
-                while (_pending.size() > 16)
+                std::lock_guard<std::mutex> lock(_fb->statsMutex);
+                _fb->drawableWaits.Add(static_cast<double>(drawableWaitNs) / 1e6);
+                _fb->pending.push_back({submitted, std::max(item.atNs, submitted), item.atNs, item.handedNs,
+                                        item.number, drawableWaitNs, item.trace});
+                while (_fb->pending.size() > 16)
                 {
-                    _pending.pop_front();
-                    _dropped++;
+                    _fb->pending.pop_front();
+                    _fb->dropped++;
                 }
                 if (item.atNs > 0 && _lastAtNs > 0)
                 {
-                    _presentIntervals.push_back(static_cast<double>(item.atNs - _lastAtNs) / 1e6);
-                    if (_presentIntervals.size() > kVBlankWindow)
-                        _presentIntervals.erase(_presentIntervals.begin());
+                    _fb->presentIntervals.push_back(static_cast<double>(item.atNs - _lastAtNs) / 1e6);
+                    if (_fb->presentIntervals.size() > kVBlankWindow)
+                        _fb->presentIntervals.erase(_fb->presentIntervals.begin());
                 }
                 if (item.atNs > 0)
                     _lastAtNs = item.atNs;
@@ -717,15 +932,18 @@ private:
                 _sinceCheck = 0;
                 CheckVrr();
             }
-            if (_hangAtNs != 0 && SteadyNs() >= _hangAtNs)
+#ifdef UNREAL_TEST_HOOKS
+            if (_hangAtNs != 0 && SteadyNowNs() >= _hangAtNs)
             {
                 _hangAtNs = 0;
                 HangDevice();
             }
+#endif
         }
         SetThreadExecutionState(ES_CONTINUOUS);
     }
 
+#ifdef UNREAL_TEST_HOOKS
     /// Presenter thread (UNREAL_TEST_GPU_HANG=d3d:<s>): a compute shader that never ends on this device; the system
     /// resets the GPU after its timeout (TDR) and removes the device, as the hang on .101 did
     void HangDevice()
@@ -762,6 +980,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         _context->CSSetShader(nullptr, nullptr, 0);
         _context->Flush();
     }
+#endif
 
     /// Presenter thread, the back buffer held: a frame whose time is past by more than a third of its period (the
     /// wait for the back buffer stalled 14-30 ms while the system moved the window between direct flip and composition
@@ -775,7 +994,7 @@ void main(uint3 id : SV_DispatchThreadID) {
             return false;
         const int64_t periodNs = item.atNs - lastAtNs;
         std::unique_lock<std::mutex> lock(_queueMutex);
-        if (SteadyNs() - item.atNs <= periodNs / 3)
+        if (SteadyNowNs() - item.atNs <= periodNs / 3)
             return false;
         _queueCv.wait_until(lock,
                             std::chrono::steady_clock::time_point(std::chrono::nanoseconds(item.atNs + periodNs)),
@@ -802,16 +1021,16 @@ void main(uint3 id : SV_DispatchThreadID) {
     {
         double vblank = 0.0, vblankLo = 0.0, vblankHi = 0.0, present = 0.0;
         {
-            std::lock_guard<std::mutex> lock(_statsMutex);
-            if (_vblankIntervals.size() < kVBlankWindow / 2 || _presentIntervals.size() < kVBlankWindow / 2)
+            std::lock_guard<std::mutex> lock(_fb->statsMutex);
+            if (_fb->vblankIntervals.size() < kVBlankWindow / 2 || _fb->presentIntervals.size() < kVBlankWindow / 2)
                 return;
-            vblank = Percentile(_vblankIntervals, 0.50);
-            vblankLo = Percentile(_vblankIntervals, 0.10);
-            vblankHi = Percentile(_vblankIntervals, 0.90);
-            present = Percentile(_presentIntervals, 0.50);
+            vblank = presentstats::Percentile(_fb->vblankIntervals, 0.50);
+            vblankLo = presentstats::Percentile(_fb->vblankIntervals, 0.10);
+            vblankHi = presentstats::Percentile(_fb->vblankIntervals, 0.90);
+            present = presentstats::Percentile(_fb->presentIntervals, 0.50);
         }
         const double refreshHz = MonitorRefreshHz(_hwnd);
-        _refreshHz = refreshHz;
+        _fb->refreshHz = refreshHz;
         if (refreshHz <= 0.0 || vblank <= 0.0 || present <= 0.0)
             return;
         const double refresh = 1000.0 / refreshHz;
@@ -822,13 +1041,13 @@ void main(uint3 id : SV_DispatchThreadID) {
         // Off the grid and with the presents: the panel follows them
         if (follows && !onGrid)
         {
-            _panelFollows = true;
+            _fb->panelFollows = true;
             if (Policy() == PresentPolicy::Auto && _tearing && !_vrr)
             {
                 _vrr = true;
                 {
-                    std::lock_guard<std::mutex> lock(_statsMutex);
-                    _vrrNote.clear();
+                    std::lock_guard<std::mutex> lock(_fb->statsMutex);
+                    _fb->vrrNote.clear();
                 }
                 qInfo().noquote() << "DxgiPresenter: the vblanks follow the frames again (every" << vblank
                                   << "ms) - VRR, Present(0, ALLOW_TEARING) from now on";
@@ -837,7 +1056,7 @@ void main(uint3 id : SV_DispatchThreadID) {
         }
         if (!(onGrid || steady) || !presentsOffGrid)
             return;
-        _panelFollows = false;
+        _fb->panelFollows = false;
         if (Policy() == PresentPolicy::Auto && _vrr)
         {
             _vrr = false;
@@ -851,142 +1070,11 @@ void main(uint3 id : SV_DispatchThreadID) {
                               "session), while frames come every %.2f ms",
                               vblank, refresh, present);
             {
-                std::lock_guard<std::mutex> lock(_statsMutex);
-                _vrrNote = note;
+                std::lock_guard<std::mutex> lock(_fb->statsMutex);
+                _fb->vrrNote = note;
             }
             qInfo().noquote() << "DxgiPresenter:" << note << "- Present(0) without tearing from now on";
         }
-    }
-
-    void SetVBlankError(const char* error)
-    {
-        std::lock_guard<std::mutex> lock(_statsMutex);
-        _vblankError = error;
-    }
-
-    /// Vblank thread: the first vblank after each present is its screen time
-    void RunVBlanks()
-    {
-        // The wake after the vblank event is the measurement's error: the highest priority there is
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-        HMODULE gdi = GetModuleHandleW(L"gdi32.dll");
-        auto open = FromProc<OpenAdapterFn>(GetProcAddress(gdi, "D3DKMTOpenAdapterFromHdc"));
-        auto wait = FromProc<WaitVBlankFn>(GetProcAddress(gdi, "D3DKMTWaitForVerticalBlankEvent"));
-        auto close = FromProc<CloseAdapterFn>(GetProcAddress(gdi, "D3DKMTCloseAdapter"));
-        if (!open || !wait || !close)
-        {
-            SetVBlankError("no D3DKMT vblank wait");
-            return;
-        }
-        // The adapter of the window's monitor, opened again when the window moves to another monitor or the wait fails
-        // (a display mode change, a session moved between RDP and the console)
-        D3dkmtWaitForVerticalBlankEvent w{};
-        HMONITOR monitor = nullptr;
-        int64_t checkedNs = 0;
-        int64_t last = 0;
-        const auto closeAdapter = [&] {
-            if (w.hAdapter)
-            {
-                D3dkmtCloseAdapter ca{w.hAdapter};
-                close(&ca);
-            }
-            w = {};
-            monitor = nullptr;
-            last = 0;
-        };
-        const auto fail = [&](const char* what, LONG status) {
-            char text[96];
-            std::snprintf(text, sizeof text, "%s 0x%08lX", what, static_cast<unsigned long>(status));
-            SetVBlankError(text);
-            closeAdapter();
-            const auto retry = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
-            while (!_vblankStop && std::chrono::steady_clock::now() < retry)
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        };
-        while (!_vblankStop)
-        {
-            const int64_t now = SteadyNs();
-            if (!w.hAdapter || now - checkedNs > 1'000'000'000)
-            {
-                checkedNs = now;
-                HMONITOR current = MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST);
-                if (current != monitor || !w.hAdapter)
-                {
-                    closeAdapter();
-                    MONITORINFOEXW mi{};
-                    mi.cbSize = sizeof mi;
-                    GetMonitorInfoW(current, &mi);
-                    HDC dc = CreateDCW(nullptr, mi.szDevice, nullptr, nullptr);
-                    D3dkmtOpenAdapterFromHdc oa{};
-                    oa.hDc = dc;
-                    const LONG status = dc ? open(&oa) : -1;
-                    if (dc)
-                        DeleteDC(dc);
-                    if (status != 0)
-                    {
-                        fail("D3DKMTOpenAdapterFromHdc", status);
-                        continue;
-                    }
-                    w.hAdapter = oa.hAdapter;
-                    w.VidPnSourceId = oa.VidPnSourceId;
-                    monitor = current;
-                    _refreshHz = MonitorRefreshHz(_hwnd);
-                    SetVBlankError("");
-                }
-            }
-            if (const LONG status = wait(&w); status != 0)
-            {
-                fail("D3DKMTWaitForVerticalBlankEvent", status);
-                continue;
-            }
-            const int64_t v = SteadyNs();
-            std::lock_guard<std::mutex> lock(_statsMutex);
-            if (last != 0)
-            {
-                _vblankIntervals.push_back(static_cast<double>(v - last) / 1e6);
-                if (_vblankIntervals.size() > kVBlankWindow)
-                    _vblankIntervals.erase(_vblankIntervals.begin());
-            }
-            last = v;
-            _lastVBlankNs.store(v, std::memory_order_relaxed);
-            // The presents before this vblank: the newest is on screen from it, the others were replaced
-            size_t before = 0;
-            while (before < _pending.size() && _pending[before].submittedNs < v)
-                before++;
-            if (before == 0)
-                continue;
-            // A panel following the presents (VRR) has the vblank at the end of the scan-out the present started
-            const double refreshHz = _refreshHz;
-            const double topHz = refreshHz > 0.0 ? refreshHz : 60.0;
-            const int64_t screen = _panelFollows ? v - static_cast<int64_t>(1e9 / topHz) : v;
-            for (size_t i = 0; i < before; i++)
-            {
-                const Pending& p = _pending[i];
-                const bool shown = i + 1 == before;
-                if (shown)
-                {
-                    _shown++;
-                    AddSample(_errors, _errorNext, static_cast<double>(screen - p.askedNs) / 1e6);
-                    // The lead from the frame's own time: a window that handed it over late was late too
-                    _lead.Shown(screen - (p.atNs > 0 ? p.atNs : p.askedNs));
-                    _beat.Shown(p.trace.picture, p.trace.targetNs, screen, static_cast<int64_t>(1e9 / topHz));
-                }
-                else
-                {
-                    _dropped++;
-                }
-                if (_trace)
-                {
-                    std::fprintf(_trace, "%llu %lld %lld %lld %lld %lld %lld %lld\n",
-                                 static_cast<unsigned long long>(p.trace.serial), static_cast<long long>(p.atNs),
-                                 static_cast<long long>(p.submittedNs), static_cast<long long>(shown ? screen : 0),
-                                 static_cast<long long>(p.trace.latchNs), static_cast<long long>(p.trace.plannedNs),
-                                 static_cast<long long>(p.trace.wokeNs), static_cast<long long>(p.drawableWaitNs));
-                }
-            }
-            _pending.erase(_pending.begin(), _pending.begin() + static_cast<std::ptrdiff_t>(before));
-        }
-        closeAdapter();
     }
 
     HWND _hwnd;
@@ -1007,7 +1095,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     ComPtr<ID3D11VertexShader> _vs;
     ComPtr<ID3D11PixelShader> _ps;
     HANDLE _waitable = nullptr;
+#ifdef UNREAL_TEST_HOOKS
     int64_t _hangAtNs = 0;  // UNREAL_TEST_GPU_HANG=d3d: the presenter thread's
+#endif
     UINT _swapFlags = 0;
     UINT _backWidth = 0;
     UINT _backHeight = 0;
@@ -1019,9 +1109,7 @@ void main(uint3 id : SV_DispatchThreadID) {
 
     std::atomic<uint8_t> _policy{0};  // a PresentPolicy (SetPolicy from the GUI thread)
     std::atomic<bool> _vrr{false};
-    std::atomic<bool> _panelFollows{false};  // the vblanks follow the presents (CheckVrr; at first: tearing supported)
-    std::string _vrrNote;                    // _statsMutex
-    std::atomic<double> _refreshHz{0.0};
+    std::atomic<HRESULT> _removed{S_OK};  // the device gone (LatchRemoved): its reason
     int _sinceCheck = 0;
 
     std::array<Slot, kSlots> _slots;
@@ -1035,30 +1123,11 @@ void main(uint3 id : SV_DispatchThreadID) {
     WakeSignal _wake;
     std::atomic<bool> _stop{false};
     std::thread _presentThread;
-    std::atomic<bool> _vblankStop{false};
-    std::atomic<int64_t> _lastVBlankNs{0};  // the newest vblank (RefreshGrid)
     std::thread _vblankThread;
-    std::string _vblankError;  // _statsMutex
     std::atomic<int64_t> _occludedNs{0};
-    mutable PresentLead _lead{kLeadStartNs};
+    int64_t _lastAtNs = 0;  // the presenter thread's
 
-    mutable std::mutex _statsMutex;
-    std::deque<Pending> _pending;
-    std::vector<double> _errors;
-    ScreenBeat _beat;  // under _statsMutex
-    size_t _errorNext = 0;
-    std::vector<double> _gpuWaits;
-    size_t _gpuWaitNext = 0;
-    std::vector<double> _drawableWaits;
-    size_t _drawableWaitNext = 0;
-    std::vector<double> _vblankIntervals;
-    std::vector<double> _presentIntervals;
-    int64_t _lastAtNs = 0;
-    std::string _failure;  ///< the last BeginFrame failure (_statsMutex)
-    uint64_t _presented = 0;
-    uint64_t _shown = 0;
-    uint64_t _dropped = 0;
-    FILE* _trace = nullptr;
+    std::shared_ptr<Feedback> _fb;  // the statistics and what the vblank thread touches
 };
 }  // namespace
 
