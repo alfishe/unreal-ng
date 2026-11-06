@@ -492,6 +492,24 @@ classDiagram
   once GL plus native works, how much more a native renderer would gain is measured, then decided.
 - The GL path stays as the fallback (`UNREAL_PRESENTER=gl`, Linux until a Vulkan presenter exists) and runs the
   `b-vsync` pick.
+- **Recovery and fallback** (`platform/presenterrecovery.h`, tested without a GPU):
+  - A presenter that cannot be made is tried again 20 times, 500 ms apart; on Windows the window gets a new native
+    handle after the 2nd failure (a removed device keeps the old swap chain).
+  - A presenter whose `BeginFrame` fails for 2 s is made anew. DXGI latches `DXGI_ERROR_DEVICE_REMOVED` / `RESET` /
+    `HUNG` from `Present` and the copy, so `BeginFrame` fails at once and the restart starts without the GUI waiting.
+  - More than 3 restarts within 60 s: GL `swapBuffers` for the rest of the window's life (macOS switches the window's
+    surface to OpenGL). The reason is in `present.sync.reason` and the window status. A rebuilt screen window tries
+    the native presenter again.
+  - After a GPU reset the GL context, the GL objects and the presenter are made anew
+    (`DeviceScreenGLWindow::recreateLostContext`). `UNREAL_TEST_GPU_HANG` and `UNREAL_TEST_PRESENT_FAIL` drive these
+    paths; they are compiled only with the CMake option `UNREAL_TEST_HOOKS` (default: `TESTS`).
+- **Thread contract.** `BeginFrame` / `PresentFrame` / the destructor run on the GUI thread; the rest reads state
+  cached there (Metal: visibility and refresh rates kept in atomics by the window's occlusion and screen observers;
+  DXGI: the vblank thread publishes the period median every 16 vblanks), so any thread may ask. The Metal
+  presented handlers hold the presenter's state by `shared_ptr`: a present shown after the presenter is gone touches
+  nothing freed. The DXGI destructor waits 200 ms for the vblank thread, which may sleep in the kernel while the
+  display is off, and detaches it after that.
+- A hidden or occluded window draws nothing: the frame stays pending, smooth motion's passes do not run.
 - macOS, as built (phase 3): `DeviceScreenGLWindow` is a `QWindow` with its own GL context. In native mode its
   surface is a `MetalSurface` and GL draws on an offscreen surface into the IOSurface. A precise timer on the GUI
   thread wakes a lead before the next frame's target, draws that frame and hands it to `presentDrawable:atTime:`
@@ -510,7 +528,9 @@ classDiagram
     presents at the time. `UNREAL_PRESENT_LEAD_MS` fixes it. `UNREAL_PRESENT_LOG` shows the late count and the lead.
   - The rest of the late tail is the GL fence wait on a busy GPU (p50 0.7 ms, up to 11 ms with other GPU work).
     `glClientWaitSync` with a timeout sleeps in steps of about 10 ms on macOS (p90 10.2 ms with nothing to wait
-    for), so the presenter polls the fence without one, 0.1 ms apart: p90 0.85 ms.
+    for), so the presenter polls the fence without one for the first 4 ms (p90 0.85 ms), then waits on it blocking,
+    100 ms in all. A fence still open then is not presented: the present is skipped and counted
+    (`gpuWaitTimeouts`, in the `UNREAL_PRESENT_LOG` line).
     `nextDrawable` waits under 0.1 ms.
   - **Smooth motion's presents (one every refresh) count the lead to the time asked for**, half a refresh before the
     refresh, as a frame's own target does; counted to the refresh itself, every present missed it by one (Aleste on
@@ -630,11 +650,14 @@ directly: the screen time minus the frame's target.
   (`MainWindow::publishIfPresentChanged`): the presenter's turn to VRR or back has no menu signal.
   `display_rate` (keep / match) is `[VIDEO] DisplayRate` (section 4.7), applied at once; `present.display` reports
   its state (`keep`, `matched`, `unchanged`), the reason, the display's rate now and before, and the machine's rate.
-  `present.gpu_ms` {`smooth`, `picture`: {p50, max over the last 600, `longest` since the GL context was made,
-  `measured`}} is the GPU time of smooth motion's steps and of the picture (the CRT composition, beam model, custom
-  shader or preset), from GL timestamp queries (`GpuPassTimes`, `unreal-qt/src/widgets/gpupasstimes.h`) read back
-  frames later, never waited for. A pass over 100 ms is logged at once: the times before a GPU reset show which pass
-  grew. Without timer queries nothing is measured (`measured` 0).
+  `present.gpu_ms` {`smooth`, `smooth_cpu`, `picture`: {p50, max over the last 600, `longest` since the GL context
+  was made, `measured`}}: `smooth` is the GPU time of smooth motion's passes alone (a refresh's timer-query segments
+  summed, each segment closed before a readback, so the CPU's work and waits between them are left out),
+  `smooth_cpu` the whole smooth refresh on the CPU's steady clock (the readback waits included), `picture` the GPU
+  time of the picture (the CRT composition, beam model, custom shader or preset). GL timestamp queries
+  (`GpuPassTimes`, `unreal-qt/src/widgets/gpupasstimes.h`) are read back frames later, never waited for. A pass over
+  100 ms is logged at once: the times before a GPU reset show which pass grew. Without timer queries (macOS: Apple's
+  GL reads every `GL_TIMESTAMP` as 0) the GPU times stay unmeasured (`measured` 0); `smooth_cpu` is always measured.
 
 ### 6.5 Every effect on the GPU and on the CPU
 
@@ -659,10 +682,25 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
   CPU: three syncs (the votes are counted between the passes) and only one fragment per block; cutting the search
   order into chunks of 9 vectors (one fragment per block and chunk, then the first of the fewest per block, the same
   bits) took it from 4.9-8.5 to 4.4-6.2 ms at range 8, from 9.9-17 to 6.9-9.9 ms at range 16. The composition takes
-  the field from memory either way, so `SmoothMotionGPU` estimates only when asked (`setFieldsOnGpu`, the tests):
+  the field from memory either way, so `SmoothMotionGPU` estimates only when asked (`UNREAL_SMOOTH_FIELDS=gpu`, the
+  tests; re-measured 2026-11-06 on M1 Ultra: CPU pool 0.3-1.1 ms p50 against GPU 3.4-4.5 ms on real clips):
   the screen in `gpu` mode composes on the GPU over the CPU's fields. Live (action.sna, 3 interleaved rounds of 25 s,
   load 50-88): a refresh late 5-10 of ~595 presents in this hybrid, 8-108 with the fields on the GPU, 40-102 on the
   CPU.
+- **Bounded work (2026-11-06).** A GPU reset on Windows (a submission over 2 s) came with GPU smooth motion only: the
+  overnight soak on an RTX 4090 had 4 resets, the longest smooth refresh 1814 ms, against 0 on the CPU. The GPU
+  cover rule read ~2.3k texels per allowed vector per still pixel (~6G reads a draw at 289 vectors). Now:
+  - `LayerFlow::kMaxVectors = 32` (the common vectors first, then the most matched, ties to the first met), applied
+    in `Prepare` so CPU and GPU share it; `kMaxAllowed = 26` per block.
+  - A `CoverMasks` pass stores per pixel the win / loss bits of x-16..x+15; the picture pass reads at most
+    3,221 texels per fragment whatever the content.
+  - Every draw is cut into scissor stripes of at most 256M texel reads with a `glFlush` between them (a stripe ~50 ms
+    on a 5G reads/s iGPU).
+  - The tiled textures are made once per picture size for 32 vectors and freed when smoothing turns off.
+  - Worst content, M1 Ultra, GPU p50 / max: 352x288 33 / 58 -> 10 / 27 ms, 640x512 130 / 742 -> 27 / 49 ms; real
+    clips +0.4-1 ms p50 (the extra pass); the CPU's output is unchanged where the cap does not apply.
+  - The picture still comes back to the CPU each refresh: the CRT grading, `KeepInk`, the flicker hold and the trace
+    use it; `Decide` runs on the CPU over the Counts / answers read back.
 - **Modes.** `EffectsDevice = gpu` takes the GPU where the presenter has one and the CPU otherwise (a software
   GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
   presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video

@@ -1526,7 +1526,7 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   "interpolate" / "auto"), effects_device ("gpu" / "cpu"), present_policy
                                      --   ("auto" / "vrr" / "vsync"), display_rate ("keep" / "match"),
                                      --   lip_sync_offset_ms (-200..200),
-                                     --   present = { presenter, vrr, clock, timing = { delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms }, late, beat = { frames, off }, lead_ms, error_ms, sound_offset_ms = { p50, p99 }, gpu_wait_ms, gpu_ms = { smooth, picture = { p50, max, longest, measured } }, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
+                                     --   present = { presenter, vrr, clock, timing = { delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms }, late, beat = { frames, off }, lead_ms, error_ms, sound_offset_ms = { p50, p99 }, gpu_wait_ms, gpu_ms = { smooth, smooth_cpu, picture = { p50, max, longest, measured } }, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
                                      --   display = { state, reason, hz, ... } }
                                      --   (the frame presenter's timing), emulator (the instance the window shows),
                                      --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,

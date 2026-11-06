@@ -2993,6 +2993,9 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     present["gpu_ms"]["smooth"]["p50"] = 0.4123;
     present["gpu_ms"]["smooth"]["max"] = 1.25;
     present["gpu_ms"]["smooth"]["measured"] = 600;
+    present["gpu_ms"]["smooth_cpu"]["p50"] = 3.1;
+    present["gpu_ms"]["smooth_cpu"]["max"] = 9.5;
+    present["gpu_ms"]["smooth_cpu"]["measured"] = 600;
     present["gpu_ms"]["picture"]["measured"] = 0;
     _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
 
@@ -3002,7 +3005,7 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     ASSERT_FALSE(read.isError) << read.text;
     for (const char* part : {"clock audio", "video delay held at 184.3 ms: the sound comes later, the picture leads it (1200 frames)",
                              "3 refreshes before any frame was due, 2 clock steps carried, 1 cuts",
-                             "gpu smooth p50 0.41 max 1.25 ms"})
+                             "gpu smooth p50 0.41 max 1.25 ms", "smooth refresh (CPU clock) p50 3.1 max 9.5 ms"})
         EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
     EXPECT_EQ(read.text.find("gpu picture"), std::string::npos) << "a pass never measured is left out: " << read.text;
 

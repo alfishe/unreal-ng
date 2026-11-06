@@ -243,12 +243,14 @@ std::string WindowDisplaySummary(const Json::Value& s)
         // The GPU time of the window's passes (what a slow refresh costs)
         const Json::Value& gpu = present["gpu_ms"];
         if (gpu.isObject())
-            for (const char* pass : {"smooth", "picture"})
+            for (const auto& [pass, name] : {std::pair<const char*, const char*>{"smooth", "gpu smooth"},
+                                             std::pair<const char*, const char*>{"smooth_cpu", "smooth refresh (CPU clock)"},
+                                             std::pair<const char*, const char*>{"picture", "gpu picture"}})
             {
                 const Json::Value& times = gpu[pass];
                 if (!times.isObject() || times.get("measured", 0).asUInt64() == 0)
                     continue;
-                line += std::string(", gpu ") + pass + " p50 " +
+                line += std::string(", ") + name + " p50 " +
                         NumberText(std::round(times.get("p50", 0.0).asDouble() * 100) / 100) + " max " +
                         NumberText(std::round(times.get("max", 0.0).asDouble() * 100) / 100) + " ms";
             }
