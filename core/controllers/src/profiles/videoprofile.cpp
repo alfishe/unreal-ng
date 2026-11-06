@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace controllers
 {
@@ -9,7 +10,7 @@ namespace controllers
 namespace
 {
 constexpr unsigned kMaxPicturePeriod = 16;
-const char* const kFields[] = {"picture_period", "smooth", "window", "exclude", "picture_ready"};
+const char* const kFields[] = {"picture_period", "smooth", "window", "exclude"};
 
 /// [x, y, width, height]: whole numbers, the size above 0
 bool ParseRect(const JsonValue& value, VideoProfile::Rect& out, const std::string& where, std::string& error)
@@ -50,8 +51,7 @@ bool Whole(const VideoProfile::Rect& r)
 }
 }  // namespace
 
-bool ParseVideoProfile(const JsonValue& value, const std::vector<std::string>* events, VideoProfile& out,
-                       std::string& error)
+bool ParseVideoProfile(const JsonValue& value, VideoProfile& out, std::string& error)
 {
     if (!value.IsObject())
     {
@@ -65,7 +65,7 @@ bool ParseVideoProfile(const JsonValue& value, const std::vector<std::string>* e
             std::end(kFields))
         {
             error = "video: unknown field '" + field +
-                    "' (known: picture_period, smooth, window, exclude, picture_ready)";
+                    "' (known: picture_period, smooth, window, exclude)";
             return false;
         }
     }
@@ -81,13 +81,15 @@ bool ParseVideoProfile(const JsonValue& value, const std::vector<std::string>* e
     }
     if (const JsonValue* smooth = value.Find("smooth"))
     {
-        if (!smooth->IsString() ||
-            (smooth->AsString() != "off" && smooth->AsString() != "cadence" && smooth->AsString() != "carry"))
+        const auto word = smooth->IsString() ? std::find(std::begin(kVideoSmoothWords), std::end(kVideoSmoothWords),
+                                                         smooth->AsString())
+                                             : std::end(kVideoSmoothWords);
+        if (word == std::end(kVideoSmoothWords))
         {
             error = "video.smooth is off, cadence or carry";
             return false;
         }
-        video.smooth = smooth->AsString();
+        video.smooth = static_cast<smoothmotion::GameMode>(word - std::begin(kVideoSmoothWords));
     }
     if (const JsonValue* window = value.Find("window"))
         if (!ParseRect(*window, video.window, "video.window", error))
@@ -112,21 +114,6 @@ bool ParseVideoProfile(const JsonValue& value, const std::vector<std::string>* e
             }
             video.exclude.push_back(r);
         }
-    }
-    if (const JsonValue* ready = value.Find("picture_ready"))
-    {
-        const JsonValue* on = ready->IsObject() ? ready->Find("on") : nullptr;
-        if (on == nullptr || !on->IsString() || ready->GetMembers().size() != 1)
-        {
-            error = "video.picture_ready is {on: <event>}";
-            return false;
-        }
-        if (events != nullptr && std::find(events->begin(), events->end(), on->AsString()) == events->end())
-        {
-            error = "video.picture_ready.on: no event '" + on->AsString() + "' in the profile's events";
-            return false;
-        }
-        video.pictureReady = on->AsString();
     }
     out = std::move(video);
     return true;
