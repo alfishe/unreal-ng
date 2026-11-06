@@ -704,7 +704,12 @@ void TtdWidget::updateTelemetry()
                                       .arg(memMb, 0, 'f', 1)
                                       .arg(provenanceStr));
             _timelineSlider->setEnabled(false);
+            // The range change moves the value to 0 and fires valueChanged: without the flag the panel would seek
+            // an emptied history to frame 0, and that seek parks a machine that is running (a resume after a
+            // dropped session was followed by a pause)
+            _isInternalSliderUpdate = true;
             _timelineSlider->setRange(0, 0);
+            _isInternalSliderUpdate = false;
             _jumpStartBtn->setEnabled(false);
             _stepBackBtn->setEnabled(false);
             _stepForwardBtn->setEnabled(false);

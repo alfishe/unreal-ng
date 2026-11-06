@@ -207,8 +207,6 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/audio/capture" -H 'Content-Type: applica
 curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' \
      -d '{"mode":"capture","limit":0,"stream":"scratch/span-ay.jsonl"}'
 # 5. Free-run (resume) for the length of the span; the capture closes itself at its target.
-#    The FIRST resume after the TTD stop is followed by a pause (seen 5 of 5 times, also after 2 s of waiting):
-#    ask GET /emulator for is_paused and POST /resume again until it is false (the second one holds)
 curl -s -X POST "$BASE/emulator/$EMU_ID/resume"
 # 6. Read /audio/capture/status until file_closed, then switch the history off (closes its stream)
 curl -s -X POST "$BASE/emulator/$EMU_ID/history/ay-socket/config" -H 'Content-Type: application/json' -d '{"mode":"off"}'
@@ -219,7 +217,7 @@ Notes:
 - **Measured end to end** (Pentagon, a loop writing AY registers and toggling the beeper; dump, load, seek, stop,
   invalidate, both captures armed, resume): the WAV is exactly 1.0 s (88 200 samples, 176 444 bytes, header patched),
   the AY history holds all 123 988 writes of that second with none dropped, its stream file has the same number of
-  lines. Without the second resume the same run collected 3 614 samples in 2 s: the machine stood paused.
+  lines. (A unreal-qt older than this note paused the machine after the first resume: the TTD panel sought the emptied timeline; resume again if `is_paused` is still true.)
 - **Both captures together.** The audio capture and the AY history see the same frames, so one pass gives the sound
   and the register writes of a span (`frame` / `tacts` of each write against the sample position:
   `samples = frames * samples_per_frame + tacts * rate / cpu_clock`).
