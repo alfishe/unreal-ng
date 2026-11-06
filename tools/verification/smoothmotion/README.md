@@ -35,8 +35,10 @@ motion has it at the refresh's time, sharp and whole. So per region that moves r
    (the best picture without blending), normalised squared error. It knows nothing of how filters work.
 5. **Oracle C (ground truth)**, synthetic scenes only: every unbroken stretch of the source track must be exactly the
    program's trajectory (`floor(floor(n / period) * step16 / 16)` px for some frame phase; with the truth's `end`
-   and `cycle`, at n mod `cycle` and gone from `end` on: a stretch while the ball is gone must not move).
-6. **Static pixels**: outside the regions, pixels that do not change in the source must be the source's.
+   and `cycle`, at n mod `cycle` and gone from `end` on: a stretch while the ball is gone must not move). The pairs
+   where the region turns empty or shows content again break the track: no oracle scores across the jump.
+6. **Static pixels**: outside the regions, pixels that do not change in the source must be the source's (gated for
+   every filter except the never shipped experiments `pan-global`, `pan-strips` and `extrapolate`).
 
 | Number | Meaning |
 |---|---|

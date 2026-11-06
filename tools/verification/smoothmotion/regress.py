@@ -15,8 +15,10 @@ import json
 import os
 import sys
 
-# Experiments of POC 047 that move whole pictures (static damage is their known flaw, measured, not gated)
-EXPERIMENTS = {"pan-global", "pan-strips"}
+# Experiments of POC 047, never shipped, whose static damage is their known flaw (measured, not gated): the pans move
+# whole pictures; extrapolate carries the last pair's block vectors past the frame (a wrong vector on a 10 px jump
+# writes a few pixels next to the lane)
+EXPERIMENTS = {"pan-global", "pan-strips", "extrapolate"}
 TOLERANCE = {"jstep": 0.05, "ghost": 0.05, "tear": 0.005, "pic": 0.01}
 
 

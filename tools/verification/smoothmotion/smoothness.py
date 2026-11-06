@@ -210,6 +210,12 @@ def mixture(out, src, traj, rect, k, ideal, velocity, axis=None):
     return mean, float(ideal[axis]), spread, min(1.0, residual * residual / var)
 
 
+def is_empty(src, rect, mask, k):
+    """Frame k shows nothing in rect: less than 4 luma levels RMS over mask (the threshold of content_energy)."""
+    content = crop(src.luma(k), rect)[mask]
+    return float(((content - content.mean()) ** 2).sum()) < 16.0 * content.size
+
+
 def content_energy(src, traj, rect, k):
     """The variance (sum) of source frame k over the region: the scale of the shares, the same for every filter.
     None for a nearly flat region (less than 4 luma levels RMS), which is not scored."""
@@ -332,7 +338,7 @@ def truth_segments(traj, axis, reg):
     dir * floor(floor(n / period) * step16 / 16) px, for some frame phase n0. With `end` and `cycle` (the truth of
     the region's scene) the motion restarts every `cycle` pictures at k = n mod cycle and the content is gone from
     x = end on: the shown frames of a stretch must follow the motion and the track must not move while it is gone
-    (the step into the gone frames is whatever shift hides the last picture best: not checked). Returns
+    (the steps into and out of the empty region break the track, see region_job). Returns
     (stretches, matched)."""
     sign = reg["dir"]
     cycle, end = reg.get("cycle"), reg.get("end")
@@ -386,7 +392,13 @@ def region_job(job):
     tv = np.array(job["tv"]) if job["tv"] is not None else None
     mask = activity_mask(src, rect) if job["strip"] else np.ones((rect[3] - rect[1], rect[2] - rect[0]), dtype=bool)
     pairwise = reg is not None and "offsets" in reg
-    traj = Trajectory(track(src, rect, job["search"], mask), mask, pairwise)
+    steps = track(src, rect, job["search"], mask)
+    if reg is not None and "end" in reg:
+        # the content leaves (x >= end) and comes back at the cycle's start: the pair between a shown and an empty
+        # region is no motion, the track breaks there (else the fit and the scores run across the jump)
+        empty = [is_empty(src, rect, mask, k) for k in range(src.count)]
+        steps = [(0, 0, False, False) if empty[k] != empty[k + 1] else s for k, s in enumerate(steps)]
+    traj = Trajectory(steps, mask, pairwise)
     check = None
     if reg is not None:
         # Oracle C: the source track against the program's own motion
