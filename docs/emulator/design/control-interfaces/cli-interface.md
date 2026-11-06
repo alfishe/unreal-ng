@@ -550,7 +550,7 @@ Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), 
 | `monitor host.stats` / `host.clients` | The process: CPU %, resident / peak memory, threads; connections and requests per plane |
 | `monitor controllers.devices` | The host input devices: one line per device (id, name, battery, notice); `--json` the value the topic pushes |
 | `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
-| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `debug.cpuprofile` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
 | `monitor <name> --json` | The reply every plane returns |
 
 ```
@@ -662,6 +662,35 @@ range     kind          detector       conf status   label / title
   vs 842F-8457 text          text            800 observed 
 > analysis export skool scratch/game.skool ranges=5900-59FF,8000-FFFF
 L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
+```
+
+### CPU time profile
+
+Where the CPU's T-states go per executed instruction and per routine, live, with no recording and no code map
+([CPU time profile](../../analysis/cpu-profile.md)); the same core handler as every plane (`profile::Execute`), so the
+lines are also the `text` of the REST and MCP answers.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `cpuprofile start [nostack] [beam] [noframes] [reset] [stream=F] [ring_kib=N]` | Switch the profile on: cells, the call stack (routines found at run time, self / inclusive), the per-frame series (default on), `beam` (self per 1/64 of the frame), `stream` (the series as JSONL). The CPU is held for the switch. |
+| `cpuprofile stop` / `reset` / `status` (`cpuprofile`) | Off (counters kept) / a fresh window (marks dropped) / the totals. |
+| `cpuprofile mark <name> [drop]` | A baseline: `since=<name>` reads the time after it (at most 8). |
+| `cpuprofile report [top] [since=M] [sort=self\|inclusive\|calls] [callers=] [beam=]` | The top (24) routines with self / inclusive share, entries, kinds and the attribution notes. |
+| `cpuprofile frames [last] [top=N]` | The last (50) frames of the series, the top (8) routines of each. |
+| `cpuprofile export <kit\|json\|entries\|sym\|ann> [path] [since=M]` | `kit`: the L1 subset `kit/fig_budget.py` reads; `entries`, `sym`, `ann`: the routine entries found. |
+
+`--json` prints the fields. Example:
+
+```text
+> cpuprofile start
+CPU profile started (stack on, beam off, frames on). Run the program, then read the report.
+> run frames 500
+> cpuprofile report 3
+CPU profile since the start: 500 frame(s), 34944000 T, 118 routine(s) found
+  self    incl    calls  routine (entry, page, kinds)
+   22.5%   24.8%    500  sub_B30C ($B30C, RAM 2, call)
+   14.1%   14.1%  61000  sub_A6E0 ($A6E0, RAM 2, call)
+    9.8%   99.9%      0  (outside any call) ($8000, RAM 2, root)
 ```
 
 ## Connection Examples

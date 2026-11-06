@@ -22,6 +22,7 @@ NextMemory::NextMemory(EmulatorContext* context) : Memory(context)
                                                           static_cast<MemoryWriteCallback>(&NextMemory::SlotWriteContendedDebug));
     _toolReadRedirect = true;  // DirectReadFromZ80Memory asks the slot table
     _ttdSlots8k = _ttdKeys;     // TTD names a byte per 8K slot (TtdKeyOf)
+    _readSlots8k = _readOff;    // and the CPU time profile its cells (ExecPhysOffset)
     _toolWriteRedirect = true;  // and DirectWriteToZ80Memory writes through it
     ResetMmu();
 }

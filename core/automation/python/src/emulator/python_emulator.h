@@ -73,6 +73,7 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -3796,6 +3797,25 @@ namespace PythonBindings
                "(on='press'), up ('release') or both. Returns the id",
                py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
                py::arg("note") = "")
+            .def("cpuprofile", [](Emulator& self, const std::string& op, const py::kwargs& kwargs) -> py::object {
+                profile::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const profile::Reply reply = profile::Execute(self, op, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "CPU time per routine (profilecontrol.h): op start (stack=True, beam=False, frames=True, ring_kib=4096, "
+               "stream='series.jsonl', reset=False) | stop | reset | mark (name='level2', drop=False) | status | report "
+               "(since='level2', top=24, sort='self' | 'inclusive' | 'calls', callers=True, beam=False) | frames (last=50, "
+               "top=8) | export (format='kit' | 'json' | 'entries' | 'sym' | 'ann', path=, since=). The reply's fields "
+               "plus text; a refusal: ok = False, error = why",
+               py::arg("op") = "status")
             .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
                 analysis::Options options;
                 for (const auto& [key, value] : kwargs)

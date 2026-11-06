@@ -2125,6 +2125,24 @@ emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) through the shared core handler (`profile::Execute`): the answer
+is a dict of its fields plus `text` (the CLI's lines); a refusal is `{"ok": False, "error": <why>}`.
+
+```python
+emu.cpuprofile("start")                                # cells + call stack + per-frame series
+emu.cpuprofile("start", beam=True, stream="scratch/series.jsonl", reset=True)
+emu.run_frames(500)
+r = emu.cpuprofile("report", top=10)                   # {window {...}, routines [{name, entry, self, inclusive, ...}], text}
+emu.cpuprofile("mark", name="level2")                  # a baseline
+emu.cpuprofile("report", since="level2", sort="inclusive")
+emu.cpuprofile("frames", last=20, top=4)               # {frames [{frame, tstates, routines [[id, self, incl]]}], names}
+emu.cpuprofile("export", format="kit", path="work/p1/profile-l1.json")  # for kit/fig_budget.py
+entries = emu.cpuprofile("export", format="entries")["content"]
+emu.cpuprofile("stop")                                 # the counters stay readable
+```
+
 ### Enumerations
 
 ```python

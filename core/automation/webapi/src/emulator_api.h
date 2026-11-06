@@ -274,6 +274,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::analysisExperiment, "/api/v1/emulator/{id}/analysis/experiment", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::analysisCover, "/api/v1/emulator/{id}/analysis/cover", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::analysisTrace, "/api/v1/emulator/{id}/analysis/trace", drogon::Post);
+    // The CPU time profile through profile::Execute (implementation: api/cpuprofile_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::cpuProfile, "/api/v1/emulator/{id}/cpuprofile/{op}", drogon::Get, drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -1243,6 +1245,10 @@ public:
     // window of the recording, written to path (accesstrace.h)
     void analysisTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
+    // The CPU time profile (api/cpuprofile_api.cpp): POST start / stop / reset / mark / export, GET status / report /
+    // frames - one profile::Execute operation per route
+    void cpuProfile(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& op) const;
 
     /// @brief POST /api/v1/emulator/{id}/ay/log — body: {"action":"start|stop|clear", "capacity":4096}
     void ayLog(const drogon::HttpRequestPtr& req,

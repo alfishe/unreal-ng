@@ -1083,4 +1083,43 @@ public:
     /// ... of them, those accepted while halted since the last reset (a HALT-paced loop; the TTD timeline's `halt`
     /// tag reads its growth between frames). Statistics only
     uint64_t interruptsAcceptedHalted = 0;
+    /// INT and NMI acknowledges since the CPU was made, and the T-states the last one took (HandleINT, the NMI
+    /// accept): the CPU time profile (ProfileAnalyzer) books an acknowledge apart from the instruction it interrupted.
+    /// Statistics only
+    uint64_t acknowledges = 0;
+    uint32_t lastAcknowledgeT = 0;
+    void NoteAcknowledge(uint32_t start)
+    {
+        acknowledges++;
+        lastAcknowledgeT = t - start;
+    }
+
+    /// region <Control-flow events>
+    /// A stack-moving transfer of control, as the CPU time profile's call stack (ProfileAnalyzer) follows it
+    enum class FlowEvent : uint8_t
+    {
+        Call,  ///< CALL nn, CALL cc,nn taken
+        Rst,   ///< RST n
+        Ret,   ///< RET, RET cc taken, RETN, RETI
+    };
+    /// @p target the new PC, @p slot the stack slot of the return address (SP after the push, SP before the pop),
+    /// @p ret the return address pushed (a call) or popped (a return, = @p target). Called at the end of the
+    /// instruction: cpu->t is the next instruction's start (before its M1 contention)
+    using FlowHook = void (*)(void* context, Z80* cpu, FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret);
+    /// Null when nobody listens. Only the handlers of those instructions test it (and EngineStep, which decodes the
+    /// engine's instruction after it ran): no other opcode pays. Set with the CPU held (Emulator::CpuHold)
+    FlowHook flowHook = nullptr;
+    void* flowHookContext = nullptr;
+    void SetFlowHook(FlowHook hook, void* context)
+    {
+        flowHookContext = context;
+        flowHook = hook;
+    }
+    void NoteFlow(FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret)
+    {
+        if (flowHook) [[unlikely]]
+            flowHook(flowHookContext, this, event, target, slot, ret);
+    }
+    void NoteEngineFlow(uint16_t spBefore);
+    /// endregion </Control-flow events>
 };

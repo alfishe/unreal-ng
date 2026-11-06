@@ -14,6 +14,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/symbolcontrol.h"
@@ -546,8 +547,34 @@ StateNode Analyzers(Emulator& emulator)
     coverage["available"] = analyzer != nullptr;
     coverage["recording"] = analyzer != nullptr && analyzer->isRecording();
     coverage["instructions"] = static_cast<int64_t>(analyzer != nullptr ? analyzer->getInstructionCount() : 0);
+    ProfileAnalyzer* cpuProfile = analyzers ? analyzers->getAnalyzer<ProfileAnalyzer>(ProfileAnalyzer::kId) : nullptr;
+    node["cpuprofile"] = cpuProfile == nullptr ? "unavailable" : cpuProfile->ReadTotals().active ? "running" : "off";
     PcHistory* history = context->pDebugManager ? context->pDebugManager->GetPcHistory() : nullptr;
     node["pchist"] = history != nullptr && history->IsArmed() ? "armed" : "off";
+    return node;
+}
+
+// The CPU time profile's totals (relaxed atomics the emulation thread writes: no hold, no copy of the counters)
+StateNode CpuProfile(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    AnalyzerManager* analyzers = context->pDebugManager ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+    ProfileAnalyzer* analyzer = analyzers ? analyzers->getAnalyzer<ProfileAnalyzer>(ProfileAnalyzer::kId) : nullptr;
+    StateNode node = StateNode::Object();
+    node["available"] = analyzer != nullptr;
+    if (analyzer == nullptr)
+        return node;
+    const profile::Totals t = analyzer->ReadTotals();
+    node["active"] = t.active;
+    node["frames"] = t.frames;
+    node["tstates"] = t.tstates;
+    node["instructions"] = t.instructions;
+    node["acknowledges"] = t.acknowledges;
+    node["routines"] = static_cast<unsigned>(t.routines);
+    node["pages"] = static_cast<unsigned>(t.pages);
+    node["depth"] = static_cast<unsigned>(t.depth);
+    node["discontinuities"] = t.discontinuities;
+    node["frames_kept"] = t.framesKept;
     return node;
 }
 
@@ -842,7 +869,7 @@ const std::vector<std::string>& InstanceNames()
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
                                                    "game.events",     "debug.watches",     "analysis.progress",
-                                                   "analysis.ready",  "devices.access"};
+                                                   "analysis.ready",  "devices.access",    "debug.cpuprofile"};
     return names;
 }
 
@@ -898,6 +925,8 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return DevicesAccess(emulator);
     if (name == "debug.watches")
         return Watches(emulator);
+    if (name == "debug.cpuprofile")
+        return CpuProfile(emulator);
     if (name == "analysis.progress")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")

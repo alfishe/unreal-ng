@@ -826,6 +826,29 @@ POST /api/v1/emulator/{id}/analysis/trace      {path, from_frame?, from_tinframe
                                                cycles, fetches, reads, writes, ports, bytes, truncated, text}
 ```
 
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) (`profile::Execute`, the CLI's `cpuprofile`): every answer has
+`text`; refusals are 400 (bad option or value), 404 (no such mark), 409 (not possible now), 503 (no debug manager).
+The reads also take a POST with a JSON body.
+
+```
+POST /api/v1/emulator/{id}/cpuprofile/start   {stack?, beam?, frames?, ring_kib?, stream?, reset?}: the CPU held for
+                                              the switch; the status
+POST /api/v1/emulator/{id}/cpuprofile/stop    the status (the counters stay readable)
+POST /api/v1/emulator/{id}/cpuprofile/reset   a fresh window, marks dropped
+POST /api/v1/emulator/{id}/cpuprofile/mark    {name, drop?}: a baseline for since=
+GET  /api/v1/emulator/{id}/cpuprofile/status  {active, settings, frames, tstates, instructions, acknowledges,
+                                              routines, pages, depth, discontinuities, frames_kept, marks, text}
+GET  /api/v1/emulator/{id}/cpuprofile/report?since=&top=&sort=self|inclusive|calls&callers=&beam=
+                                              {window, routines [{name, entry, page, kinds, self, inclusive,
+                                              self_permille, calls, callers, notes, ...}], text}
+GET  /api/v1/emulator/{id}/cpuprofile/frames?last=&top=   {frames [{frame, tstates, routines [[id, self, incl]]}],
+                                              names, text}
+POST /api/v1/emulator/{id}/cpuprofile/export  {format: kit|json|entries|sym|ann, path?, since?}: written to path or
+                                              answered in content
+```
+
 ### Settings Management
 ```
 GET  /api/v1/emulator/{id}/settings            All settings, grouped (io_acceleration, disk_interface, audio) plus turbo_mode, speed, effective_speed, turbo_active, turbo_audio
@@ -1979,6 +2002,7 @@ the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
 GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, controllers.devices,
                                                          emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
+                                                         debug.cpuprofile,
                                                          controllers.state, game.events, devices.access, breakpoint_groups
 GET    /api/v1/emulator/{id}/breakpoints/groups          {groups: [{name, total, active, ids}]} (the user breakpoints)
 ```

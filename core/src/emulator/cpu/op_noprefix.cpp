@@ -1014,6 +1014,7 @@ Z80OPCODE op_C0(Z80 *cpu) { // ret nz
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1062,6 +1063,7 @@ Z80OPCODE op_C4(Z80 *cpu) { // call nz,nnnn
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
 
         cpu->last_branch = cpu->pc - 1;
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1085,6 +1087,7 @@ Z80OPCODE op_C7(Z80 *cpu) { // rst 00
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x00, cpu->sp, cpu->pc);
     cpu->pc = 0x0000;
     cpu->memptr = 0x0000;
 }
@@ -1101,6 +1104,7 @@ Z80OPCODE op_C8(Z80 *cpu) { // ret z
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1113,6 +1117,7 @@ Z80OPCODE op_C9(Z80 *cpu) { // ret
     cpu->last_branch = cpu->pc - 1;
 
     cpu->pc = addr;
+    cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
     cpu->memptr = addr;
 }
 
@@ -1142,6 +1147,7 @@ Z80OPCODE op_CC(Z80 *cpu) { // call z,nnnn
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
 
         cpu->last_branch = cpu->pc - 1;
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1158,6 +1164,7 @@ Z80OPCODE op_CD(Z80 *cpu) { // call nnnn
     cpu->wd(--cpu->sp, (cpu->pc >> 8) & 0xFF);
     cpu->wd(--cpu->sp, cpu->pc & 0xFF);
 
+    cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
     cpu->pc = addr;
     cpu->memptr = addr;
 }
@@ -1174,6 +1181,7 @@ Z80OPCODE op_CF(Z80 *cpu) { // rst 08
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x08, cpu->sp, cpu->pc);
     cpu->pc = 0x08;
     cpu->memptr = 0x08;
     cpu->memh = 0;
@@ -1190,6 +1198,7 @@ Z80OPCODE op_D0(Z80 *cpu) { // ret nc
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1254,6 +1263,7 @@ Z80OPCODE op_D4(Z80 *cpu) { // call nc,nnnn
 
         cpu->last_branch = cpu->pc - 1;
 
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1277,6 +1287,7 @@ Z80OPCODE op_D7(Z80 *cpu) { // rst 10
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x10, cpu->sp, cpu->pc);
     cpu->pc = 0x10;
     cpu->memptr = 0x10;
 }
@@ -1293,6 +1304,7 @@ Z80OPCODE op_D8(Z80 *cpu) { // ret c
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1349,6 +1361,7 @@ Z80OPCODE op_DC(Z80 *cpu) { // call c,nnnn
         cpu->wd(--cpu->sp, cpu->pc & 0xFF);
 
         cpu->last_branch = cpu->pc - 1;
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1365,6 +1378,7 @@ Z80OPCODE op_DF(Z80 *cpu) { // rst 18
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x18, cpu->sp, cpu->pc);
     cpu->pc = 0x18;
     cpu->memptr = 0x18;
 }
@@ -1379,6 +1393,7 @@ Z80OPCODE op_E0(Z80 *cpu) { // ret po
         addr += 0x100 * cpu->rd(cpu->sp++);
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1437,6 +1452,7 @@ Z80OPCODE op_E4(Z80 *cpu) { // call po,nnnn
 
         cpu->last_branch = cpu->pc - 1;
 
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1460,6 +1476,7 @@ Z80OPCODE op_E7(Z80 *cpu) { // rst 20
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x20, cpu->sp, cpu->pc);
     cpu->pc = 0x20;
     cpu->memptr = 0x20;
 }
@@ -1475,6 +1492,7 @@ Z80OPCODE op_E8(Z80 *cpu) { // ret pe
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1519,6 +1537,7 @@ Z80OPCODE op_EC(Z80 *cpu) { // call pe,nnnn
 
         cpu->last_branch = cpu->pc - 1;
 
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1535,6 +1554,7 @@ Z80OPCODE op_EF(Z80 *cpu) { // rst 28
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x28, cpu->sp, cpu->pc);
     cpu->pc = 0x28;
     cpu->memptr = 0x28;
 }
@@ -1550,6 +1570,7 @@ Z80OPCODE op_F0(Z80 *cpu) { // ret p
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1596,6 +1617,7 @@ Z80OPCODE op_F4(Z80 *cpu) { // call p,nnnn
 
         cpu->last_branch = cpu->pc - 1;
 
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1619,6 +1641,7 @@ Z80OPCODE op_F7(Z80 *cpu) { // rst 30
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x30, cpu->sp, cpu->pc);
     cpu->pc = 0x30;
     cpu->memptr = 0x30;
 }
@@ -1634,6 +1657,7 @@ Z80OPCODE op_F8(Z80 *cpu) { // ret m
         cpu->last_branch = cpu->pc - 1;
 
         cpu->pc = addr;
+        cpu->NoteFlow(Z80::FlowEvent::Ret, addr, static_cast<uint16_t>(cpu->sp - 2), addr);
         cpu->memptr = addr;
     };
 }
@@ -1684,6 +1708,7 @@ Z80OPCODE op_FC(Z80 *cpu) { // call m,nnnn
 
         cpu->last_branch = cpu->pc - 1;
 
+        cpu->NoteFlow(Z80::FlowEvent::Call, addr, cpu->sp, cpu->pc);
         cpu->pc = addr;
     };
 }
@@ -1700,6 +1725,7 @@ Z80OPCODE op_FF(Z80 *cpu) { // rst 38
 
     cpu->last_branch = cpu->pc - 1;
 
+    cpu->NoteFlow(Z80::FlowEvent::Rst, 0x38, cpu->sp, cpu->pc);
     cpu->pc = 0x38;
     cpu->memptr = 0x38;
 }
