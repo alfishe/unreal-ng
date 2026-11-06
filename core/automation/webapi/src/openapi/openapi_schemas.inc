@@ -307,6 +307,8 @@
     schemas["MemoryBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
     schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
     schemas["MemoryBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["MemoryBreakpointInfo"]["properties"]["stop"]["type"] = "boolean";
+    schemas["MemoryBreakpointInfo"]["properties"]["stop"]["description"] = "false: it only counts its hits, never stops";
     schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
     schemas["MemoryBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["MemoryBreakpointInfo"]["properties"]["note"]["type"] = "string";
@@ -327,6 +329,8 @@
     schemas["PortBreakpointInfo"]["properties"]["condition"]["description"] = "The condition in canonical (Unreal) form, when one is set";
     schemas["PortBreakpointInfo"]["properties"]["match_count"]["type"] = "integer";
     schemas["PortBreakpointInfo"]["properties"]["match_count"]["description"] = "With a condition: every match; hit_count counts those whose condition held";
+    schemas["PortBreakpointInfo"]["properties"]["stop"]["type"] = "boolean";
+    schemas["PortBreakpointInfo"]["properties"]["stop"]["description"] = "false: it only counts its hits, never stops";
     schemas["PortBreakpointInfo"]["properties"]["condition_error"]["type"] = "string";
     schemas["PortBreakpointInfo"]["properties"]["condition_error"]["description"] = "Set when the condition failed to evaluate: the breakpoint is skipped (never stops) until enabled again or given a new condition";
     schemas["PortBreakpointInfo"]["properties"]["note"]["type"] = "string";
@@ -511,6 +515,10 @@
         "Optional for execution / read / write: {kind, page} as in the debugger protocol (the text form 'ram32' is "
         "accepted too; the ZX Next's DivMMC and Multiface: {kind: divmmc, page: 0-15}, divmmcrom, mfrom, mfram). A physical breakpoint: it fires on that page at offset address & #3FFF through whatever slot "
         "shows the page (slot_only: only through the slot of address); 400 for a page the machine does not have";
+    schemas["AddBreakpointRequest"]["properties"]["stop"]["type"] = "boolean";
+    schemas["AddBreakpointRequest"]["properties"]["stop"]["description"] =
+        "false: the breakpoint only counts its hits (hit_count, after the condition and the hit policy) and never stops "
+        "the machine; memory, ports, machine events and chip registers. Default true";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["type"] = "string";
     schemas["AddBreakpointRequest"]["properties"]["condition"]["description"] =
         "Memory and port breakpoints: stop only when this expression holds (Unreal language: registers, flags, "
@@ -541,6 +549,7 @@
     schemas["AddBreakpointResponse"]["properties"]["hit_mode"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["hit_target"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["hit_count"]["type"] = "integer";
+    schemas["AddBreakpointResponse"]["properties"]["stop"]["type"] = "boolean";
     schemas["AddBreakpointResponse"]["properties"]["condition"]["type"] = "string";
     schemas["AddBreakpointResponse"]["properties"]["match_count"]["type"] = "integer";
     schemas["AddBreakpointResponse"]["properties"]["note"]["type"] = "string";

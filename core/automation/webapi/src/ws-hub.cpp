@@ -117,7 +117,7 @@ const char* const kChangeTriggers[] = {
     NC_FILE_LOADED,            NC_RZX_PLAYBACK,         NC_RECORDING_STATE,       NC_CONTROLLER_CONNECTOR_CHANGED,
     NC_VIDEO_MODE_CHANGED,     NC_VIDEO_VIEWPORT_CHANGED, NC_SURFACE_CONTEXT,     NC_SURFACE_TARGET,
     NC_ACTION_CATALOGUE,       NC_EMULATOR_INSTANCE_CREATED, NC_EMULATOR_INSTANCE_DESTROYED,
-    NC_EMULATOR_SELECTION_CHANGED, NC_COMPANION_CHANGED,
+    NC_EMULATOR_SELECTION_CHANGED, NC_COMPANION_CHANGED,     NC_CONTROLLER_DEVICES_CHANGED,
 };
 
 std::string TopicList()
@@ -1373,7 +1373,8 @@ WsHub::ReadoutCadence WsHub::Cadence(const std::string& name)
         "run.state",         "machine",          "audio.mute",       "debug.mode",      "debug.breakpoints",
         "debug.labels",      "debug.analyzers",  "surfaces.context", "media.recent",    "machine.previous",
         "machine.switches",  "input.connectors", "video.window",     "video.crt_params", "video.viewport",
-        "video.temporal",    "actions.unavailable", "analysis.progress", "analysis.ready",   "debug.markup",
+        "video.temporal",    "actions.unavailable", "analysis.progress", "analysis.ready", "controllers.devices",
+        "debug.markup",
     };
     // With wall time: read on time while subscribed
     static const std::set<std::string> meters = {"host.stats", "host.clients", kStreamDeck};

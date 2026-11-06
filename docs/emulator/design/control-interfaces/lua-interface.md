@@ -620,6 +620,7 @@ ch, err = audio_mixer_get("ay1.a")            -- one row (with its channels) or 
 lv = audio_levels()                           -- every row's and channel's peak, active, mute, solo (the topic audio.mixer)
 -- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
+r = audio_capture_start(600, "", "out.wav")       -- a WAV file written while the samples come (up to 86400 s; closes at the target; status: file_closed)
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
 take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place
@@ -849,6 +850,8 @@ id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its d
 id, why = bp_chipreg("ay", 7, {value=0x3F, vmask=0x3F})  -- a sound chip register write by the main CPU: ay, fm,
                                -- saa, opl4, opl4wave, dac, cbl; to= a range end, unit= one chip of the kind
 bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
+bp(0x0038, {stop=false})       -- only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+bp_hits(id)                    -- the hit count; -1 for an unknown id
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id

@@ -30,6 +30,7 @@
 ///   http.status = reply.HttpStatus();  http.body = reply.ToJson();
 /// @endcode
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
@@ -166,6 +167,9 @@ public:
     static void SetOwner(IHostInputOwner* owner, Runner run = {});
     /// Execute on the registered owner's thread; `unavailable` with the reason when there is none
     static HostReply Process(const HostRequest& request);
+    /// Counts the Execute calls of verbs that may change what `devices` says (a role, a pin, a player, a database
+    /// entry, a light): DevicesFeed builds its value again after one. The read verbs do not count
+    static uint64_t Changes();
 
 private:
     HostReply Devices();

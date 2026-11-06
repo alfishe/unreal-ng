@@ -20,6 +20,7 @@
 #ifdef ENABLE_CONTROLLERS
 #include "debugger/markup/markupcontrol.h"
 #include "emulator/io/controllers/ihapticfeed.h"
+#include "devicesfeed.h"
 #include "hostinputcontrol.h"
 #include "hostinputservice.h"
 #include "profiles/autodecision.h"
@@ -227,6 +228,8 @@ private:
     /// The GUI set the context in force and it matches @p prefix: back to the default
     void releaseGuiContext(const std::string& prefix);
 #ifdef ENABLE_CONTROLLERS
+    /// The `controllers.devices` value (monitoring::HostDevices), at every poll: DevicesFeed says when it changed
+    void publishDevices();
     void assignPlayers(const std::vector<controllers::HostDeviceInfo>& devices);
     /// Plug what the resolved profiles' connectors name, where the machine holds something else
     void applyConnectorPlans();
@@ -292,6 +295,7 @@ private:
     controllers::ProfileContext _context;
     /// HostInputControl's owner (the WebAPI / MCP / CLI / Python host verbs run on the GUI thread through it)
     std::unique_ptr<controllers::IHostInputOwner> _controlOwner;
+    controllers::DevicesFeed _devicesFeed;
     std::vector<controllers::HostDeviceId> _known;
     std::map<controllers::HostDeviceId, std::pair<std::string, bool>> _knownNames;  ///< name, a player, by id
     std::map<controllers::HostDeviceId, std::string> _playerChoice;  ///< the user's connector per device

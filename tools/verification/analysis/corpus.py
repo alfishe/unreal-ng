@@ -198,12 +198,12 @@ class Input:
             if key in KEMPSTON:
                 self.s.call('joystick_input', {'action': 'release', 'buttons': KEMPSTON[key]}, ok=False)
             else:
-                self.s.call('type_input', {'action': 'release', 'key': KEY_NAMES.get(key, key.lower())}, ok=False)
+                self.s.call('type_input', {'action': 'release', 'key': KEY_NAMES.get(key, key.lower())})
         for key in keys:
             if key in KEMPSTON:
                 self.s.call('joystick_input', {'action': 'press', 'buttons': KEMPSTON[key]}, ok=False)
             else:
-                self.s.call('type_input', {'action': 'press', 'key': KEY_NAMES.get(key, key.lower())}, ok=False)
+                self.s.call('type_input', {'action': 'press', 'key': KEY_NAMES.get(key, key.lower())})
         self.held = list(keys)
 
 
@@ -474,9 +474,9 @@ class Basic:
     def keys(self, *taps):
         for tap in taps:
             if isinstance(tap, list):
-                self.m.s.call('type_input', {'action': 'combo', 'keys': tap, 'frames': 2}, ok=False)
+                self.m.s.call('type_input', {'action': 'combo', 'keys': tap, 'frames': 2})
             else:
-                self.m.s.call('type_input', {'action': 'tap', 'key': tap, 'frames': 2}, ok=False)
+                self.m.s.call('type_input', {'action': 'tap', 'key': tap, 'frames': 2})
             self.m.s.call('control_execution', {'action': 'run_frames', 'frames': 5})
 
     def check(self, player):
@@ -539,10 +539,10 @@ def key_tap(m, keys, hold=5, gap=10):
     """Holds @p keys for @p hold emulated frames, then leaves them up for @p gap: typing in the machine's time (the
     ROM takes the same key twice only after it was up a while)"""
     for key in keys:
-        m.s.call('type_input', {'action': 'press', 'key': key}, ok=False)
+        m.s.call('type_input', {'action': 'press', 'key': key})
     run_frames(m, hold, None, 0)
     for key in keys:
-        m.s.call('type_input', {'action': 'release', 'key': key}, ok=False)
+        m.s.call('type_input', {'action': 'release', 'key': key})
     run_frames(m, gap, None, 0)
 
 

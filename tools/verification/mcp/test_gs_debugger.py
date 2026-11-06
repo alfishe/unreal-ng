@@ -105,7 +105,7 @@ def test_a_card_condition(s):
 
     r = s.call('control_execution', {'action': 'bp_condition', 'bp_id': never, 'cpu': 'gs', 'condition': 'FD == 10'},
                ok=False)
-    expect(r.is_error and "the machine's" in r.text, "the machine's FD is refused on the card", r.text)
+    expect(r.is_error and 'belongs to the main machine' in r.text, "the machine's FD is refused on the card", r.text)
     pc = card_pc(s)
     r = s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs',
                                      'condition': 'PC == #%04X && M(#%04X) == M(#%04X)' % (pc, pc, pc)})

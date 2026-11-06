@@ -281,6 +281,11 @@ void BreakpointEditor::setupUI()
     // Active checkbox
     _activeCheck = new QCheckBox("Active");
     mainLayout->addWidget(_activeCheck);
+
+    // Count only: the hits are counted (the list shows them), the machine never stops
+    _countOnlyCheck = new QCheckBox("Count only (never stops)");
+    _countOnlyCheck->setToolTip("Memory, port, event and chip register breakpoints: count the hits without stopping");
+    mainLayout->addWidget(_countOnlyCheck);
     
     // Validation label
     _validationLabel = new QLabel();
@@ -429,6 +434,7 @@ void BreakpointEditor::loadBreakpointData(uint16_t breakpointId)
     
     // Set active state
     _activeCheck->setChecked(bp->active);
+    _countOnlyCheck->setChecked(bp->tapSink == BRK_COUNT_TAP);
     
     // Update UI based on type
     onTypeChanged(_typeCombo->currentIndex());
@@ -446,6 +452,11 @@ void BreakpointEditor::onTypeChanged(int index)
     _magicBox->setVisible(type == BRK_MAGIC);
     _pageRow->setVisible(type == BRK_MEMORY);
     _conditionRow->setVisible(type != BRK_KEYBOARD);
+    // The kinds a tap watches (BreakpointManager::AddBreakpoint refuses the others)
+    const bool countable = type == BRK_MEMORY || type == BRK_IO || type == BRK_EVENT || type == BRK_CHIPREG;
+    _countOnlyCheck->setVisible(countable);
+    if (!countable)
+        _countOnlyCheck->setChecked(false);
     const bool ranged = type == BRK_MEMORY || type == BRK_NEXTREG || type == BRK_COPPER;
     _endLabel->setVisible(ranged);
     _endEdit->setVisible(ranged);
@@ -744,6 +755,7 @@ void BreakpointEditor::onAccept()
     spec.address = address;
     spec.note = _descriptor.note;
     spec.group = _descriptor.group;
+    spec.stop = !_countOnlyCheck->isChecked();
     if (type != BRK_KEYBOARD)
         spec.condition = _conditionEdit->text().trimmed().toStdString();
     std::string error;

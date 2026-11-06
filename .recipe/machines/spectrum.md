@@ -10,7 +10,7 @@ card availability without checking the instance's actual config.
 
 | Model id | RAM (KB) | Sound | Disk |
 |:--|:--|:--|:--|
-| `48K` | 48 | beeper only | none (interface needed) |
+| `48K` | 48 | beeper only | none; `48K-BETA128` adds the Beta 128 ([48k-beta128.md](48k-beta128.md)) |
 | `128k` | 128 | AY (`#FFFD`/`#BFFD`) | none (interface needed) |
 | `PLUS2` (config `spectrum2`) | 128 | AY | none (grey +2: 128K hardware, Amstrad ROM) |
 | `PLUS2A` (config `spectrum2a`) | 128 | AY | none (the +3 without its floppy controller) |

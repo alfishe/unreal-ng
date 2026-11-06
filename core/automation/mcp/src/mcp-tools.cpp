@@ -1368,6 +1368,10 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["hits"]["description"] =
         "Optional for bp_add: stop on the Nth hit only ('5'), from the Nth on ('>=5') or every Nth ('%5'); every hit is "
         "counted (bp_list shows hit_count)";
+    schema["properties"]["stop"]["type"] = "boolean";
+    schema["properties"]["stop"]["description"] =
+        "Optional for bp_add of execution / read / write / port / event / chipreg: false to only count the hits, never "
+        "stop (bp_list shows the count, 'count only'); default true";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
         "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0', 'bank8k33' (an 8K RAM bank), the ZX "
@@ -1653,6 +1657,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 out << " [condition failed: " << bp["condition_error"].asString() << "]";
                             if (!bp["active"].asBool())
                                 out << " off";
+                            if (bp["stop"].isBool() && !bp["stop"].asBool())
+                                out << " count only";
                             if (bp["hit_mode"].isString() && bp["hit_mode"].asString() != "always")
                                 out << " mode " << bp["hit_mode"].asString();
                             if (bp["group"].isString() && bp["group"].asString() != "default")
@@ -1694,7 +1700,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                         body["address"] = args["address"];
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
-                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on",
+                                            "note", "group", "doors", "value", "value_mask", "hc", "key", "on", "stop",
                                             "condition", "condition_dialect", "event", "chip", "unit"})
                         if (args.isMember(key))
                             body[key] = args[key];
@@ -2696,7 +2702,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'monitor' = monitoring (GET /api/v1/monitor?instance=): the host process (CPU %, resident memory, threads), the "
         "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
         "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
-        "labels, TTD sizes, profiler states, controllers, the game's events (game.events: the play profile's events, "
+        "labels, TTD sizes, profiler states, controllers, the host input devices (controllers.devices: id, name, battery, "
+        "notice per device), the game's events (game.events: the play profile's events, "
         "how often each fired, its last frame and watched value), the device access watch's summary (devices.access: active, "
         "frames, channel_count; the channels through the monitor name itself); the WebSocket topics of the same names "
         "push them. "
@@ -3838,6 +3845,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << host["rss_bytes"].asUInt64() / (1024 * 1024) << " MB, threads "
                                         << host["threads"].asUInt() << "; clients ws " << value["clients"]["ws"]["connections"].asInt64()
                                         << ", rest requests " << value["clients"]["rest"]["requests"].asUInt64();
+                                    // The host input devices (controllers.devices): what the topic pushes
+                                    const Json::Value& devices = value["devices"];
+                                    if (devices["available"].asBool())
+                                    {
+                                        out << "\n[monitor] host devices (revision " << devices["revision"].asUInt64()
+                                            << "):";
+                                        if (devices["devices"].empty())
+                                            out << " none connected";
+                                        for (const Json::Value& device : devices["devices"])
+                                        {
+                                            out << " " << device["name"].asString() << " (" << device["id"].asString()
+                                                << ", battery " << device["battery"]["text"].asString();
+                                            if (device.isMember("notice"))
+                                                out << ", " << device["notice"].asString();
+                                            out << ");";
+                                        }
+                                    }
                                     for (const Json::Value& instance : value["instances"])
                                     {
                                         const Json::Value& stats = instance["emulator.stats"];

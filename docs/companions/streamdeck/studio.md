@@ -42,6 +42,13 @@ unreal-streamdeck run my.deck.json --viewers --watch --api 37053
 unreal-streamdeck-studio
 ```
 
+- From unreal-qt: Tools > Stream Deck... > Open Studio starts it (`--daemon 127.0.0.1:<viewers port> --daemon-api
+  <api port>`, the ports of the daemon unreal-qt supervises; macOS through Launch Services, `open -a`) from beside
+  unreal-qt (the suite's `Contents/Applications/Stream Deck Studio.app`, a build tree's `bin/`). The line beside the
+  button says whether it runs and what its deck shows, from its `GET /api/v1/connection` (asked once a second while
+  the dialog is open; a Studio started with `--api-port 0` is seen through the daemon's viewer count); while it runs
+  the button is Show Studio (`PUT /api/v1/window {"raise": true}`, plus Launch Services on macOS). Studio is its own
+  application: unreal-qt does not stop it at quit (`unreal-qt/src/controllers/studiolauncher.*`).
 - On launch, when no daemon's automation (37053) answers, the studio starts one, detached:
   `unreal-streamdeck run --wait --api 37053 --viewers 37050 --parent <studio pid>` (the executable:
   `UNREAL_STREAMDECK_BIN`, else beside the studio, its bundle or the suite's bundle, else `PATH`). It plays the idle

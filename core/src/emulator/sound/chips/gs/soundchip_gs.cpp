@@ -719,10 +719,17 @@ void SoundChip_GeneralSound::replayModuleUpload(const std::vector<uint8_t>& byte
 
 uint8_t SoundChip_GeneralSound::gsIn(uint16_t port)
 {
-    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
     // FLAGS and COMRG reads change nothing: the only reads an idle loop may repeat
     if ((port & 0x00FF) != 0x04 && (port & 0x00FF) != 0x01)
         _busEffects++;
+    // The trace holds the byte the card CPU got (COMRG: the host's command), so it is recorded after the decode
+    const uint8_t value = gsInDecode(port);
+    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, false);
+    return value;
+}
+
+uint8_t SoundChip_GeneralSound::gsInDecode(uint16_t port)
+{
     switch (port & 0x00FF)
     {
         // Exact original semantics (Unreal gsz80.cpp z80gs::in / ZXMAK2):
@@ -769,10 +776,10 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
 // of gsIn / gsOut at construction, so the classic card's port path is untouched
 uint8_t SoundChip_GeneralSound::gsInMultiSound(uint16_t port)
 {
-    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, 0, false);
     if ((port & 0x0F) != 0x04 && (port & 0x0F) != 0x01)
         _busEffects++;
     const uint8_t value = gsInMultiSoundDecode(port);
+    traceEvent(GSTraceSide::GsInternal, port & 0x00FF, value, false);
     if (_busObserver) [[unlikely]]
         _busObserver->GsPortCycle(hostTimeNow(), static_cast<uint8_t>(port), value, false);
     return value;

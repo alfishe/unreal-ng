@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(ROOT, 'tools', 'verification', 'mcp'))
 import mcplib  # noqa: E402
 
 DEFAULT_BINARY = os.path.join(ROOT, 'cmake-build-agent-release/bin/unreal-qt.app/Contents/MacOS/unreal-qt')
-KEY_NAMES = {'ENTER': 'enter', 'SPACE': 'space', 'CS': 'caps_shift', 'SS': 'symbol_shift'}
+KEY_NAMES = {'ENTER': 'enter', 'SPACE': 'space', 'CS': 'cs', 'SS': 'ss'}
 KEMPSTON = {'KF': 'fire', 'KL': 'left', 'KR': 'right', 'KU': 'up', 'KD': 'down'}
 FORMATS = ('ctl', 'skool', 'fields', 'geometry', 'layout', 'symbols', 'map')
 

@@ -446,8 +446,13 @@ void BreakpointDialog::populateBreakpointTable()
         accessItem->setTextAlignment(Qt::AlignCenter);
         _breakpointTable->setItem(row, 3, accessItem);
 
-        // Status column (a condition that failed while running stops matching until it is set again)
-        QString statusStr = bp->conditionFailed ? "Condition failed" : bp->active ? "Active" : "Inactive";
+        // Status column (a condition that failed while running stops matching until it is set again; a count-only
+        // breakpoint counts and never stops)
+        const bool countOnly = bp->tapSink == BRK_COUNT_TAP;
+        QString statusStr = bp->conditionFailed ? "Condition failed"
+                            : !bp->active       ? "Inactive"
+                            : countOnly         ? "Counting"
+                                                : "Active";
         QTableWidgetItem* statusItem = new QTableWidgetItem(statusStr);
         statusItem->setForeground(bp->conditionFailed ? QColor(192, 0, 0)
                                   : bp->active        ? QColor(0, 128, 0)
@@ -459,7 +464,7 @@ void BreakpointDialog::populateBreakpointTable()
 
         // Hits column: the hits so far (sorts as a number), the policy that picks the ones that stop
         QTableWidgetItem* hitsItem = new QTableWidgetItem();
-        if (bp->hitMode == BRK_HIT_ALWAYS)
+        if (bp->hitMode == BRK_HIT_ALWAYS || countOnly)
             hitsItem->setData(Qt::DisplayRole, static_cast<qulonglong>(bp->hitCount));
         else
             hitsItem->setText(QString("%1 (stops on %2)")

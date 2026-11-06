@@ -198,7 +198,7 @@ def set_key(s, key, down):
     if key in mm_session.KEMPSTON:
         s.call('joystick_input', {'action': action, 'buttons': mm_session.KEMPSTON[key]}, ok=False)
     else:
-        s.call('type_input', {'action': action, 'key': mm_session.KEY_NAMES.get(key, key.lower())}, ok=False)
+        s.call('type_input', {'action': action, 'key': mm_session.KEY_NAMES.get(key, key.lower())})
 
 
 def call(args):
