@@ -4326,8 +4326,8 @@ but `status` and `udev`.
 
 In the GUI: Tools > Stream Deck... (the same status, Start / Stop / Restart, when to start it, the activity look, the
 pairing with Pair / Approve / Revoke, each deck's icon pack (the daemon's packs, or "Its scenario's") and brightness,
-"Surfaces..." to the surfaces table, the udev rule on
-Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
+"Surfaces..." to the surfaces table, Open / Show Studio with whether Stream Deck Studio runs and what its deck shows
+([studio.md](../../../companions/streamdeck/studio.md#2-running-it-with-the-daemon)), the udev rule on Linux). The daemon's own automation (`127.0.0.1:37053`, REST + MCP) is in
 [docs/companions/streamdeck/daemon.md](../../../companions/streamdeck/daemon.md#automation).
 
 #### 16.3 Machine, media, input and recording actions
