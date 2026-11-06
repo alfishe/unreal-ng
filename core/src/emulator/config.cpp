@@ -1150,7 +1150,11 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: [VIDEO] AVSyncDelayFrames is retired and ignored: video follows the audio clock, "
 						"[VIDEO] LipSyncOffsetMs trims it");
 		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
-		config.lipSyncOffsetMs = (lipSync >= kMinLipSyncOffsetMs && lipSync <= kMaxLipSyncOffsetMs) ? (int)lipSync : 0;
+		const bool inRange = lipSync >= kMinLipSyncOffsetMs && lipSync <= kMaxLipSyncOffsetMs;
+		if (!inRange)
+			MLOGWARNING("Config: unsupported [VIDEO] LipSyncOffsetMs=%ld (%d..%d), using 0", lipSync,
+						kMinLipSyncOffsetMs, kMaxLipSyncOffsetMs);
+		config.lipSyncOffsetMs = inRange ? (int)lipSync : 0;
 	}
 	// The native presenter's policy: auto (default) | vrr | vsync. Unknown values warn and keep auto
 	{
