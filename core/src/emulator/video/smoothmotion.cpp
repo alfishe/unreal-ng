@@ -3,6 +3,7 @@
 #include "smoothlayers.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -485,8 +486,10 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         frame = std::move(_frames.front());
         _frames.erase(_frames.begin());
     }
+    static std::atomic<uint64_t> nextId{0};
     frame.serial = serial;
     frame.targetNs = targetNs;
+    frame.id = ++nextId;
     frame.pixels.assign(pixels, pixels + size);
     frame.changed = size;
     frame.flicker = 0;
@@ -513,6 +516,7 @@ void SmoothMotion::Push(uint64_t serial, int64_t targetNs, const uint32_t* pixel
         }
         picture.serial = serial;
         picture.targetNs = targetNs;
+        picture.id = frame.id;  // the frame's pixels
         picture.pixels.assign(pixels, pixels + size);
         _pictures.push_back(std::move(picture));
         _stats.pictures++;
@@ -542,30 +546,50 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
     const auto flickers = [](int changed, int alternating) {
         return changed > 0 && alternating * kFlickerDenominator >= changed * kFlickerNumerator;
     };
+    // Per block the verdict, split over the pool by block rows (each block writes only its own); then the held
+    // blocks applied in order
+    _flickerHeld.assign(_flickerChanged.size(), 0);
+    const auto rows = [&](int j0, int j1) {
+        for (int bj = j0; bj < j1; bj++)
+            for (int bi = 0; bi < blocksWide; bi++)
+            {
+                const size_t at = static_cast<size_t>(bj) * blocksWide + bi;
+                if (!flickers(_flickerChanged[at], _flickerAlternating[at]))
+                    continue;
+                const int bx = bi * block, by = bj * block;
+                const int x1 = std::min(bx + block, _width), y1 = std::min(by + block, _height);
+                // a shift that explains the block's changes both ways (b(p) = a(p - d), a(p) = b(p + d)) makes it a
+                // look-alike of motion: dots a scroll's step apart, passing the block one a frame (Aleste's Y). Then
+                // the 3 x 3 blocks round it alternate as well, else it is motion: the row's ends and the letter's
+                // other dots round it do not
+                if (MovesBy(a.pixels.data(), b, bx, by, x1, y1, _flickerChanged[at]))
+                {
+                    int changed = 0, alternating = 0;
+                    for (int j = std::max(bj - 1, 0); j <= std::min(bj + 1, blocksHigh - 1); j++)
+                        for (int i = std::max(bi - 1, 0); i <= std::min(bi + 1, blocksWide - 1); i++)
+                        {
+                            changed += _flickerChanged[static_cast<size_t>(j) * blocksWide + i];
+                            alternating += _flickerAlternating[static_cast<size_t>(j) * blocksWide + i];
+                        }
+                    if (!flickers(changed, alternating))
+                        continue;
+                }
+                _flickerHeld[at] = 1;
+            }
+    };
+    if (blocksHigh > 1 && std::count_if(_flickerChanged.begin(), _flickerChanged.end(), [](int c) { return c > 0; }) >
+                              kFlickerParallelBlocks)
+        Pool()->ParallelFor(blocksHigh, std::min(blocksHigh, MotionField::kRowParts), rows);
+    else
+        rows(0, blocksHigh);
     for (int bj = 0; bj < blocksHigh; bj++)
         for (int bi = 0; bi < blocksWide; bi++)
         {
             const size_t at = static_cast<size_t>(bj) * blocksWide + bi;
-            if (!flickers(_flickerChanged[at], _flickerAlternating[at]))
+            if (!_flickerHeld[at])
                 continue;
             const int bx = bi * block, by = bj * block;
             const int x1 = std::min(bx + block, _width), y1 = std::min(by + block, _height);
-            // a shift that explains the block's changes both ways (b(p) = a(p - d), a(p) = b(p + d)) makes it a
-            // look-alike of motion: dots a scroll's step apart, passing the block one a frame (Aleste's Y). Then the
-            // 3 x 3 blocks round it alternate as well, else it is motion: the row's ends and the letter's other dots
-            // round it do not
-            if (MovesBy(a.pixels.data(), b, bx, by, x1, y1, _flickerChanged[at]))
-            {
-                int changed = 0, alternating = 0;
-                for (int j = std::max(bj - 1, 0); j <= std::min(bj + 1, blocksHigh - 1); j++)
-                    for (int i = std::max(bi - 1, 0); i <= std::min(bi + 1, blocksWide - 1); i++)
-                    {
-                        changed += _flickerChanged[static_cast<size_t>(j) * blocksWide + i];
-                        alternating += _flickerAlternating[static_cast<size_t>(j) * blocksWide + i];
-                    }
-                if (!flickers(changed, alternating))
-                    continue;
-            }
             if (a.smooth.empty())
                 a.smooth.assign(static_cast<size_t>(_width) * _height, 1);
             for (int py = by; py < y1; py++)
@@ -576,6 +600,19 @@ void SmoothMotion::FindFlicker(const Stored& x, const Stored& y, const Stored& z
 
 bool SmoothMotion::MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by, int x1, int y1, int changed) const
 {
+    // The block's changed pixels once; per shift the count stops as soon as it is reached or out of reach
+    constexpr int kPixels = MotionField::kBlock * MotionField::kBlock;
+    int xs[kPixels], ys[kPixels];
+    int count = 0;
+    for (int py = by; py < y1; py++)
+        for (int px = bx; px < x1; px++)
+            if (a[static_cast<size_t>(py) * _width + px] != b[static_cast<size_t>(py) * _width + px])
+            {
+                xs[count] = px;
+                ys[count++] = py;
+            }
+    // explained * kFlickerDenominator >= changed * kFlickerNumerator, in whole pixels
+    const int needed = (changed * kFlickerNumerator + kFlickerDenominator - 1) / kFlickerDenominator;
     const int reach = MotionField::kBlock;
     for (int dy = -reach; dy <= reach; dy++)
         for (int dx = -reach; dx <= reach; dx++)
@@ -583,20 +620,18 @@ bool SmoothMotion::MovesBy(const uint32_t* a, const uint32_t* b, int bx, int by,
             if (dx == 0 && dy == 0)
                 continue;
             int explained = 0;
-            for (int py = by; py < y1; py++)
-                for (int px = bx; px < x1; px++)
-                {
-                    const size_t p = static_cast<size_t>(py) * _width + px;
-                    if (a[p] == b[p])
-                        continue;
-                    const int fx = px - dx, fy = py - dy, tx = px + dx, ty = py + dy;
-                    if (fx < 0 || fy < 0 || fx >= _width || fy >= _height || tx < 0 || ty < 0 || tx >= _width ||
-                        ty >= _height)
-                        continue;
-                    explained += b[p] == a[static_cast<size_t>(fy) * _width + fx] &&
-                                 a[p] == b[static_cast<size_t>(ty) * _width + tx];
-                }
-            if (explained * kFlickerDenominator >= changed * kFlickerNumerator)
+            for (int k = 0; k < count && explained < needed && explained + (count - k) >= needed; k++)
+            {
+                const int px = xs[k], py = ys[k];
+                const int fx = px - dx, fy = py - dy, tx = px + dx, ty = py + dy;
+                if (fx < 0 || fy < 0 || fx >= _width || fy >= _height || tx < 0 || ty < 0 || tx >= _width ||
+                    ty >= _height)
+                    continue;
+                const size_t p = static_cast<size_t>(py) * _width + px;
+                explained += b[p] == a[static_cast<size_t>(fy) * _width + fx] &&
+                             a[p] == b[static_cast<size_t>(ty) * _width + tx];
+            }
+            if (explained >= needed)
                 return true;
         }
     return false;

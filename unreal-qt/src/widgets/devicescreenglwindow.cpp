@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <QPainter>
 #include <QDragEnterEvent>
 #include <QFocusEvent>
@@ -211,7 +212,7 @@ void DeviceScreenGLWindow::releaseGLObjects()
     _composeShader = nullptr;
     _modelGpu.destroy();
     _smooth.SetDevice(nullptr);
-    _smoothGpu.destroy();
+    _smoothGpu.Destroy();
     delete _customShader;
     _customShader = nullptr;
     if (_slangRunner)
@@ -603,10 +604,12 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
-    FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.isCreated(), out);
+    FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.IsCreated(), out);
     const GpuPassTimes::Times smoothGpu = _gpuTimes.Get(GpuPassTimes::Smooth);
+    const GpuPassTimes::Times smoothCpu = _gpuTimes.Get(GpuPassTimes::SmoothCpu);
     const GpuPassTimes::Times pictureGpu = _gpuTimes.Get(GpuPassTimes::Picture);
     out.gpuSmooth = {smoothGpu.p50Ms, smoothGpu.maxMs, smoothGpu.longestMs, smoothGpu.measured};
+    out.gpuSmoothCpu = {smoothCpu.p50Ms, smoothCpu.maxMs, smoothCpu.longestMs, smoothCpu.measured};
     out.gpuPicture = {pictureGpu.p50Ms, pictureGpu.maxMs, pictureGpu.longestMs, pictureGpu.measured};
     out.displayState = _displayState;
     out.displayReason = _displayReason;
@@ -967,21 +970,34 @@ bool DeviceScreenGLWindow::smoothActive() const
 
 void DeviceScreenGLWindow::feedSmooth()
 {
-    if (_nextFrame.size() != _latchedFrame.size())
-        _nextFrame = QImage(_latchedFrame.size(), QImage::Format_RGBA8888);
-    // Each frame once, in order. The screen holds a few: a backlog past them is gone anyway
-    for (size_t k = 0; k < smoothmotion::SmoothMotion::kFrames; k++)
+    // Each frame once, in order. The screen holds a few: a backlog past them is gone anyway. Only the copies here,
+    // under the mutex; the engine's work on them (its flicker search) in pushSmooth
+    uint64_t last = _smoothFed > 0 ? _smoothFeedInfo[_smoothFed - 1].serial : _smooth.LastSerial();
+    while (_smoothFed < _smoothFeed.size())
     {
+        QImage& frame = _smoothFeed[_smoothFed];
+        if (frame.size() != _latchedFrame.size())
+            frame = QImage(_latchedFrame.size(), QImage::Format_RGBA8888);
         PresentFrameInfo next;
-        if (!_nextFrameSource(_smooth.LastSerial(), _nextFrame.bits(), static_cast<size_t>(_nextFrame.sizeInBytes()),
-                              &next) ||
-            next.serial == 0)
+        if (!_nextFrameSource(last, frame.bits(), static_cast<size_t>(frame.sizeInBytes()), &next) || next.serial == 0)
             break;
-        _smooth.Push(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
-                     _nextFrame.width(), _nextFrame.height());
-        _smoothTrace.Frame(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
-                           _nextFrame.width(), _nextFrame.height());
+        _smoothFeedInfo[_smoothFed++] = next;
+        last = next.serial;
     }
+}
+
+void DeviceScreenGLWindow::pushSmooth()
+{
+    for (size_t k = 0; k < _smoothFed; k++)
+    {
+        const QImage& frame = _smoothFeed[k];
+        const PresentFrameInfo& info = _smoothFeedInfo[k];
+        _smooth.Push(info.serial, info.targetNs, reinterpret_cast<const uint32_t*>(frame.constBits()), frame.width(),
+                     frame.height());
+        _smoothTrace.Frame(info.serial, info.targetNs, reinterpret_cast<const uint32_t*>(frame.constBits()),
+                           frame.width(), frame.height());
+    }
+    _smoothFed = 0;
 }
 
 void DeviceScreenGLWindow::clearFrameSource()
@@ -1462,6 +1478,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                 {
                     _smooth.Reset();
                     _smoothShown = {};
+                    _smoothFed = 0;
                 }
                 feedSmooth();
             }
@@ -1485,6 +1502,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         }
     }
 
+    pushSmooth();
     if (!sourceImage || sourceImage->isNull())
         return;
 
@@ -1496,12 +1514,13 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         _smooth.Height() == sourceImage->height())
     {
         // The GPU passes in this context (current: updateTexture draws), made on the first use
-        if (_smoothOnGpu && !_smoothGpu.isCreated() && !_smoothGpuFailed && !_smoothGpu.create())
+        if (_smoothOnGpu && !_smoothGpu.IsCreated() && !_smoothGpuFailed && !_smoothGpu.Create())
         {
             _smoothGpuFailed = true;
-            qWarning() << "DeviceScreenGLWindow: smooth motion on the CPU, the GPU passes failed:" << _smoothGpu.log();
+            qWarning() << "DeviceScreenGLWindow: smooth motion on the CPU, the GPU passes failed:" << _smoothGpu.Log();
         }
-        _smooth.SetDevice(_smoothOnGpu && _smoothGpu.isCreated() ? &_smoothGpu : nullptr);
+        _smoothGpu.SetPassTimes(&_gpuTimes);
+        _smooth.SetDevice(_smoothOnGpu && _smoothGpu.IsCreated() ? &_smoothGpu : nullptr);
         const int64_t planNs = atRefresh ? hostNs : _shownInfo.targetNs;
         const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(planNs);
         bool kept = false;
@@ -1512,14 +1531,24 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             if (!kept)
             {
                 if (_smoothFrame.size() != sourceImage->size())
+                {
                     _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
-                const bool timed = !(plan == _smoothShown) && _smooth.GetDevice() != nullptr;
+                    _smoothShown = {};  // a new image holds no picture yet
+                }
+                // The GPU's passes alone (the device's segments) and the refresh on the CPU's clock
+                const bool draws = !(plan == _smoothShown);
+                const bool timed = draws && _smooth.GetDevice() != nullptr;
                 if (timed)
-                    _gpuTimes.Begin(GpuPassTimes::Smooth);
-                const bool drawn =
-                    plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()));
+                    _gpuTimes.Open(GpuPassTimes::Smooth);
+                const auto drawStart = std::chrono::steady_clock::now();
+                const bool drawn = !draws || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()));
+                if (draws)
+                    _gpuTimes.Record(GpuPassTimes::SmoothCpu,
+                                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                                               drawStart)
+                                         .count());
                 if (timed)
-                    _gpuTimes.End(GpuPassTimes::Smooth);
+                    _gpuTimes.Close(GpuPassTimes::Smooth);
                 if (drawn)
                 {
                     _smoothChanged = !(plan == _smoothShown);
@@ -1536,6 +1565,10 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         }
         if (kept)
             return;
+    }
+    else if (!smoothActive() && _smoothGpu.HoldsBuffers())
+    {
+        _smoothGpu.ReleaseBuffers();  // smooth motion off: its textures back to 1 x 1
     }
     // The frame is in the texture already (a viewport change forces the upload, it does not repeat the frame)
     if (!smoothImage && !newFrame && !forced && _texture->isCreated())

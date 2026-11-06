@@ -508,6 +508,7 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     node["gpu_wait_ms"] = wait;
     StateNode gpu = StateNode::Object();
     for (const auto& [name, pass] : {std::pair<const char*, const GpuPassMs*>{"smooth", &p.gpuSmooth},
+                                     std::pair<const char*, const GpuPassMs*>{"smooth_cpu", &p.gpuSmoothCpu},
                                      std::pair<const char*, const GpuPassMs*>{"picture", &p.gpuPicture}})
     {
         StateNode times = StateNode::Object();

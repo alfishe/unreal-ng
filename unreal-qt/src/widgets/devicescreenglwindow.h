@@ -214,8 +214,10 @@ private:
     void updateTexture(int64_t hostNs, bool atRefresh = true);
     /// Smooth motion on: a mode set, the frames in order, no temporal blending
     bool smoothActive() const;
-    /// Under _frameSourceMutex: the frames latched since the last one into _smooth
+    /// Under _frameSourceMutex: the frames latched since the last one copied out (_smoothFeed)
     void feedSmooth();
+    /// The mutex released: the copied frames into _smooth (its work on them holds no lock)
+    void pushSmooth();
     /// [VIDEO] DisplayRate = match: the display under the window at the machine's rate while the application is
     /// active, its own mode otherwise (frame presenter design, section 4.6)
     void updateDisplayRate();
@@ -318,9 +320,12 @@ private:
     smoothmotion::SmoothMotion _smooth;
     SmoothMotionGPU _smoothGpu;  ///< its device unless ScreenFrames::onCpu / UNREAL_EFFECTS_DEVICE=cpu
     bool _smoothOnGpu = true;
-    bool _smoothGpuFailed = false;  ///< create() failed once: the CPU from then on
+    bool _smoothGpuFailed = false;  ///< Create() failed once: the CPU from then on
     GpuPassTimes _gpuTimes;         ///< the GPU time of smooth motion's steps and of the picture (WindowPresentStats)
-    QImage _nextFrame;    ///< a frame from _nextFrameSource on its way into _smooth
+    /// The frames from _nextFrameSource on their way into _smooth: copied under the mutex, pushed after it
+    std::array<QImage, smoothmotion::SmoothMotion::kFrames> _smoothFeed;
+    std::array<PresentFrameInfo, smoothmotion::SmoothMotion::kFrames> _smoothFeedInfo;
+    size_t _smoothFed = 0;
     QImage _smoothFrame;  ///< the picture in _texture
     smoothmotion::SmoothMotion::Result _smoothShown;  ///< what _smoothFrame is made of
     smoothmotion::TraceWriter _smoothTrace;           ///< UNREAL_SMOOTH_TRACE (smoothtrace.h)

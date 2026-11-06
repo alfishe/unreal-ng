@@ -74,7 +74,8 @@ struct WindowPresentStats
     double errorMaxMs = 0.0;
     double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
     double gpuWaitMaxMs = 0.0;
-    GpuPassMs gpuSmooth;   ///< smooth motion's GPU steps (0 on the CPU)
+    GpuPassMs gpuSmooth;     ///< smooth motion's GPU passes alone, without the CPU's work between them (0 on the CPU)
+    GpuPassMs gpuSmoothCpu;  ///< smooth motion's refresh on the CPU's clock (wall time, the GPU's waits included)
     GpuPassMs gpuPicture;  ///< the picture: the CRT composition, the beam model, a custom shader or a preset
     /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
     /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
