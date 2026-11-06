@@ -2702,7 +2702,8 @@ void RegisterInspectState(ToolRegistry& registry)
         "'monitor' = monitoring (GET /api/v1/monitor?instance=): the host process (CPU %, resident memory, threads), the "
         "clients per plane, and this instance's emulator.stats (measured fps, real-time speed %, frame time, CPU MHz, "
         "interrupts per frame), breakpoint counts by kind and groups, media slots with unsaved changes, recording, "
-        "labels, TTD sizes, profiler states, controllers, the game's events (game.events: the play profile's events, "
+        "labels, TTD sizes, profiler states, controllers, the host input devices (controllers.devices: id, name, battery, "
+        "notice per device), the game's events (game.events: the play profile's events, "
         "how often each fired, its last frame and watched value), the device access watch's summary (devices.access: active, "
         "frames, channel_count; the channels through the monitor name itself); the WebSocket topics of the same names "
         "push them. "
@@ -3844,6 +3845,23 @@ void RegisterInspectState(ToolRegistry& registry)
                                         << host["rss_bytes"].asUInt64() / (1024 * 1024) << " MB, threads "
                                         << host["threads"].asUInt() << "; clients ws " << value["clients"]["ws"]["connections"].asInt64()
                                         << ", rest requests " << value["clients"]["rest"]["requests"].asUInt64();
+                                    // The host input devices (controllers.devices): what the topic pushes
+                                    const Json::Value& devices = value["devices"];
+                                    if (devices["available"].asBool())
+                                    {
+                                        out << "\n[monitor] host devices (revision " << devices["revision"].asUInt64()
+                                            << "):";
+                                        if (devices["devices"].empty())
+                                            out << " none connected";
+                                        for (const Json::Value& device : devices["devices"])
+                                        {
+                                            out << " " << device["name"].asString() << " (" << device["id"].asString()
+                                                << ", battery " << device["battery"]["text"].asString();
+                                            if (device.isMember("notice"))
+                                                out << ", " << device["notice"].asString();
+                                            out << ");";
+                                        }
+                                    }
                                     for (const Json::Value& instance : value["instances"])
                                     {
                                         const Json::Value& stats = instance["emulator.stats"];
