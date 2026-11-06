@@ -15,6 +15,13 @@ void AudioClock::OnDeviceCallback(int64_t hostNs, uint64_t streamFrame, uint32_t
         _callbacks = 0;
         _haveOffset = false;
     }
+    // A gap (sleep and wake, an overloaded host): the fit starts over, the stream's offset is taken again
+    if (_callbacks > 0 && hostNs - _lastHostNs > kStaleNs)
+    {
+        _callbacks = 0;
+        _haveOffset = false;
+    }
+    _lastHostNs = hostNs;
 
     if (_callbacks == 0)
     {
@@ -38,13 +45,13 @@ void AudioClock::OnDeviceCallback(int64_t hostNs, uint64_t streamFrame, uint32_t
     // Exponentially weighted least squares, the incremental (West) form: numerically stable, O(1) per callback
     const double x = static_cast<double>(_device - _originDevice);
     const double y = static_cast<double>(hostNs - _originNs);
-    _weight = _weight * FORGET + 1.0;
+    _weight = _weight * kForget + 1.0;
     const double dx = x - _meanX;
     const double dy = y - _meanY;
     _meanX += dx / _weight;
     _meanY += dy / _weight;
-    _sxx = _sxx * FORGET + dx * (x - _meanX);
-    _sxy = _sxy * FORGET + dx * (y - _meanY);
+    _sxx = _sxx * kForget + dx * (x - _meanX);
+    _sxy = _sxy * kForget + dx * (y - _meanY);
     _callbacks++;
 
     // The stream's next frame is the one the device plays from this callback
@@ -57,10 +64,10 @@ void AudioClock::OnDeviceCallback(int64_t hostNs, uint64_t streamFrame, uint32_t
 
     const double nominal = 1e9 / sampleRate;
     double slope = _sxx > 0.0 ? _sxy / _sxx : nominal;
-    if (slope < nominal * (1.0 - MAX_RATE_ERROR))
-        slope = nominal * (1.0 - MAX_RATE_ERROR);
-    else if (slope > nominal * (1.0 + MAX_RATE_ERROR))
-        slope = nominal * (1.0 + MAX_RATE_ERROR);
+    if (slope < nominal * (1.0 - kMaxRateError))
+        slope = nominal * (1.0 - kMaxRateError);
+    else if (slope > nominal * (1.0 + kMaxRateError))
+        slope = nominal * (1.0 + kMaxRateError);
 
     const uint32_t seq = _seq.load(std::memory_order_relaxed);
     _seq.store(seq + 1, std::memory_order_relaxed);
@@ -74,7 +81,7 @@ void AudioClock::OnDeviceCallback(int64_t hostNs, uint64_t streamFrame, uint32_t
     _pubLatencyNs.store(static_cast<int64_t>(latencyFrames * nominal), std::memory_order_relaxed);
     _pubLastCallbackNs.store(hostNs, std::memory_order_relaxed);
     _pubGeneration.store(_generation, std::memory_order_relaxed);
-    _pubValid.store(_haveOffset && _callbacks >= MIN_CALLBACKS, std::memory_order_relaxed);
+    _pubValid.store(_haveOffset && _callbacks >= kMinCallbacks, std::memory_order_relaxed);
     _seq.store(seq + 2, std::memory_order_release);
 }
 
@@ -110,7 +117,7 @@ bool AudioClock::ReadFit(Fit* fit) const
 bool AudioClock::TimeOfStreamFrame(uint64_t streamFrame, int64_t nowNs, int64_t* hostNs) const
 {
     Fit fit;
-    if (!ReadFit(&fit) || nowNs - fit.lastCallbackNs > STALE_NS)
+    if (!ReadFit(&fit) || nowNs - fit.lastCallbackNs > kStaleNs)
         return false;
     const int64_t device = static_cast<int64_t>(streamFrame) + fit.streamToDevice;
     const double x = static_cast<double>(device - static_cast<int64_t>(fit.originDevice));
@@ -118,12 +125,4 @@ bool AudioClock::TimeOfStreamFrame(uint64_t streamFrame, int64_t nowNs, int64_t*
     if (hostNs)
         *hostNs = fit.originNs + static_cast<int64_t>(y) + fit.latencyNs;
     return true;
-}
-
-double AudioClock::FittedRate(int64_t nowNs) const
-{
-    Fit fit;
-    if (!ReadFit(&fit) || nowNs - fit.lastCallbackNs > STALE_NS || fit.slope <= 0.0)
-        return 0.0;
-    return 1e9 / fit.slope;
 }

@@ -20,14 +20,15 @@ class AudioClock
 {
 public:
     /// Callbacks before the fit counts as valid (~190 ms at 256-frame periods, 320 ms at WASAPI's 10 ms)
-    static constexpr uint32_t MIN_CALLBACKS = 32;
+    static constexpr uint32_t kMinCallbacks = 32;
     /// Forgetting factor per callback: an effective window of 256 callbacks
-    static constexpr double FORGET = 1.0 - 1.0 / 256.0;
+    static constexpr double kForget = 1.0 - 1.0 / 256.0;
     /// The device's sample period may differ from the nominal by at most this (crystals are ~100 ppm off; an
     /// estimate beyond that is callback noise early in the fit)
-    static constexpr double MAX_RATE_ERROR = 0.005;
-    /// No callback for this long: the device stopped, the clock is not valid
-    static constexpr int64_t STALE_NS = 250'000'000;
+    static constexpr double kMaxRateError = 0.005;
+    /// No callback for this long: the device stopped, the clock is not valid. A callback after such a gap (sleep and
+    /// wake, an overloaded host) starts the fit over: the line through both sides of the gap fits neither
+    static constexpr int64_t kStaleNs = 250'000'000;
 
     /// Device thread, at the start of every callback, before the ring is read.
     /// @param hostNs        steady-clock now
@@ -43,11 +44,8 @@ public:
     void Reset();
 
     /// Any thread: when stream frame `streamFrame` is heard (its start). False while the fit is not valid: too few
-    /// callbacks since a reset, or none for STALE_NS before `nowNs`
+    /// callbacks since a reset, or none for kStaleNs before `nowNs`
     bool TimeOfStreamFrame(uint64_t streamFrame, int64_t nowNs, int64_t* hostNs) const;
-
-    /// Any thread: the fitted device rate (frames per second), 0 while not valid
-    double FittedRate(int64_t nowNs) const;
 
 private:
     struct Fit
@@ -68,6 +66,7 @@ private:
     uint32_t _generation = 0;
     uint64_t _device = 0;  // frames requested so far
     uint32_t _callbacks = 0;
+    int64_t _lastHostNs = 0;  // the last callback's time
     bool _haveOffset = false;
     uint64_t _originDevice = 0;
     int64_t _originNs = 0;
