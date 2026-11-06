@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <string>
 #include <utility>
+#include <utility>
 #include <vector>
 
 namespace WindowDisplay
@@ -456,7 +457,7 @@ inline Result Set(const WindowDisplayChange& change)
 
 /// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max},
 /// clock, presented, shown, dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms
-/// {p50, p99}, gpu_wait_ms {p50, max}, smooth {mode, device, game, frames, pictures,
+/// {p50, p99}, gpu_wait_ms {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
 /// machine_hz}
 inline StateNode PresentReport(const WindowPresentStats& p)
@@ -496,6 +497,18 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     wait["p50"] = p.gpuWaitP50Ms;
     wait["max"] = p.gpuWaitMaxMs;
     node["gpu_wait_ms"] = wait;
+    StateNode gpu = StateNode::Object();
+    for (const auto& [name, pass] : {std::pair<const char*, const GpuPassMs*>{"smooth", &p.gpuSmooth},
+                                     std::pair<const char*, const GpuPassMs*>{"picture", &p.gpuPicture}})
+    {
+        StateNode times = StateNode::Object();
+        times["p50"] = pass->p50;
+        times["max"] = pass->max;
+        times["longest"] = pass->longest;
+        times["measured"] = pass->measured;
+        gpu[name] = times;
+    }
+    node["gpu_ms"] = gpu;
     StateNode smooth = StateNode::Object();
     smooth["mode"] = p.smooth;
     smooth["device"] = p.smoothDevice;

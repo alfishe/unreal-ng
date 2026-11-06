@@ -29,6 +29,7 @@
 #include "crtrenderer.h"
 #include "framehistory.h"
 #include "framesource.h"
+#include "gpupasstimes.h"
 #include "slangpresetrunner.h"
 #include "smoothmotiongpu.h"
 
@@ -199,6 +200,9 @@ private:
     static bool probeGPUAccelerationOnce(QString& rendererName);
     /// The context made and current, the GL objects initialised on the first call
     bool prepareContext();
+    bool recreateLostContext();  ///< after a graphics reset: a new context, every GL object made anew
+    void releaseGLObjects();     ///< the screen's GL objects and the native presenter (a context current)
+    void hangGL();               ///< UNREAL_TEST_GPU_HANG=gl: GL work that never ends (the recovery test)
     /// GL way: draw the frame due at the next refresh and swap
     void renderGL();
     /// Native way: draw the frame due at now + lead into an IOSurface and present it at its target; then the timer
@@ -272,6 +276,11 @@ private:
     int64_t _presentFailingSinceNs = 0;           ///< native way: BeginFrame failing since (0: it works)
     uint64_t _presentFailures = 0;                ///< ... the pictures not presented since
     static constexpr int64_t PRESENTER_RESTART_NS = 2'000'000'000;  ///< ... this long: a new presenter
+    int64_t _glHangAtNs = 0;                      ///< UNREAL_TEST_GPU_HANG=gl: when the window's GL work hangs
+    int _presenterRetries = 0;                    ///< a presenter made anew: tries left before GL presents
+    static constexpr int PRESENTER_RETRIES = 20;  ///< ... one every PRESENTER_RETRY_MS
+    static constexpr int PRESENTER_RETRY_MS = 500;
+    static constexpr int PRESENTER_NEW_WINDOW_AFTER = 2;  ///< ... failed tries before a new native window (Windows)
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
     int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
     int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
@@ -311,6 +320,7 @@ private:
     SmoothMotionGPU _smoothGpu;  ///< its device unless ScreenFrames::onCpu / UNREAL_EFFECTS_DEVICE=cpu
     bool _smoothOnGpu = true;
     bool _smoothGpuFailed = false;  ///< create() failed once: the CPU from then on
+    GpuPassTimes _gpuTimes;         ///< the GPU time of smooth motion's steps and of the picture (WindowPresentStats)
     QImage _nextFrame;    ///< a frame from _nextFrameSource on its way into _smooth
     QImage _smoothFrame;  ///< the picture in _texture
     smoothmotion::SmoothMotion::Result _smoothShown;  ///< what _smoothFrame is made of

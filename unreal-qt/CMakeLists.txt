@@ -765,6 +765,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/smoothmotiongpu_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/smoothmotiongpu.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/smoothmotiongpu.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/gpupasstimes_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/gpupasstimes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/gpupasstimes.h"
         # The libretro presets of data/shaders/crt on the slang runner (GPU: skips without a 3.3 core context)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/slangpresetrunner_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/slangpresetrunner.cpp"
@@ -776,6 +779,13 @@ if (TESTS)
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
+    endif()
+    if (WIN32)
+        # The DXGI presenter made anew for the same window (a real window and interop: skips without them)
+        list(APPEND UNREAL_QT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/dxgipresenter_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/dxgipresenter.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.h")
     endif()
     add_executable(unreal-qt-tests ${UNREAL_QT_TEST_SOURCES})
     set_target_properties(unreal-qt-tests PROPERTIES
@@ -804,6 +814,9 @@ if (TESTS)
     )
     if (APPLE)
         target_link_libraries(unreal-qt-tests PRIVATE "-framework AppKit" "-framework ApplicationServices")
+    endif()
+    if (WIN32)
+        target_link_libraries(unreal-qt-tests PRIVATE d3d11 dxgi d3dcompiler gdi32)
     endif()
 
     # The CRT picture of still frames for the gallery and the comparison with librashader (tools/crt-shaders)

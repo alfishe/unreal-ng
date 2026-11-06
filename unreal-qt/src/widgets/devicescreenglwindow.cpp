@@ -86,6 +86,9 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
         connect(_presentTimer, &QTimer::timeout, this, [this]() { renderNative(false); });
     }
     _smoothTraced = smoothmotion::TraceWriter::FromEnvironment(_smoothTrace);
+    // UNREAL_TEST_GPU_HANG=gl:<s>: the recovery test, the window's GL work never ends that long from now
+    if (const QByteArray hang = qgetenv("UNREAL_TEST_GPU_HANG"); hang.startsWith("gl:"))
+        _glHangAtNs = SteadyNowNs() + static_cast<int64_t>(hang.mid(3).toInt()) * 1'000'000'000;
     // [VIDEO] DisplayRate: the display's mode follows the application's focus and the window's display
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this]() { updateDisplayRate(); });
     connect(this, &QWindow::screenChanged, this, [this]() {
@@ -118,13 +121,88 @@ bool DeviceScreenGLWindow::prepareContext()
         _context = std::move(context);
     }
     if (!makeCurrent())
-        return false;
+    {
+        // A graphics reset (the GPU hung and the system recovered it, seen on .101) loses the context: every GL
+        // object of the screen, and the native presenter, are made anew in a new one
+        if (_context->isValid() || !recreateLostContext())
+            return false;
+    }
     if (!_glInitialized)
     {
         initializeGL();
         _glInitialized = true;
     }
     return true;
+}
+
+bool DeviceScreenGLWindow::recreateLostContext()
+{
+    qWarning() << "DeviceScreenGLWindow: the GL context was lost (a graphics reset); the screen's GL objects and the"
+               << "native presenter are made anew";
+    // The presenter first, as when it stops presenting: its slots and interop registrations go with the old device
+    _presenter.reset();
+    _presenterRetries = PRESENTER_RETRIES;
+    auto context = std::make_unique<QOpenGLContext>();
+    context->setFormat(surfaceFormat());
+    context->setShareContext(QOpenGLContext::globalShareContext());
+    if (!context->create())
+    {
+        qWarning() << "DeviceScreenGLWindow: GL context creation failed after the graphics reset";
+        return false;
+    }
+    std::unique_ptr<QOffscreenSurface> offscreen;
+    if (_native)
+    {
+        offscreen = std::make_unique<QOffscreenSurface>();
+        offscreen->setFormat(context->format());
+        offscreen->create();
+    }
+    if (!(_native ? context->makeCurrent(offscreen.get()) : handle() && context->makeCurrent(this)))
+    {
+        qWarning() << "DeviceScreenGLWindow: the new GL context is not made current after the graphics reset";
+        return false;
+    }
+    // The old objects' names died with the old context: deleted in the new, empty one they touch nothing; the Qt
+    // objects see another context and leave them
+    _gpuTimes.Release(true);
+    releaseGLObjects();
+    _context = std::move(context);  // the old one goes after its objects
+    _offscreen = std::move(offscreen);
+    _glInitialized = false;
+    _glSize = QSize();
+    _smoothShown = {};
+    _uploadedSerial = 0;
+    _gradedSerial = ~0ull;
+    _modelTablesUploaded = false;
+    _modelSerial = ~0ull;
+    _presentFailingSinceNs = 0;
+    return true;
+}
+
+void DeviceScreenGLWindow::releaseGLObjects()
+{
+    delete _texture;
+    _texture = nullptr;
+    delete _gradedTexture;
+    _gradedTexture = nullptr;
+    delete _indexTexture;
+    _indexTexture = nullptr;
+    delete _factorTexture;
+    _factorTexture = nullptr;
+    delete _composeShader;
+    _composeShader = nullptr;
+    _modelGpu.destroy();
+    _smooth.SetDevice(nullptr);
+    _smoothGpu.destroy();
+    delete _customShader;
+    _customShader = nullptr;
+    if (_slangRunner)
+        _slangRunner->release();
+    _slangRunner.reset();
+    _quadBuffer.destroy();
+    _quadVao.destroy();
+    _gpuTimes.Release(false);
+    _presenter.reset();  // its GL objects in this context
 }
 
 bool DeviceScreenGLWindow::makeCurrent()
@@ -191,6 +269,27 @@ void DeviceScreenGLWindow::renderNative(bool force)
     if (!_presenter)
     {
         _presenter = NativePresenter::Create(reinterpret_cast<void*>(winId()));
+        if (!_presenter && _presenterRetries > 0)
+        {
+            // Made anew after it stopped (a GPU reset): the system may still hold the window for a moment
+            _presenterRetries--;
+            qWarning() << "DeviceScreenGLWindow: the native presenter not made again yet," << _presenterRetries
+                       << "tries left";
+#ifdef _WIN32
+            if (_presenterRetries == PRESENTER_RETRIES - PRESENTER_NEW_WINDOW_AFTER)
+            {
+                // The old device may hold the window's swap chain for good (a device the GPU reset removed: its
+                // swap chain refused, E_ACCESSDENIED, seen on .101): a new native window takes the next one
+                qWarning() << "DeviceScreenGLWindow: the window's native handle made anew for the presenter";
+                const bool visible = isVisible();
+                destroy();
+                create();
+                setVisible(visible);
+            }
+#endif
+            _presentTimer->start(PRESENTER_RETRY_MS);
+            return;
+        }
         if (!_presenter)
         {
 #ifdef __APPLE__
@@ -204,6 +303,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
 #endif
             return;
         }
+        _presenterRetries = 0;
         _presenter->SetPolicy(_presentPolicy);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
@@ -323,6 +423,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
                                  << "; the native presenter is made anew";
             _presentFailingSinceNs = 0;
             _presenter.reset();
+            _presenterRetries = PRESENTER_RETRIES;
             update();  // the timer's present at once makes it
             return;
         }
@@ -424,6 +525,10 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.isCreated(), out);
+    const GpuPassTimes::Times smoothGpu = _gpuTimes.Get(GpuPassTimes::Smooth);
+    const GpuPassTimes::Times pictureGpu = _gpuTimes.Get(GpuPassTimes::Picture);
+    out.gpuSmooth = {smoothGpu.p50Ms, smoothGpu.maxMs, smoothGpu.longestMs, smoothGpu.measured};
+    out.gpuPicture = {pictureGpu.p50Ms, pictureGpu.maxMs, pictureGpu.longestMs, pictureGpu.measured};
     out.displayState = _displayState;
     out.displayReason = _displayReason;
     out.sync = VideoSyncName(_sync);
@@ -450,6 +555,8 @@ QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     fmt.setSwapInterval(1);  // Enable vsync: wait for vertical retrace before swap
+    // A graphics reset tells: the context reads as lost (isValid), and the window makes everything anew
+    fmt.setOption(QSurfaceFormat::ResetNotification);
     return fmt;
 }
 
@@ -546,20 +653,7 @@ DeviceScreenGLWindow::~DeviceScreenGLWindow()
         detach();
         return;
     }
-    delete _texture;
-    delete _gradedTexture;
-    delete _indexTexture;
-    delete _factorTexture;
-    delete _composeShader;
-    _modelGpu.destroy();
-    _smoothGpu.destroy();
-    delete _customShader;
-    if (_slangRunner)
-        _slangRunner->release();
-    _slangRunner.reset();
-    _quadBuffer.destroy();
-    _quadVao.destroy();
-    _presenter.reset();  // its GL objects in this context
+    releaseGLObjects();
     doneCurrent();
     detach();
 }
@@ -964,6 +1058,8 @@ void DeviceScreenGLWindow::initializeGL()
         compileCustomShader(_customShaderSource);
     if (!_slangPresetName.isEmpty() && !applySlangPreset(_slangPresetName))
         _slangPresetName.clear();
+    if (!_gpuTimes.Init(QOpenGLContext::currentContext()))
+        qInfo() << "DeviceScreenGLWindow: no GL timer queries, the GPU pass times stay 0";
 }
 
 void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
@@ -1324,7 +1420,14 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             {
                 if (_smoothFrame.size() != sourceImage->size())
                     _smoothFrame = QImage(sourceImage->size(), QImage::Format_RGBA8888);
-                if (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits())))
+                const bool timed = !(plan == _smoothShown) && _smooth.GetDevice() != nullptr;
+                if (timed)
+                    _gpuTimes.Begin(GpuPassTimes::Smooth);
+                const bool drawn =
+                    plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()));
+                if (timed)
+                    _gpuTimes.End(GpuPassTimes::Smooth);
+                if (drawn)
                 {
                     _smoothChanged = !(plan == _smoothShown);
                     _smoothShown = plan;
@@ -1421,8 +1524,47 @@ void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* 
 
 }  // namespace
 
+void DeviceScreenGLWindow::hangGL()
+{
+    // A vertex shader that never ends (vertices run whatever is drawn): the system resets the GPU after its timeout
+    // (TDR), the context is lost
+    qWarning() << "DeviceScreenGLWindow: UNREAL_TEST_GPU_HANG: the window's GL work hangs now";
+    QOpenGLShaderProgram program;
+    if (!program.addShaderFromSourceCode(QOpenGLShader::Vertex, R"(#version 330 core
+layout(location = 0) in vec2 corner;
+uniform float stepBy;
+uniform float limit;
+void main() {
+    // stepBy is 0: never ends (a loop the compiler cannot prove endless is kept)
+    float x = 0.0;
+    while (x < limit) x += stepBy;
+    gl_Position = vec4(corner * 2.0 - 1.0, x * 1e-30, 1.0);
+}
+)") || !program.addShaderFromSourceCode(QOpenGLShader::Fragment, R"(#version 330 core
+out vec4 color;
+void main() { color = vec4(1.0); }
+)") || !program.link())
+    {
+        qWarning() << "DeviceScreenGLWindow: the hang shader failed:" << program.log();
+        return;
+    }
+    program.bind();
+    program.setUniformValue("stepBy", 0.0f);
+    program.setUniformValue("limit", 1.0f);
+    _quadVao.bind();
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    _quadVao.release();
+    program.release();
+    glFlush();
+}
+
 void DeviceScreenGLWindow::paintGL()
 {
+    if (_glHangAtNs != 0 && SteadyNowNs() >= _glHangAtNs)
+    {
+        _glHangAtNs = 0;
+        hangGL();
+    }
     const qreal dpr = devicePixelRatio();
     const int surfaceWidth = _renderPicture.isEmpty() ? qRound(width() * dpr) : _renderPicture.width();
     const int surfaceHeight = _renderPicture.isEmpty() ? qRound(height() * dpr) : _renderPicture.height();
@@ -1436,9 +1578,11 @@ void DeviceScreenGLWindow::paintGL()
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
     glClear(GL_COLOR_BUFFER_BIT);
 
+    _gpuTimes.Collect();
     const QRect picture = pictureDeviceRect();
     if (_texture && _texture->isCreated() && !picture.isEmpty())
     {
+        _gpuTimes.Begin(GpuPassTimes::Picture);
         // The viewport is the picture, to the device pixel: the quad covers it, the CRT composition reads its tables
         // per pixel. GL counts rows from the bottom
         const int glY = surfaceHeight - picture.y() - picture.height();
@@ -1455,6 +1599,7 @@ void DeviceScreenGLWindow::paintGL()
         else if (_composeShader && _composeShader->isLinked() && _shownFrame)
             drawComposedCrt(picture);
         glViewport(0, 0, surfaceWidth, surfaceHeight);
+        _gpuTimes.End(GpuPassTimes::Picture);
     }
 
     if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)

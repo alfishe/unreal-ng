@@ -34,6 +34,15 @@ struct WindowViewGrab
     std::string backend;        ///< how the window draws: "gpu" / "software"
 };
 
+/// The GPU time of one of the window's passes (GL timestamps, read back without waiting), ms
+struct GpuPassMs
+{
+    double p50 = 0.0;      ///< over the last 600 measured
+    double max = 0.0;      ///< ... the longest of them
+    double longest = 0.0;  ///< since the window's GL context was made
+    uint64_t measured = 0;
+};
+
 /// How the window's frames reach the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter): the
 /// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
 struct WindowPresentStats
@@ -64,6 +73,8 @@ struct WindowPresentStats
     double errorMaxMs = 0.0;
     double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
     double gpuWaitMaxMs = 0.0;
+    GpuPassMs gpuSmooth;   ///< smooth motion's GPU steps (0 on the CPU)
+    GpuPassMs gpuPicture;  ///< the picture: the CRT composition, the beam model, a custom shader or a preset
     /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
     /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
     std::string clock = "none";

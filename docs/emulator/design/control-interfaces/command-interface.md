@@ -1699,7 +1699,7 @@ on screen: `audio` when its sound is heard, `emulated` with no audio device deli
 `presented`, `shown`, `dropped`, `late` (a refresh late), `beat` {`frames` judged, `off`: on screen for a refresh count
 outside floor / ceil of their span over the refresh, a refresh missed, a frame held or never shown}, `lead_ms`,
 `error_ms` {p50, p99, max}, `sound_offset_ms` {p50, p99: screen time minus the picture's sound, the lip-sync trim
-taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
+taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `gpu_ms` {`smooth`, `picture`: {p50, max over the last 600, `longest` since the GL context was made, `measured`}: the GPU time of smooth motion's steps and of the picture (CRT composition, beam model, custom shader or preset) from GL timestamps, a pass over 100 ms logged; `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
 `renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the machine's own frame rate: its frame length at its CPU clock, 48.83 on a Pentagon}), `emulator` (the instance the window shows),
 `fullscreen`, `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
 screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,

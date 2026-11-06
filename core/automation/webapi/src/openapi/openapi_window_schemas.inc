@@ -56,6 +56,7 @@
                "{p50, p99} over the last 600 shown: screen time minus the picture's sound on the clock in use (the "
                "lip-sync trim taken out)");
             pf("gpu_wait_ms", "object", "{p50, max}: the wait for GL's draw before the native pass");
+            pf("gpu_ms", "object", "{smooth, picture: {p50, max, longest, measured}}: the GPU time of smooth motion's steps and of the picture (CRT / preset), ms");
             pf("smooth", "object",
                "{mode (in effect: off with temporal blending or without timed frames), device (gpu / cpu), game (a "
                "game profile's cadence applies), frames, pictures, renders, blended, interpolated, motion_fields, "

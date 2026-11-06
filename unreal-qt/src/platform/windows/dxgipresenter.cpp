@@ -180,6 +180,21 @@ public:
             ReleaseSlot(s);
         if (_interopDevice && _closeDevice)
             _closeDevice(_interopDevice);
+        // The swap chain lets the window go only when its last reference is gone on the GPU too: D3D11 destroys
+        // late, and a new swap chain for the same window meanwhile gets E_ACCESSDENIED (seen on .101 after a GPU
+        // reset, the window frozen). ClearState unbinds, Flush runs the deferred destruction now
+        _rtv.Reset();
+        if (_waitable)
+            CloseHandle(_waitable);
+        _waitable = nullptr;
+        _swap.Reset();
+        _vs.Reset();
+        _ps.Reset();
+        if (_context)
+        {
+            _context->ClearState();
+            _context->Flush();
+        }
         if (_trace)
             fclose(_trace);
     }
@@ -283,6 +298,11 @@ public:
         _refreshHz = MonitorRefreshHz(_hwnd);
         if (const QByteArray path = qgetenv("UNREAL_PRESENT_TRACE"); !path.isEmpty())
             _trace = std::fopen(path.constData(), "w");
+        // UNREAL_TEST_GPU_HANG=d3d:<s>: the recovery test, the first presenter's GPU work never ends that long from
+        // now (once: the presenter made anew presents on)
+        static std::atomic<bool> hangArmed{false};
+        if (const QByteArray hang = qgetenv("UNREAL_TEST_GPU_HANG"); hang.startsWith("d3d:") && !hangArmed.exchange(true))
+            _hangAtNs = SteadyNs() + static_cast<int64_t>(hang.mid(4).toInt()) * 1'000'000'000;
 
         _presentThread = std::thread([this] { RunPresent(); });
         _vblankThread = std::thread([this] { RunVBlanks(); });
@@ -697,8 +717,50 @@ private:
                 _sinceCheck = 0;
                 CheckVrr();
             }
+            if (_hangAtNs != 0 && SteadyNs() >= _hangAtNs)
+            {
+                _hangAtNs = 0;
+                HangDevice();
+            }
         }
         SetThreadExecutionState(ES_CONTINUOUS);
+    }
+
+    /// Presenter thread (UNREAL_TEST_GPU_HANG=d3d:<s>): a compute shader that never ends on this device; the system
+    /// resets the GPU after its timeout (TDR) and removes the device, as the hang on .101 did
+    void HangDevice()
+    {
+        static const char* const kHang = R"(
+RWStructuredBuffer<uint> data : register(u0);
+[numthreads(64, 1, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+    [loop] while (data[0] != 12345u) { InterlockedAdd(data[1 + id.x % 63], 1u); }
+}
+)";
+        qWarning() << "DxgiPresenter: UNREAL_TEST_GPU_HANG: this device's GPU work hangs now";
+        ComPtr<ID3DBlob> cs, err;
+        ComPtr<ID3D11ComputeShader> shader;
+        D3D11_BUFFER_DESC bd{};
+        bd.ByteWidth = 64 * 4;
+        bd.Usage = D3D11_USAGE_DEFAULT;
+        bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        bd.StructureByteStride = 4;
+        ComPtr<ID3D11Buffer> buffer;
+        ComPtr<ID3D11UnorderedAccessView> uav;
+        if (FAILED(D3DCompile(kHang, std::strlen(kHang), nullptr, nullptr, nullptr, "main", "cs_5_0", 0, 0, &cs,
+                              &err)) ||
+            FAILED(_device->CreateComputeShader(cs->GetBufferPointer(), cs->GetBufferSize(), nullptr, &shader)) ||
+            FAILED(_device->CreateBuffer(&bd, nullptr, &buffer)) ||
+            FAILED(_device->CreateUnorderedAccessView(buffer.Get(), nullptr, &uav)))
+            return;
+        _context->CSSetShader(shader.Get(), nullptr, 0);
+        _context->CSSetUnorderedAccessViews(0, 1, uav.GetAddressOf(), nullptr);
+        _context->Dispatch(1, 1, 1);
+        ID3D11UnorderedAccessView* none = nullptr;
+        _context->CSSetUnorderedAccessViews(0, 1, &none, nullptr);
+        _context->CSSetShader(nullptr, nullptr, 0);
+        _context->Flush();
     }
 
     /// Presenter thread, the back buffer held: a frame whose time is past by more than a third of its period (the
@@ -945,6 +1007,7 @@ private:
     ComPtr<ID3D11VertexShader> _vs;
     ComPtr<ID3D11PixelShader> _ps;
     HANDLE _waitable = nullptr;
+    int64_t _hangAtNs = 0;  // UNREAL_TEST_GPU_HANG=d3d: the presenter thread's
     UINT _swapFlags = 0;
     UINT _backWidth = 0;
     UINT _backHeight = 0;
