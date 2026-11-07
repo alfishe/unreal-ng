@@ -131,7 +131,7 @@ curl -s "$BASE/emulator/$EMU_ID/disasm?address=33140&count=12" \
 # Q3: how did the program get to that write? The call stack at its moment, one call
 curl -s "$BASE/emulator/$EMU_ID/ttd/backtrace?frame=11782&tinframe=2941&text=true" | jq -r '.text'
 #   #0  pc #8184 in #8160, sp #FF3A at f11782+2941
-#   #1  #6A12 CALL #8160 in #6A00, returns to #6A15, at f11782+1022 (slot #FF3C)
+#   #1  #6A12 call #8160 in #6A00, returns to #6A15, at f11782+1022 (slot #FF3C)
 #   ...
 #   (where the routine ran earlier: reverse-continue {"pcs":[33156]} lists its previous hits)
 ```

@@ -165,8 +165,16 @@ def test_no_id_follows_the_focused_view_and_pins_hold(s):
     second = s.call('emulator_manage', {'action': 'create', 'model': '48K'}).structured
     other = second.get('id') or second.get('emulator_id') or second.get('emulator', {}).get('id')
     expect(other and other != emu, 'a second instance', second)
-    status, views = http(s, 'GET', '/api/v1/surfaces/views')
-    main_active = [v for v in views['views'] if v['id'] == main_id][0]['active']
+    # The create selects the new instance and the main window follows the selection on its UI thread, a moment later
+    # under load: wait for it, else the window switches under the checks below
+    deadline = time.monotonic() + 3
+    while True:
+        status, views = http(s, 'GET', '/api/v1/surfaces/views')
+        main_active = [v for v in views['views'] if v['id'] == main_id][0]['active']
+        if main_active == other or time.monotonic() > deadline:
+            break
+        time.sleep(0.02)
+    expect(main_active == other, 'the main window follows the created (selected) instance', views)
     status, added = http(s, 'POST', '/api/v1/surfaces/views', {'name': 'Window 2', 'active': emu, 'activate': True})
     expect(status == 200 and added['followed']['instance'] == emu and added['followed']['view']['name'] == 'Window 2',
            'the focused window is followed', added)
