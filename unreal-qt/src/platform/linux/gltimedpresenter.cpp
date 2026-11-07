@@ -69,6 +69,16 @@ Fn Loaded(const char* library, const char* name)
     return fn;
 }
 
+/// A GLX entry point from whichever GLX library the process loaded: libGL.so.1 (legacy), or GLVND's libGLX.so.0 alone
+/// (a build linked to libOpenGL + libGLX, as the CI image's: libGL.so.1 is never loaded, seen on the Steam Deck)
+template <typename Fn>
+Fn LoadedGlx(const char* name)
+{
+    if (Fn fn = Loaded<Fn>("libGL.so.1", name))
+        return fn;
+    return Loaded<Fn>("libGLX.so.0", name);
+}
+
 /// NativePresenter::PresentFeedback: the first presenter's answer
 std::atomic<int> gPresentFeedback{-1};
 
@@ -432,14 +442,12 @@ private:
             _error = "the present context is not current on the window";
             return false;
         }
-        auto glxContext = Loaded<GlxGetCurrentContextFn>("libGL.so.1", "glXGetCurrentContext");
-        if (!glxContext)
-            glxContext = Loaded<GlxGetCurrentContextFn>("libGLX.so.0", "glXGetCurrentContext");
+        auto glxContext = LoadedGlx<GlxGetCurrentContextFn>("glXGetCurrentContext");
         if (glxContext && glxContext())
         {
-            auto display = Loaded<GlxGetCurrentDisplayFn>("libGL.so.1", "glXGetCurrentDisplay");
-            auto drawable = Loaded<GlxGetCurrentDrawableFn>("libGL.so.1", "glXGetCurrentDrawable");
-            auto extensions = Loaded<GlxQueryExtensionsStringFn>("libGL.so.1", "glXQueryExtensionsString");
+            auto display = LoadedGlx<GlxGetCurrentDisplayFn>("glXGetCurrentDisplay");
+            auto drawable = LoadedGlx<GlxGetCurrentDrawableFn>("glXGetCurrentDrawable");
+            auto extensions = LoadedGlx<GlxQueryExtensionsStringFn>("glXQueryExtensionsString");
             auto defaultScreen = Loaded<XDefaultScreenFn>("libX11.so.6", "XDefaultScreen");
             _glxDisplay = display ? display() : nullptr;
             _glxDrawable = drawable ? drawable() : 0;
