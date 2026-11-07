@@ -15,14 +15,14 @@ void TTDNextState::TTDSaveState(uint8_t* dst) const
 {
     if (!dst)
         return;
-    const std::vector<uint8_t> image = NextStateCodec::Save(_decoder);
-    std::memcpy(dst, image.data(), image.size() < _size ? image.size() : _size);
+    NextStateCodec::SaveInto(_decoder, _image);
+    std::memcpy(dst, _image.data(), _image.size() < _size ? _image.size() : _size);
 }
 
 void TTDNextState::TTDLoadState(const uint8_t* src)
 {
     if (src)
-        NextStateCodec::Load(_decoder, src, _size);
+        NextStateCodec::Load(_decoder, src, _size, _size);
 }
 
 uint64_t TTDNextState::TTDHashState() const

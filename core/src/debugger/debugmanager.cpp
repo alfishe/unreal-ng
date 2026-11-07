@@ -14,6 +14,7 @@
 #include "debugger/analyzers/basic-lang/editormonitor.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/analyzers/dss/dssanalyzer.h"
 #include "debugger/analyzers/nedoos/nedoosanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
@@ -64,6 +65,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Register built-in analyzers
     _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("coverage", std::make_unique<CoverageAnalyzer>());
+    _analyzerManager->registerAnalyzer(ProfileAnalyzer::kId, std::make_unique<ProfileAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("aylog", std::make_unique<AYLogAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("nedoos", std::make_unique<NedoOsAnalyzer>(_context));

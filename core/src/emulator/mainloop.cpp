@@ -705,7 +705,9 @@ void MainLoop::OnFrameEnd()
     // previously latched framebuffer for display (decimated preview).
     if (_renderThisFrame)
     {
-        if (!_context->pScreen->IsScreenHQEnabled())
+        // A caller that holds the drawing (a TTD replay check runs frames whose picture nobody looks at) holds the
+        // batch too; on the loop's own frames the skip is clear here or follows _renderThisFrame
+        if (!_context->pScreen->IsScreenHQEnabled() && !_context->pScreen->IsTurboRenderSkip())
         {
             _context->pScreen->RenderFrameBatch();
         }

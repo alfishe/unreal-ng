@@ -34,6 +34,8 @@
 //                                       → GET /profiler/memory/counters?space=&format=top|sparse|dense&...
 //   memory_watch {op, name, start, length, port, mask, callers, values}
 //                                       → GET|POST|DELETE /profiler/memory/watches, DELETE /profiler/memory/watches/{name}
+//   cpuprofile {op, ...}                → POST /cpuprofile/{op} (the CPU time per routine, profilecontrol.h; the
+//                                        answer's text is the core's)
 //
 // analysis actions (the analysis layers, core analysis::Execute behind the routes):
 //   start {level?, mode?, record?} → POST /analysis/start
@@ -642,7 +644,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
                                "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
-                               "analyzers", "memory_counters", "memory_watch"})
+                               "analyzers", "memory_counters", "memory_watch", "cpuprofile"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -667,17 +669,24 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "(heaviest first, default), sparse (touched cells in address order) or dense; kinds r / w / x mix the weight; "
         "min, limit. memory_watch counts a region of CPU addresses or a partially decoded port (mask 0x00FF = any port "
         "with that low byte, e.g. 0x1F Kempston, 0xFE keyboard), with callers (PCs) and values: op add (name + start + "
-        "length, or name + port + mask?, callers?, values?), remove (name), clear, list (default).";
+        "length, or name + port + mask?, callers?, values?), remove (name), clear, list (default). "
+        "cpuprofile is the CPU time per routine, with no map or labels needed (routines found from CALL / RST / "
+        "interrupt entries, named by labels, else sub_XXXX): op start (stack?, beam?, series? = the per-frame ring, "
+        "ring_kib?, stream? = a JSONL file, reset?), stop, reset, mark (name: a baseline; drop?), status, report "
+        "(since? = a mark, top?, sort? self | inclusive | calls, callers?, beam?: self / inclusive T-states, permille, "
+        "callers, JP entries / dispatches / abandoned frames said per routine), frames (last?, top?: the per-frame "
+        "series), export (format kit | json | entries | sym | ann, path?, since?).";
     schema["properties"]["profiler"]["type"] = "string";
     schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
         schema["properties"]["profiler"]["enum"].append(name);
     schema["properties"]["profiler"]["description"] = "profiler: which one (all: memory + calltrace + opcode together)";
     schema["properties"]["op"]["type"] = "string";
-    schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers: the operation";
+    schema["properties"]["op"]["description"] = "profiler / gs_trace / aylog / pchist / analyzers / cpuprofile: the operation";
     schema["properties"]["name"]["type"] = "string";
     schema["properties"]["name"]["description"] =
-        "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture); memory_watch: the watch's name";
+        "analyzers: the analyzer id (trdos, editor-input, coverage, aylog, audiocapture, profile); memory_watch: the "
+        "watch's name; cpuprofile mark: the mark's name";
     schema["properties"]["space"]["type"] = "string";
     schema["properties"]["space"]["description"] = "memory_counters: cpu (default), phys, ram, or a page ram5 / rom2 / cache0";
     schema["properties"]["length"]["type"] = "string";
@@ -698,7 +707,8 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["mask"]["type"] = "string";
     schema["properties"]["mask"]["description"] = "memory_watch add: the port's address lines compared (default 0xFFFF; 0x00FF: the low byte)";
     schema["properties"]["callers"]["type"] = "boolean";
-    schema["properties"]["callers"]["description"] = "memory_watch add: count the PC of every access";
+    schema["properties"]["callers"]["description"] =
+        "memory_watch add: count the PC of every access; cpuprofile report: the callers of each routine (default true)";
     schema["properties"]["values"]["type"] = "boolean";
     schema["properties"]["values"]["description"] = "memory_watch add: count the values read and written";
     schema["properties"]["depth"]["type"] = "integer";
@@ -719,11 +729,15 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["end"]["description"] = "coverage_gaps / coverage_export window end (default 0xFFFF)";
     schema["properties"]["format"]["type"] = "string";
     schema["properties"]["format"]["enum"] = Json::Value(Json::arrayValue);
-    schema["properties"]["format"]["enum"].append("skoolkit-map");
-    schema["properties"]["format"]["description"] = "coverage_export: the file format (default skoolkit-map)";
+    for (const char* format : {"skoolkit-map", "kit", "json", "entries", "sym", "ann"})
+        schema["properties"]["format"]["enum"].append(format);
+    schema["properties"]["format"]["description"] =
+        "coverage_export: the file format (default skoolkit-map); cpuprofile export: kit (the L1 subset kit/fig_budget.py "
+        "reads), json, entries, sym or ann";
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
-        "coverage_export: the file to write (on the emulator's host); without it the map comes back in the answer";
+        "coverage_export / cpuprofile export: the file to write (on the emulator's host); without it the content comes "
+        "back in the answer";
     schema["properties"]["merge"]["type"] = "boolean";
     schema["properties"]["merge"]["description"] =
         "coverage_export: add the addresses of the map file already at path (several runs into one map)";
@@ -747,6 +761,23 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["measure_always"]["type"] = "boolean";
     schema["properties"]["measure_always"]["description"] =
         "vdac2_line_budget_set: draw and measure every FT812 frame, also while the monitor shows the Evo or turbo skips";
+    for (const char* name : {"stack", "beam", "series", "reset", "drop"})
+        schema["properties"][name]["type"] = "boolean";
+    schema["properties"]["stack"]["description"] = "cpuprofile start: routines with self / inclusive time (default true)";
+    schema["properties"]["beam"]["description"] = "cpuprofile start: self time per 1/64 of the frame; report: show it";
+    schema["properties"]["series"]["description"] = "cpuprofile start: the per-frame series ring (default true)";
+    schema["properties"]["reset"]["description"] = "cpuprofile start: a fresh window (default: go on with the last one)";
+    schema["properties"]["drop"]["description"] = "cpuprofile mark: remove the mark name";
+    for (const char* name : {"ring_kib", "top", "last"})
+        schema["properties"][name]["type"] = "integer";
+    schema["properties"]["ring_kib"]["description"] = "cpuprofile start: the series ring's size in KiB (default 4096)";
+    schema["properties"]["top"]["description"] = "cpuprofile report: rows (default 24); frames: routines per frame (8)";
+    schema["properties"]["last"]["description"] = "cpuprofile frames: the last N frames (default 50)";
+    for (const char* name : {"since", "sort", "stream"})
+        schema["properties"][name]["type"] = "string";
+    schema["properties"]["since"]["description"] = "cpuprofile report / export: the time after this mark";
+    schema["properties"]["sort"]["description"] = "cpuprofile report: self (default), inclusive or calls";
+    schema["properties"]["stream"]["description"] = "cpuprofile start: a JSONL file the per-frame series is appended to";
     schema["required"].append("action");
 
     registry.Register(
@@ -1237,6 +1268,33 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                 return;
             }
 
+            if (action == "cpuprofile")
+            {
+                // Every option goes through as given; the core checks them. series is the core's frames (frames is
+                // the porttrace frame count here)
+                const std::string op = args.get("op", "status").asString();
+                Json::Value body(Json::objectValue);
+                for (const char* name : {"stack", "beam", "ring_kib", "stream", "reset", "name", "drop", "since", "top",
+                                         "sort", "callers", "last", "format", "path"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                if (args.isMember("series") && !args["series"].isNull())
+                    body["frames"] = args["series"];
+                if (op.empty() || op.find_first_of("/?#") != std::string::npos)
+                {
+                    done(ToolResult::Error("cpuprofile op: start, stop, reset, mark, status, report, frames or export"));
+                    return;
+                }
+                ResolveAndForward(args, "POST", "/cpuprofile/" + op, &body, caller, "CPU profile: " + op,
+                                  [done](ToolResult result) {
+                                      if (!result.isError && result.structured.isObject() &&
+                                          result.structured.isMember("text"))
+                                          result.text += "\n" + result.structured["text"].asString();
+                                      done(std::move(result));
+                                  });
+                return;
+            }
+
             if (action == "profiler" || action == "gs_trace" || action == "aylog" || action == "pchist" || action == "analyzers")
             {
                 const std::string op = args.get("op", action == "analyzers" ? "list" : "status").asString();
@@ -1366,7 +1424,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                                             "'. Valid: coverage_start, coverage_stop, coverage_read, coverage_gaps, coverage_clear, "
                                             "frame_cost, profile_start, profile_stop, profile_status, profile_report, porttrace, "
                                             "gs_porttrace, vdac2_line_budget, vdac2_line_budget_set, profiler, gs_trace, aylog, "
-                                            "pchist, analyzers, memory_counters, memory_watch"));
+                                            "pchist, analyzers, memory_counters, memory_watch, cpuprofile"));
         });
 }
 

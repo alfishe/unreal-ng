@@ -354,6 +354,8 @@ private:
     TTDReply FindEvent(const TTDRequest& request);
     TTDReply ExplainFrame(const TTDRequest& request);
     TTDReply DiffMoments(const TTDRequest& request);
+    TTDReply ReplayCheck(const TTDRequest& request);
+    TTDReply SeekCheck(const TTDRequest& request);
     TTDReply Bookmarks(const TTDRequest& request);
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkNote(const TTDRequest& request);
@@ -447,7 +449,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "find-event", "explain-frame", "diff", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -491,6 +493,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                         "limit", "max_frames", "text"}},
         {"explain-frame", {"frame", "sections", "limit", "text"}},
         {"diff", {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "sections", "limit", "writers", "text"}},
+        {"replay-check", {"from_frame", "to_frame", "stride", "limit", "text"}},
+        {"seek-check", {"enabled"}},
         {"file-info", {"path"}},
         {"dump", {"path"}},
         {"load", {"path"}},
@@ -596,6 +600,10 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return ExplainFrame(request);
     if (verb == "diff")
         return DiffMoments(request);
+    if (verb == "replay-check")
+        return ReplayCheck(request);
+    if (verb == "seek-check")
+        return SeekCheck(request);
     if (verb == "markers")
         return Markers();
     if (verb == "bookmarks")
@@ -677,8 +685,11 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
             ret[key] = 0;
         ret["port_journal_off_reason"] = StateNode();
         for (const char* key : {"port_read_count", "port_write_count", "port_journal_bytes",
-                                "port_replay_value_mismatches", "port_replay_divergences"})
+                                "port_replay_value_mismatches", "port_replay_divergences", "seek_checks",
+                                "seek_check_divergences"})
             ret[key] = 0;
+        ret["check_seeks"] = false;
+        ret["last_seek_divergence"] = StateNode();
         ret["ttd_available"] = false;
         ret["backend"] = StateNode();
         ret["recording_paused"] = false;
@@ -717,6 +728,11 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
     ret["port_journal_bytes"] = static_cast<uint64_t>(info.portJournalBytes);
     ret["port_replay_value_mismatches"] = static_cast<uint64_t>(info.portReplayValueMismatches);
     ret["port_replay_divergences"] = static_cast<uint64_t>(info.portReplayDivergences);
+    // check_seeks (seek-check): every seek checks its frame's replay
+    ret["check_seeks"] = info.checkSeeks;
+    ret["seek_checks"] = info.seekChecks;
+    ret["seek_check_divergences"] = info.seekCheckDivergences;
+    ret["last_seek_divergence"] = StringOrNull(info.lastSeekDivergence);
     ret["ttd_available"] = true;
     // The implementation that records: always the engine since v1 was deleted (Phase 6)
     ret["backend"] = "engine";
@@ -1084,6 +1100,14 @@ TTDReply TTDControlBackend::Seek(const TTDRequest& request)
         marker["kind"] = TTDExternalEventKindToString(result.blockingMarker.kind);
         marker["reason"] = std::string(result.blockingMarker.reason);
         reply.body["blocking_marker"] = marker;
+    }
+    if (result.checked)
+    {
+        // check_seeks on: the replay check of the frame the seek landed in
+        StateNode check = StateNode::Object();
+        check["diverged"] = result.checkDiverged;
+        check["text"] = result.checkText;
+        reply.body["replay_check"] = check;
     }
     reply.body["state"] = TTDSessionStateToString(_manager->GetState());
     if (bookmark)
@@ -3588,6 +3612,116 @@ TTDReply TTDControlBackend::DiffMoments(const TTDRequest& request)
     b["ms"] = res.ms;
     if (text)
         b["text"] = TTDDiffMomentsText(q, res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::SeekCheck(const TTDRequest& request)
+{
+    if (const std::string* value = Option(request, "enabled"))
+    {
+        bool enabled = false;
+        if (!ParseBool(*value, enabled))
+            return Fail(TTDControlError::BadRequest, "enabled must be true or false");
+        _manager->SetCheckSeeks(enabled);
+    }
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    reply.body["enabled"] = _manager->GetCheckSeeks();
+    reply.body["seek_checks"] = info.seekChecks;
+    reply.body["seek_check_divergences"] = info.seekCheckDivergences;
+    reply.body["last_seek_divergence"] = StringOrNull(info.lastSeekDivergence);
+    return reply;
+}
+
+TTDReply TTDControlBackend::ReplayCheck(const TTDRequest& request)
+{
+    TTDReplayCheckQuery q;
+    uint64_t n = 0;
+    if (const std::string* t = Option(request, "from_frame"))
+    {
+        if (!ParseU64(*t, n))
+            return Fail(TTDControlError::BadRequest, "Invalid from_frame: '" + *t + "'");
+        q.hasFrom = true;
+        q.fromFrame = n;
+    }
+    if (const std::string* t = Option(request, "to_frame"))
+    {
+        if (!ParseU64(*t, n))
+            return Fail(TTDControlError::BadRequest, "Invalid to_frame: '" + *t + "'");
+        q.hasTo = true;
+        q.toFrame = n;
+    }
+    if (const std::string* t = Option(request, "stride"))
+    {
+        if (!ParseU64(*t, n) || n == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid stride: '" + *t + "' (expected 1 or more)");
+        q.stride = n;
+    }
+    if (const std::string* t = Option(request, "limit"))
+    {
+        if (!ParseUpTo(*t, TTDReplayCheckQuery::kMaxLimit, n) || n == 0)
+            return Fail(TTDControlError::BadRequest, "Invalid limit: '" + *t + "' (expected 1.." +
+                                                         std::to_string(TTDReplayCheckQuery::kMaxLimit) + ")");
+        q.limit = static_cast<uint32_t>(n);
+    }
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDReplayCheckResult res = _manager->QueryReplayCheck(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::BadRequest, res.error);
+
+    TTDReply reply;
+    StateNode& b = reply.body;
+    b["from_frame"] = res.fromFrame;
+    b["to_frame"] = res.toFrame;
+    b["checked"] = res.checked;
+    b["matched"] = res.matched;
+    b["diverged"] = res.diverged;
+    StateNode skipped = StateNode::Object();
+    skipped["barrier"] = res.skippedBarrier;
+    skipped["cut"] = res.skippedCut;
+    skipped["no_next_checkpoint"] = res.skippedNoNext;
+    b["skipped"] = skipped;
+    if (res.stoppedAtLimit)
+        b["stopped_after_frame"] = res.stoppedAfterFrame;
+    StateNode frames = StateNode::Array();
+    for (const TTDReplayCheckFrame& f : res.frames)
+    {
+        StateNode fn = StateNode::Object();
+        fn["frame"] = f.frame;
+        StateNode items = StateNode::Array();
+        for (const TTDReplayCheckItem& i : f.items)
+        {
+            StateNode in = StateNode::Object();
+            in["section"] = i.section;
+            in["name"] = i.name;
+            if (i.hasValues)
+            {
+                in["recorded"] = i.recorded;
+                in["replayed"] = i.replayed;
+            }
+            else
+            {
+                in["bytes"] = i.size;
+                in["differing"] = i.differing;
+                in["first_offset"] = i.firstOffset;
+            }
+            items.push(in);
+        }
+        fn["items"] = items;
+        if (f.moreItems)
+            fn["more_items"] = f.moreItems;
+        frames.push(fn);
+    }
+    b["frames"] = frames;
+    b["ms"] = res.ms;
+    if (text)
+        b["text"] = TTDReplayCheckText(res);
     return reply;
 }
 

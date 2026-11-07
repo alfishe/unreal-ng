@@ -407,6 +407,7 @@ void TimeTravelEngine::EndSession()
     _deviceScratch = {};
     _deviceExtent = {};
     _growsWithState = {};
+    _decodedStates = {};
     _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
@@ -1313,7 +1314,8 @@ bool TimeTravelEngine::DeviceStateOfV1Id(size_t index, uint8_t v1Id, std::vector
 
 TimeTravelEngine::DeviceStateRead TimeTravelEngine::ReadDeviceState(size_t index, uint32_t device,
                                                                     std::vector<uint8_t>& out,
-                                                                    uint32_t* damagedPiece) const
+                                                                    uint32_t* damagedPiece,
+                                                                    DecodedState* decoded) const
 {
     out.clear();
     const int32_t r = device < _deviceRegion.size() ? _deviceRegion[device] : -1;
@@ -1324,13 +1326,45 @@ TimeTravelEngine::DeviceStateRead TimeTravelEngine::ReadDeviceState(size_t index
     BuildMap(index, static_cast<uint32_t>(r), map);
     std::vector<uint8_t> bytes;
     CoverPieces(static_cast<uint32_t>(r), bytes, std::max<uint32_t>(PiecesHeld(map), 1));
-    for (uint32_t p = 0; p < map.size(); ++p)
-        if (map[p] != TTDPieceStore::kNone && !_store->Decode(map[p], bytes.data() + size_t(p) * kTTDPieceSize))
+    const bool fixedSize = static_cast<size_t>(r) >= _growsWithState.size() || !_growsWithState[static_cast<size_t>(r)];
+    if (decoded && fixedSize && bytes.size() >= map.size() * kTTDPieceSize)
+    {
+        // The pieces held from the last read stand while their ids do and no id was given other content since
+        const uint64_t generation = _store->ReuseGeneration();
+        if (decoded->generation != generation || decoded->store != _store.get() || decoded->ids.size() != map.size() ||
+            decoded->bytes.size() != bytes.size())
         {
-            if (damagedPiece)
-                *damagedPiece = p;
-            return DeviceStateRead::Damaged;
+            decoded->generation = generation;
+            decoded->store = _store.get();
+            decoded->ids.assign(map.size(), kUnknown);
+            decoded->bytes.assign(bytes.size(), 0);
         }
+        for (uint32_t p = 0; p < map.size(); ++p)
+        {
+            if (decoded->ids[p] == map[p])
+                continue;
+            uint8_t* piece = decoded->bytes.data() + size_t(p) * kTTDPieceSize;
+            if (map[p] == TTDPieceStore::kNone)
+                std::memset(piece, 0, kTTDPieceSize);
+            else if (!_store->Decode(map[p], piece))
+            {
+                decoded->ids[p] = kUnknown;
+                if (damagedPiece)
+                    *damagedPiece = p;
+                return DeviceStateRead::Damaged;
+            }
+            decoded->ids[p] = map[p];
+        }
+        std::memcpy(bytes.data(), decoded->bytes.data(), bytes.size());
+    }
+    else
+        for (uint32_t p = 0; p < map.size(); ++p)
+            if (map[p] != TTDPieceStore::kNone && !_store->Decode(map[p], bytes.data() + size_t(p) * kTTDPieceSize))
+            {
+                if (damagedPiece)
+                    *damagedPiece = p;
+                return DeviceStateRead::Damaged;
+            }
     const std::vector<TTDTimeField>& fields = _timeFields[static_cast<size_t>(r)];
     const size_t anchors = desc.bytes - fields.size() * kTimeAnchorBytes;
     uint32_t length = 0;
@@ -1574,7 +1608,9 @@ TTDRestoreResult TimeTravelEngine::RestoreDevices(size_t index, const TTDRestore
         issue.device = d.Key();
         std::vector<uint8_t> state;
         uint32_t damagedPiece = 0;
-        const DeviceStateRead read = ReadDeviceState(index, i, state, &damagedPiece);
+        if (_decodedStates.size() != entries.size())
+            _decodedStates.assign(entries.size(), DecodedState{});
+        const DeviceStateRead read = ReadDeviceState(index, i, state, &damagedPiece, &_decodedStates[i]);
         if (read == DeviceStateRead::Damaged)
         {
             TTDRestoreIssue damage = DamageIssue(index, static_cast<uint32_t>(_deviceRegion[i]), damagedPiece);

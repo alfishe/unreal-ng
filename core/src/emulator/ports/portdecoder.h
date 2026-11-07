@@ -892,16 +892,6 @@ public:
     /// Model-specific state this machine carries beyond TTDChipsetState.
     virtual std::vector<ttd::TTDDeviceType> GetTTDModelStateTypes() const { return {}; }
 
-    /// The TTD port journals isolate a replay when every outside input reaches the CPU through IN
-    /// (ttd-port-read-journal.md §2). Two machine traits make TTD refuse the journals by default: an
-    /// interrupt source that puts the IM2 vector on the bus, and an engine stepped with the CPU
-    /// (IMachineStepHook). A machine answers true when both are fed by recorded state only: the vector
-    /// and the engines follow the machine state in the checkpoints and the host input in the TTD input
-    /// journal, never a medium or the host directly (Sprinter: the Z84C15 daisy chain and the PLD's INT,
-    /// the PLD resets and the loader watchdog - s7-ttd-outcome.md). Then the port journals are recorded
-    /// and `/ttd/port-events` answers on the machine's recordings
-    virtual bool TtdEnginesSealed() const { return false; }
-
     /// A TTD session's baseline device states (raw, by device) against this machine's fixed population
     /// (expansion slots): false with `why` refuses the session at load, as a General Sound personality mismatch
     /// does. Default: no slots, nothing to compare

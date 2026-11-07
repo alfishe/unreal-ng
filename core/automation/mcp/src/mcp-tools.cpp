@@ -5583,7 +5583,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "cause_chain", "find_event", "explain_frame", "diff", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5672,6 +5672,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "and the last CPU write in between (time, PC, instruction), the screen % changed and the border, the devices "
         "whose state differs, the frames / T / keys / markers in between; sections picks some ('cpu,memory'), limit "
         "entries per list (default 16), writers=false skips the write search; the machine stays where it was). "
+        "'replay_check' (does the replay reproduce the recording: each frame of from_frame..to_frame (default: the "
+        "whole history) replayed from its checkpoint and compared with the next checkpoint, taken live; stride checks "
+        "every n-th frame; the answer counts checked / matched / diverged / skipped frames (a barrier inside, a cut at "
+        "the end, no next checkpoint) and lists up to limit diverged frames (default 8) with what differs: cpu and "
+        "chipset fields with both values, ram pages, devices and device regions with the bytes that differ; stops "
+        "after limit diverged frames; the machine stays where it was). "
+        "'seek_check_on' / 'seek_check_off' (off by default): every seek also replay-checks the frame it lands in, "
+        "its answer says whether that frame's replay diverged; status counts seek_checks and seek_check_divergences. "
         "'cause_chain' (why does a byte or a register hold its value: one call instead of find_last + disassemble + "
         "reverse_step loops; addr (with phys_page) or reg (A, HL, IX, SP, E'...), at frame / tinframe (default: the "
         "current position); the answer is the chain back from the value, one line per link: the instruction that "
@@ -5950,7 +5958,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
         "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
-        "most 100) and diff (default 16, at most 200)";
+        "most 100) and diff (default 16, at most 200), diverged frames for replay_check (default 8, at most 200)";
+    schema["properties"]["stride"]["type"] = "integer";
+    schema["properties"]["stride"]["description"] = "replay_check: check every n-th frame of the range (default 1)";
     schema["properties"]["max_frames"]["type"] = "integer";
     schema["properties"]["max_frames"]["description"] =
         "coverage_rare: an address is rare when at most this many frames touched it (default 1, at most 1000); "
@@ -6056,6 +6066,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
             else if (action == "journal_on" || action == "journal_off")
             {
                 (*body)["enabled"] = action == "journal_on";
+            }
+            else if (action == "seek_check_on" || action == "seek_check_off")
+            {
+                (*body)["enabled"] = action == "seek_check_on";
             }
             else if (action == "journal_build")
             {
@@ -6294,6 +6308,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                DescribeJournalSegments(b);
                     }, done);
                 }
+                else if (action == "seek_check_on" || action == "seek_check_off")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/seek-check"), body.get(), caller, [id](const Json::Value& b) {
+                        std::string text = "TTD seek check on " + id + ": " + (b["enabled"].asBool() ? "on" : "off") +
+                                           ", " + std::to_string(b["seek_checks"].asUInt64()) + " seek(s) checked, " +
+                                           std::to_string(b["seek_check_divergences"].asUInt64()) + " diverged";
+                        if (b["last_seek_divergence"].isString())
+                            text += "\nlast divergence:\n" + b["last_seek_divergence"].asString();
+                        return text;
+                    }, done);
+                }
                 else if (action == "journal_build_cancel")
                 {
                     CallAndSummarize("POST", Endpoint(id, "/ttd/journal/build/cancel"), body.get(), caller,
@@ -6415,6 +6440,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         {
                             text += " - blocked by marker " + FormatMarker(b["blocking_marker"]);
                         }
+                        // check_seeks on: whether the frame landed in replays as recorded
+                        if (b.isMember("replay_check"))
+                            text += b["replay_check"]["diverged"].asBool()
+                                        ? "\nThe frame's replay DIVERGED from the recording:\n" + b["replay_check"]["text"].asString()
+                                        : std::string("; the frame's replay matches the recording");
                         return text + FormatCheck(b);
                     }, [done](ToolResult result) {
                         // Outside the history nothing moved: an error the model cannot read as "now at frame N"
@@ -7008,6 +7038,24 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             return;
                         }
                         // One block per section: an agent may read only this
+                        std::string out = body["text"].asString();
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "replay_check")
+                {
+                    std::string query = "/ttd/replay-check?text=true";
+                    for (const char* field : {"from_frame", "to_frame", "stride", "limit"})
+                        if (args.isMember(field))
+                            query += std::string("&") + field + "=" + std::to_string(args[field].asUInt64());
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // The summary and one block per diverged frame: an agent may read only this
                         std::string out = body["text"].asString();
                         body.removeMember("text");
                         done(ToolResult::Ok(out, std::move(body)));

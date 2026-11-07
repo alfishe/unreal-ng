@@ -19,6 +19,8 @@
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
 ///   ttd explain [F]            — explain frame: what one frame did (time, routines, ports, memory, screen, keys)
 ///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
+///   ttd replay-check [F [G]]   — replay each frame and compare it with the next checkpoint
+///   ttd seek-check [on|off]    — every seek also replay-checks the frame it lands in
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -339,6 +341,14 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDDiffMoments(session, context, args);
     }
+    else if (subcommand == "replay-check")
+    {
+        HandleTTDReplayCheck(session, context, args);
+    }
+    else if (subcommand == "seek-check")
+    {
+        HandleTTDSeekCheck(session, context, args);
+    }
     else if (subcommand == "coverage" || subcommand == "cov")
     {
         HandleTTDCoverage(session, context, args);
@@ -460,6 +470,9 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd diff F[+T] [G[+T]] [--sections a,b,...] [--limit N] [--no-writers]   What differs between moment F+T" << NEWLINE;
     ss << "      and G+T (default: the current position): registers, latches, mapping, memory with the last write, screen," << NEWLINE;
     ss << "      devices, the time, keys and markers in between" << NEWLINE;
+    ss << "  ttd replay-check [F [G]] [--stride N] [--limit N]   Replay frames F..G (default: all) from their checkpoints" << NEWLINE;
+    ss << "      and compare each with the next checkpoint: what diverged (cpu, chipset, ram, device, region)" << NEWLINE;
+    ss << "  ttd seek-check [on|off]   Every seek also replay-checks the frame it lands in (off by default); the counts" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
           "find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
@@ -1942,6 +1955,76 @@ void CLIProcessor::HandleTTDDiffMoments(const ClientSession& session, EmulatorCo
     for (char c : text)
         out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
     session.SendResponse(out);
+}
+
+/// `ttd replay-check [F [G]] [--stride N] [--limit N]`: each frame of F..G replayed from its checkpoint and compared with
+/// the next checkpoint, as text
+void CLIProcessor::HandleTTDReplayCheck(const ClientSession& session, EmulatorContext* context,
+                                        const std::vector<std::string>& args)
+{
+    const std::string usage = std::string("Usage: ttd replay-check [F [G]] [--stride N] [--limit N]") + NEWLINE;
+    std::map<std::string, std::string> options = {{"text", "true"}};
+    int frames = 0;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if ((args[i] == "--stride" || args[i] == "--limit") && i + 1 < args.size())
+        {
+            options[args[i].substr(2)] = args[i + 1];
+            ++i;
+        }
+        else if (frames < 2 && !args[i].empty() && std::isdigit(static_cast<unsigned char>(args[i][0])))
+            options[frames++ == 0 ? "from_frame" : "to_frame"] = args[i];
+        else
+        {
+            session.SendResponse(usage);
+            return;
+        }
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"replay-check", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out);
+}
+
+/// `ttd seek-check [on|off]`: whether every seek replay-checks the frame it lands in, and the counts
+void CLIProcessor::HandleTTDSeekCheck(const ClientSession& session, EmulatorContext* context,
+                                      const std::vector<std::string>& args)
+{
+    std::map<std::string, std::string> options;
+    if (args.size() > 1)
+    {
+        if (args[1] != "on" && args[1] != "off")
+        {
+            session.SendResponse(std::string("Usage: ttd seek-check [on|off]") + NEWLINE);
+            return;
+        }
+        options["enabled"] = args[1] == "on" ? "true" : "false";
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"seek-check", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::stringstream ss;
+    ss << "TTD seek check: " << (reply.body.find("enabled")->b ? "on" : "off") << ", "
+       << reply.body.find("seek_checks")->i << " seek(s) checked, " << reply.body.find("seek_check_divergences")->i
+       << " diverged" << NEWLINE;
+    const StateNode* last = reply.body.find("last_seek_divergence");
+    if (last && last->kind == StateNode::Kind::String)
+    {
+        ss << "Last divergence:" << NEWLINE;
+        for (char c : last->s)
+            ss << (c == '\n' ? std::string(NEWLINE) : std::string(1, c));
+    }
+    session.SendResponse(ss.str());
 }
 
 /// `ttd timeline [--from-frame F] [--to-frame F] [--bucket-size N] [--limit N] [--buckets] [--no-ports]

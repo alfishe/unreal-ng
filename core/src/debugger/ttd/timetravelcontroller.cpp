@@ -62,7 +62,7 @@
 #include "emulator/io/tape/tape.h"        // Tape (peripheral, P1.5)
 #include "emulator/io/mouse/mouse.h"      // Mouse (Kempston Mouse peripheral + input journal replay)
 #include "emulator/memory/memory.h"      // Memory
-#include "emulator/ports/portdecoder.h"  // PortDecoder::TtdEnginesSealed (port journal gate)
+#include "emulator/ports/portdecoder.h"  // PortDecoder::EmulatedMicroseconds
 #include "emulator/platform.h"           // EmulatorState, CONFIG, PAGE_SIZE, MAX_RAM_PAGES
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/iturbosounddevice.h"  // ITurboSoundDevice (TurboSound-slot peripheral, design §3.3 / §8.2)
@@ -843,6 +843,10 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     TTDSessionInfo info;
     info.state = _state;
     info.lastCheck = _lastEngineCheck;
+    info.checkSeeks = GetCheckSeeks();
+    info.seekChecks = _seekChecks;
+    info.seekCheckDivergences = _seekCheckDivergences;
+    info.lastSeekDivergence = _lastSeekDivergence;
     info.checkpointCount    = _timeline.size();
     // The engine's piece store (Phase 5, C4a): its arena, the compressed
     // pieces in it, and the distinct 4 KB versions it holds - the most direct
@@ -1849,10 +1853,14 @@ TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
     for (ITTDRegionSource* source : _peripherals.RegionSources())
         source->TTDBeforeCapture();
 
+    // Marks a peek kept are still unrestored writes: added to, not replaced
+    const bool merge = _writtenHeld;
+    _writtenHeld = false;
     _writtenPages.clear();
     if (_dirtyTracker)
         _dirtyTracker->CollectAndClear(_writtenPages);
-    _writtenRamPages.assign(_modelRamPages, 0);
+    if (!merge || _writtenRamPages.size() != _modelRamPages)
+        _writtenRamPages.assign(_modelRamPages, 0);
     for (const uint16_t page : _writtenPages)
         if (page < _writtenRamPages.size())
             _writtenRamPages[page] = 1;
@@ -1875,7 +1883,8 @@ TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
         for (const TTDDeviceRegion& d : _shadowDeviceRegions)
             if (_shadowArmed && desc.memory && d.desc.memory == desc.memory && d.tracker && !d.compareEachCapture)
                 watched = &d;
-        marks.assign(desc.pieces, watched ? 0 : 1);
+        if (!watched || !merge || marks.size() != desc.pieces)
+            marks.assign(desc.pieces, watched ? 0 : 1);
         if (!watched)
             continue;
         _writtenScratch.clear();
@@ -1895,6 +1904,13 @@ TTDWrittenFn TimeTravelController::TakeWrittenSinceRestore()
         }
         return piece >= marks.size() || marks[piece] != 0;
     };
+}
+
+TTDWrittenFn TimeTravelController::PeekWrittenSinceRestore()
+{
+    TTDWrittenFn written = TakeWrittenSinceRestore();
+    _writtenHeld = true;
+    return written;
 }
 
 void TimeTravelController::ResyncScreenState()
@@ -3352,6 +3368,9 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     TTDSeekResult localResult;
     TTDSeekResult& result = outResult ? *outResult : localResult;
     const bool ok = SeekToInternal(target, &result);
+    // Before the picture: the check replays over the framebuffer, the composition below repaints it
+    if (ok && GetCheckSeeks())
+        CheckSeekLanding(result);
 
     // A marker halt still moved the machine, so it is shown too. Every
     // position shows what the beam drew up to it, as a live machine has it
@@ -3732,10 +3751,21 @@ void TimeTravelController::RunToFrameEnd()
     // boundary, so the remainder is one frame's worth of T-states (scaled by
     // the restored CPU frequency multiplier). Crossing the limit runs the
     // frame-end processing, which completes the frame's picture.
-    const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
-    const uint32_t startT = static_cast<uint32_t>(z80->t);
-    if (startT < frameTStates)
+    // A hardware turbo switch inside the frame (GMX, ATM3, Next) rescales the
+    // CPU's position and the frame's length at once, so the remainder counted
+    // before the run falls short: run again on the new geometry until the
+    // frame has ended, as the live machine did
+    const uint64_t frameBefore = _context->emulatorState.frame_counter;
+    for (int pass = 0; pass < 8 && _context->emulatorState.frame_counter == frameBefore; ++pass)
+    {
+        const uint32_t frameTStates = _context->emulatorState.BaseToCpuT(_context->config.frame);
+        const uint32_t startT = static_cast<uint32_t>(z80->t);
+        if (startT >= frameTStates)
+            break;
         _context->pEmulator->RunTStates(frameTStates - startT, /*skipBreakpoints=*/true);
+        if (static_cast<uint32_t>(z80->t) == startT && _context->emulatorState.frame_counter == frameBefore)
+            break;  // no progress (a halted run) - never spin
+    }
 }
 
 void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame)
@@ -7028,7 +7058,7 @@ void TimeTravelController::BuildFrameCache(uint64_t frame, TTDFrameCache& out)
     _capturingCache = nullptr;
 }
 
-void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
+void TimeTravelController::SaveLiveState(LiveStateSnapshot& out, bool withMemory)
 {
     Z80* z80 = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     if (z80)
@@ -7075,6 +7105,12 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out)
         out.keyboard = _context->pKeyboard->CaptureInputState();
 
     out.framebuffer.clear();
+    if (!withMemory)
+    {
+        out.planeB.clear();
+        out.ram.clear();
+        return;
+    }
     if (_context->pScreen)
     {
         out.screenPrevTstate = _context->pScreen->GetPrevTstate();

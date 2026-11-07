@@ -91,6 +91,7 @@
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
 #include "debugger/markup/markupcontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -6516,6 +6517,25 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("diff", options)));
         });
 
+        // ttd_replay_check{from_frame = F, to_frame = G, stride = N, limit = N, text = true}: each frame replayed from its
+        // checkpoint and compared with the next checkpoint (default: the whole history) - what diverged, by part
+        lua.set_function("ttd_replay_check", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("replay-check", options)));
+        });
+
+        // ttd_seek_check(true | false | nil): every seek also replay-checks the frame it lands in (off by default);
+        // nil keeps the setting. Returns {enabled, seek_checks, seek_check_divergences, last_seek_divergence}
+        lua.set_function("ttd_seek_check", [this](sol::this_state ts, sol::optional<bool> enabled) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (enabled)
+                options["enabled"] = *enabled ? "true" : "false";
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("seek-check", options)));
+        });
+
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
         // ttd_memory_at{space = "vram", frame = F, offset = 0x4805, length = 16}
         // ttd_memory_diff{space = "ram5", from_frame = F1, to_frame = F2, limit = 100}
@@ -7342,6 +7362,35 @@ public:
                                                            : verb == "layers" ? ""
                                                                               : "range")
                                              : markup::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The CPU time profile through profile::Execute (profilecontrol.h): cpuprofile(op, opts) with op start | stop |
+        // reset | mark | status | report | frames | export; opts a table ({stack=, beam=, frames=, ring_kib=, stream=,
+        // reset=} / {name=, drop=} / {since=, top=, sort=, callers=, beam=} / {last=, top=} / {format=, path=,
+        // since=}) or, for mark the name, for report the top, for frames the last, for export the format. The answer:
+        // the reply's fields plus text; a refusal: ok = false, error = why
+        lua.set_function("cpuprofile", [this](sol::this_state ts, sol::optional<std::string> op,
+                                              sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = op.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            profile::Reply reply;
+            if (!emulator)
+                reply.error = profile::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = profile::Execute(*emulator, verb,
+                                         opts ? SymbolOptions(*opts, verb == "mark"     ? "name"
+                                                                     : verb == "report" ? "top"
+                                                                     : verb == "frames" ? "last"
+                                                                     : verb == "export" ? "format"
+                                                                                        : "")
+                                              : profile::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

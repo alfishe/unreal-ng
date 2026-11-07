@@ -20,8 +20,12 @@ struct NextStateCodec
 {
     /// The machine's state as bytes (version byte first)
     static std::vector<uint8_t> Save(const PortDecoder_Next& decoder);
-    /// Put a saved image back; false when it does not fit (wrong version or length), the machine untouched then
-    static bool Load(PortDecoder_Next& decoder, const uint8_t* data, size_t size);
+    /// The same into @p image (emptied first; its capacity kept, so a per-frame save allocates nothing)
+    static void SaveInto(const PortDecoder_Next& decoder, std::vector<uint8_t>& image);
+    /// Put a saved image back; false when it does not fit (wrong version or length), the machine untouched then.
+    /// @p imageSize: this machine's image length when the caller knows it (the image's is fixed for the machine's
+    /// life), 0 to have it measured by a save
+    static bool Load(PortDecoder_Next& decoder, const uint8_t* data, size_t size, size_t imageSize = 0);
 
     struct Impl;  ///< the per-class field lists (nextstatecodec.cpp); a nested class of the befriended struct sees the private fields
 };

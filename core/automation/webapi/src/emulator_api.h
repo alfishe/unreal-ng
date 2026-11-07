@@ -282,6 +282,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::markupClear, "/api/v1/emulator/{id}/markup/layers", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::markupComment, "/api/v1/emulator/{id}/markup/comment", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::markupSaveProfile, "/api/v1/emulator/{id}/markup/save-profile", drogon::Post);
+    // The CPU time profile through profile::Execute (implementation: api/cpuprofile_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::cpuProfile, "/api/v1/emulator/{id}/cpuprofile/{op}", drogon::Get, drogon::Post);
 
     // AY register-write log (MCP automation)
     ADD_METHOD_TO(EmulatorAPI::ayLog, "/api/v1/emulator/{id}/ay/log", drogon::Post);
@@ -771,6 +773,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::getTTDFindEvent, "/api/v1/emulator/{id}/ttd/find-event", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDExplainFrame, "/api/v1/emulator/{id}/ttd/explain-frame", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDDiffMoments, "/api/v1/emulator/{id}/ttd/diff", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDReplayCheck, "/api/v1/emulator/{id}/ttd/replay-check", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::seekCheckTTD, "/api/v1/emulator/{id}/ttd/seek-check", drogon::Get, drogon::Post);
     // endregion TTD
 
     // region Labels/Symbols (implementation: api/debug_api.cpp)
@@ -1251,6 +1255,10 @@ public:
     // window of the recording, written to path (accesstrace.h)
     void analysisTrace(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
+    // The CPU time profile (api/cpuprofile_api.cpp): POST start / stop / reset / mark / export, GET status / report /
+    // frames - one profile::Execute operation per route
+    void cpuProfile(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id, const std::string& op) const;
 
     // Memory markup (api/markup_api.cpp): GET / PUT / DELETE markup (show, mark, unmark), GET / DELETE markup/layers
     // (layers, clear), PUT markup/comment, POST markup/save-profile
@@ -2411,6 +2419,10 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void getTTDDiffMoments(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDReplayCheck(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void seekCheckTTD(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion TTD Methods
 
     // region Helper Methods (implementation: emulator_api.cpp)
