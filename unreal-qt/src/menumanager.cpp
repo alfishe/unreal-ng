@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "debugger/externaldebuggers.h"
+#include "debugger/metadatasettings.h"
 #include "debugger/vdac2/ft812debugwindow.h"
 #include "widgets/crtprofiles.h"
 #include "widgets/slangpresetrunner.h"
@@ -1230,6 +1231,54 @@ void MenuManager::createDebugMenu()
     _showMemoryAction = _debugMenu->addAction(tr("Show &Memory"));
     _showMemoryAction->setStatusTip(tr("Show the debugger with the memory view in focus"));
     connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
+
+    // Metadata: what the debugger takes from the program's profile, the analysis and the user's marks, and the labels;
+    // global switches, kept in the settings (MetadataSettings; the dbg.metadata_* actions and dbg.labels_toggle)
+    _debugMenu->addSeparator();
+    QMenu* metadataMenu = _debugMenu->addMenu(tr("Meta&data"));
+    struct MetadataItem
+    {
+        MetadataSettings::Switch which;
+        QString text;
+        QString tip;
+    };
+    const MetadataItem metadataItems[] = {
+        {MetadataSettings::Switch::Metadata, tr("&Use Metadata"),
+         tr("Use what is known about the program (its profile, the analysis, your marks); off: the debugger as "
+            "without it, the labels aside")},
+        {MetadataSettings::Switch::Regions, tr("Disassembly &Regions"),
+         tr("Data as db rows and the known instruction starts in the disassembly")},
+        {MetadataSettings::Switch::Colours, tr("Memory &Colours"),
+         tr("The memory view coloured by the kind of each block, with its legend")},
+        {MetadataSettings::Switch::Notes, tr("&Notes and Tooltips"),
+         tr("The blocks' descriptions and the comments in the disassembly and the tooltips")},
+        {MetadataSettings::Switch::Labels, tr("&Labels"), tr("The labels in the disassembly and the tooltips")},
+    };
+    QList<QPair<QAction*, MetadataSettings::Switch>> metadataActions;
+    for (const MetadataItem& item : metadataItems)
+    {
+        if (item.which == MetadataSettings::Switch::Labels)
+            metadataMenu->addSeparator();
+        QAction* action = metadataMenu->addAction(item.text);
+        action->setCheckable(true);
+        action->setStatusTip(item.tip);
+        const MetadataSettings::Switch which = item.which;
+        connect(action, &QAction::triggered, this, [which](bool on) { MetadataSettings::Instance().Set(which, on); });
+        metadataActions.append({action, which});
+    }
+    // The states as set (from here, a control surface, a script); a part grayed out while Use Metadata is off
+    const auto syncMetadata = [metadataActions]() {
+        const MetadataSettings& settings = MetadataSettings::Instance();
+        for (const auto& [action, which] : metadataActions)
+        {
+            action->setChecked(settings.IsOn(which));
+            action->setEnabled(which == MetadataSettings::Switch::Metadata ||
+                               which == MetadataSettings::Switch::Labels ||
+                               settings.IsOn(MetadataSettings::Switch::Metadata));
+        }
+    };
+    syncMetadata();
+    connect(&MetadataSettings::Instance(), &MetadataSettings::changed, metadataMenu, syncMetadata);
 
     // Time Travel: the black box (D29) - every machine this window creates keeps
     // recording its last minutes; turbo and a host speed above 1x stay free (it

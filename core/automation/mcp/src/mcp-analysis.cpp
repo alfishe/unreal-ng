@@ -1,7 +1,7 @@
 // MCP smart tools: debug_code + analyze_performance
 //
 // debug_code actions and their WebAPI mappings:
-//   disassemble → GET  /disasm?address=&count=
+//   disassemble → GET  /disasm?address=&count=&before=&snap=
 //   assemble    → POST /assemble {code, address?, write}
 //   find_bytes  → POST /memory/find {pattern_hex, space?, mask_hex?, start?, end?, max?, alignment?}
 //   trace       → POST /profiler/calltrace/start → run_frames → stop (finalizes hot→cold) → GET entries
@@ -105,6 +105,12 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
     schema["properties"]["count"]["type"] = "integer";
     schema["properties"]["count"]["default"] = 16;
     schema["properties"]["count"]["description"] = "Instruction count for disassemble (1-256)";
+    schema["properties"]["before"]["type"] = "integer";
+    schema["properties"]["before"]["description"] =
+        "disassemble: rows above the address first (0-256), synced back from the known instruction starts";
+    schema["properties"]["snap"]["type"] = "boolean";
+    schema["properties"]["snap"]["description"] =
+        "disassemble: move the address to the start of the instruction (or db row) that holds it";
     schema["properties"]["code"]["type"] = "string";
     schema["properties"]["code"]["description"] = "Z80 assembly source for assemble (two-pass, labels, $ and 0x literals)";
     schema["properties"]["write"]["type"] = "boolean";
@@ -185,6 +191,10 @@ void RegisterDebugCodeImpl(ToolRegistry& registry)
                 if (count < 1) count = 1;
                 if (count > 256) count = 256;
                 std::string suffix = "/disasm?count=" + std::to_string(count);
+                if (args.isMember("before"))
+                    suffix += "&before=" + std::to_string(std::min(args["before"].asUInt(), 256u));
+                if (args.isMember("snap") && args["snap"].asBool())
+                    suffix += "&snap=1";
                 if (args.isMember("address") && !AddressArg(args["address"]).empty())
                 {
                     suffix += "&address=" + AddressArg(args["address"]);

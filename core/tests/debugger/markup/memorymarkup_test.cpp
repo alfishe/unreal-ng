@@ -16,6 +16,7 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/markup/memorymarkup.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -177,6 +178,26 @@ TEST_F(MemoryMarkup_Test, AnchorsAreEntriesAndCodeStarts)
     ASSERT_EQ(comments.size(), 1u);
     EXPECT_EQ(comments[0].address, 0x6A10);
     EXPECT_EQ(comments[0].text, "waits for the frame");
+}
+
+TEST_F(MemoryMarkup_Test, TheDisassemblySourceWithoutTheMarkupTakesNothingFromIt)
+{
+    markup::LayerContent content = Layer1("profile:game", {C(Place{Space::Cpu, 0, 0x6000, 0x6FFF}, RegionKind::Code),
+                                                           C(Place{Space::Cpu, 0, 0x7000, 0x70FF}, RegionKind::Data)});
+    content.entries = {Place{Space::Cpu, 0, 0x6A00, 0x6A00}};
+    _markup->SetLayer(Layer::Profile, content);
+    _emulator->GetContext()->pCore->GetZ80()->pc = 0x5000;
+
+    disasm::Marks with;
+    disasm::EmulatorSource(_emulator->GetContext()).MarksOf(0x6000, 0x7FFF, with);
+    EXPECT_EQ(with.anchors, (std::vector<uint16_t>{0x6000, 0x6A00}));
+    ASSERT_EQ(with.data.size(), 1u);
+    EXPECT_EQ(with.data[0].lo, 0x7000);
+
+    disasm::Marks without;
+    disasm::EmulatorSource(_emulator->GetContext(), false).MarksOf(0x6000, 0x7FFF, without);
+    EXPECT_TRUE(without.anchors.empty()) << "the markup's starts are not taken (the GUI's metadata switched off)";
+    EXPECT_TRUE(without.data.empty());
 }
 
 TEST_F(MemoryMarkup_Test, MarkFollowsThePageAndUnmarkCuts)

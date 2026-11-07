@@ -18,7 +18,10 @@
 #include <QTimer>
 #include <Qt>
 
+#include <algorithm>
 #include <initializer_list>
+#include <optional>
+#include <set>
 
 #include "QHexView/model/buffer/qmemorybuffer.h"
 #include "debugger/breakpointdialog.h"
@@ -26,10 +29,13 @@
 #include "debugger/breakpointstopline.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/labels/labelmanager.h"
+#include "debugger/metadatasettings.h"
 #include "debugger/devicememorydialog.h"
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/markup/memorymarkup.h"
 #include "debugger/panefocus.h"
 #include "debugger/pchistorypane.h"
 #include "debugger/porteventsdialog.h"
@@ -39,6 +45,7 @@
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/readoutschanged.h"
 #include "widgets/speedcontrolwidget.h"
 #include "ui_debuggerwindow.h"
 
@@ -341,6 +348,18 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     options.linelength = 8;    // Display 8 hex bytes per line
     options.addresswidth = 4;  // Address is 4 hex digits [0000-FFFF]
     ui->hexView->setOptions(options);
+    ui->hexView->setToolTipProvider([this](qint64 offset) { return memoryToolTip(offset); });
+    // The labels and the metadata switched (Debug > Metadata, dbg.metadata_*): the disassembly and the colours again
+    connect(&MetadataSettings::Instance(), &MetadataSettings::changed, this, [this]() {
+        ui->disassemblerWidget->metadataSwitched();
+        paintMemoryMetadata();
+    });
+    // The kinds the memory markup colours in the view
+    _markupLegend = new QLabel(ui->memoryGroup);
+    _markupLegend->setTextFormat(Qt::RichText);
+    _markupLegend->setWordWrap(true);
+    _markupLegend->setVisible(false);
+    ui->memoryGroupLayout->addWidget(_markupLegend);
 
     /// region <Subscribe to events>
     // NOTE: DebuggerWindow is now FULLY DEPENDENT on MainWindow via EmulatorBinding.
@@ -377,6 +396,26 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
                 Qt::QueuedConnection);
         });
 
+    // The memory markup changed (a mark, a profile, an L2 build: memorymarkup.h): the memory view's colours and the
+    // disassembly's data rows follow at once, paused or not
+    _markupObserver =
+        MessageCenter::DefaultMessageCenter().AddObserver(NC_READOUTS_CHANGED, [self](int, Message* message) {
+            auto* payload = message != nullptr ? dynamic_cast<ReadoutsChangedPayload*>(message->obj) : nullptr;
+            if (payload == nullptr || payload->area != "markup")
+                return;
+            const std::string id = payload->emulatorId;
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, id] {
+                    if (!self || !self->_emulator || (!id.empty() && id != self->_emulator->GetId()))
+                        return;
+                    self->paintMemoryMetadata();
+                    if (self->_emulator->IsPaused())
+                        self->ui->disassemblerWidget->refresh();
+                },
+                Qt::QueuedConnection);
+        });
+
     // Connect dispatch signals to child widgets (hierarchical pattern)
     connect(this, &DebuggerWindow::readyForChildren, ui->disassemblerWidget, &DisassemblerWidget::refresh);
     connect(this, &DebuggerWindow::readyForChildren, ui->registersWidget, &RegistersWidget::refresh);
@@ -404,6 +443,7 @@ DebuggerWindow::~DebuggerWindow()
     _isClosing = true;
     // All other event handling is done via explicit method calls from MainWindow; the breakpoint observer goes here
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_READOUTS_CHANGED, _markupObserver);
 
     delete ui;
 }
@@ -673,12 +713,206 @@ void DebuggerWindow::showMemoryAtPc()
     if (!_emulator || !_emulator->IsPaused() || !_emulator->GetZ80State())
         return;
     const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
-    changeMemoryViewZ80Address(pc);
-    if (QHexMetadata* metadata = ui->hexView->getMetadata())
+    changeMemoryViewZ80Address(pc);  // paints the metadata, PC among it
+}
+
+namespace
+{
+/// Matte backgrounds, one per markup kind, the hues spread round the wheel at one lightness (black text stays
+/// readable, neighbouring kinds stay apart); none for the unused / untouched filler
+QColor MarkupKindColour(analysis::RegionKind kind)
+{
+    using analysis::RegionKind;
+    switch (kind)
     {
-        const uint16_t pcInPage = pc & 0x3FFF;
-        metadata->clear();
-        metadata->setMetadata(pcInPage, pcInPage + 1, Qt::black, QColor(255, 255, 140), tr("PC"));
+        case RegionKind::Code: return {179, 200, 230};
+        case RegionKind::Data: return {222, 222, 222};
+        case RegionKind::Text: return {235, 199, 168};
+        case RegionKind::Font: return {219, 181, 227};
+        case RegionKind::Sprite: return {192, 223, 170};
+        case RegionKind::Tile: return {173, 220, 204};
+        case RegionKind::Screen: return {235, 188, 194};
+        case RegionKind::Buffer: return {216, 206, 182};
+        case RegionKind::InitTable: return {208, 212, 175};
+        case RegionKind::RecordArray: return {163, 219, 224};
+        case RegionKind::Variable: return {243, 230, 145};
+        case RegionKind::PointerTable: return {200, 190, 218};
+        case RegionKind::HandlerTable: return {196, 201, 238};
+        case RegionKind::RngState: return {235, 186, 173};
+        case RegionKind::MusicData: return {232, 186, 211};
+        case RegionKind::Packed: return {195, 189, 182};
+        case RegionKind::LevelMap: return {173, 220, 181};
+        case RegionKind::Unused:
+        case RegionKind::Untouched: return {};
+    }
+    return {};
+}
+}  // namespace
+
+std::optional<uint16_t> DebuggerWindow::memoryViewBase() const
+{
+    // The view shows one 16 KB page: the CPU window mapping it now places the markup (none: not mapped)
+    Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
+    if (!memory)
+        return std::nullopt;
+    for (uint8_t bank = 0; bank < 4; bank++)
+        if (memory->GetPhysicalOffsetForZ80Bank(bank) == _curPageOffset)
+            return static_cast<uint16_t>(bank * 0x4000);
+    return std::nullopt;
+}
+
+QString DebuggerWindow::memoryToolTip(qint64 offset)
+{
+    const std::optional<uint16_t> base = memoryViewBase();
+    Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
+    if (!memory || offset < 0 || offset > 0x3FFF)
+        return {};
+    if (!base)
+        return tr("Page offset $%1 (the page is not mapped in the CPU view)")
+            .arg(static_cast<int>(offset), 4, 16, QLatin1Char('0'))
+            .toUpper();
+    const auto address = static_cast<uint16_t>(*base + offset);
+    const auto hex = [](unsigned value, int digits) {
+        return QString("%1").arg(value, digits, 16, QLatin1Char('0')).toUpper();
+    };
+    const auto read = [memory](uint16_t at) { return memory->DirectReadFromZ80Memory(at); };
+    const auto escaped = [](const std::string& text) { return QString::fromStdString(text).toHtmlEscaped(); };
+
+    // The cell: its address, the byte and the word from it
+    const uint8_t byte = read(address);
+    const unsigned word = byte | (read(static_cast<uint16_t>(address + 1)) << 8);
+    QString tip = QString("<b>$%1</b>&nbsp; #%2 = %3").arg(hex(address, 4), hex(byte, 2)).arg(byte);
+    if (byte >= 0x20 && byte < 0x7F)
+        tip += QString(" '%1'").arg(QString(QChar(byte)).toHtmlEscaped());
+    tip += QString("&nbsp; word #%1 = %2").arg(hex(word, 4)).arg(word);
+
+    // The metadata's notes off: the cell and its label only
+    markup::MemoryMarkup* markup = _emulator->GetDebugManager() &&
+                                           MetadataSettings::Instance().Uses(MetadataSettings::Switch::Notes)
+                                       ? _emulator->GetDebugManager()->GetMemoryMarkup()
+                                       : nullptr;
+    // The block holding the cell: the markup's spans are cut at its anchors (instruction starts), so the
+    // neighbours of the same kind, title and layer on the page join into one
+    std::optional<markup::Span> span;
+    if (markup)
+    {
+        const std::vector<markup::Span> spans = markup->Ranges(*base, static_cast<uint16_t>(*base + 0x3FFF));
+        const auto same = [](const markup::Span& a, const markup::Span& b) {
+            return a.kind == b.kind && a.layer == b.layer && a.title == b.title;
+        };
+        for (size_t i = 0; i < spans.size(); i++)
+            if (spans[i].lo <= address && address <= spans[i].hi)
+            {
+                span = spans[i];
+                for (size_t j = i; j > 0 && spans[j - 1].hi + 1 == spans[j].lo && same(spans[j - 1], *span); j--)
+                    span->lo = spans[j - 1].lo;
+                for (size_t j = i + 1; j < spans.size() && spans[j].lo == spans[j - 1].hi + 1 && same(spans[j], *span);
+                     j++)
+                    span->hi = spans[j].hi;
+                break;
+            }
+    }
+    // The label at the cell or the nearest one before it (inside the block when there is one): the variable's name
+    std::string labelComment;
+    if (LabelManager* labels = _emulator->GetDebugManager() &&
+                                       MetadataSettings::Instance().Uses(MetadataSettings::Switch::Labels)
+                                   ? _emulator->GetDebugManager()->GetLabelManager()
+                                   : nullptr)
+    {
+        const uint16_t from = span ? span->lo : static_cast<uint16_t>(std::max(0, address - 0xFF));
+        std::shared_ptr<Label> nearest;
+        for (const auto& label : labels->GetLabelsInRange(from, address))
+            if (label->address <= address && (!nearest || label->address >= nearest->address) &&
+                labels->GetLabelByZ80Address(label->address) == label)
+                nearest = label;
+        if (nearest)
+        {
+            tip += "<br><b>" + escaped(nearest->name) + "</b>";
+            if (nearest->address != address)
+                tip += QString("+%1").arg(address - nearest->address);
+            if (!nearest->comment.empty())
+                tip += " - " + escaped(nearest->comment);
+            labelComment = nearest->comment;
+        }
+    }
+    // The block: its kind, extent, the cell's place in it, the layer it comes from, its title; a small variable's value
+    if (span)
+    {
+        const unsigned size = span->hi - span->lo + 1u;
+        const QColor colour = MarkupKindColour(span->kind);
+        tip += QString("<br><span style='background:%1'>&nbsp;%2&nbsp;</span> $%3-$%4, %5 byte(s), +%6 [%7]")
+                   .arg(colour.isValid() ? colour.name() : QString("transparent"),
+                        analysis::RegionKindName(span->kind), hex(span->lo, 4), hex(span->hi, 4))
+                   .arg(size)
+                   .arg(address - span->lo)
+                   .arg(escaped(span->source.empty() ? markup::LayerName(span->layer) : span->source));
+        if (span->kind == analysis::RegionKind::Variable && size <= 4)
+        {
+            unsigned value = 0;
+            for (unsigned i = size; i-- > 0;)
+                value = (value << 8) | read(static_cast<uint16_t>(span->lo + i));
+            tip += QString("<br>value #%1 = %2").arg(hex(value, static_cast<int>(size) * 2)).arg(value);
+        }
+        if (!span->title.empty())
+            tip += "<br>" + escaped(span->title);
+    }
+    // The comments on the cell (one the label already carries is not repeated)
+    if (markup)
+        for (const markup::CommentAt& comment : markup->Comments(address, address))
+            if (comment.text != labelComment)
+                tip += "<br><i>; " + escaped(comment.text) + "</i>";
+    if (_emulator->IsPaused() && _emulator->GetZ80State() && _emulator->GetZ80State()->Z80Registers::pc == address)
+        tip += "<br><b>PC</b>";
+    return "<p style='white-space:nowrap'>" + tip + "</p>";
+}
+
+void DebuggerWindow::paintMemoryMetadata()
+{
+    QHexMetadata* metadata = ui->hexView->getMetadata();
+    Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
+    if (!metadata || !memory)
+        return;
+    metadata->clear();
+    const std::optional<uint16_t> base = memoryViewBase();
+
+    std::set<analysis::RegionKind> shown;
+    const MetadataSettings& settings = MetadataSettings::Instance();
+    markup::MemoryMarkup* markup = _emulator->GetDebugManager() ? _emulator->GetDebugManager()->GetMemoryMarkup()
+                                                                : nullptr;
+    if (markup && base)
+    {
+        // The metadata's colours, its comments: each switched apart (Debug > Metadata)
+        const bool colours = settings.Uses(MetadataSettings::Switch::Colours);
+        for (const markup::Span& span : colours ? markup->Ranges(*base, static_cast<uint16_t>(*base + 0x3FFF))
+                                                : std::vector<markup::Span>{})
+        {
+            const QColor colour = MarkupKindColour(span.kind);
+            if (!colour.isValid())
+                continue;
+            // The tooltip is memoryToolTip's (the cell, its label, block, value and comments)
+            metadata->setMetadata(span.lo - *base, span.hi - *base + 1, QColor(), colour, QString());
+            shown.insert(span.kind);
+        }
+        if (settings.Uses(MetadataSettings::Switch::Notes))
+            for (const markup::CommentAt& comment : markup->Comments(*base, static_cast<uint16_t>(*base + 0x3FFF)))
+                metadata->setComment(comment.address - *base, comment.address - *base + 1,
+                                 QString::fromStdString(comment.text));
+    }
+    if (base && _emulator->IsPaused() && _emulator->GetZ80State())
+    {
+        const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
+        if ((pc & 0xC000) == *base)
+            metadata->setMetadata(pc & 0x3FFF, (pc & 0x3FFF) + 1, Qt::black, QColor(255, 255, 140), tr("PC"));
+    }
+
+    if (_markupLegend)
+    {
+        QString legend;
+        for (analysis::RegionKind kind : shown)
+            legend += QString("<span style='background:%1'>&nbsp;%2&nbsp;</span> ")
+                          .arg(MarkupKindColour(kind).name(), analysis::RegionKindName(kind));
+        _markupLegend->setText(legend);
+        _markupLegend->setVisible(!shown.empty());
     }
     ui->hexView->update();
 }
@@ -782,8 +1016,7 @@ void DebuggerWindow::updateState()
         ui->registersWidget->setZ80State(state);
         ui->registersWidget->refresh();
 
-        // Update disassembler widget
-        ui->disassemblerWidget->setDisassemblerAddress(state->Z80Registers::pc);
+        // Update disassembler widget: it follows PC itself (the view stays while PC is inside its margins)
         ui->disassemblerWidget->refresh();
 
         // Update memory banks widget
@@ -1660,11 +1893,6 @@ void DebuggerWindow::followPc()
     ui->disassemblerWidget->followPc();
 }
 
-void DebuggerWindow::toggleLabels()
-{
-    ui->disassemblerWidget->setShowLabels(!DisassemblerWidget::LabelsShown().load());
-}
-
 void DebuggerWindow::toggleScrollMode()
 {
     ui->disassemblerWidget->switchScrollMode();
@@ -1757,7 +1985,7 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
     // Note: change offset position only after assigning document to HexView
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);  // Position cursor on the byte with offset
-    ui->hexView->update();
+    paintMemoryMetadata();
 }
 
 void DebuggerWindow::showLabelManager()

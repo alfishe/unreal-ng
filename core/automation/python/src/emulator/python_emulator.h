@@ -4126,99 +4126,32 @@ namespace PythonBindings
                  "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
-            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu) -> py::list {
+            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu, int before) -> py::list {
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
                     return result;
                 }
+                count = std::clamp(count < 1 ? 10 : count, 1, 100);
+                const size_t rowsBefore = static_cast<size_t>(std::clamp(before, 0, 100));
                 // cpu "gs" / "ms": the sound card CPU's code, from its PC by default (cpuview.h)
-                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
-                {
-                    uint16_t at = 0;
+                const DebugCpuId card = PythonCpu(self, cpu);
+                uint16_t at = ctx->pCore->GetZ80()->pc;
+                if (IsCardCpu(card))
                     CpuView::GetRegister(ctx, card, "pc", at);
-                    if (address >= 0)
-                        at = static_cast<uint16_t>(address);
-                    const StateNode listing = CpuView::Disasm(ctx, card, at, static_cast<size_t>(std::clamp(count < 1 ? 10 : count, 1, 100)));
-                    if (const StateNode* instructions = listing.find("instructions"))
-                        for (const StateNode& line : instructions->items)
-                            result.append(StateNodeToPy(line));
-                    return result;
-                }
-                Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
-                Memory* memory = ctx->pMemory;
-                Z80* z80 = ctx->pCore->GetZ80();
-                LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
-                
-                uint16_t addr = address < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address);
-                if (count < 1) count = 10;
-                if (count > 100) count = 100;
-                
-                for (int i = 0; i < count; ++i) {
-                    std::vector<uint8_t> buffer;
-                    // Direct (non-mutating) reads: disassembly must not strobe
-                    // the ProfROM quadrant machine on #0000-#0003
-                    for (int j = 0; j < 4; ++j) {
-                        buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
-                    }
-                    
-                    uint8_t cmdLen = 0;
-                    DecodedInstruction decoded;
-                    std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
-                    if (cmdLen == 0) cmdLen = 1;
-                    
-                    py::dict instr;
-                    instr["address"] = addr;
-                    std::string hexBytes;
-                    for (uint8_t j = 0; j < cmdLen; ++j) {
-                        char buf[4];
-                        snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-                        hexBytes += buf;
-                    }
-                    instr["bytes"] = hexBytes;
-                    instr["mnemonic"] = mnemonic;
-                    instr["size"] = cmdLen;
-                    
-                    // Label at the instruction address itself (e.g. jump destination marker)
-                    if (labelMgr) {
-                        auto label = labelMgr->GetLabelByZ80Address(addr);
-                        if (label && !label->name.empty())
-                            instr["label"] = label->name;
-                    }
-                    
-                    // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-                    // known at runtime - the field is omitted when the target could not be resolved
-                    if (decoded.hasJump || decoded.hasRelativeJump) {
-                        uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-                        if (!decoded.hasIndirect || decoded.hasRuntime) {
-                            instr["target"] = target;
-                            
-                            if (labelMgr) {
-                                auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                                if (targetLabel && !targetLabel->name.empty())
-                                    instr["targetLabel"] = targetLabel->name;
-                            }
-                        }
-                    }
-                    
-                    // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-                    if (decoded.hasDisplacement && decoded.hasRuntime) {
-                        instr["displacement"] = decoded.displacement;
-                        instr["effectiveAddress"] = decoded.displacementAddr;
-                        
-                        if (labelMgr) {
-                            auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                            if (effectiveLabel && !effectiveLabel->name.empty())
-                                instr["effectiveAddressLabel"] = effectiveLabel->name;
-                        }
-                    }
-                    
-                    result.append(instr);
-                    addr += cmdLen;
-                }
+                if (address >= 0)
+                    at = static_cast<uint16_t>(address);
+                // One builder with GET /disasm: the virtual window (anchors, the markup's data ranges as db rows)
+                const StateNode listing = IsCardCpu(card)
+                                              ? CpuView::Disasm(ctx, card, at, static_cast<size_t>(count), rowsBefore)
+                                              : DebugSnapshot::Disasm(ctx, at, static_cast<size_t>(count), rowsBefore);
+                if (const StateNode* instructions = listing.find("instructions"))
+                    for (const StateNode& line : instructions->items)
+                        result.append(StateNodeToPy(line));
                 return result;
-            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "",
-               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's)")
+            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "", py::arg("before") = 0,
+               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's; before: rows above "
+               "the address first; db rows for the markup's data)")
             
             // Physical page disassembly
             .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {

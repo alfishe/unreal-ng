@@ -922,6 +922,7 @@ emu:bp_clear_last()  -- Clear last triggered breakpoint ID
 -- Disassembly
 local lines = disasm()                   -- Disassemble from PC (default 10 lines)
 local lines = disasm(0x8000, 20)         -- Disassemble from address, count
+local lines = disasm(0x8000, 20, 8)      -- 8 rows above the address first (the virtual window's backward sync)
 local lines = disasm_page("rom", 2, 0, 20)   -- Disassemble physical ROM page (e.g., TR-DOS)
 local lines = disasm_page("ram", 5, 0x100, 10)  -- Disassemble physical RAM page
 -- Returns: table with entries: {offset, bytes, mnemonic, size, label,

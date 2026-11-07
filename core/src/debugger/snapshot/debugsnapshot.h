@@ -27,8 +27,12 @@ constexpr size_t kMaxDisasmLines = 256;
 
 /// `count` (1..kMaxDisasmLines) instructions from `address` in the CPU view: the GET /disasm object (address, count,
 /// instructions[] with address, bytes, mnemonic, size, label, target, targetLabel, displacement, effectiveAddress,
-/// effectiveAddressLabel). Stops at the 64K wrap. {available: false, description} without a disassembler
-StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count);
+/// effectiveAddressLabel). Stops at the 64K wrap. {available: false, description} without a disassembler.
+/// The rows come from the virtual window (debugger/disassembler/disassemblywindow.h): `before` (0..kMaxDisasmLines)
+/// rows above `address` first (a local backward sync); `snap`: `address` moved to the start of the row that holds
+/// it (a scrollbar drag). A data range of the memory markup, or an instruction's bytes cut by an anchor, is a row
+/// with "kind" "data" / "cut" and a "db" mnemonic
+StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count, size_t before = 0, bool snap = false);
 
 /// What a snapshot request asks for beyond the small part (seq ... time)
 struct Options

@@ -18,6 +18,30 @@ def test_assemble_then_disassemble(s):
     expect(re.search(r'A004\s+C9\s+ret', r.text, re.I), 'ret listed', r.text)
 
 
+def test_disassemble_before_and_snap(s):
+    # NOPs below, so every backward chain converges on #A000
+    s.call('memory_access', {'action': 'write', 'address': '0x9FE0', 'hex': '00 ' * 32})
+    s.call('debug_code', {'action': 'assemble', 'code': 'ld hl,#4000\nld (hl),a\nret', 'address': '0xA000'})
+    r = s.call('debug_code', {'action': 'disassemble', 'address': '0xA004', 'count': 1, 'before': 2})
+    rows = [line['address'] for line in r.structured['instructions']]
+    expect(rows == [0xA000, 0xA003, 0xA004], 'two rows above, then the address', rows)
+    expect(re.search(r'A000\s+21 00 40\s+ld hl,', r.text, re.I), 'the rows above in the text', r.text)
+    r = s.call('debug_code', {'action': 'disassemble', 'address': '0xA001', 'count': 1, 'snap': True})
+    expect(r.structured['address'] == 0xA000, 'snapped to the instruction holding #A001', r.structured)
+
+
+def test_markup_data_is_db_rows(s):
+    s.call('debug_code', {'action': 'markup_clear'})
+    s.call('memory_access', {'action': 'write', 'address': '0xA100', 'hex': 'C9 ' * 16})
+    s.call('debug_code', {'action': 'mark', 'range': 'A100-A10B', 'kind': 'data'})
+    r = s.call('debug_code', {'action': 'disassemble', 'address': '0xA100', 'count': 3})
+    lines = r.structured['instructions']
+    expect([(line['address'], line.get('kind')) for line in lines] == [(0xA100, 'data'), (0xA108, 'data'), (0xA10C, None)],
+           'db rows of 8 and the rest, then code', lines)
+    expect('db #C9,#C9' in r.text, 'the db row in the text', r.text)
+    s.call('debug_code', {'action': 'markup_clear'})
+
+
 def test_find_bytes(s):
     s.call('memory_access', {'action': 'write', 'address': '0xA100', 'hex': 'ED B0 C9 DE AD'})
     r = s.call('debug_code', {'action': 'find_bytes', 'pattern': 'C9 DE AD'})

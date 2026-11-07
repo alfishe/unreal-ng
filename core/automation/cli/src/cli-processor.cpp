@@ -808,7 +808,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  memcounters save [opts] - Save memory access data to file" << NEWLINE;
     oss << NEWLINE;
     oss << "Disassembly:" << NEWLINE;
-    oss << "  disasm [addr] [count]   - Disassemble at address (or, u for short)" << NEWLINE;
+    oss << "  disasm [addr] [count] [before] - Disassemble at address, [before] rows above (or, u for short)" << NEWLINE;
     oss << "  disasm_page <ram|rom> <page> [offset] [count] - Disassemble from physical page" << NEWLINE;
     oss << NEWLINE;
     oss << "Call Trace:" << NEWLINE;

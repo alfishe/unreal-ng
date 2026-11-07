@@ -4234,6 +4234,7 @@ Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core
 | `ttd.journal_build`, `ttd.journal_build_cancel` | press | `from_frame?`, `to_frame?` | Build the write journal / cancel a build |
 | `ttd.export_clip` | press | `path`, `from?` (the start), `to?` (the end), `chunk?` | A range of the history as a lossless clip |
 | `dbg.follow_pc`, `dbg.labels_toggle`, `dbg.scroll_mode_toggle`, `dbg.goto` | press (Qt) | `addr` (goto) | The disassembly: back to PC, labels on / off (`toggle.dbg.labels_toggle`), byte / command scroll, an address |
+| `dbg.metadata_toggle`, `dbg.metadata_regions_toggle`, `dbg.metadata_colours_toggle`, `dbg.metadata_notes_toggle` | press (Qt) | | The debugger's use of the memory markup (Debug > Metadata): all of it, the disassembly's data rows and instruction starts, the memory view's colours, the notes in the comments and tooltips; global, kept in the settings like the labels (`toggle.<id>`) |
 
 `ttd.seek_by` takes the same `unit` (else the instance's scrub unit): frames and seconds keep the acceleration
 curve, `batch` moves `count` frames a step, the others answer through the verbs above, with `unit` in the result.
@@ -4680,7 +4681,9 @@ for addr in range(0x0000, 0x4000):
 
 Enhanced code analysis and disassembly features. The core disassembler (`Z80Disassembler`) is fully implemented and exposed via all automation interfaces (WebAPI, Lua, Python, CLI).
 
-**Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`
+**Implementation**: `core/src/debugger/disassembler/z80disasm.h/cpp`; the listing of every surface comes from the
+virtual window `disassemblywindow.h` ([disassembly window](../debugger/disassembly-window.md)): rows forward, rows
+above an address (`before`), the row start a drag snaps to (`snap`), anchors and data rows
 
 Key decoding properties shared by all interfaces:
 - **Signed displacements**: IX/IY indexed operands are rendered with the sign folded into the template (`(ix-#05)`), and the effective address (`IX+d`) is reported when runtime registers are available
@@ -4692,7 +4695,7 @@ Key decoding properties shared by all interfaces:
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `disasm [addr] [count]` | `[address] [lines]` | Disassemble Z80 code starting at address (default: PC). Default count: 10 lines. Shows address, hex bytes, mnemonics, and operands. | ✅ Implemented |
+| `disasm [addr] [count] [before]` | `[address] [lines] [rows above]` | Disassemble Z80 code starting at address (default: PC). Default count: 10 lines; `before` rows above the address first (a local backward sync). The memory markup's data ranges are `db` rows; an instruction running across a known instruction start is cut ([disassembly window](../debugger/disassembly-window.md)). Shows address, hex bytes, mnemonics, and operands. | ✅ Implemented |
 | `disasm range <from> <to>` | `<start> <end>` | Disassemble address range. | 🔧 Ready to implement |
 | `disasm function <addr>` | `[address]` | Disassemble entire function (until RET found). Default: function containing PC. | 🔮 Planned |
 | `disasm page <type> <page> <offset> [count]` | `<ram\|rom> <page> <offset> [lines]` | Disassemble from physical memory page (bypasses paging). Useful for ROM banks not currently paged in. Example: `disasm page rom 2 0x0000 20` for TR-DOS ROM. | ✅ Implemented |
@@ -4771,7 +4774,7 @@ local lines = disasm_page("ram", 5, 0x100, 10)
 
 **CLI Commands**:
 ```
-disasm [address] [count]       - Disassemble from address (default: PC)
+disasm [address] [count] [before] - Disassemble from address (default: PC), [before] rows above it first
 disasm_page <ram|rom> <page> [offset] [count] - Disassemble from physical page
 u [address] [count]            - Alias for disasm
 

@@ -3,10 +3,13 @@
 
 #include "cli-processor.h"
 
+#include <algorithm>
+
 #include <3rdparty/message-center/messagecenter.h>
 #include <base/featuremanager.h>
 #include <debugger/assembler/z80textassembler.h>
 #include <debugger/debugmanager.h>
+#include <debugger/disassembler/disassemblywindow.h>
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include <debugger/labels/symbolcontrol.h>
@@ -1053,9 +1056,10 @@ void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<
         return;
     }
 
-    // Parse arguments: disasm [address] [count]
+    // Parse arguments: disasm [address] [count] [before]
     uint16_t address = emulator->GetZ80State()->pc;  // Default: PC
     int count = 10;  // Default count
+    int before = 0;  // Rows above the address (the virtual window's backward sync)
 
     try {
         if (args.size() >= 1)
@@ -1072,35 +1076,28 @@ void CLIProcessor::HandleDisasm(const ClientSession& session, const std::vector<
             if (count < 1) count = 1;
             if (count > 100) count = 100;
         }
+        if (args.size() >= 3)
+            before = std::clamp(std::stoi(args[2]), 0, 100);
     } catch (...) {
-        session.SendResponse("Error: Invalid address or count. Usage: disasm [address] [count]");
+        session.SendResponse("Error: Invalid address, count or before. Usage: disasm [address] [count] [before]");
         return;
     }
 
     std::stringstream ss;
     ss << std::hex << std::uppercase << std::setfill('0');
 
-    uint16_t currentAddr = address;
-    for (int i = 0; i < count; ++i)
+    // The virtual window: anchors (PC, labels, breakpoints, the markup) and the markup's data ranges as db rows
+    disasm::EmulatorSource source(emulator->GetContext());
+    disasm::Window window(*disassembler, source);
+    for (const disasm::Row& row : window.Around(address, static_cast<size_t>(before), static_cast<size_t>(count)))
     {
-        std::vector<uint8_t> buffer(4);
-        for (int j = 0; j < 4; ++j)
-            buffer[j] = memory->DirectReadFromZ80Memory(currentAddr + j);
-
-        uint8_t cmdLen = 0;
-        DecodedInstruction decoded;
-        std::string mnemonic = disassembler->disassembleSingleCommand(buffer, currentAddr, &cmdLen, &decoded);
-        if (cmdLen == 0) cmdLen = 1;
-
         // Format: $XXXX: XX XX XX XX  mnemonic
-        ss << "$" << std::setw(4) << currentAddr << ": ";
-        for (uint8_t j = 0; j < cmdLen; ++j)
-            ss << std::setw(2) << static_cast<int>(buffer[j]) << " ";
-        for (int j = cmdLen; j < 4; ++j)
+        ss << "$" << std::setw(4) << row.address << ": ";
+        for (uint8_t j = 0; j < row.length; ++j)
+            ss << std::setw(2) << static_cast<int>(row.bytes[j]) << " ";
+        for (int j = row.length; j < 4; ++j)
             ss << "   ";
-        ss << " " << mnemonic << NEWLINE;
-
-        currentAddr += cmdLen;
+        ss << " " << row.mnemonic << NEWLINE;
     }
 
     session.SendResponse(ss.str());

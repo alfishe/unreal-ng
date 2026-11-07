@@ -744,6 +744,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/portwatchdialog.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/porteventsdialog.h"
+        # The disassembly view's row strip: up N then down N shows the same rows (disasm virtual scroll §3.4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/disassemblystrip_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disassemblystrip.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/disassemblystrip.h"
         # The debugger's PC history dialog (debugger additions tdd §7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorypane_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.cpp"

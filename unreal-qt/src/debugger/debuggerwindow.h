@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <memory>
 #include <string>
 #include <utility>
@@ -74,6 +76,15 @@ protected:
     void updateState();
     /// The memory view at PC's page (a paused machine)
     void showMemoryAtPc();
+    /// The memory view's colours: the memory markup's spans on the page shown (a colour per kind, the layer and
+    /// title as the tooltip), PC on top while paused; the legend under the view names the kinds shown
+    void paintMemoryMetadata();
+    /// The CPU address of the memory view's first byte: the window mapping its page now (none: not mapped)
+    std::optional<uint16_t> memoryViewBase() const;
+    /// The memory view's tooltip for the byte at `offset` in the page: the address, byte and word, the label at or
+    /// before it with the distance, the markup block (kind, extent, place in it, source, title, a variable's value)
+    /// and the comments on it
+    QString memoryToolTip(qint64 offset);
     void loadState();
     void saveState();
     void updateToolbarActions(bool canContinue, bool canPause, bool canStep, bool canReset, bool canManageBreakpoints,
@@ -143,10 +154,8 @@ private slots:
     void focusPrevPane();
     void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
 
-    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.labels_toggle,
-    // dbg.scroll_mode_toggle, dbg.goto)
+    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.scroll_mode_toggle, dbg.goto)
     void followPc();
-    void toggleLabels();
     void toggleScrollMode();
     void goToDisassemblyAddress(int address);
     /// The memory view's cursor as a Z80 address: the debugger's "memory" cursor (ttd.find_last_write)
@@ -247,6 +256,8 @@ private:
     QLabel* _stopBanner = nullptr;
     uint16_t _stopBreakpointId = BRK_INVALID;
     uint64_t _breakpointObserver = 0;  // NC_EXECUTION_BREAKPOINT, filtered by the machine's id
+    uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id
+    QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours
     PaneFocus* _paneFocus = nullptr;
 };
 

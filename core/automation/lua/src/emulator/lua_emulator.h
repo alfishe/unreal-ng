@@ -4426,102 +4426,36 @@ public:
         });
 
         // Disassembly
-        // disasm([address [, count [, cpu]]]): "gs" / "ms" the sound card CPU's code, from its PC (cpuview.h)
+        // disasm([address [, count [, cpu] [, before]]]): "gs" / "ms" the sound card CPU's code, from its PC
+        // (cpuview.h); before: rows above the address first (also as the third argument: disasm(a, n, before))
         lua.set_function("disasm", [this](sol::this_state s, sol::optional<int> address, sol::optional<int> count,
-                                          sol::optional<std::string> cpuName) -> sol::table {
+                                          sol::object third, sol::optional<int> fourth) -> sol::table {
             sol::table result = _lua->create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
-            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
-            {
-                uint16_t at = 0;
-                CpuView::GetRegister(emulator->GetContext(), cpu, "pc", at);
-                if (address && *address >= 0)
-                    at = static_cast<uint16_t>(*address);
-                const int lines = std::clamp(count.value_or(10), 1, 100);
-                const StateNode listing = CpuView::Disasm(emulator->GetContext(), cpu, at, static_cast<size_t>(lines));
-                int index = 1;
-                if (const StateNode* instructions = listing.find("instructions"))
-                    for (const StateNode& line : instructions->items)
-                        result[index++] = StateNodeToLua(s, line);
-                return result;
-            }
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
-            
-            Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
-            Memory* memory = ctx->pMemory;
-            Z80* z80 = ctx->pCore->GetZ80();
-            LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
-            
-            uint16_t addr = address.value_or(-1) < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address.value_or(0));
-            int cnt = count.value_or(10);
-            if (cnt < 1) cnt = 10;
-            if (cnt > 100) cnt = 100;
-            
-            int idx = 1;
-            for (int i = 0; i < cnt; ++i) {
-                std::vector<uint8_t> buffer;
-                // Direct (non-mutating) reads: disassembly must not strobe
-                // the ProfROM quadrant machine on #0000-#0003
-                for (int j = 0; j < 4; ++j) {
-                    buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
-                }
-                
-                uint8_t cmdLen = 0;
-                DecodedInstruction decoded;
-                std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
-                if (cmdLen == 0) cmdLen = 1;
-                
-                sol::table instr = _lua->create_table();
-                instr["address"] = addr;
-                std::string hexBytes;
-                for (uint8_t j = 0; j < cmdLen; ++j) {
-                    char buf[4];
-                    snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-                    hexBytes += buf;
-                }
-                instr["bytes"] = hexBytes;
-                instr["mnemonic"] = mnemonic;
-                instr["size"] = cmdLen;
-                
-                // Label at the instruction address itself (e.g. jump destination marker)
-                if (labelMgr) {
-                    auto label = labelMgr->GetLabelByZ80Address(addr);
-                    if (label && !label->name.empty())
-                        instr["label"] = label->name;
-                }
-                
-                // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-                // known at runtime - the field is omitted when the target could not be resolved
-                if (decoded.hasJump || decoded.hasRelativeJump) {
-                    uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-                    if (!decoded.hasIndirect || decoded.hasRuntime) {
-                        instr["target"] = target;
-                        
-                        if (labelMgr) {
-                            auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                            if (targetLabel && !targetLabel->name.empty())
-                                instr["targetLabel"] = targetLabel->name;
-                        }
-                    }
-                }
-                
-                // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-                if (decoded.hasDisplacement && decoded.hasRuntime) {
-                    instr["displacement"] = decoded.displacement;
-                    instr["effectiveAddress"] = decoded.displacementAddr;
-                    
-                    if (labelMgr) {
-                        auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                        if (effectiveLabel && !effectiveLabel->name.empty())
-                            instr["effectiveAddressLabel"] = effectiveLabel->name;
-                    }
-                }
-                
-                result[idx++] = instr;
-                addr += cmdLen;
-            }
+            sol::optional<std::string> cpuName;
+            int before = fourth.value_or(0);
+            if (third.is<std::string>())
+                cpuName = third.as<std::string>();
+            else if (third.is<int>())
+                before = third.as<int>();
+            const DebugCpuId cpu = ScriptCpu(cpuName);
+            uint16_t at = ctx->pCore->GetZ80()->pc;
+            if (IsCardCpu(cpu))
+                CpuView::GetRegister(ctx, cpu, "pc", at);
+            if (address && *address >= 0)
+                at = static_cast<uint16_t>(*address);
+            const auto lines = static_cast<size_t>(std::clamp(count.value_or(10) < 1 ? 10 : count.value_or(10), 1, 100));
+            const auto rowsBefore = static_cast<size_t>(std::clamp(before, 0, 100));
+            // One builder with GET /disasm: the virtual window (anchors, the markup's data ranges as db rows)
+            const StateNode listing = IsCardCpu(cpu) ? CpuView::Disasm(ctx, cpu, at, lines, rowsBefore)
+                                                     : DebugSnapshot::Disasm(ctx, at, lines, rowsBefore);
+            int index = 1;
+            if (const StateNode* instructions = listing.find("instructions"))
+                for (const StateNode& line : instructions->items)
+                    result[index++] = StateNodeToLua(s, line);
             return result;
         });
 

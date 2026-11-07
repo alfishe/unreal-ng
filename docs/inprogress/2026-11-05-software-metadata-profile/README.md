@@ -145,7 +145,7 @@ One core handler, `markup::Execute` (`core/src/debugger/markup/markupcontrol.h`)
 | 2 | `MemoryMarkup` with layers, physical keys, queries; profile layer + profile label set on a match (done: `MemoryMarkup_Test`, `MemoryProfile_Test.LaidOverAMachineAndTakenBack`) |
 | 3 | Runtime layer from L0 facts / coverage; analysis layer from L2 (done: `MemoryMarkup_Test.Runtime*`, `AnalysisLayerFollowsTheLastBuild`) |
 | 4 | Planes; save to profile (done: `MarkupControl_Test`, `MarkupControlCli_Test`, `MemoryProfile_Test.WrittenSectionReadsBack`, `SaveMergesTheLayersInTheirOrder`, `tools/verification/mcp/test_debug_code.py`) |
-| 5 | Consumers: disassembler window (anchors, data rows), memory viewer colouring |
+| 5 | Consumers: disassembler window (anchors, data rows), memory viewer colouring (done: `DisassemblyWindow_Test`, `DisassemblyStrip_Test`, `test_debug_code.py` `before` / `snap` / data rows; the Qt debugger paints the window and colours the hex view by kind with a legend; first full profile `data/software/pentagon/zynaps.yaml` from the reverse via `tools/controllers/ann-memory-profile.py`; the Qt debugger's global switches Debug > Metadata: all, regions, colours, notes, the labels apart, `dbg.metadata_*`, `MemoryMarkup_Test.TheDisassemblySourceWithoutTheMarkupTakesNothingFromIt`) |
 
 ## 7. Open points
 

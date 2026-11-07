@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
@@ -214,7 +215,27 @@ std::string Write(Emulator* emulator, DebugCpuId cpu, const char* source, uint16
     return refused;
 }
 
-StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, size_t count)
+namespace
+{
+/// The card CPU's 64K as the window reads it: peeks, no marks (labels and the markup are the main CPU's)
+class CardSource : public disasm::Source
+{
+public:
+    explicit CardSource(GeneralSoundCard* card) : _card(card) {}
+    uint8_t Read(uint16_t address) const override
+    {
+        uint8_t value = 0xFF;
+        _card->peekCardMemory(address, value);
+        return value;
+    }
+    void MarksOf(uint16_t, uint16_t, disasm::Marks& out) const override { out = {}; }
+
+private:
+    GeneralSoundCard* _card = nullptr;
+};
+}  // namespace
+
+StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, size_t count, size_t before, bool snap)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;
     GeneralSoundCard* card = Card(context, cpu);
@@ -226,42 +247,40 @@ StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, siz
                                                       : "No card with a CPU in its slot");
         return unavailable;
     }
-    Z80Disassembler* disasm = debug->GetDisassembler().get();
     count = std::clamp<size_t>(count, 1, 256);
+    before = std::min<size_t>(before, 256);
 
+    CardSource source(card);
+    disasm::Window window(*debug->GetDisassembler(), source);
+    if (snap)
+        address = window.SnapToInstruction(address);
     StateNode ret = StateNode::Object();
     ret["cpu"] = std::string(DebugCpuName(cpu));
     ret["address"] = static_cast<int>(address);
     ret["count"] = static_cast<unsigned>(count);
+    if (before)
+        ret["before"] = static_cast<unsigned>(before);
     StateNode instructions = StateNode::Array();
-    uint16_t current = address;
-    for (size_t i = 0; i < count && current >= address; ++i)
+    for (const disasm::Row& row : window.Around(address, before, count))
     {
-        std::vector<uint8_t> buffer(4, 0xFF);
-        for (uint16_t j = 0; j < 4; ++j)
-            card->peekCardMemory(static_cast<uint16_t>(current + j), buffer[j]);
-        uint8_t length = 0;
-        DecodedInstruction decoded;
-        const std::string mnemonic = disasm->disassembleSingleCommand(buffer, current, &length, &decoded);
-        if (length == 0)
-            length = 1;
-
         StateNode line = StateNode::Object();
-        line["address"] = static_cast<int>(current);
+        line["address"] = static_cast<int>(row.address);
         std::string hex;
-        for (uint8_t j = 0; j < length; ++j)
+        for (uint8_t j = 0; j < row.length; ++j)
         {
             char byte[4];
-            std::snprintf(byte, sizeof(byte), "%02X", buffer[j]);
+            std::snprintf(byte, sizeof(byte), "%02X", row.bytes[j]);
             hex += byte;
         }
         line["bytes"] = hex;
-        line["mnemonic"] = mnemonic;
-        line["size"] = static_cast<int>(length);
-        if ((decoded.hasJump || decoded.hasRelativeJump) && !decoded.hasIndirect)
+        line["mnemonic"] = row.mnemonic;
+        line["size"] = static_cast<int>(row.length);
+        const DecodedInstruction& decoded = row.decoded;
+        if (row.kind == disasm::RowKind::Data)
+            line["kind"] = std::string(row.cut ? "cut" : "data");
+        else if ((decoded.hasJump || decoded.hasRelativeJump) && !decoded.hasIndirect)
             line["target"] = static_cast<int>(decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr);
         instructions.push(line);
-        current = static_cast<uint16_t>(current + length);
     }
     ret["instructions"] = instructions;
     return ret;

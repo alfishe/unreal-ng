@@ -473,7 +473,7 @@ PUT /api/v1/emulator/{id}/memory/{type}/{page}/{offset}   Write to physical page
 GET /api/v1/emulator/{id}/memory/info         Get memory configuration (page counts, bank mappings)
 GET /api/v1/emulator/{id}/memcounters         Memory access statistics
 GET /api/v1/emulator/{id}/calltrace           Call trace history (?limit=N)
-GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC)
+GET /api/v1/emulator/{id}/disasm              Disassemble Z80 code (?address=&count=, default: PC; ?before=N rows above first, ?snap=1 the address moved to its row start; data rows kind data / cut: docs/emulator/design/debugger/disassembly-window.md)
 GET /api/v1/emulator/{id}/disasm/page         Disassemble from physical page (?type=&page=&offset=&count=)
 GET /api/v1/emulator/{id}/debug/snapshot      One coherent debugger picture (?disasm=N lines from PC, ?stack=N words, ?memory=space:addr:len repeatable or comma-separated, at most 8): seq, cpu, state, pause {reason, breakpoint_id, address}, consistency (paused | frame | stopped), regs (= /registers), prev_regs (at the previous stop), pages[], stack, time {frame, t, frame_t, line, dot}, disasm[] (= /disasm lines), memory[] {space, address, length, base64}; 503 when no coherent moment came within 500 ms
 POST /api/v1/emulator/{id}/stepout | skip_until | steps | stepover | run_*   Run-control calls: 409 "Run-control held by <surface>" while another surface (GDB) holds the claim (every call that advances the CPU); the long ones run on a pool of 4 threads of their own, so the two HTTP workers keep answering meanwhile (same reply, sent when the call finishes)
