@@ -143,7 +143,8 @@ TEST(FrameClock_Test, TurboUsesLatchTimes)
         EXPECT_EQ(r.targetNs, s.latch) << "nothing to wait for";
     }
     s.latchDelay = 7 * kPeriod;  // ZX DLSS looks ahead
-    EXPECT_EQ(s.Frame(false, false, kPeriod / 10).targetNs, s.latch + s.latchDelay);
+    const int64_t delayed = s.Frame(false, false, kPeriod / 10).targetNs;  // Frame moves s.latch: read it after
+    EXPECT_EQ(delayed, s.latch + s.latchDelay);
     const FrameTimingResult r = s.Frame(true);
     EXPECT_EQ(r.targetNs, s.latch + s.audioDelay);
     EXPECT_EQ(s.clock.GetStats().carried, 0u);

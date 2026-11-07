@@ -34,6 +34,10 @@
 #include "emulator/emulator.h"
 #include "platform/displaymodeswitch.h"
 #include "platform/nativepresenter.h"
+#include "platform/linuxpresent.h"
+#ifdef __linux__
+#include "platform/linux/x11display.h"
+#endif
 #include "emulator/emulatorcontext.h"
 #include "emulator/keyboardmanager.h"
 #include "3rdparty/message-center/messagecenter.h"
@@ -55,11 +59,15 @@ void main() {
 
 namespace
 {
-/// The native presenter where the platform has one, unless UNREAL_PRESENTER=gl
+/// The native presenter where the platform has one, unless UNREAL_PRESENTER=gl. Linux: the timed GL swap on X11
+/// and Wayland (the window picks it or the plain swap by the policy and the feedback, chooseLinuxPresenter)
 bool UseNativePresenter()
 {
 #if defined(__APPLE__) || defined(_WIN32)
     return qEnvironmentVariable("UNREAL_PRESENTER").compare(QStringLiteral("gl"), Qt::CaseInsensitive) != 0;
+#elif defined(__linux__)
+    return qEnvironmentVariable("UNREAL_PRESENTER").compare(QStringLiteral("gl"), Qt::CaseInsensitive) != 0 &&
+           x11::CurrentWindowSystem() != linuxpresent::WindowSystem::Other;
 #else
     return false;
 #endif
@@ -67,6 +75,15 @@ bool UseNativePresenter()
 
 /// Native way, occluded or minimized: the poll that notices the window shown again
 constexpr int kHiddenPollMs = 100;
+
+/// Linux: why the plain GL swap presents in place of the timed one (after "the native presenter")
+[[maybe_unused]] constexpr const char* kNoFeedbackReason =
+    "is off: no screen times here (Wayland / EGL, or GLX without GLX_OML_sync_control), the plain GL swap keeps the "
+    "refresh grid; present_policy=vrr swaps each frame at its time";
+
+// The last probe (the GUI thread): -1 none yet, 0 no GPU, 1 a hardware one; the renderer it saw
+std::atomic<int> gGpuProbe{-1};
+QString gGpuRenderer;
 }  // namespace
 
 DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _native(UseNativePresenter())
@@ -78,7 +95,7 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
     setSurfaceType(QSurface::OpenGLSurface);
 #endif
     setupVSync();
-    if (_native)
+    if (UseNativePresenter())
     {
         bool ok = false;
         const int leadMs = qEnvironmentVariableIntValue("UNREAL_PRESENT_LEAD_MS", &ok);
@@ -291,7 +308,11 @@ void DeviceScreenGLWindow::renderNative(bool force)
     if (!_presenter)
     {
         if (!_recovery.GlOnly())
+#ifdef __linux__
+            _presenter = NativePresenter::Create(static_cast<QWindow*>(this));
+#else
             _presenter = NativePresenter::Create(reinterpret_cast<void*>(winId()));
+#endif
         if (!_presenter)
         {
             const bool restarted = _recovery.RetriesLeft() > 0;
@@ -325,6 +346,14 @@ void DeviceScreenGLWindow::renderNative(bool force)
             return;
         }
         _recovery.Created();
+#ifdef __linux__
+        // Without screen times (Wayland, EGL) the timed swap is for policy vrr only: the plain swap otherwise
+        if (!linuxpresent::UseTimedSwap(_presentPolicy, NativePresenter::PresentFeedback() == 1))
+        {
+            useGlSwap(kNoFeedbackReason);
+            return;
+        }
+#endif
         _presenter->SetPolicy(_presentPolicy);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
@@ -487,6 +516,53 @@ void DeviceScreenGLWindow::renderNative(bool force)
     scheduleNative();
 }
 
+#ifdef __linux__
+void DeviceScreenGLWindow::useGlSwap(const char* why)
+{
+    qInfo() << "DeviceScreenGLWindow: the timed GL swap" << why << "- the plain GL swap presents";
+    makeCurrent();  // the presenter's GL objects are in the draw context
+    _presenter.reset();
+    _native = false;
+    _glSwapChosen = true;
+    _presenterFallback = why;
+    _presentTimer->stop();
+    _presentHidden = false;
+    _smoothRefreshNs = 0;
+    requestUpdate();
+}
+
+void DeviceScreenGLWindow::chooseLinuxPresenter()
+{
+    // A presenter given up for failing stays given up
+    if (!UseNativePresenter() || (!_native && !_glSwapChosen))
+        return;
+    const int feedback = NativePresenter::PresentFeedback();
+    const bool timed = linuxpresent::UseTimedSwap(_presentPolicy, feedback != 0);
+    if (timed && !_native)
+    {
+        qInfo() << "DeviceScreenGLWindow: present policy" << PresentPolicyName(_presentPolicy)
+                << "- the timed GL swap presents";
+        _native = true;
+        _glSwapChosen = false;
+        _presenterFallback.clear();
+        if (_context && !_offscreen)
+        {
+            _offscreen = std::make_unique<QOffscreenSurface>();
+            _offscreen->setFormat(_context->format());
+            _offscreen->create();
+        }
+        // The window's surface for the present thread: the draw context leaves it
+        if (_context)
+            _context->doneCurrent();
+        update();
+    }
+    else if (!timed && _native && feedback == 0)
+    {
+        useGlSwap(kNoFeedbackReason);
+    }
+}
+#endif
+
 void DeviceScreenGLWindow::fallBackToGl(const std::string& why)
 {
     qWarning().noquote() << "DeviceScreenGLWindow: the native presenter" << QString::fromStdString(why)
@@ -575,8 +651,10 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     {
 #ifdef __APPLE__
         out.presenter = "metal";
-#else
+#elif defined(_WIN32)
         out.presenter = "dxgi";
+#else
+        out.presenter = "gl-timed";
 #endif
         const NativePresenter::Stats s = _presenter->GetStats();
         out.minRefreshHz = s.minRefreshHz;
@@ -596,12 +674,35 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.offBeat = s.offBeat;
         out.soundOffsetP50Ms = s.soundOffsetP50;
         out.soundOffsetP99Ms = s.soundOffsetP99;
+        out.vrrSupport = s.vrrSupport;
+        out.vrrReason = s.vrrReason;
+        if (out.vrrSupport.empty())
+        {
+            // macOS reports the display's range; Windows has no query, the presenter watches the vblanks
+            const bool range = s.maxRefreshHz - s.minRefreshHz > s.minRefreshHz * 0.01;
+#ifdef __APPLE__
+            out.vrrSupport = range ? "yes" : "no";
+            out.vrrReason = range ? "" : "the display has a fixed refresh (NSScreen)";
+#else
+            out.vrrSupport = s.vrr ? "yes" : "unknown";
+            out.vrrReason = s.vrr ? "" : "Windows has no query: the presenter watches the vblanks";
+#endif
+        }
     }
     else
     {
         out.presenter = "gl";
         const QScreen* display = screen();
         out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
+#ifdef __linux__
+        const linuxpresent::VrrDecision vrr =
+            x11::DecideWindowVrr(this, gGpuRenderer.contains(QStringLiteral("NVIDIA"), Qt::CaseInsensitive));
+        out.vrrSupport = linuxpresent::VrrSupportName(vrr.support);
+        out.vrrReason = vrr.reason;
+#else
+        out.vrrSupport = "unknown";
+        out.vrrReason = "the GL swap presents on the refresh grid";
+#endif
     }
     out.fixedDisplay = out.maxRefreshHz - out.minRefreshHz <= out.minRefreshHz * 0.01;
     FillSmoothStats(_smooth, smoothActive(), _smoothOnGpu && _smoothGpu.IsCreated(), out);
@@ -641,13 +742,6 @@ QSurfaceFormat DeviceScreenGLWindow::surfaceFormat()
     fmt.setOption(QSurfaceFormat::ResetNotification);
     return fmt;
 }
-
-namespace
-{
-// The last probe (the GUI thread): -1 none yet, 0 no GPU, 1 a hardware one; the renderer it saw
-std::atomic<int> gGpuProbe{-1};
-QString gGpuRenderer;
-}  // namespace
 
 bool DeviceScreenGLWindow::probeGPUAcceleration()
 {
@@ -714,6 +808,14 @@ bool DeviceScreenGLWindow::probeGPUAccelerationOnce(QString& rendererName)
     }
 
     ctx.doneCurrent();
+
+    // A software rasterizer is slower than the CPU path, but it is the only GL in a container or a VM: the GL path
+    // and the presenter can be checked there (Mesa llvmpipe on Xvfb)
+    if (isSoftware && qEnvironmentVariableIntValue("UNREAL_GPU_ALLOW_SOFTWARE") == 1)
+    {
+        qInfo() << "DeviceScreenGLWindow: Software renderer allowed (UNREAL_GPU_ALLOW_SOFTWARE=1)";
+        isSoftware = false;
+    }
 
     if (isSoftware)
     {
@@ -800,6 +902,9 @@ void DeviceScreenGLWindow::setFrameSource(ScreenFrames source)
         qWarning() << "DeviceScreenGLWindow: UNREAL_PRESENT_POLICY=" << policy << "is not auto | vrr | vsync";
     if (_presenter)
         _presenter->SetPolicy(_presentPolicy);
+#ifdef __linux__
+    chooseLinuxPresenter();
+#endif
     _displayRate = source.displayRate;
     _smoothAuto = mode == smoothmotion::Mode::Auto;
     _sync = VideoSync::Off;
@@ -928,7 +1033,7 @@ void DeviceScreenGLWindow::updateDisplayRate()
     std::vector<double> rates;
     double currentHz = 0.0;
     if (!_displaySwitch || !display)
-        return restoreDisplayRate("this platform cannot change the display's mode");
+        return restoreDisplayRate(DisplayModeSwitch::Unavailable().c_str());
     if (!_displaySwitch->Rates(display, rates, currentHz))
         return restoreDisplayRate("the display's modes are unknown");
     if (!_displaySwitch->Switched())

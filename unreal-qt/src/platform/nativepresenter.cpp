@@ -4,11 +4,22 @@
 #include <atomic>
 #include <cstdlib>
 
-#if !defined(__APPLE__) && !defined(_WIN32)
-// No native presenter here yet (Linux: Vulkan / Wayland later): the window presents with GL
+#if !defined(__APPLE__) && !defined(_WIN32) && !defined(__linux__)
+// No native presenter here: the window presents with GL
 std::unique_ptr<NativePresenter> NativePresenter::Create(void*)
 {
     return nullptr;
+}
+#endif
+
+#ifndef __linux__
+int NativePresenter::PresentFeedback()
+{
+#if defined(__APPLE__) || defined(_WIN32)
+    return 1;
+#else
+    return 0;
+#endif
 }
 #endif
 

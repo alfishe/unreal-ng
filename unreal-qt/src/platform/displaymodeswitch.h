@@ -6,13 +6,15 @@
 
 class QScreen;
 
-/// [VIDEO] DisplayRate = match (frame presenter design, section 4.6): the display's mode switched to another refresh
+/// [VIDEO] DisplayRate = match (frame presenter design, section 4.7): the display's mode switched to another refresh
 /// rate at the same resolution, and back. One display at a time: Set on another display restores the first.
 /// - macOS: CoreGraphics display configuration for this application only (kCGConfigureForAppOnly): the system
 ///   restores the mode when the application ends, however it ends;
 /// - Windows: ChangeDisplaySettingsEx with CDS_FULLSCREEN, a temporary mode Windows restores when the application
 ///   ends;
-/// - elsewhere none (Create returns null): X11 / Wayland have no portable way.
+/// - Linux X11: RandR (XRRSetCrtcConfig) on the CRTC under the window, libXrandr loaded at run time; the destructor
+///   restores it (X11 itself keeps a mode a crashed process set);
+/// - elsewhere none (Create returns null, Unavailable says why): Wayland and XWayland leave the mode to the compositor.
 class DisplayModeSwitch
 {
 public:
@@ -20,6 +22,8 @@ public:
 
     /// This platform's, or null
     static std::unique_ptr<DisplayModeSwitch> Create();
+    /// Why Create returned null here
+    static std::string Unavailable();
 
     /// The refresh rates of `screen`'s modes at its current resolution (the current one included) and the current rate
     virtual bool Rates(const QScreen* screen, std::vector<double>& rates, double& currentHz) = 0;

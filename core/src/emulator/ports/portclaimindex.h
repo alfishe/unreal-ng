@@ -10,6 +10,11 @@
 #include <memory>
 #include <vector>
 
+// Qt defines `slots` as an empty macro: without this the namespace below turns anonymous in a Qt translation unit
+// (gcc -Wsubobject-linkage / -Wodr in unreal-qt)
+#pragma push_macro("slots")
+#undef slots
+
 class EmulatorContext;
 namespace slots
 {
@@ -48,3 +53,5 @@ private:
     std::unique_ptr<slots::PortOwners> _owners;
     std::vector<uint8_t> _table;  ///< claim by (out << 17 | dos << 16 | port); empty until the first lookup
 };
+
+#pragma pop_macro("slots")
