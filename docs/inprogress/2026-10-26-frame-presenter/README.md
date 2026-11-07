@@ -383,6 +383,22 @@ Pentagon shows each frame once, with one repeat every ~0.85 s (a 2.4 % beat), an
   Xorg dummy display (59.81 / 50.02 Hz modes): `match` for the Pentagon picks 50.02, `keep` and the signal restore
   59.81. Wayland and XWayland: none, the
   compositor owns the mode (`unchanged`, the reason says so).
+- **Steam Deck LCD (measured 2026-11-07, SteamOS 3.10, KWin 6.7.3, gamescope 3.16.30).** The built-in panel has
+  no VRR: the kernel's eDP connector says `vrr_capable = 0`; VRR exists only on an external display over USB-C /
+  DisplayPort (Game Mode: Settings > Display, the VRR switch shown when the display reports it; desktop: System
+  Settings > Display & Monitor > Adaptive sync, fullscreen). What the panel does take is other fixed rates:
+  - Game Mode: gamescope makes 40..60 Hz panel modes itself (`dynamic_modegen` in
+    `/usr/share/gamescope/scripts/00-gamescope/displays/valve.steamdeck.lcd.lua`: fixed 800x1280 timings, the
+    pixel clock scaled). The rate is the root window's `GAMESCOPE_DYNAMIC_REFRESH` atom (whole Hz, set by Steam's
+    refresh slider); `GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK` answers the rate in use. A user script in
+    `~/.config/gamescope/*.lua` can override `dynamic_modegen` (e.g. map 49 to 48.83 Hz). Not tried yet.
+  - Desktop (KWin): `kscreen-doctor output.eDP-1.addCustomMode.800.1280.<mHz>.full` adds a mode the panel
+    accepts; the asked rate is not the rate made (CVT clock steps): asked 49020 mHz gave 48.820 Hz on the
+    presenter's OML clock, against the Pentagon's 48.828 (one slip in about 2 minutes); asked 50000 gave 49.65.
+    KWin's `kde_output_management_v2` (what kscreen uses) would let `display_rate=match` switch on KDE Wayland
+    too: not built.
+  - XWayland on KDE has `GLX_OML_sync_control`: the `gl-timed` presenter gets screen times there (2455 of 2456
+    shown, beat off 1 in 2451; error p50 11 ms, the compositor's frame). Native Wayland stays on EGL, no times.
 - The picking (`FitDisplayRate`, `DisplayRatePick`) and the meter live in `core/src/emulator/video/displayrate.h`
   with unit tests; the switch in `unreal-qt/src/platform/displaymodeswitch.h`. The report's `present.display` says
   `keep`, `matched` (with the rate and the original rate) or `unchanged` with the reason.
