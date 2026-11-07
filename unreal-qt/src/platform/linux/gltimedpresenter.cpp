@@ -351,7 +351,8 @@ public:
         s.leadMs = static_cast<double>(_lead.MarginNs()) / 1e6;
         presentstats::Fill(s, std::move(errors), std::move(waits), std::move(drawableWaits));
         const bool vrr = _vrr.load(std::memory_order_relaxed);
-        s.maxRefreshHz = _refreshHz.load(std::memory_order_relaxed);
+        s.maxRefreshHz = linuxpresent::FixedRefreshHz(_refreshHz.load(std::memory_order_relaxed),
+                                                      _vblankPeriodNs.load(std::memory_order_relaxed), vrr);
         s.minRefreshHz = vrr ? 0.0 : s.maxRefreshHz;
         s.visible = _exposed.load(std::memory_order_relaxed);
         s.vrr = vrr;
@@ -632,7 +633,9 @@ private:
             _errors.Add(static_cast<double>(screenNs - asked) / 1e6);
             const int64_t own = item.atNs > 0 ? item.atNs : asked;
             _lead.Shown(screenNs - own, item.number, std::max(own, item.handedNs) - item.handedNs);
-            const double hz = _refreshHz.load(std::memory_order_relaxed);
+            const double hz = linuxpresent::FixedRefreshHz(_refreshHz.load(std::memory_order_relaxed),
+                                                           _vblankPeriodNs.load(std::memory_order_relaxed),
+                                                           _vrr.load(std::memory_order_relaxed));
             _beat.Shown(item.trace.picture, item.trace.targetNs, screenNs,
                         static_cast<int64_t>(1e9 / (hz > 0.0 ? hz : 60.0)));
         }

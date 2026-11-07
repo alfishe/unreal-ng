@@ -349,6 +349,48 @@ inline const XMode* ModeForRate(const std::vector<XMode>& modes, const XMode& cu
     return best;
 }
 
+/// The refresh rate of a fixed display: the GLX_OML_sync_control vblank counter's period when it has one (it follows
+/// a mode the compositor switched without telling X11: gamescope's dynamic refresh, which XWayland's RandR never
+/// shows), else the mode's (Qt). Under VRR the vblanks follow the frames: the mode's
+inline double FixedRefreshHz(double modeHz, int64_t vblankPeriodNs, bool vrr)
+{
+    if (vrr || vblankPeriodNs <= 0)
+        return modeHz;
+    return 1e9 / static_cast<double>(vblankPeriodNs);
+}
+
+/// gamescope_control (gamescope's Wayland protocol, the one Steam's refresh rate slider uses): the target refresh
+/// cycle request's flags. allow_refresh_switching: gamescope changes the panel's mode (the highest valid rate the fps
+/// divides); only_change_refresh_rate: no frame limiter at that fps (gamescope 3.14.2 and later, feature 4, ignored
+/// before); internal_display: the request is for the built-in panel, else for an external display
+inline constexpr uint32_t kGamescopeInternalDisplay = 0x1;
+inline constexpr uint32_t kGamescopeAllowRefreshSwitching = 0x2;
+inline constexpr uint32_t kGamescopeOnlyChangeRefreshRate = 0x4;
+
+inline uint32_t GamescopeRefreshFlags(bool internalDisplay)
+{
+    return (internalDisplay ? kGamescopeInternalDisplay : 0u) | kGamescopeAllowRefreshSwitching |
+           kGamescopeOnlyChangeRefreshRate;
+}
+
+/// The whole-Hz fps to ask gamescope for `hz` (one of its valid rates): gamescope makes the mode of that rate
+inline uint32_t GamescopeFps(double hz)
+{
+    return hz > 0.0 ? static_cast<uint32_t>(std::lround(hz)) : 0u;
+}
+
+/// active_display_info's valid refresh rates (32-bit whole Hz, empty on a display fixed at its mode), ascending
+inline std::vector<double> GamescopeRates(const uint32_t* hz, size_t count)
+{
+    std::vector<double> rates;
+    for (size_t i = 0; i < count; i++)
+        if (hz[i] > 0)
+            rates.push_back(static_cast<double>(hz[i]));
+    std::sort(rates.begin(), rates.end());
+    rates.erase(std::unique(rates.begin(), rates.end()), rates.end());
+    return rates;
+}
+
 /// Why the display's mode stays on this window system (empty: X11 can switch it)
 inline std::string NoModeSwitchReason(WindowSystem system)
 {

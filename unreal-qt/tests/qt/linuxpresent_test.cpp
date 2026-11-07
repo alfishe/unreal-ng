@@ -269,3 +269,33 @@ TEST(LinuxPresent_Test, OnlyX11SwitchesTheMode)
     EXPECT_NE(NoModeSwitchReason(WindowSystem::XWayland).find("XWayland"), std::string::npos);
     EXPECT_FALSE(NoModeSwitchReason(WindowSystem::Other).empty());
 }
+
+TEST(LinuxPresent_Test, AFixedDisplayReportsTheMeasuredVblankRate)
+{
+    // gamescope switched the panel to 49 Hz; XWayland's RandR (Qt) still says 59.81
+    EXPECT_NEAR(FixedRefreshHz(59.81, 20'408'163, false), 49.0, 0.001);
+    EXPECT_DOUBLE_EQ(FixedRefreshHz(59.81, 0, false), 59.81);         // no counter yet
+    EXPECT_DOUBLE_EQ(FixedRefreshHz(144.0, 20'408'163, true), 144.0);  // VRR: the vblanks follow the frames
+}
+
+TEST(LinuxPresent_Test, GamescopeRatesAndTheRefreshRequest)
+{
+    // The Deck LCD: 40..60 whole Hz, unordered with a repeat and a zero
+    const uint32_t valid[] = {60, 40, 49, 50, 0, 49};
+    const std::vector<double> rates = GamescopeRates(valid, sizeof valid / sizeof valid[0]);
+    ASSERT_EQ(rates.size(), 4u);
+    EXPECT_DOUBLE_EQ(rates.front(), 40.0);
+    EXPECT_DOUBLE_EQ(rates.back(), 60.0);
+    EXPECT_TRUE(GamescopeRates(nullptr, 0).empty());
+
+    // Pentagon 48.83 Hz from 60: 49 Hz (0.35 % off), asked as 49 fps
+    DisplayRateFit pick;
+    ASSERT_TRUE(DisplayRatePick(48.83, 60.0, rates, pick));
+    EXPECT_DOUBLE_EQ(pick.hz, 49.0);
+    EXPECT_EQ(GamescopeFps(pick.hz), 49u);
+    EXPECT_EQ(GamescopeFps(0.0), 0u);
+
+    // The built-in panel, the mode switched, no frame limiter at that fps
+    EXPECT_EQ(GamescopeRefreshFlags(true), 0x7u);
+    EXPECT_EQ(GamescopeRefreshFlags(false), 0x6u);
+}

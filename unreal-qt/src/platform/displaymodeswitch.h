@@ -14,6 +14,9 @@ class QScreen;
 ///   ends;
 /// - Linux X11: RandR (XRRSetCrtcConfig) on the CRTC under the window, libXrandr loaded at run time; the destructor
 ///   restores it (X11 itself keeps a mode a crashed process set);
+/// - gamescope (the Steam Deck's Game Mode): gamescope_control's target refresh cycle, the request of Steam's refresh
+///   rate slider, gamescope making the panel's mode; Restore asks for the display's own rate back (gamescope keeps
+///   the setting after the process ends);
 /// - elsewhere none (Create returns null, Unavailable says why): Wayland and XWayland leave the mode to the compositor.
 class DisplayModeSwitch
 {

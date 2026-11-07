@@ -389,9 +389,18 @@ Pentagon shows each frame once, with one repeat every ~0.85 s (a 2.4 % beat), an
   Settings > Display & Monitor > Adaptive sync, fullscreen). What the panel does take is other fixed rates:
   - Game Mode: gamescope makes 40..60 Hz panel modes itself (`dynamic_modegen` in
     `/usr/share/gamescope/scripts/00-gamescope/displays/valve.steamdeck.lcd.lua`: fixed 800x1280 timings, the
-    pixel clock scaled). The rate is the root window's `GAMESCOPE_DYNAMIC_REFRESH` atom (whole Hz, set by Steam's
-    refresh slider); `GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK` answers the rate in use. A user script in
-    `~/.config/gamescope/*.lua` can override `dynamic_modegen` (e.g. map 49 to 48.83 Hz). Not tried yet.
+    pixel clock scaled). Steam's refresh slider does not use the root window's `GAMESCOPE_DYNAMIC_REFRESH` atom
+    (setting it changed nothing): it sends `set_app_target_refresh_cycle(fps, flags)` of gamescope's Wayland
+    protocol `gamescope_control` (`protocol/gamescope-control.xml`), and gamescope runs the highest valid rate the
+    fps divides. `display_rate=match` does the same (`platform/linux/gamescopecontrol.cpp`, libwayland-client loaded
+    at run time, on `GAMESCOPE_WAYLAND_DISPLAY`; flags internal display, allow refresh switching, only change the
+    refresh rate). Measured: Pentagon 48.83 Hz asked 49, the panel ran `800x1280@49.00` and the presenter's OML
+    clock 49.005 Hz (beat off 34 in 2659 frames, error p50 13 ms); `keep` sent 0 and the panel went back to 60.
+    gamescope keeps the setting after the process ends (Restore on quit, focus loss and the signals), and Steam's
+    slider overrides it (the last request wins). XWayland's RandR keeps saying 59.81 Hz, so on a fixed display the
+    presenter reports the rate of the vblank counter. `GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK` on the `:0` root
+    answers the rate in use. A user script in `~/.config/gamescope/*.lua` can override `dynamic_modegen` (e.g. map
+    49 to 48.83 Hz). Not tried yet.
   - Desktop (KWin): `kscreen-doctor output.eDP-1.addCustomMode.800.1280.<mHz>.full` adds a mode the panel
     accepts; the asked rate is not the rate made (CVT clock steps): asked 49020 mHz gave 48.820 Hz on the
     presenter's OML clock, against the Pentagon's 48.828 (one slip in about 2 minutes); asked 50000 gave 49.65.
