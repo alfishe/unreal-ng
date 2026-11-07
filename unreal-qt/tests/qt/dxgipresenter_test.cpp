@@ -72,12 +72,12 @@ TEST(DxgiPresenter_Test, MadeAnewForTheSameWindow)
     std::unique_ptr<NativePresenter> first = NativePresenter::Create(window.Handle());
     if (!first)
         GTEST_SKIP() << "no DXGI presenter here (no WGL_NV_DX_interop2)";
-    ASSERT_TRUE(PresenterWindow::Present(*first));
-    ASSERT_TRUE(PresenterWindow::Present(*first));
+    ASSERT_TRUE(PresenterWindow::Present(*first)) << first->LastFailure();
+    ASSERT_TRUE(PresenterWindow::Present(*first)) << first->LastFailure();
     first.reset();
 
     // At once, as the screen window does when its presenter stops: the window let go
     std::unique_ptr<NativePresenter> second = NativePresenter::Create(window.Handle());
     ASSERT_TRUE(second) << "the swap chain for the window refused: the first presenter still holds the window";
-    EXPECT_TRUE(PresenterWindow::Present(*second));
+    EXPECT_TRUE(PresenterWindow::Present(*second)) << second->LastFailure();
 }

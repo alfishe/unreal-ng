@@ -538,10 +538,28 @@ public:
         Slot& slot = _slots[index];
         if (slot.width != width || slot.height != height || !slot.framebuffer)
         {
-            if (const char* why = AllocateSlot(slot, width, height, f))
+            // A new size: every slot made anew while the presenter thread is idle. The NVIDIA interop's register
+            // racing that thread's ResizeBuffers / draw / Present hung the GPU (a TDR in about 1 of 40 new
+            // presenters on .101, the old code too); the device's lock around the interop's calls deadlocks in
+            // the driver instead
             {
-                ReleaseSlot(slot);
-                return Failed(why, width, height);
+                std::unique_lock<std::mutex> lock(_queueMutex);
+                if (!_freeCv.wait_for(lock, std::chrono::milliseconds(100),
+                                      [&] { return (_queue.empty() && !_busy) || Lost(); }) ||
+                    Lost())
+                {
+                    lock.unlock();
+                    return Failed(Lost() ? "the D3D11 device is gone (a GPU reset)"
+                                         : "the presenter thread still busy for a new slot size");
+                }
+            }
+            for (Slot& s : _slots)
+            {
+                if (const char* why = AllocateSlot(s, width, height, f))
+                {
+                    ReleaseSlot(s);
+                    return Failed(why, width, height);
+                }
             }
         }
         if (!_lockObjects(_interopDevice, 1, &slot.interop))
@@ -840,11 +858,18 @@ private:
             bool lost = false;
             {
                 std::unique_lock<std::mutex> lock(_queueMutex);
+                if (_busy)
+                {
+                    // The last item's copy and present are done: the GUI thread may (re)make slots now
+                    _busy = false;
+                    _freeCv.notify_all();
+                }
                 _queueCv.wait(lock, [&] { return _stop || !_queue.empty(); });
                 if (_stop)
                     break;
                 item = _queue.front();
                 _queue.pop_front();
+                _busy = true;
                 // The device gone: nothing presents any more, the slot is free again
                 lost = Lost();
                 // A later frame already due: this one would be replaced before any refresh
@@ -1117,6 +1142,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     bool _drawing = false;
 
     std::mutex _queueMutex;
+    bool _busy = false;  // the presenter thread copies or presents an item it took (_queueMutex)
     std::condition_variable _queueCv;
     std::condition_variable _freeCv;
     std::deque<Item> _queue;
