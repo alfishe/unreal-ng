@@ -1201,6 +1201,9 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // the access that ran it, where a replay applies the recorded edit too
     if ((work & EmulatorContext::kStepWorkScriptEdits) && _context->pDebugManager) [[unlikely]]
         _context->pDebugManager->GetScriptCallbacks()->ApplyEdits();
+    // The input and the edits may arm work for this very step: a mouse motion arms an IM2 device's line
+    // (kStepWorkDeviceInt), and its interrupt decision belongs to this instruction, as when the input came before it
+    work = _context->stepWork.load(std::memory_order_relaxed);
 
     StepResult result;
 

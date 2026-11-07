@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include <memory>
@@ -593,5 +594,60 @@ TEST(TTDEspModule_Test, ReplayWithoutTheHostRebuildsTheModule)
     EXPECT_EQ(blob(), endBlob) << "the replay diverged";
     EXPECT_EQ(esp->Stack().GetSlot(0).rx.size(), 500u);
     EXPECT_EQ(host->commands.size(), hostCommands) << "a replay never talks to the host";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// The ESP module's reply queue past its fixed array (kEspOutBytes) goes into the blob's tail (8503561c4): an AT module
+/// with more replies waiting for the ZX than the array holds restores every byte of them from a checkpoint
+TEST(TTDEspModule_Test, RepliesPastTheFixedArrayRestoreWhole)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ttd::TimeTravelController* ttd = context->pTimeTravelController;
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    features->setFeature(Features::kTimeTravel, true);
+    context->pMemory->UpdateFeatureCache();
+    std::strcpy(context->config.network.zxWifi, "AT");
+    context->config.network.card |= networkspec::kCardZxWifi;
+    context->config.network.hostAccess = 0;
+    context->pCore->ApplyNetworkConfiguration();
+    ASSERT_NE(context->pComPort, nullptr);
+    auto* esp = dynamic_cast<EspModule*>(context->pComPort->Peer());
+    ASSERT_NE(esp, nullptr);
+    Z80* z80 = context->pCore->GetZ80();
+    z80->out(0xFAEF, 0x07);   // FIFOs on
+    z80->out(0xFBEF, 0x03);   // 8N1
+    emulator->RunNFrames(2);
+
+    ASSERT_TRUE(ttd->StartRecording());
+    emulator->RunNFrames(1);
+    // The module's replies to many commands at once (as a ZX program ignoring its RX would leave them)
+    for (int i = 0; i < 2000; ++i)
+        for (char c : std::string("AT\r\n"))
+            esp->Transmit(static_cast<uint8_t>(c));
+    ASSERT_GT(esp->Pending(), static_cast<size_t>(netstate::kEspOutBytes) + 1000) << "past the fixed array";
+    // The checkpoint at the next boundary holds the queue; the machine drains part of it in that frame
+    emulator->RunNFrames(1);
+    const uint64_t at = context->emulatorState.frame_counter;
+    auto drain = [&]() {
+        std::vector<uint8_t> bytes;
+        while (esp->Pending() != 0)
+            bytes.push_back(esp->TakeByte());
+        return bytes;
+    };
+    const std::vector<uint8_t> live = drain();   // a few T past the boundary
+    ASSERT_GT(live.size(), static_cast<size_t>(netstate::kEspOutBytes));
+    emulator->RunNFrames(1);
+    ttd->StopRecording();
+
+    ASSERT_TRUE(ttd->SeekTo({at, 0}));
+    const std::vector<uint8_t> restored = drain();
+    // The boundary is a few T before the live point: the line may have taken a byte in between
+    ASSERT_GE(restored.size(), live.size());
+    EXPECT_LE(restored.size() - live.size(), 2u);
+    EXPECT_TRUE(std::equal(live.begin(), live.end(), restored.end() - static_cast<std::ptrdiff_t>(live.size())))
+        << "the restored queue ends with the live one: every byte past the fixed array came back";
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
