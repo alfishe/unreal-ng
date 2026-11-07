@@ -185,6 +185,10 @@ StateNode VideoPresent()
     node["present_policy"] = settings->presentPolicy;
     node["fixed_display"] = p.fixedDisplay;
     node["vrr"] = p.vrr;
+    StateNode vrrSupport = StateNode::Object();
+    vrrSupport["state"] = p.vrrSupport;
+    vrrSupport["reason"] = p.vrrReason;
+    node["vrr_support"] = vrrSupport;
     StateNode sync = StateNode::Object();
     sync["mode"] = p.sync;
     sync["reason"] = p.syncReason;

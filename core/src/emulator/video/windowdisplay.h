@@ -454,7 +454,7 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
-/// The frame presenter's part of the report: presenter, fixed_display, vrr, sync {mode, reason}, refresh_hz {min, max},
+/// The frame presenter's part of the report: presenter, fixed_display, vrr, vrr_support {state, reason}, sync {mode, reason}, refresh_hz {min, max},
 /// clock, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
 /// dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms {p50, p99}, gpu_wait_ms
 /// {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
@@ -466,6 +466,10 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     node["presenter"] = p.presenter;
     node["fixed_display"] = p.fixedDisplay;
     node["vrr"] = p.vrr;
+    StateNode vrrSupport = StateNode::Object();
+    vrrSupport["state"] = p.vrrSupport;
+    vrrSupport["reason"] = p.vrrReason;
+    node["vrr_support"] = vrrSupport;
     StateNode sync = StateNode::Object();
     sync["mode"] = p.sync;
     sync["reason"] = p.syncReason;
@@ -623,7 +627,8 @@ inline std::string Summary(const WindowDisplaySettings& s)
             ")";
     line += ", smooth motion " + s.smoothMotion + (s.smoothMotion == "off" ? "" : " (" + s.effectsDevice + ")");
     // The policy in effect only where a native presenter applies it
-    const bool native = s.present.presenter == "metal" || s.present.presenter == "dxgi";
+    const bool native =
+        s.present.presenter == "metal" || s.present.presenter == "dxgi" || s.present.presenter == "gl-timed";
     line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
     if (s.present.sync != "off")
         line += ", video sync " + s.present.sync + (s.present.syncReason.empty() ? "" : " (" + s.present.syncReason + ")");

@@ -144,6 +144,8 @@ WindowPresentStats DeviceScreen::presentStats() const
 {
     WindowPresentStats out;
     out.presenter = "software";
+    out.vrrSupport = "no";
+    out.vrrReason = "the software screen presents on the refresh grid";
     const QScreen* display = screen();
     out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
     FillSmoothStats(_smooth, smoothActive(), false, out);

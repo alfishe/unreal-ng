@@ -43,10 +43,12 @@ class QTimer;
 /// its own GL context. Two ways to the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter):
 /// - GL: the window's GL surface, swapped on vsync; every refresh draws the frame due when it reaches the screen
 ///   (b-vsync, section 4.2). Every platform.
-/// - Native (macOS, Windows): GL draws each frame into a texture shared with the platform's API, and a
+/// - Native (macOS, Windows, Linux): GL draws each frame into a texture shared with the platform's API, and a
 ///   NativePresenter shows it at the frame's audio time (c-vrr, section 4.1): on a VRR display every frame is on screen
 ///   for its own period. macOS: the window is a Metal surface, IOSurfaces. Windows: WGL_NV_DX_interop2 and a DXGI
-///   swap chain; without the extension the window falls back to GL. UNREAL_PRESENTER=gl keeps the GL way.
+///   swap chain; without the extension the window falls back to GL. Linux: a present thread swaps a GL context of its
+///   own on the window at the time (GlTimedPresenter); without screen times only for policy vrr. UNREAL_PRESENTER=gl
+///   keeps the GL way.
 class DeviceScreenGLWindow : public QWindow, protected QOpenGLFunctions
 {
     Q_OBJECT
@@ -201,6 +203,13 @@ private:
     void hangGL();               ///< UNREAL_TEST_GPU_HANG=gl: GL work that never ends (UNREAL_TEST_HOOKS builds)
     /// The native presenter given up (`why`): GL presents for the rest of the window's life (macOS: on a GL surface)
     void fallBackToGl(const std::string& why);
+#ifdef __linux__
+    /// The plain GL swap chosen over the timed one (`why`, after "the native presenter"): no screen times and a policy
+    /// that does not need each frame at its time. chooseLinuxPresenter brings the timed one back
+    void useGlSwap(const char* why);
+    /// After a policy change: the timed GL swap or the plain one (linuxpresent::UseTimedSwap)
+    void chooseLinuxPresenter();
+#endif
     /// GL way: draw the frame due at the next refresh and swap
     void renderGL();
     /// Native way: draw the frame due at now + lead into the presenter's shared texture (macOS an IOSurface, Windows a
@@ -256,6 +265,9 @@ private:
     int _idleRefreshes = 0;                ///< refreshes in a row with no new frame and none pending
 
     bool _native;  ///< false again when the platform's presenter cannot be made (Windows: no interop)
+#ifdef __linux__
+    bool _glSwapChosen = false;  ///< the plain GL swap by choice (useGlSwap), not for a failure
+#endif
     std::unique_ptr<QOpenGLContext> _context;
     std::unique_ptr<QOffscreenSurface> _offscreen;  ///< the native way's surface to make the context current on
     bool _glInitialized = false;

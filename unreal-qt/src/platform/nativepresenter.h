@@ -17,6 +17,8 @@
 /// - macOS: IOSurfaces, CAMetalLayer presentDrawable:atTime: (metalpresenter.mm)
 /// - Windows: WGL_NV_DX_interop2 onto D3D11 textures, a DXGI flip swap chain presented by its own thread at the time,
 ///   tearing allowed for VRR (dxgipresenter.cpp)
+/// - Linux: GL textures, a present thread with its own GL context on the window swapping at the time (swap interval 0
+///   under VRR, 1 on a fixed display), GLX_OML_sync_control for the screen times (linux/gltimedpresenter.cpp)
 ///
 /// BeginFrame, PresentFrame and the destructor on the thread whose GL context draws (the GUI thread); the rest from
 /// any thread (what they read of the window system is cached on the GUI thread).
@@ -48,6 +50,10 @@ public:
         uint64_t offBeat = 0;      ///< ... on screen for a refresh count outside it
         double soundOffsetP50 = 0.0;  ///< screen time minus the picture's target (its sound plus the lip-sync trim)
         double soundOffsetP99 = 0.0;
+        /// Can the display follow the frames: "yes" / "no" / "unknown" with the reason (empty: the presenter does not
+        /// say; the window derives it from the refresh range)
+        std::string vrrSupport;
+        std::string vrrReason;
     };
 
     /// Where a present came from (steady clock, ns; 0 = unknown): UNREAL_PRESENT_TRACE's columns, and the picture and
@@ -62,9 +68,13 @@ public:
         int64_t targetNs = 0;   ///< the picture's time on the frame clock (0: a repaint, not judged)
     };
 
-    /// The platform's presenter for a window (QWindow::winId()), the GL context that will draw current. nullptr: none
-    /// here, or the platform lacks what it needs (the window then presents with GL)
+    /// The platform's presenter for a window (QWindow::winId(); Linux: the QWindow itself, the present thread's context
+    /// is made current on it), the GL context that will draw current. nullptr: none here, or the platform lacks what it
+    /// needs (the window then presents with GL)
     static std::unique_ptr<NativePresenter> Create(void* windowHandle);
+    /// Do the presenters here learn each present's screen time: 1 yes, 0 no (Linux without GLX_OML_sync_control:
+    /// Wayland, EGL), -1 not known before the first one is made. macOS and Windows: 1
+    static int PresentFeedback();
     virtual ~NativePresenter() = default;
 
     /// The GL context current: a framebuffer of `width` x `height` device pixels to draw the next picture into,

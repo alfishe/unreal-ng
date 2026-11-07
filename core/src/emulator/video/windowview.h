@@ -48,9 +48,13 @@ struct GpuPassMs
 /// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
 struct WindowPresentStats
 {
-    std::string presenter;     ///< "metal", "dxgi" (native present-at-time), "gl" (the window's own swap), "software"
+    std::string presenter;  ///< "metal", "dxgi", "gl-timed" (present-at-time), "gl" (the window's own swap), "software"
     bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
     bool vrr = false;          ///< frames presented each at its own time (c-vrr); false: on the refresh grid (b-vsync)
+    /// Can the display under the window follow the frames: "yes", "no", "unknown" (Wayland: no client query; Windows:
+    /// the presenter checks the vblanks), and why not
+    std::string vrrSupport = "unknown";
+    std::string vrrReason;
     /// [VIDEO] DisplayRate's state: "keep" (off), "matched" (the display runs `displayHz` for the machine's
     /// `machineHz`, its own mode `originalHz`), "unchanged" (match asked, nothing switched: `displayReason` says why)
     std::string displayState = "keep";

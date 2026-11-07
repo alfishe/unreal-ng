@@ -204,8 +204,13 @@ std::string WindowDisplaySummary(const Json::Value& s)
                  : refresh.get("min", 0.0).asDouble() <= 0.0 ? " variable (its low end not reported)"
                                                              : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
         const std::string presenter = present.get("presenter", "").asString();
-        if (presenter == "metal" || presenter == "dxgi")
+        if (presenter == "metal" || presenter == "dxgi" || presenter == "gl-timed")
             line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
+        const Json::Value& vrrSupport = present["vrr_support"];
+        if (vrrSupport.isObject() && vrrSupport.get("state", "").asString() != "yes" &&
+            !vrrSupport.get("state", "").asString().empty())
+            line += ", VRR support " + vrrSupport["state"].asString() +
+                    (vrrSupport.get("reason", "").asString().empty() ? "" : " (" + vrrSupport["reason"].asString() + ")");
         const Json::Value& sync = present["sync"];
         if (sync.isObject() && sync.get("mode", "off").asString() != "off")
             line += ", video sync " + sync["mode"].asString() +

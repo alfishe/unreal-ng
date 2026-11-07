@@ -36,11 +36,16 @@
                 p["properties"][name]["type"] = type;
                 p["properties"][name]["description"] = description;
             };
-            pf("presenter", "string", "metal, dxgi (present at the frame's time), gl (the window's own swap), software");
+            pf("presenter", "string",
+               "metal, dxgi, gl-timed (Linux: a thread swaps GL; present at the frame's time), gl (the window's own "
+               "swap), software");
             pf("fixed_display", "boolean", "A fixed refresh rate (false: VRR / ProMotion range)");
             pf("vrr", "boolean",
                "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
                "policy and the display decide");
+            pf("vrr_support", "object",
+               "{state (yes, no, unknown), reason}: can the display under the window follow the frames (X11: RandR "
+               "vrr_capable and a fullscreen window; Wayland and Windows: unknown, no query)");
             pf("sync", "object",
                "View > Video Synchronization (smooth_motion auto): {mode (the step in effect: off (not asked), vrr, "
                "display_rate, interpolate), reason (why the steps before it are not; \"\" for vrr and off)}");

@@ -3014,6 +3014,36 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
 }
 
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "gl-timed";
+    present["refresh_hz"]["max"] = 60.0;
+    present["vrr"] = false;
+    present["vrr_support"]["state"] = "unknown";
+    present["vrr_support"]["reason"] = "Wayland: the compositor decides";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"on the refresh grid (vsync)", "VRR support unknown (Wayland: the compositor decides)"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+
+    // A display that can follow the frames needs no word
+    settings["present"]["vrr"] = true;
+    settings["present"]["vrr_support"]["state"] = "yes";
+    settings["present"]["vrr_support"]["reason"] = "";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult yes = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(yes.isError) << yes.text;
+    EXPECT_NE(yes.text.find("each frame at its time (vrr)"), std::string::npos) << yes.text;
+    EXPECT_EQ(yes.text.find("VRR support"), std::string::npos) << yes.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_CrtParamsAndViewport_UseTheirRoutes)
 {
     Json::Value params;

@@ -380,6 +380,7 @@ else ()
         QHexView
 
         unrealng::core  # Keep this when automation is disabled (propagates unrealng::recording PUBLIC when ENABLE_RECORDING)
+        ${CMAKE_DL_LIBS}
         Threads::Threads
     )
 endif ()
@@ -809,6 +810,9 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presenterrecovery_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"
+        # The Linux presenter's decisions (VRR, swap mode, timed swap, vblank grid, RandR mode), on every platform
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/linuxpresent_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linuxpresent.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.h"
     )

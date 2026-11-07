@@ -376,7 +376,13 @@ Pentagon shows each frame once, with one repeat every ~0.85 s (a 2.4 % beat), an
   already (section 4.1), so `match` restores the mode.
 - macOS: `CGConfigureDisplayWithDisplayMode` with `kCGConfigureForAppOnly`, so the system restores the mode however
   the application ends. Windows: `ChangeDisplaySettingsExW` with `CDS_FULLSCREEN`, a temporary mode Windows
-  restores at exit. X11 / Wayland: none (the report says so).
+  restores at exit. X11: RandR's `XRRSetCrtcConfig` on the CRTC under the window (libXrandr loaded at run time,
+  `platform/linux/displaymodeswitch_x11.cpp`); the X server keeps a mode a process set after it ends, so the switch
+  restores it on quit and focus loss, and on SIGTERM / SIGINT / SIGHUP a thread of its own puts it back on a
+  connection of its own before the signal ends the process; only a crash leaves the 50 Hz mode set. Checked on an
+  Xorg dummy display (59.81 / 50.02 Hz modes): `match` for the Pentagon picks 50.02, `keep` and the signal restore
+  59.81. Wayland and XWayland: none, the
+  compositor owns the mode (`unchanged`, the reason says so).
 - The picking (`FitDisplayRate`, `DisplayRatePick`) and the meter live in `core/src/emulator/video/displayrate.h`
   with unit tests; the switch in `unreal-qt/src/platform/displaymodeswitch.h`. The report's `present.display` says
   `keep`, `matched` (with the rate and the original rate) or `unchanged` with the reason.
@@ -546,8 +552,47 @@ classDiagram
   it (`DxgiPresenter_Test` covers a presenter made anew for the same window).
 - The overlays now drawn by `DeviceScreenGLWindow` (OSD, HUD) are drawn by GL into the same texture, never blended
   between frames.
-- Linux: a Vulkan presenter later. `VK_KHR_present_wait` / `VK_GOOGLE_display_timing` where the compositor offers them,
-  `wp_presentation` on Wayland. The Steam Deck client has its own presenter (rendering.md) and shares `FrameClock`.
+- Linux, as built (level 1, before the merge to master): the timed GL swap, `GlTimedPresenter`
+  (`platform/linux/gltimedpresenter.cpp`, presenter `gl-timed`), a native presenter on the GL path. GL draws each
+  picture into one of three textures; a present thread with a GL context of its own on the window (shared with the
+  drawing one) waits on the draw's fence, waits until the frame's time, blits the texture into the back buffer and
+  swaps. The window's timer, the adaptive lead (`PresentLead`, from 8 ms as DXGI: its own thread swaps at the time),
+  smooth motion's refresh grid, `ScreenBeat` and the report are the macOS / Windows ones.
+  - **Swap mode.** `present_policy` means what it means elsewhere (`linuxpresent::PickSwapMode`): `vrr` swap
+    interval 0 at the frame's time (a VRR display starts its refresh when the frame comes), `vsync` interval 1 at the
+    time (the first refresh after it, Metal's behaviour on a fixed display), `auto` VRR where `vrr_support` is yes,
+    and back to interval 1 when the vblanks stay on the mode's grid while the frames are off it (Windows'
+    `CheckVrr` rule, `linuxpresent::VrrEngaged`).
+  - **Screen times.** On X11 with Mesa, `GLX_OML_sync_control`: after each swap `glXWaitForSbcOML` gives the UST of
+    the vblank it was shown at (CLOCK_MONOTONIC = `steady_clock`), the MSC step gives the refresh period
+    (`linuxpresent::VBlankClock`, the median of the last 64). They feed the lead, the error percentiles, the beat
+    and the screen-to-sound offset as Metal's `presentedTime` and DXGI's vblanks do. Under a compositor the UST is
+    the vblank the compositor's copy went at, not when the composed picture reached the panel.
+  - **Without screen times** (Wayland and EGL; a GLX connection without the extension: NVIDIA, Xvfb, where Mesa
+    offers it on the client only) there is no refresh grid for
+    smooth motion and no lead to adapt: the window keeps the plain GL swap (`b-vsync`, beat counts 0) for `auto` and
+    `vsync`, and takes the timed swap only for `vrr` (`linuxpresent::UseTimedSwap`), switching at run time when the
+    policy changes. The fixed lead is 8 ms there.
+  - **VRR detection** (`vrr_support`, `x11::DecideWindowVrr`, `linuxpresent::DecideVrr`). X11: RandR's
+    `vrr_capable` property on the output under the window (amdgpu, i915, nouveau and newer NVIDIA expose it); the
+    drivers vary the refresh only for a window they flip, so a window not covering its screen is `no` with that
+    reason (View > Full Screen, without the toolbar and status bar). The window and its top level get
+    `_VARIABLE_REFRESH` = 1 unless the policy is `vsync` (Mesa sets it on the GL window itself; KWin and
+    xf86-video-amdgpu read it). NVIDIA without the property: `unknown`, `no` when `__GL_GSYNC_ALLOWED` or
+    `__GL_VRR_ALLOWED` is 0 (NV-CONTROL is not used: no dependency). Wayland and XWayland: `unknown`, no client
+    query exists; KDE, GNOME 46+ and gamescope decide for a fullscreen window, `present_policy=vrr` forces the timed
+    swap there.
+  - X11, RandR and GLX are loaded at run time (`platform/linux/x11display.cpp`: `dlopen` of libX11.so.6 and
+    libXrandr.so.2 on a connection of its own; GLX through the libraries Qt's plugin loaded): no headers and no new
+    link dependency, the CI image has none of them. Without them: no VRR query, no mode switch, reasons say so.
+  - Smooth motion's GL passes on Linux GL 3.3 core: `SmoothMotionGPU_Test` (the GPU steps, LayerFlow, the engine,
+    the worst content, frame ids) gives the CPU's bits on Mesa llvmpipe, run by `docker/linux/build.sh --test
+    --qt-gl` (Xvfb: Qt's offscreen platform has GL only through GLX; EGL surfaceless gives it none). Plain
+    `--test` skips them, as CI does. A container check of the whole window: `UNREAL_GPU_ALLOW_SOFTWARE=1` takes
+    llvmpipe as a GPU.
+  - Not built: a Vulkan presenter (`VK_KHR_present_wait`, `VK_GOOGLE_display_timing`, `wp_presentation` /
+    `wp_fifo` / `wp_commit_timing` on Wayland) is the next stage; it would give Wayland screen times and present-at
+    without a timed thread. The Steam Deck client has its own presenter (rendering.md) and shares `FrameClock`.
 
 ### 6.3 Timing feedback per OS
 
@@ -556,6 +601,8 @@ classDiagram
 | macOS | `MTLDrawable.presentedTime` (0 = dropped) | the display link's timestamps | `CACurrentMediaTime` = `mach_absolute_time` = `CLOCK_UPTIME_RAW` = `steady_clock` |
 | Windows, independent flip / fullscreen | `GetFrameStatistics`: `PresentCount` -> `SyncQPCTime` on a fixed refresh; under VRR `SyncQPCTime` is the start of the vblank the flip ended (before the present), so the kernel's vblank is used there too | ditto | QPC = `steady_clock` |
 | Windows, composed (DWM) window | none: `GetFrameStatistics` succeeds with all zeros | `D3DKMTWaitForVerticalBlankEvent` on the monitor's adapter, on a thread; the first vblank after the present (a lower bound: DWM may add a refresh) | QPC |
+| Linux X11, GLX (Mesa) | `glXWaitForSbcOML`: the UST of the vblank the swap was shown at (composited: the compositor's copy) | the UST / MSC pairs of the swaps | UST = CLOCK_MONOTONIC = `steady_clock` |
+| Linux Wayland / EGL | none (the GL path cannot read `wp_presentation`) | none | - |
 
 `IDXGIOutput::WaitForVBlank` returns at once in a window. `DwmGetCompositionTimingInfo`'s `qpcVBlank` had gaps of
 up to 166 ms (p99), and it ran on a ~60 Hz timer while the monitor slept. Neither works for this.
@@ -604,7 +651,7 @@ directly: the screen time minus the frame's target.
 - **As built (phase 6).** The window's display settings (`emulator/video/windowdisplay.h`, the one validation every
   plane shares) carry `smooth_motion` (off / blend / interpolate) and `effects_device` (gpu / cpu): the shown
   instance's `[VIDEO]` values, set at run time until it restarts. The report adds `present`: the presenter (metal,
-  dxgi, gl, software), the display's refresh range, the native presenter's presented / shown / dropped / late counts,
+  dxgi, gl-timed, gl, software), `vrr_support` {state yes / no / unknown, reason} (section 6.2, Linux), the display's refresh range, the native presenter's presented / shown / dropped / late counts,
   the adaptive lead, the timing error p50 / p99 / max and the GL wait over its last 600 presents, and smooth motion's
   mode in effect, device and counters (renders, blended, interpolated, motion fields, steps on the device, renders
   with flicker held). CLI `video window`, REST and WebSocket `/video/window`, Lua and Python `window_display()`, MCP
@@ -919,3 +966,6 @@ Each phase lands on its own with tests and docs.
 - **The audio clock is designed, not measured.** The POC timed frames on a steady clock. Phase 1 has to show that the
   fitted line of a real device (miniaudio on CoreAudio and WASAPI) is as smooth: target interval error under 0.1 ms
   beyond the DRC trim.
+- **Linux, level 1 limits.** No Vulkan presenter yet, so Wayland has no screen times (the beat counts stay 0) and no
+  refresh grid for smooth motion on the timed swap; no client query for VRR there (`vrr_support` unknown); no mode
+  switch on Wayland / XWayland (the compositor owns it). X11 VRR needs the window flipped, so it is fullscreen only.
