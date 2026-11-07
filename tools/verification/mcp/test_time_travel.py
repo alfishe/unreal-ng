@@ -161,6 +161,29 @@ def test_cause_chain_follows_the_frame_counter(s):
     expect(r.is_error and 'addr' in r.text, 'no target named', r.text)
 
 
+def test_backtrace_lists_the_call_stack(s):
+    # The history of test_record_stop_seek: the ROM's main loop and its IM 1 handler; the stack words above SP named
+    # by their last writers. The base and the older frames were written before the session: before_session
+    before = s.call('time_travel', {'action': 'status'}).text
+    r = s.call('time_travel', {'action': 'backtrace'})
+    st = r.structured
+    expect(not r.is_error and r.text.startswith('#0  pc #'), 'the PC line first', r.text)
+    expect(st.get('stop') in ('before_session', 'max_depth', 'max_slots', 'rom', 'top_of_memory', 'barrier'),
+           'a stop reason', st.get('stop'))
+    expect(r.text.count('\n') >= len(st.get('frames', [])) + 1, 'one line per frame', r.text)
+    for f in st.get('frames', []):
+        expect(f.get('kind') in ('call', 'rst', 'interrupt') and f.get('slot', 0) >= st.get('sp', 0x10000),
+               'a frame above SP', f)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'backtrace', 'depth': 1})
+    expect(not r.is_error and len(r.structured.get('frames', [])) <= 1, 'depth 1: at most one frame', r.text)
+    r = s.call('time_travel', {'action': 'backtrace', 'frame': 10_000_000}, ok=False)
+    expect(r.is_error, 'a moment past the history is an error', r.text)
+
+
 
 def test_find_event_names_the_moment(s):
     # The history of test_record_stop_seek: the ROM's IM 1 handler counts FRAMES (#5C78) every frame

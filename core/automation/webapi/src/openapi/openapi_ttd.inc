@@ -1127,6 +1127,51 @@
     }
 
     // =====================================================================
+    // GET /ttd/backtrace — the call stack at a moment
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/backtrace"]["get"];
+        op["summary"] = "The call stack at a moment: the return addresses above SP and the CALL / RST / interrupt of each";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Each stack word above SP is named by its last write before the moment (the write journal, else a pruned "
+            "replay) and the instruction of that write (a replay of its frame): a CALL / RST that pushed a return "
+            "address, an interrupt acknowledge that pushed the interrupted PC, or data (PUSH, locals). With the usual "
+            "stack discipline the return addresses are the live frames, innermost first; a stack moved by LD SP shows "
+            "the frames written where it now points. The walk stops at max_depth, max_slots, the top of memory, a word "
+            "in ROM, a word not written in the history (before_session: the stack's base or frames older than the "
+            "session) or a replay barrier. The machine goes back where it stood; a live recording pauses for "
+            "browsing. Reply: at {frame, tinframe}, pc, code_page, sp, routine (the routine the PC is in), frames[] "
+            "{depth, kind (call, rst, interrupt), slot, return_address, caller_pc, caller_page, text, frame, tinframe, "
+            "callee, routine, data_words}, stop, stop_slot, slots_scanned, data_words, frames_traced, ms, text "
+            "(text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"frame", "integer", "The moment's frame (default: the current position)"},
+            {"tinframe", "integer", "The moment inside the frame, TTD time units (default 0)"},
+            {"max_depth", "integer", "Frames listed, 1..64 (default 16)"},
+            {"max_slots", "integer", "Stack words looked at, 1..4096 (default 256)"},
+            {"text", "boolean", "Also return the stack as text, one line per frame (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
     // GET /ttd/find-event — the moment something happened (TTD find event)
     // =====================================================================
     {

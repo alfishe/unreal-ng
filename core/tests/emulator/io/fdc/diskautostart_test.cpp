@@ -403,6 +403,8 @@ TEST_F(DiskAutostart_Boot_Test, ExistingBoot_RunsThroughRom)
     auto result = _emulator->AutostartDisk(TrdPath("atarin.trd"));
     ASSERT_TRUE(result.mounted);
     ASSERT_TRUE(result.started) << result.message;
+    EXPECT_FALSE(result.ttdSessionEnded) << "no session ran";
+    EXPECT_EQ(result.message.find("TTD"), std::string::npos) << result.message;
 
     DiskImage* image = _context->coreState.diskDrives[0]->getDiskImage();
     TrdosCatalog catalog;
@@ -614,6 +616,8 @@ TEST_F(DiskAutostart_Boot_Test, TheNameHookIsARecordedEditOfTheBlackBox)
 
     auto result = _emulator->AutostartDisk(TrdPath("across_the_edge_by_demarche.trd"));
     ASSERT_TRUE(result.started) << result.message;
+    EXPECT_TRUE(result.ttdSessionEnded) << "the boot ended the session: the answer says so";
+    EXPECT_NE(result.message.find("the TTD session ended"), std::string::npos) << result.message;
     ASSERT_TRUE(_context->pDiskAutostart->IsArmed());
     _emulator->RunNFrames(1, true);
     ASSERT_TRUE(ttd->IsRecording()) << "the black box records again after the autostart's reset";

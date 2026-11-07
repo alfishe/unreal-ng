@@ -5583,7 +5583,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
                                "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
-                               "cause_chain", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
+                               "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
     {
@@ -5687,6 +5687,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "allow, down to constants, port reads, interrupt pushes and the session's initial memory; a register's "
         "producer is searched back up to max_frames frames (default 50); flags=true follows F too; the machine "
         "stays where it was). "
+        "'backtrace' (the call stack at frame / tinframe, default the current position: one call instead of "
+        "reverse_step + reverse_continue loops; each return address above SP with the CALL / RST / interrupt that "
+        "pushed it, when, and the routine it entered, innermost first, one line per frame; depth frames (default 16, "
+        "at most 64), max_slots stack words (default 256); the machine stays where it was). "
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
@@ -5761,7 +5765,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["frame"]["description"] =
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
-        "current position), the frame for explain_frame (default: the current one)";
+        "current position), the frame for explain_frame (default: the current one), the moment for backtrace (default: "
+        "the current position)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
         "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
@@ -5979,7 +5984,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "cause_chain: the register to explain - A F B C D E H L IXH IXL IYH IYL I R, a pair AF BC DE HL IX IY SP, or "
         "primed A' ... L' / AF' ... HL'";
     schema["properties"]["depth"]["type"] = "integer";
-    schema["properties"]["depth"]["description"] = "cause_chain: links from the target to a leaf, 1..16 (default 4)";
+    schema["properties"]["depth"]["description"] =
+        "cause_chain: links from the target to a leaf, 1..16 (default 4); backtrace: frames listed, 1..64 (default 16)";
+    schema["properties"]["max_slots"]["type"] = "integer";
+    schema["properties"]["max_slots"]["description"] = "backtrace: stack words looked at, 1..4096 (default 256)";
     schema["properties"]["max_links"]["type"] = "integer";
     schema["properties"]["max_links"]["description"] = "cause_chain: links in the whole tree, 1..256 (default 32)";
     schema["properties"]["flags"]["type"] = "boolean";
@@ -6974,6 +6982,29 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         if (cut)
                             out += "Links marked [stop: depth] / [stop: max_links] go further: ask again with a larger "
                                    "depth / max_links, or at that link's name and frame.\n";
+                        body.removeMember("text");
+                        done(ToolResult::Ok(out, std::move(body)));
+                    });
+                }
+                else if (action == "backtrace")
+                {
+                    std::string query = "/ttd/backtrace?text=true";
+                    for (const auto& [field, name] : {std::pair<const char*, const char*>{"frame", "frame"},
+                                                      {"tinframe", "tinframe"}, {"depth", "max_depth"},
+                                                      {"max_slots", "max_slots"}})
+                        if (args.isMember(field))
+                            query += std::string("&") + name + "=" + std::to_string(args[field].asUInt64());
+                    caller.Call("GET", Endpoint(id, query), nullptr, [done](int status, Json::Value body) {
+                        if (status != 200)
+                        {
+                            done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                            return;
+                        }
+                        // The stack as lines: an agent may read only this
+                        std::string out = body["text"].asString() + "\n";
+                        const std::string stop = body["stop"].asString();
+                        if (stop == "max_depth" || stop == "max_slots")
+                            out += "The stack goes on: ask again with a larger depth / max_slots.\n";
                         body.removeMember("text");
                         done(ToolResult::Ok(out, std::move(body)));
                     });

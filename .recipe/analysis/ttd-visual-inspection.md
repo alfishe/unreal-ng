@@ -60,6 +60,14 @@ time_travel        {"action":"step_back_instruction"}
 # 5. dump memory at this exact frame for byte-level checks
 invoke_api         {"method":"GET","path":"/api/v1/emulator/{id}/memory/read/0xC000",
                    "query_params":{"length":256,"format":"full"}}
+
+# Find the frame instead of walking to it, one call each:
+time_travel        {"action":"timeline"}                   # the recording cut into phases (tape, disk, screen, ...)
+time_travel        {"action":"find_event","find":"screen","min_changed":20,"limit":10}
+                                                           # the frames whose picture changed by 20 % or more
+time_travel        {"action":"explain_frame","frame":3520} # what that frame did: routines, paging, ports, writes
+time_travel        {"action":"diff","from_frame":3519,"to_frame":3520}
+                                                           # what differs between two moments, with the last writers
 ```
 
 ## WebAPI
@@ -84,6 +92,10 @@ curl -s "$BASE/emulator/$EMU_ID/capture/screen?area=full&format=png&path=scratch
 curl -s "$BASE/emulator/$EMU_ID/memory/read/0xC000?length=256&format=full" | jq '.data[:8]'
 ```
 
+The same finders over curl: `GET /ttd/timeline`, `GET /ttd/find-event?kind=screen&cond=change&min_changed=20`,
+`GET /ttd/explain-frame?frame=3520`, `GET /ttd/diff?from_frame=3519&to_frame=3520` (add `text=true` for a short
+text answer). Compare two moments with `diff`, not with two memory reads and a diff of your own.
+
 For a whole range of frames, `POST /ttd/export-clip` writes a lossless clip in
 one call instead of a seek and a capture per frame (see
 [ttd-recording.md](ttd-recording.md#inspect-a-file-search-port-journals-export-a-clip)).
@@ -97,9 +109,9 @@ one call instead of a seek and a capture per frame (see
   polling, turbo/speed-multiplier drift).
 - **Free back-and-forth.** `step-back`/`step-forward`/`seek` all work
   once recording has stopped, and while it records they pause it
-  (`recording_paused: true`). You can walk one frame at a time across a
-  glitch boundary to see exactly which frame introduced it, then
-  `step-instruction` within that frame to find which write did it.
+  (`recording_paused: true`). `find-event` names the frame that introduced
+  a glitch (a screen change, a byte's change, a key) and `cause-chain` the
+  write behind a byte; `step-instruction` walks inside that frame.
 - **A screenshot of a seeked frame IS the frame.** There's no present-queue
   latency to worry about — TTD restores
   full state (including the framebuffer) to that recorded point before
@@ -118,9 +130,10 @@ one call instead of a seek and a capture per frame (see
 - While recording, the host speed is held at 1x and turbo / fast tape /
   fast disk are off, so a recording plays at real speed. See
   [command-interface.md → TTD Session Rules](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-session-rules).
-- Development mode (`{}`, the default on `ttd/start`) costs ~64MB
-  journal + page store for a long capture — fine for "record a few
-  thousand frames to inspect a glitch," not for hours-long sessions.
+- Development mode (`{}`, the default on `ttd/start`) also keeps the
+  write journal (`find-last`, `cause-chain`, `diff`'s last writers); the
+  history keeps a window (the history limit, see
+  [ttd-recording.md](ttd-recording.md)), older frames drop out.
 - If you need the *live* machine to keep running from a past point
   (rather than just inspecting it), `ttd/seek` then `ttd/resume` —
   otherwise seeking alone leaves the instance paused at that frame,

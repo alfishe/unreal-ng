@@ -1340,6 +1340,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     {
         ret["autostarted"] = autostartResult.started;
         ret["autostart_message"] = autostartResult.message;
+        ret["ttd_session_ended"] = autostartResult.ttdSessionEnded;
     }
     ret["status"] = success ? "success" : "error";
     if (success)

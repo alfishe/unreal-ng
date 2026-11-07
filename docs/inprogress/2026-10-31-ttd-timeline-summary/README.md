@@ -1,6 +1,6 @@
 # TD-5: TTD timeline summary
 
-**Status 2026-10-31:** design. No code yet. Plan row [#7](../PLAN.md). Supersedes the 2026-09-14 design
+**Status 2026-11-01:** landed on github/master (`b0615018a`): every plane, every video family, the device regions, B1-B3 measured ([plan.md](plan.md)). Plan row [#7](../PLAN.md). Supersedes the 2026-09-14 design
 ([ttd-timeline-summary-design.md](../2026-09-14-automation-triage-gaps/designs/ttd-timeline-summary-design.md)): two
 of its data sources do not exist, see "Why a new design" below.
 

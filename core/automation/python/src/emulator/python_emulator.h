@@ -3111,6 +3111,7 @@ namespace PythonBindings
                     Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
                     result["success"] = r.mounted;
                     result["started"] = r.started;
+                    result["ttd_session_ended"] = r.ttdSessionEnded;
                     result["message"] = r.message;
                 }
                 else
@@ -6933,6 +6934,19 @@ namespace PythonBindings
                 py::arg("target"), py::arg("frame") = py::none(), py::arg("tinframe") = py::none(),
                 py::arg("phys_page") = py::none(), py::arg("depth") = 4, py::arg("max_links") = 32,
                 py::arg("max_frames") = 50, py::arg("flags") = false, py::arg("text") = false);
+
+        emulatorClass.def("ttd_backtrace", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "backtrace", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The call stack at a moment (frame, tinframe; default: the current position): each return address "
+               "above SP with the CALL / RST / interrupt that pushed it and when; max_depth, max_slots, text");
 
         emulatorClass.def("ttd_find_event", [](Emulator& self, const std::string& kind, py::kwargs kwargs) -> py::object {
                 std::map<std::string, std::string> options;

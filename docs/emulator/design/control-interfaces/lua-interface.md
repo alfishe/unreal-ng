@@ -1390,6 +1390,14 @@ local chain = ttd_cause_chain(0x5C78, {depth = 6})
 --   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
 local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
 
+-- The call stack at a moment (default: the current position); options frame, tinframe, max_depth (16),
+-- max_slots (256), text
+local bt = ttd_backtrace{frame = 150, tinframe = 20000, text = true}
+-- { at = {frame = 150, tinframe = 20000}, pc = 0x8020, sp = 0xBFFA, routine = 0x8020,
+--   frames = { {depth = 1, kind = "call", slot = 0xBFFA, return_address = 0x8014, caller_pc = 0x8011,
+--   text = "CALL #8020", frame = 149, tinframe = ..., callee = 0x8020, routine = 0x8010, data_words = 0}, ... },
+--   stop = "before_session", stop_slot = 0xC000, slots_scanned = 3, data_words = 1, text = "#0  pc #8020 ..." }
+
 -- When did it happen: kind mem / screen / exec / port / border / key, options as the WebAPI query
 -- (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask, key,
 -- pressed, order = "first" | "last", from_frame, to_frame, limit, max_frames, text)

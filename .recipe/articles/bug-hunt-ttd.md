@@ -35,10 +35,12 @@ time_travel        {"action":"dump","path":"scratch/bughunt.ttd"}
 
 # phase 2 — the three questions:
 time_travel        {"action":"find_last","addr":16384,"access":"write","value":0}
+time_travel        {"action":"cause_chain","addr":16384,"frame":11782,"tinframe":2942,"text":true}
+                                                     # the writer and where ITS value came from, as a tree
 debug_code         {"action":"disassemble","address":"0x8174","count":12}   # code at the writer PC
 time_travel        {"action":"coverage_scan","from_frame":11000,"to_frame":11800,"kind":"executed",
                    "addr_from":"0x816C","addr_to":"0x81B0"}
-time_travel        {"action":"reverse_continue","pcs":[33156]}
+time_travel        {"action":"backtrace","frame":11782,"tinframe":2941}   # who called the writer, through what
 
 # phase 3 — replay and confirm:
 time_travel        {"action":"seek","frame":11781}
@@ -113,6 +115,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/find-last" \
 #   → {"found":true, "frame":11782, "tinframe":2941, "pc":33156, "value":0,
 #      "phys_page":5, "access":"write"}
 #   (a replay barrier in the way → "found":false, "blocked":true, "marker_kind", ...)
+
+# Q1b: where did the 0 come from? The writer, its inputs (registers, bytes) and theirs, one call
+#      (a moment just after the write: its tinframe + 1)
+curl -s "$BASE/emulator/$EMU_ID/ttd/cause-chain?addr=16384&frame=11782&tinframe=2942&text=true" | jq -r '.text'
 ```
 
 ```bash
@@ -122,11 +128,12 @@ curl -s "$BASE/emulator/$EMU_ID/disasm?address=33140&count=12" \
 ```
 
 ```bash
-# Q3: where was that routine called FROM the last times it ran?
-curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-continue" \
-     -H 'Content-Type: application/json' \
-     -d '{"pcs":[33156]}' | jq .
-# step back one instruction, repeat reverse-continue → the call chain
+# Q3: how did the program get to that write? The call stack at its moment, one call
+curl -s "$BASE/emulator/$EMU_ID/ttd/backtrace?frame=11782&tinframe=2941&text=true" | jq -r '.text'
+#   #0  pc #8184 in #8160, sp #FF3A at f11782+2941
+#   #1  #6A12 CALL #8160 in #6A00, returns to #6A15, at f11782+1022 (slot #FF3C)
+#   ...
+#   (where the routine ran earlier: reverse-continue {"pcs":[33156]} lists its previous hits)
 ```
 
 Corroborate with coverage — how often did the suspect range run:
@@ -177,7 +184,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/save" \
 |:--|:--|
 | set watchpoint → wait → miss → re-arm | record once, ask `find-last` |
 | crash → restart → hope it repeats | seek back, deterministic replay |
-| "who called this?" → guess + breakpoints | `reverse-continue` walks the real chain |
+| "who called this?" → guess + breakpoints | `backtrace` lists the real call stack at that moment |
 | evidence lives in your session | `.ttd` + snapshot are shareable artifacts |
 
 ## Checklist

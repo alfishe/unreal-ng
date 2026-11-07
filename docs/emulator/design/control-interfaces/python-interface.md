@@ -1838,6 +1838,11 @@ timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buc
 # Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
 # also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
 chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+
+# The call stack at a moment (default: the current position): frame, tinframe, max_depth=16, max_slots=256, text
+bt = emu.ttd_backtrace(frame=150, tinframe=20000, text=True)
+# {'pc': 32800, 'sp': 49146, 'frames': [{'depth': 1, 'kind': 'call', 'caller_pc': 32785, 'text': 'CALL #8020',
+#   'return_address': 32788, 'callee': 32800, 'frame': 149, ...}, ...], 'stop': 'before_session', 'text': '#0 ...'}
 # {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
 #   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
 

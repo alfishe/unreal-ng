@@ -1,6 +1,6 @@
 # Phase 2 — Device state with versions: technical design
 
-Status: **design, not implemented** (2026-10-02). Roadmap and checks: [README.md, Phase 2](README.md#phase-2--device-state-with-versions). Requirements: FR-2, FR-4, FR-7, FR-19, PR-10 ([requirements.md](requirements.md)). Decisions: D18, D23, D26, and D7 / D15 for how a restore result relates to positions and branches ([engine-decisions.md](engine-decisions.md)). Builds on [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md) (engine skeleton, piece store, regions).
+Status: **done** (the migration finished 2026-10-31, [DONE.md](DONE.md); results: [phase-2-results.md](phase-2-results.md)). The design as it was written: **design, not implemented** (2026-10-02). Roadmap and checks: [README.md, Phase 2](README.md#phase-2--device-state-with-versions). Requirements: FR-2, FR-4, FR-7, FR-19, PR-10 ([requirements.md](requirements.md)). Decisions: D18, D23, D26, and D7 / D15 for how a restore result relates to positions and branches ([engine-decisions.md](engine-decisions.md)). Builds on [phase-1-memory-regions-tdd.md](phase-1-memory-regions-tdd.md) (engine skeleton, piece store, regions).
 
 Code references are to master at `8ddaf708e`. Abbreviations:
 - `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `TTM.h` = its header;
