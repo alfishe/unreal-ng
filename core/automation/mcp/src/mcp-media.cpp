@@ -403,7 +403,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
-        "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
+        "fullscreen (bool), view (full, screen, content: the part of the frame shown, fitted by height with the "
+        "aspect kept), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
         "osd_keyboard_pictures), osd_keyboard_style (photo, schematic, hybrid: the hybrid shows what a combination key "
         "presses), next_layers (bool), next_layers_mode (layers, composed, winner), next_layers_shown "
@@ -412,7 +413,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "hud_theme", "osd_keyboard_picture", "osd_keyboard_style",
+    for (const char* word : {"crt_profile", "blending_weights", "view", "hud_theme", "osd_keyboard_picture", "osd_keyboard_style",
                              "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";

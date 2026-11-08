@@ -1856,12 +1856,12 @@ and its viewport do not: they are the machine's, off on every new Pentagon.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `view` = full / screen / content (which part of the frame the window shows, see below); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
 `blending`, `blending_frames`, `blending_weights`, `blending_decay`, `emulator` (the instance the window shows),
-`fullscreen`, `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
+`fullscreen`, `view` (`full`) with `views` (`full`, `screen`, `content`), `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
 screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
 Notifications: `ram-page`, `rom-page`, `screen-page`, `audio-beeper`, ..., `breakpoints`, `file-loading`),
@@ -1881,6 +1881,18 @@ without one, a parameter of a profile without parameters), `no-window`. The same
 `window_display` / `window_display_set` / `window_crt_params` / `window_crt_params_set`. The catalogue's
 `video.*`, `view.*`, `hud.*`, `osd.keyboard_picture` and `osd.keyboard_style` actions (§16) change the same settings; the readouts
 `video.window` and `video.crt_params` show what the window published.
+
+**`view`: which part of the frame the window shows.** Every picture is drawn fitted by height, aspect kept (bars at the
+sides when the window is wider), in the CRT's shape (`DisplayGeometry::WindowAspect`). `full` (the default) shows the
+whole frame with its border. `screen` shows the working picture the frame's geometry names (`screen_window` of
+`capture/screen`): the 256x192 paper of a Spectrum, and the whole frame in a mode that has no border (the ZX Next with
+Layer 2 at 320x256 or 640x256, an FT812 card's picture). `content` cuts further to what the layers draw: on a ZX Next
+the bounding box of the clip windows of the layers that are on (the ULA and LoRes cut to the paper, Layer 2, the
+tilemap, the sprites when one shows; a game that clips everything to x 8..247, y 8..183 shows 480x352 of the 640x512
+frame, no black around it), on every other machine the same as `screen`. The cut follows the frame it came with, so
+a mode switch or a program that moves its clip window changes it at once; `content` moves with the program's clip
+registers, so a game that animates them moves the picture too. unreal-qt keeps the choice in its settings (View >
+Picture) and the Steam Deck client has it as `--view` and a button (router action `view.next`, the Up arrow).
 
 #### GUI window recording
 

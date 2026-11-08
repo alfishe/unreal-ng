@@ -13,6 +13,7 @@
 /// Validation lives here, so every surface refuses the same words with the same message; the provider only applies.
 
 #include <emulator/state/statenode.h>
+#include <emulator/video/pictureviewmode.h>
 #include <emulator/video/windowview.h>
 
 #include <algorithm>
@@ -27,7 +28,7 @@ namespace WindowDisplay
 {
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
-    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, fullscreen, scale, toolbar, "
+    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, fullscreen, view, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
@@ -242,6 +243,17 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
     }
     if (k == "fullscreen")
         return flag(change.fullscreen);
+    if (k == "view")
+    {
+        PictureView::Mode mode;
+        if (!PictureView::Parse(value, mode))
+        {
+            error = "'view' takes " + PictureView::NameList() + ", not '" + value + "'";
+            return false;
+        }
+        change.view = PictureView::NameOf(mode);
+        return true;
+    }
     if (k == "scale")
     {
         double scale = 0;
@@ -413,6 +425,11 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["blending_decay"] = s.blendingDecay;
     node["emulator"] = s.emulatorId;
     node["fullscreen"] = s.fullscreen;
+    node["view"] = s.view;
+    StateNode views = StateNode::Array();
+    for (const std::string& name : PictureView::Names())
+        views.items.emplace_back(name);
+    node["views"] = views;
     node["scale"] = s.scale;
     node["toolbar"] = s.toolbar;
     node["status_bar"] = s.statusBar;
@@ -464,6 +481,7 @@ inline std::string Summary(const WindowDisplaySettings& s)
     line += std::string(", blending ") + (s.blending ? "on" : "off") + " (" + std::to_string(s.blendingFrames) +
             " frames, " + s.blendingWeights + (s.blendingWeights == "exponential" ? " " + NumberWord(s.blendingDecay) : "") +
             ")";
+    line += ", view " + s.view;
     line += s.fullscreen ? ", full screen" : (s.scale > 0 ? ", scale " + std::to_string(s.scale) + "x" : ", scale free");
     line += std::string(", hud ") + (s.hud ? "on" : "off") + (s.hudTheme.empty() ? "" : " (" + s.hudTheme + ")");
     if (s.osdKeyboard)

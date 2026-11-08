@@ -8,6 +8,7 @@
 #include <mutex>
 #include <cstdint>
 
+#include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
 #include "crtprofiles.h"
@@ -43,7 +44,8 @@ public:
     void fitToParent();
 
     /// Copies the latched (tear-free) frame into dst; returns true on success.
-    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize)>;
+    /// `geometry` (may be null) receives the geometry latched with that frame: the picture view cuts by it.
+    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize, PictureGeometry* geometry)>;
 
     /// When set, paintEvent pulls frames into an owned backing image via this
     /// callback (Screen::CopyPresentedFramebuffer) instead of reading the
@@ -91,6 +93,11 @@ public:
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
     }
+
+    /// The part of the frame shown (the window setting `view`); the picture's shape follows the cut and the widget
+    /// re-fits itself to it. Full is the shape init gave
+    void setPictureView(PictureView::Mode mode);
+    PictureView::Mode pictureView() const { return _pictureView; }
 
     /// Copy of the currently presented frame (viewport-cropped), for screenshots.
     /// Null image when no framebuffer is attached.
@@ -169,6 +176,11 @@ private:
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown
+
+    float _baseRatio = kNativeRatio;  // the shape init gave: what view "full" draws in
+    PictureView::Mode _pictureView = PictureView::Mode::Full;
+    PictureGeometry _frameGeometry;   // the geometry latched with the frame last drawn (GUI thread)
+    void applyPictureViewRatio();     // ratio from the cut; re-fits the widget when it changed
 
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;

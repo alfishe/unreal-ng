@@ -1,0 +1,935 @@
+diff --git a/core/benchmarks/debugger/ttd/ttd_frame_overhead_benchmark.cpp b/core/benchmarks/debugger/ttd/ttd_frame_overhead_benchmark.cpp
+index 092805de4..84acbc0d9 100644
+--- a/core/benchmarks/debugger/ttd/ttd_frame_overhead_benchmark.cpp
++++ b/core/benchmarks/debugger/ttd/ttd_frame_overhead_benchmark.cpp
+@@ -286,6 +286,40 @@ BENCHMARK_REGISTER_F(FrameBenchmarkFixture, BM_Frame_TTD_Gaming)
+     ->Iterations(1000)
+     ->Unit(benchmark::kMicrosecond);
+ 
++/// POC 048: recording with a look back every 10th frame: seek 25 frames back, return to the end, record on.
++/// The seek reads the history right after a capture, the case that waits on pieces the worker has not packed
++BENCHMARK_DEFINE_F(FrameBenchmarkFixture, BM_Frame_TTD_SeekWhileRecording)(benchmark::State& state)
++{
++    if (!mainloop || !ttd)
++    {
++        state.SkipWithError("Not initialized");
++        return;
++    }
++
++    EnableTTD(false);
++    for (int i = 0; i < 30; ++i)
++        mainloop->RunFramePublic();
++
++    uint64_t n = 0, failed = 0;
++    for (auto _ : state)
++    {
++        mainloop->RunFramePublic();
++        if (++n % 10 == 0)
++        {
++            const ttd::TTDTimePoint end = ttd->SessionEndPosition();
++            ttd::TTDTimePoint back{};
++            back.frame = end.frame - 25;
++            if (!ttd->SeekTo(back) || !ttd->ResumeRecordingFrom(end))
++                ++failed;
++        }
++    }
++    state.counters["failed"] = static_cast<double>(failed);
++    state.SetItemsProcessed(state.iterations());
++}
++BENCHMARK_REGISTER_F(FrameBenchmarkFixture, BM_Frame_TTD_SeekWhileRecording)
++    ->Iterations(1000)
++    ->Unit(benchmark::kMicrosecond);
++
+ /// TTD Development mode: TTD enabled, write journal enabled
+ BENCHMARK_DEFINE_F(FrameBenchmarkFixture, BM_Frame_TTD_Development)(benchmark::State& state)
+ {
+diff --git a/core/src/debugger/ttd/engine/ttdpiecestore.cpp b/core/src/debugger/ttd/engine/ttdpiecestore.cpp
+index 5743efc41..7514413f5 100644
+--- a/core/src/debugger/ttd/engine/ttdpiecestore.cpp
++++ b/core/src/debugger/ttd/engine/ttdpiecestore.cpp
+@@ -1,6 +1,14 @@
+ #include "ttdpiecestore.h"
+ 
++#include <atomic>
+ #include <cassert>
++#include <condition_variable>
++#include <deque>
++#include <mutex>
++#include <thread>
++#include <unordered_map>
++#include <cstdio>
++#include <cstdlib>
+ #include <cstring>
+ 
+ #include "debugger/ttd/ttdcompression.h"
+@@ -12,6 +20,264 @@ namespace ttd
+ namespace
+ {
+ constexpr uint32_t kPiece = kTTDPieceSize;
++/// POC 048: at most this many pieces wait for the worker (about 8.3 KB each); past it a piece is packed on the
++/// calling thread, as without the worker (a baseline capture offers the whole memory at once)
++constexpr size_t kMaxPendingJobs = 96;
++}
++
++/// POC 048: one piece for the worker. The inputs are copies: the caller's buffers change at the next capture
++struct TTDPieceStore::Job
++{
++    TTDPieceId id = kNone;
++    bool fullOnly = false;      ///< a Full version (first version, chain limit): compress the bytes only
++    size_t rangesSize = 0;      ///< the difference's runs (a difference job)
++    uint32_t fullThreshold = 0;
++    uint8_t diff[kTTDPieceSize];
++    uint8_t bytes[kTTDPieceSize];
++    std::vector<uint8_t> packedDiff;
++    std::vector<uint8_t> packedFull;
++    bool fullTried = false;
++    bool applied = false;
++    std::atomic<bool> done{false};
++};
++
++struct TTDPieceStore::Async
++{
++    std::mutex mutex;
++    std::condition_variable wake;
++    std::deque<Job*> todo;            ///< handed to the worker, oldest first
++    std::vector<Job*> unflushed;      ///< mode 2: queued, the worker not told yet
++    bool stop = false;
++    std::thread worker;
++    std::deque<std::unique_ptr<Job>> fifo;   ///< every job not yet applied, oldest first
++    std::unordered_map<TTDPieceId, Job*> byId;
++
++    void Run()
++    {
++        for (;;)
++        {
++            Job* job = nullptr;
++            {
++                std::unique_lock<std::mutex> lock(mutex);
++                wake.wait(lock, [&] { return stop || !todo.empty(); });
++                if (todo.empty())
++                    return;
++                job = todo.front();
++                todo.pop_front();
++            }
++            const uint64_t start = poc048::NowNs();
++            // The same rule as the synchronous Intern: the difference first, the full piece only when the
++            // difference neither loses to its runs nor fits T
++            if (job->fullOnly)
++            {
++                job->packedFull = codec::Compress(job->bytes, kPiece);
++                job->fullTried = true;
++            }
++            else
++            {
++                job->packedDiff = codec::Compress(job->diff, kPiece);
++                if (!(job->rangesSize < job->packedDiff.size()) && job->packedDiff.size() > job->fullThreshold)
++                {
++                    job->packedFull = codec::Compress(job->bytes, kPiece);
++                    job->fullTried = true;
++                }
++            }
++            poc048::Get().workerNs.fetch_add(poc048::NowNs() - start, std::memory_order_relaxed);
++            job->done.store(true, std::memory_order_release);
++        }
++    }
++};
++
++namespace
++{
++void ForEachRunPublicImpl(const uint8_t* diff, void (*f)(void*, size_t, size_t), void* ctx);
++template <typename F>
++void ForEachRunPublic(const uint8_t* diff, F&& f)
++{
++    ForEachRunPublicImpl(diff, [](void* c, size_t a, size_t b) { (*static_cast<F*>(c))(a, b); }, &f);
++}
++int AsyncModeFromEnvironment()
++{
++    const char* v = std::getenv("UNREAL_POC048_ASYNC");
++    return v ? std::atoi(v) : 0;
++}
++}  // namespace
++
++TTDPieceStore::TTDPieceStore() : TTDPieceStore(Params{}) {}
++
++TTDPieceStore::TTDPieceStore(const Params& params) : _asyncMode(AsyncModeFromEnvironment()), _params(params) {}
++
++TTDPieceStore::~TTDPieceStore()
++{
++    if (_async && _async->worker.joinable())
++    {
++        {
++            std::lock_guard<std::mutex> lock(_async->mutex);
++            _async->stop = true;
++            _async->todo.clear();
++        }
++        _async->wake.notify_one();
++        _async->worker.join();
++    }
++}
++
++void TTDPieceStore::Queue(std::unique_ptr<Job> job)
++{
++    if (!_async)
++    {
++        _async = std::make_unique<Async>();
++        _async->worker = std::thread([a = _async.get()] { a->Run(); });
++    }
++    Job* raw = job.get();
++    _async->byId[raw->id] = raw;
++    _async->fifo.push_back(std::move(job));
++    const uint64_t start = poc048::NowNs();
++    if (_asyncMode == 2)
++        _async->unflushed.push_back(raw);
++    else
++    {
++        {
++            std::lock_guard<std::mutex> lock(_async->mutex);
++            _async->todo.push_back(raw);
++        }
++        _async->wake.notify_one();
++    }
++    poc048::Get().handoffNs.fetch_add(poc048::NowNs() - start, std::memory_order_relaxed);
++    poc048::Get().queued.fetch_add(1, std::memory_order_relaxed);
++    const size_t held = _async->fifo.size() * sizeof(Job);
++    uint64_t peak = poc048::Get().peakPendingBytes.load(std::memory_order_relaxed);
++    if (held > peak)
++        poc048::Get().peakPendingBytes.store(held, std::memory_order_relaxed);
++}
++
++void TTDPieceStore::FlushAsync()
++{
++    if (!_async)
++        return;
++    const uint64_t start = poc048::NowNs();
++    if (!_async->unflushed.empty())
++    {
++        {
++            std::lock_guard<std::mutex> lock(_async->mutex);
++            _async->todo.insert(_async->todo.end(), _async->unflushed.begin(), _async->unflushed.end());
++        }
++        _async->unflushed.clear();
++        _async->wake.notify_one();
++    }
++    poc048::Get().handoffNs.fetch_add(poc048::NowNs() - start, std::memory_order_relaxed);
++    Harvest();
++}
++
++void TTDPieceStore::WaitFor(Job& job)
++{
++    if (job.done.load(std::memory_order_acquire))
++        return;
++    const uint64_t start = poc048::NowNs();
++    // Mode 2: a piece the worker was not told about yet: tell it now (everything queued, in order)
++    if (!_async->unflushed.empty())
++    {
++        {
++            std::lock_guard<std::mutex> lock(_async->mutex);
++            _async->todo.insert(_async->todo.end(), _async->unflushed.begin(), _async->unflushed.end());
++        }
++        _async->unflushed.clear();
++        _async->wake.notify_one();
++    }
++    while (!job.done.load(std::memory_order_acquire))
++        std::this_thread::yield();
++    poc048::Get().waitNs.fetch_add(poc048::NowNs() - start, std::memory_order_relaxed);
++    poc048::Get().waits.fetch_add(1, std::memory_order_relaxed);
++}
++
++void TTDPieceStore::Apply(Job& job)
++{
++    const uint64_t start = poc048::NowNs();
++    Version& v = _versions[job.id];
++    assert(v.encoding == Encoding::Pending);
++    _async->byId.erase(job.id);
++    if (!job.fullOnly)
++        _versions[v.base].pendingDependents--;
++    job.applied = true;
++    _work.compressCalls += (job.fullOnly ? 0 : 1) + (job.fullTried ? 1 : 0);
++    _work.compressInputBytes += kPiece * ((job.fullOnly ? 0 : 1) + (job.fullTried ? 1 : 0));
++    if (job.fullOnly)
++    {
++        v.encoding = Encoding::Full;
++        v.payload = _arena.Store(job.packedFull.data(), static_cast<uint32_t>(job.packedFull.size()));
++    }
++    else if (job.rangesSize < job.packedDiff.size())
++    {
++        std::vector<uint8_t> payload;
++        payload.reserve(job.rangesSize);
++        ForEachRunPublic(job.diff, [&](size_t s0, size_t e0) {
++            payload.push_back(static_cast<uint8_t>(s0));
++            payload.push_back(static_cast<uint8_t>(s0 >> 8));
++            payload.push_back(static_cast<uint8_t>(e0 - s0));
++            payload.insert(payload.end(), job.diff + s0, job.diff + e0);
++        });
++        v.encoding = Encoding::Ranges;
++        v.payload = _arena.Store(payload.data(), static_cast<uint32_t>(payload.size()));
++    }
++    else if (job.fullTried && job.packedFull.size() < job.packedDiff.size())
++    {
++        const TTDPieceId base = v.base;
++        v.encoding = Encoding::Full;
++        v.depth = 0;
++        v.base = kNone;
++        v.payload = _arena.Store(job.packedFull.data(), static_cast<uint32_t>(job.packedFull.size()));
++        Release(base);   // the reference Queue took for a difference
++    }
++    else
++    {
++        v.encoding = Encoding::Xor;
++        v.payload = _arena.Store(job.packedDiff.data(), static_cast<uint32_t>(job.packedDiff.size()));
++    }
++    poc048::Get().applyNs.fetch_add(poc048::NowNs() - start, std::memory_order_relaxed);
++}
++
++void TTDPieceStore::Harvest()
++{
++    if (!_async)
++        return;
++    while (!_async->fifo.empty())
++    {
++        Job& front = *_async->fifo.front();
++        if (!front.applied)
++        {
++            if (!front.done.load(std::memory_order_acquire))
++                return;
++            Apply(front);
++        }
++        _async->fifo.pop_front();
++    }
++}
++
++void TTDPieceStore::Settle(TTDPieceId id)
++{
++    auto it = _async->byId.find(id);
++    if (it == _async->byId.end())
++        return;
++    Job& job = *it->second;
++    WaitFor(job);
++    Apply(job);
++    Harvest();
++}
++
++void TTDPieceStore::SettleAll() const
++{
++    if (!_async)
++        return;
++    auto* self = const_cast<TTDPieceStore*>(this);
++    while (!self->_async->fifo.empty())
++    {
++        Job& front = *self->_async->fifo.front();
++        if (!front.applied)
++        {
++            self->WaitFor(front);
++            self->Apply(front);
++        }
++        self->_async->fifo.pop_front();
++    }
+ }
+ 
+ TTDPieceId TTDPieceStore::Allocate()
+@@ -38,7 +304,11 @@ std::vector<uint8_t> TTDPieceStore::Compress(const uint8_t* bytes)
+ {
+     _work.compressCalls++;
+     _work.compressInputBytes += kPiece;
+-    return codec::Compress(bytes, kPiece);
++    const uint64_t pocStart = poc048::NowNs();
++    std::vector<uint8_t> packed = codec::Compress(bytes, kPiece);
++    poc048::Get().pieceCompressNs.fetch_add(poc048::NowNs() - pocStart, std::memory_order_relaxed);
++    poc048::Get().pieceCompressCalls.fetch_add(1, std::memory_order_relaxed);
++    return packed;
+ }
+ 
+ TTDPieceId TTDPieceStore::StoreFull(const uint8_t* bytes, uint32_t crc)
+@@ -51,6 +321,16 @@ TTDPieceId TTDPieceStore::StoreFull(const uint8_t* bytes, uint32_t crc)
+         v.encoding = Encoding::Zero;
+         return id;
+     }
++    if (_asyncMode && (!_async || _async->fifo.size() < kMaxPendingJobs))
++    {
++        auto job = std::make_unique<Job>();
++        job->id = id;
++        job->fullOnly = true;
++        std::memcpy(job->bytes, bytes, kPiece);
++        v.encoding = Encoding::Pending;
++        Queue(std::move(job));
++        return id;
++    }
+     const std::vector<uint8_t> packed = Compress(bytes);
+     v.encoding = Encoding::Full;
+     v.payload = _arena.Store(packed.data(), static_cast<uint32_t>(packed.size()));
+@@ -127,6 +407,14 @@ void ForEachRun(const uint8_t* diff, size_t size, F&& f)
+ }
+ }  // namespace
+ 
++namespace
++{
++void ForEachRunPublicImpl(const uint8_t* diff, void (*f)(void*, size_t, size_t), void* ctx)
++{
++    ForEachRun(diff, kPiece, [&](size_t a, size_t b) { f(ctx, a, b); });
++}
++}  // namespace
++
+ size_t TTDPieceStore::RangesSize(const uint8_t* diff)
+ {
+     size_t size = 0;
+@@ -176,6 +464,15 @@ bool TTDPieceStore::ApplyRanges(const uint8_t* payload, size_t size, uint8_t* ou
+ }
+ 
+ TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes)
++{
++    const uint64_t pocStart = poc048::NowNs();
++    const TTDPieceId id = InternTimed(previous, previousBytes, bytes);
++    poc048::Get().internNs.fetch_add(poc048::NowNs() - pocStart, std::memory_order_relaxed);
++    poc048::Get().internCalls.fetch_add(1, std::memory_order_relaxed);
++    return id;
++}
++
++TTDPieceId TTDPieceStore::InternTimed(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes)
+ {
+     if (previous == kNone)
+         return InternFirst(bytes);
+@@ -194,6 +491,9 @@ TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousByt
+         return StoreFull(bytes, crc);   // a Zero version
+ 
+     // The chain limit: a version that would reach depth K is stored Full
++    SettleIfPending(previous);   // POC 048: its depth is known once packed
++    if (_async)
++        Harvest();
+     const uint32_t depth = uint32_t(_versions[previous].depth) + 1;
+     if (depth >= _params.chainLimit)
+     {
+@@ -206,6 +506,28 @@ TTDPieceId TTDPieceStore::Intern(TTDPieceId previous, const uint8_t* previousByt
+     if (rangesSize <= _params.rangesLimit)
+         return StoreRanges(previous, depth, diff, rangesSize, crc);
+ 
++    if (_asyncMode && _async)
++        Harvest();   // make room: what the worker has finished
++    if (_asyncMode && (!_async || _async->fifo.size() < kMaxPendingJobs))
++    {
++        auto job = std::make_unique<Job>();
++        const TTDPieceId id = Allocate();
++        Version& v = _versions[id];
++        v.crc32c = crc;
++        v.encoding = Encoding::Pending;
++        v.depth = static_cast<uint16_t>(depth);
++        v.base = previous;
++        AddRef(previous);   // held while pending; dropped if the worker's answer is Full
++        _versions[previous].pendingDependents++;
++        job->id = id;
++        job->rangesSize = rangesSize;
++        job->fullThreshold = _params.fullThreshold;
++        std::memcpy(job->diff, diff, kPiece);
++        std::memcpy(job->bytes, bytes, kPiece);
++        Queue(std::move(job));
++        return id;
++    }
++
+     // Encode once: the difference first; the full piece only when the
+     // difference is larger than T, the smaller of the two kept
+     std::vector<uint8_t> packedDiff = Compress(diff);
+@@ -242,6 +564,12 @@ void TTDPieceStore::Release(TTDPieceId id)
+     while (id != kNone)
+     {
+         assert(id < _versions.size() && _versions[id].refcount > 0);
++        if (_versions[id].refcount == 1)
++            SettleIfPending(id);   // POC 048: freed with its final encoding (its base reference)
++        // POC 048: only pending versions keep it otherwise: their answers decide whether it goes now (a Full answer
++        // drops the reference), as it would have without the worker
++        if (_asyncMode && _versions[id].pendingDependents && _versions[id].refcount <= _versions[id].pendingDependents + 1)
++            SettleAll();
+         Version& v = _versions[id];
+         if (--v.refcount > 0)
+             return;
+@@ -258,6 +586,7 @@ void TTDPieceStore::Release(TTDPieceId id)
+ bool TTDPieceStore::Decode(TTDPieceId id, uint8_t* out) const
+ {
+     assert(id < _versions.size() && _versions[id].refcount > 0);
++    SettleAll();   // POC 048: every link packed
+ 
+     // Walk to the chain's start (a Full or Zero version), then apply the
+     // differences forward
+@@ -308,11 +637,15 @@ size_t TTDPieceStore::VersionTableBytes() const
+ 
+ size_t TTDPieceStore::HeapBytes() const
+ {
++    SettleAll();
+     return VersionTableBytes() + _arena.HeapBytes();
+ }
+ 
+ void TTDPieceStore::Clear()
+ {
++    SettleAll();
++    if (_async)
++        _async->byId.clear();
+     ++_reuseGeneration;
+     _versions.clear();
+     _versions.shrink_to_fit();
+@@ -324,3 +657,39 @@ void TTDPieceStore::Clear()
+ }
+ 
+ }  // namespace ttd
++
++namespace ttd::poc048
++{
++namespace
++{
++Counters g_counters;   // before the report: destroyed after it
++struct Report
++{
++    ~Report()
++    {
++        if (!std::getenv("UNREAL_POC048"))
++            return;
++        Counters& c = Get();
++        const double caps = c.captures.load() ? double(c.captures.load()) : 1.0;
++        std::fprintf(stderr,
++                     "POC048 captures %llu | per capture: capture %.2f us, intern %.2f us (%.2f calls), piece compress "
++                     "%.2f us (%.2f calls), all compress %.2f us (%.2f calls, %.0f B)\n",
++                     (unsigned long long)c.captures.load(), c.captureNs.load() / caps / 1000.0,
++                     c.internNs.load() / caps / 1000.0, c.internCalls.load() / caps, c.pieceCompressNs.load() / caps / 1000.0,
++                     c.pieceCompressCalls.load() / caps, c.allCompressNs.load() / caps / 1000.0,
++                     c.allCompressCalls.load() / caps, c.allCompressBytes.load() / caps);
++        std::fprintf(stderr,
++                     "POC048 async: worker %.2f us, handoff %.2f us, apply %.2f us, waits %.3f (%.2f us) per capture; "
++                     "queued %.2f per capture; peak pending %llu B\n",
++                     c.workerNs.load() / caps / 1000.0, c.handoffNs.load() / caps / 1000.0, c.applyNs.load() / caps / 1000.0,
++                     c.waits.load() / caps, c.waitNs.load() / caps / 1000.0, c.queued.load() / caps,
++                     (unsigned long long)c.peakPendingBytes.load());
++    }
++};
++Report g_report;
++}  // namespace
++Counters& Get()
++{
++    return g_counters;
++}
++}  // namespace ttd::poc048
+diff --git a/core/src/debugger/ttd/engine/ttdpiecestore.h b/core/src/debugger/ttd/engine/ttdpiecestore.h
+index dad6f888a..09045d3c6 100644
+--- a/core/src/debugger/ttd/engine/ttdpiecestore.h
++++ b/core/src/debugger/ttd/engine/ttdpiecestore.h
+@@ -19,6 +19,7 @@
+ /// Design: docs/inprogress/2026-09-25-ttd-v2-migration/phase-1-memory-regions-tdd.md §4.3.
+ 
+ #include <cstdint>
++#include <memory>
+ #include <vector>
+ 
+ #include "ttdarena.h"
+@@ -39,6 +40,7 @@ public:
+         Xor = 1,      ///< the zstd-compressed XOR with the base version
+         Zero = 2,
+         Ranges = 3,   ///< the XOR's non-zero runs, uncompressed: (u16 offset, u8 length, bytes) each
++        Pending = 7,  ///< POC 048: the worker has not packed it yet (never seen outside the store)
+     };
+ 
+     /// A version that stores a difference from a base (Xor or Ranges)
+@@ -64,8 +66,19 @@ public:
+         uint64_t forcedFull = 0;       ///< versions stored Full because the chain reached K
+     };
+ 
+-    TTDPieceStore() = default;
+-    explicit TTDPieceStore(const Params& params) : _params(params) {}
++    TTDPieceStore();
++    explicit TTDPieceStore(const Params& params);
++    ~TTDPieceStore();
++    TTDPieceStore(const TTDPieceStore&) = delete;
++    TTDPieceStore& operator=(const TTDPieceStore&) = delete;
++
++    /// POC 048: 0 compresses on the calling thread (today), 1 on a worker woken per piece, 2 on a worker woken
++    /// once per capture (FlushAsync). From UNREAL_POC048_ASYNC at construction
++    int AsyncMode() const { return _asyncMode; }
++    /// The end of a capture: wake the worker for the pieces queued (mode 2) and apply what it has finished
++    void FlushAsync();
++    /// Wait for every queued piece and apply it
++    void SettleAll() const;
+ 
+     const Params& GetParams() const { return _params; }
+ 
+@@ -76,6 +89,7 @@ public:
+     /// with content @p previousBytes. Returns @p previous (with one more
+     /// reference) when the content did not change
+     TTDPieceId Intern(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes);
++    TTDPieceId InternTimed(TTDPieceId previous, const uint8_t* previousBytes, const uint8_t* bytes);  // POC 048
+ 
+     /// A version as stored elsewhere (a session file, Phase 4): its encoding,
+     /// its base (a difference only: one reference is taken on it), depth, the
+@@ -86,6 +100,7 @@ public:
+     /// The stored payload of @p id (null for a Zero version)
+     const uint8_t* PayloadData(TTDPieceId id) const
+     {
++        SettleIfPending(id);
+         return _versions[id].payload.size ? _arena.Data(_versions[id].payload) : nullptr;
+     }
+     uint32_t CrcOf(TTDPieceId id) const { return _versions[id].crc32c; }
+@@ -98,11 +113,11 @@ public:
+     /// Decode @p id into @p out (4 KB). False when a stored payload is damaged
+     bool Decode(TTDPieceId id, uint8_t* out) const;
+ 
+-    Encoding EncodingOf(TTDPieceId id) const { return _versions[id].encoding; }
+-    uint16_t DepthOf(TTDPieceId id) const { return _versions[id].depth; }
+-    TTDPieceId BaseOf(TTDPieceId id) const { return _versions[id].base; }
++    Encoding EncodingOf(TTDPieceId id) const { SettleIfPending(id); return _versions[id].encoding; }
++    uint16_t DepthOf(TTDPieceId id) const { SettleIfPending(id); return _versions[id].depth; }
++    TTDPieceId BaseOf(TTDPieceId id) const { SettleIfPending(id); return _versions[id].base; }
+     uint32_t RefCount(TTDPieceId id) const { return _versions[id].refcount; }
+-    uint32_t PayloadSize(TTDPieceId id) const { return _versions[id].payload.size; }
++    uint32_t PayloadSize(TTDPieceId id) const { SettleIfPending(id); return _versions[id].payload.size; }
+ 
+     size_t LiveVersions() const { return _liveVersions; }
+     /// Changes whenever an id may stand for other content than before (a version freed, the store cleared): a
+@@ -113,6 +128,7 @@ public:
+     /// disk sector would). False for a version without payload (Zero)
+     bool FlipBitForTesting(TTDPieceId id, uint32_t byte)
+     {
++        SettleIfPending(id);
+         Version& v = _versions[id];
+         if (v.payload.size == 0)
+             return false;
+@@ -120,12 +136,13 @@ public:
+         ++_reuseGeneration;   // the version's content changed under its id
+         return true;
+     }
+-    size_t PayloadBytes() const { return _arena.LiveBytes(); }
++    size_t PayloadBytes() const { SettleAll(); return _arena.LiveBytes(); }
+     /// Heap: version table, free list, arena chunks, decode scratch
+     size_t HeapBytes() const;
+     size_t VersionTableBytes() const;
+-    size_t ArenaBytes() const { return _arena.HeapBytes(); }
++    size_t ArenaBytes() const { SettleAll(); return _arena.HeapBytes(); }
+ 
++    /// POC 048: with the worker, compress calls count when a piece is applied (they lag the capture)
+     const Work& GetWork() const { return _work; }
+     void ResetWork() { _work = Work{}; }
+ 
+@@ -143,10 +160,27 @@ private:
+         uint32_t crc32c = 0;       ///< of the raw 4 KB
+         uint32_t refcount = 0;
+         uint16_t depth = 0;        ///< 0 for Full and Zero, base depth + 1 for Xor
++        uint32_t pendingDependents = 0;   ///< POC 048: pending versions holding a reference on this one
+         Encoding encoding = Encoding::Full;
+     };
+ 
+     TTDPieceId Allocate();
++
++    // POC 048: the worker
++    struct Job;
++    struct Async;
++    void SettleIfPending(TTDPieceId id) const
++    {
++        if (_asyncMode && _versions[id].encoding == Encoding::Pending)
++            const_cast<TTDPieceStore*>(this)->Settle(id);
++    }
++    void Settle(TTDPieceId id);
++    void Apply(Job& job);
++    void Harvest();
++    void Queue(std::unique_ptr<Job> job);
++    void WaitFor(Job& job);
++    int _asyncMode = 0;
++    std::unique_ptr<Async> _async;
+     TTDPieceId StoreFull(const uint8_t* bytes, uint32_t crc);
+     std::vector<uint8_t> Compress(const uint8_t* bytes);
+ 
+diff --git a/core/src/debugger/ttd/poc048counters.h b/core/src/debugger/ttd/poc048counters.h
+new file mode 100644
+index 000000000..9eba17607
+--- /dev/null
++++ b/core/src/debugger/ttd/poc048counters.h
+@@ -0,0 +1,26 @@
++#pragma once
++// POC 048 (branch only): where a recording's emulation-thread time goes. Totals over the process, printed at exit
++// when UNREAL_POC048 is set (tools/poc/048-ttd-async-compress)
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++
++namespace ttd::poc048
++{
++struct Counters
++{
++    std::atomic<uint64_t> allCompressNs{0}, allCompressCalls{0}, allCompressBytes{0};
++    std::atomic<uint64_t> pieceCompressNs{0}, pieceCompressCalls{0};
++    std::atomic<uint64_t> internNs{0}, internCalls{0};
++    std::atomic<uint64_t> captureNs{0}, captures{0};
++    std::atomic<uint64_t> workerNs{0}, handoffNs{0}, queued{0}, waitNs{0}, waits{0}, applyNs{0}, peakPendingBytes{0};
++};
++Counters& Get();
++
++inline uint64_t NowNs()
++{
++    return static_cast<uint64_t>(
++        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
++            .count());
++}
++}  // namespace ttd::poc048
+diff --git a/core/src/debugger/ttd/timetravelengine.cpp b/core/src/debugger/ttd/timetravelengine.cpp
+index c8bc1dde3..7e1fd3eab 100644
+--- a/core/src/debugger/ttd/timetravelengine.cpp
++++ b/core/src/debugger/ttd/timetravelengine.cpp
+@@ -10,6 +10,7 @@
+ #include <unordered_set>
+ 
+ #include "debugger/ttd/ttdcompression.h"
++#include "debugger/ttd/poc048counters.h"
+ 
+ namespace ttd
+ {
+@@ -429,6 +430,7 @@ void TimeTravelEngine::EndSession()
+     _sinceSnapshotFlag = {};
+     _lastSnapshot = {};
+     _regionPayload = {};
++    _pendingPayload.clear();
+     _regionVersions = {};
+     _frames.Clear();
+     _checkpoints.clear();
+@@ -445,8 +447,16 @@ void TimeTravelEngine::EndSession()
+ 
+ /// region <Capture>
+ 
++void TimeTravelEngine::ResolvePendingPayload() const
++{
++    for (const auto& [r, id] : _pendingPayload)
++        _regionPayload[r] += _store->PayloadSize(id);
++    _pendingPayload.clear();
++}
++
+ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& error)
+ {
++    ResolvePendingPayload();   // POC 048: last capture's pieces, packed by now
+     if (!_open)
+     {
+         error = "no session";
+@@ -749,12 +759,15 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
+     _streams.CaptureEnabled(input.position);
+     ReleaseHistory();
+ 
++    _store->FlushAsync();   // POC 048: the worker takes this capture's pieces
+     const TTDPieceStore::Work& w = _store->GetWork();
+     _lastWork.versionsStored = w.versionsStored;
+     _lastWork.compressCalls = w.compressCalls;
+     _lastWork.compressInputBytes = w.compressInputBytes;
+     _lastCaptureNs = static_cast<uint64_t>(
+         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count());
++    poc048::Get().captureNs.fetch_add(_lastCaptureNs, std::memory_order_relaxed);
++    poc048::Get().captures.fetch_add(1, std::memory_order_relaxed);
+     return true;
+ }
+ 
+@@ -765,7 +778,10 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
+ void TimeTravelEngine::NoteChange(uint32_t r, uint32_t piece, TTDPieceId next)
+ {
+     _changes.push_back({piece, next});
+-    _regionPayload[r] += _store->PayloadSize(next);
++    if (_store->AsyncMode())
++        _pendingPayload.emplace_back(r, next);   // POC 048: counted once packed (ResolvePendingPayload)
++    else
++        _regionPayload[r] += _store->PayloadSize(next);
+     ++_regionVersions[r];
+     _live[r][piece] = next;
+     if (!_sinceSnapshotFlag[r][piece])
+diff --git a/core/src/debugger/ttd/timetravelengine.h b/core/src/debugger/ttd/timetravelengine.h
+index eadfaed25..5917940c7 100644
+--- a/core/src/debugger/ttd/timetravelengine.h
++++ b/core/src/debugger/ttd/timetravelengine.h
+@@ -563,6 +563,7 @@ public:
+ 
+     uint64_t RegionPayloadBytes(uint32_t region) const
+     {
++        ResolvePendingPayload();
+         return region < _regionPayload.size() ? _regionPayload[region] : 0;
+     }
+     /// New versions stored for region @p region so far
+@@ -670,7 +671,10 @@ private:
+     std::vector<std::vector<TimeLine>> _timeLines;      ///< per region (device regions only)
+     std::vector<std::vector<TTDTimeField>> _timeFields; ///< per region: the device's declared fields
+     TTDDeviceTable _devices;
+-    std::vector<uint64_t> _regionPayload;
++    mutable std::vector<uint64_t> _regionPayload;
++    /// POC 048: versions noted while the worker packs them: their payload is counted at the next capture
++    mutable std::vector<std::pair<uint32_t, TTDPieceId>> _pendingPayload;
++    void ResolvePendingPayload() const;
+     std::vector<uint64_t> _regionVersions;
+     TTDEngineCaptureWork _lastWork;
+     uint64_t _syncMissCount = 0;
+diff --git a/core/src/debugger/ttd/ttdcompression.h b/core/src/debugger/ttd/ttdcompression.h
+index ca5f4fe96..789f5064e 100644
+--- a/core/src/debugger/ttd/ttdcompression.h
++++ b/core/src/debugger/ttd/ttdcompression.h
+@@ -22,12 +22,15 @@
+ #include <algorithm>
+ #include <cstdint>
+ #include <cstddef>
++#include <cstdlib>
+ #include <cstring>
+ #include <istream>
+ #include <vector>
+ 
+ #include <zstd.h>
+ 
++#include "debugger/ttd/poc048counters.h"
++
+ namespace ttd::codec {
+ 
+ // ---------------------------------------------------------------------------
+@@ -72,7 +75,30 @@ inline std::vector<uint8_t> Compress(const uint8_t* src, size_t size, int level
+     std::vector<uint8_t>& buffer = (size <= kCompressScratchMax) ? scratch : large;
+     if (buffer.size() < bound)
+         buffer.resize(bound);
+-    const size_t n = ZSTD_compress(buffer.data(), bound, src, size, level);
++    const uint64_t pocStart = poc048::NowNs();
++    // POC 048 stage 3: UNREAL_POC048_CCTX=1 reuses one compression context per thread instead of the one
++    // ZSTD_compress sets up and frees on every call (same parameters, so the same bytes)
++    static const bool reuseContext = [] {
++        const char* v = std::getenv("UNREAL_POC048_CCTX");
++        return v != nullptr && v[0] == '1';
++    }();
++    size_t n = 0;
++    if (reuseContext)
++    {
++        struct ContextHolder
++        {
++            ZSTD_CCtx* cctx = ZSTD_createCCtx();
++            ~ContextHolder() { ZSTD_freeCCtx(cctx); }
++        };
++        thread_local ContextHolder holder;
++        n = ZSTD_compressCCtx(holder.cctx, buffer.data(), bound, src, size, level);
++    }
++    else
++        n = ZSTD_compress(buffer.data(), bound, src, size, level);
++    poc048::Counters& poc = poc048::Get();
++    poc.allCompressNs.fetch_add(poc048::NowNs() - pocStart, std::memory_order_relaxed);
++    poc.allCompressCalls.fetch_add(1, std::memory_order_relaxed);
++    poc.allCompressBytes.fetch_add(size, std::memory_order_relaxed);
+     if (ZSTD_isError(n))
+     {
+         return {};
+diff --git a/core/tests/debugger/ttd/engine/ttdpiecestore_test.cpp b/core/tests/debugger/ttd/engine/ttdpiecestore_test.cpp
+index bfc7fe96c..105d09c81 100644
+--- a/core/tests/debugger/ttd/engine/ttdpiecestore_test.cpp
++++ b/core/tests/debugger/ttd/engine/ttdpiecestore_test.cpp
+@@ -232,3 +232,81 @@ TEST(TTDPieceStore_Test, RangesStoreFewChangesExactlyAndCheaply)
+         store.Release(ids[i]);
+     EXPECT_EQ(store.LiveVersions(), 0u) << "runs hold their base like any difference";
+ }
++
++// POC 048: the worker stores what the calling thread would have stored, byte for byte
++#include <cstdlib>
++namespace
++{
++TEST(TTDPieceStorePoc048_Test, WorkerStoresTheSameVersions)
++{
++    for (const char* mode : {"1", "2"})
++    {
++        setenv("UNREAL_POC048_ASYNC", "0", 1);
++        TTDPieceStore sync;
++        setenv("UNREAL_POC048_ASYNC", mode, 1);
++        TTDPieceStore async;
++        unsetenv("UNREAL_POC048_ASYNC");
++        ASSERT_EQ(sync.AsyncMode(), 0);
++        ASSERT_NE(async.AsyncMode(), 0);
++
++        // 16 pieces, 400 frames: a few bytes, a block, noise, zero, back to old content; chains reach the limit
++        constexpr int kPieces = 16;
++        std::vector<std::vector<uint8_t>> content(kPieces, std::vector<uint8_t>(kTTDPieceSize, 0));
++        std::vector<TTDPieceId> liveS(kPieces, TTDPieceStore::kNone), liveA(kPieces, TTDPieceStore::kNone);
++        std::vector<TTDPieceId> idsS, idsA;
++        uint32_t x = 12345;
++        auto rnd = [&] { x = x * 1664525u + 1013904223u; return x >> 8; };
++        for (int frame = 0; frame < 400; ++frame)
++        {
++            for (int p = 0; p < kPieces; ++p)
++            {
++                std::vector<uint8_t> next = content[p];
++                switch (rnd() % 6)
++                {
++                    case 0: break;                                                     // unchanged
++                    case 1: next[rnd() % kTTDPieceSize] ^= uint8_t(1 + rnd() % 255); break;   // one byte
++                    case 2: { const uint32_t at = rnd() % (kTTDPieceSize - 600);       // a block
++                              for (uint32_t k = 0; k < 600; ++k) next[at + k] = uint8_t(rnd()); } break;
++                    case 3: next = Noise(rnd()); break;                                // everything
++                    case 4: std::fill(next.begin(), next.end(), 0); break;             // zero
++                    default: for (uint32_t k = 0; k < kTTDPieceSize; k += 7) next[k] = uint8_t(frame); break;
++                }
++                auto step = [&](TTDPieceStore& s, std::vector<TTDPieceId>& live, std::vector<TTDPieceId>& ids) {
++                    const TTDPieceId prev = live[p];
++                    const TTDPieceId id = prev == TTDPieceStore::kNone ? s.InternFirst(next.data())
++                                                                        : s.Intern(prev, content[p].data(), next.data());
++                    ids.push_back(id);
++                    if (prev != TTDPieceStore::kNone)
++                        s.Release(prev);   // the history keeps only the current version: frees and reuses ids
++                    live[p] = id;
++                };
++                step(sync, liveS, idsS);
++                step(async, liveA, idsA);
++                content[p] = next;
++            }
++            async.FlushAsync();
++        }
++        async.SettleAll();
++        ASSERT_EQ(idsS, idsA) << "mode " << mode;
++        std::vector<uint8_t> a(kTTDPieceSize), b(kTTDPieceSize);
++        for (int p = 0; p < kPieces; ++p)
++        {
++            const TTDPieceId s = liveS[p], t = liveA[p];
++            EXPECT_EQ(sync.EncodingOf(s), async.EncodingOf(t));
++            EXPECT_EQ(sync.DepthOf(s), async.DepthOf(t));
++            EXPECT_EQ(sync.BaseOf(s), async.BaseOf(t));
++            EXPECT_EQ(sync.CrcOf(s), async.CrcOf(t));
++            ASSERT_EQ(sync.PayloadSize(s), async.PayloadSize(t));
++            if (sync.PayloadSize(s))
++                EXPECT_EQ(0, std::memcmp(sync.PayloadData(s), async.PayloadData(t), sync.PayloadSize(s)));
++            ASSERT_TRUE(sync.Decode(s, a.data()));
++            ASSERT_TRUE(async.Decode(t, b.data()));
++            EXPECT_EQ(a, b);
++            EXPECT_EQ(a, content[p]);
++        }
++        EXPECT_EQ(sync.LiveVersions(), async.LiveVersions());
++        EXPECT_EQ(sync.PayloadBytes(), async.PayloadBytes());
++        EXPECT_EQ(sync.GetWork().compressCalls, async.GetWork().compressCalls);
++    }
++}
++}  // namespace
+diff --git a/core/tests/debugger/ttd/ttdcompression_test.cpp b/core/tests/debugger/ttd/ttdcompression_test.cpp
+index 73442275a..2bc6a52e9 100644
+--- a/core/tests/debugger/ttd/ttdcompression_test.cpp
++++ b/core/tests/debugger/ttd/ttdcompression_test.cpp
+@@ -6,6 +6,7 @@
+ #include <gtest/gtest.h>
+ 
+ #include <cstdint>
++#include <cstring>
+ #include <vector>
+ 
+ #include "debugger/ttd/ttdcompression.h"
+@@ -76,3 +77,31 @@ TEST(TTDCompression_Test, EmptyInput_ReturnsEmpty)
+ {
+     EXPECT_TRUE(codec::Compress(nullptr, 0).empty());
+ }
++
++// POC 048 stage 3: one compression context reused across calls gives the bytes of a fresh context per call
++TEST(TTDCompressionPoc048_Test, ReusedContextGivesTheSameBytes)
++{
++    ZSTD_CCtx* cctx = ZSTD_createCCtx();
++    ASSERT_NE(cctx, nullptr);
++    uint32_t x = 7;
++    auto rnd = [&] { x = x * 1664525u + 1013904223u; return x >> 8; };
++    for (int i = 0; i < 300; ++i)
++    {
++        // sizes of pieces, journal and coverage blocks; content from sparse to noise
++        const size_t sizes[] = {4096, 4096, 4096, 1000, 16384, 65536, 37};
++        const size_t size = sizes[i % 7];
++        std::vector<uint8_t> src(size, 0);
++        const uint32_t density = 1 + rnd() % 64;
++        for (size_t k = 0; k < size; ++k)
++            if (rnd() % 64 < density)
++                src[k] = static_cast<uint8_t>(rnd() % (1 + i % 256));
++        const size_t bound = ZSTD_compressBound(size);
++        std::vector<uint8_t> a(bound), b(bound);
++        const size_t na = ZSTD_compress(a.data(), bound, src.data(), size, ttd::codec::kDefaultZstdLevel);
++        const size_t nb = ZSTD_compressCCtx(cctx, b.data(), bound, src.data(), size, ttd::codec::kDefaultZstdLevel);
++        ASSERT_FALSE(ZSTD_isError(na));
++        ASSERT_EQ(na, nb) << "input " << i;
++        ASSERT_EQ(0, std::memcmp(a.data(), b.data(), na)) << "input " << i;
++    }
++    ZSTD_freeCCtx(cctx);
++}

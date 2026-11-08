@@ -17,6 +17,7 @@
 #include <vector>
 
 class Emulator;
+struct PictureGeometry;
 
 namespace deckpoc
 {
@@ -54,8 +55,9 @@ public:
 
     /// Current framebuffer size (changes on NC_VIDEO_MODE_CHANGED); false if none yet
     bool FrameSize(FrameInfo& info) const;
-    /// Copy the newest presented frame straight into dst (e.g. a mapped GPU transfer buffer)
-    bool CopyFrameTo(uint8_t* dst, size_t size);
+    /// Copy the newest presented frame straight into dst (e.g. a mapped GPU transfer buffer); `geometry`, when given,
+    /// receives the geometry latched with that frame (its working picture and content window)
+    bool CopyFrameTo(uint8_t* dst, size_t size, PictureGeometry* geometry = nullptr);
 
     void JoystickPress(uint8_t mask);
     void JoystickRelease(uint8_t mask);
