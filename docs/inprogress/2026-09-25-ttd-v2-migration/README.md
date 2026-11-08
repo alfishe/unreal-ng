@@ -4,17 +4,17 @@
 
 ## 1. Roadmap
 
-v2 is a new engine, `ttd::TimeTravelEngine`, built next to v1 and checked against it byte for byte ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Users keep v1 until Phase 5 switches the emulator to the engine. What the engine supports from its first commit, and the conflicts settled before coding, are in [engine-decisions.md](engine-decisions.md) (decisions 1–41, cited below as D1…D41). Every item of state time travel records, rebuilds or leaves out, with its class (required, derived, telemetry, host-facing) and the known gaps: [state-registry.md](state-registry.md). Phase 1 results against the quality bar: [phase-1-results.md](phase-1-results.md). Phase 2 results: [phase-2-results.md](phase-2-results.md). Phase 3 results: [phase-3-results.md](phase-3-results.md). Phase 4 results: [phase-4-results.md](phase-4-results.md). The write journal, what it serves and what it costs (experiment E7): [write-journal-e7.md](write-journal-e7.md).
+v2 is a new engine, `ttd::TimeTravelEngine`, built next to v1 and checked against it byte for byte ([engine-approach-and-naming.md](engine-approach-and-naming.md)). Users kept v1 until Phase 5 switched the emulator to the engine; Phase 6 deleted v1. What the engine supports from its first commit, and the conflicts settled before coding, are in [engine-decisions.md](engine-decisions.md) (decisions 1–41, cited below as D1…D41). Every item of state time travel records, rebuilds or leaves out, with its class (required, derived, telemetry, host-facing) and the known gaps: [state-registry.md](state-registry.md). Phase 1 results against the quality bar: [phase-1-results.md](phase-1-results.md). Phase 2 results: [phase-2-results.md](phase-2-results.md). Phase 3 results: [phase-3-results.md](phase-3-results.md). Phase 4 results: [phase-4-results.md](phase-4-results.md). The write journal, what it serves and what it costs (experiment E7): [write-journal-e7.md](write-journal-e7.md).
 
 | Phase | Name | Status | Size | Design |
 |---|---|---|---|---|
 | [Phase 0](#phase-0--preparation) | Preparation | **done** (2026-09-29) | — | [step notes](migration-trajectory.md#phase-0--preparation) |
-| [Phase 1](#phase-1--engine-core-memory-that-costs-only-what-changes) | Engine core: memory that costs only what changes | next | L | [TDD](phase-1-memory-regions-tdd.md) |
-| [Phase 2](#phase-2--device-state-with-versions) | Device state with versions | planned | M | [TDD](phase-2-device-state-tdd.md) |
-| [Phase 3](#phase-3--everything-a-replay-needs) | Everything a replay needs | planned | M | [TDD](phase-3-replay-inputs-tdd.md) |
-| [Phase 4](#phase-4--the-session-file) | The session file: written as it records | planned | L | [TDD](phase-4-session-file-tdd.md) |
-| [Phase 5](#phase-5--switch-the-emulator-to-the-engine) | Switch the emulator to the engine | planned | M | [TDD](phase-5-switchover-tdd.md) |
-| [Phase 6](#phase-6--cleanup) | Cleanup | planned | S | — |
+| [Phase 1](#phase-1--engine-core-memory-that-costs-only-what-changes) | Engine core: memory that costs only what changes | **done** (2026-10-02) | L | [TDD](phase-1-memory-regions-tdd.md) |
+| [Phase 2](#phase-2--device-state-with-versions) | Device state with versions | **done** (2026-10-03) | M | [TDD](phase-2-device-state-tdd.md) |
+| [Phase 3](#phase-3--everything-a-replay-needs) | Everything a replay needs | **done** (2026-10-04; Step 3, card CPUs, deferred) | M | [TDD](phase-3-replay-inputs-tdd.md) |
+| [Phase 4](#phase-4--the-session-file) | The session file: written as it records | **done** (2026-10-04) | L | [TDD](phase-4-session-file-tdd.md) |
+| [Phase 5](#phase-5--switch-the-emulator-to-the-engine) | Switch the emulator to the engine | **done** (switch 2026-10-05, `edb2f3c40`; Step 2b, branches, deferred) | M | [TDD](phase-5-switchover-tdd.md) |
+| [Phase 6](#phase-6--cleanup) | Cleanup | **done** (2026-10-31; v1 deleted 2026-10-30) | S | — |
 
 Size: S = a focused day or two of agent work, M = several days, L = a week or more.
 
@@ -40,6 +40,8 @@ Phases are done in order. A step inside a phase is referred to as "Phase 1, Step
 Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 experiments](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md)); v1 stores compressed data at its exact size (`67e5aff28`, 15–68% less recording memory).
 
 ### Phase 1 — Engine core: memory that costs only what changes
+
+**Status: done** (2026-10-02, [results](phase-1-results.md)).
 
 **What.**
 
@@ -68,6 +70,8 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 
 ### Phase 2 — Device state with versions
 
+**Status: done** (2026-10-03, [results](phase-2-results.md)).
+
 **What.**
 
 | Step | Name |
@@ -82,6 +86,8 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 **Done when.** FR-2, FR-4, FR-7, FR-19, PR-10, D33: an idle frame costs (almost) nothing for device state; the contract test covers every device on every creatable model; a corrupted device state produces a "degraded" result on every surface.
 
 ### Phase 3 — Everything a replay needs
+
+**Status: done** (2026-10-04, [results](phase-3-results.md)); Step 3 (positions on card CPUs) deferred to the GS debugger (PLAN #45).
 
 **What.**
 
@@ -101,6 +107,8 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 
 ### Phase 4 — The session file
 
+**Status: done** (2026-10-04, [results](phase-4-results.md)).
+
 **What.**
 
 | Step | Name |
@@ -118,6 +126,8 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 
 ### Phase 5 — Switch the emulator to the engine
 
+**Status: done** (the switch 2026-10-05, `edb2f3c40`, [results](phase-5-results.md); Step 4 superseded by Phase 6); Step 2b (branches instead of a cut at a resume from the past) deferred to PLAN #76.
+
 **What.**
 
 | Step | Name |
@@ -133,7 +143,9 @@ Done since, outside the plan: experiments E1–E6 on real recordings ([POC 011 e
 
 ### Phase 6 — Cleanup
 
-**What.** Delete `TimeTravelManager` and what only it used, keep the v1 file reader for verification, retire the old proof-of-concept readers, bring the parent TDD in line with what was built, move this folder to `DONE.md`.
+**Status: done** (2026-10-31): v1 deleted (`d4d7bc34a`), its fixtures gone, the TDD truth pass made, this folder closed ([DONE.md](DONE.md)).
+
+**What.** Delete `TimeTravelManager` and what only it used (~~keep the v1 file reader for verification~~: owner 2026-10-09, nothing kept), retire the old proof-of-concept readers, bring the parent TDD in line with what was built, move this folder to `DONE.md`.
 
 **Done when.** QR-9 and the acceptance criteria of [requirements §6](requirements.md) hold, with the evidence linked from `DONE.md`.
 
