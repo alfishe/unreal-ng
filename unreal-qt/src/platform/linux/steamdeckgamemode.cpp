@@ -2,6 +2,7 @@
 
 #include <QEvent>
 #include <QMenuBar>
+#include <QScreen>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -28,6 +29,15 @@ public:
         _window.statusBar()->hide();
         for (QToolBar* bar : _window.findChildren<QToolBar*>())
             bar->hide();
+        // gamescope does not act on the full screen state of an XWayland window (no _NET_WM_STATE appears): the window
+        // keeps the size it was created with and gamescope fits THAT into the screen by its shape, bars around it.
+        // The window takes the screen's size itself, so the picture is fitted into the whole screen
+        if (const QScreen* screen = _window.screen())
+        {
+            const QRect area = screen->geometry();
+            if (_window.geometry() != area)
+                _window.setGeometry(area);
+        }
     }
 
 protected:

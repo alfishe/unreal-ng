@@ -416,6 +416,7 @@ void CLIProcessor::HandleVideo(const ClientSession& session, const std::vector<s
         "  video window <key>=<value> ... - change them: gpu, crt, blending, fullscreen, toolbar, status_bar, hud,\n"
         "                                   osd_keyboard, next_layers on|off; crt_profile <name>; blending_frames 2..5;\n"
         "                                   blending_weights equal|exponential; blending_decay 0.1..0.9; scale 1..4;\n"
+        "                                   view full|screen|content (the part of the frame shown);\n"
         "                                   hud_theme <name>; hud_notice.<id> on|off; osd_keyboard_picture <id>;\n"
         "                                   osd_keyboard_style photo|schematic|hybrid;\n"
         "                                   next_layers_mode layers|composed|winner; next_layer.<ula|layer2|tilemap|sprites>\n"

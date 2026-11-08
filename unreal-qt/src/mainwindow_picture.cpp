@@ -105,6 +105,7 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     s.emulatorId = _emulator ? _emulator->GetId() : std::string();
 
     s.fullscreen = isFullScreen();
+    s.view = PictureView::NameOf(_screenWrapper->pictureView());
     // A whole zoom while the window is fitted to the picture; resized by hand, maximized or full screen: none
     const bool fitted = !_userResizedWindow && !isFullScreen() && !isMaximized();
     const double zoom = std::round(_zoomFactor);
@@ -248,6 +249,16 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
             const auto at = std::find(layers.begin(), layers.end(), name);
             if (at != layers.end())
                 _nextLayersWindow->setLayerShown(static_cast<int>(at - layers.begin()), shown);
+        }
+    }
+
+    if (change.view)
+    {
+        PictureView::Mode mode;
+        if (PictureView::Parse(*change.view, mode))
+        {
+            _screenWrapper->setPictureView(mode);
+            _menuManager->setPictureViewSelection(static_cast<int>(mode));
         }
     }
 
@@ -466,6 +477,7 @@ void MainWindow::saveViewSettings() const
     settings.setValue("BlendingDecay", s.blendingDecay);
     if (s.scale > 0)
         settings.setValue("Scale", s.scale);  // a hand-sized window keeps the last whole scale
+    settings.setValue("View", QString::fromStdString(s.view));
     settings.setValue("HudVisible", s.hud);
     settings.setValue("HudTheme", QString::fromStdString(s.hudTheme));
     // Not the overscan frame: it is the machine's, off on every new Pentagon (set it explicitly when wanted)
@@ -516,6 +528,8 @@ void MainWindow::restoreViewSettings()
     }
     if (settings.contains("Blending"))
         change.blending = settings.value("Blending").toBool();
+    if (settings.contains("View"))
+        WindowDisplay::ApplyWord(change, "view", settings.value("View").toString().toStdString(), error);
     if (settings.contains("HudVisible"))
         change.hud = settings.value("HudVisible").toBool();
     if (settings.contains("HudTheme"))
