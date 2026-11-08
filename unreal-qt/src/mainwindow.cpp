@@ -53,6 +53,7 @@
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QThread>
+#include <QJsonArray>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -118,6 +119,8 @@
 #include "emulator/mousecapturecontroller.h"
 #include "emulator/companioncontroller.h"
 #include "emulator/remotecontrolguard.h"
+#include "guicontrol/host.h"
+#include "guicontrol/windowbinding.h"
 
 namespace
 {
@@ -5292,6 +5295,53 @@ void MainWindow::saveLastDirectory(const QString& path)
 
         qDebug() << "Saved last directory to settings:" << _lastDirectory;
     }
+}
+
+void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
+{
+    guicontrol::HostOptions options;
+    options.program = QStringLiteral("unreal-qt");
+    options.version = QCoreApplication::applicationVersion();
+    options.FromEnvironment();
+    if (tcpPort >= 0)
+        options.tcpPort = tcpPort;
+    if (!tcpBind.isEmpty())
+        options.tcpBind = tcpBind;
+    // The WebAPI this process serves: where a client crosses from a window to its machine (design §4.6)
+    options.endpoints = []() {
+        QJsonArray endpoints;
+#ifdef ENABLE_AUTOMATION
+        if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+            endpoints.append(QStringLiteral("http://127.0.0.1:%1").arg(port));
+#endif
+        return endpoints;
+    };
+    _guiHost = std::make_unique<guicontrol::Host>(std::move(options));
+    QString error;
+    if (!_guiHost->Start(&error))
+    {
+        qWarning().noquote() << "GUI control: not started:" << error;
+        _guiHost.reset();
+        return;
+    }
+    new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    if (debuggerWindow != nullptr)
+        new guicontrol::WindowBinding(*_guiHost, debuggerWindow, QStringLiteral("debugger"));
+
+#ifdef ENABLE_AUTOMATION
+    // The WebAPI comes up on its own thread: the discovery file names it once it listens (up to 15 s)
+    auto* poll = new QTimer(this);
+    auto tries = std::make_shared<int>(0);
+    connect(poll, &QTimer::timeout, this, [this, poll, tries]() {
+        if (Automation::GetInstance().GetWebAPIPort() > 0 || ++*tries >= 60)
+        {
+            if (_guiHost)
+                _guiHost->RefreshDiscovery();
+            poll->deleteLater();
+        }
+    });
+    poll->start(250);
+#endif
 }
 
 void MainWindow::cleanupAutomation()

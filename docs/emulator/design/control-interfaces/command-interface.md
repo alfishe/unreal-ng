@@ -11,6 +11,9 @@ The Emulator Control Interface (ECI) provides a unified high-level abstraction f
 - **Scripting** (Lua, Python bindings)
 - **Debugger Protocols** (Future: GDB Remote Serial Protocol, ADB-style universal debugging)
 
+The programs' windows and views (the debugger's panes, the video wall) are not driven here: they have the separate
+[GUI control plane](../gui-control/README.md), which the core does not depend on.
+
 Each interface layer translates its protocol-specific requests into standardized internal commands that operate on the emulator core.
 
 > **Rule.** A verb added here is added to **every** plane in the same change, and documented down the chain: this

@@ -372,6 +372,12 @@ else ()
     )
 endif ()
 
+# The GUI control plane (guicontrol/): the host unreal-qt serves its windows through
+if (NOT TARGET guicontrol-widgets)
+    add_subdirectory("${ROOT_DIR}/guicontrol" guicontrol)
+endif ()
+target_link_libraries(${PROJECT_NAME} PRIVATE guicontrol-widgets)
+
 # The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
 if (TARGET unrealng::swsignature)
     target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
@@ -598,6 +604,8 @@ if (TESTS)
     set(UNREAL_QT_TEST_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/qttestmain.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
+        # The GUI control plane (guicontrol/): host, client, discovery, the window binding
+        "${ROOT_DIR}/guicontrol/tests/guicontrol_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.cpp"
@@ -803,6 +811,7 @@ if (TESTS)
     )
     target_link_libraries(unreal-qt-tests PRIVATE
         unrealng::core
+        guicontrol-widgets
         Qt6::Widgets
         Qt6::OpenGL
         $<$<PLATFORM_ID:Windows>:OpenGL::GL>

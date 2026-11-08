@@ -72,6 +72,11 @@ class RecordingWidget;
 #endif
 class DockingManager;
 
+namespace guicontrol
+{
+class Host;
+}
+
 QT_BEGIN_NAMESPACE
 namespace Ui
 {
@@ -106,6 +111,9 @@ public:
     void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
     /// The headless runner (--script without a file): the machine the Machine menu picks, as Start does
     void startEmulatorIfNone() { handleStartEmulator(); }
+    /// The GUI control plane (docs/inprogress/2026-11-07-gui-control-plane): the host, the main window and the
+    /// debugger as `window` nodes. tcpPort: -1 none (the environment may still turn it on), 0 any free port
+    void startGuiControl(int tcpPort, const QString& tcpBind);
     /// The headless runner's end: closes as the window's close does, without the unsaved media question (the media
     /// policy decides, as for an unattended open)
     void closeUnattended()
@@ -472,6 +480,7 @@ private:
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)
+    std::unique_ptr<guicontrol::Host> _guiHost;          // the GUI control plane's host (startGuiControl)
     std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)

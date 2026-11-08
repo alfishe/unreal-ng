@@ -15,6 +15,11 @@ construction, and the module adds only what changes on its own.
 | REST | HTTP/1.1 JSON | [webapi-interface.md](../emulator/design/control-interfaces/webapi-interface.md) |
 | WebSocket | `/api/v1/ws` on the WebAPI port | [websocket-interface.md](../emulator/design/control-interfaces/websocket-interface.md) |
 
+**The GUI control plane is not one of them.** Driving a program's windows and views (raise a window, move the
+disassembly cursor, follow PC in a memory view) goes to the [GUI control plane](../emulator/design/gui-control/README.md),
+which the core does not know: its own socket, its own `unreal-gui` command, its own interfaces. A verb there is not
+added to the emulator planes, and an emulator verb never reaches into a GUI.
+
 **WebSocket adds to REST; it does not replace or deprecate it.** REST stays a first-class API. A client uses whatever
 suits it: request and answer over REST, or the same calls plus push over one socket.
 
