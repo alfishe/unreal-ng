@@ -82,7 +82,14 @@ public:
     uint8_t Read(uint16_t port, uint64_t now);
     void Write(uint16_t port, uint8_t value, uint64_t now);
     /// Look at the interrupt levels now; `enable` is NR #C6. Raises a request for each level that rose since the last look
-    void PollInterrupts(uint8_t enable);
+    void PollInterrupts(uint8_t enable)
+    {
+        // The per-instruction call of a UART nothing happened to: the levels are what the last look stored, no edge (inline: the
+        // device poll asks after every instruction)
+        if (_pollClean && enable == _polledEnable)
+            return;
+        PollInterruptLevels(enable);
+    }
     /// The other end of a channel (nullptr: nothing on the line: Tx bytes are lost, nothing arrives)
     void SetPeer(unsigned channel, ISerialPeer* peer);
     /// The module a channel is fitted with (the ESP, the Pi), also while the joystick connector has taken the channel's line
@@ -107,7 +114,13 @@ public:
     ISerialPeer* Wire(unsigned channel) const { return _joyOn && _joyChannel == channel ? _joyPeer : _ch[channel].Live(); }
     /// The pins of the line are connected to the peer (UART 1: NR #A0 bits 4 and 5, zxnext.vhd 2333: with `pi_uart_en` clear the receiver
     /// idles high and the transmitter reaches no pin): disconnected, Tx bytes are lost and the peer's bytes are not taken
-    void SetLineConnected(unsigned channel, bool connected) { _ch[channel].connected = connected; }
+    void SetLineConnected(unsigned channel, bool connected)
+    {
+        if (_ch[channel].connected == connected)
+            return;
+        Wake();
+        _ch[channel].connected = connected;
+    }
     bool LineConnected(unsigned channel) const { return _ch[channel].connected; }
 
     /// Bytes for the peer that the transmitter finished, and bytes lost by a missing peer, since the last Reset (statistics)
@@ -149,6 +162,23 @@ public:
     bool Quiet() const;
     /// What Advance does to a quiet UART: the clock and the channels' last look move to `now`
     void Look(uint64_t now);
+
+    /// The sleep of a quiet UART (the per-instruction poll of a machine whose program never touches the UART). After a Look,
+    /// TrySleep puts it to sleep when it is Quiet and no wired peer holds a byte, even one not ready yet (Pending), or a break:
+    /// nothing can then change without an event from outside the UART. Asleep, the poll calls Doze, which only stores the time
+    /// a Look would have had. Wake applies that look, so the state is what per-instruction looks would have left; it is called
+    /// by every method below that acts on the UART (the ports, the clock, the setters, Advance, Reset) and by the machine at
+    /// each frame boundary (the peers' OnFrame: network data, the ESP's Wi-Fi events) and on a peer's onReceive
+    bool Asleep() const { return _asleep; }
+    void Doze(uint64_t now) { _sleepLook = now; }
+    bool TrySleep();
+    void Wake()
+    {
+        if (!_asleep)
+            return;
+        _asleep = false;
+        Look(_sleepLook);
+    }
     /// The state of a channel without side effects
     View GetView(unsigned channel) const;
     unsigned Selected() const { return _selected; }
@@ -160,6 +190,8 @@ public:
     unsigned PeekTx(unsigned channel, uint8_t* out, unsigned max) const;
 
 private:
+    void PollInterruptLevels(uint8_t enable);
+
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
 
     uint32_t _systemClockHz = 28000000;
@@ -239,6 +271,9 @@ private:
     /// `_polledEnable`. Everything that can change them clears it (derived, not state)
     bool _pollClean = false;
     uint8_t _polledEnable = 0;
+    /// The sleep (TrySleep; derived, not state: the state codec saves the look it stands for)
+    bool _asleep = false;
+    uint64_t _sleepLook = 0;
     ISerialPeer* _joyPeer = nullptr;
     bool _joyOn = false;
     unsigned _joyChannel = 0;

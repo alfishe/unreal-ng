@@ -24,6 +24,7 @@
 # Packages (one file per platform/architecture, named
 # UnrealNG-Suite-<OS>-<arch>[-<toolchain>].<ext>):
 #   Linux    x86_64   .AppImage (portable) and .deb (Ubuntu 24.04+ / Debian 13+)
+#   Steam Deck        .tar.gz: the AppImage with its installer and library artwork (install/steamdeck)
 #   macOS    x86_64, arm64   .dmg (macOS 12+)
 #   Windows  x86_64 (MSVC), x86_64-MinGW, arm64   portable .zip
 # Every package carries the Stream Deck companion (-DUNREAL_STREAMDECK=ON): the daemon
@@ -186,6 +187,17 @@ jobs:
       - name: Package AppImage
         run: bash tools/package-appimage.sh build
 
+      # The AppImage with the Steam Deck installer, launcher and library artwork (install/steamdeck/README.md)
+      # The same AppImage inside: UnrealNG-Symbols-Linux-x86_64 holds its symbols too
+      - name: Package Steam Deck bundle
+        run: |
+          bash install/steamdeck/package.sh build
+          tar tzf build/packages/UnrealNG-SteamDeck-x86_64.tar.gz > bundle.txt
+          for f in UnrealNG.AppImage install.sh unreal-ng.sh steam-library.py art/poster.png art/capsule.png \
+              art/hero.png art/logo.png art/icon.png; do grep -qx "UnrealNG-SteamDeck/$f" bundle.txt; done
+          rm bundle.txt
+          python3 -I install/steamdeck/steam-library.py --help > /dev/null
+
       - name: Verify AppImage without the Qt SDK environment
         run: |
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
@@ -226,6 +238,15 @@ jobs:
         with:
           name: UnrealNG-Suite-Linux-x86_64.AppImage
           path: build/packages/UnrealNG-Suite-Linux-x86_64.AppImage
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+      - name: Upload Steam Deck bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: UnrealNG-SteamDeck-x86_64.tar.gz
+          path: build/packages/UnrealNG-SteamDeck-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -773,6 +794,7 @@ jobs:
           |----------|------|
           | Linux x86_64, portable (any distribution with glibc 2.39+) | `UnrealNG-Suite-Linux-x86_64.AppImage` |
           | Linux x86_64, Ubuntu 24.04+ / Debian 13+ | `UnrealNG-Suite-Linux-x86_64.deb` |
+          | Steam Deck (SteamOS): the AppImage with an installer for the Steam library | `UnrealNG-SteamDeck-x86_64.tar.gz` |
           | macOS 12+, Apple Silicon | `UnrealNG-Suite-macOS-arm64.dmg` |
           | macOS 12+, Intel | `UnrealNG-Suite-macOS-x86_64.dmg` |
           | Windows x86_64 | `UnrealNG-Suite-Windows-x86_64.zip` |
@@ -780,7 +802,8 @@ jobs:
           | Windows ARM64 | `UnrealNG-Suite-Windows-arm64.zip` |
 
           Every package carries its own Qt; nothing else needs to be installed.
-          Debug symbols (rolling snapshots only) use the same names with `UnrealNG-Symbols-`.
+          Debug symbols (rolling snapshots only) use the same names with `UnrealNG-Symbols-`; the Steam Deck bundle
+          carries the Linux AppImage, its symbols are `UnrealNG-Symbols-Linux-x86_64.tar.gz`.
 
           ### Verify Downloads
           ```bash

@@ -145,6 +145,13 @@ private:
     void FinishSpriteFrame();
     int64_t NowClock() { return static_cast<int64_t>(GetCurrentTstate()) * 8; }
     unsigned _nextLine = 0;
+    // UpdateScreen's line end in CPU T-states, and what it was made from
+    static uint32_t FirstCpuTAt(const EmulatorState& state, uint32_t baseT);
+    uint32_t _lineEndCpuT = 0;
+    unsigned _lineEndLine = ~0u;
+    uint32_t _lineEndFirst = 0;
+    uint32_t _lineEndPerLine = 0;
+    uint32_t _lineEndClock = 0;
     unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;
     uint8_t _lastSixty = 0;

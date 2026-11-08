@@ -735,3 +735,55 @@ TEST(NextUart_Test, QuietLookMatchesAdvanceOnEveryPoll)
     EXPECT_GT(quiet.looks, 10000u) << "the quiet path was taken";
     EXPECT_LT(quiet.looks, 39000u) << "and so was Advance";
 }
+
+/// The sleep of a quiet UART (NextUart::TrySleep) is invisible: a UART polled as the machine polls it (Doze while asleep) and one
+/// that looks after every instruction see the same bytes at the same times when the peer starts sending (onReceive: Advance), and
+/// a peer with a byte queued, even one not ready yet, keeps it awake
+TEST(NextUart_Test, TheSleepOfAQuietUartChangesNothing)
+{
+    NextUart sleeper, looker;
+    ScriptedPeer sleeperPeer, lookerPeer;
+    sleeper.SetPeer(0, &sleeperPeer);
+    looker.SetPeer(0, &lookerPeer);
+    auto poll = [](NextUart& uart, uint64_t now, bool canSleep) {
+        if (canSleep && uart.Asleep())
+        {
+            uart.Doze(now);
+            return;
+        }
+        if (uart.Quiet())
+        {
+            uart.Look(now);
+            if (canSleep)
+                (void)uart.TrySleep();
+        }
+        else
+            uart.Advance(now);
+    };
+    bool slept = false;
+    for (uint64_t now = 0; now < 60000; now += 37)
+    {
+        if (now == 20017)
+        {
+            // bytes from outside: both peers get them and the machine's onReceive brings the UART to now
+            sleeperPeer.toZx = lookerPeer.toZx = {0x41, 0x42, 0x43};
+            sleeper.Advance(now);
+            looker.Advance(now);
+        }
+        poll(sleeper, now, true);
+        poll(looker, now, false);
+        slept |= sleeper.Asleep();
+        const NextUart::View a = sleeper.GetView(0), b = looker.GetView(0);
+        ASSERT_EQ(a.rxCount, b.rxCount) << "at " << now;
+        ASSERT_EQ(a.rxBusy, b.rxBusy) << "at " << now;
+        ASSERT_EQ(a.status, b.status) << "at " << now;
+    }
+    EXPECT_TRUE(slept) << "a UART with a silent peer falls asleep";
+    for (int i = 0; i < 3; i++)
+        EXPECT_EQ(sleeper.Read(kRx, 60000), looker.Read(kRx, 60000));
+    EXPECT_FALSE(sleeper.Asleep()) << "a port access wakes it";
+
+    sleeperPeer.toZx = {0x55};
+    sleeper.Look(60001);
+    EXPECT_FALSE(sleeper.TrySleep()) << "a queued byte keeps it awake";
+}

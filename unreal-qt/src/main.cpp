@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 #include "crashhandler/crashhandler.h"
 #include "headless/headlessscriptrunner.h"
+#ifdef __linux__
+#include "platform/linux/steamdeckgamemode.h"
+#endif
 
 #include <QApplication>
 #include <QCommandLineParser>
@@ -170,6 +173,12 @@ int main(int argc, char *argv[])
         const QString zxpolyModel = parser.value(zxpolyModelOption);
         QTimer::singleShot(0, &window, [&window, file, zxpolyModel]() { window.openFromCommandLine(file, zxpolyModel); });
     }
+
+    // Steam Deck Game Mode: full screen without chrome, a Pentagon 128K running (platform/linux/steamdeckgamemode.h)
+#ifdef __linux__
+    if (!headless)
+        steamdeck::ApplyGameMode(window, files.isEmpty() && !parser.isSet(scriptOption));
+#endif
 
     std::unique_ptr<HeadlessScriptRunner> scriptRunner;
     if (parser.isSet(scriptOption))

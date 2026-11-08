@@ -119,7 +119,8 @@ void EmulatorAPI::companionsCollection(const HttpRequestPtr& req,
     ReplyJson(callback, ListJson(), HttpStatusCode::k200OK);
 }
 
-/// @brief POST /api/v1/companions/pairings - a device asks to pair: {name, device?, scopes?};
+/// @brief POST /api/v1/companions/pairings - a device asks to pair: {name, device?, scopes?} (from this host, not a
+/// browser page: approved at once);
 /// GET /api/v1/companions/me | {cid} - the companion itself (with a token) or one companion;
 /// DELETE /api/v1/companions/me | {cid} - unpair itself / revoke one (id or name)
 void EmulatorAPI::companionItem(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -155,9 +156,13 @@ void EmulatorAPI::companionItem(const HttpRequestPtr& req, std::function<void(co
                                  HttpStatusCode::k400BadRequest);
             scopes = *parsed;
         }
+        // From this host and not a browser page (a page's fetch carries Origin; it shares the loopback address):
+        // approved at once, no prompt
+        const std::string peer = req->getPeerAddr().toIp();
+        const bool local = companion::CompanionRegistry::IsLoopbackPeer(peer) && req->getHeader("origin").empty();
         const companion::PairingRequestResult result =
-            Registry().RequestPairing((*json)["name"].asString(), json->get("device", "").asString(), scopes,
-                                      req->getPeerAddr().toIp());
+            Registry().RequestPairing((*json)["name"].asString(), json->get("device", "").asString(), scopes, peer,
+                                      local);
         if (!result.error.empty())
         {
             Json::Value body = webapi_companion::ErrorBody(result.error, result.message);
@@ -175,6 +180,7 @@ void EmulatorAPI::companionItem(const HttpRequestPtr& req, std::function<void(co
         }
         Json::Value out;
         out["pairing_id"] = result.pairing.id;
+        out["state"] = result.pairing.state == companion::PairingState::Approved ? "approved" : "pending";
         out["code"] = result.code;
         out["expires_in"] = result.pairing.expiresIn;
         out["scopes"] = webapi_companion::ScopesJson(result.pairing.scopes);

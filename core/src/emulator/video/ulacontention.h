@@ -126,6 +126,9 @@ public:
     /// 0000 xxxx xxxx xx01 (see GetGateArrayFloatingBus)
     void SetGateArray(bool gateArray)
     {
+        // The Next sets it on every CPU speed write (NR #07): the table only when the rule changes
+        if (gateArray == _gateArray)
+            return;
         _gateArray = gateArray;
         RebuildDelayLut();
     }
@@ -135,6 +138,8 @@ public:
     /// Amstrad gate array's pattern
     void SetWindowedWait(bool windowed)
     {
+        if (windowed == _windowedWait)
+            return;
         _windowedWait = windowed;
         RebuildDelayLut();
     }

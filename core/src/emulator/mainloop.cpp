@@ -240,11 +240,7 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
             // a ~2x period the audio ring cannot cover, heard as a dropout on
             // every overrun. Up to one frame of catch-up is allowed instead;
             // DRC absorbs the residual (audio-sync design).
-            if (_nextFrameTime < now - 2 * frameDuration || _nextFrameTime > now + frameDuration)
-            {
-                _nextFrameTime = now;
-            }
-            _nextFrameTime += frameDuration;
+            _nextFrameTime = NextFrameDeadline(_nextFrameTime, now, frameDuration);
 
             // Precise, interruptible sleep (polls the stop flag every few ms).
             // Must NOT be std::condition_variable::wait_until: on Windows it

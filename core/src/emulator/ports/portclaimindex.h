@@ -10,6 +10,11 @@
 #include <memory>
 #include <vector>
 
+// Qt defines `slots` as an empty macro, and Qt sources reach this header through emulator.h before they undefine it:
+// `namespace slots` would then be an anonymous namespace (gcc -Wsubobject-linkage). The macro is off for this header
+#pragma push_macro("slots")
+#undef slots
+
 class EmulatorContext;
 namespace slots
 {
@@ -48,3 +53,5 @@ private:
     std::unique_ptr<slots::PortOwners> _owners;
     std::vector<uint8_t> _table;  ///< claim by (out << 17 | dos << 16 | port); empty until the first lookup
 };
+
+#pragma pop_macro("slots")
