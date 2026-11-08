@@ -30,6 +30,8 @@
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -63,6 +65,9 @@
 #include <string>
 #include <ctime>
 
+#include "debuggercontrol.h"
+#include "guicontrol/host.h"
+#include "guicontrol/windowbinding.h"
 #include "remotemachine.h"
 #include "unrealmachine.h"
 #include "dialogs/debugger/addressmenu.h"
@@ -528,6 +533,50 @@ void window_check(QWidget * window, ecatshim::CPU * cpu, const std::function<voi
 }
 
 // What the window's buttons and editors do, through the same calls, on the machine as it runs; the number failed
+// The GUI control plane (guicontrol/, as unreal-qt's): the window `debugger` with the views disassembly and memory,
+// for unreal-gui and the agents. UNREAL_GUI_CONTROL_DIR and UNREAL_GUI_CONTROL_PORT as for every GUI program. Null
+// when the host cannot listen (the debugger runs on without it)
+std::unique_ptr<guicontrol::Host> start_gui_control(DebuggerWindow * window, ecatshim::Emulator * m, bool remote)
+{
+    guicontrol::HostOptions options;
+    options.program = "unreal-debugger";
+    options.version = QCoreApplication::applicationVersion();
+    options.FromEnvironment();
+    // The WebAPI the machine is reached at: --connect's; in process none
+    options.endpoints = [m, remote]() {
+        QJsonArray endpoints;
+        if (remote) endpoints.append(QString::fromStdString(RemoteMachineEndpoint(m)));
+        return endpoints;
+    };
+    auto host = std::make_unique<guicontrol::Host>(std::move(options));
+    QString error;
+    if (!host->Start(&error)) {
+        fprintf(stderr, "GUI control: not started: %s\n", qPrintable(error));
+        return nullptr;
+    }
+    new guicontrol::WindowBinding(*host, window, "debugger");
+    DebuggerControl::Hooks hooks;
+    hooks.instance = [m, remote]() {
+        return QString::fromStdString(remote ? RemoteMachineId(m) : UnrealMachineId(m));
+    };
+    hooks.endpoint = [m, remote]() { return remote ? QString::fromStdString(RemoteMachineEndpoint(m)) : QString(); };
+    hooks.coreAction = [m, remote, window](const QString &action, const QJsonObject &params,
+                                           std::function<void(const guicontrol::Result &)> done) {
+        const std::string text = QJsonDocument(params).toJson(QJsonDocument::Compact).toStdString();
+        MachineActionDone answer = [done](const MachineActionResult &r) {
+            const QJsonObject body = QJsonDocument::fromJson(QByteArray::fromStdString(r.body)).object();
+            done(r.ok ? guicontrol::Result::Success(body)
+                      : guicontrol::Result::Failure(r.error.empty() ? QString(guicontrol::errors::kFailed)
+                                                                    : QString::fromStdString(r.error),
+                                                    QString::fromStdString(r.message), body));
+        };
+        if (remote) RemoteMachineAction(m, action.toStdString(), text, window, std::move(answer));
+        else UnrealMachineAction(m, action.toStdString(), text, window, std::move(answer));
+    };
+    new DebuggerControl(*host, window, std::move(hooks));
+    return host;
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -1002,6 +1051,7 @@ int main(int argc, char * argv[])
     GenericDbgWnd * dbg = CreateDebuggerWindow(nullptr, machine.get(), nullptr);
     if (parser.isSet(zoomOpt)) static_cast<DebuggerWindow *>(dbg)->set_zoom(parser.value(zoomOpt).toDouble());
     dbg->show();
+    const std::unique_ptr<guicontrol::Host> gui = start_gui_control(static_cast<DebuggerWindow *>(dbg), machine.get(), remote);
 
     if (parser.isSet(checkOpt)) {
         // Qt's own file dialogs: the check answers them, a native one it cannot reach

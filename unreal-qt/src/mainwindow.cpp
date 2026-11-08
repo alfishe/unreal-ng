@@ -121,6 +121,7 @@
 #include "emulator/companioncontroller.h"
 #include "emulator/remotecontrolguard.h"
 #include "guicontrol/host.h"
+#include "guicontrol/screenbinding.h"
 #include "guicontrol/windowbinding.h"
 #include "guiplane/debuggercontrol.h"
 #include "guiplane/programcontrol.h"
@@ -5327,20 +5328,43 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
     }
     static const bool declared = (DeclareUnrealQtInterface(), true);
     (void)declared;
+    const auto webApi = []() {
+#ifdef ENABLE_AUTOMATION
+        if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+            return QStringLiteral("http://127.0.0.1:%1").arg(port);
+#endif
+        return QString();
+    };
     new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    // The main screen: View > Scale and full screen, the machine it shows
+    guicontrol::ScreenBinding::Hooks screenHooks;
+    screenHooks.nativeSize = [this] { return pictureNativeSize(); };
+    screenHooks.zoom = [this](int factor) {
+        handleScaleRequested(factor);
+        return QString();
+    };
+    screenHooks.fullscreen = [this](bool on) { setFullScreen(on); };
+    screenHooks.instance = [this, webApi]() {
+        Emulator* emulator = m_binding ? m_binding->emulator() : nullptr;
+        if (emulator == nullptr)
+            return QJsonObject();
+        return QJsonObject{{"endpoint", webApi()}, {"id", QString::fromStdString(emulator->GetId())}};
+    };
+    QPointer<guicontrol::ScreenBinding> screenControl =
+        new guicontrol::ScreenBinding(*_guiHost, this, ui->contentFrame, QStringLiteral("main"),
+                                      QStringLiteral("screen"), std::move(screenHooks));
+    if (m_binding)
+    {
+        connect(m_binding, &EmulatorBinding::bound, screenControl, &guicontrol::ScreenBinding::Publish);
+        connect(m_binding, &EmulatorBinding::unbound, screenControl, &guicontrol::ScreenBinding::Publish);
+    }
     QPointer<DebuggerControl> debuggerControl;
     if (debuggerWindow != nullptr)
     {
         new guicontrol::WindowBinding(*_guiHost, debuggerWindow, QStringLiteral("debugger"));
         DebuggerControl::Hooks hooks;
         hooks.showDebugger = [this] { handleDebuggerToggled(true); };
-        hooks.endpoint = []() {
-#ifdef ENABLE_AUTOMATION
-            if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
-                return QStringLiteral("http://127.0.0.1:%1").arg(port);
-#endif
-            return QString();
-        };
+        hooks.endpoint = webApi;
         debuggerControl = new DebuggerControl(*_guiHost, debuggerWindow, m_binding, std::move(hooks));
     }
     ProgramControl::Hooks programHooks;
@@ -5365,13 +5389,15 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
     // The WebAPI comes up on its own thread: the discovery file and the views name it once it listens (up to 15 s)
     auto* poll = new QTimer(this);
     auto tries = std::make_shared<int>(0);
-    connect(poll, &QTimer::timeout, this, [this, poll, tries, debuggerControl]() {
+    connect(poll, &QTimer::timeout, this, [this, poll, tries, debuggerControl, screenControl]() {
         if (Automation::GetInstance().GetWebAPIPort() > 0 || ++*tries >= 60)
         {
             if (_guiHost)
                 _guiHost->RefreshDiscovery();
             if (debuggerControl)
                 debuggerControl->PublishInstance();
+            if (screenControl)
+                screenControl->Publish();
             poll->deleteLater();
         }
     });

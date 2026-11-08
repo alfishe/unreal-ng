@@ -29,7 +29,8 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 | 2 | unreal-qt: `debugger`, `metadata`, `disassembly`, `memory`, `unrealqt`; the controller bindings in process; the `state` call; `unreal-gui state` / `mcp`; the Python client | done |
 | 3 | the controller profiles and the Stream Deck scenarios on the plane; `gui-catalogue.json`; the daemon's `gui` keys and `gui.*` readouts; the TTD scrub a core action | done |
 | 4 | the GUI actions, the GUI cursors and the video wall's single sync out of the core; the video wall hosts `tilegrid` | done |
-| 5-6 | the other programs | see the design |
+| 5 | unreal-debugger hosts `debugger`, `disassembly` and `memory`, with its own core and with `--connect` | done |
+| 6 | the video wall's `tilegrid.focus` / `tilegrid.layout`; `screen` on unreal-qt's main screen and on unreal-screen-viewer, which hosts the plane | done |
 
 ## 2. Pieces
 
@@ -125,17 +126,19 @@ asks each host to `resolve` and takes the only match, else the one focused last.
 | `debugger` | host | `debugger.open`, `debugger.close`, `debugger.focus {pane}` (`disassembly`, `registers`, `memory`, `stack`), `debugger.focus_next`, `debugger.focus_prev`; on the focused pane: `debugger.cursor_move {dir}`, `debugger.page {n?}`, `debugger.activate` (Enter) | `open`, `pane` |
 | `metadata` | host | `metadata.set {switch, on?}`: `metadata`, `regions`, `colours`, `notes`, `labels` | each switch |
 | `disassembly` | view | `disassembly.goto {addr}`, `disassembly.follow_pc`, `disassembly.cursor {addr}`, `disassembly.cursor_move {dir}` (up, down), `disassembly.page {n?}` (16 rows), `disassembly.scroll_mode {mode?}` (`byte`, `command`); composed: `disassembly.run_to_cursor`, `disassembly.breakpoint_toggle_cursor` | `top`, `cursor`, `pc`, `scroll_mode` |
-| `memory` | view | `memory.goto {addr}`, `memory.cursor {addr}`, `memory.cursor_move {dir}`, `memory.page {n?}`, `memory.follow {register}` (`pc`, `sp`, `bc`, `de`, `hl`, `ix`, `iy`, `off`), `memory.select {from, to}` (one 16 KB page), `memory.follow_cursor` (the word at the cursor); composed: `memory.find_last_write`, `memory.find_last {access?}` | `top`, `cursor`, `selection {from, to}`, `follow` |
+| `memory` | view | `memory.goto {addr}`, `memory.cursor {addr}`, `memory.cursor_move {dir}`, `memory.page {n?}`, `memory.follow {register}` (`pc`, `sp`, `bc`, `de`, `hl`, `ix`, `iy`, `off`), `memory.select {from, to}` (on the page shown), `memory.follow_cursor` (the word at the cursor); composed: `memory.find_last_write`, `memory.find_last {access?}` | `top`, `cursor`, `selection {from, to}`, `follow` |
 | `unrealqt` | host | `unrealqt.osd_keyboard {on?}`, `unrealqt.controllers_open`, `unrealqt.controllers_learn {device}` | `osd_keyboard` |
-| `tilegrid` | view | `tilegrid.single_sync {on?}`: every tile shows the first tile's machine in step with it, the others removed | `tiles [{instance}]`, `single_sync` |
+| `tilegrid` | view | `tilegrid.single_sync {on?}`: every tile shows the first tile's machine in step with it, the others removed; `tilegrid.focus {tile}` (an index from 0: selects the tile as a click does, its machine plays the sound); `tilegrid.layout {preset}` (`windowed`, `frameless`, `fullscreen`: the wall's window mode, see below) | `tiles [{instance}]`, `focused` (null: none), `single_sync`, `layout` |
+| `screen` | view | `screen.zoom {factor}` (1..4: the window fits the picture at that whole scale, leaving full screen), `screen.fullscreen {on?}` | `zoom` (the scale the picture is shown at now), `fullscreen` |
 
 A declared command takes its declared parameters only: an unknown or a missing one is `bad_request` naming it and
 listing what the command takes (`memory.goto: unknown parameter file; missing addr; memory.goto takes addr (...)`).
 
 Values: an address is a number or text (`27136`, `0x6A00`, `#6A00`, `$6A00`, `6A00h`) and comes back as `0x6A00`;
 `dir` is `up`, `down`, `left` or `right`; `n` is signed (default 1); a toggle without `on` flips it. The memory view
-works in CPU addresses of the machine's current mapping: it shows one 16 KB page, `goto` and a cursor past the page's
-edge show the address's page. A view's state is null while the debugger shows no machine; its commands then answer
+works in CPU addresses of the machine's current mapping: unreal-qt's shows one 16 KB page, `goto` and a cursor past
+the page's edge show the address's page; unreal-debugger's shows the processor's whole space. A line is the view's
+own: as wide as the window in unreal-qt, 16 bytes in unreal-debugger. A view's state is null while the debugger shows no machine; its commands then answer
 `not_now`.
 
 unreal-qt binds its main window as `main`, the debugger as `debugger` with the views `debugger/disassembly` and
@@ -146,9 +149,29 @@ back as the command's (`not_now: no time travel history`). The catalogue in
 [`interfaces.cpp`](../../../../guicontrol/src/interfaces.cpp) is the source; a program adds its own commands with
 `AddProgramInterface` (unreal-qt: [`programcontrol.cpp`](../../../../unreal-qt/src/guiplane/programcontrol.cpp)).
 
+unreal-debugger (`debuggers/qt`, [`guiplane/debuggercontrol.cpp`](../../../../debuggers/qt/guiplane/debuggercontrol.cpp))
+implements the same three, as program `unreal-debugger`: the `debugger` interface on its root, its window as
+`debugger`, the views `debugger/disassembly` and `debugger/memory` on the listing and the dump of the processor whose
+tab is in front (their state adds `cpu`, its name). With its own core the views name its machine with no endpoint;
+with `--connect` they name the emulator taken over and its WebAPI, and the instance is null while it is gone.
+`run_to_cursor` and `breakpoint_toggle_cursor` are the window's F4 and F2 (`not_now` while the machine runs, or is only
+seen); `find_last_write` and `find_last` run the core action with the dump's address, through the registry in process
+and `POST /api/v1/controllers/actions/{action}` with `--connect` (the main processor only: a card's Z80 has no
+history). It has no `metadata` interface (no markup switches). The plane code is on the views' side and sees no core
+header: the machine's id and its core actions come from the adapter through hooks.
+
 The video wall (unreal-videowall) binds its window as `main` and the view `main/tilegrid` (`tilegrid`). Its single
 sync mode lives here only: the emulator planes have no video wall command
 ([`videowall_singlesync.py`](../../../../tools/verification/videowall/src/videowall_singlesync.py) drives it).
+`tilegrid.layout` switches the wall's window mode, the F10 / Ctrl+F switches: `frameless` and `fullscreen` fill the
+screen with tiles (machines are created for them), `windowed` restores the window and drops the extra tiles. It is not
+a layout preset (how many tiles, where, of what size): the wall has none yet.
+
+`screen` is the shared [`ScreenBinding`](../../../../guicontrol/include/guicontrol/screenbinding.h) of
+`guicontrol-widgets`: unreal-qt binds its main screen as `main/screen` (`zoom` is View > Scale, `fullscreen` the
+window's full screen), unreal-screen-viewer (program `unreal-screen-viewer`, `--connect host:port` names the WebAPI it
+watches, its only endpoint) binds its screen as `main/screen`, the picture being one, two side by side or two stacked
+256x192 screens. Each names the machine shown; the viewer's is the one selected in its list.
 
 **No GUI verbs in the core.** The core's action registry holds core actions only: the debugger's panes, the windows,
 the screenshot to the clipboard, the on-screen keyboard and the Controllers window are commands of this plane, with
@@ -268,6 +291,8 @@ with a clock in the core (`core/src/emulator/actions/scrubactions.cpp`), so the 
 |:--|:--|
 | `unreal-qt-tests --gtest_filter='GuiControl_Test.*'` | host and client in process: list, call, state, push, coalescing, a dropped slow client, TCP, `WindowBinding`, the parameter helpers |
 | `python3 tools/guicontrol/verify_unrealqt.py` | every unreal-qt command against an offscreen unreal-qt with a fresh machine, then `verify_mcp.py` |
+| `python3 tools/guicontrol/verify_debugger.py` | the shared `debugger` / `disassembly` / `memory` checks on unreal-qt, unreal-debugger with its core and unreal-debugger `--connect` (offscreen), then one `unreal-gui memory.goto` moving each, by host and by focus |
+| `python3 tools/guicontrol/verify_programs.py` | the four programs at once (unreal-qt, unreal-debugger `--connect`, unreal-screen-viewer `--connect`, unreal-videowall, offscreen): `unreal-gui list` shows them, `screen` on unreal-qt and the viewer, `tilegrid` and `window` on the wall |
 | `python3 tools/guicontrol/verify_mcp.py <unreal-gui>` | the MCP server against a running program: the tools, their text, the refusals |
 | `unreal-qt-tests --gtest_filter='GuiPlaneProfiles_Test.*'` | every shipped profile binding: no GUI action of the core, each plane method declared, its params accepted |
 | `streamdeck-tests` (`TestGuiPlane`) | the daemon's client against a fake host and a Unix socket, discovery by endpoint, the `gui` kind |

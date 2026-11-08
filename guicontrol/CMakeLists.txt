@@ -35,6 +35,8 @@ set_target_properties(guicontrol PROPERTIES AUTOMOC ON)
 add_library(guicontrol-widgets STATIC
     src/windowbinding.cpp
     include/guicontrol/windowbinding.h
+    src/screenbinding.cpp
+    include/guicontrol/screenbinding.h
 )
 target_link_libraries(guicontrol-widgets PUBLIC guicontrol Qt6::Gui Qt6::Widgets)
 target_compile_options(guicontrol-widgets PRIVATE ${GC_WARNINGS})

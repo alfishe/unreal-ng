@@ -5,6 +5,8 @@
 
 #include "memoryview.h"
 
+#include <utility>
+
 #include <QApplication>
 #include <QCoreApplication>
 #include <QFile>
@@ -242,9 +244,28 @@ void MemoryView::set_cursor(unsigned int address, bool chars)
     if (m_word && !chars) address &= ~1u;
     m_cursor = address;
     m_on_chars = chars;
+    m_selected = false;
     make_visible();
     viewport()->update();
     emit cursor_moved(m_cursor);
+}
+
+void MemoryView::select(unsigned int from, unsigned int to)
+{
+    if (to < from) std::swap(from, to);
+    if (to >= m_src.size) to = m_src.size - 1;
+    set_cursor(from, false);
+    m_selected = from <= to;
+    m_sel_from = from;
+    m_sel_to = to;
+    viewport()->update();
+}
+
+bool MemoryView::selection(unsigned int &from, unsigned int &to) const
+{
+    from = m_sel_from;
+    to = m_sel_to;
+    return m_selected;
 }
 
 void MemoryView::go_to(unsigned int address)
@@ -273,6 +294,7 @@ QString MemoryView::row_key(int row) const
     QString key = QString::number(line) + ' ' + QString::number(m_base) + (m_word ? 'w' : 'b')
                   + QString::number(horizontalScrollBar()->value()) + (m_on_chars ? 'c' : 'v') + (hasFocus() ? 'f' : ' ');
     if (m_cursor >= line && m_cursor - line < LINE_BYTES) key += QString::number(m_cursor - line);
+    if (selected(line, LINE_BYTES)) key += QString(" s%1-%2").arg(m_sel_from).arg(m_sel_to);
     key += window_start(line) + ' ';
     for (unsigned int i = 0; i < LINE_BYTES && line + i < m_src.size; i++) {
         const unsigned int a = line + i;
@@ -351,6 +373,7 @@ void MemoryView::paintEvent(QPaintEvent *event)
             const bool cur = (m_cursor >= a && m_cursor < a + (unsigned int)cell_bytes());
             if (cur) p.fillRect(x - 1, y, m_cw * cell_chars() + 2, m_rh,
                                 (!m_on_chars && hasFocus()) ? c.selection : c.selection.lighter(150));
+            else if (selected(a, (unsigned int)cell_bytes())) p.fillRect(x - 1, y, m_cw * cell_chars() + 2, m_rh, c.selection.lighter(170));
             p.setPen(cur && !m_on_chars && hasFocus() ? c.selection_text : (changed ? c.changed : c.text));
             p.drawText(x, y + base_y, fmt_num(v, m_base, cell_chars()));
         }
@@ -362,6 +385,7 @@ void MemoryView::paintEvent(QPaintEvent *event)
             const bool cur = (a == m_cursor) || (!m_on_chars && m_word && a == m_cursor + 1);
             if (cur) p.fillRect(x, y, m_cw, m_rh,
                                 (m_on_chars && hasFocus()) ? c.selection : c.selection.lighter(150));
+            else if (selected(a, 1)) p.fillRect(x, y, m_cw, m_rh, c.selection.lighter(170));
             p.setPen(cur && m_on_chars && hasFocus() ? c.selection_text : c.text);
             p.drawText(x, y + base_y, QString::fromStdString(e->translate_char(m_src.read(a) & 0xFF)));
         }
@@ -876,6 +900,16 @@ void MemoryTabs::show_address(CPU * cpu, unsigned int address)
             p->view()->setFocus();
             return;
         }
+}
+
+MemoryView * MemoryTabs::view_of(CPU * cpu, bool shown)
+{
+    for (MemoryPanel * p : m_panels)
+        if (p->view()->source().cpu == cpu) {
+            if (shown) setCurrentWidget(p);
+            return p->view();
+        }
+    return nullptr;
 }
 
 void MemoryTabs::show_page(CPU * cpu, unsigned int address)

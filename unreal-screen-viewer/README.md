@@ -107,10 +107,16 @@ Access **Settings** menu to configure:
 unreal-screen-viewer [options]
 
 Options:
-  --host <addr>    WebAPI host (default: localhost)
-  --port <port>    WebAPI port (default: 8090)
-  --help           Show help
+  --connect <host:port>  the WebAPI to watch, not kept in the settings (default: the Settings endpoint)
+  --help                 Show help
 ```
+
+### GUI control plane
+
+The viewer is on the [GUI control plane](../docs/emulator/design/gui-control/README.md) as program
+`unreal-screen-viewer`: the window `main` (`window.*`) and the view `main/screen` (`screen.zoom {factor}`,
+`screen.fullscreen {on?}`; it names the selected machine and the WebAPI watched). `unreal-gui list` shows it;
+`UNREAL_GUI_CONTROL_DIR` and `UNREAL_GUI_CONTROL_PORT` as for every GUI program.
 
 ---
 

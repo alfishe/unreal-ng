@@ -50,6 +50,15 @@ public:
     /// Get current dual layout
     DualLayout dualLayout() const { return _dualLayout; }
 
+    /// What the view draws at 1x: one screen, or two side by side or stacked
+    QSize pictureSize() const
+    {
+        if (_viewMode == ViewMode::Single)
+            return QSize(SCREEN_WIDTH, SCREEN_HEIGHT);
+        return _dualLayout == DualLayout::Vertical ? QSize(SCREEN_WIDTH, SCREEN_HEIGHT * 2)
+                                                   : QSize(SCREEN_WIDTH * 2, SCREEN_HEIGHT);
+    }
+
 public slots:
     /// Attach to shared memory region
     void attachToSharedMemory(const QString& emulatorId, const QString& shmName, qint64 shmSize);

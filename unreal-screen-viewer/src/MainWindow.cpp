@@ -12,13 +12,22 @@
 #include <QSettings>
 #include <QVBoxLayout>
 
+#include <QCoreApplication>
+#include <QDebug>
+#include <QJsonArray>
+#include <QJsonObject>
+
+#include "guicontrol/host.h"
+#include "guicontrol/screenbinding.h"
+#include "guicontrol/windowbinding.h"
+
 #include "WebAPIClient.h"
 #include "EmulatorList.h"
 #include "ScreenViewer.h"
 #include "emulator/buildinfo.h"
 #include "ModeToolbar.h"
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(const QString& endpoint, QWidget* parent)
     : QMainWindow(parent)
     , _webApiClient(std::make_unique<WebAPIClient>())
 {
@@ -41,6 +50,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Load saved settings
     loadSettings();
+    const QStringList parts = endpoint.split(':');
+    if (parts.size() == 2 && parts[1].toInt() > 0)
+    {
+        _webApiHost = parts[0];
+        _webApiPort = parts[1].toInt();
+        _endpointGiven = true;
+    }
+    _webApiClient->setEndpoint(_webApiHost, _webApiPort);
+
+    startGuiControl();
 
     // Initial refresh
     onRefreshClicked();
@@ -48,6 +67,9 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
+    _screenControl = nullptr;
+    _guiHost.reset();
+
     // Save settings before exit
     saveSettings();
 
@@ -192,6 +214,8 @@ void MainWindow::onEmulatorSelected(const QString& emulatorId)
     _webApiClient->enableSharedMemory(emulatorId);
     
     updateStatusBar();
+    if (_screenControl)
+        _screenControl->Publish();
 }
 
 void MainWindow::onEmulatorDeselected()
@@ -204,6 +228,8 @@ void MainWindow::onEmulatorDeselected()
     }
     
     updateStatusBar();
+    if (_screenControl)
+        _screenControl->Publish();
 }
 
 void MainWindow::onConnectionStatusChanged(bool connected)
@@ -218,6 +244,8 @@ void MainWindow::onConnectionStatusChanged(bool connected)
     }
     
     updateStatusBar();
+    if (_screenControl)
+        _screenControl->Publish();
 }
 
 void MainWindow::onRefreshClicked()
@@ -242,6 +270,9 @@ void MainWindow::openSettings()
             _webApiHost = parts[0];
             _webApiPort = parts[1].toInt();
             _webApiClient->setEndpoint(_webApiHost, _webApiPort);
+            _endpointGiven = false;
+            if (_guiHost)
+                _guiHost->RefreshDiscovery();
             onRefreshClicked();
         }
     }
@@ -274,8 +305,53 @@ void MainWindow::saveSettings()
     
     settings.setValue("viewMode", static_cast<int>(_modeToolbar->viewMode()));
     settings.setValue("dualLayout", static_cast<int>(_modeToolbar->dualLayout()));
-    settings.setValue("webApiHost", _webApiHost);
-    settings.setValue("webApiPort", _webApiPort);
+    if (!_endpointGiven)
+    {
+        settings.setValue("webApiHost", _webApiHost);
+        settings.setValue("webApiPort", _webApiPort);
+    }
+}
+
+QString MainWindow::endpointUrl() const
+{
+    return QStringLiteral("http://%1:%2").arg(_webApiHost).arg(_webApiPort);
+}
+
+void MainWindow::startGuiControl()
+{
+    guicontrol::HostOptions options;
+    options.program = QStringLiteral("unreal-screen-viewer");
+    options.version = QCoreApplication::applicationVersion();
+    options.FromEnvironment();
+    // The WebAPI watched: where a client crosses from the screen to its machine
+    options.endpoints = [this]() { return QJsonArray{endpointUrl()}; };
+    _guiHost = std::make_unique<guicontrol::Host>(std::move(options));
+    QString error;
+    if (!_guiHost->Start(&error))
+    {
+        qWarning().noquote() << "GUI control: not started:" << error;
+        _guiHost.reset();
+        return;
+    }
+    new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    guicontrol::ScreenBinding::Hooks hooks;
+    hooks.nativeSize = [this]() { return _screenViewer->pictureSize(); };
+    hooks.zoom = [this](int factor) {
+        // The screen widget at the picture times the factor: the window grows by what it adds around it
+        if (isFullScreen() || isMaximized())
+            showNormal();
+        resize(size() - _screenViewer->size() + _screenViewer->pictureSize() * factor);
+        return QString();
+    };
+    hooks.instance = [this]() {
+        if (_selectedEmulatorId.isEmpty())
+            return QJsonObject();
+        return QJsonObject{{"endpoint", endpointUrl()}, {"id", _selectedEmulatorId}};
+    };
+    _screenControl = new guicontrol::ScreenBinding(*_guiHost, this, _screenViewer, QStringLiteral("main"),
+                                                   QStringLiteral("screen"), std::move(hooks));
+    connect(_screenViewer, &ScreenViewer::viewModeChanged, _screenControl, &guicontrol::ScreenBinding::Publish);
+    connect(_screenViewer, &ScreenViewer::dualLayoutChanged, _screenControl, &guicontrol::ScreenBinding::Publish);
 }
 
 void MainWindow::loadSettings()

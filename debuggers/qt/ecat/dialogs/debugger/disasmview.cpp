@@ -284,6 +284,22 @@ void DisasmView::make_visible()
 
 void DisasmView::move_cursor(int delta, bool page)
 {
+    //By bytes: the listing decoded again from the byte next to the cursor's, the cursor on the row it was
+    if (m_byte_scroll && !page && m_buf->size() > 0) {
+        const int row = m_cursor - m_top;
+        long long address = ((long long)cursor_address() + (long long)delta * m_disasm->unit_bytes()) % m_space;
+        if (address < 0) address += m_space;
+        m_buf->reset((unsigned int)address, rows() + 1);
+        m_top = m_cursor = 0;
+        if (row > 0) {
+            keep_place([&]() { m_buf->extend_up((size_t)row); });
+            m_top = std::max(0, m_cursor - row);
+        }
+        fill();
+        update_scrollbar();
+        viewport()->update();
+        return;
+    }
     int target = m_cursor + delta;
     if (target < 0) {
         keep_place([&]() { m_buf->extend_up((size_t)(-target)); });
@@ -427,6 +443,32 @@ void DisasmView::go_to(unsigned int address)
 unsigned int DisasmView::cursor_address() const
 {
     return (m_buf->size() > 0) ? m_buf->at(m_cursor).address : 0;
+}
+
+unsigned int DisasmView::top_address() const
+{
+    return (m_buf->size() > 0) ? m_buf->at(m_top).address : 0;
+}
+
+void DisasmView::show_at_top(unsigned int address)
+{
+    go_to(address);
+    m_top = m_cursor;
+    fill();
+    update_scrollbar();
+    viewport()->update();
+}
+
+void DisasmView::place_cursor(unsigned int address)
+{
+    close_edit();
+    const int i = m_buf->find(address % m_space);
+    if (i < m_top || i >= m_top + rows()) {
+        go_to(address);
+        return;
+    }
+    m_cursor = i;
+    viewport()->update();
 }
 
 bool DisasmView::cursor_line(DisasmLine &line) const
@@ -662,6 +704,11 @@ void DisasmView::paintEvent(QPaintEvent *event)
     if (cur != m_shown_cursor) {
         m_shown_cursor = cur;
         emit cursor_moved(cur);
+    }
+    const unsigned int top = top_address();
+    if (top != m_shown_top) {
+        m_shown_top = top;
+        emit top_moved(top);
     }
 
     //Jump arrows, the shortest nearest to the listing

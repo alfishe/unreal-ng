@@ -44,6 +44,7 @@
 #include <QTimer>
 #include <QWindow>
 #include <QtConcurrent/QtConcurrent>
+#include <algorithm>
 #include <future>
 #include <unordered_set>
 #include <vector>
@@ -974,6 +975,7 @@ void VideoWallWindow::toggleFramelessMode()
             qDebug() << "Windowed → frameless:" << _tileGrid->tiles().size();
         });
     }
+    publishGuiState();
 }
 
 void VideoWallWindow::toggleFullscreenMode()
@@ -986,6 +988,7 @@ void VideoWallWindow::toggleFullscreenMode()
 #elif defined(Q_OS_LINUX)
     toggleFullscreenLinux();
 #endif
+    publishGuiState();
 }
 
 void VideoWallWindow::toggleFullscreenMacOS()
@@ -1590,7 +1593,8 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     }
 
     _audioBoundTile = tile;
-    
+    publishGuiState();
+
     // In non-singlesync mode, synchronize all rendering on this active emulator
     if (!_singleSyncMode)
     {
@@ -1598,6 +1602,65 @@ void VideoWallWindow::bindAudioToTile(EmulatorTile* tile)
     }
     
     qDebug() << "Audio bound to tile (Sound & SoundHQ enabled):" << QString::fromStdString(emulator->GetUUID().toString());
+}
+
+/// GPU mode: a click binds the audio to the tile's machine (a click on the bound one unbinds it)
+void VideoWallWindow::onGpuTileClicked(int index)
+{
+    if (index < 0 || !_soundManager)
+        return;
+
+    auto emulator = _tileGridWrapper->emulatorAt(index);
+    if (!emulator)
+        return;
+
+    // Toggle behavior: if clicking already-bound tile, unbind
+    if (_audioBoundIndex == index)
+    {
+        // Unbind current
+        emulator->ClearAudioCallback();
+        if (auto* fm = emulator->GetFeatureManager())
+        {
+            fm->setFeature(Features::kSoundGeneration, false);
+            fm->setFeature(Features::kSoundHQ, false);
+        }
+        _audioBoundIndex = -1;
+        publishGuiState();
+        qDebug() << "Audio unbound from tile" << index;
+        return;
+    }
+
+    // Unbind from previous
+    if (_audioBoundIndex >= 0)
+    {
+        auto prevEmulator = _tileGridWrapper->emulatorAt(_audioBoundIndex);
+        if (prevEmulator)
+        {
+            prevEmulator->ClearAudioCallback();
+            if (auto* fm = prevEmulator->GetFeatureManager())
+            {
+                fm->setFeature(Features::kSoundGeneration, false);
+                fm->setFeature(Features::kSoundHQ, false);
+            }
+        }
+    }
+
+    // Bind to new
+    if (auto* fm = emulator->GetFeatureManager())
+    {
+        fm->setFeature(Features::kSoundGeneration, true);
+        fm->setFeature(Features::kSoundHQ, true);
+    }
+    emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback,
+                               _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
+    emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+    _soundManager->setActiveContext(emulator->GetContext());
+
+    _audioBoundIndex = index;
+    _tileGridWrapper->setFocusedIndex(index);
+    updateSurfaceView();
+    publishGuiState();
+    qDebug() << "Audio bound to tile" << index;
 }
 
 void VideoWallWindow::onTileClicked(EmulatorTile* tile)
@@ -1631,6 +1694,7 @@ void VideoWallWindow::unbindAudioFromTile()
     // Clear pointer FIRST to prevent infinite recursion on secondary events
     EmulatorTile* tile = _audioBoundTile;
     _audioBoundTile = nullptr;
+    publishGuiState();
 
     {
         std::lock_guard<std::mutex> lock(_audioBindMutex);
@@ -1890,61 +1954,7 @@ void VideoWallWindow::handleGpuAccelerationToggled(bool enabled)
         setCentralWidget(_tileGridWrapper->widget());
 
         // Connect signals
-        connect(_tileGridWrapper, &TileGridWrapper::tileClicked, this, [this](int index) {
-            // Handle tile click in GPU mode - bind audio to emulator
-            if (index < 0 || !_soundManager)
-                return;
-
-            auto emulator = _tileGridWrapper->emulatorAt(index);
-            if (!emulator)
-                return;
-
-            // Toggle behavior: if clicking already-bound tile, unbind
-            if (_audioBoundIndex == index)
-            {
-                // Unbind current
-                emulator->ClearAudioCallback();
-                if (auto* fm = emulator->GetFeatureManager())
-                {
-                    fm->setFeature(Features::kSoundGeneration, false);
-                    fm->setFeature(Features::kSoundHQ, false);
-                }
-                _audioBoundIndex = -1;
-                qDebug() << "Audio unbound from tile" << index;
-                return;
-            }
-
-            // Unbind from previous
-            if (_audioBoundIndex >= 0)
-            {
-                auto prevEmulator = _tileGridWrapper->emulatorAt(_audioBoundIndex);
-                if (prevEmulator)
-                {
-                    prevEmulator->ClearAudioCallback();
-                    if (auto* fm = prevEmulator->GetFeatureManager())
-                    {
-                        fm->setFeature(Features::kSoundGeneration, false);
-                        fm->setFeature(Features::kSoundHQ, false);
-                    }
-                }
-            }
-
-            // Bind to new
-            if (auto* fm = emulator->GetFeatureManager())
-            {
-                fm->setFeature(Features::kSoundGeneration, true);
-                fm->setFeature(Features::kSoundHQ, true);
-            }
-            emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback,
-                                       _soundManager->occupancyCell(), _soundManager->deviceDescriptor());
-            emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
-            _soundManager->setActiveContext(emulator->GetContext());
-
-            _audioBoundIndex = index;
-            _tileGridWrapper->setFocusedIndex(index);
-            updateSurfaceView();
-            qDebug() << "Audio bound to tile" << index;
-        });
+        connect(_tileGridWrapper, &TileGridWrapper::tileClicked, this, &VideoWallWindow::onGpuTileClicked);
 
         connect(_tileGridWrapper, &TileGridWrapper::fileDropped, this, [this](int index, const QString& filePath) {
             auto emulator = _tileGridWrapper->emulatorAt(index);
@@ -2066,6 +2076,20 @@ std::vector<std::string> VideoWallWindow::allEmulatorIds() const
     return ids;
 }
 
+int VideoWallWindow::focusedTile() const
+{
+    if (_useGPU && _tileGridWrapper)
+        return _audioBoundIndex < _tileGridWrapper->emulatorCount() ? _audioBoundIndex : -1;
+    if (_tileGrid && _audioBoundTile)
+    {
+        const std::vector<EmulatorTile*>& tiles = _tileGrid->tiles();
+        const auto at = std::find(tiles.begin(), tiles.end(), _audioBoundTile.data());
+        if (at != tiles.end())
+            return static_cast<int>(at - tiles.begin());
+    }
+    return -1;
+}
+
 std::shared_ptr<Emulator> VideoWallWindow::emulatorAt(int index) const
 {
     if (_useGPU && _tileGridWrapper)
@@ -2147,6 +2171,55 @@ void VideoWallWindow::startGuiControl()
         publishStatus();
         return guicontrol::Result::Success(QJsonObject{{"single_sync", on}});
     });
+    view.SetCommand(QStringLiteral("tilegrid.focus"), [this](const guicontrol::Call& call) {
+        const int tile = call.params.value(QStringLiteral("tile")).toInt(-1);
+        if (tile < 0 || tile >= tileCount())
+            return guicontrol::Result::Failure(guicontrol::errors::kBadRequest,
+                                               QStringLiteral("no tile %1: the wall has %2").arg(tile).arg(tileCount()));
+        if (_singleSyncMode)
+            return guicontrol::Result::Failure(guicontrol::errors::kNotNow,
+                                               QStringLiteral("single sync: the tiles show one machine"));
+        if (focusedTile() != tile)
+        {
+            if (_useGPU && _tileGridWrapper)
+                onGpuTileClicked(tile);
+            else if (_tileGrid)
+                onTileClicked(_tileGrid->tiles()[static_cast<size_t>(tile)]);
+        }
+        if (focusedTile() != tile)
+            return guicontrol::Result::Failure(guicontrol::errors::kFailed,
+                                               QStringLiteral("tile %1 did not take the focus").arg(tile));
+        return guicontrol::Result::Success(QJsonObject{{"focused", tile}});
+    });
+    view.SetCommand(QStringLiteral("tilegrid.layout"), [this](const guicontrol::Call& call) {
+        const QString preset = call.params.value(QStringLiteral("preset")).toString();
+        WindowMode want = WindowMode::Windowed;
+        if (preset == QLatin1String("frameless"))
+            want = WindowMode::Frameless;
+        else if (preset == QLatin1String("fullscreen"))
+            want = WindowMode::Fullscreen;
+        else if (preset != QLatin1String("windowed"))
+            return guicontrol::Result::Failure(
+                guicontrol::errors::kBadRequest,
+                QStringLiteral("preset %1: windowed, frameless or fullscreen").arg(preset));
+        if (_windowMode != want)
+        {
+            // Back to the window first, then into the other mode: each toggle restores what it saved
+            if (_windowMode == WindowMode::Frameless)
+                toggleFramelessMode();
+            else if (_windowMode == WindowMode::Fullscreen)
+                toggleFullscreenMode();
+            if (want == WindowMode::Frameless)
+                toggleFramelessMode();
+            else if (want == WindowMode::Fullscreen)
+                toggleFullscreenMode();
+        }
+        if (_windowMode != want)
+            return guicontrol::Result::Failure(guicontrol::errors::kFailed,
+                                               QStringLiteral("the wall did not switch to %1").arg(preset));
+        publishGuiState();
+        return guicontrol::Result::Success(QJsonObject{{"layout", preset}});
+    });
     publishGuiState();
 }
 
@@ -2160,7 +2233,14 @@ void VideoWallWindow::publishGuiState() const
     QJsonArray tiles;
     for (const std::string& id : allEmulatorIds())
         tiles.append(QJsonObject{{"instance", QString::fromStdString(id)}});
-    view->SetState(QJsonObject{{"tiles", tiles}, {"single_sync", _singleSyncMode}});
+    const int focused = focusedTile();
+    const char* layout = _windowMode == WindowMode::Frameless    ? "frameless"
+                         : _windowMode == WindowMode::Fullscreen ? "fullscreen"
+                                                                 : "windowed";
+    view->SetState(QJsonObject{{"tiles", tiles},
+                               {"focused", focused >= 0 ? QJsonValue(focused) : QJsonValue()},
+                               {"single_sync", _singleSyncMode},
+                               {"layout", QLatin1String(layout)}});
 }
 
 void VideoWallWindow::publishStatus() const

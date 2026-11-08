@@ -93,6 +93,8 @@ protected:
 private slots:
     /// Handle tile click for audio binding (toggle)
     void onTileClicked(EmulatorTile* tile);
+    /// The same in GPU mode, by the tile's index
+    void onGpuTileClicked(int index);
 
 private:
     void setupUI();
@@ -152,6 +154,8 @@ private:
     int tileCount() const;
     std::vector<std::string> allEmulatorIds() const;
     std::shared_ptr<Emulator> emulatorAt(int index) const;
+    /// The tile bound to the sound (a click selects it), -1 none
+    int focusedTile() const;
     void setGridFullscreenMode(bool fullscreen);
     void clearGrid();
     void publishStatus() const;
@@ -236,10 +240,10 @@ private:
     bool _singleSyncMode = false;
 
     /// The GUI control plane's host (docs/emulator/design/gui-control): the window `main` and its view `tilegrid`
-    /// (single sync); null when it could not listen
+    /// (focus, single sync, layout); null when it could not listen
     std::unique_ptr<guicontrol::Host> _guiHost;
     void startGuiControl();
-    /// The tilegrid view's state (tiles, single sync) to the plane's subscribers
+    /// The tilegrid view's state (tiles, the focused tile, single sync, layout) to the plane's subscribers
     void publishGuiState() const;
 
     // Auto-hide menu bar in fullscreen

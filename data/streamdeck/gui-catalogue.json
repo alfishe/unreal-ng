@@ -383,6 +383,34 @@
                         }
                     ],
                     "repeats": false
+                },
+                {
+                    "description": "Select the tile as a click does: its machine plays the sound and takes the keys.",
+                    "label": "Focus a tile",
+                    "method": "tilegrid.focus",
+                    "params": [
+                        {
+                            "description": "the tile's index, from 0",
+                            "kind": "int",
+                            "name": "tile",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The wall's layout: a window with the tiles kept, or the screen filled with tiles (frameless: no frame, fullscreen: full screen); back to windowed the extra tiles go.",
+                    "label": "Layout",
+                    "method": "tilegrid.layout",
+                    "params": [
+                        {
+                            "description": "windowed, frameless or fullscreen",
+                            "kind": "string",
+                            "name": "preset",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
                 }
             ],
             "description": "The video wall's grid of tiles, each showing a machine.",
@@ -390,7 +418,48 @@
             "name": "tilegrid",
             "state": [
                 "tiles",
-                "single_sync"
+                "focused",
+                "single_sync",
+                "layout"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Fit the window to the emulated screen at that whole scale (leaves full screen).",
+                    "label": "Zoom",
+                    "method": "screen.zoom",
+                    "params": [
+                        {
+                            "description": "1..4",
+                            "kind": "int",
+                            "name": "factor",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The window with the emulated screen full screen, or back.",
+                    "label": "Full screen",
+                    "method": "screen.fullscreen",
+                    "params": [
+                        {
+                            "description": "absent: flip it",
+                            "kind": "bool",
+                            "name": "on",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "A view of an emulated screen; zoom is the scale the picture is shown at now.",
+            "level": "view",
+            "name": "screen",
+            "state": [
+                "zoom",
+                "fullscreen"
             ]
         },
         {

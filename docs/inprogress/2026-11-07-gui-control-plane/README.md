@@ -1,6 +1,6 @@
 # GUI control plane
 
-Status: phases 1-4 done (2026-11-08); phase 5 next.
+Status: phases 1-6 done (2026-11-08); phase 7 (one port, §4.10) designed, waits for review.
 
 Owner decisions (2026-11-07):
 
@@ -12,9 +12,16 @@ Owner decisions (2026-11-07):
 - Design first, code after review.
 - Transport: a local socket, plus an optional TCP listener on all interfaces, without a token for now (§4.8).
 - A surface's GUI keys follow its core target (§4.5).
-- The plane has a thin MCP server of its own, not tools in the core's MCP (§4.9).
+- The plane has a thin MCP server of its own, not tools in the core's MCP (§4.9). Extended 2026-11-08: a program
+  with a core also offers the GUI as tools of the core's MCP (§4.10).
 - No aliases for the moved action ids: the shipped profiles move at once (§5).
 - `TargetState` and `ContextState` stay in the core (§5).
+
+Owner decisions (2026-11-08):
+
+- One port and one MCP per program with a core: the GUI methods go straight into the core's API, no token (§4.10).
+- The core does not depend on the layers above it: at most it takes registered callbacks.
+- In the core's MCP the GUI is one tool per interface (`gui_memory`, `gui_screen`, ...), not one generic tool.
 
 ## Contents
 
@@ -84,6 +91,7 @@ reads, not GUI control. They stay too.
 | R8 | Never blocks the GUI. Commands run on the GUI thread's event loop and are short. Slow work (encoding and writing a file) runs off that thread. No thread per client. |
 | R9 | Local by default. A TCP listener for a remote surface is opt-in (§4.8). |
 | R10 | Works with the core in process (unreal-qt, the video wall, `unreal-debugger` with its own core) and without it (`unreal-debugger --connect`, the screen viewer). |
+| R11 | A program with a core serves the GUI methods in the core's own API as well: the WebAPI port (REST and WebSocket), the core's MCP, the CLI, Python and Lua. The core takes them as a registered callback of plain types; it includes no header of the plane, Qt or a GUI program, and names no GUI command (R1 holds). |
 
 ## 4. Design
 
@@ -294,7 +302,50 @@ GUI command still validates.
     `gui_call {target?, method, params?}` and `gui_state {target}`.
   - It adds no verbs of its own: it can do what the CLI does and nothing that reads the machine.
   - The answers carry their content as text, not only `structuredContent`.
+  - From phase 7 a program with a core also offers the GUI as tools of the core's MCP (§4.10); `unreal-gui mcp`
+    stays for programs without a core.
 - **GUI programs** use the same client to drive each other.
+
+### 4.10 One port: the GUI methods in the core's API
+
+Owner decision 2026-11-08. Until phase 6 an agent needs two MCP servers (the core's and `unreal-gui mcp`) and a
+script two transports. From phase 7 a program with a core puts the plane's methods straight into the core's API: the
+same port, the same MCP. The core only takes a registered callback; it knows no GUI command and links nothing of the
+plane.
+
+**The core: two callbacks.** In `core/automation/common/`, plain types, JSON as text:
+
+```cpp
+struct GuiMethods
+{
+    std::function<std::string()> catalogueJson;   // the interfaces: commands, params, descriptions
+    std::function<void(const std::string& method, const std::string& target, const std::string& paramsJson,
+                       std::function<void(bool ok, const std::string& resultJson)> done)> call;  // `done` once, any thread
+};
+void Automation::SetGuiMethods(GuiMethods methods);   // before start(); none: no GUI routes, no GUI tools
+```
+
+From the catalogue the core adds, for each method, the same as for its own commands:
+
+| Plane | Added |
+|:--|:--|
+| REST | `POST /api/v1/gui/{method}` (`/api/v1/gui/memory.goto`), body: the parameters and `target`?; `GET /api/v1/gui` (`list`), `GET /api/v1/gui/state?target=`. 200 with the plane's `result` (`{ok, error?, message?, body?}`); 404 for a method not in the catalogue |
+| WebSocket | the routes as `call`, as every route |
+| MCP | one tool per interface: `gui_memory {action: "goto", target?, addr}`, `gui_disassembly`, `gui_debugger`, `gui_screen`, `gui_tilegrid`, `gui_window`, `gui_unrealqt`; and `gui_list`, `gui_state {target}` |
+| CLI, Python, Lua | `gui memory.goto 0x6000`, `gui list`, `gui state debugger/memory`; `gui_call(method, target, params)` |
+
+No token or scope: the GUI routes are open, as the plane's local socket is. The core does not resolve targets or
+check parameters; it hands the call over and passes the answer back. It calls `call` on its WebAPI thread and does not
+wait: the answer comes through `done`; the emulation thread is not touched.
+
+**The plane: `guicontrol::CoreBridge`.** It fills the two callbacks from the program's `Host`: the catalogue is the
+interface catalogue with the program's extras; a call is queued to the GUI thread and run with `Host::Invoke`, the
+`Result` goes back through `done`. A target this program does not have goes to the other hosts on the machine as
+`unreal-gui` resolves it, so unreal-qt's port also reaches the screen viewer and `unreal-debugger --connect`.
+unreal-qt, the video wall and `unreal-debugger` with its own core set it before `Automation::start()`.
+
+**What stays.** Every host's local socket (the programs without a core, the Stream Deck daemon, the push topics) and
+`unreal-gui` with `unreal-gui mcp`.
 
 ## 5. Moving today's GUI parts out of the core
 
@@ -339,6 +390,7 @@ The core's GUI parts go only after every binding of them has moved, so phases 3 
 | 4 | The core's GUI parts go (§5): GUI declarations, `ActionInfo::gui`, `DebuggerCursors` and the cursor fallback, the video wall single-sync route and notification (the video wall takes `tilegrid.single_sync` in the same phase) | R1 holds: the core has no GUI action, GUI cursor or video wall code; core tests and MCP scripts green |
 | 5 | `unreal-debugger` implements `debugger`, `disassembly`, `memory` (in process and `--connect`) | the same `unreal-gui memory.goto` moves either debugger |
 | 6 | The rest of the video wall (`tilegrid`, `window`); the screen viewer and the Qt client's main screen (`screen`, `window`) | `unreal-gui list` shows all four programs |
+| 7 | One port (§4.10): `Automation::SetGuiMethods` and its REST, WebSocket, MCP, CLI, Python and Lua mapping; `guicontrol::CoreBridge`; unreal-qt, the video wall and `unreal-debugger` set it | on unreal-qt's WebAPI port alone: `POST /api/v1/gui/memory.goto` moves its debugger and reaches the screen viewer; its MCP lists `gui_memory` and the rest, and a call through them passes the live checks of phases 5 and 6; the core links no plane library and includes no header of it (a build check) |
 
 Progress:
 
@@ -378,6 +430,25 @@ Progress:
   Python / Lua functions); unreal-videowall hosts the plane (`main`, `main/tilegrid`, `tilegrid.single_sync {on?}`,
   state `tiles`, `single_sync`), and `tools/verification/videowall/src/videowall_singlesync.py` drives it.
   `GuiPlaneProfiles_Test` also checks that a binding of a core action gives its required parameters.
+- **Phase 5: done (2026-11-08).** unreal-debugger hosts the plane as program `unreal-debugger`
+  (`debuggers/qt/guiplane/debuggercontrol.cpp`, library `unreal-debugger-plane` on the views' side): `debugger` on the
+  root, the window `debugger`, the views `debugger/disassembly` and `debugger/memory` on the listing and dump of the
+  processor in front (state adds `cpu`). Its own core: the views name its machine with no endpoint; `--connect`: the
+  emulator taken over and its WebAPI. ecat's views gained what the interfaces need: the listing's top, place-cursor
+  and byte scroll, the dump's selection, the window's pane focus and register follow. `run_to_cursor` /
+  `breakpoint_toggle_cursor` are the window's F4 / F2; `find_last_write` / `find_last` run the core action through
+  the adapter (the registry in process, `POST /api/v1/controllers/actions/{action}` remote, not blocking the GUI).
+  No `metadata` interface there (ecat has no markup switches). Check: `tools/guicontrol/verify_debugger.py` runs the
+  same checks on unreal-qt, unreal-debugger and unreal-debugger `--connect`, then one `unreal-gui memory.goto` moves
+  each, by `--host` and by the pane focused last.
+- **Phase 6: done (2026-11-08).** The video wall's `tilegrid.focus {tile}` (a click's selection, by index; state
+  `focused`) and `tilegrid.layout {preset}` (for now the wall's window mode: `windowed`, `frameless`, `fullscreen`;
+  state `layout`). Owner note: a real layout preset is how many tiles there are, how they are arranged and where, and
+  the wall will later mix tiles of different sizes and resolutions as a mosaic; not in this work. The `screen`
+  interface (`screen.zoom {factor}` 1..4, `screen.fullscreen {on?}`; state `zoom`, `fullscreen`) is
+  `guicontrol::ScreenBinding` in `guicontrol-widgets`, bound on unreal-qt's main screen and on unreal-screen-viewer,
+  which now hosts the plane (`main`, `main/screen`) and takes `--connect host:port`. Check:
+  `tools/guicontrol/verify_programs.py` (all four programs in `unreal-gui list`).
 
 Docs per phase:
 
@@ -401,6 +472,12 @@ Docs per phase:
 - **Live:** a `tools/verification/gui/` script per program, launched offscreen on its own socket.
 - **The core:** after phase 4 the core tests and MCP scripts run unchanged, except the removed routes and their
   tests.
+- **The GUI methods (phase 7), in `core-tests` without Qt:** fake `GuiMethods` set by the test answer through REST,
+  the WebSocket call, an MCP tool per interface, the CLI and Python / Lua: the parameters as sent, the answer as
+  given, 404 for an unknown method, a `done` from another thread. Without them the core's routes and MCP tool list are
+  the same as today.
+- **The bridge (phase 7), live:** the scripts of phases 5 and 6 run once more through unreal-qt's WebAPI and its MCP
+  instead of the plane's socket; one call through unreal-qt's port reaches the screen viewer.
 
 ## 8. Open points
 
@@ -419,4 +496,10 @@ Decided later the same day:
    user, regenerable.
 7. ~~**Core target versus GUI target**~~: decided 2026-11-07: GUI keys follow the surface's core target (§4.5).
 
-No point is open; the design waits for the owner's review.
+Decided 2026-11-08:
+
+8. ~~**One port**~~: the GUI methods go straight into the core's API through a registered callback; no token
+   (§4.10).
+9. ~~**MCP shape**~~: one tool per interface (`gui_memory`, ...), not one `gui` tool (§4.10).
+
+No point is open for phase 7; it waits for the owner's review.
