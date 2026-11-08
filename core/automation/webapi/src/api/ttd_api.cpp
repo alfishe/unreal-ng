@@ -705,6 +705,12 @@ void EmulatorAPI::getTTDCauseChain(const HttpRequestPtr& req, std::function<void
     RespondTTD(id, "cause-chain", OptionsFromQuery(req, "cause-chain"), callback);
 }
 
+void EmulatorAPI::getTTDBacktrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    RespondTTD(id, "backtrace", OptionsFromQuery(req, "backtrace"), callback);
+}
+
 void EmulatorAPI::getTTDFindEvent(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
@@ -724,6 +730,40 @@ void EmulatorAPI::getTTDDiffMoments(const HttpRequestPtr& req, std::function<voi
                                     const std::string& id) const
 {
     RespondTTD(id, "diff", OptionsFromQuery(req, "diff"), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/ttd/replay-check
+/// Does the replay reproduce the recording (docs/inprogress/2026-11-05-ttd-replay-check): each frame of the range
+/// replayed from its checkpoint and compared with the next checkpoint; what diverged, by part of the machine
+void EmulatorAPI::getTTDReplayCheck(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                    const std::string& id) const
+{
+    RespondTTD(id, "replay-check", OptionsFromQuery(req, "replay-check"), callback);
+}
+
+/// @brief GET  /api/v1/emulator/{id}/ttd/seek-check - whether seeks check their frame, the counts
+///        POST /api/v1/emulator/{id}/ttd/seek-check {"enabled": bool} - switch it (off by default)
+void EmulatorAPI::seekCheckTTD(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (req->method() == drogon::Post)
+    {
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("enabled") || !(*json)["enabled"].isBool())
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "body: {\"enabled\": true | false}";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        options["enabled"] = (*json)["enabled"].asBool() ? "true" : "false";
+    }
+    RespondTTD(id, "seek-check", std::move(options), callback);
 }
 
 }  // namespace v1

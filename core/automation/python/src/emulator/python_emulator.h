@@ -73,6 +73,8 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/markup/markupcontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
 #include "debugger/asm/asmcontrol.h"
@@ -3109,6 +3111,7 @@ namespace PythonBindings
                     Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
                     result["success"] = r.mounted;
                     result["started"] = r.started;
+                    result["ttd_session_ended"] = r.ttdSessionEnded;
                     result["message"] = r.message;
                 }
                 else
@@ -3796,6 +3799,25 @@ namespace PythonBindings
                "(on='press'), up ('release') or both. Returns the id",
                py::arg("key") = "any", py::arg("on") = "press", py::arg("hits") = "", py::arg("group") = "",
                py::arg("note") = "")
+            .def("cpuprofile", [](Emulator& self, const std::string& op, const py::kwargs& kwargs) -> py::object {
+                profile::Options options;
+                for (const auto& [key, value] : kwargs)
+                    options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                const profile::Reply reply = profile::Execute(self, op, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "CPU time per routine (profilecontrol.h): op start (stack=True, beam=False, frames=True, ring_kib=4096, "
+               "stream='series.jsonl', reset=False) | stop | reset | mark (name='level2', drop=False) | status | report "
+               "(since='level2', top=24, sort='self' | 'inclusive' | 'calls', callers=True, beam=False) | frames (last=50, "
+               "top=8) | export (format='kit' | 'json' | 'entries' | 'sym' | 'ann', path=, since=). The reply's fields "
+               "plus text; a refusal: ok = False, error = why",
+               py::arg("op") = "status")
             .def("analysis", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
                 analysis::Options options;
                 for (const auto& [key, value] : kwargs)
@@ -3838,6 +3860,37 @@ namespace PythonBindings
                "The reply's fields plus text (the readable answer); "
                "a refusal: ok = False, error = why",
                py::arg("action") = "status")
+            .def("markup", [](Emulator& self, const std::string& action, const py::kwargs& kwargs) -> py::object {
+                markup::Options options;
+                for (const auto& [key, value] : kwargs)
+                {
+                    // analysis may be a list of kinds: comma separated for markup::Execute
+                    if (py::isinstance<py::list>(value))
+                    {
+                        std::string kinds;
+                        for (const auto& kind : value)
+                            kinds += (kinds.empty() ? "" : ",") + py::str(kind).cast<std::string>();
+                        options[py::str(key).cast<std::string>()] = kinds;
+                    }
+                    else
+                        options[py::str(key).cast<std::string>()] = TtdOptionTextPy(value);
+                }
+                const markup::Reply reply = markup::Execute(self, action, options);
+                StateNode value = reply.ToValue();
+                if (!reply.Ok())
+                {
+                    value = StateNode::Object();
+                    value["ok"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Memory markup (markupcontrol.h): action show (range='8000-80FF' or from=, to=, layer='user' | ..., "
+               "limit=200: spans, instruction starts, comments) | layers | mark (range= or from=, to=, kind='code' | "
+               "'data' | 'sprite' | ..., title=, cpu=True: the user layer) | unmark (range= or from=, to=) | comment "
+               "(address='$8000' or a label, text=: empty removes) | clear (layer='user') | save (profile=, "
+               "analysis='all' or ['code', 'sprite'], confidence=700, keep=True: into a software profile, unreal-qt "
+               "only). The reply's fields plus text; a refusal: ok = False, error = why",
+               py::arg("action") = "show")
             .def("trace", [](Emulator& self, const std::string& name, const std::string& op, const py::kwargs& kwargs) -> py::object {
                 tracecontrol::Options options;
                 for (const auto& [key, value] : kwargs)
@@ -4094,99 +4147,32 @@ namespace PythonBindings
                  "Read a label table from RAM into a set (scanner=, page=, offset=, set=, policy=)")
 
             // Disassembly
-            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu) -> py::list {
+            .def("disasm", [](Emulator& self, int address, int count, const std::string& cpu, int before) -> py::list {
                 py::list result;
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) {
                     return result;
                 }
+                count = std::clamp(count < 1 ? 10 : count, 1, 100);
+                const size_t rowsBefore = static_cast<size_t>(std::clamp(before, 0, 100));
                 // cpu "gs" / "ms": the sound card CPU's code, from its PC by default (cpuview.h)
-                if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
-                {
-                    uint16_t at = 0;
+                const DebugCpuId card = PythonCpu(self, cpu);
+                uint16_t at = ctx->pCore->GetZ80()->pc;
+                if (IsCardCpu(card))
                     CpuView::GetRegister(ctx, card, "pc", at);
-                    if (address >= 0)
-                        at = static_cast<uint16_t>(address);
-                    const StateNode listing = CpuView::Disasm(ctx, card, at, static_cast<size_t>(std::clamp(count < 1 ? 10 : count, 1, 100)));
-                    if (const StateNode* instructions = listing.find("instructions"))
-                        for (const StateNode& line : instructions->items)
-                            result.append(StateNodeToPy(line));
-                    return result;
-                }
-                Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
-                Memory* memory = ctx->pMemory;
-                Z80* z80 = ctx->pCore->GetZ80();
-                LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
-                
-                uint16_t addr = address < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address);
-                if (count < 1) count = 10;
-                if (count > 100) count = 100;
-                
-                for (int i = 0; i < count; ++i) {
-                    std::vector<uint8_t> buffer;
-                    // Direct (non-mutating) reads: disassembly must not strobe
-                    // the ProfROM quadrant machine on #0000-#0003
-                    for (int j = 0; j < 4; ++j) {
-                        buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
-                    }
-                    
-                    uint8_t cmdLen = 0;
-                    DecodedInstruction decoded;
-                    std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
-                    if (cmdLen == 0) cmdLen = 1;
-                    
-                    py::dict instr;
-                    instr["address"] = addr;
-                    std::string hexBytes;
-                    for (uint8_t j = 0; j < cmdLen; ++j) {
-                        char buf[4];
-                        snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-                        hexBytes += buf;
-                    }
-                    instr["bytes"] = hexBytes;
-                    instr["mnemonic"] = mnemonic;
-                    instr["size"] = cmdLen;
-                    
-                    // Label at the instruction address itself (e.g. jump destination marker)
-                    if (labelMgr) {
-                        auto label = labelMgr->GetLabelByZ80Address(addr);
-                        if (label && !label->name.empty())
-                            instr["label"] = label->name;
-                    }
-                    
-                    // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-                    // known at runtime - the field is omitted when the target could not be resolved
-                    if (decoded.hasJump || decoded.hasRelativeJump) {
-                        uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-                        if (!decoded.hasIndirect || decoded.hasRuntime) {
-                            instr["target"] = target;
-                            
-                            if (labelMgr) {
-                                auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                                if (targetLabel && !targetLabel->name.empty())
-                                    instr["targetLabel"] = targetLabel->name;
-                            }
-                        }
-                    }
-                    
-                    // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-                    if (decoded.hasDisplacement && decoded.hasRuntime) {
-                        instr["displacement"] = decoded.displacement;
-                        instr["effectiveAddress"] = decoded.displacementAddr;
-                        
-                        if (labelMgr) {
-                            auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                            if (effectiveLabel && !effectiveLabel->name.empty())
-                                instr["effectiveAddressLabel"] = effectiveLabel->name;
-                        }
-                    }
-                    
-                    result.append(instr);
-                    addr += cmdLen;
-                }
+                if (address >= 0)
+                    at = static_cast<uint16_t>(address);
+                // One builder with GET /disasm: the virtual window (anchors, the markup's data ranges as db rows)
+                const StateNode listing = IsCardCpu(card)
+                                              ? CpuView::Disasm(ctx, card, at, static_cast<size_t>(count), rowsBefore)
+                                              : DebugSnapshot::Disasm(ctx, at, static_cast<size_t>(count), rowsBefore);
+                if (const StateNode* instructions = listing.find("instructions"))
+                    for (const StateNode& line : instructions->items)
+                        result.append(StateNodeToPy(line));
                 return result;
-            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "",
-               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's)")
+            }, py::arg("address") = -1, py::arg("count") = 10, py::arg("cpu") = "", py::arg("before") = 0,
+               "Disassemble code at address (default: PC; cpu 'gs' / 'ms': a sound card CPU's; before: rows above "
+               "the address first; db rows for the markup's data)")
             
             // Physical page disassembly
             .def("disasm_page", [](Emulator& self, const std::string& type, int page, int offset, int count) -> py::list {
@@ -6949,6 +6935,19 @@ namespace PythonBindings
                 py::arg("phys_page") = py::none(), py::arg("depth") = 4, py::arg("max_links") = 32,
                 py::arg("max_frames") = 50, py::arg("flags") = false, py::arg("text") = false);
 
+        emulatorClass.def("ttd_backtrace", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "backtrace", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The call stack at a moment (frame, tinframe; default: the current position): each return address "
+               "above SP with the CALL / RST / interrupt that pushed it and when; max_depth, max_slots, text");
+
         emulatorClass.def("ttd_find_event", [](Emulator& self, const std::string& kind, py::kwargs kwargs) -> py::object {
                 std::map<std::string, std::string> options;
                 TtdKwargsPy(options, kwargs);
@@ -6999,6 +6998,29 @@ namespace PythonBindings
                "between, screen and border, devices, the time, keys and markers in between. kwargs: from_tinframe, "
                "to_frame, to_tinframe, sections ('cpu,memory'), limit, writers, text",
                 py::arg("from_frame"));
+
+        emulatorClass.def("ttd_replay_check", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "replay-check", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Each frame replayed from its checkpoint and compared with the next checkpoint (default: the whole "
+               "history): checked / matched / diverged / skipped counts and what diverged per frame (cpu, chipset, "
+               "ram pages, devices, device regions). kwargs: from_frame, to_frame, stride, limit, text");
+
+        emulatorClass.def("ttd_seek_check", [](Emulator& self, py::object enabled) -> py::object {
+                std::map<std::string, std::string> options;
+                if (!enabled.is_none())
+                    options["enabled"] = enabled.cast<bool>() ? "true" : "false";
+                return StateNodeToPy(TtdBodyOrThrow(TtdRunPy(self, "seek-check", options)));
+            }, "Every seek also replay-checks the frame it lands in (off by default; None keeps the setting). Returns "
+               "{enabled, seek_checks, seek_check_divergences, last_seek_divergence}",
+               py::arg("enabled") = py::none());
 
         // ================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI/Lua:

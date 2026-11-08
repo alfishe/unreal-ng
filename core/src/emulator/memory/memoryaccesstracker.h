@@ -277,6 +277,9 @@ public:
     /// counters' lock. False when there are none (another level, not allocated, the page never touched)
     bool ReadZ80Facts(uint16_t address, ByteFacts& out) const;
     bool ReadPhysicalFacts(uint16_t page, uint16_t offset, ByteFacts& out) const;
+    /// The kinds (AccessKind bits) of @p count bytes at once, one lock (MemoryAccessFacts::ReadZ80Kinds)
+    bool ReadZ80FactKinds(uint16_t address, size_t count, uint8_t* out) const;
+    bool ReadPhysicalFactKinds(uint16_t page, uint16_t offset, size_t count, uint8_t* out) const;
 
     struct FactsSummary
     {

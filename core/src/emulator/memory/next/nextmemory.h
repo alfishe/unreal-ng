@@ -120,6 +120,9 @@ public:
     /// ROM loader hook: puts the boot ROM image in place when [ROM] NEXTBOOT names one, and then the machine
     /// powers on in config mode with an empty system area
     void OnRomLoaded(uint16_t imageBanks) override;
+    /// The system area (pages 0-15) is SRAM the firmware fills; TTD records it (NextSystemArea): only the boot ROM
+    /// and the pages above it are the ROM set
+    uint16_t RomStatePages() const override { return kSystemAreaPages; }
     /// endregion
 
     /// region <DivMMC>

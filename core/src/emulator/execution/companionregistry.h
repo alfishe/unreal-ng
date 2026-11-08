@@ -6,8 +6,9 @@
 /// lock - within the scopes the user granted (automationgate.h). This registry holds the companions and the pending
 /// pairings of the process (companions are the user's, not an instance's).
 ///
-/// Trust: a pairing is approved at the GUI only (ApprovePairing has no automation surface); a headless instance gets
-/// its companions from UNREAL_COMPANION_TOKENS. A token is 32 random bytes; only its SHA-256 is kept and stored.
+/// Trust: a pairing over the network is approved at the GUI only (ApprovePairing has no automation surface); a request
+/// from this host (loopback, not a browser page) is approved at once: anything on the host can drive the WebAPI
+/// already, the code proves nothing there. A headless instance gets its companions from UNREAL_COMPANION_TOKENS. A token is 32 random bytes; only its SHA-256 is kept and stored.
 ///
 /// Thread-safe: requests arrive on WebAPI, CLI and GUI threads at once. NC_COMPANION_CHANGED is posted after each
 /// change, outside the lock.
@@ -110,10 +111,13 @@ public:
     CompanionRegistry& operator=(const CompanionRegistry&) = delete;
 
     /// region <Pairing>
-    /// A device asks to pair. `scopes` 0 = the default set. Refused without an approver (no GUI), with 4 pending, or
-    /// with one pending from `peer` already
+    /// A device asks to pair. `scopes` 0 = the default set. Refused without an approver (no GUI), with pairing turned
+    /// off, with 4 pending, or with one pending from `peer` already. `local` (the WebAPI: a loopback peer, no browser
+    /// Origin): approved at once with the scopes asked for, the first poll collects the token
     PairingRequestResult RequestPairing(const std::string& name, const std::string& device, uint32_t scopes,
-                                        const std::string& peer);
+                                        const std::string& peer, bool local = false);
+    /// The peer address is this host: 127.0.0.0/8, ::1, ::ffff:127.x.x.x
+    static bool IsLoopbackPeer(const std::string& peer);
     /// The device polls its pairing; an approved one hands out the token once and is gone
     PairingPoll PollPairing(const std::string& pairingId);
     /// The device gives up; false for an unknown or finished pairing
@@ -200,6 +204,9 @@ private:
     void ExpireLocked(int64_t now, std::vector<Event>& events);
     std::string NewIdLocked(const char* prefix) const;
     bool AddLocked(CompanionInfo info, const std::string& tokenHash);
+    /// A pending pairing becomes a companion (the token waits for the poll); empty when the companion was not added
+    std::optional<CompanionInfo> ApproveLocked(Pairing& pairing, std::optional<uint32_t> scopes, int64_t now,
+                                               std::vector<Event>& events);
     void LoadStoreLocked();
     std::string StoreTextLocked() const;
     void WriteStore();

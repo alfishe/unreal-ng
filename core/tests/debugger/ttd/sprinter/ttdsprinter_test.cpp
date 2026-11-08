@@ -26,6 +26,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/ttdrecordedstate.h"
+#include "emulator/io/sprinter/isa/cards/isawildsoundcard.h"
 #include "base/featuremanager.h"
 #include "common/filehelper.h"
 #include "debugger/debugmanager.h"
@@ -371,7 +372,7 @@ TEST_F(TTDSprinterMachine_Test, RecordsWithEverySprinterBlob)
     ExpectExactReplay(0, 3, "a few frames of BIOS POST");
 }
 
-/// The port journals record on the Sprinter (PortDecoder::TtdEnginesSealed; with the NeoGS on the ISA ZX-bus adapter
+/// The port journals record on the Sprinter (on every machine; with the NeoGS on the ISA ZX-bus adapter
 /// too: IsaZxBusAdapter_Test.NeoGsZxDmaCannotInstall_PortJournalRecords): a
 /// recording answers "who wrote this port" (/ttd/port-events) and the PLD journal's TTD source, and its replay
 /// feeds the recorded IN results with no divergence. Boot-bound: BIOS POST frames, replayed once
@@ -1144,5 +1145,67 @@ INSTANTIATE_TEST_SUITE_P(Populations, TTDSprinterIsa_Test,
                                            std::make_pair("el3c509b", "ne2000"), std::make_pair("sprinteresp", "modem"),
                                            std::make_pair("modem", "sprinteresp"), std::make_pair("dual16552", "dual16552"),
                                            std::make_pair("dual16552", "sprinteresp"), std::make_pair("ne2000", "ne2000"),
-                                           std::make_pair("zxbus", "zxbus"), std::make_pair("none", "none")),
+                                           std::make_pair("zxbus", "zxbus"), std::make_pair("none", "none"),
+                                           std::make_pair("wildsound", "none"), std::make_pair("ne2000", "wildsound")),
                          [](const auto& info) { return std::string(info.param.first) + "_" + info.param.second; });
+
+/// The Wild Sound card's upload store is an engine region (wildsound.flash, about 1 MB, its card state in the
+/// SprinterIsa blob): bytes uploaded before the recording are in every checkpoint, a seek after the live store changed
+/// puts the recorded bytes back (and the card reparses its tables from them), and the replay from there is exact
+class TTDSprinterWildSound_Test : public TTDSprinterShipped_Test
+{
+protected:
+    void ConfigureMachine(CONFIG& config) override
+    {
+        SprinterBios::Options options;
+        std::string error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString("wildsound", 0, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::IsaSlotFromString("none", 1, options, error)) << error;
+        ASSERT_TRUE(SprinterBios::ApplyToConfig(config, options, error)) << error;
+    }
+
+    sprinterisa::IsaWildSoundCard* Card() const
+    {
+        return dynamic_cast<sprinterisa::IsaWildSoundCard*>(_decoder->GetIsaBus().Card(0));
+    }
+};
+
+TEST_F(TTDSprinterWildSound_Test, TheUploadStoreIsRestoredBySeek)
+{
+    PowerOn(true);
+    Skip(5);
+    sprinterisa::IsaWildSoundCard* card = Card();
+    ASSERT_NE(card, nullptr) << "no Wild Sound card in ISA slot 1";
+    std::vector<uint8_t>& flash = card->Core().Storage().Flash();
+    ASSERT_GT(flash.size(), 0x40000u);
+    // A pattern over a few pieces far apart: the start, the middle, the end of the store
+    auto pattern = [](size_t i) { return static_cast<uint8_t>((i * 37u + 11u) ^ (i >> 9)); };
+    const size_t spots[] = {0, flash.size() / 2, flash.size() - 4096};
+    for (size_t at : spots)
+        for (size_t i = at; i < at + 4096; i++)
+            flash[i] = pattern(i);
+
+    StartRecording();
+    Record(6);
+    _ttd->StopRecording();
+    ASSERT_GE(_ttd->GetCheckpointCount(), 6u);
+    EXPECT_NE(_ttd->GetEngine().Regions().end(),
+              std::find_if(_ttd->GetEngine().Regions().begin(), _ttd->GetEngine().Regions().end(),
+                           [](const auto& r) { return r.id == ttd::TTDRegionId::WildSoundFlash; }))
+        << "wildsound.flash is a region of the session";
+
+    // The live store changes after the recording (an erase): the seek brings the recorded bytes back
+    for (size_t at : spots)
+        std::fill(flash.begin() + static_cast<std::ptrdiff_t>(at), flash.begin() + static_cast<std::ptrdiff_t>(at + 4096),
+                  0xFF);
+    ASSERT_TRUE(_ttd->SeekTo({_ttd->GetCheckpoint(3)->time.frame, 0}));
+    std::vector<uint8_t>& restored = Card()->Core().Storage().Flash();
+    size_t wrong = 0;
+    for (size_t at : spots)
+        for (size_t i = at; i < at + 4096; i++)
+            wrong += restored[i] != pattern(i);
+    EXPECT_EQ(wrong, 0u) << "bytes of the upload store not restored";
+
+    ExpectExactReplay(0, 5, "wildsound from the start");
+}
+

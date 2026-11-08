@@ -102,7 +102,7 @@ loading another program drops it.
 
 ## 5. Write the profile
 
-`data/controllers/profiles/games/<machine>/<game>.yaml`: the bindings, the match, the game's `events` and the haptics
+`data/software/<machine>/<game>.yaml`: the bindings, the match, the game's `events` and the haptics
 rules that play them. The header comment says how the addresses were found and checked, and which candidates were left
 out and why. The events are game facts, not only haptics: the `game.events` monitor publishes them for a deck key, a
 script or an agent, with no haptic device needed (older profiles write the same sources as `haptics.sources`).

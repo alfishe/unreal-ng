@@ -3,12 +3,13 @@
 Goal: drive a game from a script, record it, and find out from the recording *where in the game's code and memory a
 gameplay event lives* (crash, jump, pickup, death, level end). The same loop gives the checks for an automated
 gameplay test and the checkpoints for a speedrun script. Worked on ATV Simulator (Z80 snapshot, Pentagon) while writing
-its haptic profile ([games/pentagon/atv-simulator.yaml](../../data/controllers/profiles/games/pentagon/atv-simulator.yaml)).
+its haptic profile ([software/pentagon/atv-simulator.yaml](../../data/software/pentagon/atv-simulator.yaml)).
 
 Preconditions: [ttd-recording.md](ttd-recording.md) (start / stop / seek), [ttd-reverse-debugging.md](ttd-reverse-debugging.md)
 (find-last, reverse-continue, coverage). Everything below is WebAPI (a host-side Python pipeline, the allowed case in
-[_common/transports.md](../_common/transports.md)); `time_travel` has MCP actions for seek, find_last, reverse_continue
-and the coverage queries. `memory-at` / `memory-diff` are WebAPI verbs: check `tools/list` before assuming an MCP twin.
+[_common/transports.md](../_common/transports.md)). Every query below has an MCP `time_travel` action of the same name
+(`timeline`, `coverage_rare`, `find_event`, `diff`, `cause_chain`, `explain_frame`, `find_last`, `reverse_continue`);
+`text=true` adds a short text answer.
 
 ## 1. Start the instance deterministic and silent
 
@@ -34,21 +35,27 @@ everything else; it is fast (1250 frames in about 7 s wall-clock).
 
 ## 3. Find the event, five moves
 
-1. **Rare code.** `GET /ttd/coverage/scan?from_frame&to_frame&kind=executed&addr_from&addr_to&phys_page=0&limit=1`
-   answers *counts and first/last match*, not the frame list. Scan the game's code in 64-byte blocks and keep blocks
-   with a low `matching_frames`: a crash handler runs in 1 frame of 1250, the main loop in all of them. Without
-   `phys_page` the address aliases across pages (offset within the 16 KB page); pin the page.
-   Re-scan a rare block in 6-frame windows to see *when* it runs; line the windows up with your input log.
-2. **Which instruction.** `POST /ttd/reverse-continue {"pcs":[...]}` with every address of the block lists the exact
-   PCs that ran and the frame of each hit; walk back with `seek` to the end between calls.
-3. **Which variable.** `POST /ttd/memory-at {"frame","space":"ram","offset","length"}` for the same span at a handful
-   of frames (before, during, after) and diff: a state byte shows as a few distinct values. Offsets are physical
-   (48K on Pentagon: `0xC000..` is page 0 offset 0, `0x8000..` page 2, the screen page 5). Sample every 3 frames
-   across the run and print only the *transitions* per byte; a speed byte climbs 1..21, a state byte steps.
-4. **Who writes it.** `POST /ttd/find-last {"addr","access":"write","before_frame"}` walks backwards one write at a
-   time (`before_frame` + `before_tin` = tinframe-1 of the last hit). One writer PC for a byte = it is the state
-   machine; many = a copy loop. Print value *changes* only.
-5. **Check meaning.** `seek` to the frames from 1-4 and screenshot. A byte that looks like an event can be a sprite
+0. **The shape of the run.** `GET /ttd/timeline` cuts the recording into phases (tape, disk, sound, screen, halt,
+   input; no replay): take the window of the phase you care about instead of guessing frame ranges.
+1. **Rare code.** `GET /ttd/coverage/rare?kind=executed&from_frame&to_frame&addr_from&addr_to&phys_page=0&max_frames=3`
+   lists the blocks of code that ran in at most 3 frames of the window, rarest first (one pass, no replay): a crash
+   handler runs in 1 frame of 1250, the main loop in all of them. Without `phys_page` the address aliases across
+   pages (offset within the 16 KB page); pin the page. `coverage/scan` on one block answers the count and the first /
+   last match.
+2. **When and which instruction.** `GET /ttd/find-event?kind=exec&addr=A&addr_to=B&limit=100` lists every frame
+   the block ran in with the PC and T of each hit; line the frames up with your input log.
+   `POST /ttd/reverse-continue {"pcs":[...]}` stops at the last one.
+3. **Which variable.** `GET /ttd/diff?from_frame=F1&to_frame=F2&sections=memory` (before and after the event) lists
+   the changed RAM ranges with their bytes at both moments and the last CPU write in between: a state byte is a
+   short range with one writer. Then `GET /ttd/find-event?kind=mem&addr=X&cond=changed&limit=100` gives every
+   transition of that byte with `before` / `after` (a speed byte climbs 1..21, a state byte steps; `exact=true`
+   also finds a change undone inside one frame). `memory-at` stays the way to read a whole page at one frame
+   (offsets are physical: 48K on Pentagon `0xC000..` is page 0 offset 0, `0x8000..` page 2, the screen page 5).
+4. **Who writes it, from what.** `GET /ttd/cause-chain?addr=X&frame=F` names the instruction that wrote the byte and
+   follows its inputs back (registers, other bytes) as a tree. One writer PC for a byte = it is the state machine;
+   many = a copy loop. `POST /ttd/find-last {"addr","access":"write","changes_only":true}` lists the earlier writes.
+5. **Check meaning.** `seek` to the frames from 1-4 and screenshot; `GET /ttd/explain-frame?frame=F` says what the
+   frame did (routines by time, paging, ports, memory written, keys). A byte that looks like an event can be a sprite
    phase (ATV `#D73C`: the same value meant different things in a hop and in a crash). Believe an exec address that
    shows the same signature in two independent recordings (ATV `#E072`: crash into a cactus, then into a rock).
 
@@ -61,8 +68,8 @@ Most 48K games play their effects through one routine and a request byte. `POST 
 names the single PC that writes port `#FE` (Super Off Road: `#EB5A`); the routine reads an effect-number byte; `find-last`
 on that byte lists every writer with its value; if the writes go through a queue (a caller stores the number, one
 copier moves it) take the byte *before* the copier. The writers of the queue are the game's own event sites, with
-numbers: `find-last {"addr": queue, "access": "write"}` per hit, dedupe by `(pc, value)`, then look at the frames on
-the screen (a "20,000" caption at a money-bag write). For "whose event is it" read `IX` / `IY` at the hit
+numbers: `GET /ttd/find-event?kind=mem&addr=<queue>&cond=changed&exact=true&limit=100` lists them with the
+writer PC and the value, then look at the frames on the screen (a "20,000" caption at a money-bag write). For "whose event is it" read `IX` / `IY` at the hit
 (`reverse-continue {"pcs":[pc]}` then `GET /registers`): car games keep one struct per car, the player's is the first.
 
 ### Shortcut for keyboard games: find the key reader first
@@ -78,14 +85,16 @@ archive.org (`zx_*` items) when a tape image is damaged.
 ### Shortcuts that found racing-game events (2026-10-28 / 29)
 
 - **Key-tap coverage diff** (fire, jump, any button): record a stepped run, 150 frames with the button up, then 6 taps
-  (press, 4 frames, release, 30 frames). Scan 32-byte blocks with `coverage/scan` (`phys_page` 5 / 2 / 0) and keep the
-  blocks with 0 matches in the quiet window and 3 to 8 in the tap window: the match count is the tap count and the
+  (press, 4 frames, release, 30 frames). `coverage/rare` over the tap window (`max_frames` 8, `phys_page` 5 / 2 / 0),
+  then `coverage/scan` on each block over the quiet window: keep the blocks with 0 matches in the quiet window and 3
+  to 8 in the tap window (the taps themselves: `find-event?kind=key`): the match count is the tap count and the
   first block of the run is the spawn routine (Overlander `#5FE3`, Badlands `#B877`). `reverse-continue` + `seek` +
   `/registers` then names the actor (IX = the player's record).
 - **HUD digits against RAM**: seek to 5 frames where a counter shows 9, 8, 7, 6, 5, read all 8 pages (`memory-at`,
   `space: ram`, `offset` 0..0x1C000 in 16 KB pieces: the call refuses 0x20000 at once) and keep the address whose byte
   steps the same way (Hard Drivin' "OFF ROAD n": `#951F`, its flag `#951E`).
-- **Speed drop = crash?** `find-last` on the speed byte with `changes_only`, print drops over about 12 and their writer;
+- **Speed drop = crash?** `find-event?kind=mem&addr=speed&cond=decreased&limit=100` lists the drops with their writer; keep
+  drops over about 12;
   then screenshot the frames. A drop by a generic writer (a sum of vectors) is physics: look for the flag it follows
   (a crash sets a state byte, the speed collapse comes after). Test Drive II: the drop `#88DD` is the per-car reset loop
   after the collision flag `#FCE6` is set at `#88C7`; Cisco Heat: `#9A8F` zeroes the speed after a hit, `#9137` (sound

@@ -27,6 +27,7 @@ void NextUart::ResetFifos(Channel& c)
 
 void NextUart::Reset(bool hard)
 {
+    _asleep = false;  // the clock restarts: the look the sleep held is gone with it
     _pollClean = false;
     for (Channel& c : _ch)
     {
@@ -79,6 +80,7 @@ uint64_t NextUart::BreakClocks(const Channel& c) const
 
 void NextUart::SetPeer(unsigned channel, ISerialPeer* peer)
 {
+    Wake();
     Channel& c = _ch[channel];
     c.peer = peer;
     c.toldValid = false;
@@ -101,6 +103,7 @@ void NextUart::SetJoystickPeer(ISerialPeer* peer)
 {
     if (_joyPeer == peer)
         return;
+    Wake();
     _joyPeer = peer;
     if (_joyOn)
     {
@@ -121,6 +124,7 @@ void NextUart::SetJoystickRoute(bool on, unsigned channel)
     channel = channel ? 1u : 0u;
     if (on == _joyOn && (!on || channel == _joyChannel))
         return;
+    Wake();
     const bool wasOn = _joyOn;
     const unsigned was = _joyChannel;
     _joyOn = on;
@@ -401,6 +405,7 @@ bool NextUart::Quiet() const
 
 void NextUart::Look(uint64_t now)
 {
+    Wake();
     if (now < _now)
         now = _now;  // the clock does not go back
     _now = now;
@@ -408,8 +413,27 @@ void NextUart::Look(uint64_t now)
         c.lastLook = now;
 }
 
+bool NextUart::TrySleep()
+{
+    if (!Quiet())
+        return false;
+    for (unsigned i = 0; i < kChannels; i++)
+    {
+        const Channel& c = _ch[i];
+        // the module of a cut-off line too: its bytes are taken and lost (Quiet)
+        if (c.peer && (c.peer->Pending() || c.peer->BreakHeld()))
+            return false;
+        if (const ISerialPeer* peer = Wire(i); peer && (peer->Pending() || peer->BreakHeld()))
+            return false;
+    }
+    _asleep = true;
+    _sleepLook = _now;
+    return true;
+}
+
 void NextUart::Advance(uint64_t now)
 {
+    Wake();
     if (now < _now)
         now = _now;  // the clock does not go back
     _now = now;
@@ -509,11 +533,8 @@ void NextUart::Write(uint16_t port, uint8_t value, uint64_t now)
     Step(c, now);
 }
 
-void NextUart::PollInterrupts(uint8_t enable)
+void NextUart::PollInterruptLevels(uint8_t enable)
 {
-    // The per-instruction call of a UART nothing happened to: the levels are what the last look stored, no edge
-    if (_pollClean && enable == _polledEnable)
-        return;
     _pollClean = true;
     _polledEnable = enable;
     for (unsigned i = 0; i < kChannels; i++)
@@ -536,6 +557,7 @@ void NextUart::SetSystemClock(uint32_t hz)
 {
     if (hz == _systemClockHz)
         return;
+    Wake();
     _systemClockHz = hz;
     for (Channel& c : _ch)
         TellPeer(c);  // the same prescaler is another rate now

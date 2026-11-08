@@ -115,7 +115,7 @@ HapticProfile Resolve(const Game& game)
 {
     ProfileStore store;
     std::vector<std::string> errors;
-    EXPECT_TRUE(store.OpenGames((TestPathHelper::FindProjectRoot() / "data" / "controllers" / "profiles" / "games").string(),
+    EXPECT_TRUE(store.OpenGames((TestPathHelper::FindProjectRoot() / "data" / "software").string(),
                                 errors));
     ProfileContext context;
     context.machine = "pentagon";

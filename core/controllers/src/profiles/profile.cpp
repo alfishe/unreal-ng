@@ -8,6 +8,7 @@
 #include "haptics/surfacehaptics.h"
 #include "match.h"  // core/swsignature: header-only, no core symbols
 #include "profiles/videoprofile.h"
+#include "profiles/memoryprofile.h"
 #include "profiles/yaml.h"
 
 namespace controllers
@@ -25,7 +26,7 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "curve"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "joystick_keys", "options", "layers", "layer_key", "haptics",
-                                      "events", "video"};
+                                      "events", "video", "memory"};
 
 template <size_t N>
 bool OneOf(const char* const (&names)[N], const std::string& name)
@@ -736,6 +737,19 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
         if (!ParseVideoProfile(*video, parsed, error))
             return false;
         profile.video = *video;
+    }
+    if (const JsonValue* memory = root.Find("memory"))
+    {
+        // What the program's memory holds (software metadata profile): a play profile's, as its events are
+        MemoryProfile parsed;
+        if (profile.kind != ProfileKind::Play)
+        {
+            error = "memory: only a play profile describes a program's memory";
+            return false;
+        }
+        if (!ParseMemoryProfile(*memory, parsed, error))
+            return false;
+        profile.memory = *memory;
     }
     if (const JsonValue* layers = root.Find("layers"))
     {

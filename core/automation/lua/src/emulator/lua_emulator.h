@@ -90,6 +90,8 @@
 #include <debugger/breakpoints/breakpointselection.h>
 #include "debugger/tracecontrol/tracecontrol.h"
 #include "debugger/analyzers/analysis/analysiscontrol.h"
+#include "debugger/markup/markupcontrol.h"
+#include "debugger/analyzers/profile/profilecontrol.h"
 #include <debugger/disassembler/z80disasm.h>
 #include <debugger/labels/labelmanager.h>
 #include "debugger/labels/symbolcontrol.h"
@@ -2732,6 +2734,7 @@ public:
                 Emulator::DiskAutostartResult r = emulator->AutostartDisk(path, static_cast<uint8_t>(drive));
                 result["success"] = r.mounted;
                 result["started"] = r.started;
+                result["ttd_session_ended"] = r.ttdSessionEnded;
                 result["message"] = r.message;
             }
             else
@@ -4425,102 +4428,36 @@ public:
         });
 
         // Disassembly
-        // disasm([address [, count [, cpu]]]): "gs" / "ms" the sound card CPU's code, from its PC (cpuview.h)
+        // disasm([address [, count [, cpu] [, before]]]): "gs" / "ms" the sound card CPU's code, from its PC
+        // (cpuview.h); before: rows above the address first (also as the third argument: disasm(a, n, before))
         lua.set_function("disasm", [this](sol::this_state s, sol::optional<int> address, sol::optional<int> count,
-                                          sol::optional<std::string> cpuName) -> sol::table {
+                                          sol::object third, sol::optional<int> fourth) -> sol::table {
             sol::table result = _lua->create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
-            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
-            {
-                uint16_t at = 0;
-                CpuView::GetRegister(emulator->GetContext(), cpu, "pc", at);
-                if (address && *address >= 0)
-                    at = static_cast<uint16_t>(*address);
-                const int lines = std::clamp(count.value_or(10), 1, 100);
-                const StateNode listing = CpuView::Disasm(emulator->GetContext(), cpu, at, static_cast<size_t>(lines));
-                int index = 1;
-                if (const StateNode* instructions = listing.find("instructions"))
-                    for (const StateNode& line : instructions->items)
-                        result[index++] = StateNodeToLua(s, line);
-                return result;
-            }
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager || !ctx->pDebugManager->GetDisassembler()) return result;
-            
-            Z80Disassembler* disasm = ctx->pDebugManager->GetDisassembler().get();
-            Memory* memory = ctx->pMemory;
-            Z80* z80 = ctx->pCore->GetZ80();
-            LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
-            
-            uint16_t addr = address.value_or(-1) < 0 ? ctx->pCore->GetZ80()->pc : static_cast<uint16_t>(address.value_or(0));
-            int cnt = count.value_or(10);
-            if (cnt < 1) cnt = 10;
-            if (cnt > 100) cnt = 100;
-            
-            int idx = 1;
-            for (int i = 0; i < cnt; ++i) {
-                std::vector<uint8_t> buffer;
-                // Direct (non-mutating) reads: disassembly must not strobe
-                // the ProfROM quadrant machine on #0000-#0003
-                for (int j = 0; j < 4; ++j) {
-                    buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(addr + j)));
-                }
-                
-                uint8_t cmdLen = 0;
-                DecodedInstruction decoded;
-                std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, addr, &cmdLen, z80, memory, &decoded);
-                if (cmdLen == 0) cmdLen = 1;
-                
-                sol::table instr = _lua->create_table();
-                instr["address"] = addr;
-                std::string hexBytes;
-                for (uint8_t j = 0; j < cmdLen; ++j) {
-                    char buf[4];
-                    snprintf(buf, sizeof(buf), "%02X", buffer[j]);
-                    hexBytes += buf;
-                }
-                instr["bytes"] = hexBytes;
-                instr["mnemonic"] = mnemonic;
-                instr["size"] = cmdLen;
-                
-                // Label at the instruction address itself (e.g. jump destination marker)
-                if (labelMgr) {
-                    auto label = labelMgr->GetLabelByZ80Address(addr);
-                    if (label && !label->name.empty())
-                        instr["label"] = label->name;
-                }
-                
-                // Target address for jumps/calls. Indirect targets (JP (HL), JP (IX)) are only
-                // known at runtime - the field is omitted when the target could not be resolved
-                if (decoded.hasJump || decoded.hasRelativeJump) {
-                    uint16_t target = decoded.hasRelativeJump ? decoded.relJumpAddr : decoded.jumpAddr;
-                    if (!decoded.hasIndirect || decoded.hasRuntime) {
-                        instr["target"] = target;
-                        
-                        if (labelMgr) {
-                            auto targetLabel = labelMgr->GetLabelByZ80Address(target);
-                            if (targetLabel && !targetLabel->name.empty())
-                                instr["targetLabel"] = targetLabel->name;
-                        }
-                    }
-                }
-                
-                // Effective memory address for indexed (IX/IY+d) instructions - requires runtime registers
-                if (decoded.hasDisplacement && decoded.hasRuntime) {
-                    instr["displacement"] = decoded.displacement;
-                    instr["effectiveAddress"] = decoded.displacementAddr;
-                    
-                    if (labelMgr) {
-                        auto effectiveLabel = labelMgr->GetLabelByZ80Address(decoded.displacementAddr);
-                        if (effectiveLabel && !effectiveLabel->name.empty())
-                            instr["effectiveAddressLabel"] = effectiveLabel->name;
-                    }
-                }
-                
-                result[idx++] = instr;
-                addr += cmdLen;
-            }
+            sol::optional<std::string> cpuName;
+            int before = fourth.value_or(0);
+            if (third.is<std::string>())
+                cpuName = third.as<std::string>();
+            else if (third.is<int>())
+                before = third.as<int>();
+            const DebugCpuId cpu = ScriptCpu(cpuName);
+            uint16_t at = ctx->pCore->GetZ80()->pc;
+            if (IsCardCpu(cpu))
+                CpuView::GetRegister(ctx, cpu, "pc", at);
+            if (address && *address >= 0)
+                at = static_cast<uint16_t>(*address);
+            const auto lines = static_cast<size_t>(std::clamp(count.value_or(10) < 1 ? 10 : count.value_or(10), 1, 100));
+            const auto rowsBefore = static_cast<size_t>(std::clamp(before, 0, 100));
+            // One builder with GET /disasm: the virtual window (anchors, the markup's data ranges as db rows)
+            const StateNode listing = IsCardCpu(cpu) ? CpuView::Disasm(ctx, cpu, at, lines, rowsBefore)
+                                                     : DebugSnapshot::Disasm(ctx, at, lines, rowsBefore);
+            int index = 1;
+            if (const StateNode* instructions = listing.find("instructions"))
+                for (const StateNode& line : instructions->items)
+                    result[index++] = StateNodeToLua(s, line);
             return result;
         });
 
@@ -6542,6 +6479,16 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("cause-chain", options)));
         });
 
+        // ttd_backtrace({frame=, tinframe=, max_depth=, max_slots=, text=}): the call stack at a moment (default: the
+        // current position) - each return address above SP with the CALL / RST / interrupt that pushed it and when
+        lua.set_function("ttd_backtrace", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("backtrace", options)));
+        });
+
         // ttd_find_event(kind, {cond=, addr=, addr_to=, phys_page=, size=, value=, bit=, exact=, min_changed=, dir=,
         // port=, port_mask=, value_mask=, key=, pressed=, order=, from_frame=, to_frame=, limit=, max_frames=, text=}):
         // the first (or last) moments an event happened. kind: mem, screen, exec, port, border, key
@@ -6579,6 +6526,25 @@ public:
             for (const auto& [key, value] : argsTable)
                 options[key.as<std::string>()] = TtdOptionText(value);
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("diff", options)));
+        });
+
+        // ttd_replay_check{from_frame = F, to_frame = G, stride = N, limit = N, text = true}: each frame replayed from its
+        // checkpoint and compared with the next checkpoint (default: the whole history) - what diverged, by part
+        lua.set_function("ttd_replay_check", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("replay-check", options)));
+        });
+
+        // ttd_seek_check(true | false | nil): every seek also replay-checks the frame it lands in (off by default);
+        // nil keeps the setting. Returns {enabled, seek_checks, seek_check_divergences, last_seek_divergence}
+        lua.set_function("ttd_seek_check", [this](sol::this_state ts, sol::optional<bool> enabled) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (enabled)
+                options["enabled"] = *enabled ? "true" : "false";
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("seek-check", options)));
         });
 
         // A memory at a past checkpoint and what changed between two, from the store (no seek):
@@ -7379,6 +7345,63 @@ public:
                                                              : verb == "trace" ? "path"
                                                                                : "")
                                                : analysis::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The memory markup through markup::Execute (markupcontrol.h): markup(action, opts) with action show
+        // {range=, from=, to=, layer=, limit=} (or the range), layers, mark {range= | from=, to=, kind=, title=, cpu=}
+        // (or the range), unmark {range= | from=, to=} (or the range), comment {address=, text=} (or the address),
+        // clear {layer=} (or the layer), save {profile=, analysis=, confidence=, keep=} (or the profile)
+        lua.set_function("markup", [this](sol::this_state ts, sol::optional<std::string> action,
+                                          sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = action.value_or("show");
+            Emulator* emulator = effectiveEmulator();
+            markup::Reply reply;
+            if (!emulator)
+                reply.error = markup::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = markup::Execute(*emulator, verb,
+                                        opts ? SymbolOptions(*opts, verb == "comment" ? "address"
+                                                           : verb == "clear" ? "layer"
+                                                           : verb == "save" ? "profile"
+                                                           : verb == "layers" ? ""
+                                                                              : "range")
+                                             : markup::Options{});
+            StateNode value = reply.ToValue();
+            if (!reply.Ok())
+            {
+                value = StateNode::Object();
+                value["ok"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+        // The CPU time profile through profile::Execute (profilecontrol.h): cpuprofile(op, opts) with op start | stop |
+        // reset | mark | status | report | frames | export; opts a table ({stack=, beam=, frames=, ring_kib=, stream=,
+        // reset=} / {name=, drop=} / {since=, top=, sort=, callers=, beam=} / {last=, top=} / {format=, path=,
+        // since=}) or, for mark the name, for report the top, for frames the last, for export the format. The answer:
+        // the reply's fields plus text; a refusal: ok = false, error = why
+        lua.set_function("cpuprofile", [this](sol::this_state ts, sol::optional<std::string> op,
+                                              sol::optional<sol::object> opts) -> sol::object {
+            const std::string verb = op.value_or("status");
+            Emulator* emulator = effectiveEmulator();
+            profile::Reply reply;
+            if (!emulator)
+                reply.error = profile::Error::NotAvailable, reply.message = "no emulator";
+            else
+                reply = profile::Execute(*emulator, verb,
+                                         opts ? SymbolOptions(*opts, verb == "mark"     ? "name"
+                                                                     : verb == "report" ? "top"
+                                                                     : verb == "frames" ? "last"
+                                                                     : verb == "export" ? "format"
+                                                                                        : "")
+                                              : profile::Options{});
             StateNode value = reply.ToValue();
             if (!reply.Ok())
             {

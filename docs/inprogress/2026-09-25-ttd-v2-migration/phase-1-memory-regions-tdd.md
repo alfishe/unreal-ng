@@ -1,6 +1,6 @@
 # Phase 1 — Engine core: memory that costs only what changes — technical design
 
-Status: **design, not implemented** (rewritten 2026-10-02 for the new engine; the in-place version of 2026-10-01 is in git history). Roadmap: [README §2, Phase 1](README.md#phase-1--engine-core-memory-that-costs-only-what-changes). Decisions: [engine-decisions.md](engine-decisions.md) D1–D6, D15, D19–D22, D27, D31, D33. Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)). Parameters measured on real recordings: [experiments E1–E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md).
+Status: **done** (the migration finished 2026-10-31, [DONE.md](DONE.md); results: [phase-1-results.md](phase-1-results.md)). The design as it was written: **design, not implemented** (rewritten 2026-10-02 for the new engine; the in-place version of 2026-10-01 is in git history). Roadmap: [README §2, Phase 1](README.md#phase-1--engine-core-memory-that-costs-only-what-changes). Decisions: [engine-decisions.md](engine-decisions.md) D1–D6, D15, D19–D22, D27, D31, D33. Requirements: FR-5, FR-22, PR-3, PR-4, the memory part of PR-9 / PR-10 ([requirements.md](requirements.md)). Parameters measured on real recordings: [experiments E1–E6](../../../tools/poc/011-ttd-v2-capture-analysis/experiments/README.md).
 
 Code references are to master at `8ddaf708e`. `TTM` = `core/src/debugger/ttd/timetravelmanager.cpp`, `PS` = `core/src/debugger/ttd/ttdcodecpagestore.{h,cpp}`.
 

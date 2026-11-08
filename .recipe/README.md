@@ -109,8 +109,10 @@ matches; it names the recipe(s) for that action.
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Starting a game from its title screen (which keys / joystick) | [analysis/game-start-input.md](analysis/game-start-input.md) | memory-counters, port-trace, input/joystick |
+| Building, installing or driving Unreal NG on a Steam Deck (the bundle, Game Mode, the Steam library, a Stream Deck on its USB-C, screenshots with gamescopectl) | [testing/steamdeck.md](testing/steamdeck.md) | everything else |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
-| Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
+| Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/steamdeck.md](testing/steamdeck.md) | Unreal NG on a Steam Deck: build the bundle, install or update it, start it in Game Mode through Steam, screenshots of the composed screen, a Stream Deck on the Deck's USB-C, logs |
+| [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | A demo video of the GUI window (CRT effects, on-screen keyboard), every frame, 4K for YouTube | [media/window-recording.md](media/window-recording.md) | video-recording.md (the emulated frame only) |

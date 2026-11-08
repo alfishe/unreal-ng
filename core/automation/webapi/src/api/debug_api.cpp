@@ -3422,9 +3422,24 @@ void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const 
         count = static_cast<size_t>(value);
     }
 
+    // before=N: N rows above the address first; snap=1: the address moved to the start of the row holding it
+    size_t before = 0;
+    const std::string beforeParam = req->getParameter("before");
+    if (!beforeParam.empty())
+    {
+        uint64_t value = 0;
+        if (!StringHelper::TryParseUInt64(beforeParam, value) || value > DebugSnapshot::kMaxDisasmLines)
+            return badRequest("before must be 0-" + std::to_string(DebugSnapshot::kMaxDisasmLines));
+        before = static_cast<size_t>(value);
+    }
+    const std::string snapParam = req->getParameter("snap");
+    if (!snapParam.empty() && snapParam != "0" && snapParam != "1" && snapParam != "true" && snapParam != "false")
+        return badRequest("snap must be 0 / 1 / true / false");
+    const bool snap = snapParam == "1" || snapParam == "true";
+
     // One builder for GET /disasm and the snapshot's disasm (core DebugSnapshot)
-    const Json::Value ret = StateNodeToJson(IsCardCpu(cpu) ? CpuView::Disasm(ctx, cpu, address, count)
-                                                           : DebugSnapshot::Disasm(ctx, address, count));
+    const Json::Value ret = StateNodeToJson(IsCardCpu(cpu) ? CpuView::Disasm(ctx, cpu, address, count, before, snap)
+                                                           : DebugSnapshot::Disasm(ctx, address, count, before, snap));
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);

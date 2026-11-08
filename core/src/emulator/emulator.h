@@ -717,7 +717,8 @@ public:
     {
         bool mounted = false;  // Disk image was mounted in drive A
         bool started = false;  // Machine was reset into TR-DOS to run the disk
-        std::string message;   // Human readable outcome
+        bool ttdSessionEnded = false;  // The boot ended the TTD session (D42; a black box starts a new one)
+        std::string message;   // Human readable outcome (says so when the TTD session ended)
     };
 
     /// Mount a disk image and, when the machine can run TR-DOS, quick-reset straight into TR-DOS so the

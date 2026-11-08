@@ -372,7 +372,27 @@
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["description"] =
         "Number of instructions (default: 10, max: 256)";
     paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][2]["schema"]["type"] = "integer";
-    paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] = "Disassembled instructions";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][3]["name"] = "before";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][3]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][3]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][3]["description"] =
+        "Rows above the address first (default: 0, max: 256), synced back from the known instruction starts";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][3]["schema"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][4]["name"] = "snap";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][4]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][4]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][4]["description"] =
+        "1: move the address to the start of the row that holds it (a scrollbar drag)";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][4]["schema"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][5]["name"] = "cpu";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][5]["in"] = "query";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][5]["required"] = false;
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][5]["description"] =
+        "main (default), gs or ms: a sound card CPU's code from its PC";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["parameters"][5]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disasm"]["get"]["responses"]["200"]["description"] =
+        "Disassembled rows: instructions, and (kind data / cut) db rows of the memory markup's data ranges or of an "
+        "instruction's bytes cut by a known instruction start";
 
     // Physical page disassembly endpoint
     paths["/api/v1/emulator/{id}/disasm/page"]["get"]["summary"] = "Disassemble from physical RAM/ROM page";

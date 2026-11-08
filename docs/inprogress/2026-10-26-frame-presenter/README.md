@@ -317,7 +317,7 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
   Aleste jstep 0.72 -> 0.69, ghost 1.88 -> 1.63, tear 5.3 -> 4.9 %; the truth suite, the other five games and the
   action dots unchanged; `vibrations` jstep 2.30 -> 1.92, ghost 5.38 -> 4.29. A single pixel turning back is no evidence: a thin stroke
   of a scroller does that now and then (a per-pixel rule held those and broke the scroll).
-- **Measured in [POC 046](../../../tools/poc/046-motion-interpolation/conclusions.md):** on scrollers and moving
+- **Measured in [POC 048](../../../tools/poc/048-motion-interpolation/conclusions.md):** on scrollers and moving
   pictures 1/2 to 1/6 of the blend's error, 52-90 % of the changed pixels exact; full-screen effects fall back to the
   blend; 1.3-2.3 ms p50 per frame pair on one core without SIMD. Most games draw every 2nd-5th frame and gain
   nothing between consecutive frames: section 4.5.
@@ -327,7 +327,7 @@ has at the refresh's time: the scroller moves 4 x w pixels, not two half-bright 
 Most games draw a picture every 2nd-5th frame (Dizzy X every 4th, Green Beret every 3rd, Darkwing Duck scrolls the
 play area every 5th and redraws the status row a frame later). Between two repeated frames there is nothing to
 interpolate, so section 4.4 leaves a game's judder as it is. Between the game's own pictures the same search works
-(POC 046 stage 2): Darkwing Duck's scroll 78 -> 22.5 MAE, 81 % of the changed pixels exact.
+(POC 048 stage 2): Darkwing Duck's scroll 78 -> 22.5 MAE, 81 % of the changed pixels exact.
 
 - **No added latency** (owner). Two modes:
   - `cadence`: once the next picture is in the lookahead (the audio delay holds about two frames), the step to it is
@@ -343,7 +343,7 @@ interpolate, so section 4.4 leaves a game's judder as it is. Between the game's 
   removes the edge artefacts of `carry`), regions to leave alone (score, status row), and optionally the event that
   says "picture complete" (a probe on the game's draw-done address, as the haptic events): then the presenter knows
   each picture's frame exactly, even when the period varies.
-- **Tools.** POC 046's capture and cadence detection become the profile tool that drafts the `video:` section (period,
+- **Tools.** POC 048's capture and cadence detection become the profile tool that drafts the `video:` section (period,
   window from the changing area), as the haptics recipe drafts the events; the mode is chosen by eye per game.
 - Without a profile the game gets section 4.4 only (consecutive frames: scrollers, demos).
 
@@ -738,7 +738,7 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
 - **One definition, two implementations.** The CPU path is the reference: plain C++ in `core/` (no platform API),
   integer arithmetic only (the blend's weight in 1/256 steps, the warp in whole pixels), so it is bit-exact on
   clang, gcc, MSVC and MinGW. The GPU path implements the same steps per presenter: Metal compute (macOS, iOS), D3D11
-  compute (Windows), GL fragment passes (the GL fallback, Linux), later Vulkan. A test renders the POC 046 sequences
+  compute (Windows), GL fragment passes (the GL fallback, Linux), later Vulkan. A test renders the POC 048 sequences
   on both and requires identical output.
 - **As built (phase 5).** The GL renders on every platform (section 6.2), so there is one GPU implementation:
   `SmoothMotionGPU` (`unreal-qt/src/widgets/smoothmotiongpu.cpp`), GL 3.3 core fragment passes over integer textures
@@ -777,7 +777,7 @@ Owner: blend, interpolation and the cadence modes run on the GPU and on the CPU,
   GL, a headless or offscreen instance, the video recording); `gpu` / `cpu` force it. The CPU path runs on the
   presenter's thread for the screen, and serves the readers that have no GPU (screenshots, recording, the video
   wall, WebAPI captures) with the same picture the screen shows.
-- **Cost budget** (the design, for POC 046's per-block interpolation). CPU: 1.3-2.3 ms p50 per frame pair scalar;
+- **Cost budget** (the design, for POC 048's per-block interpolation). CPU: 1.3-2.3 ms p50 per frame pair scalar;
   SIMD (NEON / SSE2, with a scalar fallback) brings it under 1 ms. GPU: the search is per block and independent, one
   dispatch per refresh. As built, `LayerFlow` costs more and runs on a CPU pool or on the GPU (phase 5b, steps 2
   and 4).
@@ -859,11 +859,11 @@ Each phase lands on its own with tests and docs.
      `UNREAL_TEST_GPU_HANG` makes a real reset (section 9).
 5. **Smooth motion**, at once after phases 3-4 are stable on the VRR hosts (owner decision):
    - the CPU reference in `core/` (blend, interpolation, the cadence modes; integer, bit-exact), its tests on the
-     POC 046 sequences;
+     POC 048 sequences;
    - the GPU implementations in the Metal, DXGI and GL presenters, tested against the CPU output; `EffectsDevice`;
    - the game profile's `video:` section (section 4.5): parser, validation, the drafting tool, profiles for the
      test games (Darkwing Duck, Thundercats, Garfield).
-   POC 046 measured the interpolation and the cadence modes (done).
+   POC 048 measured the interpolation and the cadence modes (done).
 
    On the branch:
    - `core/src/emulator/video/smoothmotion.{h,cpp}`: blend, the motion field (a nearest-first search per 8x8 block,
@@ -919,7 +919,7 @@ Each phase lands on its own with tests and docs.
       shape as it moves (water, spinning dots) matched no block before. Measured with the eye model of
       [`tools/verification/smoothmotion/truth`](../../../tools/verification/smoothmotion/README.md#what-the-eye-sees-truth):
       the suite's pursuit sum 196 -> 179 % (`animated` 52 -> 38, the native 50 Hz source 38), the six game clips
-      the same, the game modes on the POC 046 clips the same or better (Green Beret exact 38 -> 46 %).
+      the same, the game modes on the POC 048 clips the same or better (Green Beret exact 38 -> 46 %).
       `nearTies` (`LayerFlow::kNear`): a block takes the frame's main motion when it fits within 1/8 of the block's
       best vector. Aleste's spinning dots on a letter's diagonal stroke (spacing 8 x 8, moving -8, 0) fit (0, 8) by a
       few pixels of chance and tore; now whole. Suite 179 -> 177 %, Aleste ghost 1.70 -> 1.63 px, tear 5.5 -> 4.9 %,

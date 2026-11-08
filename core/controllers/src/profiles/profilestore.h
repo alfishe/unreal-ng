@@ -4,7 +4,7 @@
 /// @brief The controller profiles (mapping-and-profiles.md §6-§8): built-in ⊂ community ⊂ user, YAML files under
 /// `play/`, `debug/`, `schemes/` and `games/`; the ones that apply to a machine, a program and the connected devices
 /// merge field by field, global → machine → family → device → game, into the router's binding scopes. The shipped game
-/// profiles stay on disk behind `games/index.yaml` (§7.5) and are parsed on a match.
+/// profiles stay on disk behind `software/index.yaml` (§7.5) and are parsed on a match.
 
 #include <cstddef>
 #include <map>

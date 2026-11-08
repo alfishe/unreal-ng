@@ -31,6 +31,9 @@ struct CPUStepCallback
     void (*fn)(void* ctx, Z80* cpu, uint16_t pc);
     void* context;
     std::string ownerId;
+    /// The subscriber books a halted idle stretch as one step (the CPU time profile: the T-states between two
+    /// instruction starts go to the HALT whatever their number), so the CPU may run the stretch in one go
+    bool idleTolerant = false;
 };
 
 /// Manages analyzer lifecycle, event dispatching, and breakpoint ownership.
@@ -141,8 +144,9 @@ public:
     /// @param context User context pointer
     /// @param analyzerId Analyzer identifier (for ownership tracking)
     /// @return Subscription ID for cleanup
+    /// @param idleTolerant The subscriber needs no step per halted idle fetch (CPUStepCallback::idleTolerant)
     CallbackId subscribeCPUStep(void (*fn)(void* ctx, Z80* cpu, uint16_t pc), void* context,
-                                const std::string& analyzerId);
+                                const std::string& analyzerId, bool idleTolerant = false);
 
     // Warm path subscriptions (std::function ~15-25ns per call)
 
@@ -211,6 +215,10 @@ public:
     /// so the no-subscriber path costs two branches.
     bool hasCPUStepSubscribers() const { return _enabled && !_cpuStepCallbacks.empty(); }
 
+    /// True when a subscriber needs a step per halted idle fetch (Z80::IdleStepsInert): an idle-tolerant one alone
+    /// lets the CPU run a halted stretch in one go
+    bool hasIdleStepSubscribers() const { return _enabled && _idleStepSubscribers != 0; }
+
     /// Guard for the per-sample audio dispatch loop in SoundManager::handleFrameEnd —
     /// true when at least one analyzer subscribes to audio samples
     bool hasAudioSampleSubscribers() const { return _enabled && !_audioCallbacks.empty(); }
@@ -264,6 +272,7 @@ private:
 
     // Hot path callback storage
     std::vector<CPUStepCallback> _cpuStepCallbacks;
+    size_t _idleStepSubscribers = 0;  ///< the callbacks above that are not idle tolerant
 
     // Warm path callback storage
     std::vector<std::pair<std::function<void(uint16_t)>, std::string>> _videoLineCallbacks;

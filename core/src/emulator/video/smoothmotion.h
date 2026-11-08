@@ -109,14 +109,14 @@ void Blend(const Picture& a, const Picture& b, int w, uint32_t* out);
 ///
 /// Known limit: a background periodic in a vector the search reaches (8x8 tiles, a checkerboard) agrees with itself
 /// under that vector; a block of mostly background beside a moving sprite may take it and shift the tiles near the
-/// sprite. Preferring zero there cost more on real content (POC 046 sequences: 7th Reality MAE 9.6 -> 22).
+/// sprite. Preferring zero there cost more on real content (POC 048 sequences: 7th Reality MAE 9.6 -> 22).
 class MotionField
 {
 public:
     static constexpr int kBlock = 8;
     /// Mismatching pixels of 64 still taken as a match: a quarter, so content that changes shape as it moves (water,
     /// spinning dots, a fifth of the pixels new each frame) keeps its motion (POC 047 suite: 4 -> 16 took `animated` from
-    /// 52 to 38 %, the rest and the game clips the same, the game modes on the POC 046 clips the same or better; 20
+    /// 52 to 38 %, the rest and the game clips the same, the game modes on the POC 048 clips the same or better; 20
     /// and 24 no better)
     static constexpr int kAccept = 16;
     static constexpr int kRangeFrames = 8;  ///< consecutive frames

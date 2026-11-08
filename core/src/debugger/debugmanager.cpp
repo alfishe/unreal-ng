@@ -14,6 +14,7 @@
 #include "debugger/analyzers/basic-lang/editormonitor.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/analyzers/dss/dssanalyzer.h"
 #include "debugger/analyzers/nedoos/nedoosanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
@@ -21,6 +22,7 @@
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
 #include "debugger/watch/framewatch.h"
+#include "debugger/markup/memorymarkup.h"
 
 /// region <Constructors / Destructors>
 
@@ -38,6 +40,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _asmSync = std::make_unique<AsmSyncService>(_context);
     _scriptCallbacks = std::make_unique<ScriptCallbackManager>(_context);
     _frameWatches = std::make_unique<framewatch::Manager>(_context);
+    _markup = std::make_unique<markup::MemoryMarkup>(_context);
     _gsTarget = std::make_unique<GSCardTarget>(_context);
     _msTarget = std::make_unique<GSCardTarget>(_context, DebugCpuId::MultiSoundGS, [context]() -> GeneralSoundCard* {
         SlotManager* slots = context->pSlotManager;
@@ -62,6 +65,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     // Register built-in analyzers
     _analyzerManager->registerAnalyzer("trdos", std::make_unique<TRDOSAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("coverage", std::make_unique<CoverageAnalyzer>());
+    _analyzerManager->registerAnalyzer(ProfileAnalyzer::kId, std::make_unique<ProfileAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("aylog", std::make_unique<AYLogAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("nedoos", std::make_unique<NedoOsAnalyzer>(_context));

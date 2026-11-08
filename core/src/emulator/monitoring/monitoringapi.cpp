@@ -14,9 +14,11 @@
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/aylog/ayloganalyzer.h"
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
+#include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/symbolcontrol.h"
+#include "debugger/markup/memorymarkup.h"
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdsessiontypes.h"
@@ -596,8 +598,34 @@ StateNode Analyzers(Emulator& emulator)
     coverage["available"] = analyzer != nullptr;
     coverage["recording"] = analyzer != nullptr && analyzer->isRecording();
     coverage["instructions"] = static_cast<int64_t>(analyzer != nullptr ? analyzer->getInstructionCount() : 0);
+    ProfileAnalyzer* cpuProfile = analyzers ? analyzers->getAnalyzer<ProfileAnalyzer>(ProfileAnalyzer::kId) : nullptr;
+    node["cpuprofile"] = cpuProfile == nullptr ? "unavailable" : cpuProfile->ReadTotals().active ? "running" : "off";
     PcHistory* history = context->pDebugManager ? context->pDebugManager->GetPcHistory() : nullptr;
     node["pchist"] = history != nullptr && history->IsArmed() ? "armed" : "off";
+    return node;
+}
+
+// The CPU time profile's totals (relaxed atomics the emulation thread writes: no hold, no copy of the counters)
+StateNode CpuProfile(Emulator& emulator)
+{
+    EmulatorContext* context = emulator.GetContext();
+    AnalyzerManager* analyzers = context->pDebugManager ? context->pDebugManager->GetAnalyzerManager() : nullptr;
+    ProfileAnalyzer* analyzer = analyzers ? analyzers->getAnalyzer<ProfileAnalyzer>(ProfileAnalyzer::kId) : nullptr;
+    StateNode node = StateNode::Object();
+    node["available"] = analyzer != nullptr;
+    if (analyzer == nullptr)
+        return node;
+    const profile::Totals t = analyzer->ReadTotals();
+    node["active"] = t.active;
+    node["frames"] = t.frames;
+    node["tstates"] = t.tstates;
+    node["instructions"] = t.instructions;
+    node["acknowledges"] = t.acknowledges;
+    node["routines"] = static_cast<unsigned>(t.routines);
+    node["pages"] = static_cast<unsigned>(t.pages);
+    node["depth"] = static_cast<unsigned>(t.depth);
+    node["discontinuities"] = t.discontinuities;
+    node["frames_kept"] = t.framesKept;
     return node;
 }
 
@@ -616,6 +644,32 @@ StateNode BufferFill(size_t used, size_t capacity, size_t slotBytes)
 
 // How full each trace buffer is: the counters the recorders keep (atomics, a shared lock, the call trace's own lock),
 // read at most once a second (the call trace's lock is the one its writer takes per event: never at a monitor's 10 Hz)
+StateNode Markup(Emulator& emulator)
+{
+    // Counts under the markup's lock, no copy of a layer; the runtime layer's feed from the tracker's level
+    EmulatorContext* context = emulator.GetContext();
+    StateNode node = StateNode::Object();
+    markup::MemoryMarkup* markup = context->pDebugManager ? context->pDebugManager->GetMemoryMarkup() : nullptr;
+    node["available"] = markup != nullptr;
+    if (markup == nullptr)
+        return node;
+    node["revision"] = markup->Revision();
+    node["runtime"] = markup->RuntimeFeed();
+    StateNode& layers = node["layers"];
+    layers = StateNode::Array();
+    for (const markup::LayerSummary& layer : markup->Summary())
+    {
+        StateNode entry = StateNode::Object();
+        entry["layer"] = markup::LayerName(layer.layer);
+        entry["source"] = layer.source;
+        entry["claims"] = static_cast<uint64_t>(layer.claims);
+        entry["entries"] = static_cast<uint64_t>(layer.entries);
+        entry["comments"] = static_cast<uint64_t>(layer.comments);
+        layers.push(std::move(entry));
+    }
+    return node;
+}
+
 StateNode Watches(Emulator& emulator)
 {
     // The totals the emulation thread published at the last frame's end (or a watch change): never the live stats
@@ -892,7 +946,8 @@ const std::vector<std::string>& InstanceNames()
                                                    "recording.state", "debug.labels",     "ttd.status",
                                                    "debug.analyzers", "controllers.state", "debug.buffers",
                                                    "game.events",     "debug.watches",     "analysis.progress",
-                                                   "analysis.ready",  "devices.access"};
+                                                   "analysis.ready",  "devices.access",    "debug.markup",
+                                                   "debug.cpuprofile"};
     return names;
 }
 
@@ -950,6 +1005,10 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator)
         return DevicesAccess(emulator);
     if (name == "debug.watches")
         return Watches(emulator);
+    if (name == "debug.markup")
+        return Markup(emulator);
+    if (name == "debug.cpuprofile")
+        return CpuProfile(emulator);
     if (name == "analysis.progress")
         return analysis::L1Jobs::Instance().View(emulator.GetId()).ProgressNode();
     if (name == "analysis.ready")

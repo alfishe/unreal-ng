@@ -1546,6 +1546,38 @@
    "gui": true
   },
   {
+   "id": "dbg.metadata_toggle",
+   "label": "Metadata in the debugger",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.metadata_regions_toggle",
+   "label": "Metadata regions in the disassembly",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.metadata_colours_toggle",
+   "label": "Metadata colours in the memory view",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
+   "id": "dbg.metadata_notes_toggle",
+   "label": "Metadata notes in the debugger",
+   "group": "Debugger",
+   "kind": "press",
+   "held": false,
+   "gui": true
+  },
+  {
    "id": "dbg.scroll_mode_toggle",
    "label": "Disassembly scrolls by bytes / instructions",
    "group": "Debugger",

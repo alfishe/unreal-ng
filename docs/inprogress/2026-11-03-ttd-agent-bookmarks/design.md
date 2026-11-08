@@ -80,7 +80,7 @@ The life counter drops when the soldier touches an enemy.
 ```
 
 Profile: `#` comment lines wrapped at 120 columns, for the header of a game profile
-(`data/controllers/profiles/games/*/*.yaml`):
+(`data/software/*/*.yaml`):
 
 ```yaml
 # Green Beret: found with TTD (3 bookmark(s), Pentagon history f0+0 .. f300+0).

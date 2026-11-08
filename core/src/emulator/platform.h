@@ -1,6 +1,8 @@
 #pragma once
 #include "stdafx.h"
 
+#include <bit>
+
 #include "sysdefs.h"
 #include "common/sound/aystereomode.h"
 #include "common/sound/filters/filtervoicing.h"
@@ -1291,7 +1293,12 @@ struct EmulatorState
     {
         const uint32_t multiplier = current_z80_frequency_multiplier ? current_z80_frequency_multiplier : 1u;
         if (hw_clock_den_applied <= 1) [[likely]]
+        {
+            // asked after every instruction: a shift for the usual 1, 2, 4, 8, 16 (a division is dear on x86)
+            if ((multiplier & (multiplier - 1)) == 0)
+                return t >> std::countr_zero(multiplier);
             return t / multiplier;
+        }
         return static_cast<uint32_t>(static_cast<uint64_t>(t) * hw_clock_den_applied / multiplier);
     }
 

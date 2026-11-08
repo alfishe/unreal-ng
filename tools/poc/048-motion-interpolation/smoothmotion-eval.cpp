@@ -1,5 +1,5 @@
 // smoothmotion-eval: the CPU reference of smooth motion (core/src/emulator/video/smoothmotion.h) on captured frame
-// sequences (tools/smoothmotion/capture.py: RGBA frames back to back), the measurements of POC 046 on the production
+// sequences (tools/smoothmotion/capture.py: RGBA frames back to back), the measurements of POC 048 on the production
 // code.
 //
 //   smoothmotion-eval eval <seq.rgba> <width> <height> <count>
@@ -13,7 +13,7 @@
 //       what a fixed display shows: repeat | blend | interpolate side by side (3 x width), one picture per refresh
 //
 // Build (no CMake target: a measuring tool, as the POC):
-//   CXXFLAGS=-O3 tools/verification/smoothmotion/compile-tool.sh tools/poc/046-motion-interpolation/smoothmotion-eval.cpp \
+//   CXXFLAGS=-O3 tools/verification/smoothmotion/compile-tool.sh tools/poc/048-motion-interpolation/smoothmotion-eval.cpp \
 //       scratch/2026-10-26-poc-046/smoothmotion-eval
 #include <algorithm>
 #include <chrono>
@@ -138,7 +138,7 @@ struct Cadence
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // the bounding box of the changes
 };
 
-/// As POC 046: a burst of changes on consecutive frames is one picture unless the content changes every frame
+/// As POC 048: a burst of changes on consecutive frames is one picture unless the content changes every frame
 Cadence DetectCadence(const std::vector<uint32_t>& seq, int width, int height, int count, const Rect& window)
 {
     const size_t size = static_cast<size_t>(width) * height;

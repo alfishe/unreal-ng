@@ -2,11 +2,20 @@
 #ifdef __APPLE__
 #include <hidapi_darwin.h>
 #endif
+#ifdef __linux__
+#include <fcntl.h>
+#include <linux/input.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#include <filesystem>
+#endif
 
 #include <algorithm>
 #include <codecvt>
 #include <locale>
 #include <set>
+#include <vector>
 
 #include "sdb/models.h"
 #include "sdb/transport.h"
@@ -25,12 +34,52 @@ std::string Narrow(const wchar_t* w)
     return s;
 }
 
+#ifdef __linux__
+// hid-generic also makes the deck an evdev keyboard: every key press reaches the desktop as KEY_UNKNOWN (KWin and Qt
+// apps act on it; on the Steam Deck unreal-qt's window maximised and restored with each press). While the deck is
+// open, its event nodes are grabbed (EVIOCGRAB: their events reach no other reader) and released on close. The
+// hidraw path is /dev/hidrawN; its input nodes are /sys/class/hidraw/hidrawN/device/input/input*/event*. Best
+// effort: a node that does not open or is grabbed already (sdctl beside the daemon) is skipped.
+std::vector<int> GrabEventNodes(const std::string& hidrawPath)
+{
+    namespace fs = std::filesystem;
+    std::vector<int> fds;
+    std::error_code ec;
+    const fs::path inputs = fs::path("/sys/class/hidraw") / fs::path(hidrawPath).filename() / "device" / "input";
+    for (const fs::directory_entry& input : fs::directory_iterator(inputs, ec))
+        for (const fs::directory_entry& node : fs::directory_iterator(input.path(), ec))
+        {
+            const std::string name = node.path().filename().string();
+            if (name.rfind("event", 0) != 0)
+                continue;
+            const std::string dev = "/dev/input/" + name;
+            const int fd = open(dev.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0)
+                continue;
+            if (ioctl(fd, EVIOCGRAB, 1) == 0)
+                fds.push_back(fd);
+            else
+                close(fd);
+        }
+    return fds;
+}
+#endif
+
 class HidTransport final : public Transport
 {
 public:
-    explicit HidTransport(hid_device* d) : _dev(d) {}
+    HidTransport(hid_device* d, [[maybe_unused]] const std::string& path) : _dev(d)
+    {
+#ifdef __linux__
+        _grabbed = GrabEventNodes(path);
+#endif
+    }
     ~HidTransport() override
     {
+#ifdef __linux__
+        for (const int fd : _grabbed)
+            close(fd);  // closing releases the grab
+#endif
         if (_dev)
             hid_close(_dev);
     }
@@ -57,6 +106,9 @@ public:
 
 private:
     hid_device* _dev;
+#ifdef __linux__
+    std::vector<int> _grabbed;  ///< the deck's evdev nodes, grabbed while it is open
+#endif
 };
 
 struct HidInit
@@ -119,7 +171,7 @@ std::unique_ptr<Transport> OpenHid(const std::string& path, std::string* error)
             *error = Narrow(hid_error(nullptr));
         return nullptr;
     }
-    return std::make_unique<HidTransport>(d);
+    return std::make_unique<HidTransport>(d, path);
 }
 
 }  // namespace sdb

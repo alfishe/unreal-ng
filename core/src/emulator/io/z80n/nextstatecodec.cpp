@@ -27,12 +27,15 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 16;  // 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 17;  // 17: + the audio render clock; 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
 {
 public:
+    /// Into @p out, emptied first (its capacity kept: a per-frame save allocates nothing)
+    explicit Writer(std::vector<uint8_t>& out) : _out(out) { _out.clear(); }
+
     /// A padded type writes its undefined padding bytes: the image (and its compressed size) changes from build to build
     template <typename T>
     static constexpr bool kNoPadding = std::has_unique_object_representations_v<T> || std::is_floating_point_v<T>;
@@ -62,10 +65,9 @@ public:
         _out.insert(_out.end(), bytes, bytes + sizeof(T) * N);
     }
     void PutBytes(const uint8_t* bytes, size_t n) { _out.insert(_out.end(), bytes, bytes + n); }
-    std::vector<uint8_t> Take() { return std::move(_out); }
 
 private:
-    std::vector<uint8_t> _out;
+    std::vector<uint8_t>& _out;
 };
 
 class Reader
@@ -448,6 +450,8 @@ static void LoadCtc(Reader& r, NextCtc& c)
 /// serial peer's blob, the Pi's the second one's, a joystick connector device's the joystick peer's); the connector's route is NR #0B
 static void SaveUart(Writer& w, const NextUart& u)
 {
+    // asleep, the look the sleep holds (NextUart::Wake): what per-instruction looks would have left
+    const uint64_t now = u._asleep ? std::max(u._now, u._sleepLook) : u._now;
     for (const NextUart::Channel& c : u._ch)
     {
         w.Put(c.prescalerMsb);
@@ -468,7 +472,7 @@ static void SaveUart(Writer& w, const NextUart& u)
         w.Put(c.rxFreeAt);
         w.Put(c.txFreeAt);
         w.Put(c.txReadyAt);
-        w.Put(c.lastLook);
+        w.Put(u._asleep ? now : c.lastLook);
         w.Put(c.errOverflow);
         w.Put(c.errFraming);
         w.Put(c.rtsOut);
@@ -484,10 +488,11 @@ static void SaveUart(Writer& w, const NextUart& u)
         w.Put(c.breakIn);
     }
     w.Put(u._selected);
-    w.Put(u._now);
+    w.Put(now);
 }
 static void LoadUart(Reader& r, NextUart& u)
 {
+    u._asleep = false;
     for (NextUart::Channel& c : u._ch)
     {
         r.Get(c.prescalerMsb);
@@ -594,6 +599,7 @@ static void LoadInterrupts(Reader& r, NextInterruptSource& i)
     r.Get(i._lineControl);
     r.Get(i._lineValue);
     r.Get(i._counterOffset);
+    i._lineStartKnown = false;  // LineStartT is made again from the loaded fields
     r.Get(i._pending);
     r.Get(i._inService);
     r.Get(i._lastT);
@@ -661,7 +667,7 @@ static void LoadSmall(Reader& r, NextMultiface& m, NextDivMmc& d)
 static void SaveAudio(Writer& w, const NextAudio* a)
 {
     // The three chips through their own TTD serializer (registers, generators, envelope, noise), then what the Next adds: pan, the selected
-    // chip, the mode bits and the four DACs. The render timing (tick clock, DC filters) is not state: it resyncs after a load
+    // chip, the mode bits and the four DACs, then the render clock. The DC filters are not state (output only)
     for (unsigned i = 0; i < NextAudio::kChips; i++)
     {
         std::vector<uint8_t> chip(a->_chips[i]->TTDStateSize());
@@ -679,6 +685,12 @@ static void SaveAudio(Writer& w, const NextAudio* a)
     w.PutArray(a->_dac);
     w.PutArray(a->_addr);
     w.Put(a->_held);
+    // The render clock: the generators tick on a 16 T grid from where the clock started, so the next tick's time
+    // and the frame's start are state too (a replay that restarted the clock at its frame start would tick off-grid,
+    // and one without a clock until the next frame would skip the frame's ticks)
+    w.Put(a->_timeKnown);
+    w.Put(a->_tickT);
+    w.Put(a->_frameStartT);
 }
 static void LoadAudio(Reader& r, NextAudio* a)
 {
@@ -699,7 +711,9 @@ static void LoadAudio(Reader& r, NextAudio* a)
     r.GetArray(a->_dac);
     r.GetArray(a->_addr);
     r.Get(a->_held);
-    a->_timeKnown = false;  // the render clock follows the machine again from the next frame
+    r.Get(a->_timeKnown);
+    r.Get(a->_tickT);
+    r.Get(a->_frameStartT);
 }
 
 static void SaveSd(Writer& w, const SdCardSpi& card)
@@ -823,7 +837,14 @@ static void LoadDecoder(Reader& r, PortDecoder_Next& p)
 
 std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
 {
-    Writer w;
+    std::vector<uint8_t> image;
+    SaveInto(p, image);
+    return image;
+}
+
+void NextStateCodec::SaveInto(const PortDecoder_Next& p, std::vector<uint8_t>& image)
+{
+    Writer w(image);
     w.Put(kImageVersion);
     w.Put(p._board->_issue);  // another board is another FPGA image: its state does not load
     Impl::SaveBoard(w, *p._board);
@@ -844,13 +865,14 @@ std::vector<uint8_t> NextStateCodec::Save(const PortDecoder_Next& p)
     Impl::SaveSd(w, p._sd[1]);
     Impl::SaveUart(w, p._uart);
     Impl::SaveEsxDos(w, *p._esxDos);
-    return w.Take();
 }
 
-bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size)
+bool NextStateCodec::Load(PortDecoder_Next& p, const uint8_t* data, size_t size, size_t imageSize)
 {
     // The length is fixed for a machine: an image of another length is another machine's
-    if (!data || size != Save(p).size() || data[0] != kImageVersion || data[1] != static_cast<uint8_t>(p._board->_issue))
+    if (imageSize == 0)
+        imageSize = Save(p).size();
+    if (!data || size != imageSize || data[0] != kImageVersion || data[1] != static_cast<uint8_t>(p._board->_issue))
         return false;
     Reader r(data, size);
     uint8_t version = 0;

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
-timeline, the cause chain, find event, explain frame, diff of two moments, bookmarks with notes and export"""
+timeline, the cause chain, find event, explain frame, diff of two moments, the replay check and the seek check,
+bookmarks with notes and export"""
 
 import re
 import sys
@@ -160,6 +161,29 @@ def test_cause_chain_follows_the_frame_counter(s):
     expect(r.is_error and 'addr' in r.text, 'no target named', r.text)
 
 
+def test_backtrace_lists_the_call_stack(s):
+    # The history of test_record_stop_seek: the ROM's main loop and its IM 1 handler; the stack words above SP named
+    # by their last writers. The base and the older frames were written before the session: before_session
+    before = s.call('time_travel', {'action': 'status'}).text
+    r = s.call('time_travel', {'action': 'backtrace'})
+    st = r.structured
+    expect(not r.is_error and r.text.startswith('#0  pc #'), 'the PC line first', r.text)
+    expect(st.get('stop') in ('before_session', 'max_depth', 'max_slots', 'rom', 'top_of_memory', 'barrier'),
+           'a stop reason', st.get('stop'))
+    expect(r.text.count('\n') >= len(st.get('frames', [])) + 1, 'one line per frame', r.text)
+    for f in st.get('frames', []):
+        expect(f.get('kind') in ('call', 'rst', 'interrupt') and f.get('slot', 0) >= st.get('sp', 0x10000),
+               'a frame above SP', f)
+    at_before = re.search(r'at frame (\d+)', before)
+    at_after = re.search(r'at frame (\d+)', s.call('time_travel', {'action': 'status'}).text)
+    expect((at_before and at_before.group(1)) == (at_after and at_after.group(1)), 'the position did not move',
+           (before[:200], at_after))
+    r = s.call('time_travel', {'action': 'backtrace', 'depth': 1})
+    expect(not r.is_error and len(r.structured.get('frames', [])) <= 1, 'depth 1: at most one frame', r.text)
+    r = s.call('time_travel', {'action': 'backtrace', 'frame': 10_000_000}, ok=False)
+    expect(r.is_error, 'a moment past the history is an error', r.text)
+
+
 
 def test_find_event_names_the_moment(s):
     # The history of test_record_stop_seek: the ROM's IM 1 handler counts FRAMES (#5C78) every frame
@@ -259,6 +283,31 @@ def test_diff_tells_what_differs_between_two_moments(s):
     expect(r.is_error and 'from_frame' in r.text, 'no first moment named', r.text)
     r = s.call('time_travel', {'action': 'diff', 'from_frame': first + 2, 'sections': 'nosuch'}, ok=False)
     expect(r.is_error and 'section' in r.text, 'an unknown section named', r.text)
+
+
+def test_replay_check_and_seek_check(s):
+    # The history of test_record_stop_seek: a ROM's frames replay as they were recorded
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'replay_check', 'from_frame': first, 'to_frame': first + 9})
+    v = r.structured
+    expect(not r.is_error and v.get('checked', 0) >= 8 and v.get('diverged') == 0, 'ten frames, none diverged', r.text)
+    expect('replay check f' in r.text and '0 diverged' in r.text, 'the summary in the text', r.text)
+    r = s.call('time_travel', {'action': 'replay_check', 'from_frame': first, 'to_frame': first + 9, 'stride': 3})
+    expect(not r.is_error and r.structured.get('checked', 0) + sum(r.structured.get('skipped', {}).values()) == 4,
+           'frames +0, +3, +6, +9', r.text)
+    r = s.call('time_travel', {'action': 'replay_check', 'stride': 0}, ok=False)
+    expect(r.is_error and 'stride' in r.text, 'a zero stride refused', r.text)
+
+    r = s.call('time_travel', {'action': 'seek_check_on'})
+    expect(not r.is_error and 'seek check' in r.text and ': on' in r.text, 'switched on', r.text)
+    r = s.call('time_travel', {'action': 'seek', 'frame': first + 4, 'tinframe': 500})
+    expect(not r.is_error and 'replay matches the recording' in r.text, 'the seek says its frame replays exactly',
+           r.text)
+    r = s.call('time_travel', {'action': 'seek_check_off'})
+    expect(not r.is_error and ': off' in r.text and '1 seek(s) checked, 0 diverged' in r.text, 'the counts', r.text)
+    r = s.call('time_travel', {'action': 'seek', 'frame': first + 5, 'tinframe': 500})
+    expect(not r.is_error and 'replay' not in r.text, 'off: the seek checks nothing', r.text)
 
 
 def test_bookmarks_keep_notes_context_and_export(s):

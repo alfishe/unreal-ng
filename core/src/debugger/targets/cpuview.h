@@ -56,8 +56,10 @@ std::string Write(Emulator* emulator, DebugCpuId cpu, const char* source, uint16
                   const std::vector<uint8_t>& bytes, size_t* written = nullptr);
 
 /// `count` (1..256) instructions from `address` of the card CPU: the GET /disasm object (address, count,
-/// instructions[] with address, bytes, mnemonic, size, target) plus "cpu"; no labels (they are the main CPU's)
-StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, size_t count);
+/// instructions[] with address, bytes, mnemonic, size, target) plus "cpu"; no labels (they are the main CPU's).
+/// `before` / `snap` as DebugSnapshot::Disasm (the virtual window, no anchors but the bytes)
+StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, size_t count, size_t before = 0,
+                 bool snap = false);
 
 /// The card CPU's four 16K windows: {cpu, windows: [{start, size, kind ("rom", "ram"), page, offset}]}; a window
 /// with nothing mapped is "none"

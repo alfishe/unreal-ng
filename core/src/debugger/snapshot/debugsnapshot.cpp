@@ -9,6 +9,7 @@
 #include "debugger/watch/framewatch.h"
 #include "debugger/memory/memoryread.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
 #include "emulator/cpu/core.h"
@@ -82,7 +83,7 @@ StateNode RegistersOf(const Z80State& state)
     return ret;
 }
 
-StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count)
+StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count, size_t before, bool snap)
 {
     DebugManager* dbg = context ? context->pDebugManager : nullptr;
     Memory* memory = context ? context->pMemory : nullptr;
@@ -97,38 +98,49 @@ StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count)
     Z80Disassembler* disasm = dbg->GetDisassembler().get();
     LabelManager* labels = dbg->GetLabelManager();
     count = std::clamp<size_t>(count, 1, kMaxDisasmLines);
+    before = std::min(before, kMaxDisasmLines);
+
+    // The virtual window (disassemblywindow.h): anchors (PC, labels, breakpoints, the markup) cut the rows that run
+    // across them, the markup's data ranges are db rows, the rows above come from a local backward sync
+    disasm::EmulatorSource source(context);
+    disasm::Window window(*disasm, source);
+    if (snap)
+        address = window.SnapToInstruction(address);
+    const std::vector<disasm::Row> rows = window.Around(address, before, count);
 
     StateNode ret = StateNode::Object();
     ret["address"] = static_cast<int>(address);
     ret["count"] = static_cast<unsigned>(count);
+    if (before)
+        ret["before"] = static_cast<unsigned>(before);
     StateNode instructions = StateNode::Array();
 
-    uint16_t current = address;
-    for (size_t i = 0; i < count && current >= address; ++i)
+    for (const disasm::Row& row : rows)
     {
-        // Direct (non-mutating) reads: the view must not strobe the ProfROM quadrant machine on #0000-#0003
-        std::vector<uint8_t> buffer;
-        for (int j = 0; j < 4; ++j)
-            buffer.push_back(memory->DirectReadFromZ80Memory(static_cast<uint16_t>(current + j)));
-
-        uint8_t length = 0;
-        DecodedInstruction decoded;
-        const std::string mnemonic = disasm->disassembleSingleCommandWithRuntime(buffer, current, &length, z80, memory, &decoded);
-        if (length == 0)
-            length = 1;   // at least advance by one
-
+        const DecodedInstruction& decoded = row.decoded;
         StateNode line = StateNode::Object();
-        line["address"] = static_cast<int>(current);
+        line["address"] = static_cast<int>(row.address);
         std::string hex;
-        for (uint8_t j = 0; j < length; ++j)
+        for (uint8_t j = 0; j < row.length; ++j)
         {
             char byte[4];
-            std::snprintf(byte, sizeof(byte), "%02X", buffer[j]);
+            std::snprintf(byte, sizeof(byte), "%02X", row.bytes[j]);
             hex += byte;
         }
         line["bytes"] = hex;
-        line["mnemonic"] = mnemonic;
-        line["size"] = static_cast<int>(length);
+        line["mnemonic"] = row.mnemonic;
+        line["size"] = static_cast<int>(row.length);
+        if (row.kind == disasm::RowKind::Data)
+        {
+            // A data range's bytes, or ("cut") an instruction's bytes up to an anchor or a data range
+            line["kind"] = std::string(row.cut ? "cut" : "data");
+            if (labels)
+                if (auto label = labels->GetLabelByZ80Address(row.address); label && !label->name.empty())
+                    line["label"] = label->name;
+            instructions.push(line);
+            continue;
+        }
+        const uint16_t current = row.address;
         if (labels)
         {
             auto label = labels->GetLabelByZ80Address(current);
@@ -163,7 +175,6 @@ StateNode Disasm(EmulatorContext* context, uint16_t address, size_t count)
             }
         }
         instructions.push(line);
-        current = static_cast<uint16_t>(current + length);
     }
     ret["instructions"] = instructions;
     return ret;

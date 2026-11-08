@@ -1,7 +1,7 @@
 # 047 — smoothing-filters
 
 Feature: [`docs/inprogress/2026-10-26-frame-presenter`](../../../docs/inprogress/2026-10-26-frame-presenter/README.md),
-sections 4.3-4.5 (smooth motion), plan phase 5. Follows [POC 046](../046-motion-interpolation/README.md).
+sections 4.3-4.5 (smooth motion), plan phase 5. Follows [POC 048](../048-motion-interpolation/README.md).
 
 ## Goals
 
@@ -17,7 +17,7 @@ The owner watched `interpolate` live on Aleste (60 Hz fixed display) and saw jud
 
 ## Requirements
 
-- The frames of POC 046 (`scratch/2026-10-26-poc-046/frames/*.rgba`, 352 x 288 RGBA, 200 consecutive frames each,
+- The frames of POC 048 (`scratch/2026-10-26-poc-046/frames/*.rgba`, 352 x 288 RGBA, 200 consecutive frames each,
   captured through the WebAPI).
 - The shipped variants (`off`, `blend`, `interpolate`, `cadence`, `carry`) through the CPU reference
   `core/src/emulator/video/smoothmotion.cpp` itself, so the videos show the bits the window shows; the others as

@@ -822,3 +822,49 @@ TEST_F(McpDebugTools_Test, CardCpu_StepsGoToTheCardsRoutes)
     EXPECT_NE(refused.text.find("a card CPU takes step, step_n, step_over and step_out"), std::string::npos)
         << refused.text;
 }
+
+/// analyze_performance cpuprofile: every op is a POST /cpuprofile/{op} with the options as given (series is the core's
+/// frames: frames is porttrace's frame count here); the core answer's text reaches content[]
+TEST_F(McpDebugTools_Test, AnalyzePerformance_CpuProfileForwardsTheOpAndCarriesTheText)
+{
+    Json::Value reportBody;
+    reportBody["text"] = "CPU profile, 50 frames\n  sub_8100  self 41.2 %";
+    _caller->routes["POST /api/v1/emulator/emu-1/cpuprofile/report"] = {200, reportBody};
+
+    Json::Value start;
+    start["action"] = "cpuprofile";
+    start["op"] = "start";
+    start["beam"] = true;
+    start["series"] = false;
+    start["ring_kib"] = 128;
+    ASSERT_FALSE(Run("analyze_performance", start).isError);
+    const FakeCaller::RecordedCall* started = _caller->Last("POST", "/api/v1/emulator/emu-1/cpuprofile/start");
+    ASSERT_NE(started, nullptr);
+    EXPECT_TRUE(started->body["beam"].asBool());
+    EXPECT_FALSE(started->body["frames"].asBool()) << "series goes as frames";
+    EXPECT_EQ(started->body["ring_kib"].asUInt(), 128u);
+    EXPECT_FALSE(started->body.isMember("series"));
+
+    Json::Value report;
+    report["action"] = "cpuprofile";
+    report["op"] = "report";
+    report["since"] = "level2";
+    report["top"] = 10;
+    const mcp::ToolResult answer = Run("analyze_performance", report);
+    ASSERT_FALSE(answer.isError) << answer.text;
+    const FakeCaller::RecordedCall* asked = _caller->Last("POST", "/api/v1/emulator/emu-1/cpuprofile/report");
+    ASSERT_NE(asked, nullptr);
+    EXPECT_EQ(asked->body["since"].asString(), "level2");
+    EXPECT_EQ(asked->body["top"].asUInt(), 10u);
+    EXPECT_NE(answer.text.find("sub_8100  self 41.2 %"), std::string::npos) << answer.text;
+
+    Json::Value status;
+    status["action"] = "cpuprofile";
+    ASSERT_FALSE(Run("analyze_performance", status).isError);
+    EXPECT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/cpuprofile/status"), nullptr) << "op defaults to status";
+
+    Json::Value bad;
+    bad["action"] = "cpuprofile";
+    bad["op"] = "report/../stop";
+    EXPECT_TRUE(Run("analyze_performance", bad).isError) << "an op is one path segment";
+}

@@ -91,6 +91,28 @@ bool MemoryAccessFacts::ReadPhysical(uint16_t page, uint16_t offset, ByteFacts& 
     return true;
 }
 
+bool MemoryAccessFacts::ReadZ80Kinds(uint16_t address, size_t count, uint8_t* out) const
+{
+    if (!_z80)
+        return false;
+    for (size_t i = 0; i < count; i++)
+        out[i] = _z80[(address + i) & 0xFFFF].kinds;
+    return true;
+}
+
+bool MemoryAccessFacts::ReadPhysicalKinds(uint16_t page, uint16_t offset, size_t count, uint8_t* out) const
+{
+    if (!_pages || page >= _pageCount || offset >= kPageSize)
+        return false;
+    const ByteFacts* entries = _pages[page].load(std::memory_order_acquire);
+    if (entries == nullptr)
+        return false;
+    count = std::min(count, kPageSize - offset);
+    for (size_t i = 0; i < count; i++)
+        out[i] = entries[offset + i].kinds;
+    return true;
+}
+
 std::vector<uint16_t> MemoryAccessFacts::TouchedPages() const
 {
     std::vector<uint16_t> pages;

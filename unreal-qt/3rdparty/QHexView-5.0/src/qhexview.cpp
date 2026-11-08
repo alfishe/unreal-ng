@@ -1437,9 +1437,13 @@ bool QHexView::event(QEvent* e) {
                                  m_currentarea == QHexArea::Ascii)) {
                 auto* helpevent = static_cast<QHelpEvent*>(e);
                 auto pos = this->positionFromPoint(helpevent->pos());
-                auto comment = m_hexmetadata->getComment(pos.line, pos.column);
+                auto comment = m_tooltipprovider && pos.isValid()
+                                   ? m_tooltipprovider(m_hexcursor->positionToOffset(pos))
+                                   : m_hexmetadata->getComment(pos.line, pos.column);
                 if(!comment.isEmpty())
                     QToolTip::showText(helpevent->globalPos(), comment);
+                else
+                    QToolTip::hideText();
                 return true;
             }
 

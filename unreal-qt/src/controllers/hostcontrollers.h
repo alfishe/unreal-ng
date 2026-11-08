@@ -18,6 +18,7 @@
 #include <vector>
 
 #ifdef ENABLE_CONTROLLERS
+#include "debugger/markup/markupcontrol.h"
 #include "emulator/io/controllers/ihapticfeed.h"
 #include "devicesfeed.h"
 #include "hostinputcontrol.h"
@@ -245,6 +246,13 @@ private:
     void onBreakpointHit(const QString& emulatorId);
     /// The feed for the resolved profiles: a game profile's haptics, else the sound filters when on, else none
     void attachHaptics();
+    /// The strongest game match's `memory` section over the attached machine (the markup's profile layer, the label
+    /// set profile:<id>); another match, or none, takes the previous one back
+    void applyMemoryProfile();
+    /// markup `save` (markupcontrol.h, every plane), on the GUI thread: the user layer and the analysis claims chosen
+    /// into the memory section of the profile named, else the applied one, else a new user game profile keyed by the
+    /// loaded program (as KeepAutoDecision keys it); then the profile lies over the machine again
+    markup::Reply saveMarkup(Emulator& emulator, const markup::SaveRequest& request);
     /// surface-dial.md §4.1: while a wheel device (the Surface Dial) is connected, the main and debugger windows hold
     /// the system wheel (Windows: no built-in tools, no wheel menu); released when the last one goes and at the end
     void updateWheelMenu();
@@ -294,6 +302,7 @@ private:
     std::vector<controllers::HostDeviceId> _known;
     std::map<controllers::HostDeviceId, std::pair<std::string, bool>> _knownNames;  ///< name, a player, by id
     std::map<controllers::HostDeviceId, std::string> _playerChoice;  ///< the user's connector per device
+    std::map<std::string, std::string> _memoryProfiles;  ///< the profile whose memory section lies over, by emulator id
 #endif
     bool _pauseOnDisconnect = false;
     EmulatorBinding* _binding = nullptr;

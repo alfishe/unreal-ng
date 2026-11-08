@@ -123,6 +123,12 @@ void NextDivMmc::ClearMapram()
 
 NextDivMmc::Hit NextDivMmc::Classify(uint16_t address) const
 {
+    // Asked on every opcode fetch: the addresses no rule names are answered first (every one below 0x4000)
+    const bool listed = address < 0x40 ? (address & 7) == 0 : address == 0x0066 || (address >> 8) == 0x3D ||
+                        (address >= 0x1FF8 && address <= 0x1FFF) || address == 0x056A || address == 0x04D7 ||
+                        address == 0x0562 || address == 0x04C6;
+    if (!listed)
+        return Hit::None;
     if (_memory->MultifaceActive())
         return Hit::None;  // zxnext.vhd: while the Multiface memory is in, sram_pre_override is "000" - the DivMMC's automap is not active
     if (!AutomapEnabled())

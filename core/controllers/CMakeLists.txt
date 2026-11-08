@@ -74,7 +74,7 @@ configure_file(${SOURCE_DIR}/devicesjson.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/gene
 list(APPEND CPP_FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/devicesjson.cpp)
 
 # The default profiles and the schemes (mapping-and-profiles.md §7.5) are compiled in the same way, one literal per
-# file; the game profiles stay files (runtime data, through games/index.yaml)
+# file; the game profiles stay files (runtime data, through software/index.yaml)
 set(PROFILES_DIR ${ROOT_DIR}/data/controllers/profiles)
 file(GLOB BUILTIN_PROFILE_FILES CONFIGURE_DEPENDS
     ${PROFILES_DIR}/play/*.yaml ${PROFILES_DIR}/debug/*.yaml ${PROFILES_DIR}/schemes/*.yaml)

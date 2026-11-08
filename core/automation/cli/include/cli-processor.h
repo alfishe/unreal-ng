@@ -212,6 +212,8 @@ private:
     void HandleFrameCost(const ClientSession& session, const std::vector<std::string>& args);
     void HandleCoverage(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAnalysis(const ClientSession& session, const std::vector<std::string>& args);  // analysis layers (L0 facts)
+    void HandleMarkup(const ClientSession& session, const std::vector<std::string>& args);    // memory markup
+    void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
@@ -504,9 +506,12 @@ private:
                               const std::vector<std::string>& args);
     void HandleTTDTimeline(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCauseChain(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDBacktrace(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDFindEvent(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDExplainFrame(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDDiffMoments(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDReplayCheck(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDSeekCheck(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);

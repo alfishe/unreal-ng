@@ -211,6 +211,8 @@ set(COMMON_SOURCES
     src/api/basic_api.cpp
     src/api/analyzers_api.cpp
     src/api/analysis_api.cpp
+    src/api/markup_api.cpp
+    src/api/cpuprofile_api.cpp
     src/api/debug_api.cpp
     src/api/capture_api.cpp
     src/api/recording_api.cpp

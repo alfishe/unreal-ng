@@ -285,6 +285,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd probe-frames` | `ttd pf` | The frames a game profile's probes fired in (a replay of the window). | ✅ Implemented |
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 | `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |
+| `ttd bt [F[+T]]` | `ttd backtrace` | The call stack at moment F+T (default: the current position): each return address above SP with the CALL / RST / interrupt that pushed it, when, and the routine it entered, one line per frame (`--depth N`, `--slots N`). |
 | `ttd event <kind> ...` | `ttd find-event` | When did it happen: `mem <addr>[:page] [cond [V\|B]] [--size 2] [--exact]`, `screen [PERCENT\|cleared]`, `exec <addr>[-<to>][:page]`, `port <in\|out> <port> [value V] [--mask M]`, `border [COLOUR]`, `key [KEY] [--released]`; `--last`, `--from F`, `--to F`, `--limit N`. One line per hit: frame+t, PC, instruction, before -> after, why; then a summary. | ✅ Implemented |
 | `ttd explain [F] [--sections a,b] [--limit N]` | `ttd explain-frame` | What frame F (default: the current one) did: the time split, the routines by time, the interrupt, paging, ports per device, memory changed with its writers, the screen and border, input, markers. Sections: `time`, `routines`, `interrupt`, `paging`, `ports`, `memory`, `screen`, `input`, `markers`, `all`; `--limit` 1..100 (default 8) per list. Prints the text; the machine stays where it was. | ✅ Implemented |
 | `ttd diff F[+T] [G[+T]] [--sections a,b] [--limit N] [--no-writers]` | — | What differs between moment F (+T inside the frame; `F:T` also works) and G (default: the current position): the registers, the latches and the 8K slot mapping, the RAM changed in ranges (screen pixels, attributes, RAM per page) with the bytes of short ranges and the last CPU write in between, the screen and border, the devices whose state differs, and the frames, T, keys and markers in between. Sections: `cpu`, `paging`, `memory`, `screen`, `devices`, `between`, `all`; `--limit` 1..200 (default 16) per list; `--no-writers` skips the write search. Prints the text; the machine stays where it was. | ✅ Implemented |
@@ -551,7 +552,7 @@ Monitoring ([command-interface.md §17](./command-interface.md#17-monitoring)), 
 | `monitor video.present` | The GUI window's way to the screen: presenter, policy, VRR, the video sync step, refresh, smooth motion in effect, the display rate switch's state and reason |
 | `monitor controllers.devices` | The host input devices: one line per device (id, name, battery, notice); `--json` the value the topic pushes |
 | `monitor emulator.stats [instance]` | fps, real-time speed %, frame time, halted %, CPU MHz and multipliers, interrupts per frame |
-| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
+| `monitor debug.breakpoints` / `breakpoint_groups` / `media.slots` / `recording.state` / `debug.labels` / `ttd.status` / `debug.analyzers` / `debug.cpuprofile` / `controllers.state` / `game.events` / `devices.access` | The summaries (JSON) |
 | `monitor <name> --json` | The reply every plane returns |
 
 ```
@@ -663,6 +664,63 @@ range     kind          detector       conf status   label / title
   vs 842F-8457 text          text            800 observed 
 > analysis export skool scratch/game.skool ranges=5900-59FF,8000-FFFF
 L2 skool (5900-59FF,8000-FFFF): 103 entries, 224275 bytes written to scratch/game.skool
+```
+
+### Memory markup
+
+What each byte of memory is (code, data, text, sprite, ...) by layer, the [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md): one command over the
+same core handler as every other plane (`markup::Execute`), so its lines are also the `text` of the REST and MCP
+answers. Addresses: `$8000`, `#8000`, `0x8000`, `8000h`, decimal or a label; a range `8000-80FF` or `$8000-$80FF`.
+`--json` prints the answer's fields.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `markup [show] [<range> \| <from> [<to>]] [layer=<l>] [limit=<n>]` | The CPU range (default the 64K) as spans of one winning claim each (kind, layer source, title, confidence below 1000), then the comments; `layer=` keeps the spans that layer wins. |
+| `markup layers` | Every layer, highest first: its source and counts; the runtime layer's feed (`facts`, `facts-physical`, `coverage`, `none`). |
+| `markup mark <range> \| <from> [<to>] <kind> [<title words>] [cpu]` | The user layer: the range as a region kind on the pages the CPU shows now (`cpu`: on the CPU addresses). |
+| `markup unmark <range> \| <from> [<to>]` | The user layer forgets its claims there. |
+| `markup comment <address> [<text words>]` | The user layer's comment (no text removes it). |
+| `markup clear [<layer>]` | Empty a layer (`user` by default; `analysis` shows the last L2 build again). |
+| `markup save [<profile>] [analysis=all\|<kinds>] [confidence=<n>] [keep]` | The user layer, and the analysis claims of at least the confidence (700) chosen, into a software profile's `memory:` section (unreal-qt only): the profile named, else the matched one, else a new user profile keyed by the loaded program. The user layer is emptied after unless `keep` (or the profile does not lie over the machine). |
+
+```
+> markup mark 8000 80FF sprite hero
+Marked $8000-$80FF as sprite 'hero' (on the pages mapped now)
+> markup comment $8010 frame 2
+Comment at $8010: frame 2
+> markup 8000-81FF
+Markup $8000-$81FF: 1 span(s), 0 instruction start(s), 1 comment(s)
+$8000-$80FF sprite [user] hero
+; $8010 frame 2
+```
+
+### CPU time profile
+
+Where the CPU's T-states go per executed instruction and per routine, live, with no recording and no code map
+([CPU time profile](../../analysis/cpu-profile.md)); the same core handler as every plane (`profile::Execute`), so the
+lines are also the `text` of the REST and MCP answers.
+
+| CLI Command | Description |
+| :--- | :--- |
+| `cpuprofile start [nostack] [beam] [noframes] [reset] [stream=F] [ring_kib=N]` | Switch the profile on: cells, the call stack (routines found at run time, self / inclusive), the per-frame series (default on), `beam` (self per 1/64 of the frame), `stream` (the series as JSONL). The CPU is held for the switch. |
+| `cpuprofile stop` / `reset` / `status` (`cpuprofile`) | Off (counters kept) / a fresh window (marks dropped) / the totals. |
+| `cpuprofile mark <name> [drop]` | A baseline: `since=<name>` reads the time after it (at most 8). |
+| `cpuprofile report [top] [since=M] [sort=self\|inclusive\|calls] [callers=] [beam=]` | The top (24) routines with self / inclusive share, entries, kinds and the attribution notes. |
+| `cpuprofile frames [last] [top=N]` | The last (50) frames of the series, the top (8) routines of each. |
+| `cpuprofile export <kit\|json\|entries\|sym\|ann> [path] [since=M]` | `kit`: the L1 subset `kit/fig_budget.py` reads; `entries`, `sym`, `ann`: the routine entries found. |
+
+`--json` prints the fields. Example:
+
+```text
+> cpuprofile start
+CPU profile started (stack on, beam off, frames on). Run the program, then read the report.
+> run frames 500
+> cpuprofile report 3
+CPU profile since the start: 500 frame(s), 34944000 T, 118 routine(s) found
+  self    incl    calls  routine (entry, page, kinds)
+   22.5%   24.8%    500  sub_B30C ($B30C, RAM 2, call)
+   14.1%   14.1%  61000  sub_A6E0 ($A6E0, RAM 2, call)
+    9.8%   99.9%      0  (outside any call) ($8000, RAM 2, root)
 ```
 
 ## Connection Examples

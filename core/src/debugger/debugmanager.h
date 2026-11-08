@@ -12,6 +12,7 @@
 #include <map>
 
 namespace framewatch { class Manager; }
+namespace markup { class MemoryMarkup; }
 
 class DebugManager
 {
@@ -48,6 +49,7 @@ protected:
     std::unique_ptr<class AsmSyncService> _asmSync;
     std::unique_ptr<class ScriptCallbackManager> _scriptCallbacks;
     std::unique_ptr<framewatch::Manager> _frameWatches;
+    std::unique_ptr<markup::MemoryMarkup> _markup;
     // The card CPU in the General Sound slot (gs-debugger design §3.2): its breakpoints and hooks
     std::unique_ptr<class GSCardTarget> _gsTarget;
     // The General Sound of a MultiSound slot card (the `ms` CPU)
@@ -83,6 +85,8 @@ public:
     ScriptCallbackManager* GetScriptCallbacks() { return _scriptCallbacks.get(); }
     /// Armed frame watches (debugger/watch/framewatch.h): checked at every frame end while any is armed
     framewatch::Manager* GetFrameWatches() { return _frameWatches.get(); }
+    /// What the main CPU's memory holds, layered (debugger/markup/memorymarkup.h): regions, entries, comments
+    markup::MemoryMarkup* GetMemoryMarkup() { return _markup.get(); }
     /// The General Sound slot's card CPU (exists for the machine's lifetime; Available() while a card with a CPU is
     /// fitted)
     GSCardTarget* GetGSTarget() { return _gsTarget.get(); }

@@ -14,7 +14,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/execution/automationgate.h"
 #include "controllers/hostcontrollers.h"
-#include "debugger/disassemblerwidget.h"
+#include "debugger/metadatasettings.h"
 #include "emulator/actions/actionparams.h"
 #include "emulator/actions/catalogue.h"
 #include "emulator/actions/steppingactions.h"
@@ -249,12 +249,21 @@ GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* 
 
     // The disassembly (Stream Deck D6.4, D6.5): follow PC, labels on / off, byte / command scroll, go to an address
     Add("dbg.follow_pc", pane("followPc"), noDebugger);
+    // The labels and the metadata switches (Debug > Metadata): global, kept in the settings, every debugger follows
+    for (const MetadataSettings::Switch which :
+         {MetadataSettings::Switch::Labels, MetadataSettings::Switch::Metadata, MetadataSettings::Switch::Regions,
+          MetadataSettings::Switch::Colours, MetadataSettings::Switch::Notes})
     {
-        actions::ActionRules labels = noDebugger;
-        labels.state = [](Emulator&, const actions::ActionValue&) -> std::optional<bool> {
-            return DisassemblerWidget::LabelsShown().load();
+        actions::ActionRules rules;
+        rules.state = [which](Emulator&, const actions::ActionValue&) -> std::optional<bool> {
+            return MetadataSettings::Instance().IsOn(which);
         };
-        Add("dbg.labels_toggle", pane("toggleLabels"), std::move(labels));
+        Add(MetadataSettings::ActionId(which),
+            [which](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
+                MetadataSettings::Instance().Toggle(which);
+                return {};
+            },
+            std::move(rules));
     }
     Add("dbg.scroll_mode_toggle", pane("toggleScrollMode"), noDebugger);
     Add("dbg.goto",

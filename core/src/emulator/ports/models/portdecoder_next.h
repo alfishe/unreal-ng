@@ -326,6 +326,8 @@ private:
     /// NR #07 was written and the clock is not switched yet: zxnext.vhd takes it over at the first idle bus clock after the write,
     /// the emulator does it at the next instruction fetch (the instruction boundary)
     bool _speedPending = false;
+    mutable const Z80* _nowCpu = nullptr;  ///< Now28's CPU (looked up at the first call: none while the machine is being built)
+    void UpdateM1HookEnd();
     double _speedChangedAt = 0;  ///< Now() of the last mid-frame switch (the boundary the SPI byte in flight is rescaled at)
     void ApplyPendingSpeed();
     uint32_t _spiTooFast = 0;
@@ -345,9 +347,12 @@ private:
     std::unique_ptr<NextInterruptSource> _interrupts;
     std::unique_ptr<NextDivMmc> _divMmc;
     std::unique_ptr<NextMultiface> _multiface;
-    /// Both devices watch the M1 cycles (the Multiface first: its memory has priority)
+    /// Both devices watch the M1 cycles (the Multiface first: its memory has priority). Every address they act on is below #4000
+    /// (the Multiface's NMI entry #0066; the DivMMC's RST entries, #0066, #04C6-#0562, #1FF8-#1FFF, #3Dxx): a fetch above it, most
+    /// of a program's, is answered here (at 28 MHz the two calls per fetch cost a few per cent of a frame)
     struct M1Chain final : IMachineM1Hook
     {
+        static constexpr uint16_t kWatchedEnd = 0x4000;
         NextMultiface* multiface = nullptr;
         NextDivMmc* divMmc = nullptr;
         PortDecoder_Next* owner = nullptr;
@@ -355,17 +360,22 @@ private:
         {
             if (owner->_speedPending) [[unlikely]]
                 owner->ApplyPendingSpeed();
+            if (address >= kWatchedEnd) [[likely]]
+                return;
             multiface->BeforeMachineM1(address);
             divMmc->BeforeMachineM1(address);
         }
         void OnMachineM1(uint16_t address) override
         {
+            if (address >= kWatchedEnd) [[likely]]
+                return;
             multiface->OnMachineM1(address);
             divMmc->OnMachineM1(address);
         }
     } _m1Chain;
     NextCtc _ctc;
     NextUart _uart;
+    uint64_t _uartSleepFrame = 0;  ///< the frame the UART fell asleep in (the device poll wakes it in the next one)
     NextDma _dma;
     // The histories beside the journals (nexthistory.h), registered while the decoder lives
     history::DeviceHistory<NextCopperRecord> _copperHistory{ "copper", "instructions the copper completes", 4096 };

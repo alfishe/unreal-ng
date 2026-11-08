@@ -47,6 +47,7 @@ Response:
 {
   "autostarted": true,
   "autostart_message": "boot.b started",
+  "ttd_session_ended": false,
   "status": "success",
   "message": "Disk inserted successfully",
   "path": "/abs/scratch/game.trd",
@@ -56,7 +57,9 @@ Response:
 
 Assert on `status == "success"`; `autostarted` tells you whether the boot
 sequence also engaged (`false` = mounted only, reason in
-`autostart_message`).
+`autostart_message`). `ttd_session_ended` is `true` when the boot ended a TTD
+session (its history stays browsable, the recording is over; the message says so
+too, for an agent that reads only the text). Python and Lua return the same key.
 
 MCP:
 
@@ -122,7 +125,8 @@ in [demo-boot-verification.md](../articles/demo-boot-verification.md).
   ([setup.md](../_common/setup.md) §3). A `48K` machine without Beta 128
   just mounts.
 - Autostart **quick-resets the machine**: register/RAM state from before the
-  call is gone. Do your snapshot/TTD setup *after* autostart lands.
+  call is gone, and a TTD session ends (`ttd_session_ended`). Do your
+  snapshot/TTD setup *after* autostart lands.
 
 ## Pitfalls
 

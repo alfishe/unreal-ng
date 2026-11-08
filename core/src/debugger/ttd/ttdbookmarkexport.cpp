@@ -160,7 +160,7 @@ std::string TTDBookmarksExportText(const std::vector<TTDBookmark>& bookmarks, TT
         return out.str();
     }
 
-    // Profile: comment lines for the header of a game profile (data/controllers/profiles/games/*.yaml), 120 columns
+    // Profile: comment lines for the header of a game profile (data/software/*/*.yaml), 120 columns
     Wrap(out, title + ": found with TTD (" + about + ").", "# ", "# ", 120);
     for (const TTDBookmark& b : bookmarks)
     {

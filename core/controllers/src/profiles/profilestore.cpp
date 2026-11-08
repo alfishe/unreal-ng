@@ -731,6 +731,8 @@ JsonValue ProfileStore::ToJson(const Profile& profile)
         root.Set("haptics", profile.haptics);
     if (!profile.video.IsNull())
         root.Set("video", profile.video);
+    if (!profile.memory.IsNull())
+        root.Set("memory", profile.memory);
     return root;
 }
 

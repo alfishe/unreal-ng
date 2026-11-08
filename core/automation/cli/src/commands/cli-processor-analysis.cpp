@@ -4,6 +4,8 @@
 // state_screen_api, recording_api) so every interface exposes the same features.
 
 #include "cli-analysis.h"
+#include "cli-markup.h"
+#include "cli-cpuprofile.h"
 #include "cli-audio-mixer.h"
 #include "cli-processor.h"
 
@@ -14,7 +16,9 @@
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
+#include <debugger/analyzers/profile/profilecontrol.h>
 #include <debugger/debugmanager.h>
+#include <debugger/markup/markupcontrol.h>
 #include <emulator/config.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
@@ -756,6 +760,62 @@ void CLIProcessor::HandleAnalysis(const ClientSession& session, const std::vecto
         return;
     }
     const analysis::Reply reply = analysis::Execute(*emulator, action, options);
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
+        return;
+    }
+    session.SendResponse((reply.Ok() ? reply.text : "Error: " + reply.message) + NEWLINE);
+}
+
+// HandleMarkup - the memory markup through markup::Execute (markupcontrol.h), the same verbs as GET / PUT / DELETE
+// /markup, /markup/layers, /markup/comment, POST /markup/save-profile and MCP debug_code markup actions
+void CLIProcessor::HandleMarkup(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    std::string action;
+    std::map<std::string, std::string> options;
+    bool json = false;
+    std::string error;
+    if (!CliMarkup::ParseArgs(args, action, options, json, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE + CliMarkup::kUsage + NEWLINE);
+        return;
+    }
+    const markup::Reply reply = markup::Execute(*emulator, action, options);
+    if (json)
+    {
+        session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);
+        return;
+    }
+    session.SendResponse((reply.Ok() ? reply.text : "Error: " + reply.message) + NEWLINE);
+}
+
+// HandleCpuProfile - the CPU time profile through profile::Execute (profilecontrol.h), the same operations as
+// /cpuprofile/{op} and MCP analyze_performance cpuprofile
+void CLIProcessor::HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    std::string op;
+    std::map<std::string, std::string> options;
+    bool json = false;
+    std::string error;
+    if (!CliCpuProfile::ParseArgs(args, op, options, json, error))
+    {
+        session.SendResponse("Error: " + error + NEWLINE + CliCpuProfile::kUsage + NEWLINE);
+        return;
+    }
+    const profile::Reply reply = profile::Execute(*emulator, op, options);
     if (json)
     {
         session.SendResponse(StateNodeToJsonText(reply.ToValue()) + NEWLINE);

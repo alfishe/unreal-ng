@@ -105,10 +105,6 @@ public:
     bool IsPagingLocked() const override { return false; }
     /// 3.5 or 21 MHz
     uint8_t TtdClockUnits() const override { return 6; }
-    /// The IM2 vector (the Z84C15 daisy chain, the PLD's INT answering #FF) and the stepped engines (PLD
-    /// resets, the loader watchdog, the CTC) follow the checkpointed state and the TTD input journal only
-    /// (s7-ttd-outcome.md): the port journals record on the Sprinter
-    bool TtdEnginesSealed() const override { return true; }
     /// A session recorded with another ISA slot population is refused (blob 33's kinds against the fitted cards)
     bool TtdSessionMatches(const ttd::TTDDeviceStates& states, std::string& why) const override;
     /// A ZX-bus only through an ISA ZX-bus adapter ([ISA] SlotN=ZXBUS; 2026-10-02-sprinter-isa/tdd.md §6, phase I2):

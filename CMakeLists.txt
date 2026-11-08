@@ -416,6 +416,12 @@ if (BUILD_TTD_INPLACE_PROFILE_POC AND TARGET unrealng::core)
 	add_subdirectory(tools/poc/040-ttd-inplace-replay-profile/cpp)
 endif ()
 
+# POC 046 (CPU time profile): the profile's cost per option and its attribution against L1; needs the core
+option(BUILD_PROFILE_ANALYZER_POC "Build POC 046 poc046-profile (tools/poc/046-profile-analyzer)" OFF)
+if (BUILD_PROFILE_ANALYZER_POC AND TARGET unrealng::core)
+	add_subdirectory(tools/poc/046-profile-analyzer/cpp)
+endif ()
+
 # POC 041 (ecat debugger): eCat3's debugger window over the core, needs the core and Qt 6 Widgets
 option(BUILD_ECAT_DEBUGGER_POC "Build POC 041 ecat-debugger-poc (tools/poc/041-ecat-debugger)" OFF)
 if (BUILD_ECAT_DEBUGGER_POC AND TARGET unrealng::core)

@@ -3,7 +3,7 @@
 // The Deck client's host controllers: what unreal-qt's HostControllers does, without Qt. The native backends (on the
 // Deck: hidraw for the built-in controller, evdev for the rest) through HostInputService, the play profiles compiled
 // into the controllers library, the user's (~/.config/unreal-ng/controllers/profiles) and the shipped game profiles
-// (controllers/profiles/games next to the binary, chosen by the loaded file's SHA-256), the machine default player
+// (software/ next to the binary, chosen by the loaded file's SHA-256), the machine default player
 // connectors, the port-read auto decision, the haptics (a game profile's, else the sound's) behind the gate, and the
 // host verbs of the automation surfaces (WebAPI /controllers/...). Everything runs on the thread that calls Poll():
 // the surfaces' requests wait for it.

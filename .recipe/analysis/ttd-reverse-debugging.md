@@ -12,6 +12,9 @@ These are the "answer the question backwards" primitives:
 - *Why does this byte / register hold this value?* → `cause-chain` (MCP `cause_chain`: the writer, its source, that
   source's writer... back to a constant, a port read or the initial memory, in one call; no `find_last` +
   `disassemble` + `reverse_step` loop)
+- *How did the program get here?* (who called this routine, through which calls, inside an interrupt?) → `backtrace`
+  (MCP `backtrace`: the return addresses above SP, innermost first, each with the CALL / RST / interrupt that pushed
+  it, when, and the routine it entered; no `reverse_step` + `reverse_continue` loop per caller)
 - *When did it happen?* (a counter went down, the scene changed, a routine first ran, fire was pressed, the border
   turned red) → `find-event` (MCP `find_event`: the first or last hits in a window, each with frame+t, PC, the
   instruction and before -> after, in one call; no `memory_at` / screen diff / `coverage_scan` + step loop)
@@ -71,6 +74,12 @@ time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
 time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position
 time_travel {"action":"cause_chain","reg":"HL","frame":11800,"tinframe":20000,"depth":6}
 #   one line per link: name = value, kind, f<frame>+<t>, PC, instruction, <- inputs; [stop: depth] = ask deeper there
+
+# how the program got here: the call stack (each stack word named by its last writer)
+time_travel {"action":"backtrace"}                                # at the current position
+time_travel {"action":"backtrace","frame":11782,"tinframe":2941}
+#   #0 pc and the routine it is in; #1.. caller PC, CALL / RST / interrupt, return address, f<frame>+<t> of the push;
+#   stop: before_session = the stack's base (or frames older than the session), max_depth = ask with a larger depth
 
 # when did it happen (frames filtered from the stored history, only hit frames replayed):
 time_travel {"action":"find_event","find":"mem","addr":"0xA130","cond":"decreased"}      # lives went down

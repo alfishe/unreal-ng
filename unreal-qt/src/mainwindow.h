@@ -107,6 +107,17 @@ public:
     void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
     /// The headless runner (--script without a file): the machine the Machine menu picks, as Start does
     void startEmulatorIfNone() { handleStartEmulator(); }
+    /// A machine of this model and RAM when none runs (Steam Deck Game Mode: a Pentagon 128K)
+    void startEmulatorIfNone(const std::string& model, uint32_t ramKb)
+    {
+        if (_emulator)
+            return;
+        _nextEmulatorModel = model;
+        _nextEmulatorRamKb = ramKb;
+        toggleEmulatorStartStop();
+        _nextEmulatorModel.clear();
+        _nextEmulatorRamKb = 128;
+    }
     /// The headless runner's end: closes as the window's close does, without the unsaved media question (the media
     /// policy decides, as for an unattended open)
     void closeUnattended()

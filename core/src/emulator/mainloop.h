@@ -100,6 +100,22 @@ public:
     /// rendered cadence stays within [target, 2 x target) frames per second
     /// (5008 fps on a 50.08 Hz machine -> every 100th frame). Public so tests can
     /// align their expectations with the fixed cadence.
+    /// The deadline the loop waits for before the next frame. `deadline` is the one the frame that just ran waited for
+    /// (so it lags `now` by that frame's duration in steady state). Normally one frame later. Behind by more than two
+    /// frames (a machine slower than real time, a stall): `now` - the next frame starts at once and the cadence restarts
+    /// there; no burst of catch-up frames, and no sleep either (a full-frame sleep on every re-anchor cost a machine
+    /// running at 140 % of its budget a fifth of its speed). Ahead by more than a frame (a clock step): one frame from now
+    static std::chrono::steady_clock::time_point NextFrameDeadline(std::chrono::steady_clock::time_point deadline,
+                                                                   std::chrono::steady_clock::time_point now,
+                                                                   std::chrono::microseconds frame)
+    {
+        if (deadline < now - 2 * frame)
+            return now;
+        if (deadline > now + frame)
+            return now + frame;
+        return deadline + frame;
+    }
+
     static constexpr uint64_t TURBO_RENDER_DECIMATION = 50;
     static constexpr uint64_t TURBO_RENDER_DECIMATION_MAX = 4096;
     static constexpr double TURBO_RATE_SAMPLE_SECONDS = 0.5;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the deployed emulator as an app on the Steam Deck: a launcher in the KDE menu and on the desktop
-# (Desktop Mode) and a non-Steam game in the Steam library (Game Mode). Runs on the Deck; deploy.sh calls it.
+# (Desktop Mode) and a non-Steam game in the Steam library (Game Mode) with its artwork
+# (install/steamdeck/steam-library.py). Runs on the Deck; deploy.sh calls it.
 #
 #   ~/steamdeck-poc/deck-install.sh             # install or refresh (safe to repeat)
 #   ~/steamdeck-poc/deck-install.sh --remove    # remove the launchers (the Steam entry: Steam -> Manage -> Remove)
@@ -50,6 +51,18 @@ if grep -qs "p01-sdl-gpu-latency" "$HOME"/.local/share/Steam/userdata/*/config/s
 elif pgrep -x steam > /dev/null; then
   steamos-add-to-steam "$DESKTOP_FILE"
   echo "Steam library: added (Game Mode: Library -> Non-Steam)"
+  # Steam writes the entry a moment later: the artwork below needs its app id
+  for _ in $(seq 1 20); do
+    grep -qs "p01-sdl-gpu-latency" "$HOME"/.local/share/Steam/userdata/*/config/shortcuts.vdf && break
+    sleep 0.5
+  done
 else
   echo "Steam library: Steam is not running, skipped (run this script again with Steam up)"
+fi
+
+# The library artwork (poster, capsule, hero, logo, icon: art/, tools/icons/generate_steam_art.py) for the entry
+# Steam added (install/steamdeck/steam-library.py);
+# Steam shows it after a restart or a return to the library
+if [ -x "$DIR/steam-library.py" ]; then
+  python3 -I "$DIR/steam-library.py" art --match p01-sdl-gpu-latency --art "$DIR/art" || true
 fi

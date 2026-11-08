@@ -279,6 +279,12 @@ struct TTDSessionInfo
     /// engine's settings and media check, LastEngineCheck): published with the
     /// rest so an observer on another thread reads a copy, not the live result
     TTDRestoreResult lastCheck;
+
+    /// check_seeks (SetCheckSeeks): every seek also checks the replay of the frame it landed in
+    bool checkSeeks = false;
+    uint64_t seekChecks = 0;            ///< seeks whose frame was checked
+    uint64_t seekCheckDivergences = 0;  ///< ... and diverged
+    std::string lastSeekDivergence;     ///< the last diverged check's text; empty when none diverged
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -428,6 +434,11 @@ struct TTDSeekResult
     /// "jump to start" goes. Frame 0 when not set
     TTDTimePoint      earliest      {};
     bool              beforeEarliest = false;
+    /// check_seeks on (SetCheckSeeks): the replay check of the frame the seek landed in. checked is false when the
+    /// frame cannot be checked (no next checkpoint, a barrier inside, a cut at its end)
+    bool              checked       = false;
+    bool              checkDiverged = false;
+    std::string       checkText;    ///< TTDReplayCheckText of the check
 };
 
 struct TTDClipExportOptions

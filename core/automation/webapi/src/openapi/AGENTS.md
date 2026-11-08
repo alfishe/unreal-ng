@@ -18,6 +18,7 @@ openapi/
 ├── openapi_analysis.inc   # Beam position, screen digest, frame cost
 ├── openapi_analyzers.inc  # Analyzer management, coverage, AY log
 ├── openapi_analysislayers.inc # Analysis layers: start / stop / status / explain / query / export / gallery / findings / review / experiment / cover (analysis::Execute)
+├── openapi_cpuprofile.inc # CPU time profile: start / stop / reset / mark / status / report / frames / export (profile::Execute)
 ├── openapi_assembly.inc   # In-process assembler + source listings
 ├── openapi_basic.inc      # BASIC interpreter control
 ├── openapi_breakpoints.inc # Breakpoint management
@@ -29,6 +30,7 @@ openapi/
 ├── openapi_interpreter.inc # CLI/Lua/Python interpreters
 ├── openapi_keyboard.inc   # Keyboard injection
 ├── openapi_labels.inc     # Labels/symbols management
+├── openapi_markup.inc     # Memory markup: show, layers, mark, unmark, comment, clear, save-profile (markup::Execute)
 ├── openapi_symbols.inc    # Symbol files in every format, symbol sets (SymbolControl)
 ├── openapi_asm.inc        # Assembler sources: decode, encode, convert, disk files (AsmControl)
 ├── openapi_signature.inc  # Media signatures: a file, the loaded media, compare (SignatureControl)

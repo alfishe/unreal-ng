@@ -1127,6 +1127,51 @@
     }
 
     // =====================================================================
+    // GET /ttd/backtrace — the call stack at a moment
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/backtrace"]["get"];
+        op["summary"] = "The call stack at a moment: the return addresses above SP and the CALL / RST / interrupt of each";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Each stack word above SP is named by its last write before the moment (the write journal, else a pruned "
+            "replay) and the instruction of that write (a replay of its frame): a CALL / RST that pushed a return "
+            "address, an interrupt acknowledge that pushed the interrupted PC, or data (PUSH, locals). With the usual "
+            "stack discipline the return addresses are the live frames, innermost first; a stack moved by LD SP shows "
+            "the frames written where it now points. The walk stops at max_depth, max_slots, the top of memory, a word "
+            "in ROM, a word not written in the history (before_session: the stack's base or frames older than the "
+            "session) or a replay barrier. The machine goes back where it stood; a live recording pauses for "
+            "browsing. Reply: at {frame, tinframe}, pc, code_page, sp, routine (the routine the PC is in), frames[] "
+            "{depth, kind (call, rst, interrupt), slot, return_address, caller_pc, caller_page, text, frame, tinframe, "
+            "callee, routine, data_words}, stop, stop_slot, slots_scanned, data_words, frames_traced, ms, text "
+            "(text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"frame", "integer", "The moment's frame (default: the current position)"},
+            {"tinframe", "integer", "The moment inside the frame, TTD time units (default 0)"},
+            {"max_depth", "integer", "Frames listed, 1..64 (default 16)"},
+            {"max_slots", "integer", "Stack words looked at, 1..4096 (default 256)"},
+            {"text", "boolean", "Also return the stack as text, one line per frame (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
     // GET /ttd/find-event — the moment something happened (TTD find event)
     // =====================================================================
     {
@@ -1234,6 +1279,80 @@
             op["parameters"][i]["description"] = q.description;
             ++i;
         }
+    }
+
+    // =====================================================================
+    // GET /ttd/replay-check — does the replay reproduce the recording
+    // =====================================================================
+    {
+        Json::Value& op = paths["/api/v1/emulator/{id}/ttd/replay-check"]["get"];
+        op["summary"] = "Replay each frame from its checkpoint and compare it with the next checkpoint";
+        op["tags"].append("Time-Travel Debug");
+        op["description"] =
+            "Every frame has a checkpoint at its start, taken from the live machine. Each frame of the range is "
+            "replayed from its checkpoint to its end and the machine's whole state compared with the next checkpoint: "
+            "CPU and chipset fields, the RAM per 16 KB page, every registered device's state, the engine's device "
+            "regions. Frames with a barrier inside (an unrecorded change), a cut at their end (a snapshot load) or no "
+            "next checkpoint are skipped and counted. The check stops after `limit` diverged frames. The machine goes "
+            "back where it stood; a live recording pauses for browsing. Reply: from_frame, to_frame, checked, "
+            "matched, diverged, skipped {barrier, cut, no_next_checkpoint}, stopped_after_frame, frames[] {frame, "
+            "items[] {section (cpu, chipset, ram, device, region), name, recorded, replayed | bytes, differing, "
+            "first_offset}, more_items}, ms, text (text=true).";
+        op["parameters"][0]["name"] = "id";
+        op["parameters"][0]["in"] = "path";
+        op["parameters"][0]["required"] = true;
+        const struct
+        {
+            const char* name;
+            const char* type;
+            const char* description;
+        } query[] = {
+            {"from_frame", "integer", "The first frame to check (default: the first kept frame)"},
+            {"to_frame", "integer", "The last frame to check, inclusive (default: the last one with a next checkpoint)"},
+            {"stride", "integer", "Check every n-th frame (default 1)"},
+            {"limit", "integer", "Diverged frames to describe before the check stops, 1..200 (default 8)"},
+            {"text", "boolean", "Also return the answer as text (default false)"},
+        };
+        Json::ArrayIndex i = 1;
+        for (const auto& q : query)
+        {
+            op["parameters"][i]["name"] = q.name;
+            op["parameters"][i]["in"] = "query";
+            op["parameters"][i]["schema"]["type"] = q.type;
+            op["parameters"][i]["description"] = q.description;
+            ++i;
+        }
+    }
+
+    // =====================================================================
+    // /ttd/seek-check — every seek replay-checks the frame it lands in
+    // =====================================================================
+    {
+        const char* path = "/api/v1/emulator/{id}/ttd/seek-check";
+        for (const char* method : {"get", "post"})
+        {
+            Json::Value& op = paths[path][method];
+            op["tags"].append("Time-Travel Debug");
+            op["parameters"][0]["name"] = "id";
+            op["parameters"][0]["in"] = "path";
+            op["parameters"][0]["required"] = true;
+            op["parameters"][0]["schema"]["type"] = "string";
+            op["responses"]["200"]["description"] =
+                "enabled, seek_checks (seeks whose frame was checked), seek_check_divergences, last_seek_divergence "
+                "(the last diverged check as text, null when none)";
+            op["responses"]["404"]["description"] = "Emulator instance not found";
+        }
+        paths[path]["get"]["summary"] = "Whether seeks check their frame's replay, and the counts";
+        paths[path]["post"]["summary"] = "Switch the seek check on or off";
+        paths[path]["post"]["description"] =
+            "Body: `{\"enabled\": true | false}`. On, every seek (any plane, the debugger's too) also runs the replay "
+            "check (GET /ttd/replay-check) of the frame it lands in; the seek's answer then carries `replay_check` "
+            "{diverged, text} and /ttd/status counts seek_checks and seek_check_divergences. A check costs one frame's "
+            "replay. Off by default.";
+        paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        paths[path]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["enabled"]["type"] =
+            "boolean";
+        paths[path]["post"]["responses"]["400"]["description"] = "The body has no boolean 'enabled'";
     }
 
     // =====================================================================

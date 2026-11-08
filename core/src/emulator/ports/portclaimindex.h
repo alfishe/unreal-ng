@@ -10,8 +10,8 @@
 #include <memory>
 #include <vector>
 
-// Qt defines `slots` as an empty macro: without this the namespace below turns anonymous in a Qt translation unit
-// (gcc -Wsubobject-linkage / -Wodr in unreal-qt)
+// Qt defines `slots` as an empty macro, and Qt sources reach this header through emulator.h before they undefine it:
+// `namespace slots` would then be an anonymous namespace (gcc -Wsubobject-linkage). The macro is off for this header
 #pragma push_macro("slots")
 #undef slots
 

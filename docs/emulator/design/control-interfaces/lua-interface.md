@@ -922,6 +922,7 @@ emu:bp_clear_last()  -- Clear last triggered breakpoint ID
 -- Disassembly
 local lines = disasm()                   -- Disassemble from PC (default 10 lines)
 local lines = disasm(0x8000, 20)         -- Disassemble from address, count
+local lines = disasm(0x8000, 20, 8)      -- 8 rows above the address first (the virtual window's backward sync)
 local lines = disasm_page("rom", 2, 0, 20)   -- Disassemble physical ROM page (e.g., TR-DOS)
 local lines = disasm_page("ram", 5, 0x100, 10)  -- Disassemble physical RAM page
 -- Returns: table with entries: {offset, bytes, mnemonic, size, label,
@@ -1389,6 +1390,14 @@ local chain = ttd_cause_chain(0x5C78, {depth = 6})
 --   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
 local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
 
+-- The call stack at a moment (default: the current position); options frame, tinframe, max_depth (16),
+-- max_slots (256), text
+local bt = ttd_backtrace{frame = 150, tinframe = 20000, text = true}
+-- { at = {frame = 150, tinframe = 20000}, pc = 0x8020, sp = 0xBFFA, routine = 0x8020,
+--   frames = { {depth = 1, kind = "call", slot = 0xBFFA, return_address = 0x8014, caller_pc = 0x8011,
+--   text = "CALL #8020", frame = 149, tinframe = ..., callee = 0x8020, routine = 0x8010, data_words = 0}, ... },
+--   stop = "before_session", stop_slot = 0xC000, slots_scanned = 3, data_words = 1, text = "#0  pc #8020 ..." }
+
 -- When did it happen: kind mem / screen / exec / port / border / key, options as the WebAPI query
 -- (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask, key,
 -- pressed, order = "first" | "last", from_frame, to_frame, limit, max_frames, text)
@@ -1684,6 +1693,40 @@ local item = emu.analysis("review")                  -- the next item: { item, s
 emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
 emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
 emu.analysis("cover", "32")                          -- a string: the budget
+```
+
+### Memory markup
+
+The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a table of its fields
+plus `text`; a refusal is `{ ok = false, error = <why> }`. A string second argument is the action's main option
+(show, mark, unmark: the range; comment: the address; clear: the layer; save: the profile).
+
+```lua
+emu.markup("mark", {range = "8000-80FF", kind = "sprite", title = "hero"})  -- the user layer
+local m = emu.markup("show", "8000-81FF")            -- { from, to, spans, anchors, comments, count, truncated, text }
+emu.markup("comment", {address = "$8010", text = "frame 2"})
+emu.markup("unmark", "8040-80FF")
+emu.markup("layers")                                 -- { layers, runtime, revision, text }
+emu.markup("clear", "user")
+emu.markup("save", {analysis = {"code", "sprite"}, keep = true})  -- unreal-qt: into the game's software profile
+```
+
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) through the shared core handler (`profile::Execute`): a table of
+the answer's fields plus `text`; a refusal is `{ok = false, error = <why>}`. A string as the second argument is the
+mark's name (`mark`), the top (`report`), the last (`frames`) or the format (`export`).
+
+```lua
+emu.cpuprofile("start")                                -- cells + call stack + per-frame series
+emu.cpuprofile("start", {beam = true, reset = true})
+emu.run_frames(500)
+local r = emu.cpuprofile("report", {top = 10})       -- { window, routines = {{name, entry, self, inclusive, ...}}, text }
+print(r.text)
+emu.cpuprofile("mark", "level2")
+emu.cpuprofile("report", {since = "level2"})
+emu.cpuprofile("export", {format = "kit", path = "work/p1/profile-l1.json"})
+emu.cpuprofile("stop")
 ```
 
 ## Usage Examples

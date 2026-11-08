@@ -105,6 +105,9 @@ public:
     uint32_t PayloadSize(TTDPieceId id) const { return _versions[id].payload.size; }
 
     size_t LiveVersions() const { return _liveVersions; }
+    /// Changes whenever an id may stand for other content than before (a version freed, the store cleared): a
+    /// holder that keeps decoded pieces by id keeps them while it stays the same
+    uint64_t ReuseGeneration() const { return _reuseGeneration; }
 
     /// Tests only: flip one bit of @p id's stored payload (damage, as a bad
     /// disk sector would). False for a version without payload (Zero)
@@ -114,6 +117,7 @@ public:
         if (v.payload.size == 0)
             return false;
         _arena.MutableData(v.payload)[byte % v.payload.size] ^= 0x10;
+        ++_reuseGeneration;   // the version's content changed under its id
         return true;
     }
     size_t PayloadBytes() const { return _arena.LiveBytes(); }
@@ -150,6 +154,7 @@ private:
     std::vector<Version> _versions;
     std::vector<TTDPieceId> _free;
     size_t _liveVersions = 0;
+    uint64_t _reuseGeneration = 0;   ///< ReuseGeneration
     TTDArena _arena;
     mutable Work _work;
 };

@@ -42,7 +42,7 @@ BIN="$ROOT/apps/steamdeck-client/build/$VARIANT/bin"
 # The binaries and the runtime data the core reads next to them (cmake/RuntimeData.cmake), plus the WebAPI's web
 # pages (resources/html) for automation builds
 INCLUDES=(--include='p[0-9][0-9]-*' --include='*.sh')
-for dir in configs rom symbols fonts midi boot controllers resources shaders; do INCLUDES+=(--include="$dir/***"); done
+for dir in configs rom symbols fonts midi boot controllers software resources shaders; do INCLUDES+=(--include="$dir/***"); done
 # The copy goes without debug info (p01: ~530 MB with it, ~30 MB without; symbols stay for backtraces), stripped in
 # the SDK image build.sh uses; the build keeps the full binaries for crash analysis
 STAGE="$ROOT/apps/steamdeck-client/build/$VARIANT/deploy"
@@ -52,6 +52,9 @@ docker run --rm --platform linux/amd64 -v "$STAGE":/stage -e HOST_IDS="$(id -u):
   bash -c 'strip --strip-debug /stage/p[0-9][0-9]-* && chown -R "$HOST_IDS" /stage'
 cp "$ROOT/apps/steamdeck-client/p19-runtime-packaging/run-in-slr.sh" "$ROOT/apps/steamdeck-client/deck-install.sh" "$STAGE/"
 cp "$ROOT/unreal-qt/resources/icons/app/appicon_256.png" "$STAGE/unreal-ng-deck.png"
+# The Steam library artwork and its installer (deck-install.sh runs it)
+cp "$ROOT/install/steamdeck/steam-library.py" "$STAGE/"
+rsync -a --delete "$ROOT/install/steamdeck/art/" "$STAGE/art/"
 if [ "$STAGE_ONLY" = 1 ]; then
   echo "staged: $STAGE"
   exit 0

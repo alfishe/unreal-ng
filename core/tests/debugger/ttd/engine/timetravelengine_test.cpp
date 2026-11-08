@@ -762,6 +762,59 @@ TEST(TimeTravelEngine_Damage_Test, DeviceDamageAndMissingStateAreNamedWithTheirF
     EXPECT_EQ(check.issues[1].lastFrame, 9u);
 }
 
+/// A restore decodes only the device state pieces whose version differs from the ones it decoded last: every
+/// checkpoint still gives back its own state, in any order, and after a resume from the past has freed versions and
+/// stored others (their ids reused) the new states come back, not the ones the old ids held
+TEST(TimeTravelEngine_DeviceState_Test, RestoresDecodeChangedPiecesOnly_ReusedIdsStillRight)
+{
+    struct Device : TTDSerializable
+    {
+        std::vector<uint8_t> state = std::vector<uint8_t>(3 * kTTDPieceSize - 64, 0);
+        size_t TTDStateSize() const override { return state.size(); }
+        void TTDSaveState(uint8_t* dst) const override { std::memcpy(dst, state.data(), state.size()); }
+        void TTDLoadState(const uint8_t* src) override { std::memcpy(state.data(), src, state.size()); }
+        std::string TTDDeviceName() const override { return "Probe"; }
+        PeripheralId TTDPeripheralId() const override { return PeripheralId::Covox; }
+    } dev;
+    TimeTravelEngine engine;
+    std::string err;
+    std::vector<uint8_t> ram(kTTDPieceSize, 0);
+    TTDRegionDesc r;
+    r.name = "ram";
+    r.memory = ram.data();
+    r.pieces = 1;
+    r.bytes = kTTDPieceSize;
+    ASSERT_TRUE(engine.BeginSession({r}, {{dev.TTDDescribe(), &dev, nullptr}}, err)) << err;
+    std::vector<std::vector<uint8_t>> expected;
+    auto capture = [&](uint64_t f, uint8_t salt) {
+        dev.state[10] = static_cast<uint8_t>(f + salt);                            // the first piece: every frame
+        dev.state[2 * kTTDPieceSize + 10] = static_cast<uint8_t>(f / 4 + salt);   // the last: every fourth
+        TTDFrameInput in;
+        in.position = {0, f, 0};
+        in.deviceStates.push_back({0 /* the one device */, dev.state.data(), dev.state.size()});
+        ASSERT_TRUE(engine.CaptureFrame(in, err)) << err;
+        expected.resize(f + 1);
+        expected[f] = dev.state;
+    };
+    for (uint64_t f = 0; f < 12; ++f)
+        capture(f, 0);
+    auto restoreAndCheck = [&](size_t index) {
+        std::fill(dev.state.begin(), dev.state.end(), uint8_t(0xEE));
+        ASSERT_EQ(engine.RestoreDevices(index, {}).status, TTDRestoreStatus::Exact) << "checkpoint " << index;
+        EXPECT_TRUE(dev.state == expected[index]) << "checkpoint " << index;
+    };
+    for (const size_t index : {3u, 4u, 11u, 0u, 7u, 7u, 8u, 2u})
+        restoreAndCheck(index);
+
+    // The cache holds checkpoint 10's pieces; a resume at 5 frees the later versions, the new frames store others
+    restoreAndCheck(10);
+    ASSERT_TRUE(engine.TruncateAfter(5, {0, 5, 0}, err)) << err;
+    for (uint64_t f = 6; f < 12; ++f)
+        capture(f, 100);
+    for (const size_t index : {10u, 11u, 6u, 5u, 9u})
+        restoreAndCheck(index);
+}
+
 /// Phase 3, Step 4: the session's settings. The first entry is the session's;
 /// a change adds an entry and a ConfigChange cut at its frame; equal settings
 /// add nothing. A checkpoint is checked against the settings it was recorded

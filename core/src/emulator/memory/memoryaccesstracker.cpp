@@ -172,6 +172,18 @@ bool MemoryAccessTracker::ReadPhysicalFacts(uint16_t page, uint16_t offset, Byte
     return _level == TrackerLevel::Facts && _facts.ReadPhysical(page, offset, out);
 }
 
+bool MemoryAccessTracker::ReadZ80FactKinds(uint16_t address, size_t count, uint8_t* out) const
+{
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return _level == TrackerLevel::Facts && _facts.ReadZ80Kinds(address, count, out);
+}
+
+bool MemoryAccessTracker::ReadPhysicalFactKinds(uint16_t page, uint16_t offset, size_t count, uint8_t* out) const
+{
+    std::shared_lock<std::shared_mutex> lock(_allocationMutex);
+    return _level == TrackerLevel::Facts && _facts.ReadPhysicalKinds(page, offset, count, out);
+}
+
 MemoryAccessTracker::FactsSummary MemoryAccessTracker::SummarizeFacts() const
 {
     std::shared_lock<std::shared_mutex> lock(_allocationMutex);

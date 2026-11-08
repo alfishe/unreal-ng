@@ -1340,6 +1340,7 @@ emu.bp_clear_last()        # Clear last triggered breakpoint ID
 # Disassembly
 emu.disasm()                                    # Disassemble from PC (default 10 lines)
 emu.disasm(address=0x8000, count=20)           # Disassemble from address
+emu.disasm(address=0x8000, count=20, before=8) # 8 rows above the address first (data rows: kind 'data' / 'cut')
 emu.disasm_page("rom", 2, offset=0, count=20)  # Disassemble physical ROM page (e.g., TR-DOS)
 emu.disasm_page("ram", 5, offset=0x100, count=10)  # Disassemble physical RAM page
 # Returns: list of dicts with keys: address/offset, bytes, mnemonic, size, label,
@@ -1837,6 +1838,11 @@ timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buc
 # Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
 # also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
 chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+
+# The call stack at a moment (default: the current position): frame, tinframe, max_depth=16, max_slots=256, text
+bt = emu.ttd_backtrace(frame=150, tinframe=20000, text=True)
+# {'pc': 32800, 'sp': 49146, 'frames': [{'depth': 1, 'kind': 'call', 'caller_pc': 32785, 'text': 'CALL #8020',
+#   'return_address': 32788, 'callee': 32800, 'frame': 149, ...}, ...], 'stop': 'before_session', 'text': '#0 ...'}
 # {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
 #   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
 
@@ -2131,6 +2137,39 @@ emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label=
 emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
              "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
+```
+
+### Memory markup
+
+The [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) through the shared core handler (`markup::Execute`): the answer is a dict of its fields
+plus `text`; a refusal is `{"ok": False, "error": <why>}`.
+
+```python
+emu.markup("mark", range="8000-80FF", kind="sprite", title="hero")  # the user layer (cpu=True: CPU addresses)
+m = emu.markup("show", range="8000-81FF")              # {from, to, spans [...], anchors, comments, count, text}
+emu.markup("comment", address="$8010", text="frame 2")
+emu.markup("unmark", range="8040-80FF")
+emu.markup("layers")                                   # {layers [...], runtime, revision, text}
+emu.markup("clear", layer="user")
+emu.markup("save", analysis=["code", "sprite"], keep=True)  # unreal-qt: into the game's software profile
+```
+
+### CPU time profile
+
+The [CPU time profile](../../analysis/cpu-profile.md) through the shared core handler (`profile::Execute`): the answer
+is a dict of its fields plus `text` (the CLI's lines); a refusal is `{"ok": False, "error": <why>}`.
+
+```python
+emu.cpuprofile("start")                                # cells + call stack + per-frame series
+emu.cpuprofile("start", beam=True, stream="scratch/series.jsonl", reset=True)
+emu.run_frames(500)
+r = emu.cpuprofile("report", top=10)                   # {window {...}, routines [{name, entry, self, inclusive, ...}], text}
+emu.cpuprofile("mark", name="level2")                  # a baseline
+emu.cpuprofile("report", since="level2", sort="inclusive")
+emu.cpuprofile("frames", last=20, top=4)               # {frames [{frame, tstates, routines [[id, self, incl]]}], names}
+emu.cpuprofile("export", format="kit", path="work/p1/profile-l1.json")  # for kit/fig_budget.py
+entries = emu.cpuprofile("export", format="entries")["content"]
+emu.cpuprofile("stop")                                 # the counters stay readable
 ```
 
 ### Enumerations
