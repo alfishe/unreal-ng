@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <sstream>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -352,6 +354,48 @@ TEST_F(TTDReplayCheck_Test, R7_NextSeekKeepsTheRestoredMmu)
     ASSERT_TRUE(r.error.empty()) << r.error;
     EXPECT_GE(r.checked, 4u) << ttd::TTDReplayCheckText(r);
     EXPECT_EQ(r.diverged, 0u) << ttd::TTDReplayCheckText(r);
+}
+
+/// R8: the Next's system area (the ROMs its firmware loads, the DivMMC RAM) is machine state, not the ROM set. A
+/// session recorded after the boot loads into a machine that has not booted, and a seek there shows the area as
+/// recorded
+TEST_F(TTDReplayCheck_Test, R8_NextSessionLoadsIntoAFreshMachine)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    _emulator->EnableTurboMode();
+    _ttd = _context->pTimeTravelController;
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);   // the firmware fills the system area
+    const size_t areaBytes = static_cast<size_t>(NextMemory::kSystemAreaPages) * PAGE_SIZE;
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint at = _ttd->CurrentPosition();
+    const std::vector<uint8_t> area(_context->pMemory->ROMBase(), _context->pMemory->ROMBase() + areaBytes);
+    _ttd->StopRecording();
+    std::stringstream session;
+    std::string error;
+    ASSERT_TRUE(_ttd->SerializeSession(session, error)) << error;
+
+    Emulator* fresh = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(fresh, nullptr);
+    EmulatorContext* freshContext = fresh->GetContext();
+    freshContext->pFeatureManager->setFeature(Features::kDebugMode, true);
+    freshContext->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    freshContext->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* freshTtd = freshContext->pTimeTravelController;
+    session.seekg(0);
+    EXPECT_TRUE(freshTtd->DeserializeSession(session, error)) << error;
+    if (error.empty())
+    {
+        EXPECT_TRUE(freshTtd->SeekTo(at));
+        const uint8_t* now = freshContext->pMemory->ROMBase();
+        EXPECT_TRUE(std::equal(area.begin(), area.end(), now)) << "the system area as recorded";
+    }
+    EmulatorTestHelper::CleanupEmulator(fresh);
 }
 
 /// R5: every model the TTD tests boot: the ROM boot's replay matches each next checkpoint

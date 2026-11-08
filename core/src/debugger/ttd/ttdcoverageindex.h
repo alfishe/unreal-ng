@@ -310,8 +310,17 @@ private:
         if ((slot & mask) != 0)
             return true;
         slot |= mask;
+        _seenWords[kindIdx][word >> 6] |= uint64_t{1} << (word & 63);
         return false;
     }
+
+    /// The words of _seen holding a bit, one bit per word (16 KB per kind): the seal walks them in order, which
+    /// yields the frame's keys sorted without sorting them (a sort of a few thousand keys per kind cost two thirds
+    /// of the frame boundary)
+    static constexpr size_t kSeenSummaryWords = kSeenWords / 64;
+    std::vector<uint64_t> _seenWords[kKindCount];
+    /// Below this many keys the sort is cheaper than the walk over the summary
+    static constexpr size_t kSortedWalkMinKeys = 256;
 
     /// Inclusive range of frames this index observed, per kind. Sealing a frame
     /// extends it even when the frame touched nothing, so "no entry" can be

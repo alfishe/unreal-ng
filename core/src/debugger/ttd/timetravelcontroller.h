@@ -754,6 +754,19 @@ public:
     /// find-last's beforeGlobalT, the journal segments and the engine's events
     /// share it. Without a session: frame x FrameSpan() + tInFrame
     uint64_t GlobalT(const TTDTimePoint& at) const;
+    /// GlobalT of a moment in @p frame, the start of the frame cached: a journaled write asks for the frame being
+    /// recorded at every store, and the frame table's lookups cost more than the record itself. The start depends
+    /// only on the frame, the table (its generation) and the frame span, so the cache is keyed by them
+    uint64_t GlobalTInFrame(uint64_t frame, uint32_t tInFrame) const;
+    struct FrameStartCache
+    {
+        uint64_t frame = UINT64_MAX;
+        uint64_t generation = 0;
+        uint32_t span = 0;
+        bool open = false;
+        uint64_t start = 0;
+    };
+    mutable FrameStartCache _frameStartCache;
     /// @brief The position of machine time @p globalT (the inverse of GlobalT)
     TTDTimePoint TimePointAt(uint64_t globalT) const;
     /// @brief The first barrier in (@p from, @p to] on the engine's event log,

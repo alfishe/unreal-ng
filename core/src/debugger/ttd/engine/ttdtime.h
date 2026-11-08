@@ -43,6 +43,7 @@ public:
     {
         _entries.clear();
         _base = 0;
+        ++_generation;
     }
 
     /// Append the next frame. Refused when the frame number does not grow or
@@ -52,10 +53,13 @@ public:
         if (!_entries.empty() && (frame <= _entries.back().frame || start < _entries.back().start))
             return false;
         _entries.push_back({frame, start});
+        ++_generation;
         return true;
     }
 
     size_t Count() const { return _entries.size(); }
+    /// Changes with every change of the table: a cache of a frame's start holds while it stays
+    uint64_t Generation() const { return _generation; }
     bool Empty() const { return _entries.empty(); }
     uint64_t FirstFrame() const { return _entries.empty() ? 0 : _entries.front().frame; }
     uint64_t LastFrame() const { return _entries.empty() ? 0 : _entries.back().frame; }
@@ -73,6 +77,7 @@ public:
         count = count < _entries.size() ? count : _entries.size();
         _entries.erase(_entries.begin(), _entries.begin() + static_cast<std::ptrdiff_t>(count));
         _base += count;
+        ++_generation;
     }
 
     /// Forget the newest @p count frames (a recording resumed from the past)
@@ -80,6 +85,7 @@ public:
     {
         count = count < _entries.size() ? count : _entries.size();
         _entries.resize(_entries.size() - count);
+        ++_generation;
     }
 
     /// Start of @p frame; false when the frame is not recorded
@@ -98,6 +104,7 @@ private:
         TTDMachineTime start;
     };
     size_t _base = 0;   ///< frames dropped from the front
+    uint64_t _generation = 0;
     std::vector<Entry> _entries;
 };
 

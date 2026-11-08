@@ -591,6 +591,10 @@ public:
     /// EmulatorState / TEMP
     virtual ScorpionRomWindow* GetScorpionRomWindow() { return nullptr; }
 
+    /// The ROM pages that are machine state, not the ROM set: written while the machine runs (the Next's system area,
+    /// which its firmware loads) and recorded by TTD as a device state. The ROM signature skips them
+    virtual uint16_t RomStatePages() const { return 0; }
+
     void SetROMPage(uint16_t page, bool updatePorts = false);
     void SetROMPageToBank(uint8_t bank, uint16_t page);  // Map any of the 4 Z80 banks to a ROM page (bank writes -> trash)
     /// A RAM bank that reads normally and drops its writes (ZX-Evo `#xBF7` write protect): the write pointer goes to

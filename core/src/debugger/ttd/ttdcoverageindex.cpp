@@ -1,6 +1,8 @@
 #include "ttdcoverageindex.h"
 
 #include <algorithm>
+#include <bit>
+#include <cassert>
 #include <istream>
 #include <iterator>
 #include <ostream>
@@ -51,6 +53,7 @@ TTDCoverageIndex::TTDCoverageIndex()
     {
         _pending[k].reserve(kPendingReserve);
         _seen[k].assign(kSeenWords, 0);
+        _seenWords[k].assign(kSeenSummaryWords, 0);
     }
 }
 
@@ -112,10 +115,12 @@ bool TTDCoverageIndex::IsHole(size_t kindIdx, uint64_t frame) const
 void TTDCoverageIndex::DiscardPending(size_t kindIdx)
 {
     std::vector<uint64_t>& seen = _seen[kindIdx];
+    std::vector<uint64_t>& words = _seenWords[kindIdx];
     for (TTDCoverageKey key : _pending[kindIdx])
     {
         const TTDCoverageKey masked = key & (kKeySpace - 1);
-        seen[masked >> 6] &= ~(uint64_t{1} << (masked & 63));
+        seen[masked >> 6] = 0;   // every key of the word is in the list
+        words[masked >> 12] = 0;
     }
     _pending[kindIdx].clear();
     std::fill(std::begin(_recent[kindIdx]), std::end(_recent[kindIdx]), TTDCoverageKey{0});
@@ -297,23 +302,42 @@ void TTDCoverageIndex::EncodePending(size_t kindIdx, uint64_t frame)
     // would break the "block covers [baseFrame, baseFrame+frameCount)" mapping
     // that replaces the per-frame table.
 
-    // Release the membership bits for exactly the keys this frame touched, so
-    // the next frame starts clean without touching the rest of the bitmap.
-    std::vector<uint64_t>& seen = _seen[kindIdx];
-    for (TTDCoverageKey key : pending)
-    {
-        const TTDCoverageKey masked = key & (kKeySpace - 1);
-        seen[masked >> 6] &= ~(uint64_t{1} << (masked & 63));
-    }
-
     // Reset the repeat filter for the next frame. Without this a key touched in
     // frame N would be skipped in frame N+1 and the set would be incomplete —
     // a false negative, the one failure mode that actually loses answers.
     std::fill(std::begin(_recent[kindIdx]), std::end(_recent[kindIdx]), TTDCoverageKey{0});
 
-    // Already deduplicated by the membership bitmap; sorting is what the delta
-    // encoding below needs.
-    std::sort(pending.begin(), pending.end());
+    // The delta encoding below needs the keys sorted (the bitmap already deduplicated them). The membership bits
+    // are released for exactly the words this frame touched, so the next frame starts clean without touching the
+    // rest of the bitmap
+    std::vector<uint64_t>& seen = _seen[kindIdx];
+    std::vector<uint64_t>& words = _seenWords[kindIdx];
+    if (pending.size() < kSortedWalkMinKeys)
+    {
+        std::sort(pending.begin(), pending.end());
+        for (TTDCoverageKey key : pending)
+        {
+            seen[key >> 6] = 0;   // every key of the word is in the list
+            words[key >> 12] = 0;
+        }
+    }
+    else
+    {
+        // The bitmap in address order is the set sorted: the summary names the words holding a bit
+        size_t at = 0;
+        for (size_t w = 0; w < kSeenSummaryWords; ++w)
+        {
+            for (uint64_t summary = words[w]; summary != 0; summary &= summary - 1)
+            {
+                const size_t word = (w << 6) + static_cast<size_t>(std::countr_zero(summary));
+                for (uint64_t bits = seen[word]; bits != 0; bits &= bits - 1)
+                    pending[at++] = static_cast<TTDCoverageKey>((word << 6) + static_cast<size_t>(std::countr_zero(bits)));
+                seen[word] = 0;
+            }
+            words[w] = 0;
+        }
+        assert(at == pending.size());
+    }
 
     std::vector<uint8_t>& pool = _openBlock[kindIdx];
 
@@ -483,6 +507,7 @@ void TTDCoverageIndex::Clear()
     {
         _pending[k].clear();
         _seen[k].assign(kSeenWords, 0);
+        _seenWords[k].assign(kSeenSummaryWords, 0);
         std::fill(std::begin(_recent[k]), std::end(_recent[k]), TTDCoverageKey{0});
         _blocks[k].clear();
         _openBlock[k].clear();
@@ -612,6 +637,7 @@ size_t TTDCoverageIndex::HeapBytes() const
     {
         total += _pending[k].capacity() * sizeof(TTDCoverageKey);
         total += _seen[k].capacity() * sizeof(uint64_t);
+        total += _seenWords[k].capacity() * sizeof(uint64_t);
         total += _openBlock[k].capacity();
         for (const Block& b : _blocks[k])
             total += b.compressed.capacity() + sizeof(Block);

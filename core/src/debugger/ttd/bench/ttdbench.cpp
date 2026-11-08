@@ -1029,6 +1029,21 @@ std::vector<Case> Matrix(const std::string& set)
         return cases;
     }
 
+    if (set == "heavy")
+    {
+        // The configurations whose recording costs the most per frame: the Next, the ZX-Evo with and without its
+        // sound cards, a General Sound 512 on the Pentagon, the Sprinter, TS-Conf with VDAC2 (and the base Pentagon
+        // to compare with)
+        add(Base("PENTAGON", "PENTAGON"), Idle(1500));
+        add(WithPeripherals(Base("PENTAGON", "PENTAGON"), "gs512"), Idle(1500));
+        add(atm3, Idle(1500));
+        add(WithPeripherals(atm3, "gs512+moon+tsfm"), Idle(1500));
+        add(Base("SPRINTER", "SPRINTER"), Idle(1500));
+        add(Base("TSL-VDAC2", "TSL-VDAC2"), Idle(1500));
+        add(Base("NEXT", "NEXT"), Idle(1500));
+        return cases;
+    }
+
     // full: every base model with its default peripherals (BR-4) ...
     const Configuration bases[] = {Base("48K", "48K"),
                                    Base("128K", "128k"),

@@ -1739,8 +1739,12 @@ uint64_t TimeTravelController::ComputeRomSignature() const
     // happens to expose: on ProfROM machines the quadrants outside the active
     // plane are exactly what a later seek will page in, so a session recorded
     // against a different image must not compare equal.
-    const size_t romBytes = static_cast<size_t>(MAX_ROM_PAGES) * PAGE_SIZE;
-    const uint64_t signature = ttd::HashBytes(_memory->ROMBase(), romBytes);
+    // The pages that are machine state (the Next's system area: the firmware loads it, TTD records it) are not the
+    // ROM set: a session recorded after the boot must load into a machine that has not booted yet. Machines without
+    // such pages hash the whole region as before, so their saved sessions keep their signature
+    const size_t statePages = std::min<size_t>(_memory->RomStatePages(), MAX_ROM_PAGES);
+    const size_t romBytes = (static_cast<size_t>(MAX_ROM_PAGES) - statePages) * PAGE_SIZE;
+    const uint64_t signature = ttd::HashBytes(_memory->ROMBase() + statePages * PAGE_SIZE, romBytes);
 
     // Never collide with the "unknown" sentinel.
     return signature == ttd::dump::kRomSignatureUnknown ? 1u : signature;
@@ -3200,6 +3204,20 @@ uint64_t TimeTravelController::GlobalT(const TTDTimePoint& at) const
     frames.Start(frames.FirstFrame(), start);
     const uint64_t back = (frames.FirstFrame() - at.frame) * span;
     return (start > back ? start - back : 0) + at.tInFrame;
+}
+
+uint64_t TimeTravelController::GlobalTInFrame(uint64_t frame, uint32_t tInFrame) const
+{
+    const TTDFrameTable& frames = _engine->Frames();
+    FrameStartCache& c = _frameStartCache;
+    const bool open = _engine->IsSessionOpen();
+    const uint32_t span = FrameSpan();
+    if (c.frame != frame || c.open != open || c.span != span || c.generation != frames.Generation())
+    {
+        // Every branch of GlobalT adds the moment's T to its frame's start
+        c = FrameStartCache{frame, frames.Generation(), span, open, GlobalT(TTDTimePoint{frame, 0})};
+    }
+    return c.start + tInFrame;
 }
 
 TTDTimePoint TimeTravelController::TimePointAt(uint64_t globalT) const
@@ -5115,7 +5133,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
         return;
 
     TTDWriteRecord rec{};
-    rec.globalT  = GlobalT({_context->emulatorState.frame_counter, TInFrameNow()});
+    rec.globalT  = GlobalTInFrame(_context->emulatorState.frame_counter, TInFrameNow());
     rec.addr     = addr;
     rec.isIo     = 0;
     rec.flip     = flip & 1u;
