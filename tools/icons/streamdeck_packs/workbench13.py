@@ -17,16 +17,17 @@ BLUE = (0, 85, 170)
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 34)
 ORANGE = (255, 136, 0)
+RED = (221, 34, 34)  # the record marker, beyond the four 1.3 colours
 
 
 class Workbench13(reskin.Skin):
     steps = 1
     bg = BLUE
     bg_on = ORANGE
-    flats = {'k': BLACK, 'd': BLACK, 'w': WHITE, 'l': WHITE, 'b': ORANGE, 'e': ORANGE}
+    flats = {'k': BLACK, 'd': BLACK, 'w': WHITE, 'l': WHITE, 'b': ORANGE, 'e': ORANGE, 'r': RED}
     # A shaded fill (a solid shape) in the dark grey becomes white with its black outline, like the 1.3 icons; the
     # dark grey of a detail (a line, a pixel run) stays black
-    fills = {'k': BLACK, 'd': WHITE, 'w': WHITE, 'l': WHITE, 'b': ORANGE, 'e': ORANGE}
+    fills = {'k': BLACK, 'd': WHITE, 'w': WHITE, 'l': WHITE, 'b': ORANGE, 'e': ORANGE, 'r': RED}
 
     def flat(self, key, on):
         if key == 'g':

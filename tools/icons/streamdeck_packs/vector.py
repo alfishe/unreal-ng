@@ -127,7 +127,7 @@ class HiResCanvas:
 
     def text_mask(self, s, x, y, scale=1, gap=1):
         m = np.zeros((R, R), bool)
-        for ch in s:
+        for ch in s.upper():
             for j, row in enumerate(sp.FONT_4X7[ch]):
                 for i, bit in enumerate(row):
                     if bit == '1':

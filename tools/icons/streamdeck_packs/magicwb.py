@@ -4,10 +4,11 @@
     python3 tools/icons/streamdeck_packs/magicwb.py     # writes data/streamdeck/icons/packs/magicwb/
 
 The look of Amiga MagicWB (original drawings; only the palette and the technique are imitated): the 8-colour MagicWB
-palette, a black outline, white light from the top left, shade bottom right with a dithered band, on a Workbench 2
+palette plus one red ('r', shade 'R') kept for the record marker of every pack, a black outline, white light from the top left, shade bottom right with a dithered band, on a Workbench 2
 button (white / black bevel). A toggle's "on" face is the button pressed in (bevel inverted) and lit blue.
 """
 
+import numpy as np
 import json
 import math
 import os
@@ -22,8 +23,8 @@ PACK_DIR = os.path.join(ROOT_DIR, 'data', 'streamdeck', 'icons', 'packs', 'magic
 N = 32
 
 PALETTE = {'g': (149, 149, 149), 'k': (0, 0, 0), 'w': (255, 255, 255), 'b': (59, 103, 162), 'd': (123, 123, 123),
-           'l': (175, 175, 175), 'e': (170, 144, 124)}
-LO = {'b': 'k', 'l': 'd', 'e': 'd', 'd': 'k', 'w': 'l', 'g': 'd', 'k': 'k'}
+           'l': (175, 175, 175), 'e': (170, 144, 124), 'r': (214, 36, 36), 'R': (122, 18, 18)}
+LO = {'b': 'k', 'l': 'd', 'e': 'd', 'd': 'k', 'w': 'l', 'g': 'd', 'k': 'k', 'r': 'R', 'R': 'k'}
 
 
 class Style:
@@ -219,13 +220,48 @@ def camera(c):
 
 
 def videocam(c, light=False):
+    """A video camera; `light` False / True: its red record light (True: with a glint), None: no light."""
     bar(c, 3, 10, 20, 24, 'l', r=1)
     c.solid(c.m.poly([(21, 14), (29, 9), (29, 26), (21, 21)]), 'd')
     if light is None:
         return
-    dot(c, 8, 14, 2, 'e' if light else 'd')
+    dot(c, 9, 16, 4.2, 'r')
     if light:
-        c.px(7, 13, 'w')
+        c.box(7, 13, 8, 14, 'w')
+
+
+def movie_camera(c):
+    """A movie camera with two film reels on top (the video recording page)."""
+    reel(c, 8, 8, 5.5)
+    reel(c, 19, 8, 5.5)
+    bar(c, 3, 15, 20, 27, 'l', r=1)
+    c.solid(c.m.poly([(21, 18), (29, 14), (29, 28), (21, 24)]), 'd')
+
+
+def microphone(c, cx=15, x_off=0):
+    """A studio microphone on a stand (the audio recording page)."""
+    cx += x_off
+    bar(c, cx - 4, 3, cx + 4, 17, 'l', r=4)
+    for y in (7, 10, 13):
+        c.hline(cx - 2, cx + 2, y, 'd')
+    c.solid(c.m.arc(cx, 11, 7.5, 0, 180, 2.2), 'd')
+    bar(c, cx - 1, 20, cx + 1, 25, 'd')
+    bar(c, cx - 6, 26, cx + 6, 28, 'd', r=1)
+
+
+def rec_badge(c, cx, cy, r, lit):
+    """The red record marker in a corner of a drawing (a glint when lit)."""
+    dot(c, cx, cy, r, 'r')
+    if lit:
+        c.box(cx - 2, cy - 2, cx - 1, cy - 1, 'w')
+
+
+def recordings(c):
+    """Recorded frames behind the record ring (no red: the time travel recording page)."""
+    bar(c, 3, 3, 19, 15, 'd', r=1)
+    bar(c, 6, 6, 22, 18, 'l', r=1)
+    ring(c, 20, 20, 9, 6, 'l')
+    dot(c, 20, 20, 4.2, 'd')
 
 
 def keycap(c, x0=4, y0=5, x1=27, y1=26):
@@ -735,11 +771,25 @@ def draw(gid):
     return c.image(PALETTE)
 
 
+def pixel_disc(c, cx, cy, r):
+    """A disc of the pixels whose centres lie within r of (cx, cy), in 32-grid units on a canvas of any resolution
+    (the vector packs draw at 256): mirror-symmetric where the PIL ellipse is not."""
+    n = c.c.shape[0]
+    k = n / 32
+    y, x = np.mgrid[0:n, 0:n]
+    return (x + 0.5 - cx * k) ** 2 + (y + 0.5 - cy * k) ** 2 <= (r * k) ** 2
+
+
 def g_record(c, lit):
-    ring(c, 15, 15, 12, 8.5, 'l')
-    dot(c, 15, 15, 7, 'k' if lit else 'd')
-    if lit:
-        c.box(12, 11, 13, 12, 'w')
+    """The record key: a flat red dot, no ring, no bevel and no word (the key tile is the button and the deck writes
+    the label). 20 px across, centred on the grid's middle (16, 16) like the stop square; lit: the pressed backdrop."""
+    c.solid(pixel_disc(c, 16, 16, 10.2), 'r', bevel=False, outline=False)
+
+
+def g_stop(c):
+    """The stop key: a flat black square, no ring and no bevel; 16 px, centred on the grid's middle (16, 16) like the
+    record dot. The deck dims the key while nothing records."""
+    c.solid(c.m.rect(8, 8, 23, 23), 'k', bevel=False, outline=False)
 
 
 DRAW = {
@@ -809,7 +859,8 @@ DRAW = {
     'ttd.menu': lambda c: clock(c, 17, 16, 12, arrow_back=True),
     'ttd.record': lambda c: g_record(c, False),
     'ttd.record.on': lambda c: g_record(c, True),
-    'ttd.stop': lambda c: (ring(c, 15, 15, 12, 8.5, 'l'), bar(c, 11, 11, 20, 20, 'k')),
+    'ttd.stop': g_stop,
+    'ttd.recordings': recordings,
     'ttd.step_back_frame': lambda c: (bar(c, 4, 5, 8, 26), tri_left(c, 10, 5, 27, 26)),
     'ttd.step_forward_frame': lambda c: (tri_right(c, 4, 5, 21, 26), bar(c, 23, 5, 27, 26)),
     'ttd.step_back_instruction': lambda c: (code_lines(c, x0=12), tri_left(c, 2, 10, 9, 21)),
@@ -1019,6 +1070,11 @@ DRAW = {
     'cap.screenshot_save': lambda c: (camera(c), arrow(c, 25.5, 14, 25.5, 29, shaft=4, head=10, head_len=5, col='e')),
     'cap.record': lambda c: videocam(c, False),
     'cap.record.on': lambda c: videocam(c, True),
+    'cap.record_stop': g_stop,
+    'cap.video': movie_camera,
+    'cap.audio': microphone,
+    'cap.record_audio': lambda c: (microphone(c, x_off=-4), rec_badge(c, 24, 7, 4.6, False)),
+    'cap.record_audio.on': lambda c: (microphone(c, x_off=-4), rec_badge(c, 24, 7, 4.6, True)),
     'cap.clip_last': scissors,
     'cap.record_pause': lambda c: (videocam(c, None), bar(c, 7, 13, 9, 21, 'b'), bar(c, 13, 13, 15, 21, 'b')),
     'cap.audio_capture': lambda c: ([bar(c, x, 16 - h, x + 1, 16 + h, 'b') for x, h in

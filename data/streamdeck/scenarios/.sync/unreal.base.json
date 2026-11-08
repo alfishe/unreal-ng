@@ -1,18 +1,109 @@
 {
  "derived": {
-  "arec": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
+  "auday": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
    "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
+   "state": null,
+   "title": "Capture audio"
   },
-  "audio": {
+  "audbeep": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Capture audio"
+  },
+  "audcovox": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Capture audio"
+  },
+  "audfile": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
-   "title": "audio"
+   "title": "audfile"
+  },
+  "audgs": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Capture audio"
+  },
+  "audio": {
+   "glyph": "cap.audio",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "AUDIO REC"
+  },
+  "audmix": {
+   "glyph": "cap.audio_capture",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Capture audio"
+  },
+  "audmon": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "audmon"
+  },
+  "audpause": {
+   "glyph": "cap.record_pause",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pause recording"
+  },
+  "audsize": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "audsize"
+  },
+  "audstart": {
+   "glyph": "cap.record_audio",
+   "glyph_on": "cap.record_audio.on",
+   "hold": false,
+   "state": "cap.record.audio_only",
+   "title": "Start recording"
+  },
+  "audstate": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "audstate"
+  },
+  "audstop": {
+   "glyph": "cap.record_stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop recording"
+  },
+  "audtime": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "audtime"
+  },
+  "audwav": {
+   "glyph": "cap.record_audio",
+   "glyph_on": "cap.record_audio",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
   },
   "ay": {
    "glyph": "audio.sound",
@@ -2198,12 +2289,89 @@
    "state": "toggle.set.toggle.turbo_tape",
    "title": "Toggle a setting"
   },
+  "ttd": {
+   "glyph": "ttd.recordings",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "TTD REC"
+  },
+  "ttdback5": {
+   "glyph": "ttd.unit_back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Back one unit"
+  },
+  "ttdbytes": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdbytes"
+  },
+  "ttdclip": {
+   "glyph": "cap.clip_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clip the last seconds"
+  },
+  "ttddrop": {
+   "glyph": "ttd.invalidate",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Drop the history"
+  },
+  "ttdfrms": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdfrms"
+  },
+  "ttdjrnl": {
+   "glyph": "ttd.journal_build",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Build the write journal"
+  },
   "ttdlen": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
    "title": "ttdlen"
+  },
+  "ttdlive": {
+   "glyph": "ttd.resume_live",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Resume live"
+  },
+  "ttdload": {
+   "glyph": "ttd.load",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Open a session"
+  },
+  "ttdmark": {
+   "glyph": "ttd.bookmark_add",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Add a bookmark"
+  },
+  "ttdmarks": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdmarks"
   },
   "ttdmem": {
    "glyph": null,
@@ -2212,12 +2380,33 @@
    "state": null,
    "title": "ttdmem"
   },
-  "ttdrec": {
-   "glyph": "ttd.record",
-   "glyph_on": "ttd.record.on",
+  "ttdmnext": {
+   "glyph": "ttd.bookmark_next",
+   "glyph_on": null,
    "hold": false,
-   "state": "toggle.ttd.record_toggle",
-   "title": "Start / stop recording"
+   "state": null,
+   "title": "Next bookmark"
+  },
+  "ttdmprev": {
+   "glyph": "ttd.bookmark_prev",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous bookmark"
+  },
+  "ttdpos": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdpos"
+  },
+  "ttdsave": {
+   "glyph": "ttd.dump",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save the session"
   },
   "ttdst": {
    "glyph": null,
@@ -2225,6 +2414,27 @@
    "hold": null,
    "state": null,
    "title": "ttdst"
+  },
+  "ttdstart": {
+   "glyph": "ttd.record",
+   "glyph_on": "ttd.record.on",
+   "hold": false,
+   "state": "toggle.ttd.start",
+   "title": "Start recording"
+  },
+  "ttdstate": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "ttdstate"
+  },
+  "ttdstop": {
+   "glyph": "ttd.stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop recording"
   },
   "turbo": {
    "glyph": "mach.turbo",
@@ -2254,12 +2464,124 @@
    "state": null,
    "title": "Joystick"
   },
+  "vid1080": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
+  },
+  "vid4k": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
+  },
+  "vidclip": {
+   "glyph": "cap.clip_last",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Clip the last seconds"
+  },
   "video": {
+   "glyph": "cap.video",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "VIDEO REC"
+  },
+  "vidfile": {
    "glyph": null,
    "glyph_on": null,
    "hold": null,
    "state": null,
-   "title": "video"
+   "title": "vidfile"
+  },
+  "vidgif": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
+  },
+  "vidhq": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
+  },
+  "vidmon": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vidmon"
+  },
+  "vidmulti": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record",
+   "hold": false,
+   "state": "toggle.cap.record_start",
+   "title": "Start recording"
+  },
+  "vidpause": {
+   "glyph": "cap.record_pause",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Pause recording"
+  },
+  "vidshot": {
+   "glyph": "cap.screenshot",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Screenshot"
+  },
+  "vidsize": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vidsize"
+  },
+  "vidsshot": {
+   "glyph": "cap.screenshot_save",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Save a screenshot"
+  },
+  "vidstart": {
+   "glyph": "cap.record",
+   "glyph_on": "cap.record.on",
+   "hold": false,
+   "state": "cap.record.video",
+   "title": "Start recording"
+  },
+  "vidstate": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vidstate"
+  },
+  "vidstop": {
+   "glyph": "cap.record_stop",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Stop recording"
+  },
+  "vidtime": {
+   "glyph": null,
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "vidtime"
   },
   "vport": {
    "glyph": "video.viewport",
@@ -2267,13 +2589,6 @@
    "hold": false,
    "state": null,
    "title": "Overscan viewport"
-  },
-  "vrec": {
-   "glyph": "cap.record",
-   "glyph_on": "cap.record.on",
-   "hold": false,
-   "state": "toggle.cap.record_toggle",
-   "title": "Record video"
   },
   "wpa": {
    "glyph": "media.protect",
@@ -2330,23 +2645,123 @@
   }
  },
  "nodes": {
-  "arec": {
-   "action": "cap.record_toggle",
+  "auday": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    3
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "AY 5S",
+   "uc": [
+    "C7.4"
+   ],
+   "value": {
+    "seconds": 5,
+    "source": "ay1"
+   }
+  },
+  "audbeep": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    2
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "BEEPER 5S",
+   "uc": [
+    "C7.4"
+   ],
+   "value": {
+    "seconds": 5,
+    "source": "beeper"
+   }
+  },
+  "audcovox": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    4
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "COVOX 5S",
+   "uc": [
+    "C7.4"
+   ],
+   "value": {
+    "seconds": 5,
+    "source": "covox"
+   }
+  },
+  "audfile": {
+   "at": [
+    2,
+    5
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "FILE",
+   "show": {
+    "format": "{}",
+    "readout": "cap.record.output"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "audgs": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    5
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "GS 5S",
+   "uc": [
+    "C7.4"
+   ],
+   "value": {
+    "seconds": 5,
+    "source": "gs"
+   }
+  },
+  "audio": {
    "at": [
     2,
     8
    ],
+   "glyph": "cap.audio",
    "in": "home",
-   "kind": "key",
-   "label": "AUDIO REC",
+   "kind": "menu",
+   "label": "AUDIO",
+   "title": "AUDIO REC",
    "uc": [
-    "C7.2a"
+    "C7.2a",
+    "C7.4"
+   ]
+  },
+  "audmix": {
+   "action": "cap.audio_capture",
+   "at": [
+    1,
+    1
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "MIX 5S",
+   "uc": [
+    "C7.4"
    ],
    "value": {
-    "preset": "music"
+    "seconds": 5,
+    "source": "master"
    }
   },
-  "audio": {
+  "audmon": {
    "at": [
     1,
     8
@@ -2361,6 +2776,118 @@
    "uc": [
     "C10.4"
    ]
+  },
+  "audpause": {
+   "action": "cap.record_pause",
+   "at": [
+    0,
+    3
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "PAUSE",
+   "uc": [
+    "C7.2a"
+   ]
+  },
+  "audsize": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "SIZE",
+   "show": {
+    "format": "{:b}",
+    "readout": "cap.record.bytes"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "audstart": {
+   "action": "cap.record_start",
+   "at": [
+    0,
+    1
+   ],
+   "glyph": "cap.record_audio",
+   "glyph_on": "cap.record_audio.on",
+   "in": "audio",
+   "kind": "key",
+   "label": "REC",
+   "state": "cap.record.audio_only",
+   "uc": [
+    "C7.2a"
+   ],
+   "value": {
+    "preset": "music"
+   }
+  },
+  "audstate": {
+   "at": [
+    2,
+    1
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "AUDIO",
+   "show": {
+    "format": "{audio_only?REC|IDLE}",
+    "readout": "cap.record",
+    "warn": 1
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "audstop": {
+   "action": "cap.record_stop",
+   "at": [
+    0,
+    2
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "STOP",
+   "uc": [
+    "C7.2a"
+   ]
+  },
+  "audtime": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "audio",
+   "kind": "key",
+   "label": "LENGTH",
+   "show": {
+    "format": "{:.0f}S",
+    "readout": "cap.record.seconds"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "audwav": {
+   "action": "cap.record_start",
+   "at": [
+    0,
+    5
+   ],
+   "glyph": "cap.record_audio",
+   "glyph_on": "cap.record_audio",
+   "in": "audio",
+   "kind": "key",
+   "label": "WAV",
+   "uc": [
+    "C7.2a"
+   ],
+   "value": {
+    "preset": "audio"
+   }
   },
   "ay": {
    "at": [
@@ -7685,6 +8212,151 @@
     "name": "turbo_tape"
    }
   },
+  "ttd": {
+   "at": [
+    3,
+    5
+   ],
+   "context": "ttd",
+   "dials": {
+    "0": {
+     "label": "FRAMES",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.jog_frames",
+      "value": {
+       "d": "$ticks"
+      }
+     },
+     "uc": [
+      "D3.3"
+     ]
+    },
+    "1": {
+     "label": "SCRUB",
+     "press": {
+      "action": "run.pause_toggle"
+     },
+     "turn": {
+      "action": "ttd.seek_by",
+      "value": {
+       "d": "$ticks",
+       "rate": "$rate"
+      }
+     },
+     "uc": [
+      "D3.2"
+     ]
+    }
+   },
+   "glyph": "ttd.recordings",
+   "in": "home",
+   "kind": "menu",
+   "label": "TTD",
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "TTD REC",
+   "uc": [
+    "C7.1",
+    "D3"
+   ]
+  },
+  "ttdback5": {
+   "action": "ttd.unit_back",
+   "at": [
+    0,
+    4
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "-5S",
+   "uc": [
+    "U2.2"
+   ],
+   "value": {
+    "count": 5,
+    "unit": "seconds"
+   }
+  },
+  "ttdbytes": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "TTD MEM",
+   "show": {
+    "format": "{:b}",
+    "readout": "ttd.status.memory_bytes"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdclip": {
+   "action": "cap.clip_last",
+   "at": [
+    1,
+    3
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "CLIP 10S",
+   "uc": [
+    "C7.3"
+   ],
+   "value": {
+    "seconds": 10
+   }
+  },
+  "ttddrop": {
+   "action": "ttd.invalidate",
+   "at": [
+    1,
+    8
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "DROP",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "ttdfrms": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "FRAMES",
+   "show": {
+    "format": "{:k}",
+    "readout": "ttd.status.frames"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdjrnl": {
+   "action": "ttd.journal_build",
+   "at": [
+    1,
+    5
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "JOURNAL",
+   "uc": [
+    "C7.1"
+   ]
+  },
   "ttdlen": {
    "at": [
     2,
@@ -7696,6 +8368,64 @@
    "show": {
     "format": "{:k}",
     "readout": "ttd.status.frames"
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdlive": {
+   "action": "ttd.resume_live",
+   "at": [
+    0,
+    3
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "LIVE",
+   "uc": [
+    "U2.3",
+    "D3.6"
+   ]
+  },
+  "ttdload": {
+   "action": "ttd.load",
+   "at": [
+    1,
+    1
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "LOAD TTD",
+   "uc": [
+    "C7.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
+  },
+  "ttdmark": {
+   "action": "ttd.bookmark_add",
+   "at": [
+    0,
+    6
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "MARK",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "ttdmarks": {
+   "at": [
+    2,
+    4
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "MARKS",
+   "show": {
+    "readout": "ttd.status.bookmarks"
    },
    "uc": [
     "C10.7"
@@ -7717,18 +8447,64 @@
     "C10.7"
    ]
   },
-  "ttdrec": {
-   "action": "ttd.record_toggle",
+  "ttdmnext": {
+   "action": "ttd.bookmark_next",
    "at": [
-    3,
+    0,
+    8
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "MARK >",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "ttdmprev": {
+   "action": "ttd.bookmark_prev",
+   "at": [
+    0,
+    7
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "MARK <",
+   "uc": [
+    "D3.7"
+   ]
+  },
+  "ttdpos": {
+   "at": [
+    2,
     5
    ],
-   "in": "home",
+   "in": "ttd",
    "kind": "key",
-   "label": "TTD REC",
+   "label": "FRAME",
+   "show": {
+    "format": "{}",
+    "readout": "ttd.position.current.frame"
+   },
    "uc": [
-    "C7.1"
+    "D3.2"
    ]
+  },
+  "ttdsave": {
+   "action": "ttd.dump",
+   "at": [
+    1,
+    0
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "SAVE TTD",
+   "uc": [
+    "C7.1",
+    "D12.1"
+   ],
+   "value": {
+    "path": "$user/sessions/deck.ttd"
+   }
   },
   "ttdst": {
    "at": [
@@ -7745,6 +8521,49 @@
    },
    "uc": [
     "C10.7"
+   ]
+  },
+  "ttdstart": {
+   "action": "ttd.start",
+   "at": [
+    0,
+    1
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "REC",
+   "uc": [
+    "C7.1"
+   ]
+  },
+  "ttdstate": {
+   "at": [
+    2,
+    1
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "TTD",
+   "show": {
+    "format": "{recording?REC|IDLE}",
+    "readout": "ttd.status",
+    "warn": 1
+   },
+   "uc": [
+    "C10.7"
+   ]
+  },
+  "ttdstop": {
+   "action": "ttd.stop",
+   "at": [
+    0,
+    2
+   ],
+   "in": "ttd",
+   "kind": "key",
+   "label": "STOP",
+   "uc": [
+    "C7.1"
    ]
   },
   "turbo": {
@@ -7804,7 +8623,125 @@
     "hold": true
    }
   },
+  "vid1080": {
+   "action": "cap.record_start",
+   "at": [
+    1,
+    5
+   ],
+   "glyph_on": "cap.record",
+   "in": "video",
+   "kind": "key",
+   "label": "1080P",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gameplay",
+    "profile": "1080p"
+   }
+  },
+  "vid4k": {
+   "action": "cap.record_start",
+   "at": [
+    1,
+    6
+   ],
+   "glyph_on": "cap.record",
+   "in": "video",
+   "kind": "key",
+   "label": "4K",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gameplay",
+    "profile": "4k"
+   }
+  },
+  "vidclip": {
+   "action": "cap.clip_last",
+   "at": [
+    0,
+    7
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "CLIP 10S",
+   "uc": [
+    "C7.3"
+   ],
+   "value": {
+    "seconds": 10
+   }
+  },
   "video": {
+   "at": [
+    2,
+    7
+   ],
+   "glyph": "cap.video",
+   "in": "home",
+   "kind": "menu",
+   "label": "VIDEO",
+   "title": "VIDEO REC",
+   "uc": [
+    "C7.2",
+    "C7.3",
+    "C7.5"
+   ]
+  },
+  "vidfile": {
+   "at": [
+    2,
+    5
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "FILE",
+   "show": {
+    "format": "{}",
+    "readout": "cap.record.output"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vidgif": {
+   "action": "cap.record_start",
+   "at": [
+    1,
+    1
+   ],
+   "glyph_on": "cap.record",
+   "in": "video",
+   "kind": "key",
+   "label": "GIF",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gif"
+   }
+  },
+  "vidhq": {
+   "action": "cap.record_start",
+   "at": [
+    1,
+    2
+   ],
+   "glyph_on": "cap.record",
+   "in": "video",
+   "kind": "key",
+   "label": "HQ MKV",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "hq"
+   }
+  },
+  "vidmon": {
    "at": [
     3,
     8
@@ -7816,6 +8753,144 @@
     "format": "{recording?REC|IDLE}",
     "readout": "cap.record",
     "warn": 1
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vidmulti": {
+   "action": "cap.record_start",
+   "at": [
+    1,
+    3
+   ],
+   "glyph_on": "cap.record",
+   "in": "video",
+   "kind": "key",
+   "label": "TRACKS",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "multitrack"
+   }
+  },
+  "vidpause": {
+   "action": "cap.record_pause",
+   "at": [
+    0,
+    3
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "PAUSE",
+   "uc": [
+    "C7.2"
+   ]
+  },
+  "vidshot": {
+   "action": "cap.screenshot",
+   "at": [
+    0,
+    5
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "SHOT",
+   "uc": [
+    "C7.5"
+   ]
+  },
+  "vidsize": {
+   "at": [
+    2,
+    3
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "SIZE",
+   "show": {
+    "format": "{:b}",
+    "readout": "cap.record.bytes"
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vidsshot": {
+   "action": "cap.screenshot_save",
+   "at": [
+    0,
+    6
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "SHOT PNG",
+   "uc": [
+    "C7.5"
+   ],
+   "value": {
+    "path": "$user/screenshots/deck.png"
+   }
+  },
+  "vidstart": {
+   "action": "cap.record_start",
+   "at": [
+    0,
+    1
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "REC",
+   "state": "cap.record.video",
+   "uc": [
+    "C7.2"
+   ],
+   "value": {
+    "preset": "gameplay"
+   }
+  },
+  "vidstate": {
+   "at": [
+    2,
+    1
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "VIDEO",
+   "show": {
+    "format": "{video?REC|IDLE}",
+    "readout": "cap.record",
+    "warn": 1
+   },
+   "uc": [
+    "C10.9"
+   ]
+  },
+  "vidstop": {
+   "action": "cap.record_stop",
+   "at": [
+    0,
+    2
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "STOP",
+   "uc": [
+    "C7.2"
+   ]
+  },
+  "vidtime": {
+   "at": [
+    2,
+    2
+   ],
+   "in": "video",
+   "kind": "key",
+   "label": "LENGTH",
+   "show": {
+    "format": "{:.0f}S",
+    "readout": "cap.record.seconds"
    },
    "uc": [
     "C10.9"
@@ -7839,22 +8914,6 @@
    ],
    "value": {
     "viewport": "next"
-   }
-  },
-  "vrec": {
-   "action": "cap.record_toggle",
-   "at": [
-    2,
-    7
-   ],
-   "in": "home",
-   "kind": "key",
-   "label": "VIDEO REC",
-   "uc": [
-    "C7.2"
-   ],
-   "value": {
-    "preset": "gameplay"
    }
   },
   "wpa": {

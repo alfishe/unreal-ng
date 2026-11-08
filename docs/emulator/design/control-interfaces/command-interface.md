@@ -1782,9 +1782,9 @@ same option names on the CLI, `POST /api/v1/emulator/{id}/video/record` (`action
 toggle / status, `preset`, `mode`, `container`, ...; `GET /api/v1/recording/presets` lists the presets), MCP
 `capture_media` (`record_start` with `preset`, `container`, `record_mode`; `record_presets`), Lua
 `video_record(action, opts)` / `recording_presets()`, Python `emu.video_record(action, opts)` /
-`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause`; the
-WebSocket `call` of the route, the topic `cap.record` (recording, paused, frames, seconds, bytes, output) pushes the
-state.
+`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause` / `cap.record_start` / `cap.record_stop`; the
+WebSocket `call` of the route, the topic `cap.record` (recording, paused, video, audio_only, frames, seconds, bytes,
+output) pushes the state.
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -4384,6 +4384,7 @@ the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `i
 | `input.joystick_type` | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` | The joystick on a connector (§15) | `input.connectors` |
 | `input.mouse_button`, `input.mouse_release` | `button`, `hold?`, `frames?` | Kempston mouse buttons (§11); the mouse itself is `feature.toggle name=kempstonmouse` | |
 | `cap.record_toggle`, `cap.record_pause` | `preset?`, `format?`, `container?`, `audio?`, `mode?`, `profile?`, `path?`, ... | Video recording (§5.8) over `capture::RecordingControl`; a start without a path writes `<user data>/recordings/` | `toggle.cap.record_toggle`, `cap.record` |
+| `cap.record_start`, `cap.record_stop` | start: as `cap.record_toggle` | The Stream Deck's REC and STOP keys: `cap.record_start` starts a recording (`conflict` while one runs; state `toggle.cap.record_start` while one runs), `cap.record_stop` stops it and is unavailable (`not_now`) while nothing records, so a deck dims its key. The `cap.record` readout's `video` / `audio_only` say which kind runs (the VIDEO and AUDIO pages light their own REC key) | `toggle.cap.record_start`, `cap.record` |
 | `cap.clip_last` | `seconds?` (10), `format?` (gif), `path?`, `scale?` | The last seconds of a running TTD recording as a video file: the recording pauses for browsing at its end, the clip is written, the recording goes on from that point, the run state as it was. Without a recording: `not_now` | |
 | `ttd.export_clip` | `from`, `to`, `path?`, `codec?`, `scale?` | A TTD range as a clip: a `.gif` / `.mp4` / `.mkv` / `.webm` / `.mov` / `.avi` path writes a video (`ttd export-clip` takes such a path on every plane too), a folder the lossless clip | |
 | `cap.audio_capture` | `source?`, `seconds?` (5), `path?` | One sound source (or the mix) for N emulated seconds into a WAV (needs a running machine; waits for the capture) | |
