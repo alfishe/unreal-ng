@@ -18,7 +18,8 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 - [7. The unreal-gui command](#7-the-unreal-gui-command)
 - [8. Settings](#8-settings)
 - [9. MCP and the Python client](#9-mcp-and-the-python-client)
-- [10. Checks](#10-checks)
+- [10. Bindings: profiles, the deck, the catalogue](#10-bindings-profiles-the-deck-the-catalogue)
+- [11. Checks](#11-checks)
 
 ## 1. Status
 
@@ -26,7 +27,8 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 |:--|:--|:--|
 | 1 | Host, discovery, protocol, the `window` interface, `unreal-gui list` / `window.*` / `watch`, unreal-qt hosts it | done |
 | 2 | unreal-qt: `debugger`, `metadata`, `disassembly`, `memory`, `unrealqt`; the controller bindings in process; the `state` call; `unreal-gui state` / `mcp`; the Python client | done |
-| 3-6 | the bindings move to the plane, the GUI actions out of the core, the other programs | see the design |
+| 3 | the controller profiles and the Stream Deck scenarios on the plane; `gui-catalogue.json`; the daemon's `gui` keys and `gui.*` readouts; the TTD scrub a core action | done |
+| 4-6 | the GUI actions out of the core, the other programs | see the design |
 
 ## 2. Pieces
 
@@ -47,7 +49,8 @@ In-process callers (the controller bindings) use `Host::Invoke` with the same ta
 ## 3. Finding a program
 
 Each running host writes `<id>.json` into the discovery directory: `UNREAL_GUI_CONTROL_DIR`, else
-`<runtime dir>/unreal-ng/gui` (`$XDG_RUNTIME_DIR`, the per-user temp directory on macOS and Windows). The file is
+`<runtime dir>/unreal-ng/gui` (Qt's runtime location: `$XDG_RUNTIME_DIR` on Linux, `~/Library/Application Support`
+on macOS, the home folder on Windows). The file is
 owner-only and removed when the host stops; an entry whose process is gone is skipped.
 
 ```json
@@ -199,11 +202,62 @@ with Gui.connect() as gui:                  # host=ID, tcp="ADDR:PORT"
     print(gui.state("memory")["state"])
 ```
 
-## 10. Checks
+## 10. Bindings: profiles, the deck, the catalogue
+
+GUI verbs are named by their plane method everywhere a binding is written down; no shipped controller profile or deck
+scenario names a GUI action id of the core (`GuiPlaneProfiles_Test` holds it for the profiles).
+
+**`gui-catalogue.json`.** The build writes [`data/streamdeck/gui-catalogue.json`](../../../../data/streamdeck/gui-catalogue.json)
+(target `gui-catalogue`, the tool `unreal-gui-catalogue`; the file changes only when the declarations do) from the
+interface declarations, the way `catalogue.json` comes from the core's action registry:
+
+```json
+{"format": "unreal-ng-gui-catalogue", "version": 1, "interfaces": [
+  {"name": "debugger", "level": "host", "description": "…", "state": ["open", "pane"],
+   "commands": [{"method": "debugger.cursor_move", "label": "Cursor in the focused pane", "repeats": true,
+                 "params": [{"name": "dir", "kind": "string", "optional": false, "description": "up, down, left, right"}]}]}]}
+```
+
+`level` is where the interface sits: `host` (the program's root), `window`, `view`. The deck tooling checks scenario
+keys against it.
+
+**Controller profiles.** A control binds a plane method the same way it binds a core action; the parameters go in
+`params:` (an object; it excludes a `curve` object, which sets them too). The router runs it in process
+(`Host::Invoke`), a held control of a `repeats` command repeats.
+
+```yaml
+dpad_up: { action: debugger.cursor_move, params: { dir: up } }
+start:   { action: unrealqt.osd_keyboard }
+```
+
+**Stream Deck daemon.** A key step `{kind: gui, method, params?, target?, hold?}` goes to the program that serves the
+daemon's WebAPI: the client (`companions/streamdeck/lib/src/guiplane.cpp`) reads the discovery files, takes the host
+whose `endpoints` hold that WebAPI, talks over its local socket and connects again after the program restarts. With
+no target the plane resolves it; when the deck follows a chosen instance (`emulator` not `auto`), a view interface
+goes to `iface@<instance>`. `hold: true` (a `repeats` command) repeats while the key is held: again after 300 ms, then
+every 60 ms, until the release or a refusal. A refusal shows on the key and in the activity feed with the plane's
+message. Readouts `gui.<path>` read the program's root state (`gui.metadata.labels`, `gui.osd_keyboard`,
+`gui.open`); the daemon polls them while a page shows one, also while a surface pushes the core readouts.
+
+In a scenario spec (`data/streamdeck/scenarios/src/*.spec.yaml`) the key field is `gui:`; `deckflow` fills the glyph
+(glyphs.json binds methods, per parameter value), the title (the command's label) and the hold:
+
+```yaml
+cup:    {at: [2, 4], uc: D6.2, gui: debugger.cursor_move, params: {dir: up}, title: Cursor up}
+labels: {at: [2, 8], uc: D6.4, gui: metadata.set, params: {switch: labels}, label: LABELS}
+```
+
+**The TTD scrub** (`ttd.scrub_back`, `ttd.scrub_forward`, level actions of a held stick or trigger) is a core action
+with a clock in the core (`core/src/emulator/actions/scrubactions.cpp`), so the profiles keep it; it is not a GUI verb.
+
+## 11. Checks
 
 | Check | What |
 |:--|:--|
 | `unreal-qt-tests --gtest_filter='GuiControl_Test.*'` | host and client in process: list, call, state, push, coalescing, a dropped slow client, TCP, `WindowBinding`, the parameter helpers |
 | `python3 tools/guicontrol/verify_unrealqt.py` | every unreal-qt command against an offscreen unreal-qt with a fresh machine, then `verify_mcp.py` |
 | `python3 tools/guicontrol/verify_mcp.py <unreal-gui>` | the MCP server against a running program: the tools, their text, the refusals |
+| `unreal-qt-tests --gtest_filter='GuiPlaneProfiles_Test.*'` | every shipped profile binding: no GUI action of the core, each plane method declared, its params accepted |
+| `streamdeck-tests` (`TestGuiPlane`) | the daemon's client against a fake host and a Unix socket, discovery by endpoint, the `gui` kind |
+| `python3 companions/streamdeck/tools/tests/test_deckflow.py` | `gui:` keys in a spec: check, defaults, build, the round trip |
 | `python3 tools/guicontrol/demo_zynaps_hexview.py --tape Zynaps.tzx` | the memory view at the Zynaps variables, sprites and font through the plane, a shot per scene |

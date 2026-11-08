@@ -1,7 +1,6 @@
 #include "guiactions.h"
 
 #include <QCoreApplication>
-#include <QElapsedTimer>
 #include <QMetaObject>
 #include <QTimer>
 #include <QWidget>
@@ -19,7 +18,6 @@
 #include "emulator/actions/catalogue.h"
 #include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
-#include "router/analog.h"
 #include "guicontrol/host.h"
 #include "guicontrol/interfaces.h"
 
@@ -85,103 +83,9 @@ void PostToGui(const std::shared_ptr<std::atomic<bool>>& alive, std::function<vo
 }
 }  // namespace
 
-/// ttd.scrub_back / ttd.scrub_forward (debug-and-ttd.md §3.2): each level is a speed on the scrub curve, both held
-/// count against each other; a 20 ms timer turns the frames the speed covered into a ttd.jog_frames call of the core
-/// registry (its actions worker seeks, the GUI thread never waits; jogs queued behind a slow seek merge). It stops on
-/// the release, and at either end of the history or on a refusal, with the reason
-class GuiActions::Scrub
-{
-public:
-    Scrub(std::shared_ptr<std::atomic<bool>> alive, std::function<void(const QString&)> notice)
-        : _alive(std::move(alive)), _notice(std::move(notice))
-    {
-        _timer.setInterval(20);
-        QObject::connect(&_timer, &QTimer::timeout, [this] { Tick(); });
-    }
-
-    QString Set(bool forward, float level, const std::string& instanceId, const actions::ActionOrigin& origin)
-    {
-        (forward ? _forward : _back) = level;
-        _instanceId = instanceId;
-        _origin = origin;
-        if (_back == 0 && _forward == 0)
-        {
-            Stop();
-            return {};
-        }
-        if (!_timer.isActive())
-        {
-            _owed = 0;
-            _clock.start();
-            _timer.start();
-        }
-        return {};
-    }
-
-private:
-    void Stop()
-    {
-        _timer.stop();
-        _owed = 0;
-    }
-
-    void Tick()
-    {
-        const double seconds = static_cast<double>(_clock.restart()) / 1000.0;
-        _owed += (controllers::ScrubSpeed(_forward) - controllers::ScrubSpeed(_back)) * seconds;
-        const auto frames = static_cast<int64_t>(_owed);  // toward zero: the rest waits for the next tick
-        if (frames == 0)
-            return;
-        _owed -= static_cast<double>(frames);
-        actions::ActionValue value;
-        value.kind = actions::ValueKind::Delta;
-        value.delta = static_cast<double>(frames);
-        value.rate = static_cast<double>(frames) / std::max(seconds, 0.001);
-        auto alive = _alive;
-        actions::ActionRegistry::Instance().Submit(
-            "ttd.jog_frames", std::move(value), _instanceId, _origin, [this, alive](actions::ActionResult result) {
-                if (result.ok)
-                    return;
-                // Held on: it starts again with the next change of the level
-                const QString why = QString::fromStdString(result.message);
-                PostToGui(alive, [this, why] {
-                    Stop();
-                    if (_notice)
-                        _notice(Tr("Scrub stopped: %1").arg(why));
-                });
-            });
-    }
-
-    std::shared_ptr<std::atomic<bool>> _alive;
-    std::function<void(const QString&)> _notice;
-    QTimer _timer;
-    QElapsedTimer _clock;
-    float _back = 0;
-    float _forward = 0;
-    double _owed = 0;  ///< frames covered and not moved yet (back < 0)
-    std::string _instanceId;
-    actions::ActionOrigin _origin;
-};
-
 GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* parent)
     : QObject(parent), _binding(binding), _hooks(std::move(hooks)), _alive(std::make_shared<std::atomic<bool>>(true))
 {
-    _scrub = std::make_shared<Scrub>(_alive, _hooks.notice);
-
-    // 3.2 Time travel: the analog scrub (a trigger's level, `curve: scrub`; a button press is the full level)
-    actions::ActionRules rewind;
-    rewind.scope = actions::ActionRules::Fixed(automation_gate::ScopeRewind);
-    // Weak and raw references only: an executor may be dropped on an actions worker, the objects stay on this thread
-    std::weak_ptr<Scrub> scrub = _scrub;
-    for (const bool forward : {false, true})
-        Add(forward ? "ttd.scrub_forward" : "ttd.scrub_back",
-            [scrub, forward](const std::string& instance, const actions::ActionValue& value,
-                             const actions::ActionOrigin& origin) -> QString {
-                std::shared_ptr<Scrub> live = scrub.lock();
-                return live ? live->Set(forward, static_cast<float>(value.level), instance, origin) : QString();
-            },
-            rewind);
-
     // 3.3 Debugger UI
     QObject* debugger = _hooks.debugger;
     std::function<void()> showDebugger = _hooks.showDebugger;

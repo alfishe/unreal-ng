@@ -36,8 +36,8 @@ layers:
     button.11:     { action: run.frame_step, repeat: { delay: 15, rate: 4 } }
     button.12:     { action: ttd.reverse_continue }
     button.13:     { action: ttd.resume_live }
-    button.14:     { action: dbg.follow_pc }
-    button.15:     { action: dbg.focus_next_pane }
+    button.14:     { action: disassembly.follow_pc }
+    button.15:     { action: debugger.focus_next }
     jog:           { action: run.step_by }
     button.14+jog: { action: run.step_by, curve: { unit: frames } }
     button.15+jog: { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }

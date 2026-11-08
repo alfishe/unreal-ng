@@ -71,6 +71,7 @@ A binding is **source → target, with options**. A profile is a list of binding
 | `frames` | 1..50 | 2 | Tap length, like `DebugJoystickManager::Tap`. |
 | `invert` | bool | false | For axes, and for "released = pressed" oddities. |
 | `repeat` | `{delay, rate}` in frames (1..500 each), or `none` | none | Key repeat for a held ZX key from a pad (menu navigation). Built: a held key or retro control is released for one emulated frame `delay` frames after the press and then every `rate` frames (`rate` 2 or more), so a menu that waits for a new press sees one, and a recording replays it; a held action (a debug layer's step keys) runs again on the host clock, `delay` and then every `rate` frames of 20 ms, also while the machine is paused ([debug-and-ttd.md §3.3](debug-and-ttd.md#33-debugger-ui)). Refused with `turbo`, `press: tap`, a `level` action, an encoder or a mouse target. |
+| `params` | object | none | An `action` target's parameters as the action declares them: `{ action: debugger.cursor_move, params: { dir: up } }` (a [GUI control plane](../../emulator/design/gui-control/README.md) command, run on the program's own host). The action checks them when it runs. Not with a `curve` object (a scrub action's parameters). |
 | `label` | string | none | The game's meaning ("Fire", "Hyperspace"), shown in the picture callouts (RetroArch descriptors). |
 
 ## 2. Routing and layers

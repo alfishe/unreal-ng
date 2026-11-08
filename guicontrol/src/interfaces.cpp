@@ -1,5 +1,9 @@
 #include "guicontrol/interfaces.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 namespace guicontrol
 {
 
@@ -215,6 +219,39 @@ const char* ParamKindName(ParamKind kind)
             return "address";
     }
     return "string";
+}
+
+QByteArray CatalogueJson()
+{
+    QJsonArray interfaces;
+    for (const InterfaceSpec& spec : Interfaces())
+    {
+        QJsonArray commands;
+        for (const CommandSpec& command : spec.commands)
+        {
+            QJsonArray params;
+            for (const ParamSpec& param : command.params)
+                params.append(QJsonObject{{"name", param.name},
+                                          {"kind", ParamKindName(param.kind)},
+                                          {"optional", param.optional},
+                                          {"description", param.description}});
+            commands.append(QJsonObject{{"method", command.method},
+                                        {"label", command.label},
+                                        {"description", command.description},
+                                        {"repeats", command.repeats},
+                                        {"params", params}});
+        }
+        QJsonArray state;
+        for (const char* field : spec.state)
+            state.append(QLatin1String(field));
+        interfaces.append(QJsonObject{{"name", spec.name},
+                                      {"level", LevelName(spec.level)},
+                                      {"description", spec.description},
+                                      {"state", state},
+                                      {"commands", commands}});
+    }
+    return QJsonDocument(QJsonObject{{"format", "unreal-ng-gui-catalogue"}, {"version", 1}, {"interfaces", interfaces}})
+        .toJson(QJsonDocument::Indented);
 }
 
 }  // namespace guicontrol

@@ -52,6 +52,8 @@ const Descriptions& DescriptionTable()
         {"ttd.bookmark_add", "Bookmark the current position of the history."},
         {"ttd.resume_live", "Leave the history and continue the live machine."},
         {"ttd.jog_frames", "Move through the history by a number of frames (a delta)."},
+        {"ttd.scrub_back", "Scrub back through the history at the speed a level 0..1 sets on the scrub curve (a trigger's travel; 0 stops)."},
+        {"ttd.scrub_forward", "Scrub forward through the history at the speed a level 0..1 sets on the scrub curve (a trigger's travel; 0 stops)."},
         {"ttd.jog_instructions", "Move through the history by a number of instructions (a delta)."},
         {"ttd.seek_by", "Seek through the history by a dial's delta in a unit (param unit, else ttd.scrub_unit's): frames and seconds on an acceleration curve, batch, instructions, tstates, scanlines, bookmarks; answers the marks crossed."},
         {"ttd.find_last_write", "Find the last write to an address (param addr, else the memory / disassembly cursor) before now, and go there."},
@@ -270,14 +272,10 @@ const DefaultToggle* DefaultToggleOf(std::string_view id)
 
 const std::vector<GuiActionDeclaration>& GuiActionDeclarations()
 {
-    static const char* const ttd = "Time travel";
     static const char* const debug = "Debugger";
     static const char* const machine = "Capture and machine";
     static const char* const controllers = "Controllers";
     static const std::vector<GuiActionDeclaration> table = {
-        // The analog scrub (a trigger's level, `curve: scrub`; a button press is the full level)
-        {"ttd.scrub_back", "Scrub back", ttd, ValueKind::Level},
-        {"ttd.scrub_forward", "Scrub forward", ttd, ValueKind::Level},
         // The debugger window and its panes; the cursor keys repeat while held
         {"dbg.open", "Open the debugger", debug},
         {"dbg.focus_next_pane", "Next debugger pane", debug},

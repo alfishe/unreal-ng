@@ -1,0 +1,502 @@
+{
+    "format": "unreal-ng-gui-catalogue",
+    "interfaces": [
+        {
+            "commands": [
+                {
+                    "description": "Show the debugger window and raise it.",
+                    "label": "Open the debugger",
+                    "method": "debugger.open",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Hide the debugger window.",
+                    "label": "Close the debugger",
+                    "method": "debugger.close",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Give a pane of the debugger the focus (a closed debugger opens).",
+                    "label": "Focus a pane",
+                    "method": "debugger.focus",
+                    "params": [
+                        {
+                            "description": "disassembly, registers, memory or stack",
+                            "kind": "string",
+                            "name": "pane",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The next pane of the debugger takes the focus.",
+                    "label": "Next pane",
+                    "method": "debugger.focus_next",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The previous pane of the debugger takes the focus.",
+                    "label": "Previous pane",
+                    "method": "debugger.focus_prev",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The arrow key into the pane in focus: the disassembly's row, the memory's byte, a register or stack cell.",
+                    "label": "Cursor in the focused pane",
+                    "method": "debugger.cursor_move",
+                    "params": [
+                        {
+                            "description": "up, down, left or right",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Page Up / Page Down into the pane in focus.",
+                    "label": "Page in the focused pane",
+                    "method": "debugger.page",
+                    "params": [
+                        {
+                            "description": "pages, signed: below 0 up (default 1)",
+                            "kind": "int",
+                            "name": "n",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Enter into the pane in focus: the disassembly follows the operand, the memory view follows a register or stack value, or the word at its cursor.",
+                    "label": "Enter in the focused pane",
+                    "method": "debugger.activate",
+                    "params": [
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "The program's debugger: there even while its window is closed.",
+            "level": "host",
+            "name": "debugger",
+            "state": [
+                "open",
+                "pane"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "A switch of Debug > Metadata, for every debugger of the program (kept in the settings).",
+                    "label": "Metadata switch",
+                    "method": "metadata.set",
+                    "params": [
+                        {
+                            "description": "metadata, regions, colours, notes or labels",
+                            "kind": "string",
+                            "name": "switch",
+                            "optional": false
+                        },
+                        {
+                            "description": "absent: flip it",
+                            "kind": "bool",
+                            "name": "on",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "The memory markup and labels the program's views show.",
+            "level": "host",
+            "name": "metadata",
+            "state": [
+                "metadata",
+                "regions",
+                "colours",
+                "notes",
+                "labels"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Show the address at the top, the cursor on it.",
+                    "label": "Go to an address",
+                    "method": "disassembly.goto",
+                    "params": [
+                        {
+                            "description": "an address: decimal, 0x.., #.., $.. or ..h",
+                            "kind": "address",
+                            "name": "addr",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Show the disassembly at PC again.",
+                    "label": "Show PC",
+                    "method": "disassembly.follow_pc",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The cursor row on the address; the view scrolls only when it is not shown.",
+                    "label": "Put the cursor",
+                    "method": "disassembly.cursor",
+                    "params": [
+                        {
+                            "description": "an address: decimal, 0x.., #.., $.. or ..h",
+                            "kind": "address",
+                            "name": "addr",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The cursor one row (one byte in byte scroll) up or down.",
+                    "label": "Move the cursor",
+                    "method": "disassembly.cursor_move",
+                    "params": [
+                        {
+                            "description": "up or down",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "The cursor a page (16 rows) up or down.",
+                    "label": "Page",
+                    "method": "disassembly.page",
+                    "params": [
+                        {
+                            "description": "pages, signed: below 0 up (default 1)",
+                            "kind": "int",
+                            "name": "n",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Scroll by whole instructions or by bytes.",
+                    "label": "Scroll mode",
+                    "method": "disassembly.scroll_mode",
+                    "params": [
+                        {
+                            "description": "byte or command; absent: flip it",
+                            "kind": "string",
+                            "name": "mode",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Run the machine to the cursor row (run.to_cursor with its address); a breakpoint on the way stops it.",
+                    "label": "Run to the cursor",
+                    "method": "disassembly.run_to_cursor",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Toggle an execution breakpoint at the cursor row.",
+                    "label": "Breakpoint at the cursor",
+                    "method": "disassembly.breakpoint_toggle_cursor",
+                    "params": [
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "A disassembly view.",
+            "level": "view",
+            "name": "disassembly",
+            "state": [
+                "top",
+                "cursor",
+                "pc",
+                "scroll_mode"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Show the address's page, the cursor on it.",
+                    "label": "Go to an address",
+                    "method": "memory.goto",
+                    "params": [
+                        {
+                            "description": "an address: decimal, 0x.., #.., $.. or ..h",
+                            "kind": "address",
+                            "name": "addr",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The cursor on the address; the page changes only when the address is not on it.",
+                    "label": "Put the cursor",
+                    "method": "memory.cursor",
+                    "params": [
+                        {
+                            "description": "an address: decimal, 0x.., #.., $.. or ..h",
+                            "kind": "address",
+                            "name": "addr",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The cursor a byte left or right, a line up or down.",
+                    "label": "Move the cursor",
+                    "method": "memory.cursor_move",
+                    "params": [
+                        {
+                            "description": "up, down, left or right",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "The cursor a screen of lines up or down.",
+                    "label": "Page",
+                    "method": "memory.page",
+                    "params": [
+                        {
+                            "description": "pages, signed: below 0 up (default 1)",
+                            "kind": "int",
+                            "name": "n",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Where the view goes when the machine stops: the register's address, or nowhere (off).",
+                    "label": "Follow a register",
+                    "method": "memory.follow",
+                    "params": [
+                        {
+                            "description": "pc, sp, bc, de, hl, ix, iy, or off",
+                            "kind": "string",
+                            "name": "register",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Select a range on the page shown.",
+                    "label": "Select bytes",
+                    "method": "memory.select",
+                    "params": [
+                        {
+                            "description": "the first byte",
+                            "kind": "address",
+                            "name": "from",
+                            "optional": false
+                        },
+                        {
+                            "description": "the last byte",
+                            "kind": "address",
+                            "name": "to",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Go to the address the little-endian word at the cursor holds.",
+                    "label": "Follow the word at the cursor",
+                    "method": "memory.follow_cursor",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Find the last write to the cursor's byte before now and go there (ttd.find_last_write).",
+                    "label": "Last write to the cursor",
+                    "method": "memory.find_last_write",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Find the last access to the cursor's byte before now and go there (ttd.find_last).",
+                    "label": "Last access to the cursor",
+                    "method": "memory.find_last",
+                    "params": [
+                        {
+                            "description": "write, read, execute or io (write)",
+                            "kind": "string",
+                            "name": "access",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "A memory (hex) view of the CPU's address space, one 16 KB page at a time.",
+            "level": "view",
+            "name": "memory",
+            "state": [
+                "top",
+                "cursor",
+                "selection",
+                "follow"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Show the window, bring it to the front and give it focus.",
+                    "label": "Raise the window",
+                    "method": "window.raise",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Show the window without raising it.",
+                    "label": "Show the window",
+                    "method": "window.show",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Hide the window.",
+                    "label": "Hide the window",
+                    "method": "window.hide",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Move or resize the window; the fields not given stay.",
+                    "label": "Move the window",
+                    "method": "window.move",
+                    "params": [
+                        {
+                            "description": "left edge",
+                            "kind": "int",
+                            "name": "x",
+                            "optional": true
+                        },
+                        {
+                            "description": "top edge",
+                            "kind": "int",
+                            "name": "y",
+                            "optional": true
+                        },
+                        {
+                            "description": "width",
+                            "kind": "int",
+                            "name": "w",
+                            "optional": true
+                        },
+                        {
+                            "description": "height",
+                            "kind": "int",
+                            "name": "h",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The window's own pixels (not the emulated screen) to a file or the clipboard.",
+                    "label": "Screenshot of the window",
+                    "method": "window.screenshot",
+                    "params": [
+                        {
+                            "description": "a PNG file; absent: the clipboard",
+                            "kind": "string",
+                            "name": "path",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "A top-level window of the program.",
+            "level": "window",
+            "name": "window",
+            "state": [
+                "title",
+                "geometry",
+                "visible",
+                "active"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Show or hide the on-screen keyboard window.",
+                    "label": "On-screen keyboard",
+                    "method": "unrealqt.osd_keyboard",
+                    "params": [
+                        {
+                            "description": "absent: flip it",
+                            "kind": "bool",
+                            "name": "on",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Open Tools > Controllers.",
+                    "label": "Controllers window",
+                    "method": "unrealqt.controllers_open",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The learn wizard for a device the controller database does not know.",
+                    "label": "Learn a controller",
+                    "method": "unrealqt.controllers_learn",
+                    "params": [
+                        {
+                            "description": "a host device id (controllers devices lists them)",
+                            "kind": "string",
+                            "name": "device",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "unreal-qt's own windows.",
+            "level": "host",
+            "name": "unrealqt",
+            "state": [
+                "osd_keyboard"
+            ]
+        }
+    ],
+    "version": 1
+}

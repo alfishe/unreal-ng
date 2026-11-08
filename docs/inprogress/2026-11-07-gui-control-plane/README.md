@@ -1,6 +1,6 @@
 # GUI control plane
 
-Status: design, 2026-11-07. No code yet.
+Status: phases 1-3 done (2026-11-07); phase 4 next.
 
 Owner decisions (2026-11-07):
 
@@ -357,6 +357,17 @@ Progress:
   `tools/guicontrol/guicontrol.py`. Checks: `GuiControl_Test` (14 tests); `tools/guicontrol/verify_unrealqt.py` (every
   command against an offscreen unreal-qt, then `verify_mcp.py`); `tools/guicontrol/demo_zynaps_hexview.py` points the
   memory view at the Zynaps variables, sprites and font through the plane (the demo's double-click on HL goes).
+- **Phase 3: done (2026-11-07).** The bindings name plane methods: the controller profiles (`debug/pad-default`,
+  `debug/shuttle-pro`, `play/pad-default`; a control's `params:` object carries the parameters) and the Stream Deck
+  scenario `unreal` (spec key `gui:`). The build writes `data/streamdeck/gui-catalogue.json` (`unreal-gui-catalogue`);
+  `deckflow` and `make_deck_scenario.py` check `gui` keys against it, `glyphs.json` binds methods to glyphs. The
+  daemon has a GUI plane client (`companions/streamdeck/lib/src/guiplane.cpp`: discovery by WebAPI endpoint, the local
+  socket or named pipe, reconnect), the `gui` step kind with the held-key repeat, and `gui.*` readouts from the root
+  state. Owner decision: the TTD scrub moved into the core (`scrubactions.cpp`, a core clock that jogs
+  `ttd.jog_frames`), so `ttd.scrub_back` / `ttd.scrub_forward` stay core actions in the profiles. Checks:
+  `GuiPlaneProfiles_Test`, `ScrubActions_Test`, `streamdeck-tests` (`TestGuiPlane`), the deckflow tests. Open: the
+  named-pipe code of the daemon's client is not compiled on Windows yet; a scrub refusal now shows only in the
+  activity feed (the Qt notice went with the GUI class).
 
 Docs per phase:
 

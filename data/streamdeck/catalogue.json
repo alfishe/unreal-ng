@@ -1431,7 +1431,7 @@
    "group": "Time travel",
    "kind": "level",
    "held": false,
-   "gui": true
+   "gui": false
   },
   {
    "id": "ttd.scrub_forward",
@@ -1439,7 +1439,7 @@
    "group": "Time travel",
    "kind": "level",
    "held": false,
-   "gui": true
+   "gui": false
   },
   {
    "id": "dbg.open",

@@ -378,6 +378,24 @@ if (NOT TARGET guicontrol-widgets)
 endif ()
 target_link_libraries(${PROJECT_NAME} PRIVATE guicontrol-widgets)
 
+# data/streamdeck/gui-catalogue.json from the plane's declarations and unreal-qt's own (tools/guicatalogue.cpp); kept
+# in the repository beside catalogue.json for the Stream Deck tools that run without a build. A cross build keeps it
+if (NOT CMAKE_CROSSCOMPILING)
+    add_executable(unreal-gui-catalogue tools/guicatalogue.cpp src/guiplane/unrealqtinterface.cpp)
+    target_include_directories(unreal-gui-catalogue PRIVATE ${SOURCE_DIR})
+    target_link_libraries(unreal-gui-catalogue PRIVATE guicontrol)
+    set_target_properties(unreal-gui-catalogue PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+    add_custom_target(gui-catalogue ALL
+        COMMAND unreal-gui-catalogue "${ROOT_DIR}/data/streamdeck/gui-catalogue.json"
+        COMMENT "GUI catalogue: data/streamdeck/gui-catalogue.json"
+        VERBATIM)
+    add_dependencies(${PROJECT_NAME} gui-catalogue)
+    # runtime-data copies data/streamdeck beside the executables: after the catalogue is written
+    if (TARGET runtime-data)
+        add_dependencies(runtime-data gui-catalogue)
+    endif ()
+endif ()
+
 # The media signatures (core/swsignature): the controller manager's signature hook (hostcontrollers.cpp)
 if (TARGET unrealng::swsignature)
     target_link_libraries(${PROJECT_NAME} PRIVATE unrealng::swsignature)
@@ -606,6 +624,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/mousecapturecontroller_test.cpp"
         # The GUI control plane (guicontrol/): host, client, discovery, the window binding
         "${ROOT_DIR}/guicontrol/tests/guicontrol_test.cpp"
+        # The shipped controller profiles bind GUI commands of the plane, never GUI actions of the core
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/guiplaneprofiles_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/guiplane/unrealqtinterface.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/guiplane/unrealqtinterface.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/windows/mousecapture_windows.cpp"

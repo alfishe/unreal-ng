@@ -298,7 +298,7 @@ GLYPHS = [
     ('status.hold', 'status', 'Hold to confirm', 'stopwatch'),
 ]
 
-# Catalogue action -> faces. face / face_on: glyph ids; state: the readout that selects face_on; params: a glyph per
+# Catalogue action (or GUI command) -> faces. face / face_on: glyph ids; state: the readout that selects face_on; params: a glyph per
 # parameter value; label: the key's text (a pack glyph with a label, or a text-only face where there is no glyph).
 ACTIONS = {
     'run.pause_toggle': {'face': 'run.pause', 'face_on': 'run.play', 'state': 'run.state.paused'},
@@ -405,6 +405,19 @@ ACTIONS = {
     'dbg.page_up': {'face': 'dbg.page_up'},
     'dbg.page_down': {'face': 'dbg.page_down'},
     'dbg.memory_follow': {'face': 'dbg.memory_follow'},
+    # The GUI control plane's commands (data/streamdeck/gui-catalogue.json), by method: a deck key `gui: METHOD`
+    'debugger.open': {'face': 'debug.menu'},
+    'debugger.focus_next': {'face': 'dbg.focus_next_pane'},
+    'debugger.focus_prev': {'face': 'dbg.focus_prev_pane'},
+    'debugger.cursor_move': {'face': 'dbg.cursor_up', 'params': {'up': 'dbg.cursor_up', 'down': 'dbg.cursor_down',
+                                                                 'left': 'dbg.cursor_left', 'right': 'dbg.cursor_right'}},
+    'debugger.page': {'face': 'dbg.page_down', 'params': {'-1': 'dbg.page_up', '1': 'dbg.page_down'}},
+    'debugger.activate': {'face': 'dbg.memory_follow'},
+    'disassembly.follow_pc': {'face': 'dbg.follow_pc'},
+    'disassembly.breakpoint_toggle_cursor': {'face': 'dbg.breakpoint_toggle_cursor'},
+    'metadata.set': {'params': {'labels': 'dbg.labels_toggle'}},
+    'unrealqt.osd_keyboard': {'face': 'osd.keyboard'},
+    'window.screenshot': {'face': 'cap.screenshot'},
     # run: to a target, source lines, the pace
     'run.to_pixel': {'face': 'run.to_pixel'},
     'run.until_pc': {'face': 'run.until_pc', 'label': 'the address'},
@@ -516,8 +529,8 @@ PRUNED = {
     'ttd.jog_frames': 'a dial (delta) action',
     'ttd.jog_instructions': 'a dial (delta) action',
     'ttd.seek_by': 'a dial (delta) action',
-    'ttd.scrub_back': 'a level action of the GUI (held stick / trigger), not a key press',
-    'ttd.scrub_forward': 'a level action of the GUI (held stick / trigger), not a key press',
+    'ttd.scrub_back': 'a level action (a held stick / trigger), not a key press',
+    'ttd.scrub_forward': 'a level action (a held stick / trigger), not a key press',
     'run.pace_by': 'a dial (delta) action',
     'run.pace_shuttle_faster': 'a level action (a spring-loaded shuttle ring), not a key press',
     'run.pace_shuttle_slower': 'a level action (a spring-loaded shuttle ring), not a key press',

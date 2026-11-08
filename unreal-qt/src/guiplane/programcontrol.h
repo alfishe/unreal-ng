@@ -2,8 +2,7 @@
 
 /// @file programcontrol.h
 /// @brief unreal-qt's own commands on the GUI control plane (`unrealqt.*`, design §4.2): the on-screen keyboard,
-/// the Controllers window and its learn wizard. The declarations (DeclareUnrealQtInterface) need no widgets, so a
-/// catalogue writer links them without the program.
+/// the Controllers window and its learn wizard. Their declaration is in unrealqtinterface.h.
 
 #include <QObject>
 #include <QPointer>
@@ -17,8 +16,7 @@ namespace guicontrol
 class Host;
 }
 
-/// Adds the `unrealqt` interface to the plane's declarations (guicontrol::AddProgramInterface); once per process
-void DeclareUnrealQtInterface();
+#include "unrealqtinterface.h"
 
 class ProgramControl : public QObject
 {

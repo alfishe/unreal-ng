@@ -4,7 +4,7 @@
 /// @brief The Qt client's part of the host actions (control surfaces architecture §2, §3): the core
 /// actions::ActionRegistry (core/src/emulator/actions) holds the catalogue and runs every action on the instance's
 /// actions worker; this registers the GUI ones there (the debugger window and its panes, the screenshot to the
-/// clipboard, the analog scrub, the on-screen keyboard, the Controllers window and its learn wizard, the OSD stubs) and turns a device's action events into registry calls with the origin
+/// clipboard, the on-screen keyboard, the Controllers window and its learn wizard, the OSD stubs) and turns a device's action events into registry calls with the origin
 /// of the device. GUI executors run on the GUI thread: the worker posts them and answers at once.
 ///
 /// Lifetime: the registrations end with this object; a GUI call still queued then finds the alive token false and does
@@ -68,8 +68,6 @@ public:
     void SetGuiHost(guicontrol::Host* host);
 
 private:
-    class Scrub;
-
     using GuiRun = std::function<QString(const std::string& instanceId, const actions::ActionValue& value,
                                          const actions::ActionOrigin& origin)>;
     /// An executor that runs `run` on the GUI thread and answers at once; its reason goes to the status bar
@@ -85,7 +83,6 @@ private:
     EmulatorBinding* _binding = nullptr;
     GuiActionHooks _hooks;
     std::shared_ptr<std::atomic<bool>> _alive;
-    std::shared_ptr<Scrub> _scrub;
     std::vector<actions::RegistrationHandle> _handles;
     QPointer<guicontrol::Host> _guiHost;
     std::map<QString, QTimer*> _guiRepeats;  ///< per binding (device + command): the repeat while held

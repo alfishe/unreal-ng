@@ -5,6 +5,7 @@
 /// parameters and its state fields. A program implements an interface on the node where its subject lives (host,
 /// window or view); clients read the declarations to map arguments and to write the catalogue without a GUI running.
 
+#include <QByteArray>
 #include <QString>
 #include <QStringView>
 
@@ -66,5 +67,10 @@ const CommandSpec* FindCommand(QStringView method);
 QString InterfaceOf(QStringView method);
 const char* LevelName(Level level);
 const char* ParamKindName(ParamKind kind);
+
+/// The catalogue of every declared interface as JSON text (`gui-catalogue.json`, design §4.9): format
+/// "unreal-ng-gui-catalogue", version 1, interfaces[{name, level, description, state[], commands[{method, label,
+/// description, repeats, params[{name, kind, optional, description}]}]}]. Stable: written in declaration order
+QByteArray CatalogueJson();
 
 }  // namespace guicontrol

@@ -18,6 +18,7 @@
 #include "emulator/actions/catalogue.h"
 #include "emulator/actions/hostactions.h"
 #include "emulator/actions/pictureactions.h"
+#include "emulator/actions/scrubactions.h"
 #include "emulator/actions/steppingactions.h"
 #include "emulator/actions/hostactions_debugtools.h"
 #include "emulator/coordinator/machineop.h"
@@ -645,6 +646,20 @@ ActionRegistry& ActionRegistry::Instance()
         for (RegistrationHandle& handle : RegisterSteppingActions(*created))  // run pace, runs to a place, TTD units
             created->_builtin.push_back(std::move(handle));
         for (RegistrationHandle& handle : RegisterDebugToolsActions(*created))  // breakpoints, profilers, state
+            created->_builtin.push_back(std::move(handle));
+        // The analog scrub: its host clock jogs the history through this registry, so it lives as long
+        static ScrubClock* scrub = new ScrubClock([created](const std::string& instanceId, int64_t frames, double rate,
+                                                            const ActionOrigin& origin) {
+            ActionValue value;
+            value.kind = ValueKind::Delta;
+            value.delta = static_cast<double>(frames);
+            value.rate = rate;
+            created->Submit("ttd.jog_frames", std::move(value), instanceId, origin, [instanceId](ActionResult result) {
+                if (!result.ok)
+                    scrub->Stop(instanceId);  // held on: it starts again with the next change of the level
+            });
+        });
+        for (RegistrationHandle& handle : RegisterScrubActions(*created, *scrub))
             created->_builtin.push_back(std::move(handle));
         created->_feed = &ActivityFeed::Instance();
         created->_post = true;  // from now on: the Qt client's GUI actions come and go
