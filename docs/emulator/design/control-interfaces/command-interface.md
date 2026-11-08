@@ -3622,11 +3622,8 @@ emu.ttd_seek(result["frame"], result["tinframe"])
 
 ### 9. Videowall API
 
-Commands specifically for managing the multi-emulator videowall environment.
-
-| Command | Aliases | Arguments | Description | Implementation Status |
-| :--- | :--- | :--- | :--- | :--- |
-| `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
+None. The video wall's single sync mode is a GUI matter: the video wall serves it on the GUI control plane as
+`tilegrid.single_sync {on?}` ([gui-control](../gui-control/README.md)), not on the emulator's planes.
 
 ### 10. Tape Control Commands
 
@@ -4174,8 +4171,10 @@ scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`
 `set.speed`, `set.toggle`, `set.value`, `audio.mute_toggle`, `audio.source_mute`, `audio.source_solo`,
 `audio.source_volume`, `audio.volume_by` (a source or a channel `ay1.a`), `media.open`, `media.tape`, `media.eject`,
 `snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
-[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
-Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and the scrub
+(`ttd.scrub_*`). The GUI's own verbs (the debugger and its panes, the windows, the screenshot to the clipboard, the
+on-screen keyboard, the Controllers window) are not actions: they are commands of the
+[GUI control plane](../gui-control/README.md). Each takes the companion
 scope of the REST route it replaces. The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
 the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
 The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
@@ -4184,7 +4183,7 @@ control.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "the machine is running: pause it first", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "the machine is running: pause it first", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
 | `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
 | `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
 
@@ -4223,9 +4222,6 @@ companion scope (their routes change nothing).
 | `hud.toggle` | press | `on?` | The HUD | `toggle.hud.toggle` |
 | `hud.theme` | press | `theme?` (a name, `next`, `prev`) | The HUD's theme | |
 | `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
-| `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
-| `ctl.open` | press | | The Controllers window (the Qt client's GUI action) | |
-| `ctl.learn` | press | `device` (a host device id) | The Controllers window with the learn wizard for the device: it starts the `learn` session (or follows a running one) and shows its prompts | |
 | `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
 | `osd.keyboard_style` | press | `style?` (`photo`, `schematic`, `hybrid`, `next`, `prev`) | How the on-screen keyboard is drawn | |
 
@@ -4254,13 +4250,13 @@ Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core
 | `run.pace_stop`, `run.pace_step` | press | | Stop the pace; one step at it |
 | `run.to_pixel` | press | | To the first paper pixel (needs a pause) |
 | `run.until_pc` | press | `pc`, `max_tstates?`, `breakpoints?` | Until PC = `pc` (needs a pause); `hit`, `stop` |
-| `run.to_cursor` | press | `addr?` (else the disassembly's cursor row), `max_tstates?` | To the cursor; a breakpoint on the way stops it (needs a pause). The cursor row moves with a click, Up / Down, PageUp / PageDown and `dbg.cursor_up` / `_down`, `dbg.page_up` / `_down` on the disassembly pane (from PC when there is none; the view scrolls to keep it visible); the memory pane's keys move its cursor, which `ttd.find_last*` take |
+| `run.to_cursor` | press | `addr`, `max_tstates?` | To the address; a breakpoint on the way stops it (needs a pause). The GUI passes its disassembly cursor (`disassembly.run_to_cursor` on the [GUI control plane](../gui-control/README.md)); without `addr` it is `Bad Request` |
 | `run.step_line`, `run.to_line` | press | `max_tstates?`; `line` | Source level (a loaded listing; `Conflict` "No listing loaded") |
 | `run.step_by` | delta | `unit?` (instructions, frames, scanlines, tstates), `count?` | Forward runs `count` units a step, back steps back through the history in the unit |
 | `ttd.step_back_scanline`, `ttd.step_forward_scanline` | press | `count?` 1..1000 | A scanline (N) back (`reverse-step scanlines`) or forward (a seek to the T-state) |
 | `ttd.bookmark_prev`, `ttd.bookmark_next` | press | | The previous / next bookmark from the position; `Conflict` "no earlier bookmark" / "no later bookmark" |
 | `ttd.bookmarks` | press | | The bookmark list |
-| `ttd.find_last_write`, `ttd.find_last` | press | `addr?` (else the memory view's cursor, then the disassembly's), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
+| `ttd.find_last_write`, `ttd.find_last` | press | `addr` (find_last: or a range; the GUI passes its memory cursor: `memory.find_last_write`, `memory.find_last`), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
 | `ttd.seek_start`, `ttd.seek_end` | press | | The history's first frame / its end |
 | `ttd.unit_back`, `ttd.unit_forward` | press | `unit?`, `count?` | One step of the scrub unit |
 | `ttd.scrub_unit` | text | `count?` | The unit a dial scrubs in: `frames`, `seconds`, `batch` (10 frames), `instructions`, `tstates` (100), `scanlines`, `bookmarks`, or `next` / `prev`; the `ttd.position` topic and readout show it (`unit`, `unit_count`) |
@@ -4292,8 +4288,8 @@ kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `compa
 `Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
 
 The catalogue rows also carry `description` (one sentence, for a palette's tooltip) and `toggle` (the action has an
-on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when the Qt
-client registers or drops its GUI actions; `NC_ACTION_CATALOGUE`).
+on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when an action
+is registered or dropped; `NC_ACTION_CATALOGUE`).
 
 #### 16.1 Surface targets, readouts, activity
 

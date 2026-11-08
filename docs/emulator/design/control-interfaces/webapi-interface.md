@@ -1495,27 +1495,6 @@ Response contains type-specific fields based on breakpoint type:
 }
 ```
 
-## Videowall API
-
-### 8. Set Videowall Single Sync Mode
-**Endpoint**: `POST /api/v1/videowall/singlesync`  
-**Description**: Toggles the Single Emulator Sync mode in the Videowall app, providing 100% synchronized rendering and video recording.  
-
-**Request**:
-```json
-{
-  "enable": true,
-  "emulator_id": "optional-id"
-}
-```
-
-**Response**:
-```json
-{
-  "success": true
-}
-```
-
 ## Input API
 
 ### 9. Keyboard Inputjection
@@ -1968,7 +1947,7 @@ the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}` forgets one (`2
 ### Host Actions
 
 ```
-GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, gui, scope,
+GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, scope,
                                                           needs_pause, available (+ error, reason)
 POST /api/v1/controllers/actions/{id}                     {instance?, value?, params?}: run it, answer when done
 ```

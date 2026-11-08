@@ -4161,8 +4161,8 @@ root:
             - 0
             - 5
           do:
-            id: run.to_cursor
-            kind: action
+            kind: gui
+            method: disassembly.run_to_cursor
           face:
             glyph: run.to_cursor
             label: "TO CURSOR"
@@ -5158,24 +5158,24 @@ root:
             - 3
             - 5
           do:
-            id: ttd.find_last_write
-            kind: action
+            kind: gui
+            method: memory.find_last_write
           face:
             glyph: ttd.find_last_write
             label: WRITE
           id: lastw
           tags:
             - uc:D5.1
-          title: "Last write here"
+          title: "Last write to the cursor"
           type: action
         -
           at:
             - 3
             - 6
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: read
           face:
             glyph: ttd.find_last
@@ -5183,16 +5183,16 @@ root:
           id: lastr
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:
             - 3
             - 7
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: execute
           face:
             glyph: ttd.find_last
@@ -5200,7 +5200,7 @@ root:
           id: laste
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:

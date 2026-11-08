@@ -276,8 +276,8 @@ that calls it is S4.
 ## 6. The palette
 
 - The studio's palette comes from the live catalogue; offline from `$data/streamdeck/catalogue.json`, generated at
-  build time (`tools/actioncatalogue`: the core registry's `List()` plus the Qt client's actions the core declares,
-  `actions::GuiActionDeclarations`), so the palette always matches the shipped core.
+  build time (`tools/actioncatalogue`: the core registry's `List()`), so the palette always matches the shipped core.
+  The GUI's verbs come from `$data/streamdeck/gui-catalogue.json` (the GUI control plane's commands, §2.1).
 - Presets: one per catalogue action (id, label, group, a default face from the action's icon hint), plus the generic
   presets. Faces for unreal-ng actions use unreal-qt's icons (`$icons`), so the deck looks like the GUI.
 

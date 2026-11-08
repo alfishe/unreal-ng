@@ -72,6 +72,7 @@
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassemblerwidget.h"
 #include "debugger/symbolbundlepreferences.h"
 #include "emulator/filemanager.h"
 #include "emulator/hostkeyboardmenu.h"
@@ -389,26 +390,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
-    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
-    // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
+    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): a device's action bindings go to the core
+    // ActionRegistry (the instance's actions worker) or, for a GUI control plane command, to the program's host.
     // A seek's marks come back to the device that moved: it feels them (control surfaces architecture.md §9)
-    GuiActionHooks guiHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
-                            [this] { handleScreenshotRequested(); },
-                            [this](const QString& text) { statusBar()->showMessage(text, 3000); },
-                            [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
+    GuiActionHooks guiHooks{[this](const QString& text) { statusBar()->showMessage(text, 3000); },
                             [this](const std::string& device, const std::vector<std::string>& marks) {
                                 _hostControllers->PlayMarks(device, marks);
                             }};
-    const auto showControllers = [this] {
-        _controllersDialog->show();
-        _controllersDialog->raise();
-        _controllersDialog->activateWindow();
-    };
-    guiHooks.showControllers = showControllers;
-    guiHooks.learn = [this, showControllers](const std::string& device) {
-        showControllers();
-        return _controllersDialog->openLearnWizard(device);
-    };
     _guiActions = std::make_unique<GuiActions>(m_binding, std::move(guiHooks));
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
@@ -491,7 +479,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _nextLayersWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
 
-    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or osd.keyboard
+    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or unrealqt.osd_keyboard
     _osdKeyboardWindow = new OsdKeyboardWindow(this);
     _osdKeyboardWindow->setBinding(m_binding);
 
@@ -3910,10 +3898,19 @@ void MainWindow::handleStepOut()
 
 void MainWindow::handleRunToCursor()
 {
-    submitGuiAction("run.to_cursor");
+    const std::optional<uint16_t> cursor =
+        debuggerWindow != nullptr ? debuggerWindow->disassembler()->cursorAddress() : std::nullopt;
+    if (!cursor)
+    {
+        statusBar()->showMessage(tr("Run to cursor: the disassembly has no cursor row, click one first"), 5000);
+        return;
+    }
+    StateNode params = StateNode::Object();
+    params["addr"] = static_cast<int>(*cursor);
+    submitGuiAction("run.to_cursor", std::move(params));
 }
 
-void MainWindow::submitGuiAction(const char* id)
+void MainWindow::submitGuiAction(const char* id, StateNode params)
 {
     if (!_emulator)
         return;
@@ -3923,7 +3920,9 @@ void MainWindow::submitGuiAction(const char* id)
     origin.client = "menu";
     QPointer<MainWindow> self(this);
     // The actions worker runs it (a run never blocks the GUI thread); a refusal goes to the status bar
-    actions::ActionRegistry::Instance().Submit(id, actions::ActionValue{}, _emulator->GetId(), std::move(origin),
+    actions::ActionValue value;
+    value.params = std::move(params);
+    actions::ActionRegistry::Instance().Submit(id, std::move(value), _emulator->GetId(), std::move(origin),
                                                [self](actions::ActionResult result) {
                                                    if (result.ok)
                                                        return;

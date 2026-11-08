@@ -61,14 +61,9 @@ public:
 public:
     bool start();
     void stop();
-    
-    // Videowall
-    bool SetVideowallSingleSyncMode(bool enable, const std::string& emulatorId = "");
 
     // Meyer's Singleton accessor - returns reference, automatic lifetime
     static Automation& GetInstance();
-    
-    std::string getEmulatorIdOrFirst(const std::string& providedId);
 
     /// The port this process's WebAPI listens on: 0 when it is not up (not built, the port taken by another
     /// emulator, stopped). What a client started from here connects to (unreal-qt's Debug > Debugger)

@@ -220,7 +220,7 @@ std::vector<RegistrationHandle> RegisterPictureActions(ActionRegistry& registry)
     std::vector<RegistrationHandle> handles;
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    const char* description, Executor run, ActionRules rules) {
-        handles.push_back(registry.Register({id, label, group, kind, false, false, params, description, false},
+        handles.push_back(registry.Register({id, label, group, kind, false, params, description, false},
                                             std::move(run), std::move(rules)));
     };
     using Change = WindowDisplayChange;

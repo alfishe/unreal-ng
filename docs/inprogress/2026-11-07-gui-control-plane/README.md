@@ -1,6 +1,6 @@
 # GUI control plane
 
-Status: phases 1-3 done (2026-11-07); phase 4 next.
+Status: phases 1-4 done (2026-11-08); phase 5 next.
 
 Owner decisions (2026-11-07):
 
@@ -368,6 +368,16 @@ Progress:
   `GuiPlaneProfiles_Test`, `ScrubActions_Test`, `streamdeck-tests` (`TestGuiPlane`), the deckflow tests. Open: the
   named-pipe code of the daemon's client is not compiled on Windows yet; a scrub refusal now shows only in the
   activity feed (the Qt notice went with the GUI class).
+- **Phase 4: done (2026-11-08).** The core has no GUI verb: `GuiActionDeclarations`, `ActionInfo::gui` (and the `gui`
+  field of every plane's listing and of `catalogue.json`) and the Qt client's registrations are gone; the Controllers
+  window offers the plane's commands without required parameters. `DebuggerCursors` and the cursor fallback are gone:
+  `run.to_cursor`, `ttd.find_last_write` and `ttd.find_last` take `addr` (else `Bad Request`); the Qt Debug menu's run
+  to cursor passes the disassembly's cursor, the deck keys and the paddle bindings name `disassembly.run_to_cursor`,
+  `memory.find_last_write`, `memory.find_last`. The video wall's single sync left the core (CLI `videowall`, REST
+  `/videowall/singlesync`, `Automation::SetVideowallSingleSyncMode`, `NC_VIDEOWALL_SINGLE_SYNC_MODE`, the
+  Python / Lua functions); unreal-videowall hosts the plane (`main`, `main/tilegrid`, `tilegrid.single_sync {on?}`,
+  state `tiles`, `single_sync`), and `tools/verification/videowall/src/videowall_singlesync.py` drives it.
+  `GuiPlaneProfiles_Test` also checks that a binding of a core action gives its required parameters.
 
 Docs per phase:
 

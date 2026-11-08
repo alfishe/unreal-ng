@@ -24,56 +24,6 @@
 namespace actions
 {
 
-/// region <DebuggerCursors>
-
-struct DebuggerCursors::Impl
-{
-    mutable std::mutex mutex;
-    std::map<std::pair<std::string, std::string>, uint16_t> cursors;
-};
-
-DebuggerCursors& DebuggerCursors::Instance()
-{
-    static DebuggerCursors* cursors = new DebuggerCursors();  // never destroyed: workers read it at exit
-    return *cursors;
-}
-
-DebuggerCursors::Impl& DebuggerCursors::impl() const
-{
-    static Impl* impl = new Impl();
-    return *impl;
-}
-
-void DebuggerCursors::Set(const std::string& instanceId, const std::string& pane, std::optional<uint16_t> address)
-{
-    Impl& data = impl();
-    std::lock_guard<std::mutex> lock(data.mutex);
-    if (address)
-        data.cursors[{instanceId, pane}] = *address;
-    else
-        data.cursors.erase({instanceId, pane});
-}
-
-std::optional<uint16_t> DebuggerCursors::Get(const std::string& instanceId, const std::string& pane) const
-{
-    Impl& data = impl();
-    std::lock_guard<std::mutex> lock(data.mutex);
-    auto it = data.cursors.find({instanceId, pane});
-    if (it == data.cursors.end())
-        return std::nullopt;
-    return it->second;
-}
-
-void DebuggerCursors::Drop(const std::string& instanceId)
-{
-    Impl& data = impl();
-    std::lock_guard<std::mutex> lock(data.mutex);
-    for (auto it = data.cursors.begin(); it != data.cursors.end();)
-        it = it->first.first == instanceId ? data.cursors.erase(it) : std::next(it);
-}
-
-/// endregion </DebuggerCursors>
-
 namespace
 {
 using automation_gate::ScopeDebug;
@@ -176,22 +126,6 @@ bool BudgetParam(const ActionValue& value, uint64_t& budget, std::string& error)
     }
     budget = given ? static_cast<uint64_t>(*given) : 0;
     return true;
-}
-
-/// The address a call names (`addr`), else the debugger's cursor of `panes` in order; false with why not
-bool AddressOrCursor(const ActionCall& call, std::initializer_list<const char*> panes, uint16_t& address,
-                     std::string& error)
-{
-    if (call.value.params.find("addr") != nullptr)
-        return AddressParam(call.value.params, "addr", address, error);
-    for (const char* pane : panes)
-        if (const std::optional<uint16_t> cursor = DebuggerCursors::Instance().Get(call.instanceId, pane))
-        {
-            address = *cursor;
-            return true;
-        }
-    error = "addr: an address (no debugger cursor to take it from)";
-    return false;
 }
 
 struct Point
@@ -371,7 +305,7 @@ std::map<std::string, int>& ShuttleTurns()
     return turns;
 }
 
-/// ttd.find_last / ttd.find_last_write: find-last at the address (or the cursor), then the seek there (seek: true)
+/// ttd.find_last / ttd.find_last_write: find-last at the address (or in a range), then the seek there (seek: true)
 ActionResult FindLast(const ActionCall& call, const char* access)
 {
     EmulatorContext* context = call.emulator->GetContext();
@@ -382,7 +316,7 @@ ActionResult FindLast(const ActionCall& call, const char* access)
     uint16_t address = 0;
     if (call.value.params.find("addr") != nullptr || !range)
     {
-        if (!AddressOrCursor(call, {"memory", "disasm"}, address, error))
+        if (!AddressParam(call.value.params, "addr", address, error))
             return BadRequest(error);
         options["addr"] = std::to_string(address);
     }
@@ -580,7 +514,6 @@ StateNode PaceReadout(const std::string& instanceId)
 
 void DropSteppingState(const std::string& instanceId)
 {
-    DebuggerCursors::Instance().Drop(instanceId);
     std::lock_guard<std::mutex> lock(ScrubMutex());
     ScrubChoices().erase(instanceId);
     ShuttleTurns().erase(instanceId + "/faster");
@@ -639,7 +572,7 @@ std::vector<RegistrationHandle> RegisterSteppingActions(ActionRegistry& registry
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    Executor run, ActionRules rules, bool held = false) {
         handles.push_back(
-            registry.Register({id, label, group, kind, held, false, params, {}, false}, std::move(run), std::move(rules)));
+            registry.Register({id, label, group, kind, held, params, {}, false}, std::move(run), std::move(rules)));
     };
 
     // region <Run: the pace (D1)>
@@ -742,11 +675,11 @@ std::vector<RegistrationHandle> RegisterSteppingActions(ActionRegistry& registry
         },
         RouteRules("POST", "/skip_until", true));
     add("run.to_cursor", "Run to the cursor", run, ValueKind::Press,
-        "addr? (else the disassembly's cursor), max_tstates? (0: 500 frames)",
+        "addr, max_tstates? (0: 500 frames)",
         [](const ActionCall& call) {
             uint16_t address = 0;
             std::string error;
-            if (!AddressOrCursor(call, {"disasm"}, address, error))
+            if (!AddressParam(call.value.params, "addr", address, error))
                 return BadRequest(error);
             uint64_t budget = 0;
             if (!BudgetParam(call.value, budget, error))
@@ -811,10 +744,10 @@ std::vector<RegistrationHandle> RegisterSteppingActions(ActionRegistry& registry
         [](const ActionCall& call) { return FromTtd(Ttd(call.emulator->GetContext(), "bookmarks")); },
         TtdRules(0, false));
     add("ttd.find_last_write", "Last write here", ttdGroup, ValueKind::Press,
-        "addr? (else the memory / disassembly cursor), seek? (true), pc_from?, pc_to?, value?, phys_page?, space?",
+        "addr, seek? (true), pc_from?, pc_to?, value?, phys_page?, space?",
         [](const ActionCall& call) { return FindLast(call, "write"); }, TtdRules(ScopeDebug, true));
     add("ttd.find_last", "Last access here", ttdGroup, ValueKind::Press,
-        "addr? (else the cursor), access? (write|read|execute|io), seek? (true), addr_from?, addr_to?, pc_from?, "
+        "addr? (or a range), access? (write|read|execute|io), seek? (true), addr_from?, addr_to?, pc_from?, "
         "pc_to?, value?, phys_page?, space?",
         [](const ActionCall& call) { return FindLast(call, nullptr); }, TtdRules(ScopeDebug, true));
     for (const bool start : {true, false})

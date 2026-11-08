@@ -119,6 +119,17 @@ std::vector<InterfaceSpec> Declared()
          },
          {"top", "cursor", "selection", "follow"},
          "A memory (hex) view of the CPU's address space, one 16 KB page at a time."},
+        {"tilegrid",
+         Level::View,
+         {
+             {"tilegrid.single_sync",
+              "Single sync",
+              {{"on", ParamKind::Bool, true, "absent: flip it"}},
+              "Every tile shows the first tile's machine in step with it (the others are removed); off: each tile "
+              "runs its own again."},
+         },
+         {"tiles", "single_sync"},
+         "The video wall's grid of tiles, each showing a machine."},
         {"window",
          Level::Window,
          {

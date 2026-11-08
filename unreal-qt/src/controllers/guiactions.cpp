@@ -3,7 +3,6 @@
 #include <QCoreApplication>
 #include <QMetaObject>
 #include <QTimer>
-#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -13,10 +12,6 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/execution/automationgate.h"
 #include "controllers/hostcontrollers.h"
-#include "debugger/metadatasettings.h"
-#include "emulator/actions/actionparams.h"
-#include "emulator/actions/catalogue.h"
-#include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
 #include "guicontrol/host.h"
 #include "guicontrol/interfaces.h"
@@ -86,202 +81,16 @@ void PostToGui(const std::shared_ptr<std::atomic<bool>>& alive, std::function<vo
 GuiActions::GuiActions(EmulatorBinding* binding, GuiActionHooks hooks, QObject* parent)
     : QObject(parent), _binding(binding), _hooks(std::move(hooks)), _alive(std::make_shared<std::atomic<bool>>(true))
 {
-    // 3.3 Debugger UI
-    QObject* debugger = _hooks.debugger;
-    std::function<void()> showDebugger = _hooks.showDebugger;
-    Add("dbg.open",
-        [showDebugger](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
-            if (showDebugger)
-                showDebugger();
-            return {};
-        });
-    // Pane focus opens a closed debugger first; the cursor keys go to the pane in focus and repeat while held
-    auto pane = [debugger, showDebugger](const char* name) -> GuiRun {
-        return [debugger, showDebugger, name](const std::string&, const actions::ActionValue&,
-                                              const actions::ActionOrigin&) -> QString {
-            auto* window = qobject_cast<QWidget*>(debugger);
-            if (window == nullptr)
-                return Tr("the debugger is not available");
-            if (!window->isVisible() && showDebugger)
-                showDebugger();
-            QMetaObject::invokeMethod(window, name);
-            return {};
-        };
-    };
-    auto key = [this, debugger](int code, bool repeats) -> GuiRun {
-        auto* timer = new QTimer(this);  // the repeat; this object owns it
-        auto send = [debugger, code] {
-            if (debugger != nullptr)
-                QMetaObject::invokeMethod(debugger, "paneKey", Q_ARG(int, code));
-        };
-        QObject::connect(timer, &QTimer::timeout, [timer, send] {
-            timer->setInterval(60);
-            send();
-        });
-        return [timer, send, repeats](const std::string&, const actions::ActionValue& value,
-                                      const actions::ActionOrigin&) -> QString {
-            timer->stop();
-            if (!value.pressed)
-                return {};
-            send();
-            if (repeats)
-                timer->start(300);
-            return {};
-        };
-    };
-    actions::ActionRules noDebugger;
-    noDebugger.unavailable = [debugger](Emulator&, const actions::ActionValue&) {
-        return debugger == nullptr ? std::string("the debugger is not available") : std::string();
-    };
-    Add("dbg.focus_next_pane", pane("focusNextPane"), noDebugger);
-    Add("dbg.focus_prev_pane", pane("focusPrevPane"), noDebugger);
-    Add("dbg.cursor_up", key(Qt::Key_Up, true), noDebugger);
-    Add("dbg.cursor_down", key(Qt::Key_Down, true), noDebugger);
-    Add("dbg.cursor_left", key(Qt::Key_Left, true), noDebugger);
-    Add("dbg.cursor_right", key(Qt::Key_Right, true), noDebugger);
-    Add("dbg.page_up", key(Qt::Key_PageUp, true), noDebugger);
-    Add("dbg.page_down", key(Qt::Key_PageDown, true), noDebugger);
-    Add("dbg.memory_follow", key(Qt::Key_Return, false), noDebugger);
-    // An execution breakpoint at the disassembly cursor (dbg.breakpoint_toggle_pc, the core's, takes the PC)
-    Add("dbg.breakpoint_toggle_cursor",
-        [debugger, showDebugger](const std::string&, const actions::ActionValue&,
-                                 const actions::ActionOrigin&) -> QString {
-            auto* window = qobject_cast<QWidget*>(debugger);
-            if (window == nullptr)
-                return Tr("the debugger is not available");
-            if (!window->isVisible() && showDebugger)
-                showDebugger();
-            QMetaObject::invokeMethod(window, "toggleBreakpointAtCursor");
-            return {};
-        },
-        noDebugger);
-
-    // The disassembly (Stream Deck D6.4, D6.5): follow PC, labels on / off, byte / command scroll, go to an address
-    Add("dbg.follow_pc", pane("followPc"), noDebugger);
-    // The labels and the metadata switches (Debug > Metadata): global, kept in the settings, every debugger follows
-    for (const MetadataSettings::Switch which :
-         {MetadataSettings::Switch::Labels, MetadataSettings::Switch::Metadata, MetadataSettings::Switch::Regions,
-          MetadataSettings::Switch::Colours, MetadataSettings::Switch::Notes})
-    {
-        actions::ActionRules rules;
-        rules.state = [which](Emulator&, const actions::ActionValue&) -> std::optional<bool> {
-            return MetadataSettings::Instance().IsOn(which);
-        };
-        Add(MetadataSettings::ActionId(which),
-            [which](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
-                MetadataSettings::Instance().Toggle(which);
-                return {};
-            },
-            std::move(rules));
-    }
-    Add("dbg.scroll_mode_toggle", pane("toggleScrollMode"), noDebugger);
-    Add("dbg.goto",
-        [debugger, showDebugger](const std::string&, const actions::ActionValue& value,
-                                 const actions::ActionOrigin&) -> QString {
-            uint16_t address = 0;
-            std::string error;
-            if (!actions::AddressParam(value.params, "addr", address, error))
-                return QString::fromStdString(error);
-            auto* window = qobject_cast<QWidget*>(debugger);
-            if (window == nullptr)
-                return Tr("the debugger is not available");
-            if (!window->isVisible() && showDebugger)
-                showDebugger();
-            QMetaObject::invokeMethod(window, "goToDisassemblyAddress", Q_ARG(int, static_cast<int>(address)));
-            return {};
-        },
-        noDebugger);
-
-    // 3.4 Capture: the screenshot to the clipboard (the main window's)
-    std::function<void()> screenshot = _hooks.screenshot;
-    Add("cap.screenshot",
-        [screenshot](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
-            if (screenshot)
-                screenshot();
-            return {};
-        });
-
-    // The on-screen keyboard window (the main window's)
-    std::function<void()> toggleKeyboard = _hooks.toggleKeyboard;
-    Add("osd.keyboard",
-        [toggleKeyboard](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
-            if (toggleKeyboard)
-                toggleKeyboard();
-            return {};
-        });
-
-    // The Controllers window, and its learn wizard for a device the database does not know (ui-ux.md §3.5)
-    std::function<void()> showControllers = _hooks.showControllers;
-    Add("ctl.open",
-        [showControllers](const std::string&, const actions::ActionValue&, const actions::ActionOrigin&) -> QString {
-            if (showControllers)
-                showControllers();
-            return {};
-        });
-    std::function<QString(const std::string&)> learn = _hooks.learn;
-    Add("ctl.learn",
-        [learn](const std::string&, const actions::ActionValue& value, const actions::ActionOrigin&) -> QString {
-            const std::optional<std::string> device = actions::TextParam(value, "device");
-            if (!device || device->empty())
-                return Tr("ctl.learn needs params.device: a host device id (controllers devices lists them)");
-            return learn ? learn(*device) : Tr("the Controllers window is not available");
-        },
-        {});
-
-    // Stubs of the catalogue: a binding to one says why instead of doing nothing
-    actions::ActionRules later;
-    later.unavailable = [](Emulator&, const actions::ActionValue&) { return std::string("not available yet"); };
-    later.unavailableError = "Not Implemented";
-    for (const char* id : {"osd.quick_menu"})
-        Add(id, nullptr, later);
 }
 
 GuiActions::~GuiActions()
 {
-    _alive->store(false);
-    _handles.clear();  // the registry forgets the GUI actions before their objects go
+    _alive->store(false);  // a result still on its way finds the window gone
 }
 
 const actions::ActionRegistry& GuiActions::Registry() const
 {
     return actions::ActionRegistry::Instance();
-}
-
-actions::Executor GuiActions::OnGui(GuiRun run)
-{
-    if (!run)
-        return nullptr;
-    auto alive = _alive;
-    auto notice = _hooks.notice;
-    return [alive, notice, run = std::move(run)](const actions::ActionCall& call) {
-        PostToGui(alive, [run, notice, instance = call.instanceId, value = call.value, origin = call.origin] {
-            const QString why = run(instance, value, origin);
-            if (!why.isEmpty() && notice)
-                notice(why);
-        });
-        StateNode body = StateNode::Object();
-        body["queued"] = "gui";
-        return actions::ActionResult::Success(std::move(body));
-    };
-}
-
-void GuiActions::Add(const char* id, GuiRun run, actions::ActionRules rules)
-{
-    const actions::GuiActionDeclaration* declaration = actions::GuiActionDeclarationOf(id);
-    Q_ASSERT_X(declaration != nullptr, "GuiActions::Add", "a GUI action the core does not declare (catalogue.cpp)");
-    if (declaration == nullptr)
-        return;
-    actions::ActionInfo info{id,
-                             Tr(declaration->label).toStdString(),
-                             Tr(declaration->group).toStdString(),
-                             declaration->kind,
-                             declaration->held,
-                             true,
-                             declaration->params,
-                             {},
-                             false};
-    _handles.push_back(actions::ActionRegistry::Instance().Register(std::move(info), OnGui(std::move(run)),
-                                                                    std::move(rules)));
 }
 
 void GuiActions::Notice(const QString& text)
@@ -386,14 +195,6 @@ void GuiActions::Trigger(const HostActionEvent& event)
     {
         if (pressed)
             Notice(Tr("%1: no machine").arg(QString::fromStdString(info->label)));
-        return;
-    }
-    // The GUI's actions (the debugger's panes, the screenshot, the windows) act on this window's machine only
-    if (info->gui && (emulator == nullptr || instance != emulator->GetId()))
-    {
-        if (pressed)
-            Notice(Tr("%1: the device drives another machine than this window's")
-                       .arg(QString::fromStdString(info->label)));
         return;
     }
     actions::ActionValue actionValue;

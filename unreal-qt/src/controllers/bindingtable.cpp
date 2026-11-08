@@ -22,6 +22,7 @@
 #include <cmath>
 
 #include "emulator/actions/actionregistry.h"
+#include "guicontrol/interfaces.h"
 #include "controllers/hostcontrollers.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -86,6 +87,23 @@ std::string Lower(std::string text)
 JsonValue TargetSpec(const char* field, const std::string& value)
 {
     return JsonValue::Object({{field, JsonValue::String(value)}});
+}
+
+/// A command of the GUI control plane (unrealqt.osd_keyboard, debugger.open): bound as an action, the router runs it
+/// on the program's host (GuiActions::TriggerGui); `target` among the params names a node
+JsonValue GuiSpec(const char* method, const char* target = nullptr)
+{
+    JsonValue spec = TargetSpec("action", method);
+    if (target != nullptr)
+        spec.Set("params", JsonValue::Object({{"target", JsonValue::String(target)}}));
+    return spec;
+}
+
+/// The label of a GUI control plane command; "" for any other id
+QString GuiLabel(const std::string& id)
+{
+    const guicontrol::CommandSpec* command = guicontrol::FindCommand(QString::fromStdString(id));
+    return command != nullptr ? QString::fromUtf8(command->label) : QString();
 }
 
 JsonValue None()
@@ -696,6 +714,16 @@ void BindingTable::buildRows()
             for (const actions::ActionInfo& action : _actions->List())
                 addRow("action:" + action.id, QString::fromStdString(action.group), QString::fromStdString(action.label),
                        QString::fromStdString(action.id), TargetSpec("action", action.id));
+        // The GUI's own verbs: the plane's commands that need no parameter (a pane's cursor and page take one: the
+        // profiles bind them with params)
+        for (const guicontrol::InterfaceSpec& spec : guicontrol::Interfaces())
+            if (QLatin1String(spec.name) != QLatin1String("tilegrid"))  // the video wall's, not this program's
+                for (const guicontrol::CommandSpec& command : spec.commands)
+                    if (std::none_of(command.params.begin(), command.params.end(),
+                                     [](const guicontrol::ParamSpec& param) { return !param.optional; }))
+                        addRow(std::string("action:") + command.method, tr("GUI: %1").arg(spec.name),
+                               QString::fromUtf8(command.label), QString::fromUtf8(command.method),
+                               TargetSpec("action", command.method));
         return;
     }
     const QString joystick = tr("Joystick");
@@ -716,11 +744,15 @@ void BindingTable::buildRows()
     addRow("mouse:left", mouse, tr("Left button"), {}, TargetSpec("mouse", "left"));
     addRow("mouse:right", mouse, tr("Right button"), {}, TargetSpec("mouse", "right"));
     const QString emulator = tr("Emulator");
-    for (const char* id : {"run.pause_toggle", "osd.keyboard", "osd.quick_menu", "mach.turbo_toggle", "run.turbo_hold",
-                           "cap.screenshot", "mach.reset"})
+    for (const char* id : {"run.pause_toggle", "mach.turbo_toggle", "run.turbo_hold", "mach.reset"})
         if (_actions != nullptr && _actions->Find(id).has_value())
             addRow(std::string("action:") + id, emulator, actionTitle(id), QString::fromUtf8(id),
                    TargetSpec("action", id));
+    // The window's own: the on-screen keyboard, the main window's screenshot to the clipboard (GUI control plane)
+    addRow("action:unrealqt.osd_keyboard", emulator, GuiLabel("unrealqt.osd_keyboard"),
+           QStringLiteral("unrealqt.osd_keyboard"), GuiSpec("unrealqt.osd_keyboard"));
+    addRow("action:window.screenshot", emulator, tr("Screenshot to the clipboard"), QStringLiteral("window.screenshot"),
+           GuiSpec("window.screenshot", "main"));
 }
 
 void BindingTable::refresh()
@@ -761,9 +793,12 @@ void BindingTable::refresh()
             {
                 const std::optional<actions::ActionInfo> action =
                     _actions != nullptr ? _actions->Find(what) : std::nullopt;
-                addRow(key, play || !action ? tr("Emulator") : QString::fromStdString(action->group),
-                       QString::fromStdString(action ? action->label : what), QString::fromStdString(what),
-                       TargetSpec("action", what));
+                const QString gui = GuiLabel(what);  // a GUI plane command: its params belong to the binding
+                const QString title = action    ? QString::fromStdString(action->label)
+                                      : !gui.isEmpty() ? gui
+                                                       : QString::fromStdString(what);
+                addRow(key, play || !action ? tr("Emulator") : QString::fromStdString(action->group), title,
+                       action || gui.isEmpty() ? QString::fromStdString(what) : yaml, bound.spec);
             }
             else if (key.rfind("layer:", 0) == 0)
                 addRow(key, tr("Emulator"), tr("Layer %1").arg(QString::fromStdString(what)), yaml, bound.spec);

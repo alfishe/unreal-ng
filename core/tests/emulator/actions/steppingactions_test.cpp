@@ -118,24 +118,6 @@ int64_t Int(const StateNode& body, const char* key)
 }
 }  // namespace
 
-TEST(DebuggerCursors_Test, PanesPerInstanceAClearAndTheInstanceGoing)
-{
-    DebuggerCursors& cursors = DebuggerCursors::Instance();
-    cursors.Set("i1", "disasm", 0x8000);
-    cursors.Set("i1", "memory", 0x4000);
-    cursors.Set("i2", "disasm", 0x1234);
-    EXPECT_EQ(cursors.Get("i1", "disasm"), std::optional<uint16_t>(0x8000));
-    EXPECT_EQ(cursors.Get("i1", "memory"), std::optional<uint16_t>(0x4000));
-    cursors.Set("i1", "disasm", 0x8003);  // the cursor row moved (a key, a deck's dbg.cursor_down)
-    EXPECT_EQ(cursors.Get("i1", "disasm"), std::optional<uint16_t>(0x8003));
-    cursors.Set("i1", "memory", std::nullopt);
-    EXPECT_FALSE(cursors.Get("i1", "memory").has_value());
-    DropSteppingState("i1");
-    EXPECT_FALSE(cursors.Get("i1", "disasm").has_value());
-    EXPECT_EQ(cursors.Get("i2", "disasm"), std::optional<uint16_t>(0x1234)) << "another instance's stays";
-    DropSteppingState("i2");
-}
-
 /// region <Time travel>
 
 /// Each test inits a bare instance and records 6-8 frames of a write loop on it: boot-bound, about 40-60 ms
@@ -300,9 +282,9 @@ TEST_F(SteppingTtd_Test, TheLastWriteToTheCursorsAddressAndTheSeekThere)
     EXPECT_EQ(Int(result.body, "pc"), 0x8002) << "the LD (#9000),A";
     EXPECT_EQ(result.body.find("seeked"), nullptr);
 
-    // The memory view's cursor names the address; the seek goes there
-    DebuggerCursors::Instance().Set(_emulator->GetId(), "memory", 0x9000);
-    result = _registry->Run("ttd.find_last_write", Press());
+    // The seek goes there; without an address it is refused (the GUI passes its cursor: memory.find_last_write)
+    EXPECT_EQ(_registry->Run("ttd.find_last_write", Press()).error, "Bad Request");
+    result = _registry->Run("ttd.find_last_write", Press(Params({{"addr", 0x9000}})));
     ASSERT_TRUE(result.ok) << result.message;
     ASSERT_TRUE(result.body.find("found")->b);
     EXPECT_TRUE(result.body.find("seeked")->b);
@@ -417,20 +399,19 @@ TEST_F(SteppingRun_Test, RunUntilPcAndToTheCursorWhichABreakpointStops)
     EXPECT_EQ(Pc(), 0x8010);
     EXPECT_EQ(_registry->Run("run.until_pc", Press()).error, "Bad Request") << "no pc";
 
-    // To the disassembly's cursor; a breakpoint on the way stops it first
-    EXPECT_EQ(_registry->Run("run.to_cursor", Press()).error, "Bad Request") << "no cursor yet";
-    DebuggerCursors::Instance().Set(_emulator->GetId(), "disasm", 0x8030);
+    // To the cursor's address (the GUI passes it); a breakpoint on the way stops it first
+    EXPECT_EQ(_registry->Run("run.to_cursor", Press()).error, "Bad Request") << "no addr";
     auto* breakpoint = new BreakpointDescriptor();
     breakpoint->type = BreakpointTypeEnum::BRK_MEMORY;
     breakpoint->memoryType = BRK_MEM_EXECUTE;
     breakpoint->z80address = 0x8020;
     ASSERT_NE(_emulator->GetBreakpointManager()->AddBreakpoint(breakpoint), 0);
-    result = _registry->Run("run.to_cursor", Press());
+    result = _registry->Run("run.to_cursor", Press(Params({{"addr", 0x8030}})));
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_FALSE(result.body.find("hit")->b);
     EXPECT_EQ(result.body.find("stop")->find("reason")->s, "breakpoint");
     EXPECT_EQ(Pc(), 0x8020);
-    result = _registry->Run("run.to_cursor", Press());
+    result = _registry->Run("run.to_cursor", Press(Params({{"addr", 0x8030}})));
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_TRUE(result.body.find("hit")->b) << "on from the breakpoint to the cursor";
     EXPECT_EQ(Pc(), 0x8030);

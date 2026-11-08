@@ -20,6 +20,10 @@ class EmulatorManager;
 class Automation;
 #endif
 class EmulatorTile;
+namespace guicontrol
+{
+class Host;
+}
 class AppSoundManager;
 
 /**
@@ -74,7 +78,7 @@ public:
     void createNextBatch();
     
     // Single Emulator Sync Mode
-    void setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId = "");
+    void setSingleEmulatorSyncMode(bool enable);
 
     /// Handle GPU acceleration toggle
     void handleGpuAccelerationToggled(bool enabled);
@@ -172,7 +176,6 @@ private:
     actions::ViewHandle _surfaceView;   ///< this window as a view of TargetState
     std::string _surfaceActive;         ///< the active instance last reported
     QTimer* _surfaceTimer = nullptr;    ///< focus paths are many: a cheap check every 200 ms besides the direct calls
-    std::uint64_t _singleSyncObserverId = 0;
     std::uint64_t _instanceCreatedObserverId = 0;
     std::uint64_t _instanceDestroyedObserverId = 0;
 
@@ -232,10 +235,16 @@ private:
     // Single sync mode state
     bool _singleSyncMode = false;
 
+    /// The GUI control plane's host (docs/emulator/design/gui-control): the window `main` and its view `tilegrid`
+    /// (single sync); null when it could not listen
+    std::unique_ptr<guicontrol::Host> _guiHost;
+    void startGuiControl();
+    /// The tilegrid view's state (tiles, single sync) to the plane's subscribers
+    void publishGuiState() const;
+
     // Auto-hide menu bar in fullscreen
     QTimer* _menuAutoHideTimer = nullptr;
     static constexpr int MENU_AUTO_HIDE_DELAY_MS = 2000;
     static constexpr int MENU_TRIGGER_ZONE_HEIGHT = 10;  // pixels from top
-    
-    void handleSingleSyncModeMessage(MessagePayload* payload);
+
 };

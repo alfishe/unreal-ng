@@ -325,7 +325,7 @@ public:
     void SetZ80nMode(bool enabled) { _z80nMode = enabled; }
     bool IsZ80nMode() const { return _z80nMode; }
 
-    /// Labels off on this thread while it lives (the Qt disassembly's labels toggle, dbg.labels_toggle): operands and
+    /// Labels off on this thread while it lives (the Qt disassembly's labels switch): operands and
     /// instructions show plain addresses. Thread-local, so the other surfaces' disassembly keeps its labels
     class NoLabelsScope
     {

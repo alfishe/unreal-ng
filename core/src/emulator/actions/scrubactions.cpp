@@ -171,7 +171,7 @@ std::vector<RegistrationHandle> RegisterScrubActions(ActionRegistry& registry, S
     for (const bool forward : {false, true})
         handles.push_back(registry.Register(
             {forward ? "ttd.scrub_forward" : "ttd.scrub_back", forward ? "Scrub forward" : "Scrub back", "Time travel",
-             ValueKind::Level, false, false, {}, {}, false},
+             ValueKind::Level, false, {}, {}, false},
             [&clock, forward](const ActionCall& call) {
                 clock.Set(call.instanceId, forward, call.value.level, call.origin);
                 return ActionResult::Success();

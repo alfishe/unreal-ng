@@ -325,8 +325,6 @@ private:
     void HandleJoystick(const ClientSession& session, const std::vector<std::string>& args);
     void ShowJoystickHelp(const ClientSession& session);
 
-    // Videowall commands
-    void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);
 
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);

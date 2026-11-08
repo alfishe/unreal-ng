@@ -666,7 +666,6 @@ inline pybind11::object ActionsPy(Emulator& self)
         row["group"] = status.info.group;
         row["kind"] = actions::ValueKindName(status.info.kind);
         row["held"] = status.info.held;
-        row["gui"] = status.info.gui;
         row["scope"] = automation_gate::CompanionScopeName(status.scope);
         row["needs_pause"] = status.needsPause;
         row["toggle"] = status.info.toggle;
@@ -1850,10 +1849,6 @@ namespace PythonBindings
             return mgr && mgr->SetSelectedEmulatorId(id);
         }, "Set emulator as currently selected by ID", py::arg("id"));
 
-        m.def("videowall_singlesync", [](bool enable, const std::string& emulatorId) -> bool {
-            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
-        }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
-
         // The user took control back from this script's automation session (execution arbiter design §6a)
         py::register_exception<execution::script::ControlRevoked>(m, "ControlRevoked");
 
@@ -2866,7 +2861,7 @@ namespace PythonBindings
                  "view_update, view_remove, session_open, session_close) with its args as keywords: "
                  "surfaces('pin', session='s1', target='view:v1'); {ok, ...} as WebAPI /api/v1/surfaces")
             .def("actions", [](Emulator& self) { return ActionsPy(self); },
-                 "The host actions: {instance, actions: [{id, label, group, kind, held, gui, scope, needs_pause, "
+                 "The host actions: {instance, actions: [{id, label, group, kind, held, scope, needs_pause, "
                  "available, error, reason}]} (the CLI `action list`, WebAPI GET /controllers/actions, MCP actions)")
             .def("action", [](Emulator& self, const std::string& id, const py::object& value, const py::kwargs& params) {
                      return ActionPy(self, id, value, params);

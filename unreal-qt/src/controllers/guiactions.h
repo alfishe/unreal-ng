@@ -1,14 +1,14 @@
 #pragma once
 
 /// @file guiactions.h
-/// @brief The Qt client's part of the host actions (control surfaces architecture §2, §3): the core
-/// actions::ActionRegistry (core/src/emulator/actions) holds the catalogue and runs every action on the instance's
-/// actions worker; this registers the GUI ones there (the debugger window and its panes, the screenshot to the
-/// clipboard, the on-screen keyboard, the Controllers window and its learn wizard, the OSD stubs) and turns a device's action events into registry calls with the origin
-/// of the device. GUI executors run on the GUI thread: the worker posts them and answers at once.
+/// @brief A device's action events in the Qt client (control surfaces architecture §2, §3): a binding naming a core
+/// action becomes a call of the core actions::ActionRegistry (core/src/emulator/actions; it runs on the instance's
+/// actions worker) with the device's origin; a binding naming a command of the GUI control plane (the debugger's
+/// panes, the windows, the on-screen keyboard: design §4.7) runs on the program's host in process. The GUI's verbs are
+/// not core actions.
 ///
-/// Lifetime: the registrations end with this object; a GUI call still queued then finds the alive token false and does
-/// nothing. Results come back on the worker and go to the status bar through the GUI thread.
+/// Lifetime: results come back on the worker and go to the status bar through the GUI thread; one still on its way
+/// when this object goes finds the alive token false and does nothing.
 
 #include <QObject>
 #include <QPointer>
@@ -33,16 +33,9 @@ class Host;
 
 struct GuiActionHooks
 {
-    QObject* debugger = nullptr;  ///< DebuggerWindow: focusNextPane, paneKey, ... invoked by name
-    std::function<void()> showDebugger;
-    std::function<void()> screenshot;
     std::function<void(const QString&)> notice;  ///< the status bar
-    std::function<void()> toggleKeyboard;        ///< the on-screen keyboard shown / hidden
     /// A host device's action came back with timeline marks (`ttd.seek_by`): the device feels them (GUI thread)
     std::function<void(const std::string& device, const std::vector<std::string>& marks)> marks;
-    std::function<void()> showControllers;  ///< Tools > Controllers (ctl.open)
-    /// The learn wizard for a host device (ctl.learn, ui-ux.md §3.5); the reason when it cannot start
-    std::function<QString(const std::string& device)> learn;
 };
 
 struct HostActionEvent;
@@ -68,12 +61,6 @@ public:
     void SetGuiHost(guicontrol::Host* host);
 
 private:
-    using GuiRun = std::function<QString(const std::string& instanceId, const actions::ActionValue& value,
-                                         const actions::ActionOrigin& origin)>;
-    /// An executor that runs `run` on the GUI thread and answers at once; its reason goes to the status bar
-    actions::Executor OnGui(GuiRun run);
-    /// Register a GUI action the core declares (actions::GuiActionDeclarations: label, group, kind, held, params)
-    void Add(const char* id, GuiRun run, actions::ActionRules rules = {});
     /// Show a result's error on the GUI thread
     void Notice(const QString& text);
     /// A binding of a GUI plane command: run on the host, a held one of a repeating command repeats; false when the
@@ -83,7 +70,6 @@ private:
     EmulatorBinding* _binding = nullptr;
     GuiActionHooks _hooks;
     std::shared_ptr<std::atomic<bool>> _alive;
-    std::vector<actions::RegistrationHandle> _handles;
     QPointer<guicontrol::Host> _guiHost;
     std::map<QString, QTimer*> _guiRepeats;  ///< per binding (device + command): the repeat while held
 };

@@ -371,6 +371,31 @@
         {
             "commands": [
                 {
+                    "description": "Every tile shows the first tile's machine in step with it (the others are removed); off: each tile runs its own again.",
+                    "label": "Single sync",
+                    "method": "tilegrid.single_sync",
+                    "params": [
+                        {
+                            "description": "absent: flip it",
+                            "kind": "bool",
+                            "name": "on",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "The video wall's grid of tiles, each showing a machine.",
+            "level": "view",
+            "name": "tilegrid",
+            "state": [
+                "tiles",
+                "single_sync"
+            ]
+        },
+        {
+            "commands": [
+                {
                     "description": "Show the window, bring it to the front and give it focus.",
                     "label": "Raise the window",
                     "method": "window.raise",

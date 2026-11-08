@@ -119,7 +119,6 @@ TEST_F(HostActionsMachine_Test, TheAreaActionsAreInTheCatalogueWithParamsScopesA
     {
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info.has_value()) << id;
-        EXPECT_FALSE(info->gui) << id;
         EXPECT_FALSE(info->description.empty()) << id << " has a description";
     }
     EXPECT_TRUE(registry.Find("mach.switch")->toggle);

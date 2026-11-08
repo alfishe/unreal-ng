@@ -69,7 +69,6 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
-#include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowrecording.h"
@@ -1167,11 +1166,6 @@ public:
             return nullptr;
         });
 
-        lua.set_function("videowall_singlesync", [](bool enable, sol::optional<std::string> emulatorId) -> bool {
-            std::string id = emulatorId.value_or("");
-            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, id);
-        });
-
         // Register access - requires emulator instance
         lua.set_function("get_pc", [this]() -> uint16_t {
             if (!effectiveEmulator()) return 0;
@@ -2233,7 +2227,7 @@ public:
             }
             return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
         });
-        // actions() -> {instance, actions = {{id, label, group, kind, held, gui, scope, needs_pause, available, error,
+        // actions() -> {instance, actions = {{id, label, group, kind, held, scope, needs_pause, available, error,
         // reason}, ...}}; action(id, [value], [params]) -> {ok, action, error, message, result}: the core
         // ActionRegistry (control surfaces actions.md §6), as the CLI `action`, WebAPI /controllers/actions, MCP
         // `actions` and Python actions() / action(). value by the action's kind: nil (a press), true / false, a number
@@ -2258,7 +2252,6 @@ public:
                 row["group"] = status.info.group;
                 row["kind"] = actions::ValueKindName(status.info.kind);
                 row["held"] = status.info.held;
-                row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
                 row["toggle"] = status.info.toggle;

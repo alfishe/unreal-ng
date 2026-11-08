@@ -27,21 +27,6 @@ struct ActionResult;
 /// Register the actions of this file; the registry keeps the handles
 std::vector<RegistrationHandle> RegisterSteppingActions(ActionRegistry& registry);
 
-/// The debugger's cursors per instance (thread-safe; the GUI writes, the actions workers read)
-class DebuggerCursors
-{
-public:
-    static DebuggerCursors& Instance();
-    /// `pane`: "disasm" or "memory"; nullopt clears it
-    void Set(const std::string& instanceId, const std::string& pane, std::optional<uint16_t> address);
-    std::optional<uint16_t> Get(const std::string& instanceId, const std::string& pane) const;
-    void Drop(const std::string& instanceId);
-
-private:
-    struct Impl;
-    Impl& impl() const;
-};
-
 /// region <The scrub unit of ttd.seek_by (D3.1)>
 
 /// "frames" (the acceleration curve), "seconds" (its curve in seconds), "batch" (`count` frames a step, 10),

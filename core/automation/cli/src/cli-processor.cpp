@@ -296,10 +296,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"joystick", &CLIProcessor::HandleJoystick},
 
                         // Time-Travel Debug commands
-                        {"ttd", &CLIProcessor::HandleTTD},
-                        
-                        // Videowall commands
-                        {"videowall", &CLIProcessor::HandleVideowall}};
+                        {"ttd", &CLIProcessor::HandleTTD}};
 }
 
 void CLIProcessor::ProcessCommand(ClientSession& session, const std::string& command)

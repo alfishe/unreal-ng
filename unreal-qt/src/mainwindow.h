@@ -30,6 +30,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/media/mediatargets.h"
 #include "emulator/soundmanager.h"
+#include "emulator/state/statenode.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
 #include "common/displayrefreshrate.h"
@@ -193,10 +194,11 @@ private slots:
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
-    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor on the instance's actions worker
+    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor (the disassembly's cursor row as its addr)
+    /// on the instance's actions worker
     void handleStepOut();
     void handleRunToCursor();
-    void submitGuiAction(const char* id);
+    void submitGuiAction(const char* id, StateNode params = StateNode::Object());
     // Debug menu: breakpoints and the debugger's panes
     void handleToggleBreakpoint();
     void handleClearAllBreakpoints();
@@ -485,7 +487,7 @@ private:
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     class WindowRecorder* _windowRecorder = nullptr;      // the window recording (WindowView), made on first use
-    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, the osd.keyboard action
+    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, unrealqt.osd_keyboard
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
     SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)

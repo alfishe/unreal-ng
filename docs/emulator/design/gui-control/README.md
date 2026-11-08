@@ -1,7 +1,7 @@
 # GUI control plane
 
-The plane that drives the **programs**, not the emulator: the windows and views of unreal-qt (and later the standalone
-debugger, the video wall and the screen viewer). The emulator planes (CLI, Python, Lua, MCP, REST, WebSocket) control
+The plane that drives the **programs**, not the emulator: the windows and views of unreal-qt and the video wall (and
+later the standalone debugger and the screen viewer). The emulator planes (CLI, Python, Lua, MCP, REST, WebSocket) control
 the core; this plane controls what a person sees. The core does not know about it and does not link it.
 
 Design and decisions: [docs/inprogress/2026-11-07-gui-control-plane](../../../inprogress/2026-11-07-gui-control-plane/README.md).
@@ -28,7 +28,8 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 | 1 | Host, discovery, protocol, the `window` interface, `unreal-gui list` / `window.*` / `watch`, unreal-qt hosts it | done |
 | 2 | unreal-qt: `debugger`, `metadata`, `disassembly`, `memory`, `unrealqt`; the controller bindings in process; the `state` call; `unreal-gui state` / `mcp`; the Python client | done |
 | 3 | the controller profiles and the Stream Deck scenarios on the plane; `gui-catalogue.json`; the daemon's `gui` keys and `gui.*` readouts; the TTD scrub a core action | done |
-| 4-6 | the GUI actions out of the core, the other programs | see the design |
+| 4 | the GUI actions, the GUI cursors and the video wall's single sync out of the core; the video wall hosts `tilegrid` | done |
+| 5-6 | the other programs | see the design |
 
 ## 2. Pieces
 
@@ -126,6 +127,7 @@ asks each host to `resolve` and takes the only match, else the one focused last.
 | `disassembly` | view | `disassembly.goto {addr}`, `disassembly.follow_pc`, `disassembly.cursor {addr}`, `disassembly.cursor_move {dir}` (up, down), `disassembly.page {n?}` (16 rows), `disassembly.scroll_mode {mode?}` (`byte`, `command`); composed: `disassembly.run_to_cursor`, `disassembly.breakpoint_toggle_cursor` | `top`, `cursor`, `pc`, `scroll_mode` |
 | `memory` | view | `memory.goto {addr}`, `memory.cursor {addr}`, `memory.cursor_move {dir}`, `memory.page {n?}`, `memory.follow {register}` (`pc`, `sp`, `bc`, `de`, `hl`, `ix`, `iy`, `off`), `memory.select {from, to}` (one 16 KB page), `memory.follow_cursor` (the word at the cursor); composed: `memory.find_last_write`, `memory.find_last {access?}` | `top`, `cursor`, `selection {from, to}`, `follow` |
 | `unrealqt` | host | `unrealqt.osd_keyboard {on?}`, `unrealqt.controllers_open`, `unrealqt.controllers_learn {device}` | `osd_keyboard` |
+| `tilegrid` | view | `tilegrid.single_sync {on?}`: every tile shows the first tile's machine in step with it, the others removed | `tiles [{instance}]`, `single_sync` |
 
 A declared command takes its declared parameters only: an unknown or a missing one is `bad_request` naming it and
 listing what the command takes (`memory.goto: unknown parameter file; missing addr; memory.goto takes addr (...)`).
@@ -143,6 +145,16 @@ unreal-qt binds its main window as `main`, the debugger as `debugger` with the v
 back as the command's (`not_now: no time travel history`). The catalogue in
 [`interfaces.cpp`](../../../../guicontrol/src/interfaces.cpp) is the source; a program adds its own commands with
 `AddProgramInterface` (unreal-qt: [`programcontrol.cpp`](../../../../unreal-qt/src/guiplane/programcontrol.cpp)).
+
+The video wall (unreal-videowall) binds its window as `main` and the view `main/tilegrid` (`tilegrid`). Its single
+sync mode lives here only: the emulator planes have no video wall command
+([`videowall_singlesync.py`](../../../../tools/verification/videowall/src/videowall_singlesync.py) drives it).
+
+**No GUI verbs in the core.** The core's action registry holds core actions only: the debugger's panes, the windows,
+the screenshot to the clipboard, the on-screen keyboard and the Controllers window are commands of this plane, with
+no alias among the actions (a binding of an old id such as `dbg.open` or `cap.screenshot` finds no action). The core
+actions a GUI composes take the address it shows: `run.to_cursor {addr}`, `ttd.find_last_write {addr}`,
+`ttd.find_last {addr}`; the core keeps no GUI cursor.
 
 **Controller bindings.** A binding in a controller profile that names a plane command (`memory.cursor_move`,
 `unrealqt.osd_keyboard`) runs it on the program's own host (`GuiActions::TriggerGui`, `Host::Invoke`), not through
@@ -171,7 +183,7 @@ answer. Exit codes: 0 done, 1 refused or failed, 2 wrong usage.
 
 ## 8. Settings
 
-| Setting | unreal-qt option | Environment |
+| Setting | unreal-qt option (the video wall: the environment only) | Environment |
 |:--|:--|:--|
 | TCP listener port (0: any free) | `--gui-control-port N` | `UNREAL_GUI_CONTROL_PORT` |
 | its address (default all interfaces) | `--gui-control-bind ADDR` | `UNREAL_GUI_CONTROL_BIND` |

@@ -115,6 +115,5 @@ TEST(ScrubActions_Test, ActionsSetTheLevels)
     const std::optional<ActionInfo> back = registry.Find("ttd.scrub_back");
     ASSERT_TRUE(back.has_value());
     EXPECT_EQ(back->kind, ValueKind::Level);
-    EXPECT_FALSE(back->gui) << "a core action: every plane scrubs";
     EXPECT_TRUE(registry.Find("ttd.scrub_forward").has_value());
 }

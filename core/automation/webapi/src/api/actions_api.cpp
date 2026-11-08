@@ -190,7 +190,6 @@ void EmulatorAPI::getActions(const HttpRequestPtr& req, std::function<void(const
         row["group"] = status.info.group;
         row["kind"] = actions::ValueKindName(status.info.kind);
         row["held"] = status.info.held;
-        row["gui"] = status.info.gui;
         const std::string scope = automation_gate::CompanionScopeName(status.scope);
         row["scope"] = scope.empty() ? Json::Value(Json::nullValue) : Json::Value(scope);
         row["needs_pause"] = status.needsPause;

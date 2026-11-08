@@ -96,13 +96,6 @@ The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 
 ## API Reference
 
-### Module Functions
-
-```python
-def videowall_singlesync(enable: bool, emulator_id: str = "") -> bool:
-    """Toggle Videowall Single Sync Mode"""
-```
-
 ### Emulator Class
 
 ```python
@@ -836,7 +829,7 @@ A changing action passes the script gate as the script's own control calls (an i
 `take_control`); the call waits for the action with the GIL released.
 
 ```python
-emu.actions()["actions"]                   # [{id, label, group, kind, held, gui, scope, needs_pause, available, ...}]
+emu.actions()["actions"]                   # [{id, label, group, kind, held, scope, needs_pause, available, ...}]
 emu.action("run.pause_toggle")             # a press
 emu.action("run.step_in")                  # {"ok": True, "result": {"pc": ..., "state": "paused", ...}}
 emu.action("ttd.jog_frames", -10)          # a delta: signed steps

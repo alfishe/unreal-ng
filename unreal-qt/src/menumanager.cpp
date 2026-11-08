@@ -286,7 +286,7 @@ void MenuManager::createViewMenu()
     _nextLayersAction->setChecked(false);
     connect(_nextLayersAction, &QAction::triggered, this, &MenuManager::nextLayersToggled);
 
-    // The machine's own keyboard to click (POC 031 pictures, controller manager osd.keyboard)
+    // The machine's own keyboard to click (POC 031 pictures, unrealqt.osd_keyboard)
     _osdKeyboardAction = _viewMenu->addAction(tr("On-screen &Keyboard"));
     _osdKeyboardAction->setStatusTip(tr("Show/hide the emulated machine's keyboard to click"));
     _osdKeyboardAction->setCheckable(true);
@@ -1233,7 +1233,7 @@ void MenuManager::createDebugMenu()
     connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
 
     // Metadata: what the debugger takes from the program's profile, the analysis and the user's marks, and the labels;
-    // global switches, kept in the settings (MetadataSettings; the dbg.metadata_* actions and dbg.labels_toggle)
+    // global switches, kept in the settings (MetadataSettings; the GUI plane's metadata.set)
     _debugMenu->addSeparator();
     QMenu* metadataMenu = _debugMenu->addMenu(tr("Meta&data"));
     struct MetadataItem

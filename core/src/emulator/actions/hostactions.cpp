@@ -701,7 +701,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    Executor run, ActionRules rules, bool held = false) {
         handles.push_back(
-            registry.Register({id, label, group, kind, held, false, params, {}, false}, std::move(run), std::move(rules)));
+            registry.Register({id, label, group, kind, held, params, {}, false}, std::move(run), std::move(rules)));
     };
 
     // region <Run: explicit pause / resume, counted runs>

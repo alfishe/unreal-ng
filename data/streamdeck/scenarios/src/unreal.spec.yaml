@@ -544,9 +544,9 @@ menu time:
     bmadd:   {at: [3, 1], uc: D3.7, action: ttd.bookmark_add, label: MARK}
     bmnext:  {at: [3, 2], uc: D3.7, action: ttd.bookmark_next, label: MARK >}
     bmlist:  {at: [3, 3], uc: D3.7, action: ttd.bookmarks, label: MARKS}
-    lastw:   {at: [3, 5], uc: D5.1, action: ttd.find_last_write, label: WRITE}
-    lastr:   {at: [3, 6], uc: D5.1, action: ttd.find_last, value: {access: read}, label: READ}
-    laste:   {at: [3, 7], uc: D5.1, action: ttd.find_last, value: {access: execute}, label: EXEC}
+    lastw:   {at: [3, 5], uc: D5.1, gui: memory.find_last_write, label: WRITE}
+    lastr:   {at: [3, 6], uc: D5.1, gui: memory.find_last, params: {access: read}, label: READ}
+    laste:   {at: [3, 7], uc: D5.1, gui: memory.find_last, params: {access: execute}, label: EXEC}
     timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
 
 # D2, D4, D6, D8, D10: the debugger. Row 0 pause and the steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
@@ -573,7 +573,7 @@ menu debug:
     debstepin: {at: [0, 2], uc: D2.1, action: run.step_in, label: STEP IN}
     debstepovr: {at: [0, 3], uc: D2.1, action: run.step_over, label: STEP OVER}
     debstepout: {at: [0, 4], uc: D2.1, action: run.step_out, label: STEP OUT}
-    debcursor: {at: [0, 5], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
+    debcursor: {at: [0, 5], uc: D2.6, gui: disassembly.run_to_cursor, label: TO CURSOR}
     int:     {at: [0, 6], uc: D2.3, action: run.wait_int, label: TO INT}
     debframe: {at: [0, 7], uc: D2.3, action: run.frame_step, label: FRAME}
     line:    {at: [0, 8], uc: D2.7, action: run.step_line, label: LINE}

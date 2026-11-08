@@ -205,7 +205,6 @@ TEST_F(PictureActions_Test, HeadlessTheWindowActionsAreListedAndSayThereIsNoWind
     {
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info) << id;
-        EXPECT_FALSE(info->gui) << id << ": a core action";
         EXPECT_FALSE(info->description.empty()) << id;
     }
     EXPECT_EQ(registry.Find("video.crt_param_by")->kind, ValueKind::Delta);

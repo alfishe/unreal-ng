@@ -164,8 +164,8 @@ public:
 
     void setDisassemblerAddress(uint16_t pc);
 
-    /// region <Controls of the GUI actions (dbg.follow_pc, dbg.labels_toggle, dbg.scroll_mode_toggle, dbg.goto)>
-    /// Show the disassembly at PC again (Home; dbg.follow_pc); a jump of the address history
+    /// region <Controls the GUI control plane drives (disassembly.follow_pc, .goto, .scroll_mode; metadata.set)>
+    /// Show the disassembly at PC again (Home; disassembly.follow_pc); a jump of the address history
     void followPc();
     /// Enter: the cursor row's target - a JP / CALL / JR / DJNZ / RST address, JP (HL) through its register, RET's
     /// return address from the stack, else a 16-bit operand (LD HL,nn); a row without one shows PC again
@@ -176,12 +176,12 @@ public:
     /// Marked addresses 1-5: Ctrl+N marks the cursor row (again: unmarks it), Alt+N shows it
     void setMark(int n);
     void goToMark(int n);
-    /// The labels or the metadata switched (MetadataSettings, dbg.labels_toggle, dbg.metadata_*): the rows again
+    /// The labels or the metadata switched (MetadataSettings, metadata.set): the rows again
     void metadataSwitched();
     /// Byte / command scroll (B)
     void switchScrollMode();
-    /// The address of the cursor row (a click, or the row kept across refreshes); published as the debugger's
-    /// "disasm" cursor (actions::DebuggerCursors) for run.to_cursor
+    /// The address of the cursor row (a click, or the row kept across refreshes): run to the cursor and the GUI
+    /// plane's disassembly.* cursor commands take it
     std::optional<uint16_t> cursorAddress() const { return m_cursorAddress; }
     /// Move the cursor row by `rows` instructions (bytes in byte scroll) - Up / Down, PageUp / PageDown (16) and
     /// dbg.cursor_* / dbg.page_*: from the cursor row, else PC, else the top line; the view scrolls to keep it visible
@@ -287,7 +287,6 @@ private:
     /// hints), long labels on lines of their own, PC, breakpoints, marks and the cursor; the scrollbar follows
     void layoutLines();
     void onLineClicked(int line);
-    void publishCursor();
     void copyCursorLine();
     bool hasRows() const { return !m_view->lines().empty(); }
     DisassemblyStrip m_strip;

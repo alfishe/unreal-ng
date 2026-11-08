@@ -10,4 +10,4 @@ layers:
   debug:
     paddle.p1: { action: ttd.bookmark_next }
     paddle.p3: { action: ttd.bookmark_prev }
-    paddle.p2: { action: ttd.find_last_write }
+    paddle.p2: { action: memory.find_last_write }

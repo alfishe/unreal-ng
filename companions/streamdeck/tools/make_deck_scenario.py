@@ -317,7 +317,7 @@ def shipped_catalogue(reply):
     rows = []
     for a in reply["actions"]:
         row = {"id": a["id"], "label": a.get("label", a["id"]), "group": a.get("group", ""),
-               "kind": a.get("kind", "press"), "held": bool(a.get("held", False)), "gui": bool(a.get("gui", False))}
+               "kind": a.get("kind", "press"), "held": bool(a.get("held", False))}
         if a.get("params"):
             row["params"] = a["params"]
         rows.append(row)

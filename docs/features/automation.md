@@ -239,12 +239,6 @@ listing stepline                # Step to the next source line (alias: step_line
 listing runtoline <line>        # Run until a source line (alias: run_to_line)
 ```
 
-#### VideoWall Control
-```
-videowall singlesync on [id]    # Enable single sync mode (sync all tiles to one emulator)
-videowall singlesync off        # Disable single sync mode (independent tile rendering)
-```
-
 ---
 
 ## WebAPI (REST)
@@ -432,19 +426,6 @@ Full parity with the CLI `tape` commands, the Lua `tape_*` functions and the Pyt
 }
 ```
 
-#### VideoWall Control
-| Method | Endpoint | Description |
-|:-------|:---------|:------------|
-| POST | `/videowall/singlesync` | Set single sync mode |
-
-**Request body:**
-```json
-{
-  "enable": true,
-  "emulator_id": "optional-uuid"
-}
-```
-
 #### Machine Model Switching
 Switch between ZX Spectrum models at runtime:
 ```bash
@@ -551,7 +532,6 @@ end
 - `cpu` - Register access
 - `sound` - AY chip control
 - `disk` - Disk operations
-- `videowall` - VideoWall control
 - `tape_*` / `feature_*` globals - Full tape transport, audio bridge and feature toggles (same surface as the CLI `tape` / `feature` commands)
 - `step_out`, `skip_until`, `mem_find`, `screen_digest`, `beam_position`, `frame_cost` - Advanced stepping and screen/frame analysis
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_in`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte, a sprite attribute word or a palette cell feeds)
@@ -580,18 +560,6 @@ feature_set("turbotape", true)
 -- Offline audio bridge (pure file conversions)
 tape_render("game.tzx", "out.wav", {first_block=2, last_block=5})
 tape_import("recording.wav", "imported.tzx")
-```
-
-### VideoWall Control
-```lua
--- Enable single sync mode (all tiles sync to first emulator)
-videowall.setSingleSync(true)
-
--- Enable single sync to specific emulator
-videowall.setSingleSync(true, "emulator-uuid")
-
--- Disable single sync mode
-videowall.setSingleSync(false)
 ```
 
 ---
@@ -669,19 +637,9 @@ emu.tape_render("game.tzx", "out.wav", options={"first_block": 2, "last_block": 
 emu.tape_import("recording.wav", "imported.tzx")
 ```
 
-### VideoWall Control
-```python
-import videowall
-
-# Enable single sync mode (all tiles sync to first emulator)
-videowall.set_single_sync(True)
-
-# Enable single sync to specific emulator
-videowall.set_single_sync(True, emulator_id="uuid-string")
-
-# Disable single sync mode
-videowall.set_single_sync(False)
-```
+The video wall's single sync mode is not on these planes: the video wall serves it on the GUI control plane
+(`tilegrid.single_sync`, [gui-control](../emulator/design/gui-control/README.md);
+`tools/verification/videowall/src/videowall_singlesync.py`).
 
 ---
 
@@ -702,7 +660,6 @@ videowall.set_single_sync(False)
 | Tape Inspection (pos/blocks/info) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tape Audio Bridge (render/import) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Feature Toggle | ✅ | ✅ | ✅ | ✅ | 🔶 |
-| VideoWall Control | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Keyboard Input | ❌ | ✅ | ✅ | ✅ | ❌ |
 | Screen Buffer | ❌ | ✅ | ✅ | ✅ | ❌ |
 | Event Callbacks | ❌ | 🔶 | 🔶 | 🔶 | ❌ |

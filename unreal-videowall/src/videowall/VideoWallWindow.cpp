@@ -52,6 +52,10 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screenshotter.h"
+#include "guicontrol/host.h"
+#include "guicontrol/node.h"
+#include "guicontrol/protocol.h"
+#include "guicontrol/windowbinding.h"
 #include "videowall/EmulatorTile.h"
 #include "videowall/TileGrid.h"
 #include "videowall/TileGridWrapper.h"
@@ -62,13 +66,6 @@ VideoWallWindow::VideoWallWindow(QWidget* parent) : QMainWindow(parent)
 
     setupUI();
     createDefaultPresets();
-
-    _singleSyncObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_VIDEOWALL_SINGLE_SYNC_MODE,
-        [this](int id, Message* message) {
-            if (message && message->obj) {
-                handleSingleSyncModeMessage(message->obj);
-            }
-        });
 
     _instanceCreatedObserverId = MessageCenter::DefaultMessageCenter().AddObserver(NC_EMULATOR_INSTANCE_CREATED,
         [this](int topic, Message* message) {
@@ -193,8 +190,8 @@ VideoWallWindow::~VideoWallWindow()
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_DESTROYED, _instanceDestroyedObserverId);
         if (_instanceCreatedObserverId != 0)
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_CREATED, _instanceCreatedObserverId);
-        if (_singleSyncObserverId != 0)
-            shutdownMessageCenter.RemoveObserverById(NC_VIDEOWALL_SINGLE_SYNC_MODE, _singleSyncObserverId);
+        // No GUI control client reaches the window from here on
+        _guiHost.reset();
         // The view closes: `view:` pins on it fall back to following the focus
         if (_surfaceTimer != nullptr)
             _surfaceTimer->stop();
@@ -267,6 +264,7 @@ void VideoWallWindow::initializeAfterEventLoopStart()
         qDebug() << "Automation modules started";
     }
 #endif  // ENABLE_AUTOMATION
+    startGuiControl();
 
     // Initialize sound manager for audio binding to focused tile
     _soundManager = new AppSoundManager();
@@ -1748,19 +1746,7 @@ void VideoWallWindow::removeTileForDestroyedEmulator(const std::string& emulator
     publishStatus();
 }
 
-void VideoWallWindow::handleSingleSyncModeMessage(MessagePayload* payload)
-{
-    auto* syncPayload = dynamic_cast<VideowallSyncModePayload*>(payload);
-    if (syncPayload)
-    {
-        // Use QMetaObject::invokeMethod to ensure this runs on the UI thread
-        QMetaObject::invokeMethod(this, [this, enable = syncPayload->_enable, id = syncPayload->_emulatorId.toString()]() {
-            setSingleEmulatorSyncMode(enable, id);
-        }, Qt::QueuedConnection);
-    }
-}
-
-void VideoWallWindow::setSingleEmulatorSyncMode(bool enable, const std::string& emulatorId)
+void VideoWallWindow::setSingleEmulatorSyncMode(bool enable)
 {
     if (!_tileGrid || _tileGrid->tiles().empty()) return;
     
@@ -2120,8 +2106,66 @@ void VideoWallWindow::clearGrid()
     publishStatus();
 }
 
+void VideoWallWindow::startGuiControl()
+{
+    guicontrol::HostOptions options;
+    options.program = QStringLiteral("unreal-videowall");
+    options.version = QCoreApplication::applicationVersion();
+    options.FromEnvironment();
+    // The WebAPI this process serves: where a client crosses from a tile to its machine (design §4.6)
+    options.endpoints = []() {
+        QJsonArray endpoints;
+#ifdef ENABLE_AUTOMATION
+        if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+            endpoints.append(QStringLiteral("http://127.0.0.1:%1").arg(port));
+#endif
+        return endpoints;
+    };
+    _guiHost = std::make_unique<guicontrol::Host>(std::move(options));
+    QString error;
+    if (!_guiHost->Start(&error))
+    {
+        qWarning().noquote() << "GUI control: not started:" << error;
+        _guiHost.reset();
+        return;
+    }
+    new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    guicontrol::Node& view = _guiHost->Root().AddChild(QStringLiteral("main")).AddChild(QStringLiteral("tilegrid"));
+    view.AddInterface(QStringLiteral("tilegrid"));
+    view.SetCommand(QStringLiteral("tilegrid.single_sync"), [this](const guicontrol::Call& call) {
+        bool on = false;
+        guicontrol::Result failure;
+        if (!guicontrol::params::Toggle(call.params, _singleSyncMode, on, failure))
+            return failure;
+        if (on && (!_tileGrid || _tileGrid->tiles().empty() || !_tileGrid->tiles().front()->emulator()))
+            return guicontrol::Result::Failure(guicontrol::errors::kNotNow,
+                                               QStringLiteral("single sync needs a machine on the first tile"));
+        setSingleEmulatorSyncMode(on);
+        if (_singleSyncMode != on)
+            return guicontrol::Result::Failure(guicontrol::errors::kFailed,
+                                               QStringLiteral("single sync did not switch %1").arg(on ? "on" : "off"));
+        publishStatus();
+        return guicontrol::Result::Success(QJsonObject{{"single_sync", on}});
+    });
+    publishGuiState();
+}
+
+void VideoWallWindow::publishGuiState() const
+{
+    if (!_guiHost)
+        return;
+    guicontrol::Node* view = _guiHost->Root().Find(QStringLiteral("main/tilegrid"));
+    if (view == nullptr)
+        return;
+    QJsonArray tiles;
+    for (const std::string& id : allEmulatorIds())
+        tiles.append(QJsonObject{{"instance", QString::fromStdString(id)}});
+    view->SetState(QJsonObject{{"tiles", tiles}, {"single_sync", _singleSyncMode}});
+}
+
 void VideoWallWindow::publishStatus() const
 {
+    publishGuiState();
     if (!_statusShm.data)
     {
         ipc::ShmCreate(_statusShm, "unreal_videowall_status", 1024);
