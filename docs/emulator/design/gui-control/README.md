@@ -18,6 +18,7 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 - [7. The unreal-gui command](#7-the-unreal-gui-command)
 - [8. Settings](#8-settings)
 - [9. MCP and the Python client](#9-mcp-and-the-python-client)
+  - [9.1 Through a program's core](#91-through-a-programs-core)
 - [10. Bindings: profiles, the deck, the catalogue](#10-bindings-profiles-the-deck-the-catalogue)
 - [11. Checks](#11-checks)
 
@@ -31,6 +32,7 @@ Code: [`guicontrol/`](../../../../guicontrol/).
 | 4 | the GUI actions, the GUI cursors and the video wall's single sync out of the core; the video wall hosts `tilegrid` | done |
 | 5 | unreal-debugger hosts `debugger`, `disassembly` and `memory`, with its own core and with `--connect` | done |
 | 6 | the video wall's `tilegrid.focus` / `tilegrid.layout`; `screen` on unreal-qt's main screen and on unreal-screen-viewer, which hosts the plane | done |
+| 7 | one port: the plane's methods in the core's API (REST `/api/v1/gui`, WebSocket calls, MCP `gui_<interface>`, CLI `gui`, Lua / Python `gui_*`) in unreal-qt and the video wall, reaching every GUI program on the machine ([§9.1](#91-through-a-programs-core)) | done |
 
 ## 2. Pieces
 
@@ -237,6 +239,28 @@ with Gui.connect() as gui:                  # host=ID, tcp="ADDR:PORT"
     print(gui.state("memory")["state"])
 ```
 
+### 9.1 Through a program's core
+
+A program with a core and the plane (unreal-qt, the video wall) registers two callbacks with the core, `GuiPlane`
+(`core/automation/common/guimethods.h`): the catalogue and a call. The core knows no GUI command; its planes hand
+the call over and pass the plane's result back. The callbacks are `guicontrol::corebridge`
+(`guicontrol/corebridge.h`): the same routing as `unreal-gui` (`guicontrol::route`, a host by id, the method's
+interface, the focus records), over the local sockets, to any GUI program on the machine, the program's own included
+(called on the GUI thread, it runs inline; from another thread, on the global pool). unreal-debugger in process has
+no automation of its own: it is reached through unreal-qt's port or the wall's.
+
+| Plane | Form |
+|:--|:--|
+| REST | `GET /api/v1/gui`, `GET /api/v1/gui/catalogue`, `GET /api/v1/gui/state?target=`, `POST /api/v1/gui/{method}` (body the parameters and `target`); 200 with the result, 404 `no_gui`, 400 a body not an object |
+| WebSocket | a `call` of any of these routes |
+| MCP | one tool per interface (`gui_memory`, `gui_screen`, ...: `action`, `target`, the parameters), `gui_list`, `gui_state` |
+| CLI | `gui [list]`, `gui catalogue`, `gui state <target>`, `gui <method> name=value .. [target=]` |
+| Lua / Python | `gui_list()`, `gui_catalogue()`, `gui_state(target)`, `gui_call(method, ...)`; they wait up to 15 s |
+
+No session or companion scope: the routes are as open as the plane's own socket. The Python client has `WebGui(port,
+host=None, via="rest" | "mcp")` with the same `call` / `state` / `list`. Command reference:
+[command-interface.md §16.4](../control-interfaces/command-interface.md#164-the-gui-control-planes-methods).
+
 ## 10. Bindings: profiles, the deck, the catalogue
 
 GUI verbs are named by their plane method everywhere a binding is written down; no shipped controller profile or deck
@@ -293,6 +317,8 @@ with a clock in the core (`core/src/emulator/actions/scrubactions.cpp`), so the 
 | `python3 tools/guicontrol/verify_unrealqt.py` | every unreal-qt command against an offscreen unreal-qt with a fresh machine, then `verify_mcp.py` |
 | `python3 tools/guicontrol/verify_debugger.py` | the shared `debugger` / `disassembly` / `memory` checks on unreal-qt, unreal-debugger with its core and unreal-debugger `--connect` (offscreen), then one `unreal-gui memory.goto` moving each, by host and by focus |
 | `python3 tools/guicontrol/verify_programs.py` | the four programs at once (unreal-qt, unreal-debugger `--connect`, unreal-screen-viewer `--connect`, unreal-videowall, offscreen): `unreal-gui list` shows them, `screen` on unreal-qt and the viewer, `tilegrid` and `window` on the wall |
+| `python3 tools/guicontrol/verify_one_port.py` | the checks of phases 5 and 6 once more through unreal-qt's WebAPI port and its MCP (the three debuggers, the screen viewer), the wall's through its own port, one WebSocket, CLI, Lua and Python call each |
+| `core-tests --gtest_filter='GuiMethods_Test.*:McpGui_Test.*:OpenApiGuiRoutes_Test.*'` | the registry, the waiting calls, the MCP tools from a catalogue, the routes in the OpenAPI spec |
 | `python3 tools/guicontrol/verify_mcp.py <unreal-gui>` | the MCP server against a running program: the tools, their text, the refusals |
 | `unreal-qt-tests --gtest_filter='GuiPlaneProfiles_Test.*'` | every shipped profile binding: no GUI action of the core, each plane method declared, its params accepted |
 | `streamdeck-tests` (`TestGuiPlane`) | the daemon's client against a fake host and a Unix socket, discovery by endpoint, the `gui` kind |

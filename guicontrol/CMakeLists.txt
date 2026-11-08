@@ -20,12 +20,16 @@ add_library(guicontrol STATIC
     src/host.cpp
     src/discovery.cpp
     src/client.cpp
+    src/route.cpp
+    src/corebridge.cpp
     include/guicontrol/protocol.h
     include/guicontrol/interfaces.h
     include/guicontrol/node.h
     include/guicontrol/host.h
     include/guicontrol/discovery.h
     include/guicontrol/client.h
+    include/guicontrol/route.h
+    include/guicontrol/corebridge.h
 )
 target_include_directories(guicontrol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(guicontrol PUBLIC Qt6::Core Qt6::Network)
@@ -42,7 +46,7 @@ target_link_libraries(guicontrol-widgets PUBLIC guicontrol Qt6::Gui Qt6::Widgets
 target_compile_options(guicontrol-widgets PRIVATE ${GC_WARNINGS})
 set_target_properties(guicontrol-widgets PROPERTIES AUTOMOC ON)
 
-add_executable(unreal-gui cli/main.cpp cli/connect.cpp cli/connect.h cli/mcp.cpp cli/mcp.h)
+add_executable(unreal-gui cli/main.cpp cli/mcp.cpp cli/mcp.h)
 target_link_libraries(unreal-gui PRIVATE guicontrol)
 target_compile_definitions(unreal-gui PRIVATE GUICONTROL_VERSION="${PROJECT_VERSION}")
 target_compile_options(unreal-gui PRIVATE ${GC_WARNINGS})

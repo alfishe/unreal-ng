@@ -2012,6 +2012,19 @@ the daemon's automation (`409 not_running` without one, `502 daemon_refused` wit
 the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
 
 ```
+GET    /api/v1/gui                                       every GUI program on the machine: {ok, body: {hosts: [...]}}
+GET    /api/v1/gui/catalogue                             the GUI interfaces: interfaces[{name, level, state, commands[{method, params}]}]
+GET    /api/v1/gui/state?target=                         a node's state: {ok, body: {host, target, interfaces, state, instance?}}
+POST   /api/v1/gui/{method}                              a GUI command (memory.goto, screen.zoom): body its parameters and target?
+```
+
+The GUI control plane's methods ([command-interface.md section 16.4](./command-interface.md#164-the-gui-control-planes-methods)):
+the program's windows and views, every GUI program on the machine. Each route answers the plane's result with 200
+(`{ok, body}` or `{ok: false, error: not_found | bad_request | ambiguous | not_now | failed | timeout, message}`, a
+refusal too), `404 no_gui` without a plane (headless), 400 for a body that is not a JSON object. Open: no session, no
+companion scope. Every route is also a `/api/v1/ws` call.
+
+```
 GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
 GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, controllers.devices,
                                                          emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,

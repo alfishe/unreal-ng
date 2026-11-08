@@ -4395,6 +4395,23 @@ The plane verbs that came with them:
 | `videorecord presets` | | The recording presets (§5.8). WebAPI `GET /api/v1/recording/presets`, MCP `capture_media` `record_presets`, Lua / Python `recording_presets()` | ✅ Implemented |
 | `media create` | `--format trdos` | A formatted TR-DOS blank (also `disk create <drive> [cyl] [sides] trdos`, `POST /disk/{drive}/create {"format": "trdos"}`, Lua / Python `disk_create`) | ✅ Implemented |
 
+#### 16.4 The GUI control plane's methods
+
+What the program's windows and views do (scroll a memory view, zoom the screen, focus a tile) is the GUI control
+plane's ([gui-control](../gui-control/README.md), design
+[§4.10](../../../inprogress/2026-11-07-gui-control-plane/README.md#410-one-port-the-gui-methods-in-the-cores-api)).
+A program with a core and the plane (unreal-qt, the video wall) registers its methods with the core
+(`core/automation/common/guimethods.h`); the core hands each call over and passes the plane's answer back, so the
+same commands, targets and refusals as `unreal-gui` reach every GUI program on the machine through this program's
+ports. No session or companion scope. Without a plane (headless) every call answers `no_gui`.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `gui list` | `[--json]` | Every GUI program on the machine: its windows and views, their interfaces, commands, state and machine, the focus records. WebAPI `GET /api/v1/gui`, MCP `gui_list`, Lua / Python `gui_list()` | ✅ Implemented |
+| `gui catalogue` | `[--json]` | The interfaces, their commands and parameters (`name=kind`, `?` optional). WebAPI `GET /api/v1/gui/catalogue`, Lua / Python `gui_catalogue()`; MCP: one tool per interface | ✅ Implemented |
+| `gui state` | `<target>` | A node's state, interfaces and machine (`main/screen`, `debugger/memory`, `memory`, `memory@<instance>`). WebAPI `GET /api/v1/gui/state?target=`, MCP `gui_state`, Lua / Python `gui_state(target)` | ✅ Implemented |
+| `gui <method>` | `[name=value ..] [target=<node>] [--json]` | Run a command: `gui memory.goto addr=0x6000`, `gui screen.zoom factor=2 target=main/screen`. A whole number is an int, `true` / `false` a bool, the rest text. Waits up to 15 s; prints the body, or `Error: <error>: <message>`. WebAPI `POST /api/v1/gui/{method}` (body: the parameters and `target`), MCP `gui_<interface>` (`action`: the command), Lua `gui_call(method, [params], [target])`, Python `gui_call(method, target="", **params)` | ✅ Implemented |
+
 ### 17. Monitoring
 
 What a monitoring page shows (Stream Deck use case C10), read-only: what the host process uses, how fast each

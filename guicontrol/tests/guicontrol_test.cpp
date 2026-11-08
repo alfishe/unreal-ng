@@ -4,6 +4,7 @@
 #include "_helpers/testpathhelper.h"
 
 #include "guicontrol/client.h"
+#include "guicontrol/corebridge.h"
 #include "guicontrol/discovery.h"
 #include "guicontrol/host.h"
 #include "guicontrol/interfaces.h"
@@ -22,9 +23,12 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
+#include <thread>
 
 using namespace guicontrol;
 
@@ -505,4 +509,65 @@ TEST_F(GuiControl_Test, ParamsAreChecked)
     EXPECT_TRUE(answer->message.contains("unknown parameter adr")) << answer->message.toStdString();
     EXPECT_TRUE(Host::CheckParams("window.raise", QJsonObject{}).ok);
     EXPECT_TRUE(Host::CheckParams("window.raise", QJsonObject{{"x", 1}}).message.contains("takes no parameters"));
+}
+
+// The core bridge (design §4.10): what the core's GuiPlane calls. From another thread (the WebAPI's) the call goes to
+// the pool and reaches the host over its socket while the host's thread serves; on the host's thread (a script the
+// GUI runs) it runs there. list, state and a command answer as `unreal-gui` does
+TEST_F(GuiControl_Test, CoreBridgeCallsFromAnyThread)
+{
+    const QByteArray previous = qgetenv("UNREAL_GUI_CONTROL_DIR");
+    qputenv("UNREAL_GUI_CONTROL_DIR", _directory.toUtf8());
+    {
+        std::unique_ptr<Host> host = MakeHost();
+        AddView(*host, QStringLiteral("debugger"), QStringLiteral("memory"), QStringLiteral("memory"));
+
+        auto parse = [](const std::string& text) {
+            return QJsonDocument::fromJson(QByteArray::fromStdString(text)).object();
+        };
+        // From a thread of its own: the answer comes from a pool thread while this thread pumps the host
+        std::atomic<bool> answered{false};
+        std::string answer;
+        std::thread caller([&answered, &answer]() {
+            corebridge::Call("memory.probe", "debugger/memory", R"({"value": 7})", [&](const std::string& result) {
+                answer = result;
+                answered = true;
+            });
+        });
+        EXPECT_TRUE(Pump([&answered] { return answered.load(); }, 5000));
+        caller.join();
+        QJsonObject result = parse(answer);
+        EXPECT_TRUE(result.value("ok").toBool()) << answer;
+        EXPECT_EQ(result.value("body").toObject().value("path").toString(), QStringLiteral("debugger/memory"));
+        EXPECT_EQ(result.value("body").toObject().value("echo").toInt(), 7);
+
+        // On the host's thread: inline, the own host served by the client's local event loop
+        std::string inlineAnswer;
+        corebridge::Call("state", "", R"({"target": "memory"})",
+                         [&inlineAnswer](const std::string& text) { inlineAnswer = text; });
+        result = parse(inlineAnswer);
+        EXPECT_TRUE(result.value("ok").toBool()) << inlineAnswer;
+        EXPECT_EQ(result.value("body").toObject().value("target").toString(), QStringLiteral("debugger/memory"));
+
+        std::string list;
+        corebridge::Call("list", "", "{}", [&list](const std::string& text) { list = text; });
+        result = parse(list);
+        ASSERT_EQ(result.value("body").toObject().value("hosts").toArray().size(), 1) << list;
+        EXPECT_EQ(result.value("body").toObject().value("hosts").toArray()[0].toObject().value("program").toString(),
+                  QStringLiteral("guicontrol-test"));
+
+        // Refusals pass through; parameters that are not an object are refused before any host is asked
+        std::string missing;
+        corebridge::Call("memory.probe", "nowhere/none", "{}", [&missing](const std::string& text) { missing = text; });
+        EXPECT_EQ(parse(missing).value("error").toString(), QLatin1String(errors::kNotFound)) << missing;
+        std::string bad;
+        corebridge::Call("memory.probe", "", "[1]", [&bad](const std::string& text) { bad = text; });
+        EXPECT_EQ(parse(bad).value("error").toString(), QLatin1String(errors::kBadRequest)) << bad;
+
+        EXPECT_NE(corebridge::CatalogueJson().find("unreal-ng-gui-catalogue"), std::string::npos);
+    }
+    if (previous.isNull())
+        qunsetenv("UNREAL_GUI_CONTROL_DIR");
+    else
+        qputenv("UNREAL_GUI_CONTROL_DIR", previous);
 }

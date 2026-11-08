@@ -1,6 +1,6 @@
 # GUI control plane
 
-Status: phases 1-6 done (2026-11-08); phase 7 (one port, §4.10) designed, waits for review.
+Status: phases 1-6 done (2026-11-08); phase 7 (one port, §4.10) implemented and checked live 2026-11-08 (`tools/guicontrol/verify_one_port.py`).
 
 Owner decisions (2026-11-07):
 
@@ -313,36 +313,45 @@ script two transports. From phase 7 a program with a core puts the plane's metho
 same port, the same MCP. The core only takes a registered callback; it knows no GUI command and links nothing of the
 plane.
 
-**The core: two callbacks.** In `core/automation/common/`, plain types, JSON as text:
+**The core: two callbacks.** `core/automation/common/guimethods.h`, header-only, the standard library only, JSON as
+text (as `WindowView::SetProvider` takes the window's provider):
 
 ```cpp
 struct GuiMethods
 {
-    std::function<std::string()> catalogueJson;   // the interfaces: commands, params, descriptions
+    using Done = std::function<void(const std::string& resultJson)>;   // once, from any thread
+    std::function<std::string()> catalogueJson;                         // the interfaces: commands, params, descriptions
     std::function<void(const std::string& method, const std::string& target, const std::string& paramsJson,
-                       std::function<void(bool ok, const std::string& resultJson)> done)> call;  // `done` once, any thread
+                       Done done)> call;                                // must not wait for the GUI
 };
-void Automation::SetGuiMethods(GuiMethods methods);   // before start(); none: no GUI routes, no GUI tools
+GuiPlane::Set(std::shared_ptr<const GuiMethods>);   // before Automation::start(); null withdraws them
 ```
 
-From the catalogue the core adds, for each method, the same as for its own commands:
+The result is the plane's `result` without `op` / `rid`: `{ok, body}` or `{ok: false, error, message, body?}`.
+`list` and `state` are the plane's own methods. Without methods every call answers `no_gui`. The core adds, for
+every method, the same as for its own commands:
 
 | Plane | Added |
 |:--|:--|
-| REST | `POST /api/v1/gui/{method}` (`/api/v1/gui/memory.goto`), body: the parameters and `target`?; `GET /api/v1/gui` (`list`), `GET /api/v1/gui/state?target=`. 200 with the plane's `result` (`{ok, error?, message?, body?}`); 404 for a method not in the catalogue |
+| REST | `GET /api/v1/gui` (`list`: every GUI program on the machine), `GET /api/v1/gui/catalogue`, `GET /api/v1/gui/state?target=`, `POST /api/v1/gui/{method}` (`/api/v1/gui/memory.goto`, body: the parameters and `target`?). 200 with the plane's result, a refusal too; 404 `no_gui` without a plane; 400 for a body that is not a JSON object or a state without a target |
 | WebSocket | the routes as `call`, as every route |
-| MCP | one tool per interface: `gui_memory {action: "goto", target?, addr}`, `gui_disassembly`, `gui_debugger`, `gui_screen`, `gui_tilegrid`, `gui_window`, `gui_unrealqt`; and `gui_list`, `gui_state {target}` |
-| CLI, Python, Lua | `gui memory.goto 0x6000`, `gui list`, `gui state debugger/memory`; `gui_call(method, target, params)` |
+| MCP | one tool per interface of the catalogue: `gui_memory {action: "goto", target?, addr}`, `gui_disassembly`, `gui_debugger`, `gui_screen`, `gui_tilegrid`, `gui_window`, `gui_unrealqt`; and `gui_list`, `gui_state {target}`. Made from the catalogue when the MCP starts; none without a plane |
+| CLI | `gui [list]`, `gui catalogue`, `gui state <target>`, `gui <method> [name=value ..] [target=<node>]`, `--json` |
+| Lua, Python | `gui_list()`, `gui_catalogue()`, `gui_state(target)`; Lua `gui_call(method, [params], [target])`, Python `gui_call(method, target="", **params)` |
 
 No token or scope: the GUI routes are open, as the plane's local socket is. The core does not resolve targets or
-check parameters; it hands the call over and passes the answer back. It calls `call` on its WebAPI thread and does not
-wait: the answer comes through `done`; the emulation thread is not touched.
+check parameters; it hands the call over and passes the answer back. REST, WebSocket and MCP never wait: the answer
+comes through `done` on whatever thread. The CLI, Lua and Python wait up to 15 s (`guicall.h`; Python with the GIL
+released); the emulation thread is not touched.
 
-**The plane: `guicontrol::CoreBridge`.** It fills the two callbacks from the program's `Host`: the catalogue is the
-interface catalogue with the program's extras; a call is queued to the GUI thread and run with `Host::Invoke`, the
-`Result` goes back through `done`. A target this program does not have goes to the other hosts on the machine as
-`unreal-gui` resolves it, so unreal-qt's port also reaches the screen viewer and `unreal-debugger --connect`.
-unreal-qt, the video wall and `unreal-debugger` with its own core set it before `Automation::start()`.
+**The plane: `guicontrol::corebridge`.** Two functions with the callbacks' signatures, so the program joins them in
+three lines and neither side includes the other: `CatalogueJson()` (every declared interface, the program's extras
+included) and `Call()`. A call goes where `unreal-gui` sends it (`route.h`, moved out of the CLI): to any GUI program
+on the machine, this one too, over the hosts' local sockets, so the activity, the focus and the refusals are those of
+every client, and unreal-qt's port also reaches `unreal-debugger --connect` and the screen viewer. It runs on a
+thread of Qt's global pool; on the application's thread (a script the GUI runs) it runs there, its client's local
+event loop serving the own host. unreal-qt and the video wall set it before `Automation::start()`. `unreal-debugger`
+in process has a core but no automation planes: it is reached through the bridge of a program that has them.
 
 **What stays.** Every host's local socket (the programs without a core, the Stream Deck daemon, the push topics) and
 `unreal-gui` with `unreal-gui mcp`.
@@ -390,7 +399,7 @@ The core's GUI parts go only after every binding of them has moved, so phases 3 
 | 4 | The core's GUI parts go (§5): GUI declarations, `ActionInfo::gui`, `DebuggerCursors` and the cursor fallback, the video wall single-sync route and notification (the video wall takes `tilegrid.single_sync` in the same phase) | R1 holds: the core has no GUI action, GUI cursor or video wall code; core tests and MCP scripts green |
 | 5 | `unreal-debugger` implements `debugger`, `disassembly`, `memory` (in process and `--connect`) | the same `unreal-gui memory.goto` moves either debugger |
 | 6 | The rest of the video wall (`tilegrid`, `window`); the screen viewer and the Qt client's main screen (`screen`, `window`) | `unreal-gui list` shows all four programs |
-| 7 | One port (§4.10): `Automation::SetGuiMethods` and its REST, WebSocket, MCP, CLI, Python and Lua mapping; `guicontrol::CoreBridge`; unreal-qt, the video wall and `unreal-debugger` set it | on unreal-qt's WebAPI port alone: `POST /api/v1/gui/memory.goto` moves its debugger and reaches the screen viewer; its MCP lists `gui_memory` and the rest, and a call through them passes the live checks of phases 5 and 6; the core links no plane library and includes no header of it (a build check) |
+| 7 | One port (§4.10): `GuiPlane` and its REST, WebSocket, MCP, CLI, Python and Lua mapping; `guicontrol::corebridge` over `route.h`; unreal-qt and the video wall set it | on unreal-qt's WebAPI port alone: `POST /api/v1/gui/memory.goto` moves its debugger and reaches the screen viewer; its MCP lists `gui_memory` and the rest, and a call through them passes the live checks of phases 5 and 6; the core links no plane library and includes no header of it (a build check) |
 
 Progress:
 
@@ -472,10 +481,13 @@ Docs per phase:
 - **Live:** a `tools/verification/gui/` script per program, launched offscreen on its own socket.
 - **The core:** after phase 4 the core tests and MCP scripts run unchanged, except the removed routes and their
   tests.
-- **The GUI methods (phase 7), in `core-tests` without Qt:** fake `GuiMethods` set by the test answer through REST,
-  the WebSocket call, an MCP tool per interface, the CLI and Python / Lua: the parameters as sent, the answer as
-  given, 404 for an unknown method, a `done` from another thread. Without them the core's routes and MCP tool list are
-  the same as today.
+- **The GUI methods (phase 7), in `core-tests` without Qt:** `GuiMethods_Test`: fake methods get the method, target
+  and parameters as sent and their answer comes back as given, from another thread too; no answer in time is
+  `timeout`, a late one is dropped; without methods `no_gui`; the CLI's words become typed parameters.
+  `McpGui_Test`: one tool per interface with its actions and typed parameters, each call its `/api/v1/gui` route,
+  refusals as text an agent reads; without a catalogue no GUI tool. `OpenApiGuiRoutes_Test`: the routes registered
+  and documented. `GuiControl_Test.CoreBridgeCallsFromAnyThread` (unreal-qt-tests): the bridge from another thread
+  and inline on the host's thread.
 - **The bridge (phase 7), live:** the scripts of phases 5 and 6 run once more through unreal-qt's WebAPI and its MCP
   instead of the plane's socket; one call through unreal-qt's port reaches the screen viewer.
 
@@ -502,4 +514,4 @@ Decided 2026-11-08:
    (§4.10).
 9. ~~**MCP shape**~~: one tool per interface (`gui_memory`, ...), not one `gui` tool (§4.10).
 
-No point is open for phase 7; it waits for the owner's review.
+No point is open.

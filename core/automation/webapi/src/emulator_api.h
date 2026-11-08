@@ -137,6 +137,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::putStreamDeckBrightness, "/api/v1/streamdeck/decks/{deck}/brightness", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getStreamDeckPack, "/api/v1/streamdeck/decks/{deck}/pack", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putStreamDeckPack, "/api/v1/streamdeck/decks/{deck}/pack", drogon::Put);
+    // The GUI control plane's methods, registered by the program (implementation: api/gui_api.cpp over GuiPlane;
+    // gui-control-plane design §4.10): list, the catalogue, a node's state, a command
+    ADD_METHOD_TO(EmulatorAPI::getGui, "/api/v1/gui", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getGuiCatalogue, "/api/v1/gui/catalogue", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getGuiState, "/api/v1/gui/state", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postGuiMethod, "/api/v1/gui/{method}", drogon::Post);
     // Monitoring: the host process, the clients, each instance's pace and summaries (implementation:
     // api/monitoring_api.cpp over monitoring::Call, the verbs of every plane; the WebSocket topics of the same names)
     ADD_METHOD_TO(EmulatorAPI::getMonitor, "/api/v1/monitor", drogon::Get);
@@ -962,6 +968,14 @@ public:
     /// The Stream Deck daemon's verbs (api/streamdeck_api.cpp; companion::streamdeck::Call): GET /api/v1/streamdeck
     /// = status; GET settings, udev, pair, packs; POST start, stop, restart, pair, revoke; PUT settings; DELETE pair;
     /// GET / PUT decks/{deck}/brightness and decks/{deck}/pack
+    /// GET /api/v1/gui: the plane's `list` (every GUI program on the machine); 404 no_gui without a plane
+    void getGui(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    /// GET /api/v1/gui/catalogue: the interfaces, their commands and parameters
+    void getGuiCatalogue(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    /// GET /api/v1/gui/state?target=: a node's state, interfaces and machine
+    void getGuiState(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
+    /// POST /api/v1/gui/{method} {target?, params...}: the command; 200 with the plane's result
+    void postGuiMethod(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& method) const;
     void getStreamDeck(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback) const;
     void getStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;
     void postStreamDeckVerb(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& verb) const;

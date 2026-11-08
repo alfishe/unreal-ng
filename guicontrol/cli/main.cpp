@@ -12,7 +12,7 @@
 //
 // Exit codes: 0 done, 1 refused or failed, 2 wrong usage.
 
-#include "connect.h"
+#include "guicontrol/route.h"
 #include "guicontrol/client.h"
 #include "guicontrol/discovery.h"
 #include "guicontrol/interfaces.h"
@@ -136,7 +136,7 @@ void PrintFailure(const QString& what, const Result& failure)
 std::unique_ptr<Client> Open(const Options& options, const QString& method, const QString& target)
 {
     Result failure;
-    std::unique_ptr<Client> client = cli::Open(cli::Where{options.host, options.tcp}, method, target, failure);
+    std::unique_ptr<Client> client = route::Open(route::Where{options.host, options.tcp}, method, target, failure);
     if (!client)
         PrintFailure({}, failure);
     return client;
@@ -168,7 +168,7 @@ int Hosts(const Options& options)
 int List(const Options& options)
 {
     QJsonArray hosts;
-    const Result result = cli::ListAll(cli::Where{options.host, options.tcp}, hosts);
+    const Result result = route::ListAll(route::Where{options.host, options.tcp}, hosts);
     if (!result.ok)
     {
         PrintFailure({}, result);

@@ -120,6 +120,8 @@
 #include "emulator/mousecapturecontroller.h"
 #include "emulator/companioncontroller.h"
 #include "emulator/remotecontrolguard.h"
+#include "automation/common/guimethods.h"
+#include "guicontrol/corebridge.h"
 #include "guicontrol/host.h"
 #include "guicontrol/screenbinding.h"
 #include "guicontrol/windowbinding.h"
@@ -5328,6 +5330,14 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
     }
     static const bool declared = (DeclareUnrealQtInterface(), true);
     (void)declared;
+#ifdef ENABLE_AUTOMATION
+    // The plane's methods on the core's WebAPI port and MCP (design §4.10): before the automation starts (300 ms
+    // after the window), the MCP tools are made from the catalogue then
+    auto methods = std::make_shared<GuiMethods>();
+    methods->catalogueJson = guicontrol::corebridge::CatalogueJson;
+    methods->call = guicontrol::corebridge::Call;
+    GuiPlane::Set(std::move(methods));
+#endif
     const auto webApi = []() {
 #ifdef ENABLE_AUTOMATION
         if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
@@ -5410,6 +5420,7 @@ void MainWindow::cleanupAutomation()
 #ifdef ENABLE_AUTOMATION
     if (_automation)
     {
+        GuiPlane::Set(nullptr);  // no /api/v1/gui call reaches the windows from here on
         _automation->stop();
         qDebug() << "Automation cleanup complete";
         // Note: Singleton handles its own lifetime

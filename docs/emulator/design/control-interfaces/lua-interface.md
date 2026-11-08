@@ -624,6 +624,10 @@ take_control("my script")   -- automation session: the GUI shows it; after the u
 release_control()
 c = companions()            -- companion clients (devices acting as the user's hands): {companions = {...}, pairings = {...}, approval_available}
 n = companion_revoke("Desk panel")   -- revoke by id or name ("all": every one); the number revoked. A script never pairs or acts as a companion
+r = gui_list()                       -- the GUI control plane (command-interface.md §16.4): every GUI program, its windows and views
+r = gui_catalogue()                  -- the GUI interfaces, their commands and parameters
+r = gui_state("main/screen")         -- a node's state: {ok = true, body = {target, interfaces, state, instance}}
+r = gui_call("memory.goto", {addr = "0x6000"}, "debugger/memory")  -- a GUI command: {ok, body} or {ok = false, error, message}; waits up to 15 s
 profi = profi_state()       -- ZX Profi board chips: port_map (ext_ports, dos_latch, cpm, rom14, extended_map), ppi8255, pit8253.counters[], usart8251; available=false on other machines
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 r, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings: the reply table (nil, err, reply when refused); a ZX-bus card change (zxnetusb / zxwifi) is a slot change applied by a restart (owner decision Q11: r.status "applied", r.restart.emulatorId; the other keys go to the restarted machine), else "accepted" (in place)

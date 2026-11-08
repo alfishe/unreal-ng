@@ -134,6 +134,7 @@
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
+#include "../../../common/guicall.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
@@ -1564,6 +1565,45 @@ namespace PythonBindings
         m.def("companions", []() -> py::object {
             return StateNodeToPy(companion::CompanionRegistry::Instance().Report());
         }, "Companion clients and pending pairings: {companions: [...], pairings: [...], approval_available, pairing_allowed}");
+        // The GUI control plane's methods the program registered (gui-control-plane design §4.10), as `unreal-gui`,
+        // the CLI `gui`, WebAPI /api/v1/gui. Each answers the plane's result {ok, body} or {ok: False, error, message};
+        // waits up to 15 s with the GIL released (the GUI thread may want it)
+        m.def("gui_list", []() -> py::object {
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait("list", {}, StateNode::Object());
+            }
+            return StateNodeToPy(result);
+        }, "The GUI programs on this machine: hosts[{program, windows[{id, interfaces, state, views[...]}], focus}]");
+        m.def("gui_catalogue", []() -> py::object {
+            StateNode catalogue;
+            if (!StateNodeFromJsonText(GuiPlane::Catalogue(), catalogue))
+                return StateNodeToPy(gui_call::Parse(GuiPlane::Failure(GuiPlane::kNoGui, "no GUI catalogue")));
+            return StateNodeToPy(catalogue);
+        }, "The GUI interfaces: interfaces[{name, level, description, state, commands[{method, params}]}]");
+        m.def("gui_state", [](const std::string& target) -> py::object {
+            StateNode params = StateNode::Object();
+            params["target"] = target;
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait("state", {}, params);
+            }
+            return StateNodeToPy(result);
+        }, "A node's state, interfaces and machine: gui_state('main/screen')", py::arg("target"));
+        m.def("gui_call", [](const std::string& method, const std::string& target, const py::kwargs& kwargs) -> py::object {
+            StateNode params = StateNode::Object();
+            for (const auto& item : kwargs)
+                params[py::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait(method, target, params);
+            }
+            return StateNodeToPy(result);
+        }, "Run a GUI command: gui_call('memory.goto', addr='0x6000'), gui_call('screen.zoom', 'main/screen', factor=2)",
+           py::arg("method"), py::arg("target") = "");
         m.def("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
         }, "Revoke a companion by id or name ('all': every one); the number revoked", py::arg("id"));

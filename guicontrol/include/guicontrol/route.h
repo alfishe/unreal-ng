@@ -1,7 +1,9 @@
 #pragma once
 
-// Which host a command of unreal-gui (the CLI and its MCP server) goes to: --tcp, --host, a host id leading the
-// target, else every discovered host asked to resolve the target and the one that took focus last (design §4.5).
+/// @file route.h
+/// @brief Which host a command goes to (design §4.5): --tcp, --host, a host id leading the target, else every
+/// discovered host asked to resolve the target and the one that took focus last. unreal-gui (the CLI and its MCP
+/// server) and the core bridge (corebridge.h) route the same way. Blocking: it waits on local event loops
 
 #include "guicontrol/client.h"
 
@@ -10,7 +12,7 @@
 
 #include <memory>
 
-namespace guicontrol::cli
+namespace guicontrol::route
 {
 
 struct Where
@@ -25,4 +27,4 @@ std::unique_ptr<Client> Open(const Where& where, const QString& method, const QS
 /// `list` of every host (one with --host / --tcp)
 Result ListAll(const Where& where, QJsonArray& hosts);
 
-}  // namespace guicontrol::cli
+}  // namespace guicontrol::route

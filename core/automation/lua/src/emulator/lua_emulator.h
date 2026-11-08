@@ -73,6 +73,7 @@
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
+#include "../../../common/guicall.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
@@ -170,6 +171,51 @@ inline void ValidatePageIndex(const char* api, const std::string& type, int page
                                     " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
 }
 
+
+/// Lua value -> StateNode: a whole number an Int, a table with keys 1..n an array, another table an object
+inline StateNode LuaToStateNode(const sol::object& value)
+{
+    switch (value.get_type())
+    {
+        case sol::type::boolean: return StateNode(value.as<bool>());
+        case sol::type::number:
+        {
+            const double number = value.as<double>();
+            if (number == std::floor(number) && std::abs(number) < 9.0e15)
+                return StateNode(static_cast<int64_t>(number));
+            return StateNode(number);
+        }
+        case sol::type::string: return StateNode(value.as<std::string>());
+        case sol::type::table:
+        {
+            const sol::table table = value.as<sol::table>();
+            const size_t length = table.size();
+            size_t count = 0;
+            for (const auto& entry : table)
+            {
+                (void)entry;
+                count++;
+            }
+            if (length > 0 && count == length)
+            {
+                StateNode array = StateNode::Array();
+                for (size_t i = 1; i <= length; i++)
+                    array.push(LuaToStateNode(table[i]));
+                return array;
+            }
+            StateNode object = StateNode::Object();
+            for (const auto& [key, item] : table)
+            {
+                const std::string name = key.is<std::string>()               ? key.as<std::string>()
+                                         : key.get_type() == sol::type::number ? std::to_string(key.as<int64_t>())
+                                                                               : std::string("?");
+                object[name] = LuaToStateNode(item);
+            }
+            return object;
+        }
+        default: return StateNode();
+    }
+}
 
 /// StateNode -> Lua table (objects keep their keys, arrays become 1-based
 /// sequences). The one converter Lua needs for every DeviceState report.
@@ -2817,6 +2863,30 @@ public:
         });
         lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
+        });
+        // The GUI control plane's methods the program registered (gui-control-plane design §4.10), as `unreal-gui`,
+        // the CLI `gui`, WebAPI /api/v1/gui: gui_list(), gui_catalogue(), gui_state(target), gui_call(method, [params],
+        // [target]). Each answers the plane's result {ok, body} or {ok = false, error, message}; waits up to 15 s
+        lua.set_function("gui_list", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, gui_call::CallAndWait("list", {}, StateNode::Object()));
+        });
+        lua.set_function("gui_catalogue", [](sol::this_state s) -> sol::object {
+            StateNode catalogue;
+            if (!StateNodeFromJsonText(GuiPlane::Catalogue(), catalogue))
+                return StateNodeToLua(s, gui_call::Parse(GuiPlane::Failure(GuiPlane::kNoGui, "no GUI catalogue")));
+            return StateNodeToLua(s, catalogue);
+        });
+        lua.set_function("gui_state", [](sol::this_state s, const std::string& target) -> sol::object {
+            StateNode params = StateNode::Object();
+            params["target"] = target;
+            return StateNodeToLua(s, gui_call::CallAndWait("state", {}, params));
+        });
+        lua.set_function("gui_call", [](sol::this_state s, const std::string& method, sol::optional<sol::object> params,
+                                        sol::optional<std::string> target) -> sol::object {
+            StateNode node = params && params->get_type() == sol::type::table ? LuaToStateNode(*params) : StateNode::Object();
+            if (!node.isObject())
+                node = StateNode::Object();
+            return StateNodeToLua(s, gui_call::CallAndWait(method, target.value_or(std::string()), node));
         });
         // step([skip_bp], [cpu]), steps(count, [skip_bp], [cpu]), stepover([cpu]), step_out([cpu]): "gs" / "ms" steps
         // the sound card CPU (CardStep; step("gs") too)

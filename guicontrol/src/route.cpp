@@ -1,8 +1,8 @@
-#include "connect.h"
+#include "guicontrol/route.h"
 
 #include "guicontrol/discovery.h"
 
-namespace guicontrol::cli
+namespace guicontrol::route
 {
 
 std::unique_ptr<Client> Open(const Where& where, const QString& method, const QString& target, Result& failure)
@@ -108,4 +108,4 @@ Result ListAll(const Where& where, QJsonArray& hosts)
     return Result::Success();
 }
 
-}  // namespace guicontrol::cli
+}  // namespace guicontrol::route

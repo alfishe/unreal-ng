@@ -4,7 +4,7 @@
 
 #include "mcp.h"
 
-#include "connect.h"
+#include "guicontrol/route.h"
 #include "guicontrol/interfaces.h"
 
 #include <QJsonArray>
@@ -105,11 +105,11 @@ QJsonObject ToolResult(const Result& result)
 
 Result CallTool(const QString& name, const QJsonObject& arguments)
 {
-    const Where where{arguments.value("host").toString(), {}};
+    const route::Where where{arguments.value("host").toString(), {}};
     if (name == QLatin1String("gui_list"))
     {
         QJsonArray hosts;
-        const Result result = ListAll(where, hosts);
+        const Result result = route::ListAll(where, hosts);
         if (!result.ok)
             return result;
         return Result::Success(QJsonObject{{"hosts", hosts}});
@@ -124,7 +124,7 @@ Result CallTool(const QString& name, const QJsonObject& arguments)
         if (!call && target.isEmpty())
             return Result::Failure(errors::kBadRequest, QStringLiteral("target: a node, as gui_list shows"));
         Result failure;
-        std::unique_ptr<Client> client = Open(where, method, target, failure);
+        std::unique_ptr<Client> client = route::Open(where, method, target, failure);
         if (!client)
             return failure;
         return call ? client->Call(method, target, arguments.value("params").toObject())

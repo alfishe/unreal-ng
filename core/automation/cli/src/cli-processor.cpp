@@ -250,6 +250,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         // Joystick connectors: the retro devices plugged into them, live input (ControllerControl)
                         {"controllers", &CLIProcessor::HandleControllers},
                         {"action", &CLIProcessor::HandleAction},
+                        // The GUI control plane's methods (windows, views), when the program registered them
+                        {"gui", &CLIProcessor::HandleGui},
                         {"surface", &CLIProcessor::HandleSurface},
                         // The Stream Deck daemon's supervision by unreal-qt, settings, pairing, brightness
                         {"streamdeck", &CLIProcessor::HandleStreamDeck},
@@ -878,6 +880,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  action run <id> [value] - Run one, e.g. action run run.pause_toggle, action run ttd.jog_frames -10" << NEWLINE;
     oss << "  surface [views]        - Control surface targets: views, target, sessions, pin, readouts, activity" << NEWLINE;
     oss << "  monitor [name]         - Host CPU / memory / threads, clients, fps / speed, breakpoints, media, TTD ..." << NEWLINE;
+    oss << "  gui [list]             - The GUI programs, their windows and views; gui catalogue, gui state <target>" << NEWLINE;
+    oss << "  gui <method> [k=v ..]  - Drive a window or view, e.g. gui memory.goto addr=0x6000 (gui help)" << NEWLINE;
     oss << NEWLINE;
     oss << "ZX-MultiSound and MIDI:" << NEWLINE;
     oss << "  multisound [--full|--json] - The card: options, CPLD, YM2203 pair, SAA1099, GS, DACs, MIDI" << NEWLINE;

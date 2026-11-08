@@ -39,6 +39,7 @@ void buildPaths(Json::Value& paths)
 #include "openapi/openapi_controllers.inc"
 #include "openapi/openapi_signature.inc"
 #include "openapi/openapi_streamdeck.inc"
+#include "openapi/openapi_gui.inc"
 #include "openapi/openapi_monitoring.inc"
 #include "openapi/openapi_snapshot.inc"
 #include "openapi/openapi_rzx.inc"

@@ -17,6 +17,7 @@
 
 #ifdef ENABLE_AUTOMATION
 #include <automation/automation.h>
+#include <automation/common/guimethods.h>
 #endif
 
 #include <QAction>
@@ -53,6 +54,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/video/screenshotter.h"
+#include "guicontrol/corebridge.h"
 #include "guicontrol/host.h"
 #include "guicontrol/node.h"
 #include "guicontrol/protocol.h"
@@ -191,7 +193,8 @@ VideoWallWindow::~VideoWallWindow()
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_DESTROYED, _instanceDestroyedObserverId);
         if (_instanceCreatedObserverId != 0)
             shutdownMessageCenter.RemoveObserverById(NC_EMULATOR_INSTANCE_CREATED, _instanceCreatedObserverId);
-        // No GUI control client reaches the window from here on
+        // No GUI control client reaches the window from here on: neither the plane's nor the core's (/api/v1/gui)
+        GuiPlane::Set(nullptr);
         _guiHost.reset();
         // The view closes: `view:` pins on it fall back to following the focus
         if (_surfaceTimer != nullptr)
@@ -261,6 +264,12 @@ void VideoWallWindow::initializeAfterEventLoopStart()
     // The Automation object was created in constructor, we only defer start().
     if (_automation)
     {
+        // The GUI control plane's methods on the core's port and MCP (design §4.10): before the start, the MCP tools
+        // are made from the catalogue then
+        auto methods = std::make_shared<GuiMethods>();
+        methods->catalogueJson = guicontrol::corebridge::CatalogueJson;
+        methods->call = guicontrol::corebridge::Call;
+        GuiPlane::Set(std::move(methods));
         _automation->start();
         qDebug() << "Automation modules started";
     }

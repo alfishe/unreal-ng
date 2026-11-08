@@ -426,6 +426,21 @@ def companions() -> dict:
 def companion_revoke(id: str) -> int:
     """Revoke a companion by id or name ('all': every one); the number revoked"""
 
+# Module functions: the GUI control plane's methods (command-interface.md §16.4): the program's windows and views,
+# every GUI program on the machine. Each answers the plane's result {ok, body} or {ok: False, error, message}; waits up
+# to 15 s with the GIL released
+def gui_list() -> dict:
+    """{ok, body: {hosts: [{program, pid, windows: [{id, interfaces, state, views}], focus, endpoints}]}}"""
+
+def gui_catalogue() -> dict:
+    """The GUI interfaces: {format, interfaces: [{name, level, description, state, commands: [{method, params}]}]}"""
+
+def gui_state(target: str) -> dict:
+    """A node's state, interfaces and machine: gui_state('main/screen')"""
+
+def gui_call(method: str, target: str = "", **params) -> dict:
+    """A GUI command: gui_call('memory.goto', addr='0x6000'), gui_call('screen.zoom', 'main/screen', factor=2)"""
+
     def execution_state(self) -> dict:
         """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
         main_loop (attached, parked), may_run, parked, serving (the command holding the CPU, drives_z80), queue,
