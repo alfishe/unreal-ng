@@ -84,7 +84,11 @@ public:
     /// The counter line the beam is on now (NR #1E / #1F): the frame position from the ULA interrupt's place
     uint16_t CurrentLine() const;
     /// NR #64: the counter starts at this value at the paper's first line
-    void SetCounterOffset(uint8_t offset) { _counterOffset = offset; }
+    void SetCounterOffset(uint8_t offset)
+    {
+        _counterOffset = offset;
+        _lineStartKnown = false;
+    }
 
     /// NR #C6: the UARTs' interrupt enables (bits 2:0 UART 0, 6:4 UART 1: Tx, Rx on near full only, Rx on a byte)
     uint8_t UartEnables() const { return _enableUart; }
@@ -134,6 +138,9 @@ private:
     uint16_t _pending = 0;
     uint16_t _inService = 0;
     uint32_t _lastT = 0;
+    // LineStartT's last answer (not state: made again from the fields above, forgotten when one of them is written)
+    mutable uint32_t _lineStartT = 0;
+    mutable bool _lineStartKnown = false;
     bool _pulseOn = false;       ///< pulse mode: a device request (CTC, UART) started an INT pulse
     uint64_t _pulseFrame = 0;
     uint32_t _pulseStart = 0;

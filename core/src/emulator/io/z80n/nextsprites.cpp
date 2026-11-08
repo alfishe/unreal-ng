@@ -10,7 +10,7 @@
 
 void NextSprites::Reset()
 {
-    _epoch++;
+    Touch();
     std::memset(_attr, 0, sizeof _attr);
     std::memset(_pattern, 0, sizeof _pattern);
     _slot = _byte = _patternHalf = _mirror = 0;
@@ -42,7 +42,6 @@ void NextSprites::WriteSlotSelect(uint8_t value)
 
 void NextSprites::WriteAttribute(uint8_t value)
 {
-    _epoch++;
     SetAttribute(_slot, _byte, value);
     switch (_byte)
     {
@@ -64,7 +63,6 @@ void NextSprites::WriteAttribute(uint8_t value)
 
 void NextSprites::WritePattern(uint8_t value)
 {
-    _epoch++;
     _pattern[_patternOffset & (kPatternBytes - 1)] = value;
     _patternOffset = (_patternOffset + 1) & (kPatternBytes - 1);
 }
@@ -83,7 +81,6 @@ void NextSprites::WriteMirrorSprite(uint8_t value, bool tied)
 
 void NextSprites::WriteMirrorAttribute(unsigned byte, uint8_t value, bool increment, bool tied)
 {
-    _epoch++;
     if (byte > 4)
         return;
     SetAttribute(_mirror & 0x7F, byte, value);
@@ -119,7 +116,11 @@ NextSprites::Effective NextSprites::Decode(unsigned s) const
 
 void NextSprites::UpdateAnchor(unsigned s, Anchor& anchor) const
 {
-    const Effective e = Decode(s);
+    AnchorOf(s, Decode(s), anchor);
+}
+
+void NextSprites::AnchorOf(unsigned s, const Effective& e, Anchor& anchor) const
+{
     const bool ext = Extended(s);
     anchor.type1 = ext && (_attr[s][4] & 0x20);
     anchor.h4bit = e.fourBit;
@@ -253,6 +254,11 @@ bool NextSprites::FillUntil(FillCursor& c, unsigned stopTick, unsigned vcount, u
 {
     // sprites.vhd runs whatever NR #15 bit 0 says (the bit only gates the output in zxnext.vhd), so the collision and "too many" flags
     // are set with the sprites disabled too. A line with no visible sprite costs the engine 129 clocks and sets nothing
+    if (!c.started && stopTick == ~0u) [[likely]]
+    {
+        c.started = c.done = true;
+        return FillLine(vcount, control, transparentIndex, lineClocks, out, collisions);
+    }
     if (!c.started)
     {
         c.started = true;
@@ -345,6 +351,67 @@ bool NextSprites::FillUntil(FillCursor& c, unsigned stopTick, unsigned vcount, u
             c.pixel++;
     }
     return c.overtime || c.tick >= lineClocks;  // still busy when the next line starts (the last clock of the line is a busy one too)
+}
+
+/// FillUntil of a whole line in one call (no write can land between two of its clocks): the same engine over the resolved sprites
+/// FillClocks keeps (MakeFillEntries), the ones off the line skipped by their count of qualify clocks. Each line's 128 decodes
+/// were a twentieth of a 28 MHz frame on the Steam Deck
+bool NextSprites::FillLine(unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks, LineBuffer& out,
+                           std::vector<uint16_t>& collisions) const
+{
+    collisions.clear();
+    out.any = false;
+    if (!AnyVisible())
+        return false;
+    out.any = true;
+    for (Pixel& p : out.pixel)
+        p.opaque = false;
+    if (!_fillValid || _fillDirtyLo < kSprites)
+        MakeFillEntries();
+    const bool zeroOnTop = (control & 0x40) != 0;
+    static const unsigned kWrapMask[4] = {0x1F, 0x1E, 0x1C, 0x18};
+    unsigned tick = 1;    // the engine clock of the last step (S_START = 1)
+    unsigned sprite = 0;  // the next sprite to qualify
+    for (unsigned n = 0; n < _fillCount; n++)
+    {
+        const unsigned index = _fillEntries[n].index;
+        const Effective& e = _fillEffective[index];
+        const int height = 16 << e.yScale;
+        int dy = static_cast<int>(vcount) - e.y;
+        if (dy < 0)
+            dy += 512;
+        if (dy >= height)
+            continue;
+        tick += index - sprite + 1;  // S_QUALIFY of the sprites skipped and of this one
+        sprite = index + 1;
+        const int rowIndex = e.yMirror ? 15 - (dy >> e.yScale) : (dy >> e.yScale);
+        const unsigned wrapMask = kWrapMask[e.xScale];
+        const int width = 16 << e.xScale;
+        for (int k = 0;; k++)
+        {
+            if (++tick > lineClocks)
+                return true;  // cut off: the rest of the line is not reached
+            const unsigned hc = static_cast<unsigned>(e.x + k) & 0x1FF;
+            uint8_t value;
+            if (hc < kGridWidth && PatternPixel(e, k >> e.xScale, rowIndex, transparentIndex, value))
+            {
+                Pixel& p = out.pixel[hc];
+                if (p.opaque)
+                    collisions.push_back(static_cast<uint16_t>(tick));
+                if (!zeroOnTop || !p.opaque)
+                {
+                    p.index = value;
+                    p.sprite = static_cast<uint8_t>(index);
+                }
+                p.opaque = true;
+            }
+            const unsigned next = static_cast<unsigned>(e.x + k + 1) & 0x1FF;
+            if (k + 1 == width || (next >= kGridWidth && (((next >> 4) & wrapMask) != wrapMask)))
+                break;
+        }
+    }
+    tick += kSprites - sprite;  // the qualify clocks of the sprites after the last one drawn
+    return tick >= lineClocks;
 }
 
 void NextSprites::Output(const LineBuffer& line, unsigned y, uint8_t control, const NextVideoRegs& regs, Pixel* out) const
@@ -451,34 +518,61 @@ void NextSprites::ClearFlags()
     _lastRead = kNever;
 }
 
-unsigned NextSprites::FillClocks(unsigned y) const
+void NextSprites::MakeFillEntries() const
 {
-    Effective effective[kSprites];
+    // Only the changed sprites are resolved again, from the anchor that governs the first one (a relative sprite takes the last
+    // anchor before it; one before any anchor takes the empty one) up to the first anchor after the last one: past it nothing
+    // depends on the change
+    unsigned from = _fillValid ? _fillDirtyLo : 0;
+    const unsigned last = _fillValid ? _fillDirtyHi : kSprites - 1;
+    while (from > 0 && Relative(from))
+        from--;
     Anchor anchor;
-    for (unsigned i = 0; i < kSprites; i++)
+    for (unsigned i = from; i < kSprites; i++)
     {
         if (Relative(i))
-            Resolve(i, anchor, effective[i]);
+            Resolve(i, anchor, _fillEffective[i]);
         else
         {
-            effective[i] = Decode(i);
-            UpdateAnchor(i, anchor);
+            if (i > last && i > from)
+                break;
+            _fillEffective[i] = Decode(i);
+            AnchorOf(i, _fillEffective[i], anchor);
         }
     }
-    unsigned last = 0, drawn = 0, processed = 0;
+    _fillDirtyLo = kSprites;
+    _fillDirtyHi = 0;
+    _fillCount = 0;
     for (unsigned i = 0; i < kSprites; i++)
     {
-        const Effective& e = effective[i];
+        const Effective& e = _fillEffective[i];
         if (!e.visible)
             continue;
-        int dy = static_cast<int>(y) - e.y;
+        FillEntry& f = _fillEntries[_fillCount++];
+        f.index = static_cast<uint16_t>(i);
+        f.y = static_cast<uint16_t>(e.y);
+        f.height = static_cast<uint16_t>(16 << e.yScale);
+        f.ticks = static_cast<uint16_t>(ProcessTicksOf(e.x, e.xScale));
+    }
+    _fillValid = true;
+}
+
+unsigned NextSprites::FillClocks(unsigned y) const
+{
+    if (!_fillValid || _fillDirtyLo < kSprites)
+        MakeFillEntries();
+    unsigned last = 0, drawn = 0, processed = 0;
+    for (unsigned n = 0; n < _fillCount; n++)
+    {
+        const FillEntry& f = _fillEntries[n];
+        int dy = static_cast<int>(y) - f.y;
         if (dy < 0)
             dy += 512;
-        if (dy < (16 << e.yScale))
+        if (dy < f.height)
         {
-            last = i;
+            last = f.index;
             drawn++;
-            processed += ProcessTicksOf(e.x, e.xScale);
+            processed += f.ticks;
         }
     }
     // one clock per sprite up to the last drawn one to qualify it, and the process clocks of the drawn ones

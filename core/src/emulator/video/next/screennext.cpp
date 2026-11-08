@@ -662,6 +662,10 @@ void ScreenNext::UpdateScreen()
     unsigned done = 0;
     const uint32_t perLine = _rasterState.tstatesPerLine;
     const uint32_t first = GridFirstT();
+    // Called after every instruction: until the beam ends the line being drawn there is nothing to do (RenderUpTo would return),
+    // known by a multiply instead of the division below (dear on x86)
+    if (_nextLine >= NextVideoRenderer::kHeight || now < first + (_nextLine + 1) * perLine)
+        return;
     if (now > first)
         done = (now - first) / perLine;
     RenderLinesUpTo(done);

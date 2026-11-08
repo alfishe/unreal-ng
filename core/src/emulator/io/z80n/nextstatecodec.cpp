@@ -450,6 +450,8 @@ static void LoadCtc(Reader& r, NextCtc& c)
 /// serial peer's blob, the Pi's the second one's, a joystick connector device's the joystick peer's); the connector's route is NR #0B
 static void SaveUart(Writer& w, const NextUart& u)
 {
+    // asleep, the look the sleep holds (NextUart::Wake): what per-instruction looks would have left
+    const uint64_t now = u._asleep ? std::max(u._now, u._sleepLook) : u._now;
     for (const NextUart::Channel& c : u._ch)
     {
         w.Put(c.prescalerMsb);
@@ -470,7 +472,7 @@ static void SaveUart(Writer& w, const NextUart& u)
         w.Put(c.rxFreeAt);
         w.Put(c.txFreeAt);
         w.Put(c.txReadyAt);
-        w.Put(c.lastLook);
+        w.Put(u._asleep ? now : c.lastLook);
         w.Put(c.errOverflow);
         w.Put(c.errFraming);
         w.Put(c.rtsOut);
@@ -486,10 +488,11 @@ static void SaveUart(Writer& w, const NextUart& u)
         w.Put(c.breakIn);
     }
     w.Put(u._selected);
-    w.Put(u._now);
+    w.Put(now);
 }
 static void LoadUart(Reader& r, NextUart& u)
 {
+    u._asleep = false;
     for (NextUart::Channel& c : u._ch)
     {
         r.Get(c.prescalerMsb);
@@ -596,6 +599,7 @@ static void LoadInterrupts(Reader& r, NextInterruptSource& i)
     r.Get(i._lineControl);
     r.Get(i._lineValue);
     r.Get(i._counterOffset);
+    i._lineStartKnown = false;  // LineStartT is made again from the loaded fields
     r.Get(i._pending);
     r.Get(i._inService);
     r.Get(i._lastT);

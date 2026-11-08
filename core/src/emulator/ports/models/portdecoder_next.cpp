@@ -15,6 +15,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/io/z80n/nexttiming.h"
+#include <bit>
 #include <cstring>
 #include <filesystem>
 
@@ -167,12 +168,29 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _interrupts->SetPoller([this]() {
         const uint64_t now = Now28();
         _ctc.Advance(now);
+        // A sleeping UART (NextUart::TrySleep) only stores the look; a new frame (the peers' OnFrame ran) or a changed NR #A0
+        // wakes it into the full poll below
+        if (_uart.Asleep())
+        {
+            if (_context->emulatorState.frame_counter == _uartSleepFrame &&
+                _uart.LineConnected(1) == ((_board->Stored(0xA0) & 0x30) == 0x30)) [[likely]]
+            {
+                _uart.Doze(now);
+                _uart.PollInterrupts(_interrupts->UartEnables());
+                return;
+            }
+            _uart.Wake();
+        }
         if (!_uart.Idle())
         {
             SyncPiLine();
-            // a UART with a silent peer (the ESP module is always fitted) only notes the look
+            // a UART with a silent peer (the ESP module is always fitted) only notes the look, and sleeps while no peer holds a byte
             if (_uart.Quiet())
+            {
                 _uart.Look(now);
+                if (_uart.TrySleep())
+                    _uartSleepFrame = _context->emulatorState.frame_counter;
+            }
             else
                 _uart.Advance(now);
         }
@@ -1575,6 +1593,15 @@ void PortDecoder_Next::PerformReset(bool hard)
 
 uint64_t PortDecoder_Next::Now28() const
 {
+    // The device poll asks after every instruction: integers and a shift for the power-of-two multipliers (the same value as
+    // Now() * 8: t / multiplier is exact in a double there), the double otherwise
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
+    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if ((multiplier & (multiplier - 1)) == 0)
+    {
+        const uint64_t cpu = z80 ? (static_cast<uint64_t>(z80->t) << 3) >> std::countr_zero(multiplier) : 0;
+        return static_cast<uint64_t>(_state->t_states) * 8 + cpu;
+    }
     return static_cast<uint64_t>(Now() * 8.0);
 }
 
