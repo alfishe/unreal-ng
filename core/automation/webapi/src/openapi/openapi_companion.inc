@@ -1,5 +1,5 @@
     // Companion clients (docs/inprogress/2026-10-16-companion-client/protocol.md): a paired device acts as the user's
-    // hands. Pairing: the device asks, the user approves at the GUI (no route approves), the device collects its token
+    // hands. Pairing: the device asks, a request from this host (loopback, no browser Origin) is approved at once, otherwise the user approves at the GUI (no route approves), the device collects its token
     // once. With Authorization: Bearer <token> its changes open no session, within its scopes
     {
         auto param = [&](const char* path, const char* method, const char* name) {
@@ -34,7 +34,7 @@
         op(kItem, "post", "Request a pairing (cid = pairings)",
            "POST /api/v1/companions/pairings with {name (1-64 characters), device?, scopes? (run, input, media, "
            "machine, rewind, debug, takeback, all; default: all)}. 202: {pairing_id, code (six digits to show on "
-           "the device), expires_in (120), scopes}. The user compares the code and allows it at the GUI.");
+           "the device), expires_in (120), scopes}. The user compares the code and allows it at the GUI; from this host (loopback, no Origin) it is approved at once (state: approved).");
         param(kItem, "post", "cid");
         paths[kItem]["post"]["responses"]["202"]["description"] = "Pairing requested: poll it";
         paths[kItem]["post"]["responses"]["400"]["description"] = "bad_request: no name, an unknown scope";

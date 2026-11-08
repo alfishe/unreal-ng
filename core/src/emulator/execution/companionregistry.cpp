@@ -294,11 +294,17 @@ void CompanionRegistry::ExpireLocked(int64_t now, std::vector<Event>& events)
 
 /// region <Pairing>
 
+bool CompanionRegistry::IsLoopbackPeer(const std::string& peer)
+{
+    return peer == "::1" || peer.rfind("127.", 0) == 0 || peer.rfind("::ffff:127.", 0) == 0;
+}
+
 PairingRequestResult CompanionRegistry::RequestPairing(const std::string& name, const std::string& device,
-                                                       uint32_t scopes, const std::string& peer)
+                                                       uint32_t scopes, const std::string& peer, bool local)
 {
     PairingRequestResult result;
     std::vector<Event> events;
+    bool approved = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         const int64_t now = NowMs();
@@ -349,17 +355,23 @@ PairingRequestResult CompanionRegistry::RequestPairing(const std::string& name, 
                 p.info.expiresIn = kPairingLifetimeSeconds;
                 std::random_device device;
                 p.code = std::to_string(100000 + device() % 900000);
-                result.pairing = p.info;
-                result.code = p.code;
                 _pairings.push_back(std::move(p));
-                events.push_back({"pairing_requested", {}, result.pairing.id, result.pairing.name});
+                Pairing& added = _pairings.back();
+                // From this host: no prompt, the code proves nothing a local process could not do over the WebAPI
+                approved = local && ApproveLocked(added, std::nullopt, now, events).has_value();
+                if (!approved)
+                    events.push_back({"pairing_requested", {}, added.info.id, added.info.name});
+                result.pairing = added.info;
+                result.code = added.code;
             }
         }
     }
+    if (approved)
+        WriteStore();
     Announce(events);
     if (result.error.empty())
-        LOGINFO("Companion pairing requested: '%s' (%s) from %s", result.pairing.name.c_str(),
-                result.pairing.device.c_str(), peer.c_str());
+        LOGINFO("Companion pairing %s: '%s' (%s) from %s", approved ? "approved (this host)" : "requested",
+                result.pairing.name.c_str(), result.pairing.device.c_str(), peer.c_str());
     return result;
 }
 
@@ -437,26 +449,7 @@ std::optional<CompanionInfo> CompanionRegistry::ApprovePairing(const std::string
             return p.info.id == pairingId && p.info.state == PairingState::Pending;
         });
         if (it != _pairings.end())
-        {
-            const std::string token = GenerateToken();
-            CompanionInfo info;
-            info.id = NewIdLocked("c-");
-            info.name = it->info.name;
-            info.device = it->info.device;
-            info.source = "paired";
-            info.scopes = (scopes ? *scopes : it->info.scopes) & automation_gate::kCompanionAllScopes;
-            info.pairedMs = now;
-            if (AddLocked(info, HashToken(token)))
-            {
-                it->info.state = PairingState::Approved;
-                it->info.scopes = info.scopes;
-                it->finishedMs = now;
-                it->token = token;
-                it->companionId = info.id;
-                paired = info;
-                events.push_back({"paired", info.id, pairingId, info.name});
-            }
-        }
+            paired = ApproveLocked(*it, scopes, now, events);
     }
     if (paired)
     {
@@ -465,6 +458,28 @@ std::optional<CompanionInfo> CompanionRegistry::ApprovePairing(const std::string
     }
     Announce(events);
     return paired;
+}
+
+std::optional<CompanionInfo> CompanionRegistry::ApproveLocked(Pairing& pairing, std::optional<uint32_t> scopes,
+                                                              int64_t now, std::vector<Event>& events)
+{
+    const std::string token = GenerateToken();
+    CompanionInfo info;
+    info.id = NewIdLocked("c-");
+    info.name = pairing.info.name;
+    info.device = pairing.info.device;
+    info.source = "paired";
+    info.scopes = (scopes ? *scopes : pairing.info.scopes) & automation_gate::kCompanionAllScopes;
+    info.pairedMs = now;
+    if (!AddLocked(info, HashToken(token)))
+        return std::nullopt;
+    pairing.info.state = PairingState::Approved;
+    pairing.info.scopes = info.scopes;
+    pairing.finishedMs = now;
+    pairing.token = token;
+    pairing.companionId = info.id;
+    events.push_back({"paired", info.id, pairing.info.id, info.name});
+    return info;
 }
 
 bool CompanionRegistry::DenyPairing(const std::string& pairingId)

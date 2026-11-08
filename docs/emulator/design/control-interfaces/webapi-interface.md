@@ -584,7 +584,7 @@ POST /api/v1/emulator/{id}/control/take-back   A companion with the takeback sco
 POST /api/v1/emulator/{id}/control/allow-again A companion with the takeback scope lifts the re-take cooldowns (as the GUI's Allow again)
 GET  /api/v1/companions                        Companions (id, name, device, scopes, source, paired_ms, last_seen_ms) and pending pairings; never a token or a code
 DELETE /api/v1/companions                      Revoke every companion
-POST /api/v1/companions/pairings               A device asks to pair {name, device, scopes}: 202 {pairing_id, code, expires_in}; the user allows it at the GUI; 503 pairing_unavailable without a GUI
+POST /api/v1/companions/pairings               A device asks to pair {name, device, scopes}: 202 {pairing_id, code, expires_in}; from this host (loopback, no Origin) approved at once, else the user allows it at the GUI; 503 pairing_unavailable without a GUI
 GET  /api/v1/companions/pairings/{pid}         Poll: pending | approved (token, once) | denied | expired; DELETE cancels
 GET  /api/v1/companions/me                     The companion (with its token): scopes, per instance state, who holds control (can_act, can_take_back) and actions {name: {available, scope, reason}} - what it may do now; DELETE unpairs itself
 GET  /api/v1/companions/events                 WebSocket: the token on the handshake or {"op":"auth"}; then hello (= me), and each changed instance entry (op emulator / emulator_gone), revoked; instead of polling me
