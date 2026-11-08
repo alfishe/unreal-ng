@@ -306,8 +306,12 @@ PortDecoder_Next::~PortDecoder_Next()
     }
     if (_context->pSoundManager)
         _context->pSoundManager->setMachineClockScale(1.0);  // the next machine runs at its T-states' clock
-    if (_context->pCore && _context->pCore->GetZ80() && _context->pCore->GetZ80()->machineM1Hook == _divMmc.get())
-        _context->pCore->GetZ80()->machineM1Hook = nullptr;
+    if (Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        z80 && (z80->machineM1Hook == &_m1Chain || z80->machineM1Hook == _divMmc.get()))
+    {
+        z80->machineM1Hook = nullptr;  // the chain lives in this decoder
+        z80->machineM1HookEnd = 0x10000;
+    }
     if (_context->pCore && _context->pCore->GetZ80())
         _context->pCore->GetZ80()->SetInterruptSource(nullptr);
     if (_context->pRst8Trap == _esxDos.get())
@@ -354,6 +358,7 @@ void PortDecoder_Next::reset()
     _spiBusyRatio = 1.0;
     _speedPending = false;
     _speedChangedAt = 0;
+    UpdateM1HookEnd();
 
     _screen->SetBorderColor(COLOR_WHITE);
     _screen->SetActiveScreen(SCREEN_NORMAL);
@@ -1596,7 +1601,10 @@ uint64_t PortDecoder_Next::Now28() const
     // The device poll asks after every instruction: integers and a shift for the power-of-two multipliers (the same value as
     // Now() * 8: t / multiplier is exact in a double there), the double otherwise
     const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
-    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    // the CPU is the core's, made before any decoder and gone after it: looked up once (the chain was a load per poll)
+    if (!_nowCpu) [[unlikely]]
+        _nowCpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    const Z80* z80 = _nowCpu;
     if ((multiplier & (multiplier - 1)) == 0)
     {
         const uint64_t cpu = z80 ? (static_cast<uint64_t>(z80->t) << 3) >> std::countr_zero(multiplier) : 0;
@@ -1834,12 +1842,22 @@ void PortDecoder_Next::SetCpuSpeed(uint8_t ratio)
     _state->hw_turbo_ratio = ratio;
     _ratio = ratio;
     _speedPending = ratio != _state->hw_turbo_ratio_applied;
+    UpdateM1HookEnd();
     UpdateContention();
+}
+
+/// The M1 chain acts on fetches below #4000 only, but a pending speed change is taken at the next fetch wherever it is
+void PortDecoder_Next::UpdateM1HookEnd()
+{
+    Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (z80 && z80->machineM1Hook == &_m1Chain)
+        z80->machineM1HookEnd = _speedPending ? 0x10000u : M1Chain::kWatchedEnd;
 }
 
 void PortDecoder_Next::ApplyPendingSpeed()
 {
     _speedPending = false;
+    UpdateM1HookEnd();
     Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     if (!z80 || _state->hw_turbo_ratio == _state->hw_turbo_ratio_applied)
         return;

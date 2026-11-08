@@ -657,18 +657,42 @@ void ScreenNext::UpdateScreen()
 {
     if (_turboRenderSkip || !_feature_screenhq_enabled)
         return;
-    const uint32_t now = GetCurrentTstate();
-    // lines whose end the beam has passed
-    unsigned done = 0;
+    // Called after every instruction: until the beam ends the line being drawn there is nothing to do (RenderUpTo would return).
+    // That line end is kept in the CPU's own T-states, with the line, the geometry and the clock it was made for: one compare
+    // here (the T-state conversion and the division below were a twentieth of a 28 MHz frame on the Steam Deck)
+    const Z80* cpu = _context->pCore->GetZ80();
+    const EmulatorState& state = _context->emulatorState;
     const uint32_t perLine = _rasterState.tstatesPerLine;
     const uint32_t first = GridFirstT();
-    // Called after every instruction: until the beam ends the line being drawn there is nothing to do (RenderUpTo would return),
-    // known by a multiply instead of the division below (dear on x86)
-    if (_nextLine >= NextVideoRenderer::kHeight || now < first + (_nextLine + 1) * perLine)
+    const uint32_t clock = state.current_z80_frequency_multiplier | (state.hw_clock_den_applied << 8);
+    if (cpu->t < _lineEndCpuT && _nextLine == _lineEndLine && first == _lineEndFirst && perLine == _lineEndPerLine &&
+        clock == _lineEndClock) [[likely]]
         return;
+    const uint32_t now = state.CpuToBaseT(cpu->t);
+    if (_nextLine >= NextVideoRenderer::kHeight || now < first + (_nextLine + 1) * perLine)
+    {
+        _lineEndLine = _nextLine;
+        _lineEndFirst = first;
+        _lineEndPerLine = perLine;
+        _lineEndClock = clock;
+        _lineEndCpuT = _nextLine >= NextVideoRenderer::kHeight ? ~0u : FirstCpuTAt(state, first + (_nextLine + 1) * perLine);
+        return;
+    }
+    // lines whose end the beam has passed
+    unsigned done = 0;
     if (now > first)
         done = (now - first) / perLine;
     RenderLinesUpTo(done);
+}
+
+/// The first CPU T-state whose base T-state (EmulatorState::CpuToBaseT) is `baseT` or later
+uint32_t ScreenNext::FirstCpuTAt(const EmulatorState& state, uint32_t baseT)
+{
+    const uint64_t multiplier = state.current_z80_frequency_multiplier ? state.current_z80_frequency_multiplier : 1u;
+    const uint64_t den = state.hw_clock_den_applied;
+    // floor(t / m) >= b <=> t >= b * m; floor(t * d / m) >= b <=> t >= ceil(b * m / d)
+    const uint64_t t = den <= 1 ? baseT * multiplier : (baseT * multiplier + den - 1) / den;
+    return t > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(t);
 }
 
 void ScreenNext::DrawRange(uint32_t fromTstate, uint32_t toTstate)

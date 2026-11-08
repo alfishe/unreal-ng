@@ -669,6 +669,9 @@ public:
     /// logic such as the ZX-Evo NMI exit counter and breakpoint compare act on).
     /// Null unless a model decoder needs it: one pointer test per M1
     IMachineM1Hook* machineM1Hook = nullptr;
+    /// machineM1Hook is called for the fetches below this address only: a model whose hook acts on low addresses (the Next's
+    /// DivMMC and Multiface, #0000-#3FFF) sets it, and a fetch above costs a compare instead of two virtual calls. 0x10000: all
+    uint32_t machineM1HookEnd = 0x10000;
 
     /// Machine latch clocked by I/O read cycles whose port matches its decode ((port & mask) == match), after
     /// the CPU has taken the byte. Null unless a model decoder needs it (the 128K / +2 paging latch). The end of

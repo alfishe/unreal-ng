@@ -326,6 +326,8 @@ private:
     /// NR #07 was written and the clock is not switched yet: zxnext.vhd takes it over at the first idle bus clock after the write,
     /// the emulator does it at the next instruction fetch (the instruction boundary)
     bool _speedPending = false;
+    mutable const Z80* _nowCpu = nullptr;  ///< Now28's CPU (looked up at the first call: none while the machine is being built)
+    void UpdateM1HookEnd();
     double _speedChangedAt = 0;  ///< Now() of the last mid-frame switch (the boundary the SPI byte in flight is rescaled at)
     void ApplyPendingSpeed();
     uint32_t _spiTooFast = 0;
