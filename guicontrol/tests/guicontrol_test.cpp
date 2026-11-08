@@ -6,6 +6,7 @@
 #include "guicontrol/client.h"
 #include "guicontrol/discovery.h"
 #include "guicontrol/host.h"
+#include "guicontrol/interfaces.h"
 #include "guicontrol/node.h"
 #include "guicontrol/windowbinding.h"
 
@@ -193,10 +194,11 @@ TEST_F(GuiControl_Test, ResolutionByFocusAndInstance)
     ASSERT_TRUE(result.ok) << result.message.toStdString();
     EXPECT_EQ(result.body.value("path").toString(), "debugger/memory1");
 
-    // No view shows that machine: the focused one
+    // No view shows that machine: refused, never another machine's view
     result = client.Call("memory.probe", "memory@cccc");
-    ASSERT_TRUE(result.ok) << result.message.toStdString();
-    EXPECT_EQ(result.body.value("path").toString(), "debugger/memory2");
+    EXPECT_EQ(result.error, errors::kNotFound);
+    EXPECT_TRUE(result.message.contains("cccc") && result.message.contains("debugger/memory1 (aaaa)"))
+        << result.message.toStdString();
 
     // Removing the focused node forgets the focus
     host->Root().Child("debugger")->RemoveChild("memory2");
@@ -385,4 +387,122 @@ TEST_F(GuiControl_Test, InProcessInvoke)
     ASSERT_TRUE(answer.has_value());
     EXPECT_TRUE(answer->ok);
     EXPECT_EQ(answer->body.value("echo").toInt(), 3);
+}
+
+TEST_F(GuiControl_Test, StateCallByAnyTarget)
+{
+    std::unique_ptr<Host> host = MakeHost();
+    Node& view = AddView(*host, "debugger", "memory1", "memory");
+    view.SetState(QJsonObject{{"top", "0x4000"}});
+    view.SetInstance("http://127.0.0.1:8090", "emu-1");
+    Client client;
+    ASSERT_TRUE(client.Connect(host->SocketName(), 1000));
+
+    // A node without the method asked: the path, the interface, the interface on a machine
+    for (const QString& target : {QStringLiteral("debugger/memory1"), QStringLiteral("memory"),
+                                  QStringLiteral("memory@emu-1")})
+    {
+        const Result state = client.Call("state", {}, QJsonObject{{"target", target}});
+        ASSERT_TRUE(state.ok) << target.toStdString() << ": " << state.message.toStdString();
+        EXPECT_EQ(state.body.value("target").toString(), "debugger/memory1");
+        EXPECT_EQ(state.body.value("state").toObject().value("top").toString(), "0x4000");
+        EXPECT_EQ(state.body.value("instance").toObject().value("id").toString(), "emu-1");
+    }
+    EXPECT_EQ(client.Call("state", {}, QJsonObject{{"target", "nowhere"}}).error, errors::kNotFound);
+    EXPECT_EQ(client.Call("state").error, errors::kBadRequest);
+}
+
+TEST_F(GuiControl_Test, ParamHelpers)
+{
+    Result failure;
+    quint16 address = 0;
+    for (const auto& [text, expected] : std::vector<std::pair<QJsonValue, int>>{
+             {QJsonValue("0x6A00"), 0x6A00}, {QJsonValue("#6a00"), 0x6A00}, {QJsonValue("$FFFF"), 0xFFFF},
+             {QJsonValue("6A00h"), 0x6A00}, {QJsonValue("27136"), 0x6A00}, {QJsonValue(27136), 0x6A00}})
+    {
+        ASSERT_TRUE(params::Address(QJsonObject{{"addr", text}}, "addr", address, failure))
+            << failure.message.toStdString();
+        EXPECT_EQ(address, expected);
+    }
+    for (const QJsonValue& bad : {QJsonValue("0x10000"), QJsonValue(-1), QJsonValue("ram"), QJsonValue(1.5)})
+        EXPECT_FALSE(params::Address(QJsonObject{{"addr", bad}}, "addr", address, failure));
+    EXPECT_FALSE(params::Address(QJsonObject{}, "addr", address, failure));
+    EXPECT_EQ(failure.error, errors::kBadRequest);
+    EXPECT_EQ(params::Hex(0x6A00), "0x6A00");
+
+    int dx = 0;
+    int dy = 0;
+    ASSERT_TRUE(params::Direction(QJsonObject{{"dir", "left"}}, dx, dy, failure));
+    EXPECT_EQ(dx, -1);
+    EXPECT_EQ(dy, 0);
+    EXPECT_FALSE(params::Direction(QJsonObject{{"dir", "back"}}, dx, dy, failure));
+
+    int pages = 0;
+    ASSERT_TRUE(params::Pages(QJsonObject{}, pages, failure));
+    EXPECT_EQ(pages, 1);
+    ASSERT_TRUE(params::Pages(QJsonObject{{"n", -3}}, pages, failure));
+    EXPECT_EQ(pages, -3);
+    EXPECT_FALSE(params::Pages(QJsonObject{{"n", 0}}, pages, failure));
+    EXPECT_FALSE(params::Pages(QJsonObject{{"n", 1000}}, pages, failure));
+
+    bool on = false;
+    ASSERT_TRUE(params::Toggle(QJsonObject{}, true, on, failure));
+    EXPECT_FALSE(on);  // absent: flip
+    ASSERT_TRUE(params::Toggle(QJsonObject{{"on", true}}, true, on, failure));
+    EXPECT_TRUE(on);
+    ASSERT_TRUE(params::Toggle(QJsonObject{{"on", "off"}}, true, on, failure));  // a word from the CLI
+    EXPECT_FALSE(on);
+    EXPECT_FALSE(params::Toggle(QJsonObject{{"on", "maybe"}}, true, on, failure));
+}
+
+TEST_F(GuiControl_Test, ProgramInterface)
+{
+    // The declared interfaces carry the debugger's; a program adds its own, a second add replaces the first
+    ASSERT_NE(FindCommand(u"memory.goto"), nullptr);
+    EXPECT_TRUE(FindCommand(u"memory.cursor_move")->repeats);
+    EXPECT_FALSE(FindCommand(u"memory.goto")->repeats);
+    AddProgramInterface({"testprog", Level::Host, {{"testprog.first", "First", {}, "one"}}, {}, "a test program"});
+    AddProgramInterface({"testprog", Level::Host, {{"testprog.second", "Second", {}, "two"}}, {}, "a test program"});
+    EXPECT_EQ(FindCommand(u"testprog.first"), nullptr);
+    ASSERT_NE(FindCommand(u"testprog.second"), nullptr);
+    EXPECT_EQ(InterfaceOf(u"testprog.second"), "testprog");
+    size_t count = 0;
+    for (const InterfaceSpec& spec : Interfaces())
+        count += QLatin1String(spec.name) == QLatin1String("testprog") ? 1 : 0;
+    EXPECT_EQ(count, 1u);
+}
+
+TEST_F(GuiControl_Test, ParamsAreChecked)
+{
+    // A declared command: unknown and missing parameters refused with what it takes; the handler never runs
+    std::unique_ptr<Host> host = MakeHost();
+    Node& view = host->Root().AddChild("debugger").AddChild("memory1");
+    view.AddInterface("memory");
+    int runs = 0;
+    view.SetCommand("memory.goto", [&runs](const Call&) {
+        ++runs;
+        return Result::Success();
+    });
+    Client client;
+    ASSERT_TRUE(client.Connect(host->SocketName(), 1000));
+
+    Result result = client.Call("memory.goto", {}, QJsonObject{{"file", "x"}});
+    EXPECT_EQ(result.error, errors::kBadRequest);
+    EXPECT_EQ(result.message.toStdString(),
+              "memory.goto: unknown parameter file; missing addr; memory.goto takes addr (an address: decimal, 0x.., "
+              "#.., $.. or ..h)");
+    EXPECT_EQ(result.body.value("unknown").toArray(), QJsonArray{"file"});
+    EXPECT_EQ(result.body.value("missing").toArray(), QJsonArray{"addr"});
+    EXPECT_EQ(client.Call("memory.goto", {}, QJsonObject{{"addr", 1}, {"space", "ram"}}).error, errors::kBadRequest);
+    EXPECT_EQ(runs, 0);
+    EXPECT_TRUE(client.Call("memory.goto", {}, QJsonObject{{"addr", 1}}).ok);
+    EXPECT_EQ(runs, 1);
+
+    // The same in process (the controller bindings)
+    std::optional<Result> answer;
+    host->Invoke("memory.goto", "memory", QJsonObject{{"adr", 1}}, "binding", [&answer](Result r) { answer = r; });
+    ASSERT_TRUE(answer.has_value());
+    EXPECT_TRUE(answer->message.contains("unknown parameter adr")) << answer->message.toStdString();
+    EXPECT_TRUE(Host::CheckParams("window.raise", QJsonObject{}).ok);
+    EXPECT_TRUE(Host::CheckParams("window.raise", QJsonObject{{"x", 1}}).message.contains("takes no parameters"));
 }

@@ -35,6 +35,7 @@ struct CommandSpec
     const char* label;
     std::vector<ParamSpec> params;
     const char* description;
+    bool repeats = false;  ///< a held binding repeats it (cursor moves, pages)
 };
 
 enum class Level
@@ -53,8 +54,11 @@ struct InterfaceSpec
     const char* description;
 };
 
-/// Every declared interface
+/// Every declared interface: the plane's own, then the programs' extras added in this process
 const std::vector<InterfaceSpec>& Interfaces();
+/// A program's own commands (`unrealqt.*`): declared by the program from a table without widgets, so a catalogue
+/// writer links it without the program (design §4.2). A name already declared is replaced
+void AddProgramInterface(InterfaceSpec spec);
 const InterfaceSpec* FindInterface(QStringView name);
 /// A declared command; null for a program's own extra or an unknown one
 const CommandSpec* FindCommand(QStringView method);

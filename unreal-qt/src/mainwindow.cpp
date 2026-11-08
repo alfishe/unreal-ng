@@ -121,6 +121,8 @@
 #include "emulator/remotecontrolguard.h"
 #include "guicontrol/host.h"
 #include "guicontrol/windowbinding.h"
+#include "guiplane/debuggercontrol.h"
+#include "guiplane/programcontrol.h"
 
 namespace
 {
@@ -5324,19 +5326,53 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
         _guiHost.reset();
         return;
     }
+    static const bool declared = (DeclareUnrealQtInterface(), true);
+    (void)declared;
     new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    QPointer<DebuggerControl> debuggerControl;
     if (debuggerWindow != nullptr)
+    {
         new guicontrol::WindowBinding(*_guiHost, debuggerWindow, QStringLiteral("debugger"));
+        DebuggerControl::Hooks hooks;
+        hooks.showDebugger = [this] { handleDebuggerToggled(true); };
+        hooks.endpoint = []() {
+#ifdef ENABLE_AUTOMATION
+            if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+                return QStringLiteral("http://127.0.0.1:%1").arg(port);
+#endif
+            return QString();
+        };
+        debuggerControl = new DebuggerControl(*_guiHost, debuggerWindow, m_binding, std::move(hooks));
+    }
+    ProgramControl::Hooks programHooks;
+    programHooks.keyboardShown = [this] { return _osdKeyboardWindow != nullptr && _osdKeyboardWindow->isVisible(); };
+    programHooks.showKeyboard = [this](bool on) { handleOsdKeyboardToggled(on); };
+    programHooks.showControllers = [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    };
+    programHooks.learn = [this](const std::string& device) {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        return _controllersDialog->openLearnWizard(device);
+    };
+    new ProgramControl(*_guiHost, std::move(programHooks), this);
+    // The controller bindings of GUI commands go to this host in process (design §4.7)
+    if (_guiActions)
+        _guiActions->SetGuiHost(_guiHost.get());
 
 #ifdef ENABLE_AUTOMATION
-    // The WebAPI comes up on its own thread: the discovery file names it once it listens (up to 15 s)
+    // The WebAPI comes up on its own thread: the discovery file and the views name it once it listens (up to 15 s)
     auto* poll = new QTimer(this);
     auto tries = std::make_shared<int>(0);
-    connect(poll, &QTimer::timeout, this, [this, poll, tries]() {
+    connect(poll, &QTimer::timeout, this, [this, poll, tries, debuggerControl]() {
         if (Automation::GetInstance().GetWebAPIPort() > 0 || ++*tries >= 60)
         {
             if (_guiHost)
                 _guiHost->RefreshDiscovery();
+            if (debuggerControl)
+                debuggerControl->PublishInstance();
             poll->deleteLater();
         }
     });

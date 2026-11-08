@@ -146,11 +146,11 @@ host (a process)                 the pid; program name           interfaces: deb
 
 | Interface | On | Commands | State |
 |:--|:--|:--|:--|
-| `debugger` | host | `open`, `close`, `focus {pane}`, `focus_next`, `focus_prev` | open, focused pane |
+| `debugger` | host | `open`, `close`, `focus {pane}`, `focus_next`, `focus_prev`; on the focused pane: `cursor_move {dir}`, `page {n}`, `activate` (Enter) | open, focused pane |
 | `metadata` | host | `set {switch, on?}`: `on` absent flips. Switches: `metadata`, `regions`, `colours`, `notes`, `labels` | each switch |
 | `window` | window | `raise`, `show`, `hide`, `move {x,y,w,h}`, `screenshot {path?}` (the window's pixels; no path: to the clipboard, as today's `cap.screenshot`) | title, geometry, visible, active |
 | `disassembly` | view | `goto {addr}`, `follow_pc`, `cursor {addr}`, `cursor_move {dir}`, `page {n}`, `scroll_mode {mode?}`; composed (R7): `run_to_cursor`, `breakpoint_toggle_cursor` | top address, cursor, follow PC, scroll mode |
-| `memory` | view | `goto {addr, space?}`, `cursor {addr}`, `cursor_move {dir}`, `page {n}`, `follow {register\|off}`, `select {from,to}`, `follow_cursor`; composed: `find_last_write`, `find_last` | top address, cursor, selection, follow |
+| `memory` | view | `goto {addr}` (a CPU address; the view shows its 16 KB page), `cursor {addr}`, `cursor_move {dir}`, `page {n}`, `follow {register\|off}`, `select {from,to}`, `follow_cursor`; composed: `find_last_write`, `find_last` | top address, cursor, selection, follow |
 | `screen` | view | `zoom {factor}`, `fullscreen {on?}` | zoom, fullscreen |
 | `tilegrid` | view | `focus {tile}`, `single_sync {on?}`, `layout {preset}` | tiles (each with its instance), focused tile, single sync |
 
@@ -221,9 +221,10 @@ Two fields differ, because there is no HTTP underneath:
   looks at.
 - **A surface** (Stream Deck, a remote surface) keeps one target for both kinds of keys (owner decision 2026-11-07).
   Its emulator keys follow its core target (`TargetState`: the followed instance, or its pin). Its GUI keys are sent
-  as `<interface>@<that instance>`: the focused view of that interface that shows the same machine, and only when no
-  view shows it, the focused view alone. A pin of the surface therefore moves both kinds of keys. An emulator key and
-  a GUI key never act on two different machines while a view of the target exists.
+  as `<interface>@<that instance>`: the focused view of that interface that shows the same machine. When no view
+  shows it, the key is refused with `not_found` naming the instance and what the views show (owner decision
+  2026-11-07: never another machine's view). A pin of the surface therefore moves both kinds of keys, and an emulator
+  key and a GUI key never act on two different machines.
 
 ### 4.6 The GUI and the emulator
 
@@ -303,9 +304,9 @@ The GUI actions of `guiactions.cpp` and their new commands:
 |:--|:--|
 | `dbg.open` | `debugger.open` |
 | `dbg.focus_next_pane`, `dbg.focus_prev_pane` | `debugger.focus_next`, `debugger.focus_prev` |
-| `dbg.cursor_up` / `_down` / `_left` / `_right` | `disassembly.cursor_move` / `memory.cursor_move {dir}` on the focused pane |
-| `dbg.page_up`, `dbg.page_down` | `disassembly.page` / `memory.page {n}` on the focused pane |
-| `dbg.memory_follow` (Enter in the memory pane) | `memory.follow_cursor` |
+| `dbg.cursor_up` / `_down` / `_left` / `_right` | `debugger.cursor_move {dir}`: the focused pane (`disassembly.cursor_move` / `memory.cursor_move` on a view) |
+| `dbg.page_up`, `dbg.page_down` | `debugger.page {n}`: the focused pane (`disassembly.page` / `memory.page` on a view) |
+| `dbg.memory_follow` (Enter in the focused pane) | `debugger.activate`; on the memory view itself `memory.follow_cursor` |
 | `dbg.breakpoint_toggle_cursor` | `disassembly.breakpoint_toggle_cursor` (composed) |
 | `dbg.follow_pc`, `dbg.goto`, `dbg.scroll_mode_toggle` | `disassembly.follow_pc`, `disassembly.goto`, `disassembly.scroll_mode` |
 | `dbg.labels_toggle`, `dbg.metadata_toggle`, `dbg.metadata_regions_toggle`, `dbg.metadata_colours_toggle`, `dbg.metadata_notes_toggle` | `metadata.set {switch}` |
@@ -347,6 +348,15 @@ Progress:
   `window.show` / `hide` / `raise`, `window.screenshot` to a file, the TCP listener, `watch` at `--max-hz 5`. The
   offscreen platform sends no activation events, so the `focus` push was checked in the tests only. Module document:
   [docs/emulator/design/gui-control](../../emulator/design/gui-control/README.md).
+- **Phase 2: done (2026-11-07).** unreal-qt implements `debugger`, `metadata`, `disassembly`, `memory` (the views
+  `debugger/disassembly`, `debugger/memory`, each naming its machine) and `unrealqt.*` (`guiplane/debuggercontrol.cpp`,
+  `guiplane/programcontrol.cpp`). The composed commands call `run.to_cursor`, `ttd.find_last_write`, `ttd.find_last`
+  with the view's address and the GUI origin. A controller binding that names a plane command runs it on the host in
+  process (`GuiActions::TriggerGui`), a held one of a `repeats` command repeats (300 ms, then 60 ms). New: the `state`
+  call, `unreal-gui state`, `unreal-gui mcp` (`gui_list`, `gui_call`, `gui_state`), the Python client
+  `tools/guicontrol/guicontrol.py`. Checks: `GuiControl_Test` (14 tests); `tools/guicontrol/verify_unrealqt.py` (every
+  command against an offscreen unreal-qt, then `verify_mcp.py`); `tools/guicontrol/demo_zynaps_hexview.py` points the
+  memory view at the Zynaps variables, sprites and font through the plane (the demo's double-click on HL goes).
 
 Docs per phase:
 

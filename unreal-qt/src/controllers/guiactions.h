@@ -11,10 +11,12 @@
 /// nothing. Results come back on the worker and go to the status bar through the GUI thread.
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,6 +24,12 @@
 #include "emulator/actions/actionregistry.h"
 
 class EmulatorBinding;
+class QTimer;
+
+namespace guicontrol
+{
+class Host;
+}
 
 struct GuiActionHooks
 {
@@ -55,6 +63,10 @@ public:
     /// keyboard: the GUI's own origin). An encoder turn bound to a Press action presses once per step, at most 16
     void Trigger(const HostActionEvent& event);
 
+    /// The program's GUI control plane host: a binding naming one of its commands (`memory.cursor_move`,
+    /// `unrealqt.osd_keyboard`) goes there in process instead of the core registry (design §4.7)
+    void SetGuiHost(guicontrol::Host* host);
+
 private:
     class Scrub;
 
@@ -66,10 +78,15 @@ private:
     void Add(const char* id, GuiRun run, actions::ActionRules rules = {});
     /// Show a result's error on the GUI thread
     void Notice(const QString& text);
+    /// A binding of a GUI plane command: run on the host, a held one of a repeating command repeats; false when the
+    /// id is not one
+    bool TriggerGui(const HostActionEvent& event);
 
     EmulatorBinding* _binding = nullptr;
     GuiActionHooks _hooks;
     std::shared_ptr<std::atomic<bool>> _alive;
     std::shared_ptr<Scrub> _scrub;
     std::vector<actions::RegistrationHandle> _handles;
+    QPointer<guicontrol::Host> _guiHost;
+    std::map<QString, QTimer*> _guiRepeats;  ///< per binding (device + command): the repeat while held
 };

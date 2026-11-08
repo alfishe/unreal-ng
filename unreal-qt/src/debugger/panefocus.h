@@ -33,6 +33,10 @@ public:
     void Focus(int index);
     /// Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
     void Key(int key);
+    /// The pane holding the window's focus, -1 when none
+    int Focused() const;
+    /// The pane focused last (the one the keys go to while the window has no focus)
+    int Last() const { return _pane; }
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -40,7 +44,6 @@ protected:
 private:
     class Frame;
 
-    int Focused() const;  ///< the pane holding the window's focus, -1 when none
     QWidget* Receiver(const Pane& pane) const;
     bool CellKey(Pane& pane, size_t index, int key);
     void Place();

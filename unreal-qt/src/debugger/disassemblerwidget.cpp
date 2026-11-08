@@ -689,6 +689,24 @@ void DisassemblerWidget::switchScrollMode()
     toggleScrollMode();
 }
 
+void DisassemblerWidget::setCursorAddress(uint16_t address)
+{
+    if (m_isShuttingDown || !getEmulator() || !getZ80Registers())
+        return;
+    m_cursorAddress = address;
+    publishCursor();
+    if (shownRowOf(address) < 0 || shownRowOf(address) >= m_rowsShown)
+        setDisassemblerAddress(address);
+    else
+        layoutLines();
+}
+
+void DisassemblerWidget::setByteScroll(bool on)
+{
+    if (on != byteScroll())
+        toggleScrollMode();
+}
+
 void DisassemblerWidget::onLineClicked(int line)
 {
     if (m_isShuttingDown || line < 0 || line >= static_cast<int>(m_view->lines().size()))
@@ -1051,6 +1069,7 @@ void DisassemblerWidget::layoutLines()
     m_rowsShown = rowsShown;
     m_view->setLines(std::move(lines));
     m_view->setScrollAddress(m_displayAddress);
+    emit viewChanged();
 }
 
 void DisassemblerWidget::scrollRows(int rows)
@@ -1167,6 +1186,7 @@ void DisassemblerWidget::toggleScrollMode()
 
     // Update the indicator
     updateScrollModeIndicator();
+    emit viewChanged();
 }
 
 void DisassemblerWidget::reset()

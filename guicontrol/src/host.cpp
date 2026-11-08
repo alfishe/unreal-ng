@@ -260,8 +260,10 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
     Resolution resolution;
     QString interfaceName = InterfaceOf(method);
     std::vector<Node*> candidates;
+    // No method (the `state` call): any node the target names
+    const auto has = [&method](const Node& node) { return method.isEmpty() || node.HasCommand(method); };
     const auto withMethod = [&](Node& node) {
-        if (node.HasCommand(method))
+        if (has(node))
             candidates.push_back(&node);
     };
 
@@ -274,7 +276,7 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
     if (target.isEmpty())
         Walk(*_root, withMethod);
     else if (rest.isEmpty() || rest.contains('/') ||
-             (_root->Child(rest) != nullptr && _root->Child(rest)->HasCommand(method)))
+             (_root->Child(rest) != nullptr && has(*_root->Child(rest))))
     {
         // A path: the node itself. A bare word is a window when that window has the command, else an interface
         // ("debugger" is both the debugger window and the host's debugger interface)
@@ -290,7 +292,7 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
         const QString instance = at < 0 ? QString() : rest.mid(at + 1);
         interfaceName = name;
         Walk(*_root, [&](Node& node) {
-            if (node.Implements(name) && node.HasCommand(method))
+            if (node.Implements(name) && has(node))
                 candidates.push_back(&node);
         });
         if (!instance.isEmpty())
@@ -298,9 +300,20 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
             std::vector<Node*> showing;
             std::copy_if(candidates.begin(), candidates.end(), std::back_inserter(showing),
                          [&instance](const Node* node) { return node->InstanceId() == instance; });
-            // No view shows that machine: the focused one of the interface (design §4.5)
-            if (!showing.empty())
-                candidates = std::move(showing);
+            // No view shows that machine: refused, never another machine's view (design §4.5)
+            if (showing.empty() && !candidates.empty())
+            {
+                QStringList shown;
+                for (const Node* node : candidates)
+                    shown << QStringLiteral("%1 (%2)").arg(node->Path(), node->InstanceId().isEmpty()
+                                                                             ? QStringLiteral("no machine")
+                                                                             : node->InstanceId());
+                resolution.failure = Result::Failure(
+                    errors::kNotFound,
+                    QStringLiteral("no %1 view shows instance %2; the %1 views here: %3")
+                        .arg(name, instance, shown.join(QStringLiteral(", "))));
+            }
+            candidates = std::move(showing);
         }
     }
 
@@ -309,8 +322,9 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
         const auto focus = _focus.constFind(interfaceName);
         if (candidates.empty())
             resolution.failure = Result::Failure(
-                errors::kNotFound, target.isEmpty() ? QStringLiteral("nothing here has %1").arg(method)
-                                                    : QStringLiteral("%1 names nothing with %2").arg(target, method));
+                errors::kNotFound, target.isEmpty()   ? QStringLiteral("nothing here has %1").arg(method)
+                                   : method.isEmpty() ? QStringLiteral("%1 names nothing").arg(target)
+                                                      : QStringLiteral("%1 names nothing with %2").arg(target, method));
         else if (candidates.size() == 1)
             resolution.node = candidates.front();
         else if (focus != _focus.constEnd())
@@ -342,9 +356,57 @@ Host::Resolution Host::Resolve(const QString& method, const QString& target)
     return resolution;
 }
 
+namespace
+{
+/// "addr (an address 0..#FFFF), on? (absent: flip it)": a command's parameters as an error message lists them
+QString DescribeParams(const CommandSpec& command)
+{
+    if (command.params.empty())
+        return QStringLiteral("%1 takes no parameters").arg(QLatin1String(command.method));
+    QStringList names;
+    for (const ParamSpec& param : command.params)
+        names << QStringLiteral("%1%2 (%3)")
+                     .arg(QLatin1String(param.name), param.optional ? "?" : "", QLatin1String(param.description));
+    return QStringLiteral("%1 takes %2").arg(QLatin1String(command.method), names.join(QStringLiteral(", ")));
+}
+}  // namespace
+
+Result Host::CheckParams(const QString& method, const QJsonObject& params)
+{
+    // A declared command takes its declared parameters only: a misspelt one is refused, never ignored
+    const CommandSpec* command = FindCommand(method);
+    if (command == nullptr)
+        return Result::Success();
+    QStringList unknown;
+    for (auto it = params.begin(); it != params.end(); ++it)
+        if (std::none_of(command->params.begin(), command->params.end(),
+                         [&it](const ParamSpec& param) { return it.key() == QLatin1String(param.name); }))
+            unknown << it.key();
+    QStringList missing;
+    for (const ParamSpec& param : command->params)
+        if (!param.optional && !params.contains(QLatin1String(param.name)))
+            missing << QLatin1String(param.name);
+    if (unknown.isEmpty() && missing.isEmpty())
+        return Result::Success();
+    QStringList what;
+    if (!unknown.isEmpty())
+        what << QStringLiteral("unknown parameter%1 %2").arg(unknown.size() > 1 ? "s" : "", unknown.join(", "));
+    if (!missing.isEmpty())
+        what << QStringLiteral("missing %1").arg(missing.join(", "));
+    return Result::Failure(errors::kBadRequest,
+                           QStringLiteral("%1: %2; %3").arg(method, what.join("; "), DescribeParams(*command)),
+                           QJsonObject{{"unknown", QJsonArray::fromStringList(unknown)},
+                                       {"missing", QJsonArray::fromStringList(missing)}});
+}
+
 void Host::Invoke(const QString& method, const QString& target, const QJsonObject& params, const QString& client,
                   Done done)
 {
+    if (const Result refused = CheckParams(method, params); !refused.ok)
+    {
+        done(refused);
+        return;
+    }
     const Resolution resolution = Resolve(method, target);
     if (resolution.node == nullptr)
     {
@@ -471,6 +533,30 @@ void Host::Handle(Connection& connection, const QJsonObject& message)
             reply(Result::Failure(errors::kBadRequest, QStringLiteral("a call needs a method")));
         else if (method == QLatin1String("list"))
             reply(Result::Success(List()));
+        else if (method == QLatin1String("state"))
+        {
+            // A node's state, interfaces and machine by any target form (gui_state, `unreal-gui state`)
+            const QString wanted = params.value("target").toString(target);
+            if (wanted.isEmpty())
+                reply(Result::Failure(errors::kBadRequest, QStringLiteral("state needs a target")));
+            else
+            {
+                const Resolution resolution = Resolve({}, wanted);
+                if (resolution.node == nullptr)
+                    reply(resolution.failure);
+                else
+                {
+                    QJsonObject body{{"host", _id},
+                                     {"target", resolution.node->Path()},
+                                     {"interfaces", QJsonArray::fromStringList(resolution.node->Interfaces())},
+                                     {"state", resolution.node->State()},
+                                     {"focus_at", resolution.focusAt}};
+                    if (!resolution.node->Instance().isEmpty())
+                        body["instance"] = resolution.node->Instance();
+                    reply(Result::Success(body));
+                }
+            }
+        }
         else if (method == QLatin1String("resolve"))
         {
             // Which node a target names here, and since when it has focus: a client choosing between hosts

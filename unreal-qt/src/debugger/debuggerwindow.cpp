@@ -708,12 +708,30 @@ void DebuggerWindow::onBindingReady()
 
 void DebuggerWindow::showMemoryAtPc()
 {
-    // The memory view follows PC: its 16 KB page read again (a step changes memory), the PC byte marked; a page
-    // picked by hand stays until the next stop
+    // The memory view follows PC (or the register memoryFollow names): its 16 KB page read again (a step changes
+    // memory), the PC byte marked; a page picked by hand stays until the next stop. Off: the page stays, read again
     if (!_emulator || !_emulator->IsPaused() || !_emulator->GetZ80State())
         return;
-    const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
-    changeMemoryViewZ80Address(pc);  // paints the metadata, PC among it
+    const Z80Registers& registers = *_emulator->GetZ80State();
+    std::optional<uint16_t> address;
+    if (_memoryFollow == QLatin1String("pc"))
+        address = registers.pc;
+    else if (_memoryFollow == QLatin1String("sp"))
+        address = registers.sp;
+    else if (_memoryFollow == QLatin1String("bc"))
+        address = registers.bc;
+    else if (_memoryFollow == QLatin1String("de"))
+        address = registers.de;
+    else if (_memoryFollow == QLatin1String("hl"))
+        address = registers.hl;
+    else if (_memoryFollow == QLatin1String("ix"))
+        address = registers.ix;
+    else if (_memoryFollow == QLatin1String("iy"))
+        address = registers.iy;
+    else
+        address = memoryCursor();
+    if (address)
+        changeMemoryViewZ80Address(*address);  // paints the metadata, PC among it
 }
 
 namespace
@@ -1922,6 +1940,78 @@ void DebuggerWindow::publishMemoryCursor()
     actions::DebuggerCursors::Instance().Set(_emulator->GetId(), "memory", std::nullopt);  // not mapped now
 }
 
+DisassemblerWidget* DebuggerWindow::disassembler() const
+{
+    return ui->disassemblerWidget;
+}
+
+QHexView* DebuggerWindow::memoryView() const
+{
+    return ui->hexView;
+}
+
+const std::vector<QString>& DebuggerWindow::paneNames()
+{
+    // The order of the focus ring (_paneFocus)
+    static const std::vector<QString> names = {QStringLiteral("disassembly"), QStringLiteral("registers"),
+                                               QStringLiteral("memory"), QStringLiteral("stack")};
+    return names;
+}
+
+QString DebuggerWindow::focusedPane() const
+{
+    const int focused = _paneFocus->Focused();
+    const int index = focused >= 0 ? focused : _paneFocus->Last();
+    return index >= 0 && static_cast<size_t>(index) < paneNames().size() ? paneNames()[static_cast<size_t>(index)]
+                                                                          : QString();
+}
+
+bool DebuggerWindow::focusPane(const QString& name)
+{
+    const auto it = std::find(paneNames().begin(), paneNames().end(), name);
+    if (it == paneNames().end())
+        return false;
+    _paneFocus->Focus(static_cast<int>(it - paneNames().begin()));
+    return true;
+}
+
+void DebuggerWindow::movePaneFocus(int delta)
+{
+    _paneFocus->Move(delta);
+}
+
+void DebuggerWindow::sendPaneKey(int key)
+{
+    _paneFocus->Key(key);
+}
+
+bool DebuggerWindow::showMemoryAt(uint16_t address)
+{
+    if (!_emulator || !_emulator->GetMemory())
+        return false;
+    changeMemoryViewZ80Address(address);
+    return true;
+}
+
+std::optional<uint16_t> DebuggerWindow::memoryCursor() const
+{
+    const std::optional<uint16_t> base = memoryViewBase();
+    if (!base || !ui->hexView->getDocument())
+        return std::nullopt;
+    return static_cast<uint16_t>(*base + (ui->hexView->offset() & 0x3FFF));
+}
+
+bool DebuggerWindow::setMemoryFollow(const QString& name)
+{
+    static const QStringList names = {"pc", "sp", "bc", "de", "hl", "ix", "iy", "off"};
+    if (!names.contains(name))
+        return false;
+    _memoryFollow = name;
+    showMemoryAtPc();
+    emit memoryViewChanged();
+    return true;
+}
+
 void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
 {
     qDebug("DebuggerWindow::changeMemoryViewZ80Address");
@@ -1986,6 +2076,7 @@ void DebuggerWindow::changeMemoryViewAddress(uint8_t* address, size_t size, uint
     // otherwise widget is unaware of the document and where to jump so just skipping the request
     ui->hexView->gotoOffset(currentAddress);  // Position cursor on the byte with offset
     paintMemoryMetadata();
+    emit memoryViewChanged();
 }
 
 void DebuggerWindow::showLabelManager()

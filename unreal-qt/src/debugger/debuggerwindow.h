@@ -70,6 +70,26 @@ public slots:
     void focusMemoryPane();
 
 public:
+    /// region <The GUI control plane's debugger, disassembly and memory (guicontrol/debuggercontrol.cpp)>
+    class DisassemblerWidget* disassembler() const;
+    class QHexView* memoryView() const;
+    /// The panes of the focus ring: "disassembly", "registers", "memory", "stack"
+    static const std::vector<QString>& paneNames();
+    /// The pane holding the focus, else the one focused last
+    QString focusedPane() const;
+    bool focusPane(const QString& name);
+    void movePaneFocus(int delta);
+    void sendPaneKey(int key);
+    /// The memory view at a CPU address: its 16 KB page, the cursor on it; false without a machine
+    bool showMemoryAt(uint16_t address);
+    /// The memory view's first byte and cursor as CPU addresses (none: its page is not mapped now)
+    std::optional<uint16_t> memoryTop() const { return memoryViewBase(); }
+    std::optional<uint16_t> memoryCursor() const;
+    /// Where the memory view goes when the machine stops: "pc" (the default), "sp", "bc", "de", "hl", "ix", "iy" or
+    /// "off" (it stays)
+    const QString& memoryFollow() const { return _memoryFollow; }
+    bool setMemoryFollow(const QString& name);
+    /// endregion </The GUI control plane>
 
     /// region <Helper methods>
 protected:
@@ -178,6 +198,9 @@ signals:
     /// to DeviceScreen::refresh().
     void screenRefreshRequested();
 
+    /// The memory view shows another page or its follow mode changed (its cursor: QHexView::positionChanged)
+    void memoryViewChanged();
+
     /// @brief Emitted when the window is shown or hidden (menu toggle, close box,
     /// docking). MainWindow keeps the Debug menu in sync and switches the
     /// emulator's debug instrumentation on only while the window is visible.
@@ -259,6 +282,7 @@ private:
     uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id
     QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours
     PaneFocus* _paneFocus = nullptr;
+    QString _memoryFollow = QStringLiteral("pc");  // the memory view's register on a stop (memoryFollow)
 };
 
 #endif  // DEBUGGERWINDOW_H

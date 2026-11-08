@@ -68,4 +68,20 @@ using Done = std::function<void(Result result)>;
 /// One message as one line (compact JSON and '\n')
 QByteArray Encode(const QJsonObject& message);
 
+/// region <Parameters of a call>
+namespace params
+{
+/// An address: a number, or text in decimal, 0x.., #.., $.. or ..h (as the core's AddressParam); 0..#FFFF
+bool Address(const QJsonObject& params, const char* name, quint16& address, Result& failure);
+/// `dir`: up, down, left, right as a step (dx, dy)
+bool Direction(const QJsonObject& params, int& dx, int& dy, Result& failure);
+/// `n` pages, signed, default 1
+bool Pages(const QJsonObject& params, int& pages, Result& failure);
+/// A toggle's `on`: absent = flip `current`
+bool Toggle(const QJsonObject& params, bool current, bool& on, Result& failure);
+/// `name` as hex text: "0x6A00"
+QString Hex(quint16 address);
+}  // namespace params
+/// endregion </Parameters of a call>
+
 }  // namespace guicontrol

@@ -20,6 +20,11 @@
 #include "emulator/actions/steppingactions.h"
 #include "profiles/json.h"
 #include "router/analog.h"
+#include "guicontrol/host.h"
+#include "guicontrol/interfaces.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace
 {
@@ -384,8 +389,78 @@ void GuiActions::Notice(const QString& text)
     });
 }
 
+void GuiActions::SetGuiHost(guicontrol::Host* host)
+{
+    _guiHost = host;
+}
+
+bool GuiActions::TriggerGui(const HostActionEvent& event)
+{
+    const guicontrol::CommandSpec* command = guicontrol::FindCommand(event.action);
+    if (command == nullptr)
+        return false;
+    const QString method = event.action;
+    // The binding's parameters are the command's; `target` among them names the node (default: the interface on the
+    // device's machine, design §4.5: the focused view of that interface showing it, else the focused one)
+    QJsonObject params = QJsonDocument::fromJson(event.params.toUtf8()).object();
+    QString target = params.take(QStringLiteral("target")).toString();
+    if (target.isEmpty())
+    {
+        const QString interfaceName = guicontrol::InterfaceOf(method);
+        const guicontrol::InterfaceSpec* spec = guicontrol::FindInterface(interfaceName);
+        if (spec != nullptr && spec->level == guicontrol::Level::View && !event.instance.isEmpty())
+            target = interfaceName + '@' + event.instance;
+        else
+            target = interfaceName;
+    }
+    const QString key = event.device + '|' + method + '|' + target;
+    if (auto repeat = _guiRepeats.find(key); repeat != _guiRepeats.end())
+        repeat->second->stop();
+    if (!event.pressed && !event.turn)
+        return true;
+    if (!_guiHost)
+    {
+        Notice(Tr("%1: the GUI control plane is off").arg(method));
+        return true;
+    }
+    const QString client = event.device;
+    auto invoke = [this, method, target, params, client]() {
+        if (!_guiHost)
+            return;
+        const QPointer<GuiActions> self(this);
+        _guiHost->Invoke(method, target, params, client, [self, method](guicontrol::Result result) {
+            if (self && !result.ok)
+                self->Notice(Tr("%1: %2").arg(method, result.message));
+        });
+    };
+    // An encoder's turn: once per step, at most 16 (as a Press action of the core)
+    if (event.turn)
+    {
+        const int steps = std::min(16, static_cast<int>(std::lround(std::fabs(event.value))));
+        for (int n = 0; n < steps; ++n)
+            invoke();
+        return true;
+    }
+    invoke();
+    if (command->repeats)
+    {
+        QTimer*& timer = _guiRepeats[key];
+        if (timer == nullptr)
+            timer = new QTimer(this);
+        timer->disconnect();
+        connect(timer, &QTimer::timeout, this, [timer, invoke]() {
+            timer->setInterval(60);
+            invoke();
+        });
+        timer->start(300);
+    }
+    return true;
+}
+
 void GuiActions::Trigger(const HostActionEvent& event)
 {
+    if (TriggerGui(event))
+        return;
     const QString& action = event.action;
     const bool pressed = event.pressed;
     const float value = event.value;

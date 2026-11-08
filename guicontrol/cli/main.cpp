@@ -4,15 +4,19 @@
 //   unreal-gui list [--host ID]                       their windows and views, with state and commands
 //   unreal-gui [--host ID] [--target T] METHOD [VALUE...] [KEY=VALUE...]
 //                                                     run a command; values fill the declared parameters in order
+//   unreal-gui state TARGET                           one window's or view's state, interfaces and machine
 //   unreal-gui watch [TOPIC...] [--max-hz N]          print the pushes (state, nodes, focus, activity) until killed
+//   unreal-gui mcp                                    the plane's MCP server on stdio (gui_list, gui_call, gui_state)
 //   --tcp ADDRESS:PORT                                a host's TCP listener instead of the discovery directory
 //   --json                                            the answer as JSON
 //
 // Exit codes: 0 done, 1 refused or failed, 2 wrong usage.
 
+#include "connect.h"
 #include "guicontrol/client.h"
 #include "guicontrol/discovery.h"
 #include "guicontrol/interfaces.h"
+#include "mcp.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -44,7 +48,9 @@ int Usage()
     Err() << "usage: unreal-gui hosts\n"
              "       unreal-gui list [--host ID]\n"
              "       unreal-gui [--host ID] [--target T] METHOD [VALUE...] [KEY=VALUE...]\n"
+             "       unreal-gui state TARGET\n"
              "       unreal-gui watch [TOPIC...] [--max-hz N]\n"
+             "       unreal-gui mcp\n"
              "options: --tcp ADDRESS:PORT, --json\n";
     Err().flush();
     return 2;
@@ -119,76 +125,21 @@ void PrintNode(const QJsonObject& node, int depth)
             PrintNode(child.toObject(), depth + 1);
 }
 
-/// The client of the host the command goes to; null with a message printed when there is none
+void PrintFailure(const QString& what, const Result& failure)
+{
+    Err() << "unreal-gui: " << what << (what.isEmpty() ? "" : ": ") << failure.error << ": " << failure.message << '\n';
+    if (failure.body.contains("candidates"))
+        Err() << Json(failure.body.value("candidates")) << '\n';
+}
+
+/// The client of the host the command goes to; null with the reason printed when there is none
 std::unique_ptr<Client> Open(const Options& options, const QString& method, const QString& target)
 {
-    auto client = std::make_unique<Client>();
-    QString error;
-    if (!options.tcp.isEmpty())
-    {
-        const qsizetype colon = options.tcp.lastIndexOf(':');
-        if (colon <= 0 || !client->ConnectTcp(options.tcp.left(colon), options.tcp.mid(colon + 1).toUShort(), 3000,
-                                              &error))
-        {
-            Err() << "unreal-gui: " << options.tcp << ": " << (error.isEmpty() ? QStringLiteral("not ADDRESS:PORT") : error)
-                  << '\n';
-            return nullptr;
-        }
-        return client;
-    }
-
-    const std::vector<discovery::Entry> entries = discovery::List();
-    if (entries.empty())
-    {
-        Err() << "unreal-gui: no GUI program is running (" << discovery::Directory() << ")\n";
-        return nullptr;
-    }
-    QString hostId = options.host;
-    if (hostId.isEmpty())
-    {
-        const qsizetype slash = target.indexOf('/');
-        const QString first = slash < 0 ? target : target.left(slash);
-        for (const discovery::Entry& entry : entries)
-            if (entry.id == first)
-                hostId = first;
-    }
-    if (hostId.isEmpty() && entries.size() > 1 && !method.isEmpty())
-    {
-        // Every host says what the target names there; the one that took focus last wins (design §4.5)
-        std::vector<HostChoice> choices;
-        for (const discovery::Entry& entry : entries)
-        {
-            Client probe;
-            if (!probe.Connect(entry.socket, 3000))
-                continue;
-            choices.push_back({entry, probe.Call(QStringLiteral("resolve"), {},
-                                                 QJsonObject{{"method", method}, {"target", target}})});
-        }
-        size_t chosen = 0;
-        const Result choice = ChooseHost(choices, chosen);
-        if (!choice.ok)
-        {
-            Err() << "unreal-gui: " << choice.message << '\n';
-            if (choice.body.contains("candidates"))
-                Err() << Json(choice.body.value("candidates")) << '\n';
-            return nullptr;
-        }
-        hostId = choices[chosen].entry.id;
-    }
-    if (hostId.isEmpty())
-        hostId = entries.front().id;
-    for (const discovery::Entry& entry : entries)
-        if (entry.id == hostId)
-        {
-            if (!client->Connect(entry.socket, 3000, &error))
-            {
-                Err() << "unreal-gui: host " << hostId << ": " << error << '\n';
-                return nullptr;
-            }
-            return client;
-        }
-    Err() << "unreal-gui: no host " << hostId << '\n';
-    return nullptr;
+    Result failure;
+    std::unique_ptr<Client> client = cli::Open(cli::Where{options.host, options.tcp}, method, target, failure);
+    if (!client)
+        PrintFailure({}, failure);
+    return client;
 }
 
 int Hosts(const Options& options)
@@ -216,39 +167,45 @@ int Hosts(const Options& options)
 
 int List(const Options& options)
 {
-    std::vector<std::unique_ptr<Client>> clients;
-    if (!options.host.isEmpty() || !options.tcp.isEmpty())
-    {
-        auto client = Open(options, {}, {});
-        if (!client)
-            return 1;
-        clients.push_back(std::move(client));
-    }
-    else
-        for (const discovery::Entry& entry : discovery::List())
-        {
-            auto client = std::make_unique<Client>();
-            if (client->Connect(entry.socket, 3000))
-                clients.push_back(std::move(client));
-        }
     QJsonArray hosts;
-    for (const std::unique_ptr<Client>& client : clients)
+    const Result result = cli::ListAll(cli::Where{options.host, options.tcp}, hosts);
+    if (!result.ok)
     {
-        const Result result = client->Call(QStringLiteral("list"));
-        if (!result.ok)
-            continue;
-        hosts.append(result.body);
-        if (options.json)
-            continue;
-        Out() << result.body.value("host").toString() << "  " << result.body.value("program").toString() << ' '
-              << result.body.value("version").toString() << '\n';
-        QJsonObject root = result.body;
+        PrintFailure({}, result);
+        return 1;
+    }
+    if (options.json)
+    {
+        Out() << Json(hosts) << '\n';
+        return 0;
+    }
+    for (const QJsonValue& value : hosts)
+    {
+        QJsonObject root = value.toObject();
+        Out() << root.value("host").toString() << "  " << root.value("program").toString() << ' '
+              << root.value("version").toString() << '\n';
         root["id"] = QStringLiteral("(host)");
         PrintNode(root, 1);
     }
-    if (options.json)
-        Out() << Json(hosts) << '\n';
     return 0;
+}
+
+int State(const Options& options)
+{
+    const QString target = options.words.size() > 1 ? options.words[1] : options.target;
+    if (target.isEmpty())
+        return Usage();
+    auto client = Open(options, {}, target);
+    if (!client)
+        return 1;
+    const Result result = client->Call(QStringLiteral("state"), {}, QJsonObject{{"target", target}});
+    if (options.json)
+        Out() << Json(result.ToJson()) << '\n';
+    else if (result.ok)
+        Out() << Json(result.body) << '\n';
+    else
+        PrintFailure(QStringLiteral("state"), result);
+    return result.ok ? 0 : 1;
 }
 
 int Watch(const Options& options)
@@ -310,11 +267,7 @@ int Run(const Options& options)
             Out() << Json(result.body) << '\n';
     }
     else
-    {
-        Err() << "unreal-gui: " << method << ": " << result.error << ": " << result.message << '\n';
-        if (result.body.contains("candidates"))
-            Err() << Json(result.body.value("candidates")) << '\n';
-    }
+        PrintFailure(method, result);
     return result.ok ? 0 : 1;
 }
 
@@ -372,8 +325,12 @@ int main(int argc, char** argv)
         code = Hosts(options);
     else if (verb == QLatin1String("list"))
         code = List(options);
+    else if (verb == QLatin1String("state"))
+        code = State(options);
     else if (verb == QLatin1String("watch"))
         code = Watch(options);
+    else if (verb == QLatin1String("mcp"))
+        code = cli::RunMcp(QStringLiteral(GUICONTROL_VERSION));
     else
         code = Run(options);
     Out().flush();

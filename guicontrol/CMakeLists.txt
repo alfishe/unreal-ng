@@ -40,6 +40,7 @@ target_link_libraries(guicontrol-widgets PUBLIC guicontrol Qt6::Gui Qt6::Widgets
 target_compile_options(guicontrol-widgets PRIVATE ${GC_WARNINGS})
 set_target_properties(guicontrol-widgets PROPERTIES AUTOMOC ON)
 
-add_executable(unreal-gui cli/main.cpp)
+add_executable(unreal-gui cli/main.cpp cli/connect.cpp cli/connect.h cli/mcp.cpp cli/mcp.h)
 target_link_libraries(unreal-gui PRIVATE guicontrol)
+target_compile_definitions(unreal-gui PRIVATE GUICONTROL_VERSION="${PROJECT_VERSION}")
 target_compile_options(unreal-gui PRIVATE ${GC_WARNINGS})

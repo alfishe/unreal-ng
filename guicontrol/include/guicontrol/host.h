@@ -84,6 +84,10 @@ public:
     void Invoke(const QString& method, const QString& target, const QJsonObject& params, const QString& client,
                 Done done);
 
+    /// A declared command's parameters: unknown or missing ones refused (bad_request naming them and what the command
+    /// takes; body `unknown`, `missing`). Commands without a declaration pass
+    static Result CheckParams(const QString& method, const QJsonObject& params);
+
     /// What a target names (design §4.5): the node, or a failure (not_found, ambiguous with the candidates)
     struct Resolution
     {

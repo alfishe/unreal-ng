@@ -191,6 +191,15 @@ public:
     void toggleBreakpointAtCursor();
     /// endregion </Controls>
 
+    /// region <The GUI control plane's disassembly (guicontrol/debuggercontrol.cpp)>
+    uint16_t topAddress() const { return m_displayAddress; }
+    uint16_t pcAddress() const { return m_currentPC; }
+    bool byteScroll() const { return m_scrollMode == ScrollMode::Byte; }
+    void setByteScroll(bool on);
+    /// The cursor row on `address`, without a jump of the history; the view scrolls only when the row is not shown
+    void setCursorAddress(uint16_t address);
+    /// endregion </The GUI control plane's disassembly>
+
     // Helper methods
 protected:
     Emulator* getEmulator();
@@ -226,6 +235,8 @@ public slots:
     void prepareForShutdown();  // Block all refreshes during app shutdown
 
 signals:
+    /// The rows were laid out again or the scroll mode changed: the top, the cursor or PC may differ
+    void viewChanged();
 
 private:
     Ui::DisassemblerWidget* ui;
