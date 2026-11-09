@@ -93,6 +93,12 @@ float MouseCurve(float value, const AnalogOptions& options)
     return value < 0 ? -curved : curved;
 }
 
+float PadMouseTravel(float travel, const AnalogOptions& options)
+{
+    const float gain = std::min(kPadMaxGain, 1.0f + options.padAccel * kPadAccelRef * std::fabs(travel));
+    return travel * gain;
+}
+
 float ScrubSpeed(float travel)
 {
     struct Point

@@ -62,6 +62,34 @@ TEST(ProfileStore_Test, Json_ParsesAndReportsThePlace)
     EXPECT_FALSE(ParseJson("{} x", value, error));
 }
 
+// A trackpad's pointer options (mapping-and-profiles.md §3): the acceleration, the coasting, the counts per pad unit
+TEST(ProfileStore_Test, TouchpadMouse_AccelInertiaAndScaleAreParsedAndChecked)
+{
+    JsonValue spec;
+    JsonValue defaults;
+    std::string error;
+    Binding binding;
+    ASSERT_TRUE(ParseJson(R"({"mouse": "dx", "scale": 90, "accel": 0.25, "inertia": true})", spec, error)) << error;
+    ASSERT_TRUE(ParseJson("{}", defaults, error)) << error;
+    ASSERT_TRUE(CompileBinding("rtouchpad.x", spec, defaults, "play", binding, error)) << error;
+    EXPECT_EQ(binding.target.mouse, MouseControl::Dx);
+    EXPECT_FLOAT_EQ(binding.target.scale, 90.0f);
+    EXPECT_FLOAT_EQ(binding.options.analog.padAccel, 0.25f);
+    EXPECT_TRUE(binding.options.analog.padInertia);
+
+    Binding plain;
+    ASSERT_TRUE(ParseJson(R"({"mouse": "dy"})", spec, error)) << error;
+    ASSERT_TRUE(CompileBinding("rtouchpad.y", spec, defaults, "play", plain, error)) << error;
+    EXPECT_FLOAT_EQ(plain.options.analog.padAccel, 0.25f) << "the default acceleration";
+    EXPECT_FALSE(plain.options.analog.padInertia) << "coasting is opt-in";
+
+    ASSERT_TRUE(ParseJson(R"({"mouse": "dx", "inertia": "yes"})", spec, error)) << error;
+    EXPECT_FALSE(CompileBinding("rtouchpad.x", spec, defaults, "play", plain, error));
+    EXPECT_NE(error.find("inertia"), std::string::npos) << error;
+    ASSERT_TRUE(ParseJson(R"({"mouse": "dx", "accel": -1})", spec, error)) << error;
+    EXPECT_FALSE(CompileBinding("rtouchpad.x", spec, defaults, "play", plain, error));
+}
+
 TEST(ProfileStore_Test, Yaml_ScalarsKeysAndPlace)
 {
     JsonValue value;

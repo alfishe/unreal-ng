@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/breakpoints/breakpointcondition.h"
@@ -991,6 +992,7 @@ void ControllerManager::OnFrame(uint64_t frame)
         _lastSample.assign(_connectors.size(), -1);
         _wasOwned = false;
         _mouseButtons = 0;  // the seek cleared the mouse's button sources
+        _mouseMotion.Reset();
     }
     FeedHaptics(frame);
 
@@ -1071,10 +1073,17 @@ void ControllerManager::SubmitMouse(const MouseSample& mouse)
         _context->pDebugManager ? _context->pDebugManager->GetMouseManager() : nullptr;
     if (mouse.dx != 0 || mouse.dy != 0)
     {
-        if (funnel)
-            funnel->ApplyHostMove(mouse.dx, mouse.dy);
-        else
-            manager->ApplyMotion(mouse.dx, mouse.dy);
+        // The host mouse's sensitivity setting ([INPUT] MouseScale, 2^n; a plain char, unsigned on ARM) applies to a
+        // pad's pointer as well: one setting for every way the mouse is driven
+        const double sensitivity = std::ldexp(1.0, static_cast<signed char>(_context->config.input.mousescale));
+        const MouseDeltaAccumulator::Steps steps = _mouseMotion.Feed(mouse.dx, mouse.dy, 1.0, 1.0, sensitivity);
+        if (steps.dx != 0 || steps.dy != 0)
+        {
+            if (funnel)
+                funnel->ApplyHostMove(steps.dx, steps.dy);
+            else
+                manager->ApplyMotion(steps.dx, steps.dy);
+        }
     }
     if (mouse.wheel != 0)
     {

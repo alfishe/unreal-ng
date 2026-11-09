@@ -103,6 +103,9 @@ void DeviceScreenWrapper::setupMouseCapture()
         _mouseCapture->setSourceSizeProvider([screen] { return screen->displaySourceRect().size(); });
         screen->setMouseCapture(_mouseCapture);
     }
+    // gamescope composes the Steam Deck's touchscreen as an absolute pointer (motion and a press, no touch events):
+    // captured, the pointer is a relative pad, not a mouse to warp
+    surface.pointerIsTouch = qEnvironmentVariable("XDG_CURRENT_DESKTOP") == QLatin1String("gamescope");
     _mouseCapture->setSurface(std::move(surface));
 
     _mouseCapture->setHostSettingsProvider([this] {

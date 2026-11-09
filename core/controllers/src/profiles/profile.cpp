@@ -21,7 +21,7 @@ const char* const kTargetFields[] = {"retro", "key", "keys", "macro", "mouse", "
 /// Known and kept, not acted on yet (TODO.md C2c): `invert`
 const char* const kOptionFields[] = {"turbo",        "on",           "off",   "count",    "press",
                                      "frames",       "label",        "consume", "ways",   "deadzone",
-                                     "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
+                                     "saturation",   "diagonal_hold", "gamma", "accel", "inertia", "invert", "repeat",
                                      "curve"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "joystick_keys", "options", "layers", "layer_key", "haptics",
@@ -187,6 +187,18 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         return Fraction(value, options.analog.diagonalHold, field, error, 90.0f);
     if (field == "gamma")
         return Fraction(value, options.analog.mouseGamma, field, error, 5.0f);
+    if (field == "inertia")
+    {
+        if (!value.IsBool())
+        {
+            error = "'inertia' is true or false";
+            return false;
+        }
+        options.analog.padInertia = value.AsBool();
+        return true;
+    }
+    if (field == "accel")
+        return Fraction(value, options.analog.padAccel, field, error, 10.0f);
     if (field == "label")
     {
         if (!value.IsString())
