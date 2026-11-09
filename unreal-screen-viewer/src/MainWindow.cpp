@@ -32,7 +32,7 @@ MainWindow::MainWindow(const QString& endpoint, QWidget* parent)
     , _webApiClient(std::make_unique<WebAPIClient>())
 {
     setWindowTitle("Unreal Screen Viewer");
-    setMinimumSize(800, 600);
+    // No window minimum of its own: the widgets' minimums bound it, so screen.zoom 1 fits the picture at 1x
     resize(1024, 768);
 
     setupUI();

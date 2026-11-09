@@ -87,6 +87,28 @@ def hosts(directory: Optional[Path] = None) -> list[dict]:
     return sorted(entries, key=lambda e: e.get("started", 0))
 
 
+class _Pipe:
+    """A Windows named pipe with the few socket calls Gui makes (no timeouts: a pipe read blocks)."""
+
+    def __init__(self, name: str):
+        self._file = open(name, "r+b", buffering=0)
+
+    def makefile(self, mode: str):
+        return self._file
+
+    def sendall(self, data: bytes) -> None:
+        self._file.write(data)
+
+    def settimeout(self, timeout: Optional[float]) -> None:
+        pass
+
+    def close(self) -> None:
+        try:
+            self._file.close()
+        except OSError:
+            pass
+
+
 class Gui:
     """One connection to one host."""
 
@@ -113,7 +135,7 @@ class Gui:
             raise GuiError("not_found", f"no GUI program is running ({discovery_directory()})")
         name = entries[0]["socket"]
         if platform.system() == "Windows":
-            raise GuiError("failed", "named pipes: connect with tcp= (start the program with --gui-control-port)")
+            return cls(_Pipe(name))
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect(name)
