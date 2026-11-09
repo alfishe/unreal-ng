@@ -1380,7 +1380,6 @@ TEST_F(ZXPolyGroup_Test, ScreenshotOfTheMasterIsTheComposedDisplayFrame)
     ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
     ASSERT_NE(group, nullptr);
     group->RunFrames(5);
-    master->GetContext()->pScreen->SetPresentDelayFrames(0);
     const ZXPolyGroup::Status status = group->GetStatus();
 
     ScreenshotOptions full;
@@ -1404,7 +1403,6 @@ TEST_F(ZXPolyGroup_Test, ScreenshotOfTheMasterIsTheComposedDisplayFrame)
     // Slave 2 is not shown: its own native frame
     std::shared_ptr<Emulator> slave = manager->GetEmulator(status.memberIds[2]);
     ASSERT_TRUE(slave);
-    slave->GetContext()->pScreen->SetPresentDelayFrames(0);
     slave->GetContext()->pScreen->LatchFramebuffer();
     const ScreenshotResult own = Screenshotter::Take(status.memberIds[2], full);
     ASSERT_TRUE(own.ok) << own.errorMessage;

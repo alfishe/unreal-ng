@@ -229,6 +229,10 @@ protected:
     // Sits after the recording and analyzer taps (they stay in emulated time)
     // and before the DRC resampler. Emulation thread only.
     int _outputDelayFrames = 0;
+    // The last frame's sound in the device ring's stream (takeFrameAudioEnd)
+    bool _frameAudioEndValid = false;
+    uint64_t _frameAudioEnd = 0;
+    uint32_t _frameAudioFrames = 0;
     std::deque<std::vector<int16_t>> _outputDelayLine;
     std::vector<int16_t> _delayedOut;
     int16_t _deviceBuffer[DEVICE_BUFFER_FRAMES * AUDIO_CHANNELS] = {};
@@ -932,6 +936,12 @@ public:
     /// and analyzers are not delayed. Emulation thread.
     void setOutputDelayFrames(int frames) { _outputDelayFrames = frames < 0 ? 0 : frames; }
     int getOutputDelayFrames() const { return _outputDelayFrames; }
+
+    /// Emulation thread, after handleFrameEnd: where the frame's sound ends in the device ring's stream
+    /// (AudioDeviceDescriptor::streamWritten, plus the frames the output delay line still holds back) and how
+    /// many device frames one machine frame gives. False when this frame delivered nothing to a device (no
+    /// device, turbo without sound, a held output). Clears the record: one answer per frame
+    bool takeFrameAudioEnd(uint64_t* streamFrame, uint32_t* deviceFramesPerFrame);
     /// endregion </Emulation events>
 
     /// region <Wave file export>

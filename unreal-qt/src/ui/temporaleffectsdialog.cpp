@@ -302,7 +302,7 @@ void TemporalEffectsDialog::refreshDlssStatus()
         _dlssDetectors->clear();
         return;
     }
-    const double frameMs = screen->GetPresentDelayUs() / 1000.0 / std::max<int>(1, screen->GetEffectivePresentDelayFrames());
+    const double frameMs = screen->NativeFramePeriodUs() / 1000.0;
     _dlssStatus->setText(tr("Picture and sound delayed %1 frames (%2 ms).\n"
                             "Analysis %3 ms/frame (last %4 ms). Corrected %5 of %6 frames.\n"
                             "Shown raw %7 (output after the frame was on screen), late %8, restarts %9.")

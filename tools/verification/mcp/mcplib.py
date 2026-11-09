@@ -131,6 +131,7 @@ class WebSocket:
 
     def __init__(self, port, path='/api/v1/ws', token=None, headers=None, upgrade=True, rcvbuf=None):
         import base64
+        self.pending = []  # messages put back by unread(), read before the socket
         if rcvbuf:  # a small receive window, set before connect (a slow consumer)
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
@@ -179,6 +180,8 @@ class WebSocket:
     def recv(self, timeout=5):
         """The next JSON text message; None once the server closed (or nothing came in `timeout`: self.closed stays
         False then)"""
+        if self.pending:
+            return self.pending.pop(0)
         self.sock.settimeout(timeout)
         while True:
             try:
@@ -217,6 +220,10 @@ class WebSocket:
             if predicate(message):
                 return message
         expect(False, what, seen[-12:])
+
+    def unread(self, messages):
+        """Puts messages back: the next reads return them first, in order"""
+        self.pending[:0] = messages
 
     def drain(self, seconds=0.2):
         """Every message that comes within `seconds`"""

@@ -116,7 +116,7 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
             std::string line = std::string(status.available ? "* " : "  ") + status.info.id;
             line.resize(std::max<size_t>(line.size() + 1, 32), ' ');
             line += std::string("[") + actions::ValueKindName(status.info.kind) + (status.info.held ? ", held" : "") +
-                    (status.info.gui ? ", gui" : "") + "] " + status.info.label;
+                    "] " + status.info.label;
             if (!status.info.params.empty())
                 line += " (" + status.info.params + ")";
             if (!status.available)
@@ -138,7 +138,6 @@ void CLIProcessor::HandleAction(const ClientSession& session, const std::vector<
                 row["group"] = status.info.group;
                 row["kind"] = actions::ValueKindName(status.info.kind);
                 row["held"] = status.info.held;
-                row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
                 row["toggle"] = status.info.toggle;

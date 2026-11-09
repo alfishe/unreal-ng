@@ -57,7 +57,7 @@ namespace
             }
             out << (action["available"].asBool() ? "* " : "  ") << action["id"].asString() << " ["
                 << action["kind"].asString() << (action["held"].asBool() ? ", held" : "")
-                << (action["gui"].asBool() ? ", gui" : "") << "] " << action["label"].asString();
+                << "] " << action["label"].asString();
             if (action["scope"].isString())
                 out << " (scope " << action["scope"].asString() << ")";
             if (action["params"].isString())

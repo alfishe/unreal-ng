@@ -733,7 +733,7 @@ std::vector<RegistrationHandle> RegisterMachineAreaActions(ActionRegistry& regis
     std::vector<RegistrationHandle> handles;
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    const char* description, Executor run, ActionRules rules, bool held = false) {
-        handles.push_back(registry.Register({id, label, group, kind, held, false, params, description, false},
+        handles.push_back(registry.Register({id, label, group, kind, held, params, description, false},
                                             std::move(run), std::move(rules)));
     };
     const char* machine = "Capture and machine";
@@ -846,6 +846,23 @@ std::vector<RegistrationHandle> RegisterMachineAreaActions(ActionRegistry& regis
             "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? "
             "(single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?",
             "", [](const ActionCall& call) { return Recording(call, "toggle"); }, std::move(rules));
+    }
+    {
+        // A REC key and a STOP key (no toggle): the start is the recording's state, the stop unavailable until one runs
+        ActionRules start = RouteRules("POST", "/video/record");
+        start.state = [](Emulator& emulator, const ActionValue&) { return RecordingOn(emulator, false); };
+        add("cap.record_start", "Start recording", machine, ValueKind::Press,
+            "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? "
+            "(single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?",
+            "Start a video or audio recording (params as cap.record_toggle); refused while one runs.",
+            [](const ActionCall& call) { return Recording(call, "start"); }, std::move(start));
+        ActionRules stop = RouteRules("POST", "/video/record");
+        stop.unavailable = [](Emulator& emulator, const ActionValue&) {
+            const std::optional<bool> on = RecordingOn(emulator, false);
+            return on && *on ? std::string() : std::string("no recording runs");
+        };
+        add("cap.record_stop", "Stop recording", machine, ValueKind::Press, "", "Stop the running video or audio recording.",
+            [](const ActionCall& call) { return Recording(call, "stop"); }, std::move(stop));
     }
     {
         ActionRules rules = RouteRules("POST", "/video/record");

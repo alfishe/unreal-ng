@@ -26,7 +26,7 @@ def render(g):
     cap = CAP_ON if on else CAP
     dim = tuple(v.mix(LEGEND, cap, 0.5))
     c = v.canvas_for(g['id'], gap=0.9)
-    glyph, alpha = v.flat_glyph(c, {'w': LEGEND, 'l': LEGEND, 'e': LEGEND, 'b': LEGEND, 'd': dim, 'k': None,
+    glyph, alpha = v.flat_glyph(c, {'w': LEGEND, 'l': LEGEND, 'e': LEGEND, 'b': LEGEND, 'd': dim, 'r': (232, 64, 56), 'k': None,
                                     'g': None}, black_fill=dim, black_line=LEGEND)
     base = v.to_image(np.zeros((v.R, v.R, 3)) + v.rgb(PAD))
     d = ImageDraw.Draw(base)

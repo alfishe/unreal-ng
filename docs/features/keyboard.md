@@ -129,7 +129,7 @@ model does not run.
 
 ## On-screen keyboard
 
-View → On-screen Keyboard (or a controller button bound to `osd.keyboard`) opens the emulated machine's own
+View → On-screen Keyboard (or a controller button bound to `unrealqt.osd_keyboard`) opens the emulated machine's own
 keyboard in a window of its own: the 48K's rubber keys, the 128's and the +2's, the Pentagon's sticker keyboard,
 the Profi's, the PC clones' PC keyboards and so on (one picture per model, drawn by
 [POC 031](../../tools/poc/031-authentic-osd-keyboards/README.md)). The window never takes the keyboard focus from

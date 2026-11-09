@@ -92,7 +92,6 @@ protected:
         for (uint16_t a = 0x5800; a < 0x5B00; a++)
             z80->DirectWrite(a, static_cast<uint8_t>(kPaperColor << 3));
         _context->pPortDecoder->DecodePortOut(0xFE, static_cast<uint8_t>(kBorderColor), 0);
-        _screen->SetPresentDelayFrames(0);
         _emulator->RunNFrames(3);
     }
 

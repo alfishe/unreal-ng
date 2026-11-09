@@ -2,8 +2,8 @@
 
 /// @file metadatasettings.h
 /// @brief How the Qt debugger uses what is known about the program (the memory markup: the software profile, the
-/// analysis, the user's marks) and the labels: global switches of the application (Debug > Metadata, the
-/// dbg.metadata_* actions and dbg.labels_toggle), kept in the settings. Every debugger window follows them.
+/// analysis, the user's marks) and the labels: global switches of the application (Debug > Metadata, the GUI control
+/// plane's metadata.set), kept in the settings. Every debugger window follows them.
 ///
 /// `Metadata` is the main one: off, the debugger shows what it showed before the markup (no data rows, colours or
 /// notes) whatever the others say; the labels stay apart.
@@ -37,9 +37,6 @@ public:
     /// Set and kept; `changed` (on the GUI thread) and the control surfaces' readouts when it differs
     void Set(Switch which, bool on);
     void Toggle(Switch which) { Set(which, !IsOn(which)); }
-
-    /// The action of the switch (dbg.metadata_toggle, ..., dbg.labels_toggle)
-    static const char* ActionId(Switch which);
 
 signals:
     void changed();

@@ -69,11 +69,11 @@
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
-#include "../../../automation.h"
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
+#include "../../../common/guicall.h"
 #include "../../../operationsstatus.h"
 #include <debugger/ttd/ttdcontrol.h>
 #include <debugger/debugmanager.h>
@@ -171,6 +171,51 @@ inline void ValidatePageIndex(const char* api, const std::string& type, int page
                                     " out of range (0-" + std::to_string(PAGE_SIZE - 1) + ")");
 }
 
+
+/// Lua value -> StateNode: a whole number an Int, a table with keys 1..n an array, another table an object
+inline StateNode LuaToStateNode(const sol::object& value)
+{
+    switch (value.get_type())
+    {
+        case sol::type::boolean: return StateNode(value.as<bool>());
+        case sol::type::number:
+        {
+            const double number = value.as<double>();
+            if (number == std::floor(number) && std::abs(number) < 9.0e15)
+                return StateNode(static_cast<int64_t>(number));
+            return StateNode(number);
+        }
+        case sol::type::string: return StateNode(value.as<std::string>());
+        case sol::type::table:
+        {
+            const sol::table table = value.as<sol::table>();
+            const size_t length = table.size();
+            size_t count = 0;
+            for (const auto& entry : table)
+            {
+                (void)entry;
+                count++;
+            }
+            if (length > 0 && count == length)
+            {
+                StateNode array = StateNode::Array();
+                for (size_t i = 1; i <= length; i++)
+                    array.push(LuaToStateNode(table[i]));
+                return array;
+            }
+            StateNode object = StateNode::Object();
+            for (const auto& [key, item] : table)
+            {
+                const std::string name = key.is<std::string>()               ? key.as<std::string>()
+                                         : key.get_type() == sol::type::number ? std::to_string(key.as<int64_t>())
+                                                                               : std::string("?");
+                object[name] = LuaToStateNode(item);
+            }
+            return object;
+        }
+        default: return StateNode();
+    }
+}
 
 /// StateNode -> Lua table (objects keep their keys, arrays become 1-based
 /// sequences). The one converter Lua needs for every DeviceState report.
@@ -1165,11 +1210,6 @@ public:
                 }
             }
             return nullptr;
-        });
-
-        lua.set_function("videowall_singlesync", [](bool enable, sol::optional<std::string> emulatorId) -> bool {
-            std::string id = emulatorId.value_or("");
-            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, id);
         });
 
         // Register access - requires emulator instance
@@ -2233,7 +2273,7 @@ public:
             }
             return StateNodeToLua(s, controllers::ControllerControl(emulator->GetContext()).Execute(request).ToValue());
         });
-        // actions() -> {instance, actions = {{id, label, group, kind, held, gui, scope, needs_pause, available, error,
+        // actions() -> {instance, actions = {{id, label, group, kind, held, scope, needs_pause, available, error,
         // reason}, ...}}; action(id, [value], [params]) -> {ok, action, error, message, result}: the core
         // ActionRegistry (control surfaces actions.md §6), as the CLI `action`, WebAPI /controllers/actions, MCP
         // `actions` and Python actions() / action(). value by the action's kind: nil (a press), true / false, a number
@@ -2258,7 +2298,6 @@ public:
                 row["group"] = status.info.group;
                 row["kind"] = actions::ValueKindName(status.info.kind);
                 row["held"] = status.info.held;
-                row["gui"] = status.info.gui;
                 row["scope"] = automation_gate::CompanionScopeName(status.scope);
                 row["needs_pause"] = status.needsPause;
                 row["toggle"] = status.info.toggle;
@@ -2443,7 +2482,7 @@ public:
             return StateNodeToLua(s, companion::streamdeck::Call(verb.value_or("status"), args).body);
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
-        // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
+        // host.clients, video.present, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
         // debug.analyzers, controllers.state, game.events, devices.access; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
@@ -2825,6 +2864,30 @@ public:
         });
         lua.set_function("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
+        });
+        // The GUI control plane's methods the program registered (gui-control-plane design §4.10), as `unreal-gui`,
+        // the CLI `gui`, WebAPI /api/v1/gui: gui_list(), gui_catalogue(), gui_state(target), gui_call(method, [params],
+        // [target]). Each answers the plane's result {ok, body} or {ok = false, error, message}; waits up to 15 s
+        lua.set_function("gui_list", [](sol::this_state s) -> sol::object {
+            return StateNodeToLua(s, gui_call::CallAndWait("list", {}, StateNode::Object()));
+        });
+        lua.set_function("gui_catalogue", [](sol::this_state s) -> sol::object {
+            StateNode catalogue;
+            if (!StateNodeFromJsonText(GuiPlane::Catalogue(), catalogue))
+                return StateNodeToLua(s, gui_call::Parse(GuiPlane::Failure(GuiPlane::kNoGui, "no GUI catalogue")));
+            return StateNodeToLua(s, catalogue);
+        });
+        lua.set_function("gui_state", [](sol::this_state s, const std::string& target) -> sol::object {
+            StateNode params = StateNode::Object();
+            params["target"] = target;
+            return StateNodeToLua(s, gui_call::CallAndWait("state", {}, params));
+        });
+        lua.set_function("gui_call", [](sol::this_state s, const std::string& method, sol::optional<sol::object> params,
+                                        sol::optional<std::string> target) -> sol::object {
+            StateNode node = params && params->get_type() == sol::type::table ? LuaToStateNode(*params) : StateNode::Object();
+            if (!node.isObject())
+                node = StateNode::Object();
+            return StateNodeToLua(s, gui_call::CallAndWait(method, target.value_or(std::string()), node));
         });
         // step([skip_bp], [cpu]), steps(count, [skip_bp], [cpu]), stepover([cpu]), step_out([cpu]): "gs" / "ms" steps
         // the sound card CPU (CardStep; step("gs") too)

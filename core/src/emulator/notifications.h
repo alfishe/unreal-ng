@@ -278,33 +278,6 @@ public:
     virtual ~CPUFreqPayload() = default;
 };
 
-/// Payload for requesting single sync mode in videowall
-/// Example: messageCenter.Post(NC_VIDEOWALL_SINGLE_SYNC_MODE, new VideowallSyncModePayload(emulatorId, true));
-class VideowallSyncModePayload : public MessagePayload
-{
-public:
-    unreal::UUID _emulatorId;
-    bool _enable;
-
-public:
-    VideowallSyncModePayload(const unreal::UUID& emulatorId, bool enable)
-        : MessagePayload()
-        , _emulatorId(emulatorId)
-        , _enable(enable)
-    {
-    }
-    
-    VideowallSyncModePayload(const std::string& emulatorId, bool enable)
-        : MessagePayload()
-        , _emulatorId(emulatorId.empty() ? unreal::UUID() : unreal::UUID(emulatorId))
-        , _enable(enable)
-    {
-    }
-    
-    virtual ~VideowallSyncModePayload() = default;
-};
-
-
 /// region <Instance-tagged payloads (GDB TDD §6.3 prerequisite)>
 //
 // These payloads inherit from SimpleNumberPayload so that existing observers

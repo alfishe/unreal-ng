@@ -13,8 +13,9 @@
 
 /// @file windowview.h
 /// @brief The picture as a GUI window draws it, for the automation surfaces (screenshot source "window"), and the
-/// window's display settings (GPU acceleration, CRT effects and their parameters, temporal blending, full screen and
-/// scale, toolbar / status bar, HUD, on-screen keyboard, the ZX Next layers window).
+/// window's display settings (GPU acceleration, CRT effects and their parameters, temporal blending, smooth motion and
+/// the frame presenter's timing, full screen and scale, toolbar / status bar, HUD, on-screen keyboard, the ZX Next
+/// layers window).
 ///
 /// The framebuffer and a screenshot say what the machine shows; how a front end puts that on the host display (the
 /// shape it stretches the picture to, the letterbox, the CRT shader, the HUD) only the front end knows. The core has
@@ -34,6 +35,96 @@ struct WindowViewGrab
     std::string backend;        ///< how the window draws: "gpu" / "software"
 };
 
+/// The GPU time of one of the window's passes (GL timestamps, read back without waiting), ms
+struct GpuPassMs
+{
+    double p50 = 0.0;      ///< over the last 600 measured
+    double max = 0.0;      ///< ... the longest of them
+    double longest = 0.0;  ///< since the window's GL context was made
+    uint64_t measured = 0;
+};
+
+/// How the window's frames reach the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter): the
+/// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
+struct WindowPresentStats
+{
+    std::string presenter;  ///< "metal", "dxgi", "gl-timed" (present-at-time), "gl" (the window's own swap), "software"
+    bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
+    bool vrr = false;          ///< frames presented each at its own time (c-vrr); false: on the refresh grid (b-vsync)
+    /// Can the display under the window follow the frames: "yes", "no", "unknown" (Wayland: no client query; Windows:
+    /// the presenter checks the vblanks), and why not
+    std::string vrrSupport = "unknown";
+    std::string vrrReason;
+    /// [VIDEO] DisplayRate's state: "keep" (off), "matched" (the display runs `displayHz` for the machine's
+    /// `machineHz`, its own mode `originalHz`), "unchanged" (match asked, nothing switched: `displayReason` says why)
+    std::string displayState = "keep";
+    std::string displayReason;
+    /// View > Video Synchronization's step in effect (VideoSyncName: off / vrr / display_rate / interpolate), and why
+    /// the steps before it are not ("" for vrr and off)
+    std::string sync = "off";
+    std::string syncReason;
+    double displayHz = 0.0;
+    double originalHz = 0.0;
+    double machineHz = 0.0;
+    double minRefreshHz = 0.0;
+    double maxRefreshHz = 0.0;
+    uint64_t presented = 0;  ///< native presenter only (0 otherwise), as NativePresenter::Stats
+    uint64_t shown = 0;
+    uint64_t dropped = 0;
+    uint64_t late = 0;        ///< shown more than a refresh after their time
+    double leadMs = 0.0;      ///< the adaptive lead in effect
+    double errorP50Ms = 0.0;  ///< screen time minus the time asked for
+    double errorP99Ms = 0.0;
+    double errorMaxMs = 0.0;
+    double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
+    double gpuWaitMaxMs = 0.0;
+    GpuPassMs gpuSmooth;     ///< smooth motion's GPU passes alone, without the CPU's work between them (0 on the CPU)
+    GpuPassMs gpuSmoothCpu;  ///< smooth motion's refresh on the CPU's clock (wall time, the GPU's waits included)
+    GpuPassMs gpuPicture;  ///< the picture: the CRT composition, the beam model, a custom shader or a preset
+    /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
+    /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
+    std::string clock = "none";
+    uint64_t beatFrames = 0;  ///< native presenter only: pictures judged against the beat pattern (ScreenBeat)
+    uint64_t offBeat = 0;     ///< ... on screen for a refresh count outside it: a refresh missed, held, never shown
+    double soundOffsetP50Ms = 0.0;  ///< screen time minus the picture's sound (the clock's time, the lip-sync trim out)
+    double soundOffsetP99Ms = 0.0;
+    /// How the frames are timed (Screen::GetPresentTimingStats, FillPresentTiming). The frame timed last: its sound
+    /// comes later than the screen holds its frames (a long audio path such as a Bluetooth headset, a large lip-sync
+    /// trim), so it is due `maxDelayMs` after its frame's end, ahead of its sound
+    bool delayClamped = false;
+    double maxDelayMs = 0.0;   ///< the longest video delay the screen holds
+    uint64_t clampedFrames = 0;
+    uint64_t early = 0;        ///< refreshes that found no frame due yet (start up)
+    uint64_t carried = 0;      ///< steps of the frames' clock carried and paid back slowly (a device came or went, an
+                               ///< underrun moved the stream)
+    uint64_t cuts = 0;         ///< breaks of the frame sequence (a pause, a seek, a stall, turbo)
+    double carryMs = 0.0;      ///< the carry being paid back now
+
+    std::string smooth = "off";  ///< smooth motion in effect: off / blend / interpolate (off with temporal blending)
+    std::string smoothDevice;    ///< where its steps run: "gpu" / "cpu" ("" while off)
+    bool game = false;           ///< a game profile's `video:` cadence applies
+    uint64_t frames = 0;         ///< smooth motion's counters (SmoothMotion::Stats)
+    uint64_t pictures = 0;
+    uint64_t renders = 0;
+    uint64_t blended = 0;
+    uint64_t interpolated = 0;
+    uint64_t motionFields = 0;
+    uint64_t onDevice = 0;
+    uint64_t heldFlicker = 0;
+};
+
+/// The screen's timing counters into a front end's present report
+inline void FillPresentTiming(WindowPresentStats& p, const PresentTimingStats& t)
+{
+    p.delayClamped = t.delayClamped;
+    p.maxDelayMs = static_cast<double>(t.maxDelayNs) / 1e6;
+    p.clampedFrames = t.clampedFrames;
+    p.early = t.early;
+    p.carried = t.carried;
+    p.cuts = t.cuts;
+    p.carryMs = static_cast<double>(t.carryNs) / 1e6;
+}
+
 /// How a window draws the picture: its display settings as the View menu shows them
 struct WindowDisplaySettings
 {
@@ -48,6 +139,13 @@ struct WindowDisplaySettings
     std::string blendingWeights;           ///< "equal" / "exponential"
     double blendingDecay = 0.5;            ///< exponential weights: each older frame's share of the newer one, 0.1..0.9
     std::string emulatorId;                ///< the instance the window shows ("" = none)
+    std::string smoothMotion = "off";      ///< [VIDEO] SmoothMotion of the shown instance: off / blend / interpolate / auto
+    std::string effectsDevice = "gpu";     ///< [VIDEO] EffectsDevice of the shown instance: gpu / cpu
+    std::string presentPolicy = "auto";    ///< [VIDEO] PresentPolicy of the shown instance: auto / vrr / vsync
+    std::string displayRate = "keep";      ///< [VIDEO] DisplayRate of the shown instance: keep / match
+    int lipSyncOffsetMs = 0;               ///< [VIDEO] LipSyncOffsetMs of the shown instance, -200..200
+    WindowPresentStats present;            ///< read with the settings (Get) and published with them (Publish: the
+                                           ///< counters as of the publish, at most once a second)
 
     bool fullscreen = false;               ///< the window fills the display
     std::string view = "full";             ///< the part of the frame shown: "full", "screen", "content" (pictureview.h)
@@ -81,6 +179,11 @@ struct WindowDisplayChange
     std::optional<int> blendingFrames;
     std::optional<std::string> blendingWeights;
     std::optional<double> blendingDecay;
+    std::optional<std::string> smoothMotion;
+    std::optional<std::string> effectsDevice;
+    std::optional<std::string> presentPolicy;
+    std::optional<std::string> displayRate;
+    std::optional<int> lipSyncOffsetMs;
     std::optional<bool> fullscreen;
     std::optional<std::string> view;
     std::optional<int> scale;
@@ -99,7 +202,7 @@ struct WindowDisplayChange
     bool Empty() const
     {
         return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
-               !fullscreen && !view && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
+               !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !view && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
 };

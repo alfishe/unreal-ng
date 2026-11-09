@@ -17,11 +17,16 @@
 #include "remotemachine.h"
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPointer>
 #include <QSettings>
 #include <QTcpSocket>
 #include <QThread>
@@ -703,6 +708,9 @@ public:
         return m_histories;
     }
     const QString &base() const { return m_base; }
+    // The emulator taken over (empty while offline) and the WebAPI's address, for the GUI control plane
+    QString id() const { return m_online.load() ? m_id : QString(); }
+    QString endpoint() const { return QString("http://%1:%2").arg(m_host).arg(m_port); }
 
     bool debug_online() const override { return m_online.load(); }
     std::string debug_offline_text() const override
@@ -1656,4 +1664,54 @@ void RemoteMachineTraffic(ecatshim::Emulator * e, uint64_t &requests, uint64_t &
 {
     requests = bytes = 0;
     if (auto * m = dynamic_cast<RemoteMachine *>(e)) m->traffic(requests, bytes);
+}
+
+std::string RemoteMachineId(ecatshim::Emulator * e)
+{
+    auto * m = dynamic_cast<RemoteMachine *>(e);
+    return m ? m->id().toStdString() : std::string();
+}
+
+std::string RemoteMachineEndpoint(ecatshim::Emulator * e)
+{
+    auto * m = dynamic_cast<RemoteMachine *>(e);
+    return m ? m->endpoint().toStdString() : std::string();
+}
+
+void RemoteMachineAction(ecatshim::Emulator * e, const std::string &action, const std::string &params, QObject * context,
+                         MachineActionDone done)
+{
+    auto * m = dynamic_cast<RemoteMachine *>(e);
+    const QString id = m ? m->id() : QString();
+    if (id.isEmpty()) {
+        done(MachineActionResult{false, "not_now", "the debugger is not connected to an emulator", "{}"});
+        return;
+    }
+    // The views' Http blocks: a search through the history may take a while, so this one goes on its own, the GUI
+    // thread free meanwhile
+    static QNetworkAccessManager * network = new QNetworkAccessManager(QCoreApplication::instance());
+    QNetworkRequest request(QUrl(m->endpoint() + "/api/v1/controllers/actions/" + QString::fromStdString(action)));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setTransferTimeout(30000);
+    const QJsonObject body{{"instance", id}, {"value", true},
+                           {"params", QJsonDocument::fromJson(QByteArray::fromStdString(params)).object()}};
+    QNetworkReply * reply = network->post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    const QPointer<QObject> alive(context);
+    QObject::connect(reply, &QNetworkReply::finished, reply, [reply, alive, done]() {
+        reply->deleteLater();
+        if (!alive) return;
+        const QJsonObject answer = QJsonDocument::fromJson(reply->readAll()).object();
+        MachineActionResult r;
+        if (!answer.contains("ok")) {
+            r.error = "failed";
+            r.message = answer.value("message").toString(reply->errorString()).toStdString();
+            r.body = "{}";
+        } else {
+            r.ok = answer.value("ok").toBool();
+            r.error = answer.value("error").toString().toStdString();
+            r.message = answer.value("message").toString().toStdString();
+            r.body = QJsonDocument(answer.value("result").toObject()).toJson(QJsonDocument::Compact).toStdString();
+        }
+        done(r);
+    });
 }

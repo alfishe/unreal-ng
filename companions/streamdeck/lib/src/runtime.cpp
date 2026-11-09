@@ -117,11 +117,26 @@ void Runtime::Run(const std::atomic<bool>& stop)
 
 // The REST fallback's poller: time travel for the strip and the faces' readouts nobody pushes. Started by the device
 // thread while the surface client is not live, ended once it is (a connected deck has no poller thread).
+// A key of the page shows a GUI program's state (gui.*): the surface client never pushes it, so it is polled live too
+bool Runtime::PageReadsGuiLocked() const
+{
+    for (const Node* n : _page.keys)
+        if (n)
+        {
+            if (n->state.rfind("gui.", 0) == 0)
+                return true;
+            for (const Face* f : {&n->face, n->faceOn ? &*n->faceOn : nullptr})
+                if (f && f->value && f->value->readout.rfind("gui.", 0) == 0)
+                    return true;
+        }
+    return false;
+}
+
 void Runtime::EnsureMonitor()
 {
     {
         std::lock_guard l(_mu);
-        if (_live || _monitorRunning)
+        if ((_live && !PageReadsGuiLocked()) || _monitorRunning)
             return;
     }
     if (_monitor.joinable())
@@ -137,7 +152,7 @@ void Runtime::EnsureMonitor()
         {
             {
                 std::lock_guard l(_mu);
-                if (_live)
+                if (_live && !PageReadsGuiLocked())
                 {
                     _monitorRunning = false;
                     return;
@@ -160,12 +175,13 @@ void Runtime::EnsureMonitor()
                 if (ttd)
                     fps = _page.strip->fps;
                 const bool kick = _monitorKick.exchange(false);
-                if (!_live && (kick || now >= nextReadouts))
+                if (kick || now >= nextReadouts)
                 {
                     nextReadouts = now + std::chrono::milliseconds(std::max(20, _opt.readoutPollMs));
-                    // the same few paths a page's keys name: its state-bound faces and its value faces
+                    // the same few paths a page's keys name: its state-bound faces and its value faces. Live, the
+                    // surface client pushes the core's; the GUI program's (gui.*) are asked still
                     auto add = [&](const std::string& path) {
-                        if (!path.empty() && !_pushed.count(path) &&
+                        if (!path.empty() && !_pushed.count(path) && (!_live || path.rfind("gui.", 0) == 0) &&
                             std::find(paths.begin(), paths.end(), path) == paths.end())
                             paths.push_back(path);
                     };
@@ -240,6 +256,11 @@ void Runtime::Step(int timeoutMs)
     {
         std::lock_guard l(_mu);
         handled = _posted;
+        if (_redrawAll)
+        {
+            _redrawAll = false;
+            force = true;
+        }
         while (!_injected.empty())
         {
             const Event e = _injected.front();
@@ -523,7 +544,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 if (const Dial* d = _page.dials[static_cast<size_t>(e.index)]; d && d->press)
                 {
                     Job j{*d->press, sdb::Format("dial {} press", e.index), json::object(), "stay"};
-                    if (d->press->kind == "action" && d->press->spec.value("hold", false))
+                    if ((d->press->kind == "action" || d->press->kind == "gui") && d->press->spec.value("hold", false))
                     {
                         j.phase = 1;
                         Job release = j;
@@ -628,7 +649,7 @@ void Runtime::Activate(int key)
         return;  // a display-only key (a value face without "do")
     Job j{n->action, n->id, json::object(), n->then, n->action.kind == "toggle"};
     j.state = n->state;
-    if (n->action.kind == "action" && n->action.spec.value("hold", false))
+    if ((n->action.kind == "action" || n->action.kind == "gui") && n->action.spec.value("hold", false))
     {
         // press now, release on the key's release (KeyUp); "then" follows the release
         j.phase = 1;
@@ -1017,6 +1038,13 @@ void Runtime::SetPack(const std::string& pack)
     std::lock_guard l(_mu);
     _pack = pack;
     ++_posted;  // a Ticket taken now is done once a step has drawn the keys in the new pack
+}
+
+void Runtime::RedrawAll()
+{
+    std::lock_guard l(_mu);
+    _redrawAll = true;
+    ++_posted;
 }
 
 std::string Runtime::PackSetting() const

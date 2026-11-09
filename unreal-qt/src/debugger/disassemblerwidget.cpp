@@ -27,7 +27,6 @@
 #include "debugger/markup/memorymarkup.h"
 #include "debuggerwindow.h"
 #include "metadatasettings.h"
-#include "emulator/actions/steppingactions.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/memory/memory.h"
@@ -554,14 +553,12 @@ void DisassemblerWidget::jumpTo(uint16_t address)
     }
     m_forward.clear();
     m_cursorAddress = address;
-    publishCursor();
     setDisassemblerAddress(address);
 }
 
 void DisassemblerWidget::showPlace(const ViewPlace& place)
 {
     m_cursorAddress = place.cursor;
-    publishCursor();
     setDisassemblerAddress(place.top);
 }
 
@@ -689,19 +686,29 @@ void DisassemblerWidget::switchScrollMode()
     toggleScrollMode();
 }
 
+void DisassemblerWidget::setCursorAddress(uint16_t address)
+{
+    if (m_isShuttingDown || !getEmulator() || !getZ80Registers())
+        return;
+    m_cursorAddress = address;
+    if (shownRowOf(address) < 0 || shownRowOf(address) >= m_rowsShown)
+        setDisassemblerAddress(address);
+    else
+        layoutLines();
+}
+
+void DisassemblerWidget::setByteScroll(bool on)
+{
+    if (on != byteScroll())
+        toggleScrollMode();
+}
+
 void DisassemblerWidget::onLineClicked(int line)
 {
     if (m_isShuttingDown || line < 0 || line >= static_cast<int>(m_view->lines().size()))
         return;
     m_cursorAddress = m_view->lines()[static_cast<size_t>(line)].address;  // a long label's line: the row below
-    publishCursor();
     layoutLines();
-}
-
-void DisassemblerWidget::publishCursor()
-{
-    if (Emulator* emulator = getEmulator())
-        actions::DebuggerCursors::Instance().Set(emulator->GetId(), "disasm", m_cursorAddress);
 }
 
 void DisassemblerWidget::copyCursorLine()
@@ -748,7 +755,6 @@ void DisassemblerWidget::moveCursorBy(int rows)
     {
         address = static_cast<uint16_t>(address + rows);
         m_cursorAddress = address;
-        publishCursor();
         if (outOfView(shownRowOf(address)))
             setDisassemblerAddress(rows > 0 ? static_cast<uint16_t>(address - keep) : address);
         else
@@ -773,7 +779,6 @@ void DisassemblerWidget::moveCursorBy(int rows)
                 m_strip.Scroll(window, source, -keep, static_cast<size_t>(capacity));
         }
     });
-    publishCursor();
     layoutLines();
 }
 
@@ -884,7 +889,7 @@ bool DisassemblerWidget::withWindow(
     if (m_isShuttingDown || !context || !context->pMemory || !getZ80Registers() || !disassembler)
         return false;
 
-    // Labels off (dbg.labels_toggle): plain addresses in the operands; this thread only
+    // Labels off (metadata.set {switch: labels}): plain addresses in the operands; this thread only
     const MetadataSettings& settings = MetadataSettings::Instance();
     std::optional<Z80Disassembler::NoLabelsScope> noLabels;
     if (!settings.Uses(MetadataSettings::Switch::Labels))
@@ -1051,6 +1056,7 @@ void DisassemblerWidget::layoutLines()
     m_rowsShown = rowsShown;
     m_view->setLines(std::move(lines));
     m_view->setScrollAddress(m_displayAddress);
+    emit viewChanged();
 }
 
 void DisassemblerWidget::scrollRows(int rows)
@@ -1167,6 +1173,7 @@ void DisassemblerWidget::toggleScrollMode()
 
     // Update the indicator
     updateScrollModeIndicator();
+    emit viewChanged();
 }
 
 void DisassemblerWidget::reset()
@@ -1471,7 +1478,7 @@ uint16_t DisassemblerWidget::parseAddressInput(const QString& input)
 
 void DisassemblerWidget::goToAddress(uint16_t address)
 {
-    // Go to (Ctrl+G, dbg.goto), a register or stack entry: a jump of the address history
+    // Go to (Ctrl+G, disassembly.goto), a register or stack entry: a jump of the address history
     jumpTo(address);
 }
 

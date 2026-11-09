@@ -2,6 +2,7 @@
 #include "pch.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <vector>
 
@@ -101,9 +102,8 @@ TEST_F(PresentLatch_Test, LatchSnapshotsCompletedFrame)
     ASSERT_GT(fb.memoryBufferSize, 0u);
 
     // This test pins the TEAR-FREE property of the latch, independent of the
-    // A/V-sync present delay (covered by VideoModeChange_Test.PresentQueue_*):
-    // run in low-latency mode so each latch is immediately visible
-    _screen->SetPresentDelayFrames(0);
+    // A/V sync by time (FramesByTime_Test): no frame clock stamps this screen,
+    // so each latch is due at once
 
     // Render a recognizable "frame" into the live framebuffer and latch it
     memset(fb.memoryBuffer, 0x11, fb.memoryBufferSize);
@@ -185,7 +185,6 @@ TEST_F(PresentLatch_Test, PlaneB_PresentedCopyFollowsPresentedFrame)
     uint16_t* live = _screen->GetPlaneB(&count);
     ASSERT_NE(live, nullptr);
 
-    _screen->SetPresentDelayFrames(0);
     std::fill(live, live + count, uint16_t{0x1111});
     _screen->LatchFramebuffer();
     ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
@@ -202,18 +201,25 @@ TEST_F(PresentLatch_Test, PlaneB_PresentedCopyFollowsPresentedFrame)
     ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
     EXPECT_EQ(out.front(), 0x2222);
 
-    // With a present delay the copy trails exactly like the framebuffer does
-    _screen->SetPresentDelayFrames(1);
+    // A frame due later (its sound heard in a second) is not served yet: plane B trails exactly like the framebuffer
+    _screen->SettlePresentTiming();  // the frames so far are due
     std::fill(live, live + count, uint16_t{0x3333});
     _screen->LatchFramebuffer();
+    FrameStampInput later;
+    later.periodNs = 20'000'000;
+    later.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                      std::chrono::steady_clock::now().time_since_epoch()).count();
+    later.haveEmulated = true;
+    later.emulatedEndNs = later.nowNs + 1'000'000'000;
+    _screen->StampPresentTiming(later);
     ASSERT_TRUE(_screen->CopyPresentedPlaneB(out));
     EXPECT_EQ(out.front(), 0x2222) << "plane B of the frame CopyPresentedFramebuffer serves";
 
     // Off: frames latched afterwards carry no plane B
-    _screen->SetPresentDelayFrames(0);
     _emulator->GetFeatureManager()->setFeature(Features::kZXDLSS, false);
     _screen->InitFrame();
     _screen->LatchFramebuffer();
+    _screen->SettlePresentTiming();  // due at once, as on a stopped machine
     EXPECT_FALSE(_screen->CopyPresentedPlaneB(out));
 }
 

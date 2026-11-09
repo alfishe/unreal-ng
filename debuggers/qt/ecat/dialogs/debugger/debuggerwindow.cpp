@@ -9,10 +9,12 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QGraphicsColorizeEffect>
 #include <QHeaderView>
 #include <QIcon>
 #include <QImage>
+#include <QKeyEvent>
 #include <QPixmap>
 #include <QLabel>
 #include <QLineEdit>
@@ -356,16 +358,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_to_cursor->setShortcut(QKeySequence(Qt::Key_F4));
     m_to_cursor->setToolTip(tr("Run to the cursor") + " (F4)");
     addAction(m_to_cursor);
-    connect(m_to_cursor, &QAction::triggered, this, [this]() {
-        CpuPane * p = pane();
-        if (p == nullptr || !e->loaded) return;
-        mark_all();
-        const unsigned int address = p->code->cursor_address();
-        CPU * c = p->cpu;
-        Emulator * em = e;
-        e->invoke([em, c, address]() { em->debug_run_to(c, address); });
-        show_state();
-    });
+    connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
     tb->addSeparator();
 
     //An address of the listing: it follows the cursor, and Enter goes there
@@ -407,9 +400,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_bp_toggle->setShortcut(QKeySequence(Qt::Key_F2));
     m_bp_toggle->setShortcutContext(Qt::WindowShortcut);
     addAction(m_bp_toggle);
-    connect(m_bp_toggle, &QAction::triggered, this, [this]() {
-        if (CpuPane * p = pane()) p->code->toggle_breakpoint(p->code->cursor_address());
-    });
+    connect(m_bp_toggle, &QAction::triggered, this, [this]() { toggle_breakpoint_at_cursor(); });
 
     m_bp_clear = tb->addAction(tool_icon(":/icons/cancel"), tr("Remove all breakpoints"));
     connect(m_bp_clear, &QAction::triggered, this, [this]() {
@@ -460,6 +451,130 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     connect(close_action, &QAction::triggered, this, &QDialog::close);
     if (QToolButton * b = qobject_cast<QToolButton*>(tb->widgetForAction(close_action)))
         b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+}
+
+DisasmView * DebuggerWindow::current_code()
+{
+    CpuPane * p = pane();
+    return p ? p->code : nullptr;
+}
+
+MemoryView * DebuggerWindow::current_memory(bool shown)
+{
+    CPU * c = current_cpu();
+    return c ? m_memory_tabs->view_of(c, shown) : nullptr;
+}
+
+//The panes in the order the focus goes through them
+static const char * const PANES[] = {"disassembly", "registers", "memory", "stack"};
+
+QString DebuggerWindow::focused_pane()
+{
+    QWidget * f = focusWidget();
+    CpuPane * p = pane();
+    if (f == nullptr || p == nullptr) return QString();
+    const auto in = [f](QWidget * w) { return w != nullptr && (w == f || w->isAncestorOf(f)); };
+    if (in(p->code)) return PANES[0];
+    if (in(p->regs) || in(p->flags)) return PANES[1];
+    if (in(m_memory_tabs)) return PANES[2];
+    if (in(m_stack)) return PANES[3];
+    return QString();
+}
+
+bool DebuggerWindow::focus_pane(const QString &name)
+{
+    CpuPane * p = pane();
+    if (p == nullptr) return false;
+    QWidget * w = nullptr;
+    if (name == PANES[0]) {
+        w = p->code;
+    } else if (name == PANES[1]) {
+        w = p->regs;
+    } else if (name == PANES[2]) {
+        w = current_memory(true);
+        if (w == nullptr) w = m_memory_tabs->currentWidget();
+    } else if (name == PANES[3]) {
+        m_side_tabs->setCurrentWidget(m_stack);
+        w = m_stack;
+    }
+    if (w == nullptr) return false;
+    w->setFocus(Qt::OtherFocusReason);
+    return true;
+}
+
+void DebuggerWindow::move_pane_focus(int delta)
+{
+    const int n = (int)(sizeof(PANES) / sizeof(PANES[0]));
+    const QString now = focused_pane();
+    int i = -1;
+    for (int k = 0; k < n; k++)
+        if (now == PANES[k]) i = k;
+    //From none: the first pane forward, the last back
+    i = (i < 0) ? (delta > 0 ? 0 : n - 1) : ((i + delta) % n + n) % n;
+    focus_pane(PANES[i]);
+}
+
+void DebuggerWindow::send_pane_key(int key)
+{
+    if (focused_pane().isEmpty()) focus_pane(PANES[0]);
+    QWidget * target = focusWidget();
+    if (target == nullptr) return;
+    QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+    QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+    QCoreApplication::sendEvent(target, &press);
+    QCoreApplication::sendEvent(target, &release);
+}
+
+bool DebuggerWindow::set_memory_follow(const QString &name)
+{
+    static const char * const REGISTERS[] = {"pc", "sp", "bc", "de", "hl", "ix", "iy"};
+    const QString n = name.toLower();
+    if (n == "off") {
+        m_memory_follow.clear();
+        return true;
+    }
+    for (const char * r : REGISTERS)
+        if (n == r) {
+            m_memory_follow = n;
+            //Held: the dump goes there now, as it would at the stop
+            if (held()) follow_register();
+            return true;
+        }
+    return false;
+}
+
+void DebuggerWindow::follow_register()
+{
+    CPU * c = current_cpu();
+    MemoryView * v = current_memory();
+    if (m_memory_follow.isEmpty() || c == nullptr || v == nullptr) return;
+    v->go_to(register_value(c, m_memory_follow.toUpper().toStdString()) - v->source().origin);
+}
+
+bool DebuggerWindow::held()
+{
+    return e->loaded && pane() != nullptr && !m_router->read_only() && !e->debug_stepping() && e->debug_paused();
+}
+
+bool DebuggerWindow::run_to_cursor()
+{
+    CpuPane * p = pane();
+    if (!held()) return false;
+    mark_all();
+    const unsigned int address = p->code->cursor_address();
+    CPU * c = p->cpu;
+    Emulator * em = e;
+    e->invoke([em, c, address]() { em->debug_run_to(c, address); });
+    show_state();
+    return true;
+}
+
+bool DebuggerWindow::toggle_breakpoint_at_cursor()
+{
+    CpuPane * p = pane();
+    if (p == nullptr || !e->loaded || m_router->read_only()) return false;
+    p->code->toggle_breakpoint(p->code->cursor_address());
+    return true;
 }
 
 //The address field and the breakpoint buttons follow the listing's cursor
@@ -558,8 +673,13 @@ void DebuggerWindow::refresh_all(bool stopped)
         else p.code->follow_memory();
     }
     m_memory_tabs->refresh();
-    if (stopped) refresh_side();
-    else m_stack->refresh();
+    if (stopped) {
+        refresh_side();
+        follow_register();
+    } else {
+        m_stack->refresh();
+    }
+    emit views_refreshed();
 }
 
 void DebuggerWindow::update_view()

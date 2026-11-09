@@ -131,9 +131,6 @@ sleep(100)
 
 -- Get current timestamp
 time = os.time()
-
--- Toggle Videowall Single Sync Mode
-videowall_singlesync(true, "emulator-id")
 ```
 
 ### Tape Operations
@@ -627,6 +624,10 @@ take_control("my script")   -- automation session: the GUI shows it; after the u
 release_control()
 c = companions()            -- companion clients (devices acting as the user's hands): {companions = {...}, pairings = {...}, approval_available}
 n = companion_revoke("Desk panel")   -- revoke by id or name ("all": every one); the number revoked. A script never pairs or acts as a companion
+r = gui_list()                       -- the GUI control plane (command-interface.md §16.4): every GUI program, its windows and views
+r = gui_catalogue()                  -- the GUI interfaces, their commands and parameters
+r = gui_state("main/screen")         -- a node's state: {ok = true, body = {target, interfaces, state, instance}}
+r = gui_call("memory.goto", {addr = "0x6000"}, "debugger/memory")  -- a GUI command: {ok, body} or {ok = false, error, message}; waits up to 15 s
 profi = profi_state()       -- ZX Profi board chips: port_map (ext_ports, dos_latch, cpm, rom14, extended_map), ppi8255, pit8253.counters[], usart8251; available=false on other machines
 net = network_state()       -- network adapters: card (ZXNETUSB, W5300 sockets), com_port (UART, peer), virtual network (leases, sockets, activity); available=false without one
 r, err = network_configure{card="zxnetusb", host_access=true, hosts="name=10.0.2.50"}  -- change [NETWORK] settings: the reply table (nil, err, reply when refused); a ZX-bus card change (zxnetusb / zxwifi) is a slot change applied by a restart (owner decision Q11: r.status "applied", r.restart.emulatorId; the other keys go to the restarted machine), else "accepted" (in place)
@@ -1531,7 +1532,13 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
 emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
-                                     --   blending_decay (0.1..0.9), emulator (the instance the window shows),
+                                     --   blending_decay (0.1..0.9), smooth_motion ("off" / "blend" /
+                                     --   "interpolate" / "auto"), effects_device ("gpu" / "cpu"), present_policy
+                                     --   ("auto" / "vrr" / "vsync"), display_rate ("keep" / "match"),
+                                     --   lip_sync_offset_ms (-200..200),
+                                     --   present = { presenter, vrr, vrr_support = { state, reason }, clock, timing = { delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms }, late, beat = { frames, off }, lead_ms, error_ms, sound_offset_ms = { p50, p99 }, gpu_wait_ms, gpu_ms = { smooth, smooth_cpu, picture = { p50, max, longest, measured } }, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
+                                     --   display = { state, reason, hz, ... } }
+                                     --   (the frame presenter's timing), emulator (the instance the window shows),
                                      --   fullscreen, view ("full" / "screen" / "content"), views, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
                                      --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
                                      --   osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style,
@@ -1543,7 +1550,10 @@ emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu,
                                      --   crt_profile (one of crt_profiles: none, basic, ...,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
                                      --   than none switches CRT on), blending_frames, blending_weights,
-                                     --   blending_decay (0.3), view ("full" / "screen" / "content"), scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   blending_decay (0.3), smooth_motion ("interpolate"), effects_device
+                                     --   ("gpu" / "cpu"), present_policy ("vsync"), display_rate ("match"),
+                                     --   lip_sync_offset_ms (-40),
+                                     --   view ("full" / "screen" / "content"), scale (1..4), hud_theme, hud_notices = {["ram-page"]
                                      --   = false}, osd_keyboard_picture, osd_keyboard_style ("photo" / "schematic" /
                                      --   "hybrid"), next_layers_mode ("layers" / "composed" /
                                      --   "winner"), next_layers_shown = {sprites = false}; applied the way the View

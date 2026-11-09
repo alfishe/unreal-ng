@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "common/sound/audioclock.h"
+
 /// Realtime-observable state of the frontend audio device and its ring
 /// buffer. Owned by the frontend's AppSoundManager (outlives any emulator
 /// instance) and registered with the emulator via Emulator::SetAudioCallback;
@@ -60,6 +62,14 @@ struct AudioDeviceDescriptor
     /// Lifetime totals (stereo frames through the ring)
     std::atomic<uint64_t> framesEnqueued{0};
     std::atomic<uint64_t> framesDequeued{0};
+
+    /// The ring's write position in its stream (AudioRingBuffer::getWrittenStereoFrames), published after every
+    /// enqueue: where the sound the core just delivered ends. Unlike framesEnqueued it counts only what got in
+    std::atomic<uint64_t> streamWritten{0};
+
+    /// When a frame of the ring's stream is heard (fed by the device callback): the master clock video frames are
+    /// timed by (frame presenter design, section 3)
+    AudioClock clock;
 
     /// Ring over/underrun counters. Under converged rate control both stay
     /// at zero permanently; growth means the controller is not keeping up.

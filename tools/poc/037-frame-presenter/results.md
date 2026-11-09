@@ -5,7 +5,8 @@ Measured 2026-10-26. Metric definitions: [`design.md`](design.md) section 4. Raw
 `python3 -I analyze.py --detail <csv...>`.
 
 Deviation from the charter: runs are 20 s (Mac) and 30 s (Windows), not 60 s. The machines were shared, and these
-lengths already give 900-1700 frames per run. The MacBook Pro (ProMotion) was not available, so its column is open.
+lengths already give 900-1700 frames per run. The MacBook Pro (ProMotion) was measured later the same day, 8 s runs
+(section 2b).
 
 ## 1. Mac Studio, DELL U4320Q, fixed 60 Hz
 
@@ -152,13 +153,36 @@ Lab fixes found on the way (all in the code now):
   `KeepDisplayOn()` fixed it.
 - `IDXGIOutput::WaitForVBlank` returns at once in a window (0.8 µs intervals); the kernel's vblank event works.
 
+## 2b. MacBook Pro (M1 Max), built-in ProMotion panel, macOS 12.7
+
+The panel reports 24-120 Hz. Built with the macOS 13.1 SDK, so `CAMetalDisplayLink` and `NSScreen.displayLink` are
+not available; `b` runs on `CVDisplayLink` (`--link cv`). 8 s runs on AC power, load ~9. Raw logs:
+`scratch/2026-10-26-poc-037/mbp`. On-screen intervals rounded to the 120 Hz grid:
+
+| Run | Frames / on screen | 8.3 | 16.7 | 25 | 33.3 | 41.7 ms | Screen - target p1 / p50 / p99 |
+|---|---|---|---|---|---|---|---|
+| `c-at` 48.83 Hz | 378 / 341 | - | 164 | 142 | 3 | 25 | -9.0 / 11.5 / 15.6 ms |
+| `c-at` 50.00 Hz | 387 / 352 | - | 196 | 135 | 4 | 13 | -5.4 / 11.2 / 15.6 ms |
+| `c-at` 50.08 Hz | 410 / 382 | - | 216 | 141 | 3 | 15 | -6.3 / 11.7 / 15.7 ms |
+| `c-at` 61.13 Hz | 472 / 417 | - | 341 | 27 | 27 | 2 | -5.1 / 11.3 / 15.6 ms |
+| `b` CVDisplayLink | 919 / 812 | 778 | 12 | 15 | 3 | - | 0.0 / 8.4 / 25.0 ms |
+
+- **No free-running VRR.** `presentDrawable:atTime:` puts a frame on the 120 Hz grid only: a 50 Hz frame gets 16.7 or
+  25 ms (2 or 3 refreshes), never 20 ms. This is the 120 Hz beat of `b`, not the one-refresh-per-frame of G-Sync.
+- **7-12 % of the frames never reach the screen** in `c-at` (no presented time), and 41.7 ms holes follow them.
+- **Low Power Mode caps the panel at 60 Hz.** The same series on battery (Low Power Mode on, load 16) gave
+  `CVDisplayLink` at 16.7 ms and lost 25-45 % of the `c-at` frames.
+- **Consequence:** on ProMotion the presenter takes the `b-vsync` path at 120 Hz, and smooth motion (phase 5) is what
+  removes the 2/3 cadence. Whether macOS 14+ (`CAMetalDisplayLink`, `preferredFrameRateRange`) does better is open:
+  the machine has macOS 12.
+
 ## 3. Against the charter
 
 | Goal | Result |
 |---|---|
 | 1. Baseline | Mac 60 Hz: on par with `b` (proxy timing). Windows 144 Hz: 39-103 frames per minute outside the beat pattern, against 11-43 for `b` |
 | 2. Vsync presenter | the arithmetic beat, nothing worse: Mac irregular 0-3 / min, Windows near the ideal histogram. `CADisplayLink` over `CAMetalDisplayLink` for latency |
-| 3. VRR | G-Sync: a window gets one refresh per frame at 48.8-61.3 Hz with `Present(0, ALLOW_TEARING)` at the frame's time; on-screen error p50 0.2-0.55 ms, p99 1.7-3.5 ms (source-clock targets). On a fixed display it degrades to `b` (Mac `presentDrawable:atTime:`). Today's GL path stays at 144 Hz under G-Sync. ProMotion not measured |
+| 3. VRR | G-Sync: a window gets one refresh per frame at 48.8-61.3 Hz with `Present(0, ALLOW_TEARING)` at the frame's time; on-screen error p50 0.2-0.55 ms, p99 1.7-3.5 ms (source-clock targets). On a fixed display it degrades to `b` (Mac `presentDrawable:atTime:`). Today's GL path stays at 144 Hz under G-Sync. ProMotion (macOS 12): the 120 Hz grid only, 16.7 / 25 ms for a 50 Hz frame, 7-12 % lost |
 | 4. Display-locked | tick jitter 0.06-1.1 ms p99 (criterion < 0.5 ms met for VGA 0 and VGA 2, not for VGA 1 at 1.14 ms); the DRC needs ±4 % for Next 60 Hz on 60 Hz and holds the ring within 6.4 ms then. Latency through the macOS links is 2-4 refreshes |
 | 5. Qt 6 vs SDL3 | equal with the same native presenter (Mac `c-at` 28.4 / 28.1 ms, Windows `b` 10.3 / 10.4 ms). `SDL_GPU` has neither present-at-time nor feedback. Qt stays; the presenter is native under either shell |
 
@@ -173,5 +197,7 @@ Decision rules of the charter:
   quarter of the fixed 60 Hz beat and half of the 144 Hz one. Proposed as the VRR default; an optical measurement
   would settle the tail.
 - `d` as an option: the jitter rule (< 0.5 ms) is met for VGA 0 and VGA 2, not for VGA 1 (1.14 ms, one run); the DRC
-  rule is met with the limit widened to ±4 % in that mode. Proposed as an opt-in, VGA 1 to be re-measured.
+  rule is met with the limit widened to ±4 % in that mode. Rejected by the owner (2026-10-26): the sound is the master
+  clock, the display never paces the emulation or shifts the pitch. Fixed displays get the beat, with blending or
+  motion-compensated interpolation as options (the feature design, sections 4.3-4.5).
 - Shell: Qt.

@@ -14,10 +14,10 @@ settings: {brightness: 60, activity: {ignore: [ttd.seek_by, audio.volume_by, run
 #     0          1          2          3          4          5          6          7          8
 # 0 | PAUSE      RESET      NMI        TURBO      HOLD       X1         >SPEED     MUTE       FULL
 # 1 | S1         L1         >STATE     >MEDIA     TAPE       LAST FILE  .          >GAME      >BASIC
-# 2 | >MODEL     >SOUND     >PICTURE   .          .          .          SHOT       VIDEO REC  AUDIO REC
-# 3 | >DEBUG     >TIME      .          -5S        LIVE       TTD REC    MARK       .          >MONITOR
+# 2 | >MODEL     >SOUND     >PICTURE   .          .          .          SHOT       >VIDEO     >AUDIO
+# 3 | >DEBUG     >TIME      .          -5S        LIVE       >TTD       MARK       .          >MONITOR
 # opens: [0,6] speed, [1,2] state, [1,3] media, [1,7] game, [1,8] basic, [2,0] machine, [2,1] sound, [2,2] picture
-#        [3,0] debug, [3,1] time, [3,8] monitor
+#        [2,7] video, [2,8] audio, [3,0] debug, [3,1] time, [3,5] ttd, [3,8] monitor
 # dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
 # dial 1 TIME: turn ttd.seek_by, press run.pause_toggle
 # dial 2 OPS: turn ttd.jog_instructions, press ttd.resume_live
@@ -58,18 +58,120 @@ menu home:
     machine: {at: [2, 0], open: machine}
     sound:   {at: [2, 1], open: sound}
     picture: {at: [2, 2], open: picture}
-    shot:    {at: [2, 6], uc: C7.5, action: cap.screenshot}
-    vrec:    {at: [2, 7], uc: C7.2, action: cap.record_toggle, value: {preset: gameplay}, label: VIDEO REC}
-    arec:    {at: [2, 8], uc: C7.2a, action: cap.record_toggle, value: {preset: music}, label: AUDIO REC}
+    shot:    {at: [2, 6], uc: C7.5, do: {gui: window.screenshot, target: main}, glyph: cap.screenshot, title: Screenshot}
+    video:   {at: [2, 7], open: video}
+    audio:   {at: [2, 8], open: audio}
     # D2, D4, D6, D1, D3: the programmer's pages; U2, C7.1, D3.7: rewind, the history recording, a bookmark;
-    # C10: monitoring in the last corner
+    # C10: monitoring in the last corner. The recordings (time travel, video, audio) are pages of their own: REC and
+    # STOP first there
     debug:   {at: [3, 0], open: debug}
     time:    {at: [3, 1], open: time}
     back5:   {at: [3, 3], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
     live:    {at: [3, 4], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
-    ttdrec:  {at: [3, 5], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
+    ttd:     {at: [3, 5], open: ttd}
     mark:    {at: [3, 6], uc: D3.7, action: ttd.bookmark_add, label: MARK}
     monitor: {at: [3, 8], open: monitor}
+
+# C7.1, D3.7, D12.1: the time travel recording. Row 0 REC (red, lit while it records) and STOP (dimmed until a
+# recording runs), then going back to the live end and the bookmarks; row 1 the session and the history; row 2 what it
+# holds. Rewinding and stepping through it: the TIME page.
+# +-- screen ttd: TTD REC (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      REC        STOP       LIVE       -5S        .          MARK       MARK <     MARK >
+# 1 | SAVE TTD   LOAD TTD   .          CLIP 10S   .          JOURNAL    .          .          DROP
+# 2 | .          TTD        FRAMES     TTD MEM    MARKS      FRAME      .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
+# dial 1 SCRUB: turn ttd.seek_by, press run.pause_toggle
+# +--
+menu ttd:
+  title: TTD REC
+  label: TTD
+  uc: [C7.1, D3]
+  glyph: ttd.recordings
+  context: ttd
+  strip: {content: title, status: ttd, target: true}
+  dials:
+    0: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: run.pause_toggle}}
+    1: {label: SCRUB, uc: D3.2, turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate}}, press: {action: run.pause_toggle}}
+  keys:
+    ttdstart: {at: [0, 1], uc: C7.1, action: ttd.start, label: REC}
+    ttdstop:  {at: [0, 2], uc: C7.1, action: ttd.stop, label: STOP}
+    ttdlive:  {at: [0, 3], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
+    ttdback5: {at: [0, 4], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
+    ttdmark:  {at: [0, 6], uc: D3.7, action: ttd.bookmark_add, label: MARK}
+    ttdmprev: {at: [0, 7], uc: D3.7, action: ttd.bookmark_prev, label: MARK <}
+    ttdmnext: {at: [0, 8], uc: D3.7, action: ttd.bookmark_next, label: MARK >}
+    ttdsave:  {at: [1, 0], uc: [C7.1, D12.1], action: ttd.dump, value: {path: $user/sessions/deck.ttd}, label: SAVE TTD}
+    ttdload:  {at: [1, 1], uc: C7.1, action: ttd.load, value: {path: $user/sessions/deck.ttd}, label: LOAD TTD}
+    ttdclip:  {at: [1, 3], uc: C7.3, action: cap.clip_last, value: {seconds: 10}, label: CLIP 10S}
+    ttdjrnl:  {at: [1, 5], uc: C7.1, action: ttd.journal_build, label: JOURNAL}
+    ttddrop:  {at: [1, 8], uc: C7.1, action: ttd.invalidate, label: DROP}
+    ttdstate: {at: [2, 1], uc: C10.7, label: TTD, show: {readout: ttd.status, format: "{recording?REC|IDLE}", warn: 1}}
+    ttdfrms:  {at: [2, 2], uc: C10.7, label: FRAMES, show: {readout: ttd.status.frames, format: "{:k}"}}
+    ttdbytes: {at: [2, 3], uc: C10.7, label: TTD MEM, show: {readout: ttd.status.memory_bytes, format: "{:b}"}}
+    ttdmarks: {at: [2, 4], uc: C10.7, label: MARKS, show: {readout: ttd.status.bookmarks}}
+    ttdpos:   {at: [2, 5], uc: D3.2, label: FRAME, show: {readout: ttd.position.current.frame, format: '{}'}}
+
+# C7.2, C7.3, C7.5: video. Row 0 REC (red, lit while a video records) and STOP (dimmed until a recording runs), pause,
+# the screenshots and the last seconds; row 1 the other formats (each starts a recording); row 2 what records.
+# +-- screen video: VIDEO REC (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      REC        STOP       PAUSE      .          SHOT       SHOT PNG   CLIP 10S   .
+# 1 | .          GIF        HQ MKV     TRACKS     .          1080P      4K         .          .
+# 2 | .          VIDEO      LENGTH     SIZE       .          FILE       .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# +--
+menu video:
+  title: VIDEO REC
+  label: VIDEO
+  uc: [C7.2, C7.3, C7.5]
+  glyph: cap.video
+  keys:
+    vidstart: {at: [0, 1], uc: C7.2, action: cap.record_start, value: {preset: gameplay}, label: REC, state: cap.record.video}
+    vidstop:  {at: [0, 2], uc: C7.2, action: cap.record_stop, label: STOP}
+    vidpause: {at: [0, 3], uc: C7.2, action: cap.record_pause, label: PAUSE}
+    vidshot:  {at: [0, 5], uc: C7.5, do: {gui: window.screenshot, target: main}, glyph: cap.screenshot, label: SHOT}
+    vidsshot: {at: [0, 6], uc: C7.5, action: cap.screenshot_save, value: {path: $user/screenshots/deck.png}, label: SHOT PNG}
+    vidclip:  {at: [0, 7], uc: C7.3, action: cap.clip_last, value: {seconds: 10}, label: CLIP 10S}
+    vidgif:   {at: [1, 1], uc: C7.2, action: cap.record_start, value: {preset: gif}, label: GIF, glyph_on: cap.record}
+    vidhq:    {at: [1, 2], uc: C7.2, action: cap.record_start, value: {preset: hq}, label: HQ MKV, glyph_on: cap.record}
+    vidmulti: {at: [1, 3], uc: C7.2, action: cap.record_start, value: {preset: multitrack}, label: TRACKS, glyph_on: cap.record}
+    vid1080:  {at: [1, 5], uc: C7.2, action: cap.record_start, value: {preset: gameplay, profile: 1080p}, label: 1080P, glyph_on: cap.record}
+    vid4k:    {at: [1, 6], uc: C7.2, action: cap.record_start, value: {preset: gameplay, profile: 4k}, label: 4K, glyph_on: cap.record}
+    vidstate: {at: [2, 1], uc: C10.9, label: VIDEO, show: {readout: cap.record, format: "{video?REC|IDLE}", warn: 1}}
+    vidtime:  {at: [2, 2], uc: C10.9, label: LENGTH, show: {readout: cap.record.seconds, format: "{:.0f}S"}}
+    vidsize:  {at: [2, 3], uc: C10.9, label: SIZE, show: {readout: cap.record.bytes, format: "{:b}"}}
+    vidfile:  {at: [2, 5], uc: C10.9, label: FILE, show: {readout: cap.record.output, format: '{}'}}
+
+# C7.2a, C7.4: sound alone. Row 0 REC (red, lit while sound alone records: FLAC) and STOP (dimmed until a recording
+# runs), pause, WAV; row 1 one source for five seconds into a WAV; row 2 what records.
+# +-- screen audio: AUDIO REC (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      REC        STOP       PAUSE      .          WAV        .          .          .
+# 1 | .          MIX 5S     BEEPER 5S  AY 5S      COVOX 5S   GS 5S      .          .          .
+# 2 | .          AUDIO      LENGTH     SIZE       .          FILE       .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# +--
+menu audio:
+  title: AUDIO REC
+  label: AUDIO
+  uc: [C7.2a, C7.4]
+  glyph: cap.audio
+  keys:
+    audstart: {at: [0, 1], uc: C7.2a, action: cap.record_start, value: {preset: music}, label: REC, glyph: cap.record_audio, glyph_on: cap.record_audio.on, state: cap.record.audio_only}
+    audstop:  {at: [0, 2], uc: C7.2a, action: cap.record_stop, label: STOP}
+    audpause: {at: [0, 3], uc: C7.2a, action: cap.record_pause, label: PAUSE}
+    audwav:   {at: [0, 5], uc: C7.2a, action: cap.record_start, value: {preset: audio}, label: WAV, glyph: cap.record_audio, glyph_on: cap.record_audio}
+    audmix:   {at: [1, 1], uc: C7.4, action: cap.audio_capture, value: {source: master, seconds: 5}, label: MIX 5S}
+    audbeep:  {at: [1, 2], uc: C7.4, action: cap.audio_capture, value: {source: beeper, seconds: 5}, label: BEEPER 5S}
+    auday:    {at: [1, 3], uc: C7.4, action: cap.audio_capture, value: {source: ay1, seconds: 5}, label: AY 5S}
+    audcovox: {at: [1, 4], uc: C7.4, action: cap.audio_capture, value: {source: covox, seconds: 5}, label: COVOX 5S}
+    audgs:    {at: [1, 5], uc: C7.4, action: cap.audio_capture, value: {source: gs, seconds: 5}, label: GS 5S}
+    audstate: {at: [2, 1], uc: C10.9, label: AUDIO, show: {readout: cap.record, format: "{audio_only?REC|IDLE}", warn: 1}}
+    audtime:  {at: [2, 2], uc: C10.9, label: LENGTH, show: {readout: cap.record.seconds, format: "{:.0f}S"}}
+    audsize:  {at: [2, 3], uc: C10.9, label: SIZE, show: {readout: cap.record.bytes, format: "{:b}"}}
+    audfile:  {at: [2, 5], uc: C10.9, label: FILE, show: {readout: cap.record.output, format: '{}'}}
 
 # C6: save state. Rows 1 and 2 are the nine quick slots, row 0 the files and the disks.
 # +-- screen state: Save state (deckflow build writes this map from the keys below)
@@ -342,7 +444,7 @@ menu picture:
     teffect: {at: [2, 1], uc: C9.5, action: video.temporal_effect, value: {effect: next}, label: EFFECT, show: {readout: video.temporal.dlss, format: '{?ZX DLSS|BLEND}'}}
     hud:     {at: [3, 0], uc: C9.6, action: hud.toggle, label: HUD}
     hudth:   {at: [3, 1], uc: C9.6, action: hud.theme, value: {theme: next}, label: HUD LOOK}
-    osdkb:   {at: [3, 3], uc: C9.7, action: osd.keyboard, label: KEYBOARD}
+    osdkb:   {at: [3, 3], uc: C9.7, gui: unrealqt.osd_keyboard, label: KEYBOARD}
     osdpic:  {at: [3, 4], uc: C9.7, action: osd.keyboard_picture, value: {picture: next}, label: KB LOOK}
 
 # C10: monitoring, read-only (a press changes nothing): value keys show the readouts (row 0 the instances and the host,
@@ -379,7 +481,7 @@ menu monitor:
     ints:    {at: [1, 5], uc: C10.3, label: INT/FR, show: {readout: emulator.stats.interrupts_per_frame, format: "{:.0f}"}}
     slots:   {at: [1, 6], uc: C10.4, label: MEDIA, show: {readout: media.slots, format: "{loaded}/{slots:#}"}}
     pads:    {at: [1, 7], uc: C10.4, label: PLUGGED, show: {readout: controllers.state.plugged}}
-    audio:   {at: [1, 8], uc: C10.4, label: AUDIO, show: {readout: audio.mixer, format: "{master.muted?MUTED|ON}"}}
+    audmon:  {at: [1, 8], uc: C10.4, label: AUDIO, show: {readout: audio.mixer, format: "{master.muted?MUTED|ON}"}}
     bps:     {at: [2, 2], uc: C10.5, label: BPS, show: {readout: debug.breakpoints, format: "{active}/{total}"}}
     lasthit: {at: [2, 3], uc: C10.5, label: HIT AT, show: {readout: debug.breakpoints.last_hit.address, format: "{:04X}"}}
     lblcnt:  {at: [2, 4], uc: C10.6, label: LABELS, show: {readout: debug.labels.total, format: "{:k}"}}
@@ -394,7 +496,7 @@ menu monitor:
     rec:     {at: [3, 5], uc: C10.9, label: RECORD, show: {readout: recording.state, format: "{recording?REC|IDLE}", warn: 1}}
     rectime: {at: [3, 6], uc: C10.9, label: LENGTH, show: {readout: recording.state.duration_s, format: "{:.0f}S"}}
     recsize: {at: [3, 7], uc: C10.9, label: SIZE, show: {readout: recording.state.file_bytes, format: "{:b}"}}
-    video:   {at: [3, 8], uc: C10.9, label: VIDEO, show: {readout: cap.record, format: "{recording?REC|IDLE}", warn: 1}}
+    vidmon:  {at: [3, 8], uc: C10.9, label: VIDEO, show: {readout: cap.record, format: "{recording?REC|IDLE}", warn: 1}}
 
 # C10.8: how full each trace buffer is (read-only): slots used of the capacity, the bytes they take under it. Row 0 the
 # CPU's traces, row 1 the ports and the sound, row 2 time travel.
@@ -544,9 +646,9 @@ menu time:
     bmadd:   {at: [3, 1], uc: D3.7, action: ttd.bookmark_add, label: MARK}
     bmnext:  {at: [3, 2], uc: D3.7, action: ttd.bookmark_next, label: MARK >}
     bmlist:  {at: [3, 3], uc: D3.7, action: ttd.bookmarks, label: MARKS}
-    lastw:   {at: [3, 5], uc: D5.1, action: ttd.find_last_write, label: WRITE}
-    lastr:   {at: [3, 6], uc: D5.1, action: ttd.find_last, value: {access: read}, label: READ}
-    laste:   {at: [3, 7], uc: D5.1, action: ttd.find_last, value: {access: execute}, label: EXEC}
+    lastw:   {at: [3, 5], uc: D5.1, gui: memory.find_last_write, label: WRITE}
+    lastr:   {at: [3, 6], uc: D5.1, gui: memory.find_last, params: {access: read}, label: READ}
+    laste:   {at: [3, 7], uc: D5.1, gui: memory.find_last, params: {access: execute}, label: EXEC}
     timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
 
 # D2, D4, D6, D8, D10: the debugger. Row 0 pause and the steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
@@ -573,12 +675,12 @@ menu debug:
     debstepin: {at: [0, 2], uc: D2.1, action: run.step_in, label: STEP IN}
     debstepovr: {at: [0, 3], uc: D2.1, action: run.step_over, label: STEP OVER}
     debstepout: {at: [0, 4], uc: D2.1, action: run.step_out, label: STEP OUT}
-    debcursor: {at: [0, 5], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
+    debcursor: {at: [0, 5], uc: D2.6, gui: disassembly.run_to_cursor, label: TO CURSOR}
     int:     {at: [0, 6], uc: D2.3, action: run.wait_int, label: TO INT}
     debframe: {at: [0, 7], uc: D2.3, action: run.frame_step, label: FRAME}
     line:    {at: [0, 8], uc: D2.7, action: run.step_line, label: LINE}
     debbppc: {at: [1, 0], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
-    bpcur:   {at: [1, 1], uc: D4.1, action: dbg.breakpoint_toggle_cursor, label: BP CUR}
+    bpcur:   {at: [1, 1], uc: D4.1, gui: disassembly.breakpoint_toggle_cursor, label: BP CUR}
     bpfe:    {at: [1, 2], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: fe}, label: OUT FE}
     bp7ffd:  {at: [1, 3], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: 7ffd}, label: 7FFD}
     bpall:   {at: [1, 4], uc: D4.3, action: dbg.bp_toggle, label: BPS ON}
@@ -586,21 +688,21 @@ menu debug:
     debbphits: {at: [1, 6], uc: D4.3, action: dbg.breakpoint_hits_reset, label: HITS 0}
     pixel:   {at: [1, 7], uc: D2.4, action: run.to_pixel, label: TO PIXEL}
     debdbgmode: {at: [1, 8], uc: D4.4, action: dbg.mode_toggle, label: DEBUG MODE}
-    open:    {at: [2, 0], uc: D6.1, action: dbg.open, label: SHOW DEBUG}
-    pprev:   {at: [2, 1], uc: D6.1, action: dbg.focus_prev_pane, label: PANE <}
-    pnext:   {at: [2, 2], uc: D6.1, action: dbg.focus_next_pane, label: PANE >}
-    pgup:    {at: [2, 3], uc: D6.2, action: dbg.page_up}
-    cup:     {at: [2, 4], uc: D6.2, action: dbg.cursor_up}
-    pgdn:    {at: [2, 5], uc: D6.2, action: dbg.page_down}
-    follow:  {at: [2, 6], uc: D6.4, action: dbg.follow_pc, label: FOLLOW}
-    memf:    {at: [2, 7], uc: D6.3, action: dbg.memory_follow, label: MEM PC}
-    labels:  {at: [2, 8], uc: D6.4, action: dbg.labels_toggle, label: LABELS}
+    open:    {at: [2, 0], uc: D6.1, gui: debugger.open, label: SHOW DEBUG}
+    pprev:   {at: [2, 1], uc: D6.1, gui: debugger.focus_prev, label: PANE <, title: Previous debugger pane}
+    pnext:   {at: [2, 2], uc: D6.1, gui: debugger.focus_next, label: PANE >, title: Next debugger pane}
+    pgup:    {at: [2, 3], uc: D6.2, gui: debugger.page, params: {n: -1}, title: Page up}
+    cup:     {at: [2, 4], uc: D6.2, gui: debugger.cursor_move, params: {dir: up}, title: Cursor up}
+    pgdn:    {at: [2, 5], uc: D6.2, gui: debugger.page, params: {n: 1}, title: Page down}
+    follow:  {at: [2, 6], uc: D6.4, gui: disassembly.follow_pc, label: FOLLOW}
+    memf:    {at: [2, 7], uc: D6.3, gui: debugger.activate, label: MEM PC}
+    labels:  {at: [2, 8], uc: D6.4, gui: metadata.set, params: {switch: labels}, label: LABELS}
     symload: {at: [3, 0], uc: D8.2, action: sym.import, value: {path: $user/build/main.sym}, label: LOAD SYM}
     symlive: {at: [3, 1], uc: D8.2, action: sym.import_live, label: LIVE SYM}
     symsave: {at: [3, 2], uc: D8.2, action: sym.export, value: {path: $user/build/deck.sym}, label: SAVE SYM}
-    cleft:   {at: [3, 3], uc: D6.2, action: dbg.cursor_left}
-    cdown:   {at: [3, 4], uc: D6.2, action: dbg.cursor_down}
-    cright:  {at: [3, 5], uc: D6.2, action: dbg.cursor_right}
+    cleft:   {at: [3, 3], uc: D6.2, gui: debugger.cursor_move, params: {dir: left}, title: Cursor left}
+    cdown:   {at: [3, 4], uc: D6.2, gui: debugger.cursor_move, params: {dir: down}, title: Cursor down}
+    cright:  {at: [3, 5], uc: D6.2, gui: debugger.cursor_move, params: {dir: right}, title: Cursor right}
     prof:    {at: [3, 6], uc: D10.1, action: prof.toggle, value: {name: opcode}, label: PROF OPS}
     cover:   {at: [3, 7], uc: D10.1, action: prof.toggle, value: {name: coverage}, label: COVERAGE}
     trace:   {at: [3, 8], uc: D10.1, action: prof.toggle, value: {name: calltrace}, label: CALLS}

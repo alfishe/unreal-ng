@@ -129,9 +129,11 @@ Exponential between the points. The right stick X refines inside a frame: full d
 ms, so a release lands on an exact line. At the end of history the scrub stops and the pad pulses once ([§7](#7-feedback)).
 
 Built: `curve: scrub` gives the action the source's level each time it changes (`ActionEvent::value`, 0 on the
-release); `ScrubSpeed` is the table; a 20 ms timer in the Qt client moves by the frames covered with `seek`, both
-triggers held count against each other. It stops on the release, at either end of the history and on a refusal,
-with the reason in the status bar. A button bound to a scrub is the full level. Not yet: the fine scrub on the right
+release); `actions::ScrubSpeed` is the table. The scrub is a core action (`core/src/emulator/actions/scrubactions.cpp`,
+2026-11-07, before it was a GUI action of the Qt client): a 20 ms host clock moves by the frames covered with
+`ttd.jog_frames`, both triggers held count against each other, so a deck key or a WebAPI call with a level scrubs as
+a pad does. It stops on the release, at either end of the history and on a refusal (the jog's result is in the
+activity feed). A button bound to a scrub is the full level. Not yet: the fine scrub on the right
 stick, the pulse at the end, forward past the end into live (`ttd.resume_live` does that).
 
 `ttd.jog_frames` and `ttd.jog_instructions` take an encoder's signed steps (§4.4): a frame or an instruction per

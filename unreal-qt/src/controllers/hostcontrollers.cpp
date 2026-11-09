@@ -1069,6 +1069,13 @@ void HostControllers::Reapply()
     _context = context;
     applyConnectorPlans();
     attachHaptics();
+    const std::string videoKey = _resolved.video.IsNull() ? std::string()
+                                                          : _resolved.videoProfile + ":" + _resolved.video.Dump();
+    if (videoKey != _videoKey)
+    {
+        _videoKey = videoKey;
+        emit gameVideoChanged();
+    }
     applyMemoryProfile();
     for (const std::string& warning : _resolved.warnings)
         qWarning("controllers: %s", warning.c_str());

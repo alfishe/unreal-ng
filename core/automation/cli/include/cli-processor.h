@@ -325,8 +325,6 @@ private:
     void HandleJoystick(const ClientSession& session, const std::vector<std::string>& args);
     void ShowJoystickHelp(const ClientSession& session);
 
-    // Videowall commands
-    void HandleVideowall(const ClientSession& session, const std::vector<std::string>& args);
 
     // Instance management command handlers
     void HandleStart(const ClientSession& session, const std::vector<std::string>& args);
@@ -409,6 +407,7 @@ private:
     void HandleSurface(const ClientSession& session, const std::vector<std::string>& args);
     /// streamdeck <verb>: the Stream Deck daemon's supervision, settings, pairing (companion::streamdeck::Call)
     void HandleStreamDeck(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleGui(const ClientSession& session, const std::vector<std::string>& args);
     /// monitor [name]: host process, clients, each instance's pace and summaries (monitoring::Call)
     void HandleMonitor(const ClientSession& session, const std::vector<std::string>& args);
     // ZX-MultiSound and its MIDI synthesizer (cli-processor-multisound.cpp, DeviceState::MultiSound / Midi, MidiControl)

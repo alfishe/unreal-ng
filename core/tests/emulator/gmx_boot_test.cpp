@@ -229,7 +229,6 @@ std::vector<uint8_t> RunBorderStripes(Emulator& emulator)
     z80->iff1 = z80->iff2 = 0;
     z80->halted = 0;
     z80->pc = 0x8000;
-    context->pScreen->SetPresentDelayFrames(0);
     emulator.RunNFrames(4, true);
 
     const auto& fb = context->pScreen->GetFramebufferDescriptor();

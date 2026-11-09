@@ -2,7 +2,6 @@
 
 #include <cstdio>
 #include <map>
-#include <set>
 
 #include "base/featuremanager.h"
 #include "debugger/ttd/timetravelhooks.h"
@@ -13,7 +12,6 @@
 #include "emulator/sound/audiomixer.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
-#include "emulator/video/windowview.h"
 
 namespace actions
 {
@@ -52,9 +50,11 @@ const Descriptions& DescriptionTable()
         {"ttd.bookmark_add", "Bookmark the current position of the history."},
         {"ttd.resume_live", "Leave the history and continue the live machine."},
         {"ttd.jog_frames", "Move through the history by a number of frames (a delta)."},
+        {"ttd.scrub_back", "Scrub back through the history at the speed a level 0..1 sets on the scrub curve (a trigger's travel; 0 stops)."},
+        {"ttd.scrub_forward", "Scrub forward through the history at the speed a level 0..1 sets on the scrub curve (a trigger's travel; 0 stops)."},
         {"ttd.jog_instructions", "Move through the history by a number of instructions (a delta)."},
         {"ttd.seek_by", "Seek through the history by a dial's delta in a unit (param unit, else ttd.scrub_unit's): frames and seconds on an acceleration curve, batch, instructions, tstates, scanlines, bookmarks; answers the marks crossed."},
-        {"ttd.find_last_write", "Find the last write to an address (param addr, else the memory / disassembly cursor) before now, and go there."},
+        {"ttd.find_last_write", "Find the last write to an address (param addr) before now, and go there."},
         {"ttd.bookmark_prev", "Go to the previous bookmark of the history."},
         {"ttd.bookmark_next", "Go to the next bookmark of the history."},
         {"ttd.step_back_scanline", "Go back one scanline (param count: N) in the history."},
@@ -79,7 +79,7 @@ const Descriptions& DescriptionTable()
         {"run.pace_step", "Run one step of the chosen pace (a frame, N scanlines, an instruction)."},
         {"run.to_pixel", "Run to the first paper pixel of the next frame and pause."},
         {"run.until_pc", "Run until PC reaches an address (param pc; max_tstates; breakpoints) and pause."},
-        {"run.to_cursor", "Run to the disassembly's cursor (or param addr); a breakpoint on the way stops it."},
+        {"run.to_cursor", "Run to an address (param addr: the GUI's cursor, disassembly.run_to_cursor); a breakpoint on the way stops it."},
         {"run.step_line", "Run to the next source line of the loaded listing."},
         {"run.to_line", "Run to a source line of the loaded listing (param line)."},
         {"ttd.step_forward_scanline", "Go forward one scanline (param count: N) in the history."},
@@ -93,9 +93,6 @@ const Descriptions& DescriptionTable()
         {"ttd.journal_build", "Build the write journal over the history (params from_frame, to_frame)."},
         {"ttd.journal_build_cancel", "Cancel a running write-journal build."},
         {"ttd.export_clip", "Export a range of the history as a lossless clip (params path, from, to)."},
-        {"dbg.follow_pc", "Show the disassembly at PC again."},
-        {"dbg.goto", "Show the disassembly at an address (param addr)."},
-        {"dbg.scroll_mode_toggle", "Scroll the disassembly by bytes or by instructions."},
         // Context
         {"ctx.set", "Set the instance's surface context (play, ttd, ttd.timecode, debug.disasm); \"\" returns to the default."},
         // Machine and capture
@@ -105,7 +102,6 @@ const Descriptions& DescriptionTable()
         {"mach.start", "Start a machine of a model (param model); with replace it takes the place of the target."},
         {"mach.cold_reset", "Restart the same model from power on."},
         {"cap.screenshot_save", "Save a screenshot to a file (param path)."},
-        {"cap.screenshot", "Copy a screenshot of the window to the clipboard."},
         {"cap.record_toggle", "Start a video recording (params preset, format, container, audio, mode, path), or stop it."},
         {"cap.clip_last", "Save the last seconds of the time travel recording as a video clip (param seconds)."},
         // Input
@@ -146,26 +142,7 @@ const Descriptions& DescriptionTable()
         {"dbg.mode_toggle", "Switch debug mode on or off (breakpoints and the debug features)."},
         {"dbg.breakpoints_clear", "Remove every breakpoint."},
         {"dbg.breakpoint_hits_reset", "Reset the hit counts of the breakpoints."},
-        // The Qt client's GUI actions
-        {"dbg.open", "Open the debugger window."},
-        {"dbg.focus_next_pane", "Move the focus to the next debugger pane."},
-        {"dbg.focus_prev_pane", "Move the focus to the previous debugger pane."},
-        {"dbg.cursor_up", "Move the cursor of the debugger pane up."},
-        {"dbg.cursor_down", "Move the cursor of the debugger pane down."},
-        {"dbg.cursor_left", "Move the cursor of the debugger pane left."},
-        {"dbg.cursor_right", "Move the cursor of the debugger pane right."},
-        {"dbg.page_up", "Page the debugger pane up."},
-        {"dbg.page_down", "Page the debugger pane down."},
-        {"dbg.memory_follow", "Show the memory at the value under the debugger's cursor."},
         {"dbg.breakpoint_toggle_pc", "Set an execution breakpoint at PC (or at address), or remove the one there."},
-        {"dbg.breakpoint_toggle_cursor", "Set an execution breakpoint at the debugger's disassembly cursor, or remove it."},
-        {"dbg.labels_toggle", "Show or hide the labels in the disassembly."},
-        {"dbg.metadata_toggle", "Use the program's metadata in the debugger (regions, colours, notes), or not."},
-        {"dbg.metadata_regions_toggle", "Data rows and instruction starts from the metadata in the disassembly."},
-        {"dbg.metadata_colours_toggle", "The memory view coloured by the metadata's kinds."},
-        {"dbg.metadata_notes_toggle", "The metadata's block descriptions and comments in the debugger."},
-        {"osd.keyboard", "Show the on-screen keyboard, or hide it (the GUI's window of the machine's own keyboard)."},
-        {"osd.quick_menu", "Show the quick menu (not available yet)."},
     };
     return table;
 }
@@ -222,13 +199,6 @@ const Toggles& ToggleTable()
                 return std::nullopt;
             return features->isEnabled(Features::kDebugMode);
         };
-        // The GUI's on-screen keyboard: shown as the window published it (pictureactions.h)
-        t["osd.keyboard"].state = [](Emulator&, const ActionValue&) -> std::optional<bool> {
-            const std::optional<WindowDisplaySettings> settings = WindowView::PublishedSettings();
-            if (!settings)
-                return std::nullopt;
-            return settings->osdKeyboard;
-        };
         DefaultToggle& feature = t["feature.toggle"];
         feature.stem = "feature";
         feature.param = "name";
@@ -268,57 +238,6 @@ const DefaultToggle* DefaultToggleOf(std::string_view id)
     return it != table.end() ? &it->second : nullptr;
 }
 
-const std::vector<GuiActionDeclaration>& GuiActionDeclarations()
-{
-    static const char* const ttd = "Time travel";
-    static const char* const debug = "Debugger";
-    static const char* const machine = "Capture and machine";
-    static const char* const controllers = "Controllers";
-    static const std::vector<GuiActionDeclaration> table = {
-        // The analog scrub (a trigger's level, `curve: scrub`; a button press is the full level)
-        {"ttd.scrub_back", "Scrub back", ttd, ValueKind::Level},
-        {"ttd.scrub_forward", "Scrub forward", ttd, ValueKind::Level},
-        // The debugger window and its panes; the cursor keys repeat while held
-        {"dbg.open", "Open the debugger", debug},
-        {"dbg.focus_next_pane", "Next debugger pane", debug},
-        {"dbg.focus_prev_pane", "Previous debugger pane", debug},
-        {"dbg.cursor_up", "Cursor up in the pane", debug, ValueKind::Press, true},
-        {"dbg.cursor_down", "Cursor down in the pane", debug, ValueKind::Press, true},
-        {"dbg.cursor_left", "Cursor left in the pane", debug, ValueKind::Press, true},
-        {"dbg.cursor_right", "Cursor right in the pane", debug, ValueKind::Press, true},
-        {"dbg.page_up", "Page up in the pane", debug, ValueKind::Press, true},
-        {"dbg.page_down", "Page down in the pane", debug, ValueKind::Press, true},
-        {"dbg.memory_follow", "Memory follows the value under the cursor", debug, ValueKind::Press, true},
-        {"dbg.breakpoint_toggle_cursor", "Toggle a breakpoint at the cursor", debug},
-        {"dbg.follow_pc", "Disassembly follows PC", debug},
-        {"dbg.labels_toggle", "Labels in the disassembly", debug},
-        {"dbg.metadata_toggle", "Metadata in the debugger", debug},
-        {"dbg.metadata_regions_toggle", "Metadata regions in the disassembly", debug},
-        {"dbg.metadata_colours_toggle", "Metadata colours in the memory view", debug},
-        {"dbg.metadata_notes_toggle", "Metadata notes in the debugger", debug},
-        {"dbg.scroll_mode_toggle", "Disassembly scrolls by bytes / instructions", debug},
-        {"dbg.goto", "Disassembly at an address", debug, ValueKind::Press, false,
-         "addr (0..#FFFF: decimal, 0x.., #.., $..)"},
-        // The main window's screenshot to the clipboard and its on-screen keyboard
-        {"cap.screenshot", "Screenshot", machine},
-        {"osd.keyboard", "On-screen keyboard", machine},
-        // The Controllers window and its learn wizard
-        {"ctl.open", "Open the Controllers window", controllers},
-        {"ctl.learn", "Learn a device's controls", controllers, ValueKind::Press, false, "device"},
-        // Stubs: a binding to one says why instead of doing nothing
-        {"osd.quick_menu", "osd.quick_menu", machine},
-    };
-    return table;
-}
-
-const GuiActionDeclaration* GuiActionDeclarationOf(std::string_view id)
-{
-    for (const GuiActionDeclaration& declaration : GuiActionDeclarations())
-        if (id == declaration.id)
-            return &declaration;
-    return nullptr;
-}
-
 namespace
 {
 /// A JSON string as Python's json.dumps(ensure_ascii=False) writes it (make_deck_scenario.py --fetch-catalogue)
@@ -353,14 +272,7 @@ std::string Quoted(std::string_view text)
 
 std::string ShippedCatalogueJson(const std::vector<ActionInfo>& actions)
 {
-    std::vector<ActionInfo> rows = actions;
-    std::set<std::string, std::less<>> ids;
-    for (const ActionInfo& info : actions)
-        ids.insert(info.id);
-    for (const GuiActionDeclaration& declaration : GuiActionDeclarations())
-        if (ids.count(declaration.id) == 0)
-            rows.push_back(ActionInfo{declaration.id, declaration.label, declaration.group, declaration.kind,
-                                      declaration.held, true, declaration.params, {}, false});
+    const std::vector<ActionInfo>& rows = actions;
     std::string out = "{\n \"format\": \"unreal-ng-action-catalogue\",\n \"version\": 1,\n \"actions\": [";
     for (size_t i = 0; i < rows.size(); i++)
     {
@@ -368,7 +280,7 @@ std::string ShippedCatalogueJson(const std::vector<ActionInfo>& actions)
         out += i == 0 ? "\n" : ",\n";
         out += "  {\n   \"id\": " + Quoted(info.id) + ",\n   \"label\": " + Quoted(info.label) + ",\n   \"group\": " +
                Quoted(info.group) + ",\n   \"kind\": " + Quoted(ValueKindName(info.kind)) + ",\n   \"held\": " +
-               (info.held ? "true" : "false") + ",\n   \"gui\": " + (info.gui ? "true" : "false");
+               (info.held ? "true" : "false");
         if (!info.params.empty())
             out += ",\n   \"params\": " + Quoted(info.params);
         out += "\n  }";

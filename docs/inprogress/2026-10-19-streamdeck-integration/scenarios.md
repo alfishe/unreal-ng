@@ -32,6 +32,7 @@ is.
 
 - [1. Settings](#1-settings)
 - [2. The action kind](#2-the-action-kind)
+  - [2.1 The gui kind](#21-the-gui-kind)
 - [3. Paths](#3-paths)
 - [4. State-bound faces](#4-state-bound-faces) (4.1 glyph faces, 4.2 value faces)
 - [5. Activity](#5-activity)
@@ -94,6 +95,27 @@ Done 2026-10-20 (`sdb/actionexec.h`). How a step becomes a call of the registry 
   changes"); it uses the daemon's token, relative paths resolve to the session's **target** instance.
 - `ttd_seek`, `run_toggle` (deck-side logic) are replaced by `ttd.seek_by` and `run.pause_toggle`; v1 files keep them
   working through compatibility shims in the daemon until the default scenario no longer uses them.
+
+### 2.1 The gui kind
+
+GUI verbs (the debugger's cursor, its panes, the metadata switches, the on-screen keyboard, a window screenshot) are
+commands of the GUI control plane, not catalogue actions
+([gui-control §10](../../emulator/design/gui-control/README.md#10-bindings-profiles-the-deck-the-catalogue)):
+
+```json
+"do": { "kind": "gui", "method": "debugger.cursor_move", "params": { "dir": "up" }, "hold": true }
+```
+
+| Field | Meaning |
+|:--|:--|
+| `method` | A command of [`gui-catalogue.json`](../../../data/streamdeck/gui-catalogue.json) (`iface.cmd`) |
+| `params` | Its parameters (unknown or missing ones are refused by the tooling and by the program) |
+| `target` | A node (`main`, `debugger`, `memory@<instance>`); omitted: the plane resolves it, or `iface@<instance>` for a view interface while the deck follows a chosen instance |
+| `hold` | `true` for a `repeats` command: again after 300 ms, then every 60 ms while the key is held |
+
+The daemon sends it to the program that serves its WebAPI (the discovery files' `endpoints`). Readouts `gui.<path>`
+read that program's root state (`gui.metadata.labels`, `gui.osd_keyboard`). In a spec the key field is `gui:` with
+`params:`; deckflow takes the glyph, the title and the hold from glyphs.json and the GUI catalogue.
 
 ## 3. Paths
 
@@ -254,8 +276,8 @@ that calls it is S4.
 ## 6. The palette
 
 - The studio's palette comes from the live catalogue; offline from `$data/streamdeck/catalogue.json`, generated at
-  build time (`tools/actioncatalogue`: the core registry's `List()` plus the Qt client's actions the core declares,
-  `actions::GuiActionDeclarations`), so the palette always matches the shipped core.
+  build time (`tools/actioncatalogue`: the core registry's `List()`), so the palette always matches the shipped core.
+  The GUI's verbs come from `$data/streamdeck/gui-catalogue.json` (the GUI control plane's commands, §2.1).
 - Presets: one per catalogue action (id, label, group, a default face from the action's icon hint), plus the generic
   presets. Faces for unreal-ng actions use unreal-qt's icons (`$icons`), so the deck looks like the GUI.
 

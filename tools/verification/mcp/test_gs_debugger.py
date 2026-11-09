@@ -234,9 +234,17 @@ def test_the_card_cpu_steps(s):
     r = s.call('control_execution', {'action': 'step_over', 'cpu': 'gs'})
     expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'a step over on the card', r.structured)
 
-    # A card breakpoint where the loader loops ends a step out of its top level
-    pc = card_pc(s)
-    s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    # A card breakpoint where the loader loops ends a step out of its top level: the first instruction the card
+    # comes back to (where it stands now may be on its way in, never run again; 2026-11 on Windows the step timed out)
+    seen = [card_pc(s)]
+    looped = False
+    for _ in range(500):
+        pc = s.call('control_execution', {'action': 'step', 'cpu': 'gs'}).structured.get('pc')
+        looped = pc in seen
+        if looped:
+            break
+        seen.append(pc)
+    expect(looped, 'the card comes back to an instruction within 500 steps', seen[-10:])
     s.call('control_execution', {'action': 'bp_add', 'address': pc, 'cpu': 'gs'})
     r = s.call('control_execution', {'action': 'step_out', 'cpu': 'gs'})
     stop = (r.structured or {}).get('stop', {})

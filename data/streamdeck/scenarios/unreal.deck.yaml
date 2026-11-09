@@ -3965,8 +3965,8 @@ root:
             - 3
             - 3
           do:
-            id: osd.keyboard
-            kind: action
+            kind: gui
+            method: unrealqt.osd_keyboard
           face:
             glyph: osd.keyboard
             label: KEYBOARD
@@ -4007,8 +4007,9 @@ root:
         - 2
         - 6
       do:
-        id: cap.screenshot
-        kind: action
+        kind: gui
+        method: window.screenshot
+        target: main
       face:
         glyph: cap.screenshot
       id: shot
@@ -4020,44 +4021,523 @@ root:
       at:
         - 2
         - 7
-      do:
-        id: cap.record_toggle
-        kind: action
-        value:
-          preset: gameplay
       face:
-        glyph: cap.record
-        label: "VIDEO REC"
-      face_on:
-        glyph: cap.record.on
-        label: "VIDEO REC"
-      id: vrec
-      state: toggle.cap.record_toggle
+        glyph: cap.video
+        label: VIDEO
+      id: video
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: gameplay
+          face:
+            glyph: cap.record
+            label: REC
+          face_on:
+            glyph: cap.record.on
+            label: REC
+          id: vidstart
+          state: cap.record.video
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: cap.record_stop
+            kind: action
+          face:
+            glyph: cap.record_stop
+            label: STOP
+          id: vidstop
+          tags:
+            - uc:C7.2
+          title: "Stop recording"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: cap.record_pause
+            kind: action
+          face:
+            glyph: cap.record_pause
+            label: PAUSE
+          id: vidpause
+          tags:
+            - uc:C7.2
+          title: "Pause recording"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            kind: gui
+            method: window.screenshot
+            target: main
+          face:
+            glyph: cap.screenshot
+            label: SHOT
+          id: vidshot
+          tags:
+            - uc:C7.5
+          title: vidshot
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: cap.screenshot_save
+            kind: action
+            value:
+              path: $user/screenshots/deck.png
+          face:
+            glyph: cap.screenshot_save
+            label: "SHOT PNG"
+          id: vidsshot
+          tags:
+            - uc:C7.5
+          title: "Save a screenshot"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: cap.clip_last
+            kind: action
+            value:
+              seconds: 10
+          face:
+            glyph: cap.clip_last
+            label: "CLIP 10S"
+          id: vidclip
+          tags:
+            - uc:C7.3
+          title: "Clip the last seconds"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: gif
+          face:
+            glyph: cap.record
+            label: GIF
+          face_on:
+            glyph: cap.record
+            label: GIF
+          id: vidgif
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: hq
+          face:
+            glyph: cap.record
+            label: "HQ MKV"
+          face_on:
+            glyph: cap.record
+            label: "HQ MKV"
+          id: vidhq
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: multitrack
+          face:
+            glyph: cap.record
+            label: TRACKS
+          face_on:
+            glyph: cap.record
+            label: TRACKS
+          id: vidmulti
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: gameplay
+              profile: 1080p
+          face:
+            glyph: cap.record
+            label: 1080P
+          face_on:
+            glyph: cap.record
+            label: 1080P
+          id: vid1080
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: gameplay
+              profile: 4k
+          face:
+            glyph: cap.record
+            label: 4K
+          face_on:
+            glyph: cap.record
+            label: 4K
+          id: vid4k
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          face:
+            label: VIDEO
+            value:
+              format: "{video?REC|IDLE}"
+              readout: cap.record
+              warn: 1
+          id: vidstate
+          tags:
+            - uc:C10.9
+          title: vidstate
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          face:
+            label: LENGTH
+            value:
+              format: "{:.0f}S"
+              readout: cap.record.seconds
+          id: vidtime
+          tags:
+            - uc:C10.9
+          title: vidtime
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          face:
+            label: SIZE
+            value:
+              format: "{:b}"
+              readout: cap.record.bytes
+          id: vidsize
+          tags:
+            - uc:C10.9
+          title: vidsize
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          face:
+            label: FILE
+            value:
+              format: "{}"
+              readout: cap.record.output
+          id: vidfile
+          tags:
+            - uc:C10.9
+          title: vidfile
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
       tags:
         - uc:C7.2
-      title: "Record video"
-      type: action
+        - uc:C7.3
+        - uc:C7.5
+      title: "VIDEO REC"
+      type: menu
     -
       at:
         - 2
         - 8
-      do:
-        id: cap.record_toggle
-        kind: action
-        value:
-          preset: music
       face:
-        glyph: cap.record
-        label: "AUDIO REC"
-      face_on:
-        glyph: cap.record.on
-        label: "AUDIO REC"
-      id: arec
-      state: toggle.cap.record_toggle
+        glyph: cap.audio
+        label: AUDIO
+      id: audio
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: music
+          face:
+            glyph: cap.record_audio
+            label: REC
+          face_on:
+            glyph: cap.record_audio.on
+            label: REC
+          id: audstart
+          state: cap.record.audio_only
+          tags:
+            - uc:C7.2a
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: cap.record_stop
+            kind: action
+          face:
+            glyph: cap.record_stop
+            label: STOP
+          id: audstop
+          tags:
+            - uc:C7.2a
+          title: "Stop recording"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: cap.record_pause
+            kind: action
+          face:
+            glyph: cap.record_pause
+            label: PAUSE
+          id: audpause
+          tags:
+            - uc:C7.2a
+          title: "Pause recording"
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            id: cap.record_start
+            kind: action
+            value:
+              preset: audio
+          face:
+            glyph: cap.record_audio
+            label: WAV
+          face_on:
+            glyph: cap.record_audio
+            label: WAV
+          id: audwav
+          state: toggle.cap.record_start
+          tags:
+            - uc:C7.2a
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 5
+              source: master
+          face:
+            glyph: cap.audio_capture
+            label: "MIX 5S"
+          id: audmix
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 5
+              source: beeper
+          face:
+            glyph: cap.audio_capture
+            label: "BEEPER 5S"
+          id: audbeep
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 5
+              source: ay1
+          face:
+            glyph: cap.audio_capture
+            label: "AY 5S"
+          id: auday
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 5
+              source: covox
+          face:
+            glyph: cap.audio_capture
+            label: "COVOX 5S"
+          id: audcovox
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: cap.audio_capture
+            kind: action
+            value:
+              seconds: 5
+              source: gs
+          face:
+            glyph: cap.audio_capture
+            label: "GS 5S"
+          id: audgs
+          tags:
+            - uc:C7.4
+          title: "Capture audio"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          face:
+            label: AUDIO
+            value:
+              format: "{audio_only?REC|IDLE}"
+              readout: cap.record
+              warn: 1
+          id: audstate
+          tags:
+            - uc:C10.9
+          title: audstate
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          face:
+            label: LENGTH
+            value:
+              format: "{:.0f}S"
+              readout: cap.record.seconds
+          id: audtime
+          tags:
+            - uc:C10.9
+          title: audtime
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          face:
+            label: SIZE
+            value:
+              format: "{:b}"
+              readout: cap.record.bytes
+          id: audsize
+          tags:
+            - uc:C10.9
+          title: audsize
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          face:
+            label: FILE
+            value:
+              format: "{}"
+              readout: cap.record.output
+          id: audfile
+          tags:
+            - uc:C10.9
+          title: audfile
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
       tags:
         - uc:C7.2a
-      title: "Record video"
-      type: action
+        - uc:C7.4
+      title: "AUDIO REC"
+      type: menu
     -
       at:
         - 3
@@ -4160,8 +4640,8 @@ root:
             - 0
             - 5
           do:
-            id: run.to_cursor
-            kind: action
+            kind: gui
+            method: disassembly.run_to_cursor
           face:
             glyph: run.to_cursor
             label: "TO CURSOR"
@@ -4235,15 +4715,15 @@ root:
             - 1
             - 1
           do:
-            id: dbg.breakpoint_toggle_cursor
-            kind: action
+            kind: gui
+            method: disassembly.breakpoint_toggle_cursor
           face:
             glyph: dbg.breakpoint_toggle_cursor
             label: "BP CUR"
           id: bpcur
           tags:
             - uc:D4.1
-          title: "Toggle a breakpoint at the cursor"
+          title: "Breakpoint at the cursor"
           type: action
         -
           at:
@@ -4365,8 +4845,8 @@ root:
             - 2
             - 0
           do:
-            id: dbg.open
-            kind: action
+            kind: gui
+            method: debugger.open
           face:
             glyph: debug.menu
             label: "SHOW DEBUG"
@@ -4380,8 +4860,8 @@ root:
             - 2
             - 1
           do:
-            id: dbg.focus_prev_pane
-            kind: action
+            kind: gui
+            method: debugger.focus_prev
           face:
             glyph: dbg.focus_prev_pane
             label: "PANE <"
@@ -4395,8 +4875,8 @@ root:
             - 2
             - 2
           do:
-            id: dbg.focus_next_pane
-            kind: action
+            kind: gui
+            method: debugger.focus_next
           face:
             glyph: dbg.focus_next_pane
             label: "PANE >"
@@ -4411,14 +4891,16 @@ root:
             - 3
           do:
             hold: true
-            id: dbg.page_up
-            kind: action
+            kind: gui
+            method: debugger.page
+            params:
+              n: -1
           face:
             glyph: dbg.page_up
           id: pgup
           tags:
             - uc:D6.2
-          title: "Page up in the pane"
+          title: "Page up"
           type: action
         -
           at:
@@ -4426,14 +4908,16 @@ root:
             - 4
           do:
             hold: true
-            id: dbg.cursor_up
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: up
           face:
             glyph: dbg.cursor_up
           id: cup
           tags:
             - uc:D6.2
-          title: "Cursor up in the pane"
+          title: "Cursor up"
           type: action
         -
           at:
@@ -4441,60 +4925,63 @@ root:
             - 5
           do:
             hold: true
-            id: dbg.page_down
-            kind: action
+            kind: gui
+            method: debugger.page
+            params:
+              n: 1
           face:
             glyph: dbg.page_down
           id: pgdn
           tags:
             - uc:D6.2
-          title: "Page down in the pane"
+          title: "Page down"
           type: action
         -
           at:
             - 2
             - 6
           do:
-            id: dbg.follow_pc
-            kind: action
+            kind: gui
+            method: disassembly.follow_pc
           face:
             glyph: dbg.follow_pc
             label: FOLLOW
           id: follow
           tags:
             - uc:D6.4
-          title: "Disassembly follows PC"
+          title: "Show PC"
           type: action
         -
           at:
             - 2
             - 7
           do:
-            hold: true
-            id: dbg.memory_follow
-            kind: action
+            kind: gui
+            method: debugger.activate
           face:
             glyph: dbg.memory_follow
             label: "MEM PC"
           id: memf
           tags:
             - uc:D6.3
-          title: "Memory follows the value under the cursor"
+          title: "Enter in the focused pane"
           type: action
         -
           at:
             - 2
             - 8
           do:
-            id: dbg.labels_toggle
-            kind: action
+            kind: gui
+            method: metadata.set
+            params:
+              switch: labels
           face:
             glyph: dbg.labels_toggle
             label: LABELS
           id: labels
           tags:
             - uc:D6.4
-          title: "Labels in the disassembly"
+          title: "Metadata switch"
           type: action
         -
           at:
@@ -4551,14 +5038,16 @@ root:
             - 3
           do:
             hold: true
-            id: dbg.cursor_left
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: left
           face:
             glyph: dbg.cursor_left
           id: cleft
           tags:
             - uc:D6.2
-          title: "Cursor left in the pane"
+          title: "Cursor left"
           type: action
         -
           at:
@@ -4566,14 +5055,16 @@ root:
             - 4
           do:
             hold: true
-            id: dbg.cursor_down
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: down
           face:
             glyph: dbg.cursor_down
           id: cdown
           tags:
             - uc:D6.2
-          title: "Cursor down in the pane"
+          title: "Cursor down"
           type: action
         -
           at:
@@ -4581,14 +5072,16 @@ root:
             - 5
           do:
             hold: true
-            id: dbg.cursor_right
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: right
           face:
             glyph: dbg.cursor_right
           id: cright
           tags:
             - uc:D6.2
-          title: "Cursor right in the pane"
+          title: "Cursor right"
           type: action
         -
           at:
@@ -5144,24 +5637,24 @@ root:
             - 3
             - 5
           do:
-            id: ttd.find_last_write
-            kind: action
+            kind: gui
+            method: memory.find_last_write
           face:
             glyph: ttd.find_last_write
             label: WRITE
           id: lastw
           tags:
             - uc:D5.1
-          title: "Last write here"
+          title: "Last write to the cursor"
           type: action
         -
           at:
             - 3
             - 6
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: read
           face:
             glyph: ttd.find_last
@@ -5169,16 +5662,16 @@ root:
           id: lastr
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:
             - 3
             - 7
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: execute
           face:
             glyph: ttd.find_last
@@ -5186,7 +5679,7 @@ root:
           id: laste
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:
@@ -5264,21 +5757,317 @@ root:
       at:
         - 3
         - 5
-      do:
-        id: ttd.record_toggle
-        kind: action
+      context: ttd
+      dials:
+        -
+          index: 0
+          label: FRAMES
+          press:
+            id: run.pause_toggle
+            kind: action
+          turn:
+            id: ttd.jog_frames
+            kind: action
+            value:
+              d: $ticks
+        -
+          index: 1
+          label: SCRUB
+          press:
+            id: run.pause_toggle
+            kind: action
+          turn:
+            id: ttd.seek_by
+            kind: action
+            value:
+              d: $ticks
+              rate: $rate
       face:
-        glyph: ttd.record
-        label: "TTD REC"
-      face_on:
-        glyph: ttd.record.on
-        label: "TTD REC"
-      id: ttdrec
-      state: toggle.ttd.record_toggle
+        glyph: ttd.recordings
+        label: TTD
+      id: ttd
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: ttd.start
+            kind: action
+          face:
+            glyph: ttd.record
+            label: REC
+          face_on:
+            glyph: ttd.record.on
+            label: REC
+          id: ttdstart
+          state: toggle.ttd.start
+          tags:
+            - uc:C7.1
+          title: "Start recording"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: ttd.stop
+            kind: action
+          face:
+            glyph: ttd.stop
+            label: STOP
+          id: ttdstop
+          tags:
+            - uc:C7.1
+          title: "Stop recording"
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            id: ttd.resume_live
+            kind: action
+          face:
+            glyph: ttd.resume_live
+            label: LIVE
+          id: ttdlive
+          tags:
+            - uc:U2.3
+            - uc:D3.6
+          title: "Resume live"
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            id: ttd.unit_back
+            kind: action
+            value:
+              count: 5
+              unit: seconds
+          face:
+            glyph: ttd.unit_back
+            label: -5S
+          id: ttdback5
+          tags:
+            - uc:U2.2
+          title: "Back one unit"
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            id: ttd.bookmark_add
+            kind: action
+          face:
+            glyph: ttd.bookmark_add
+            label: MARK
+          id: ttdmark
+          tags:
+            - uc:D3.7
+          title: "Add a bookmark"
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            id: ttd.bookmark_prev
+            kind: action
+          face:
+            glyph: ttd.bookmark_prev
+            label: "MARK <"
+          id: ttdmprev
+          tags:
+            - uc:D3.7
+          title: "Previous bookmark"
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            id: ttd.bookmark_next
+            kind: action
+          face:
+            glyph: ttd.bookmark_next
+            label: "MARK >"
+          id: ttdmnext
+          tags:
+            - uc:D3.7
+          title: "Next bookmark"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            id: ttd.dump
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.dump
+            label: "SAVE TTD"
+          id: ttdsave
+          tags:
+            - uc:C7.1
+            - uc:D12.1
+          title: "Save the session"
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            id: ttd.load
+            kind: action
+            value:
+              path: $user/sessions/deck.ttd
+          face:
+            glyph: ttd.load
+            label: "LOAD TTD"
+          id: ttdload
+          tags:
+            - uc:C7.1
+          title: "Open a session"
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            id: cap.clip_last
+            kind: action
+            value:
+              seconds: 10
+          face:
+            glyph: cap.clip_last
+            label: "CLIP 10S"
+          id: ttdclip
+          tags:
+            - uc:C7.3
+          title: "Clip the last seconds"
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            id: ttd.journal_build
+            kind: action
+          face:
+            glyph: ttd.journal_build
+            label: JOURNAL
+          id: ttdjrnl
+          tags:
+            - uc:C7.1
+          title: "Build the write journal"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            id: ttd.invalidate
+            kind: action
+          face:
+            glyph: ttd.invalidate
+            label: DROP
+          id: ttddrop
+          tags:
+            - uc:C7.1
+          title: "Drop the history"
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          face:
+            label: TTD
+            value:
+              format: "{recording?REC|IDLE}"
+              readout: ttd.status
+              warn: 1
+          id: ttdstate
+          tags:
+            - uc:C10.7
+          title: ttdstate
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          face:
+            label: FRAMES
+            value:
+              format: "{:k}"
+              readout: ttd.status.frames
+          id: ttdfrms
+          tags:
+            - uc:C10.7
+          title: ttdfrms
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          face:
+            label: "TTD MEM"
+            value:
+              format: "{:b}"
+              readout: ttd.status.memory_bytes
+          id: ttdbytes
+          tags:
+            - uc:C10.7
+          title: ttdbytes
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          face:
+            label: MARKS
+            value:
+              readout: ttd.status.bookmarks
+          id: ttdmarks
+          tags:
+            - uc:C10.7
+          title: ttdmarks
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          face:
+            label: FRAME
+            value:
+              format: "{}"
+              readout: ttd.position.current.frame
+          id: ttdpos
+          tags:
+            - uc:D3.2
+          title: ttdpos
+          type: action
+      nav:
+        back:
+          - 0
+          - 0
+        dials: own
+      strip:
+        content: title
+        status: ttd
+        target: true
       tags:
         - uc:C7.1
-      title: "Start / stop recording"
-      type: action
+        - uc:D3
+        - dial.0.uc:D3.3
+        - dial.1.uc:D3.2
+      title: "TTD REC"
+      type: menu
     -
       at:
         - 3
@@ -5536,10 +6325,10 @@ root:
             value:
               format: "{master.muted?MUTED|ON}"
               readout: audio.mixer
-          id: audio
+          id: audmon
           tags:
             - uc:C10.4
-          title: audio
+          title: audmon
           type: action
         -
           at:
@@ -5917,10 +6706,10 @@ root:
               format: "{recording?REC|IDLE}"
               readout: cap.record
               warn: 1
-          id: video
+          id: vidmon
           tags:
             - uc:C10.9
-          title: video
+          title: vidmon
           type: action
       nav:
         back:

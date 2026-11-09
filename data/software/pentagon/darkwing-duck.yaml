@@ -1,0 +1,17 @@
+# Darkwing Duck on a Pentagon: the game's picture cadence for smooth motion (mapping-and-profiles.md §7.7, frame
+# presenter design section 4.5). Drafted by tools/smoothmotion/draft-video-profile.py from 200 frames of the RZX Archive
+# recording (testdata/loaders/rzx/archive/darkwingduck.rzx): 37 pictures, 5 frames apart (23 times; 6: 11, 7: 2). The
+# play area scrolls on the beat; its top row (lives) is redrawn a frame later on every picture, so it is left alone.
+# No key bindings: the game's controls come from the default profiles.
+schema: 1
+kind: play
+id: builtin/game/darkwing-duck
+label: Darkwing Duck
+match:
+  machines: [PENTAGON]
+  file_sha256: ["66d8fd0d5b4f74557dacab45ad27857619f4947ad4e365586ccdc7a1a9185ab3"]
+video:
+  picture_period: 5
+  smooth: cadence
+  window: [48, 48, 256, 192]
+  exclude: [[48, 48, 256, 8]]

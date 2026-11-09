@@ -34,7 +34,7 @@ std::string_view KnownName(std::string_view path)
 
 void AddValue(const Face& f, std::set<std::string>& readouts, std::set<std::string>& paths)
 {
-    if (!f.value || f.value->readout.empty())
+    if (!f.value || f.value->readout.empty() || f.value->readout.substr(0, 4) == "gui.")
         return;
     paths.insert(f.value->readout);
     readouts.insert(SplitReadoutPath(f.value->readout).name);
@@ -54,7 +54,7 @@ void Collect(const Node& n, std::set<std::string>& readouts, std::set<std::strin
         paths.insert("actions.unavailable");
         readouts.insert("actions.unavailable");
     }
-    if (!n.state.empty())
+    if (!n.state.empty() && n.state.substr(0, 4) != "gui.")  // gui.*: the GUI program's, not the surface topic's
     {
         paths.insert(n.state);
         readouts.insert(SplitReadoutPath(n.state).name);
@@ -166,6 +166,8 @@ bool IsKnownReadoutPath(std::string_view path)
         return false;
     if (path.substr(0, 7) == "toggle." || (path.substr(0, 13) == "audio.source." && path.size() > 13))
         return true;
+    if (path.substr(0, 4) == "gui.")
+        return true;  // the GUI control plane's state (the daemon reads it from the program, not the core)
     return !KnownName(path).empty();
 }
 

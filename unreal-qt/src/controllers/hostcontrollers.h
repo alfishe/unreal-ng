@@ -189,6 +189,8 @@ public:
 signals:
     /// A device arrived or left, or the profiles changed
     void changed();
+    /// The resolved game profile's `video:` section changed (Resolved().video; null: none)
+    void gameVideoChanged();
     /// A host action (debug-and-ttd.md §3) from a device, on the GUI thread; the owner hands it to the core
     /// ActionRegistry. @p value: 1 for a press, a scrub level, an encoder's steps; @p device: the host device's id
     void actionTriggered(const HostActionEvent& event);
@@ -267,6 +269,7 @@ private:
     bool _wheelConnected = false;
     std::shared_ptr<controllers::IHapticFeed> _hapticFeed;
     std::string _hapticsKey;  ///< what _hapticFeed was made from: a re-resolve to the same keeps its state
+    std::string _videoKey;    ///< the profile and `video:` gameVideoChanged told last
     uint64_t _fileObserver = 0;
     uint64_t _guestObserver = 0;
     uint64_t _contextObserver = 0;

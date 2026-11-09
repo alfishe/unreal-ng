@@ -60,8 +60,8 @@ public:
     void prepareForShutdown();
 
 public slots:
-    /// Toggle an execution breakpoint at the disassembly cursor (the Debug menu, the dbg.breakpoint_toggle_cursor
-    /// action); refused while an automation session holds the machine
+    /// Toggle an execution breakpoint at the disassembly cursor (the Debug menu, the GUI plane's
+    /// disassembly.breakpoint_toggle_cursor); refused while an automation session holds the machine
     void toggleBreakpointAtCursor();
     /// The breakpoint list and editor (the Debug menu's Show Breakpoints...)
     void openBreakpoints();
@@ -70,6 +70,26 @@ public slots:
     void focusMemoryPane();
 
 public:
+    /// region <The GUI control plane's debugger, disassembly and memory (guicontrol/debuggercontrol.cpp)>
+    class DisassemblerWidget* disassembler() const;
+    class QHexView* memoryView() const;
+    /// The panes of the focus ring: "disassembly", "registers", "memory", "stack"
+    static const std::vector<QString>& paneNames();
+    /// The pane holding the focus, else the one focused last
+    QString focusedPane() const;
+    bool focusPane(const QString& name);
+    void movePaneFocus(int delta);
+    void sendPaneKey(int key);
+    /// The memory view at a CPU address: its 16 KB page, the cursor on it; false without a machine
+    bool showMemoryAt(uint16_t address);
+    /// The memory view's first byte and cursor as CPU addresses (none: its page is not mapped now)
+    std::optional<uint16_t> memoryTop() const { return memoryViewBase(); }
+    std::optional<uint16_t> memoryCursor() const;
+    /// Where the memory view goes when the machine stops: "pc" (the default), "sp", "bc", "de", "hl", "ix", "iy" or
+    /// "off" (it stays)
+    const QString& memoryFollow() const { return _memoryFollow; }
+    bool setMemoryFollow(const QString& name);
+    /// endregion </The GUI control plane>
 
     /// region <Helper methods>
 protected:
@@ -149,18 +169,6 @@ private slots:
     void showLabelManager();
     void showVisualizationWindow();
 
-    // Pane focus for controllers: disassembly, registers, memory, stack
-    void focusNextPane();
-    void focusPrevPane();
-    void paneKey(int key);  ///< Qt::Key_Up / Down / Left / Right / PageUp / PageDown / Return into the pane in focus
-
-    // The disassembly's GUI actions (controllers/guiactions.cpp: dbg.follow_pc, dbg.scroll_mode_toggle, dbg.goto)
-    void followPc();
-    void toggleScrollMode();
-    void goToDisassemblyAddress(int address);
-    /// The memory view's cursor as a Z80 address: the debugger's "memory" cursor (ttd.find_last_write)
-    void publishMemoryCursor();
-
     void changeMemoryViewZ80Address(uint16_t addr);
     void changeMemoryViewBank(uint8_t bank);
     void changeMemoryViewAddress(uint8_t* address, size_t size, uint16_t offset = 0, uint16_t currentAddress = 0);
@@ -177,6 +185,9 @@ signals:
     /// (e.g., after speed control stepping). MainWindow connects this
     /// to DeviceScreen::refresh().
     void screenRefreshRequested();
+
+    /// The memory view shows another page or its follow mode changed (its cursor: QHexView::positionChanged)
+    void memoryViewChanged();
 
     /// @brief Emitted when the window is shown or hidden (menu toggle, close box,
     /// docking). MainWindow keeps the Debug menu in sync and switches the
@@ -259,6 +270,7 @@ private:
     uint64_t _markupObserver = 0;      // NC_READOUTS_CHANGED of the markup, filtered by the machine's id
     QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours
     PaneFocus* _paneFocus = nullptr;
+    QString _memoryFollow = QStringLiteral("pc");  // the memory view's register on a stop (memoryFollow)
 };
 
 #endif  // DEBUGGERWINDOW_H

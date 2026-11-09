@@ -96,13 +96,6 @@ The model is a configuration name (`ZXPOLY-48K`, `ZXPOLY-128K`,
 
 ## API Reference
 
-### Module Functions
-
-```python
-def videowall_singlesync(enable: bool, emulator_id: str = "") -> bool:
-    """Toggle Videowall Single Sync Mode"""
-```
-
 ### Emulator Class
 
 ```python
@@ -432,6 +425,21 @@ def companions() -> dict:
 
 def companion_revoke(id: str) -> int:
     """Revoke a companion by id or name ('all': every one); the number revoked"""
+
+# Module functions: the GUI control plane's methods (command-interface.md §16.4): the program's windows and views,
+# every GUI program on the machine. Each answers the plane's result {ok, body} or {ok: False, error, message}; waits up
+# to 15 s with the GIL released
+def gui_list() -> dict:
+    """{ok, body: {hosts: [{program, pid, windows: [{id, interfaces, state, views}], focus, endpoints}]}}"""
+
+def gui_catalogue() -> dict:
+    """The GUI interfaces: {format, interfaces: [{name, level, description, state, commands: [{method, params}]}]}"""
+
+def gui_state(target: str) -> dict:
+    """A node's state, interfaces and machine: gui_state('main/screen')"""
+
+def gui_call(method: str, target: str = "", **params) -> dict:
+    """A GUI command: gui_call('memory.goto', addr='0x6000'), gui_call('screen.zoom', 'main/screen', factor=2)"""
 
     def execution_state(self) -> dict:
         """Execution arbiter: phase, intent (run / pause) with intent_set_by (origin, client), intent_reason,
@@ -836,7 +844,7 @@ A changing action passes the script gate as the script's own control calls (an i
 `take_control`); the call waits for the action with the GIL released.
 
 ```python
-emu.actions()["actions"]                   # [{id, label, group, kind, held, gui, scope, needs_pause, available, ...}]
+emu.actions()["actions"]                   # [{id, label, group, kind, held, scope, needs_pause, available, ...}]
 emu.action("run.pause_toggle")             # a press
 emu.action("run.step_in")                  # {"ok": True, "result": {"pc": ..., "state": "paused", ...}}
 emu.action("ttd.jog_frames", -10)          # a delta: signed steps
@@ -1978,7 +1986,12 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
 emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
                                      #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
-                                     #   'exponential'), 'blending_decay' (0.1..0.9), 'emulator' (the instance the
+                                     #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
+                                     #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
+                                     #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
+                                     #   'match'), 'lip_sync_offset_ms'
+                                     #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',
+                                     #   'renders', 'interpolated', ...}, 'display': {'state', 'reason', 'hz', ...}} (the frame presenter's timing), 'emulator' (the instance the
                                      #   window shows), 'fullscreen', 'view' ('full' / 'screen' / 'content'), 'views', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},
                                      #   'osd_keyboard', 'osd_keyboard_picture', 'osd_keyboard_pictures',
@@ -1990,7 +2003,10 @@ emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=,
                                      #   crt_profile= (one of crt_profiles: none, basic, ...,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other
                                      #   than none switches CRT on), blending_frames=, blending_weights=,
-                                     #   blending_decay= (0.3), view= ('full' / 'screen' / 'content'), scale= (1..4), hud_theme=, hud_notices=
+                                     #   blending_decay= (0.3), smooth_motion= ('interpolate'), effects_device=
+                                     #   ('gpu' / 'cpu'), present_policy= ('vsync'), display_rate= ('match'),
+                                     #   lip_sync_offset_ms= (-40),
+                                     #   view= ('full' / 'screen' / 'content'), scale= (1..4), hud_theme=, hud_notices=
                                      #   {'ram-page': False}, osd_keyboard_picture=, osd_keyboard_style=
                                      #   ('photo' / 'schematic' / 'hybrid'), next_layers_mode=,
                                      #   next_layers_shown={'sprites': False}; applied the way the View menu does.

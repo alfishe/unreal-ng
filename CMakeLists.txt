@@ -309,6 +309,10 @@ endif ()
 # Qt-based Applications
 # ========================================
 if (BUILD_QT_APPS)
+    # The GUI control plane every GUI program hosts (no link to the core)
+    message(STATUS ">>> Building guicontrol + unreal-gui")
+    add_subdirectory(guicontrol)
+
     message(STATUS ">>> Building unreal-qt")
     add_subdirectory(unreal-qt)
     

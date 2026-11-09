@@ -123,7 +123,6 @@ struct ActionInfo
     std::string group;  ///< "Run", "Time travel", "Debugger", "Capture and machine"
     ValueKind kind = ValueKind::Press;
     bool held = false;  ///< a Press whose release matters too (turbo while held, reset after a 1 s hold)
-    bool gui = false;   ///< registered by the Qt client; absent headless
     /// The parameters it reads from ActionValue::params, one line for the catalogue ("key, hold?, frames?"; a `?`
     /// marks an optional one); "" when it takes none
     std::string params;

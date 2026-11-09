@@ -11,6 +11,7 @@
 #include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
+#include "framesource.h"
 #include "crtprofiles.h"
 
 class CRTBeamModel;
@@ -43,19 +44,18 @@ public:
     /// the framebuffer geometry changes (model/video-mode switch).
     void fitToParent();
 
-    /// Copies the latched (tear-free) frame into dst; returns true on success.
-    /// `geometry` (may be null) receives the geometry latched with that frame: the picture view cuts by it.
-    using FrameCopyFn = std::function<bool(uint8_t* dst, size_t dstSize, PictureGeometry* geometry)>;
-
-    /// When set, paintEvent pulls frames into an owned backing image via this
-    /// callback (Screen::CopyPresentedFramebuffer) instead of reading the
-    /// emulator's live framebuffer, which the emulation thread overwrites
-    /// concurrently and causes mid-frame tearing.
-    void setFrameSource(FrameCopyFn frameSource)
-    {
-        std::lock_guard<std::mutex> lock(_frameSourceMutex);
-        _frameSource = std::move(frameSource);
-    }
+    /// When set, paintEvent pulls the frame due now (Screen::CopyFrameAt) into an owned backing image via this
+    /// callback instead of reading the emulator's live framebuffer, which the emulation thread overwrites
+    /// concurrently and causes mid-frame tearing. A frame due later gets its own repaint
+    /// Smooth motion (ScreenFrames::smooth, UNREAL_SMOOTH_MOTION overrides it) with the frames in order: a repaint every
+    /// refresh while frames come, each with the picture for its time (smoothmotion.h, the CPU reference)
+    void setFrameSource(ScreenFrames source);
+    void setFrameSource(FrameSourceFn frameSource) { setFrameSource(ScreenFrames{std::move(frameSource)}); }
+    /// The game's picture cadence from its profile (nullptr: none): with Mode::Interpolate, the steps between the
+    /// game's own pictures
+    void setGameVideo(const smoothmotion::GameVideo* game) { _smooth.SetGame(game); }
+    /// Smooth motion's counters for the automation (presenter "software", the CPU reference)
+    WindowPresentStats presentStats() const;
 
     /// Thread-safe cut of every paint path into the emulator's framebuffer
     /// (the tear-free provider captures raw Screen*/EmulatorContext* pointers,
@@ -168,8 +168,27 @@ private:
     QRectF devicePixelsRect;
     QImage* devicePixels = nullptr;
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
-    FrameCopyFn _frameSource;       // Tear-free frame provider (empty = legacy live-buffer path)
-    mutable std::mutex _frameSourceMutex;  // Guards _frameSource + devicePixels across threads
+    FrameSourceFn _frameSource;     // Tear-free frame provider (empty = legacy live-buffer path)
+    NextFrameSourceFn _nextFrameSource;  // The frames in order, for smooth motion
+    bool _repaintScheduled = false; // a repaint waits for the next frame's target
+    mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + devicePixels across threads
+
+    // Smooth motion (GUI thread)
+    bool smoothActive() const;
+    smoothmotion::SmoothMotion _smooth;
+    DisplayRate _displayRate = DisplayRate::Keep;  // ScreenFrames::displayRate: reported, not done (no presenter)
+    // Smooth motion auto (View > Video Synchronization): no VRR and no display switch here, so interpolate unless the
+    // display's own rate fits the machine's
+    void updateVideoSync();
+    bool _smoothAuto = false;
+    VideoSync _sync = VideoSync::Off;
+    std::string _syncReason;
+    FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
+    FrameClockSource _shownClock = FrameClockSource::None;  // the clock that timed the frame drawn last
+    uint64_t _meteredSerial = 0; // the last frame pushed into it
+    QImage _nextFrame;    // a frame on its way into _smooth
+    QImage _smoothFrame;  // the picture drawn
+    smoothmotion::SmoothMotion::Result _smoothShown;  // what _smoothFrame is made of
 
     static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
     float ratio = kNativeRatio;  // the shape the picture is drawn in (init)

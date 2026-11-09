@@ -73,10 +73,6 @@ protected:
 
         _mainLoop = reinterpret_cast<MainLoop_CUT*>(_context->pMainLoop);
         ASSERT_NE(_mainLoop, nullptr);
-
-        // Low-latency presentation so the presented frame equals the last
-        // latch - the decimation cadence becomes directly observable
-        _screen->SetPresentDelayFrames(0);
     }
 
     void TearDown() override
@@ -295,7 +291,6 @@ TEST_F(TurboMode_Test, RenderedTurboFrameMatchesNormalMode)
     reference->GetContext()->pFeatureManager->setFeature(Features::kScreenHQ, true);  // same renderer as the fixture
     Screen* referenceScreen = reference->GetContext()->pScreen;
     ASSERT_NE(referenceScreen, nullptr);
-    referenceScreen->SetPresentDelayFrames(0);
     auto* referenceLoop = reinterpret_cast<MainLoop_CUT*>(reference->GetContext()->pMainLoop);
     ASSERT_NE(referenceLoop, nullptr);
 

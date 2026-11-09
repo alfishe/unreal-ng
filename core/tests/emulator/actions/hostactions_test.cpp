@@ -159,8 +159,7 @@ TEST_F(HostActions_Test, TheCatalogueHasTheScenarioActionsWithTheirKindsParamsAn
                            "ttd.load"})
     {
         const std::optional<ActionInfo> info = registry.Find(id);
-        ASSERT_TRUE(info.has_value()) << id;
-        EXPECT_FALSE(info->gui) << id << ": a core action, present headless";
+        EXPECT_TRUE(info.has_value()) << id << ": a core action, present headless";
     }
     EXPECT_EQ(registry.Find("input.type")->kind, ValueKind::Text);
     EXPECT_EQ(registry.Find("basic.inject")->kind, ValueKind::Text);
@@ -408,9 +407,18 @@ TEST_F(HostActions_Test, TimeTravelVerbsTakeTheirParamsAsOptions)
         EXPECT_EQ(early.error, "not_now") << id;
         EXPECT_EQ(early.message, actions::kNoHistory) << id;
     }
+    // A REC key's state is the recording; its STOP key is not available until one runs (and after it stopped)
+    ActionRegistry& registry = ActionRegistry::Instance();
+    EXPECT_EQ(registry.ToggleState("ttd.start", _id), false);
+    const ActionResult idle = Run("ttd.stop", Press());
+    EXPECT_EQ(idle.error, "not_now");
+    EXPECT_EQ(idle.message, "not recording");
     ASSERT_TRUE(Run("ttd.start", Press()).ok);
+    EXPECT_EQ(registry.ToggleState("ttd.start", _id), true);
     _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
     ASSERT_TRUE(Run("ttd.stop", Press()).ok);
+    EXPECT_EQ(registry.ToggleState("ttd.start", _id), false);
+    EXPECT_EQ(Run("ttd.stop", Press()).error, "not_now") << "stopped: nothing to stop";
 
     // The params reach the controller as its options: a missing label and an unknown one are its own answers
     EXPECT_EQ(Run("ttd.bookmark_delete", Press()).error, "Bad Request") << "no label";

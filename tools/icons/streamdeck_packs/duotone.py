@@ -14,6 +14,7 @@ import vector as v
 
 PAD = (23, 24, 28)
 GLYPH = (238, 235, 226)
+REC = (232, 64, 56)  # the record marker: red in every group
 # group: (plate, accent)
 GROUPS = {
     'nav': ((44, 48, 56), (150, 170, 196)),
@@ -38,7 +39,7 @@ def render(g):
         plate = tuple(int(x * 1.55) for x in plate)
     dim = tuple(v.mix(GLYPH, plate, 0.45))
     c = v.canvas_for(g['id'], gap=0.9)
-    glyph, alpha = v.flat_glyph(c, {'w': GLYPH, 'l': GLYPH, 'e': GLYPH, 'b': accent, 'd': dim, 'k': None,
+    glyph, alpha = v.flat_glyph(c, {'w': GLYPH, 'l': GLYPH, 'e': GLYPH, 'b': accent, 'd': dim, 'r': REC, 'k': None,
                                     'g': None}, black_fill=dim, black_line=GLYPH)
     img = np.zeros((v.R, v.R, 3)) + v.rgb(PAD)
     from PIL import Image, ImageDraw

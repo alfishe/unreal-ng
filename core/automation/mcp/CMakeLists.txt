@@ -41,6 +41,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-controllers.cpp
     src/mcp-actions.h
     src/mcp-actions.cpp
+    src/mcp-gui.h
+    src/mcp-gui.cpp
     src/mcp-streamdeck.h
     src/mcp-streamdeck.cpp
     src/mcp-bus.cpp

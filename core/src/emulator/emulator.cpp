@@ -3285,6 +3285,9 @@ Emulator::DirectStepScope::~DirectStepScope()
         // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
             screen->UpdateScreen();
+        // A direct run is not paced to real time and leaves the machine stopped: its frames are due at once
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr)
+            screen->SettlePresentTiming();
         _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());

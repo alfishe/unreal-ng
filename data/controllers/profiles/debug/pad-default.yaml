@@ -26,13 +26,13 @@ layers:
     west:            { action: ttd.bookmark_add }
     east:            { action: ttd.resume_live }
     menu:            { action: run.pause_toggle }
-    view:            { action: dbg.focus_next_pane }
-    lstick.up:       { action: dbg.cursor_up }
-    lstick.down:     { action: dbg.cursor_down }
-    lstick.left:     { action: dbg.cursor_left }
-    lstick.right:    { action: dbg.cursor_right }
+    view:            { action: debugger.focus_next }
+    lstick.up:       { action: debugger.cursor_move, params: { dir: up } }
+    lstick.down:     { action: debugger.cursor_move, params: { dir: down } }
+    lstick.left:     { action: debugger.cursor_move, params: { dir: left } }
+    lstick.right:    { action: debugger.cursor_move, params: { dir: right } }
     rstick.click:    { action: dbg.breakpoint_toggle_pc }
-    lstick.click:    { action: dbg.memory_follow }
+    lstick.click:    { action: debugger.activate }
   "@ttd":
     dpad.left:       { action: ttd.step_back_frame, repeat: { delay: 15, rate: 4 } }
     dpad.right:      { action: ttd.step_forward_frame, repeat: { delay: 15, rate: 4 } }

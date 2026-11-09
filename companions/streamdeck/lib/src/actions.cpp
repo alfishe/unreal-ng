@@ -1,8 +1,10 @@
 #include "sdb/actions.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -13,6 +15,7 @@
 
 #include "sdb/datadir.h"
 #include "sdb/format.h"
+#include "sdb/guiplane.h"
 #include "sdb/surfacereadouts.h"
 
 #ifndef _WIN32
@@ -123,6 +126,8 @@ ActionResult Execute(const Action& a, ActionHost& host, const json& vars, bool* 
         ResolvePaths(call.params, vars.value("__dir", ""));
         return host.RunAction(call);
     }
+    if (k == "gui")
+        return host.RunGui(j, vars.value("phase", 0));
     if (k == "webapi")
     {
         const std::string method = j.value("method", "POST"), path = j.value("path", "");
@@ -642,6 +647,98 @@ public:
                 });
     }
 
+    // A view's interface (memory, disassembly) goes to the view showing the deck's machine when the scenario names
+    // one (`iface@<instance>`); with emulator "auto" the plane picks, as the REST fallback lets the host pick
+    ActionResult RunGui(const json& step, int phase) override
+    {
+        const std::string method = step.value("method", "");
+        if (phase < 0)
+        {
+            StopRepeat();
+            return {true, "gui " + method + ": released"};
+        }
+        std::string target = step.value("target", "");
+        if (target.empty() && _s.emulator != "auto")
+        {
+            const std::string iface = method.substr(0, method.find('.'));
+            if (Gui().IsViewInterface(iface))
+            {
+                std::lock_guard l(_m);
+                if (!_resolved || _emuId.empty())
+                    Resolve();
+                if (!_emuId.empty())
+                    target = iface + "@" + _emuId;
+            }
+        }
+        const json params = step.contains("params") && step["params"].is_object() ? step["params"] : json::object();
+        const gui::Result r = Gui().Call(method, target, params);
+        if (!r.ok)
+            return {false, "gui " + method + ": " + (r.message.empty() ? r.error : r.message)};
+        if (phase > 0)
+            StartRepeat(method, target, params);
+        return {true, "gui " + method};
+    }
+
+    // A held key of a repeating command: again after 300 ms, then every 60 ms, until its release or a refusal (the
+    // runtime's jobs run one at a time, so the repeat has a thread of its own)
+    void StartRepeat(const std::string& method, const std::string& target, const json& params)
+    {
+        StopRepeat();
+        std::lock_guard l(_repeatMutex);
+        _repeatStop = false;
+        _repeat = std::thread([this, method, target, params] {
+            std::unique_lock lock(_repeatMutex);
+            auto wait = std::chrono::milliseconds(300);
+            while (!_repeatCv.wait_for(lock, wait, [this] { return _repeatStop; }))
+            {
+                lock.unlock();
+                const bool ok = Gui().Call(method, target, params).ok;
+                lock.lock();
+                if (!ok)
+                    break;
+                wait = std::chrono::milliseconds(60);
+            }
+        });
+    }
+
+    void StopRepeat()
+    {
+        std::thread done;
+        {
+            std::lock_guard l(_repeatMutex);
+            _repeatStop = true;
+            done = std::move(_repeat);
+        }
+        _repeatCv.notify_all();
+        if (done.joinable())
+            done.join();
+    }
+
+    ~SystemHost() override
+    {
+        StopRepeat();
+    }
+
+    gui::Client& Gui()
+    {
+        std::call_once(_guiOnce, [this] { _gui = std::make_unique<gui::Client>(_s.webapi); });
+        return *_gui;
+    }
+
+    // `gui.<path>`: the GUI host's root state (one `list` for all of them)
+    json GuiReadouts(const std::vector<std::string>& paths)
+    {
+        json out = json::object();
+        if (std::none_of(paths.begin(), paths.end(), [](const std::string& p) { return p.rfind("gui.", 0) == 0; }))
+            return out;
+        const json list = Gui().List(1000);
+        for (const std::string& path : paths)
+            if (path.rfind("gui.", 0) == 0)
+                if (json v = gui::ReadoutOf(list, path); !v.is_null())
+                    out[path] = std::move(v);
+        return out;
+    }
+
     ActionResult RunAction(const ActionCall& call) override
     {
         if (_exec)
@@ -685,6 +782,11 @@ public:
 
     json Readout(const std::string& path) override
     {
+        if (path.rfind("gui.", 0) == 0)
+        {
+            const json v = GuiReadouts({path});
+            return v.contains(path) ? v[path] : json();
+        }
         std::lock_guard l(_m);
         if (!_resolved || _emuId.empty())
             Resolve();
@@ -713,12 +815,20 @@ public:
 
     json Readouts(const std::vector<std::string>& paths) override
     {
+        json out = GuiReadouts(paths);
+        std::vector<std::string> core;
+        for (const std::string& path : paths)
+            if (path.rfind("gui.", 0) != 0)
+                core.push_back(path);
+        if (core.empty())
+            return out;
         std::lock_guard l(_m);
         if (!_resolved || _emuId.empty())
             Resolve();
         if (_emuId.empty())
-            return json::object();
-        return ReadoutsLocked(paths);
+            return out;
+        out.update(ReadoutsLocked(core));
+        return out;
     }
 
     HttpResponse Webapi(const std::string& method, const std::string& path, const json& body, bool control) override
@@ -1289,6 +1399,12 @@ private:
     std::atomic<bool>* _cancel;
     std::shared_ptr<ActionExecutor> _exec;  // the surface client's (null: none)
     std::shared_ptr<ActionExecutor> _rest;
+    std::mutex _repeatMutex;  // the held gui key's repeat
+    std::condition_variable _repeatCv;
+    std::thread _repeat;
+    bool _repeatStop = false;
+    std::once_flag _guiOnce;
+    std::unique_ptr<gui::Client> _gui;  // the GUI control plane, made at the first gui key or readout
     std::mutex _actionMutex;  // the REST fallback's instance and context (FollowInstance)
     std::string _lastInstance;
     json _context;  // the body of the last ctx.set that succeeded

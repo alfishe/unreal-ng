@@ -286,7 +286,7 @@ void MenuManager::createViewMenu()
     _nextLayersAction->setChecked(false);
     connect(_nextLayersAction, &QAction::triggered, this, &MenuManager::nextLayersToggled);
 
-    // The machine's own keyboard to click (POC 031 pictures, controller manager osd.keyboard)
+    // The machine's own keyboard to click (POC 031 pictures, unrealqt.osd_keyboard)
     _osdKeyboardAction = _viewMenu->addAction(tr("On-screen &Keyboard"));
     _osdKeyboardAction->setStatusTip(tr("Show/hide the emulated machine's keyboard to click"));
     _osdKeyboardAction->setCheckable(true);
@@ -345,6 +345,14 @@ void MenuManager::createViewMenu()
     _temporalBlendingAction->setCheckable(true);
     _temporalBlendingAction->setChecked(false);
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
+
+    // The machine's frames even on the display: VRR, else a display rate fitting the machine's, else interpolation
+    _videoSyncAction = _viewMenu->addAction(tr("Video &Synchronization"));
+    _videoSyncAction->setStatusTip(tr("Show every frame for the same time: the display's VRR, else a display rate "
+                                      "fitting the machine's (50 / 100 Hz), else interpolation between the frames"));
+    _videoSyncAction->setCheckable(true);
+    _videoSyncAction->setChecked(false);
+    connect(_videoSyncAction, &QAction::triggered, this, &MenuManager::videoSyncToggled);
 
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey).
@@ -502,6 +510,12 @@ void MenuManager::setTemporalBlendingChecked(bool checked)
     {
         _temporalBlendingAction->setChecked(checked);
     }
+}
+
+void MenuManager::setVideoSyncChecked(bool checked)
+{
+    if (_videoSyncAction && _videoSyncAction->isChecked() != checked)
+        _videoSyncAction->setChecked(checked);
 }
 
 void MenuManager::setTemporalBlendingEnabled(bool enabled)
@@ -1248,7 +1262,7 @@ void MenuManager::createDebugMenu()
     connect(_showMemoryAction, &QAction::triggered, this, &MenuManager::showMemoryRequested);
 
     // Metadata: what the debugger takes from the program's profile, the analysis and the user's marks, and the labels;
-    // global switches, kept in the settings (MetadataSettings; the dbg.metadata_* actions and dbg.labels_toggle)
+    // global switches, kept in the settings (MetadataSettings; the GUI plane's metadata.set)
     _debugMenu->addSeparator();
     QMenu* metadataMenu = _debugMenu->addMenu(tr("Meta&data"));
     struct MetadataItem
@@ -1353,6 +1367,12 @@ void MenuManager::createToolsMenu()
     _temporalEffectsAction = _toolsMenu->addAction(tr("&Temporal Effects..."));
     _temporalEffectsAction->setStatusTip(tr("Configure frame blending for gigascreen smoothing"));
     connect(_temporalEffectsAction, &QAction::triggered, this, &MenuManager::temporalEffectsRequested);
+
+    // Video Synchronization: the step in effect and the interpolation's work, live
+    _videoSyncWindowAction = _toolsMenu->addAction(tr("&Video Synchronization..."));
+    _videoSyncWindowAction->setStatusTip(tr("Show how the frames reach the display: VRR, the display rate or "
+                                            "interpolation, and what the interpolation does"));
+    connect(_videoSyncWindowAction, &QAction::triggered, this, &MenuManager::videoSyncWindowRequested);
 
     // HUD Settings
     _hudSettingsAction = _toolsMenu->addAction(tr("&HUD Settings..."));

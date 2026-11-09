@@ -272,33 +272,13 @@ void EmulatorTile::handleVideoFrameRefresh(int id, Message* message)
 ### Single Sync Mode
 Single sync mode synchronizes all tile rendering to a single emulator's frame events, providing smoother visual output for recording and display purposes.
 
-#### CLI
-```
-videowall singlesync on [emulator_id]   # Enable (optional: specify which emulator to sync to)
-videowall singlesync off                # Disable (tiles render independently)
-```
+The video wall serves it on the GUI control plane ([gui-control](../emulator/design/gui-control/README.md)): the
+view `main/tilegrid` takes `tilegrid.single_sync {on?}` (`on` absent flips) and publishes `single_sync` and `tiles`.
+Every tile then shows the first tile's machine; the others are removed.
 
-#### WebAPI
-```http
-POST /api/videowall/singlesync
-Content-Type: application/json
-
-{"enable": true, "emulator_id": "optional-uuid"}
-```
-
-#### Python
-```python
-import videowall
-videowall.set_single_sync(True)                    # Sync to first emulator
-videowall.set_single_sync(True, emulator_id="...")  # Sync to specific emulator
-videowall.set_single_sync(False)                   # Independent rendering
-```
-
-#### Lua
-```lua
-videowall.setSingleSync(true)           -- Sync to first emulator
-videowall.setSingleSync(true, "uuid")   -- Sync to specific emulator
-videowall.setSingleSync(false)          -- Independent rendering
+```bash
+unreal-gui --host <id> tilegrid.single_sync on=true    # the video wall's host id: unreal-gui hosts
+python3 tools/verification/videowall/src/videowall_singlesync.py --on --snapshot game.z80
 ```
 
 ## Dependencies

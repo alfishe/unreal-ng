@@ -16,8 +16,8 @@ Each display refresh the app:
 4. does one linear-filter blit that fills the screen keeping the aspect ratio, with crop;
 5. submits.
 
-The core paces itself (core-clocked). The display-locked tick is P-04. Present delay is 0 by
-default (`Screen::SetPresentDelayFrames`). Audio goes from the core's callback into an SDL3 audio
+The core paces itself (core-clocked). The display-locked tick is P-04. The screen serves the frame
+due by the audio clock (no present delay setting). Audio goes from the core's callback into an SDL3 audio
 stream at the device rate, and the stream fill is reported as the DRC occupancy.
 
 The default guest program is a tight loop, poked at `#8000`:
@@ -35,7 +35,7 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 
 ```bash
 # Deck, Game Mode, non-Steam game: ~/steamdeck-poc/p01-sdl-gpu-latency  (Launch Options below)
---present vsync --fif 1 --delay 0 --view full          # baseline
+--present vsync --fif 1 --view full          # baseline
 --present vsync --fif 2                                # smoother, +1 frame?
 --present mailbox --fif 1                              # if gamescope offers it
 --view screen                                          # the working picture only: the paper of a Spectrum, the whole frame without a border

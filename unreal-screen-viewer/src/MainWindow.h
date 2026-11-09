@@ -11,6 +11,12 @@ class ModeToolbar;
 class QLabel;
 class QSplitter;
 
+namespace guicontrol
+{
+class Host;
+class ScreenBinding;
+}  // namespace guicontrol
+
 /**
  * @brief Main application window for the Screen Viewer
  * 
@@ -24,7 +30,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    /// @p endpoint "host:port" of the WebAPI to watch (--connect), not kept in the settings; empty: the settings'
+    explicit MainWindow(const QString& endpoint = QString(), QWidget* parent = nullptr);
     ~MainWindow() override;
 
 private slots:
@@ -42,6 +49,10 @@ private:
     void updateStatusBar();
     void saveSettings();
     void loadSettings();
+    /// The GUI control plane (docs/emulator/design/gui-control): the window `main` and its view `main/screen`
+    void startGuiControl();
+    /// The WebAPI watched, as a URL
+    QString endpointUrl() const;
 
     // UI Components
     QSplitter* _splitter = nullptr;
@@ -60,5 +71,9 @@ private:
     bool _isConnected = false;
     QString _webApiHost = "localhost";
     int _webApiPort = 8090;
+    bool _endpointGiven = false;  // --connect: the settings keep their own endpoint
+
+    std::unique_ptr<guicontrol::Host> _guiHost;
+    guicontrol::ScreenBinding* _screenControl = nullptr;  // a child of the screen widget
 };
 

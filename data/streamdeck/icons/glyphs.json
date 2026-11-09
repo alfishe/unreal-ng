@@ -343,20 +343,26 @@
    "id": "ttd.record",
    "group": "ttd",
    "title": "TTD recording (off)",
-   "draw": "record button, idle"
+   "draw": "record key: a flat red dot, no ring (the deck writes the label)"
   },
   {
    "id": "ttd.record.on",
    "group": "ttd",
    "title": "TTD recording (on)",
-   "draw": "record button, lit",
+   "draw": "record key while recording: the flat red dot on the pressed backdrop",
    "variant_of": "ttd.record"
   },
   {
    "id": "ttd.stop",
    "group": "ttd",
    "title": "Stop recording",
-   "draw": "stop square inside the record ring"
+   "draw": "stop key: a flat square centred like the record dot, no ring"
+  },
+  {
+   "id": "ttd.recordings",
+   "group": "ttd",
+   "title": "Time travel recording (page)",
+   "draw": "recorded frames behind the record ring, no red"
   },
   {
    "id": "ttd.step_back_frame",
@@ -1309,14 +1315,45 @@
    "id": "cap.record",
    "group": "video",
    "title": "Record video (off)",
-   "draw": "video camera"
+   "draw": "video camera with its red record light"
   },
   {
    "id": "cap.record.on",
    "group": "video",
    "title": "Record video (on)",
-   "draw": "video camera with the record light on",
+   "draw": "video camera with the red record light lit",
    "variant_of": "cap.record"
+  },
+  {
+   "id": "cap.record_stop",
+   "group": "video",
+   "title": "Stop recording",
+   "draw": "stop key: a flat square centred like the record dot, no ring"
+  },
+  {
+   "id": "cap.video",
+   "group": "video",
+   "title": "Video recording (page)",
+   "draw": "movie camera with two film reels, no red"
+  },
+  {
+   "id": "cap.audio",
+   "group": "video",
+   "title": "Audio recording (page)",
+   "draw": "studio microphone on a stand, no red"
+  },
+  {
+   "id": "cap.record_audio",
+   "group": "video",
+   "title": "Record audio (off)",
+   "draw": "microphone with a red record dot"
+  },
+  {
+   "id": "cap.record_audio.on",
+   "group": "video",
+   "title": "Record audio (on)",
+   "draw": "microphone with the red record dot lit",
+   "variant_of": "cap.record_audio"
   },
   {
    "id": "cap.clip_last",
@@ -1626,7 +1663,9 @@
    "state": "toggle.ttd.record_toggle"
   },
   "ttd.start": {
-   "face": "ttd.record.on"
+   "face": "ttd.record",
+   "face_on": "ttd.record.on",
+   "state": "toggle.ttd.start"
   },
   "ttd.stop": {
    "face": "ttd.stop"
@@ -1721,20 +1760,19 @@
    "face_on": "cap.record.on",
    "state": "toggle.cap.record_toggle"
   },
+  "cap.record_start": {
+   "face": "cap.record",
+   "face_on": "cap.record.on",
+   "state": "toggle.cap.record_start"
+  },
+  "cap.record_stop": {
+   "face": "cap.record_stop"
+  },
   "cap.clip_last": {
    "face": "cap.clip_last"
   },
-  "cap.screenshot": {
-   "face": "cap.screenshot"
-  },
   "cap.screenshot_save": {
    "face": "cap.screenshot_save"
-  },
-  "osd.keyboard": {
-   "face": "osd.keyboard"
-  },
-  "osd.quick_menu": {
-   "face": "osd.quick_menu"
   },
   "input.key": {
    "face": "input.key",
@@ -1895,9 +1933,6 @@
    "face_on": "dbg.mode.on",
    "state": "debug.mode.enabled"
   },
-  "dbg.open": {
-   "face": "debug.menu"
-  },
   "dbg.breakpoints_clear": {
    "face": "dbg.breakpoints_clear"
   },
@@ -1907,35 +1942,66 @@
   "dbg.breakpoint_toggle_pc": {
    "face": "dbg.breakpoint_toggle_pc"
   },
-  "dbg.labels_toggle": {
-   "face": "dbg.labels_toggle"
+  "debugger.open": {
+   "face": "debug.menu"
   },
-  "dbg.focus_next_pane": {
+  "debugger.focus_next": {
    "face": "dbg.focus_next_pane"
   },
-  "dbg.focus_prev_pane": {
+  "debugger.focus_prev": {
    "face": "dbg.focus_prev_pane"
   },
-  "dbg.cursor_up": {
-   "face": "dbg.cursor_up"
+  "debugger.cursor_move": {
+   "face": "dbg.cursor_up",
+   "params": {
+    "up": "dbg.cursor_up",
+    "down": "dbg.cursor_down",
+    "left": "dbg.cursor_left",
+    "right": "dbg.cursor_right"
+   }
   },
-  "dbg.cursor_down": {
-   "face": "dbg.cursor_down"
+  "debugger.page": {
+   "face": "dbg.page_down",
+   "params": {
+    "-1": "dbg.page_up",
+    "1": "dbg.page_down"
+   }
   },
-  "dbg.cursor_left": {
-   "face": "dbg.cursor_left"
-  },
-  "dbg.cursor_right": {
-   "face": "dbg.cursor_right"
-  },
-  "dbg.page_up": {
-   "face": "dbg.page_up"
-  },
-  "dbg.page_down": {
-   "face": "dbg.page_down"
-  },
-  "dbg.memory_follow": {
+  "debugger.activate": {
    "face": "dbg.memory_follow"
+  },
+  "disassembly.follow_pc": {
+   "face": "dbg.follow_pc"
+  },
+  "disassembly.breakpoint_toggle_cursor": {
+   "face": "dbg.breakpoint_toggle_cursor"
+  },
+  "disassembly.run_to_cursor": {
+   "face": "run.to_cursor"
+  },
+  "memory.find_last_write": {
+   "face": "ttd.find_last_write"
+  },
+  "memory.find_last": {
+   "face": "ttd.find_last"
+  },
+  "disassembly.scroll_mode": {
+   "face": "dbg.scroll_mode"
+  },
+  "disassembly.goto": {
+   "face": "dbg.goto",
+   "label": "the address"
+  },
+  "metadata.set": {
+   "params": {
+    "labels": "dbg.labels_toggle"
+   }
+  },
+  "unrealqt.osd_keyboard": {
+   "face": "osd.keyboard"
+  },
+  "window.screenshot": {
+   "face": "cap.screenshot"
   },
   "run.to_pixel": {
    "face": "run.to_pixel"
@@ -2023,9 +2089,6 @@
   "ttd.export_clip": {
    "face": "ttd.export_clip"
   },
-  "dbg.breakpoint_toggle_cursor": {
-   "face": "dbg.breakpoint_toggle_cursor"
-  },
   "dbg.bp_add": {
    "face": "dbg.bp_add",
    "label": "the kind and address"
@@ -2065,16 +2128,6 @@
   "port.out": {
    "face": "port.out",
    "label": "the port and value"
-  },
-  "dbg.follow_pc": {
-   "face": "dbg.follow_pc"
-  },
-  "dbg.scroll_mode_toggle": {
-   "face": "dbg.scroll_mode"
-  },
-  "dbg.goto": {
-   "face": "dbg.goto",
-   "label": "the address"
   },
   "sym.import": {
    "face": "sym.import"
@@ -2276,8 +2329,8 @@
   "ttd.jog_frames": "a dial (delta) action",
   "ttd.jog_instructions": "a dial (delta) action",
   "ttd.seek_by": "a dial (delta) action",
-  "ttd.scrub_back": "a level action of the GUI (held stick / trigger), not a key press",
-  "ttd.scrub_forward": "a level action of the GUI (held stick / trigger), not a key press",
+  "ttd.scrub_back": "a level action (a held stick / trigger), not a key press",
+  "ttd.scrub_forward": "a level action (a held stick / trigger), not a key press",
   "run.pace_by": "a dial (delta) action",
   "run.pace_shuttle_faster": "a level action (a spring-loaded shuttle ring), not a key press",
   "run.pace_shuttle_slower": "a level action (a spring-loaded shuttle ring), not a key press",

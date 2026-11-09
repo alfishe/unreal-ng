@@ -111,7 +111,7 @@ without `on` the action toggles the current state.
 | `sym.set_toggle` (toggle `toggle.sym_set.<id>`) | P | `id`, `on?` | free | `SymbolControl` `set` |
 | `prof.toggle` (toggle `toggle.profiler.<name>`), `prof.pause_toggle` (toggle `toggle.profiler_paused.<name>`), `prof.clear` | P | `name` (opcode, memory, calltrace, coverage, porttrace, gsporttrace, pchist, aylog, audio, all), `on?`, `keep?`, `capacity?`, `seconds?`, `source?` | free (`/profiler/*`) | `tracecontrol::Execute` |
 | `analyzer.toggle` (toggle `toggle.analyzer.<name>`), `analyzer.clear` | P | `name` (trdos, editor-input, coverage, aylog, audiocapture), `on?` | free (`/analyzer/*`) | `AnalyzerManager` |
-| `ttd.start`, `ttd.stop`, `ttd.invalidate` | P | | free (`/ttd/start`, ...) | `TTDControl` verbs |
+| `ttd.start`, `ttd.stop`, `ttd.invalidate` | P | | free (`/ttd/start`, ...) | `TTDControl` verbs; `ttd.start` has a state (`toggle.ttd.start`: recording), `ttd.stop` is unavailable while nothing records (`not_now`, "not recording": the deck dims its STOP key) |
 | `ttd.seek` | P | `frame` + `tinframe?`, or `bookmark` | rewind (`/ttd/seek`) | `TTDControl` `seek` |
 | `ttd.bookmark_delete`, `ttd.history_limit`, `ttd.journal`, `ttd.dump`, `ttd.load` | P | `label`; `frames?`, `bytes?`; `enabled`; `path` | debug | `TTDControl` verbs |
 
@@ -145,6 +145,8 @@ C3.3, C4.3, C4.5, C5, C6.4, C6.5, C7, U1.3, U1.5). Readouts of their own in `mac
 | `input.mouse_button` | P, held | `button` (left, right, middle), `hold?` (false: a click), `frames?` (2) | input (`/mouse/press`) | `DebugMouseManager` `Click` / `PressButton` / `ReleaseButton` |
 | `input.mouse_release` | P | | input | `DebugMouseManager::ReleaseAllButtons` |
 | `cap.record_toggle` | P, toggle | `preset?` (gameplay, music, audio, gif, hq, multitrack), `format?`, `container?`, `audio?`, `mode?` (single, multi, audio), `profile?`, `path?`, `fps?`, `scale?`, `region?` | free (`/video/record`) | `capture::RecordingControl` `toggle`: start (default folder `<user data>/recordings`) or stop |
+| `cap.record_start` | P, toggle | as `cap.record_toggle` | free | `RecordingControl` `start`; the Stream Deck REC key: `conflict` while a recording runs; state: a recording runs (`toggle.cap.record_start`) |
+| `cap.record_stop` | P | | free | `RecordingControl` `stop`; the Stream Deck STOP key: unavailable (`not_now`, "no recording runs") while nothing records, so the deck dims it |
 | `cap.record_pause` | P, toggle | | free | `RecordingControl` `pause` / `resume`; `not_now` without a recording |
 | `cap.clip_last` | P | `seconds?` (10), `format?` (gif, mp4, mkv, webm, mov, avi), `path?`, `scale?` | free (`/ttd/export-clip`); `not_now` without a TTD recording | `capture::ClipLast`: the recording pauses for browsing at its end (D8), the last seconds go to a video file, the recording goes on from the paused point, the run state as it was |
 | `ttd.export_clip` | P | `from`, `to`, `path?` (a video file; a folder: the lossless clip), `codec?`, `scale?`, `chunk?` | free | `TTDControl` `export-clip` (a video path: `capture::ExportTtdClip`) |
@@ -186,7 +188,7 @@ Stream Deck use cases D1, D2, D3, D5, D6 ([use-cases](../2026-10-19-streamdeck-i
 | `run.pace_stop`, `run.pace_step` | P | | free; run (as `POST /run_pace`) | `RunPacer::Stop`, `Step` |
 | `run.to_pixel` | P | | debug, pause (`/run_to_pixel`) | `RunControl::RunToPixel` |
 | `run.until_pc` | P | `pc`, `max_tstates?`, `breakpoints?` | debug, pause (`/skip_until`) | `RunControl::RunUntilPc` |
-| `run.to_cursor` | P | `addr?` (else `DebuggerCursors` "disasm"), `max_tstates?` (500 frames) | debug, pause | `RunControl::RunUntilPc`, breakpoints honoured |
+| `run.to_cursor` | P | `addr`, `max_tstates?` (500 frames) | debug, pause | `RunControl::RunUntilPc`, breakpoints honoured |
 | `run.step_line`, `run.to_line` | P | `max_tstates?`; `line` | debug, pause (`/listing/*`) | `RunControl::StepLine` / `RunToLine` |
 | `ttd.step_back_scanline`, `ttd.step_forward_scanline` | P | `count?` | debug; history | `reverse-step` `scanlines`; a seek to the T-state |
 | `ttd.bookmark_prev`, `ttd.bookmark_next` | P | | rewind; history | a seek to the bookmark before / after the position |
@@ -198,14 +200,10 @@ Stream Deck use cases D1, D2, D3, D5, D6 ([use-cases](../2026-10-19-streamdeck-i
 | `ttd.journal_build`, `ttd.journal_build_cancel`, `ttd.export_clip` | P | `from_frame?`, `to_frame?`; —; `path`, `from?`, `to?`, `chunk?` | the routes' | the verbs |
 | `dbg.follow_pc`, `dbg.labels_toggle` (toggle), `dbg.scroll_mode_toggle`, `dbg.goto` | P | `addr` (goto) | GUI | the Qt disassembly |
 
-**The debugger's cursors** (`actions::DebuggerCursors`): the Qt client publishes the address of the disassembly's
-cursor row as `disasm` and the memory view's cursor as `memory`, per instance; `run.to_cursor`, `ttd.find_last*` (and
-the breakpoint actions at the cursor) take them when the call names no `addr`. The cursor row moves with a click, with
-Up / Down (an instruction; a byte in byte scroll) and PageUp / PageDown (16) in the disassembly, and so with a deck's
-`dbg.cursor_up` / `dbg.cursor_down` / `dbg.page_up` / `dbg.page_down` on that pane: it starts at PC when there is no
-row yet, the view scrolls to keep it visible, the row is kept and marked across refreshes. The mouse wheel scrolls the
-view without moving it. In the memory pane the same keys move the hex cursor (the view follows it). Headless there is
-no cursor: the call needs `addr`.
+**The debugger's cursors** (GUI control plane, 2026-11-08): the core keeps none. `run.to_cursor`, `ttd.find_last*`
+need `addr`; the GUI passes its own cursor (`disassembly.run_to_cursor`, `memory.find_last_write`,
+`memory.find_last`; [gui-control](../../emulator/design/gui-control/README.md)). The rows of this table naming `dbg.*`
+GUI verbs, `cap.screenshot`, `osd.keyboard`, `ctl.*` are history: they are plane commands now.
 
 **`ttd.seek_by` units** (§2): `params.unit`, else the instance's (`ttd.scrub_unit`): `frames`, `seconds` (the
 curve), `batch` (`count` frames a step, default 10), `instructions` (back: `reverse-step count`; forward: up to 64
@@ -314,7 +312,7 @@ Every plane (automation planes guidelines; built in S1, the `surface` topic in S
 | Python | `emu.actions()` | `emu.action(id, value=None, **params)` |
 | Lua | `actions()` | `action(id, [value], [params])` |
 | MCP | `actions` `list` | `actions` `run` (`id`, `value`, `params`, `target`) |
-| REST | `GET /api/v1/controllers/actions` (`?instance=`: id, label, group, kind, held, gui, scope, `needs_pause`, `available`, `error`, `reason`) | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
+| REST | `GET /api/v1/controllers/actions` (`?instance=`: id, label, group, kind, held, scope, `needs_pause`, `available`, `error`, `reason`) | `POST /api/v1/controllers/actions/{id}` `{instance?, value?, params?}` |
 | WebSocket | `{"op":"call","method":"GET","path":"/api/v1/controllers/actions"}` on `/api/v1/ws` | `{"op":"call","method":"POST","path":"/api/v1/controllers/actions/{id}","body":…}`; push: the `surface` topic (`join`, `action`, `result`, `ctx`, readouts; [websocket-interface.md §3.1](../../emulator/design/control-interfaces/websocket-interface.md#31-the-surface-topic)) |
 | Qt | menus and toolbars call the registry (C7); a device's action bindings run through it (`unreal-qt/src/controllers/guiactions.cpp`) | |
 

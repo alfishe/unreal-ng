@@ -290,7 +290,7 @@ bool ValidateBinding(const Binding& binding, std::string& error)
     }
     if (!binding.options.params.IsNull() && target.kind != TargetKind::Action)
     {
-        error = "a 'curve' object is an action's parameters: it needs an action target";
+        error = "'params' or a 'curve' object are an action's parameters: they need an action target";
         return false;
     }
     const BindingOptions& options = binding.options;

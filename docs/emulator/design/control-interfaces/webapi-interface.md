@@ -612,8 +612,8 @@ Emulation itself is not delayed. The same status is CLI `video temporal`,
 Lua / Python `video_temporal()`, MCP `capture_media` `temporal_status`.
 
 ```
-GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, blending_decay, emulator (the instance the window shows), fullscreen, view (full | screen | content), views[], scale (1..4; 0 resized by hand / maximized / full screen), toolbar, status_bar, hud, hud_theme, hud_themes[], hud_notices {id: bool}, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures[], osd_keyboard_style, osd_keyboard_styles[], next_layers, next_layers_mode, next_layers_shown {ula, layer2, tilemap, sprites}
-PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential", "blending_decay": 0.1..0.9, "fullscreen": bool, "view": "full"|"screen"|"content", "scale": 1..4, "toolbar": bool, "status_bar": bool, "hud": bool, "hud_theme": "retro_zx", "hud_notices": {"ram-page": false} (or "hud_notice.<id>": bool), "osd_keyboard": bool, "osd_keyboard_picture": "pentagon2plus", "osd_keyboard_style": "photo"|"schematic"|"hybrid", "next_layers": bool, "next_layers_mode": "layers"|"composed"|"winner", "next_layers_shown": {"sprites": false} (or "next_layer.<name>": bool)} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL, a keyboard picture on a machine without one), {error, kind}
+GET  /api/v1/emulator/{id}/video/window       GUI window display settings: backend (gpu / software), gpu_available, gpu, crt, crt_profile, crt_profiles[], blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, present_policy, display_rate, lip_sync_offset_ms, present {presenter (metal / dxgi / gl-timed / gl / software), fixed_display, vrr, vrr_support {state (yes / no / unknown), reason}, sync {mode, reason}, refresh_hz, clock (audio / emulated / latch / none), timing {delay_clamped (the sound comes later than the screen holds its frames: the picture leads it), max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown, dropped, late, beat {frames, off (outside the beat pattern)}, lead_ms, error_ms, sound_offset_ms {p50, p99}, gpu_wait_ms, gpu_ms {smooth, smooth_cpu, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures, renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz, machine_hz}}, emulator (the instance the window shows), fullscreen, view (full | screen | content), views[], scale (1..4; 0 resized by hand / maximized / full screen), toolbar, status_bar, hud, hud_theme, hud_themes[], hud_notices {id: bool}, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures[], osd_keyboard_style, osd_keyboard_styles[], next_layers, next_layers_mode, next_layers_shown {ula, layer2, tilemap, sprites}
+PUT  /api/v1/emulator/{id}/video/window       any of {"gpu": bool, "crt": bool, "crt_profile": "basic", "blending": bool, "blending_frames": 2..5, "blending_weights": "equal"|"exponential", "blending_decay": 0.1..0.9, "smooth_motion": "off"|"blend"|"interpolate"|"auto", "effects_device": "gpu"|"cpu", "present_policy": "auto"|"vrr"|"vsync", "display_rate": "keep"|"match", "lip_sync_offset_ms": -200..200, "fullscreen": bool, "view": "full"|"screen"|"content", "scale": 1..4, "toolbar": bool, "status_bar": bool, "hud": bool, "hud_theme": "retro_zx", "hud_notices": {"ram-page": false} (or "hud_notice.<id>": bool), "osd_keyboard": bool, "osd_keyboard_picture": "pentagon2plus", "osd_keyboard_style": "photo"|"schematic"|"hybrid", "next_layers": bool, "next_layers_mode": "layers"|"composed"|"winner", "next_layers_shown": {"sprites": false} (or "next_layer.<name>": bool)} (POST too); applied the way the View menu does, answers the settings after the change; a custom shader is `"crt_profile": "shader:<name>"` (offered when the host has a GPU; needs `gpu` on, in the same request or before: 409 unavailable otherwise); the window's display, not the machine: no control session opened or needed; 400 bad-parameter, 409 no-window (headless) / unavailable (gpu without OpenGL, a keyboard picture on a machine without one), {error, kind}
 GET  /api/v1/emulator/{id}/video/window/crt_params        the active CRT profile's parameters: {profile, kind (preset | profile | none), parameters [{name, description, value, initial, minimum, maximum, step}]}
 PUT  /api/v1/emulator/{id}/video/window/crt_params        {values: {name: number}, steps: {name: steps}, reset: true | name | [names]} (POST too): reset, then set (clamped), then move by a dial's steps; answers the parameters; 400 an unknown name (lists them), 409 no-window / unavailable (a profile without parameters)
 POST /api/v1/emulator/{id}/video/window/crt_params/reset  every parameter back to its initial value
@@ -1495,27 +1495,6 @@ Response contains type-specific fields based on breakpoint type:
 }
 ```
 
-## Videowall API
-
-### 8. Set Videowall Single Sync Mode
-**Endpoint**: `POST /api/v1/videowall/singlesync`  
-**Description**: Toggles the Single Emulator Sync mode in the Videowall app, providing 100% synchronized rendering and video recording.  
-
-**Request**:
-```json
-{
-  "enable": true,
-  "emulator_id": "optional-id"
-}
-```
-
-**Response**:
-```json
-{
-  "success": true
-}
-```
-
 ## Input API
 
 ### 9. Keyboard Inputjection
@@ -1968,7 +1947,7 @@ the new id); `POST /api/v1/controllers/unalias {"id": "gc:..."}` forgets one (`2
 ### Host Actions
 
 ```
-GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, gui, scope,
+GET  /api/v1/controllers/actions[?instance=<id|index>]   the catalogue: id, label, group, kind, held, scope,
                                                           needs_pause, available (+ error, reason)
 POST /api/v1/controllers/actions/{id}                     {instance?, value?, params?}: run it, answer when done
 ```
@@ -2033,8 +2012,21 @@ the daemon's automation (`409 not_running` without one, `502 daemon_refused` wit
 the I/O thread. The topic `streamdeck.status` on `/api/v1/ws` pushes the changes.
 
 ```
-GET    /api/v1/monitor[?instance=]                       everything: {host, clients, instances: [{instance, index, model, emulator.stats, ...}]}
-GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, controllers.devices,
+GET    /api/v1/gui                                       every GUI program on the machine: {ok, body: {hosts: [...]}}
+GET    /api/v1/gui/catalogue                             the GUI interfaces: interfaces[{name, level, state, commands[{method, params}]}]
+GET    /api/v1/gui/state?target=                         a node's state: {ok, body: {host, target, interfaces, state, instance?}}
+POST   /api/v1/gui/{method}                              a GUI command (memory.goto, screen.zoom): body its parameters and target?
+```
+
+The GUI control plane's methods ([command-interface.md section 16.4](./command-interface.md#164-the-gui-control-planes-methods)):
+the program's windows and views, every GUI program on the machine. Each route answers the plane's result with 200
+(`{ok, body}` or `{ok: false, error: not_found | bad_request | ambiguous | not_now | failed | timeout, message}`, a
+refusal too), `404 no_gui` without a plane (headless), 400 for a body that is not a JSON object. Open: no session, no
+companion scope. Every route is also a `/api/v1/ws` call.
+
+```
+GET    /api/v1/monitor[?instance=]                       everything: {host, clients, video, devices, instances: [{instance, index, model, emulator.stats, ...}]}
+GET    /api/v1/monitor/{name}[?instance=]                one name: host.stats, host.clients, video.present, controllers.devices,
                                                          emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers,
                                                          debug.markup,
                                                          debug.cpuprofile,

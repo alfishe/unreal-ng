@@ -1,112 +1,85 @@
 #!/usr/bin/env python3
-import requests
-import time
+"""Switch the video wall's single sync mode through the GUI control plane (`tilegrid.single_sync`,
+docs/emulator/design/gui-control), and optionally load a snapshot on the machine every tile then shows.
+
+    videowall_singlesync.py --on [--snapshot game.z80]
+    videowall_singlesync.py --off
+    videowall_singlesync.py game.z80          # on, then the snapshot
+
+The video wall is found by its discovery file (program unreal-videowall); --host picks one by id, --tcp connects to
+a TCP listener (UNREAL_GUI_CONTROL_PORT). The snapshot goes through the WebAPI the video wall announces.
+"""
 import argparse
-import sys
 import os
-import json
+import sys
 
-def set_videowall_single_sync(base_url, enable, emulator_id=""):
-    url = f"{base_url}/api/v1/videowall/singlesync"
-    payload = {
-        "enable": enable
-    }
-    if emulator_id:
-        payload["emulator_id"] = emulator_id
-        
-    print(f"Sending request to {url}: {payload}")
-    
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        response.raise_for_status()
-        result = response.json()
-        print(f"Success: {result.get('success')}")
-        return result.get('success', False)
-    except requests.exceptions.RequestException as e:
-        print(f"Error communicating with WebAPI: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            print(f"Server response: {e.response.text}")
-        return False
+import requests
 
-def load_snapshot(base_url, emulator_id, snapshot_path):
-    url = f"{base_url}/api/v1/emulator/{emulator_id}/snapshot/load"
-    payload = {
-        "path": os.path.abspath(snapshot_path)
-    }
-    
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', 'guicontrol'))
+from guicontrol import Gui, GuiError, hosts  # noqa: E402
+
+
+def connect(args):
+    if args.tcp:
+        return Gui.connect(tcp=args.tcp)
+    walls = [e for e in hosts() if e.get('program') == 'unreal-videowall' and (not args.host or e['id'] == args.host)]
+    if not walls:
+        raise GuiError('not_found', 'no unreal-videowall is running' + (f' with host id {args.host}' if args.host else ''))
+    return Gui.connect(host=walls[0]['id'])
+
+
+def load_snapshot(endpoint, emulator_id, snapshot_path):
+    url = f"{endpoint}/api/v1/emulator/{emulator_id}/snapshot/load"
     print(f"Loading snapshot via {url}")
-    
     try:
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json={"path": os.path.abspath(snapshot_path)}, timeout=5)
         response.raise_for_status()
-        result = response.json()
-        print(f"Snapshot loaded successfully")
+        print("Snapshot loaded")
         return True
     except requests.exceptions.RequestException as e:
         print(f"Error loading snapshot: {e}")
-        if hasattr(e, 'response') and e.response is not None:
+        if getattr(e, 'response', None) is not None:
             print(f"Server response: {e.response.text}")
         return False
 
-def get_emulator_id(base_url):
-    url = f"{base_url}/api/v1/emulator"
-    try:
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-        emulators = response.json().get('emulators', [])
-        if not emulators:
-            print("No emulators found running.")
-            return None
-        # Return first emulator ID
-        return emulators[0]['id']
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting emulators: {e}")
-        return None
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Videowall Single Sync Mode")
-    parser.add_argument("snapshot_pos", nargs="?", help="Path to snapshot to load on the target emulator (SNA/Z80)")
-    parser.add_argument("--url", default="http://localhost:8090", help="Base URL of WebAPI (default: http://localhost:8090)")
+    parser = argparse.ArgumentParser(description="Video wall single sync mode (GUI control plane)")
+    parser.add_argument("snapshot_pos", nargs="?", help="Snapshot to load on the synced machine (SNA/Z80)")
     parser.add_argument("--on", action="store_true", help="Enable single sync mode")
     parser.add_argument("--off", action="store_true", help="Disable single sync mode")
-    parser.add_argument("--id", help="Target emulator ID (optional)")
-    parser.add_argument("--snapshot", help="Path to snapshot to load on the target emulator (SNA/Z80)")
-    
+    parser.add_argument("--snapshot", help="Snapshot to load on the synced machine (SNA/Z80)")
+    parser.add_argument("--host", help="The video wall's host id (its discovery file); default: the oldest one")
+    parser.add_argument("--tcp", help="ADDRESS:PORT of the video wall's TCP listener instead of the local socket")
     args = parser.parse_args()
-    
+
     snapshot_path = args.snapshot or args.snapshot_pos
-    
-    # Default to enabling single sync if positional snapshot is provided and --off wasn't explicitly requested
-    if snapshot_path and not args.off:
-        enable = True
-    elif args.off:
+    if args.off:
         enable = False
-    elif args.on:
+    elif args.on or snapshot_path:
         enable = True
     else:
         print("Please specify --on, --off, or pass a snapshot file path.")
         parser.print_help()
         sys.exit(1)
-    
-    # If no ID specified but we're trying to enable, get the first running emulator
-    target_id = args.id
-    if enable and not target_id:
-        target_id = get_emulator_id(args.url)
-        if not target_id:
-            print("Failed to auto-detect emulator ID.")
-            sys.exit(1)
-        print(f"Auto-detected emulator ID: {target_id}")
 
-    # Step 1: Set Videowall Sync Mode
-    success = set_videowall_single_sync(args.url, enable, target_id)
-    if not success:
+    try:
+        with connect(args) as gui:
+            body = gui.call('tilegrid.single_sync', on=enable)
+            print(f"Single sync: {'on' if body.get('single_sync') else 'off'}")
+            if not (enable and snapshot_path):
+                return
+            tiles = gui.state('main/tilegrid')['state'].get('tiles') or []
+            endpoints = gui.list().get('endpoints') or []
+    except (OSError, GuiError) as e:
+        print(f"GUI control: {e}")
         sys.exit(1)
-        
-    # Step 2: Optionally load snapshot
-    if enable and snapshot_path and target_id:
-        # Give UI a moment to transition
-        time.sleep(0.5)
-        load_snapshot(args.url, target_id, snapshot_path)
-        
+    if not tiles or not endpoints:
+        print("No machine on the tiles or no WebAPI announced: the snapshot is not loaded")
+        sys.exit(1)
+    if not load_snapshot(endpoints[0], tiles[0]['instance'], snapshot_path):
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()

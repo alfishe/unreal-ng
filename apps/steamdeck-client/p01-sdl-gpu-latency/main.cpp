@@ -13,7 +13,7 @@
 // counter step (0 = repeated frame, 2+ = a frame skipped).
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
-//                       [--delay 0..3] [--view full|screen|content] [--seconds N] [--windowed] [--autofire MS]
+//                       [--view full|screen|content] [--seconds N] [--windowed] [--autofire MS]
 //                       [--headless] [--boot] [--sound-haptics] [--crt <preset key>]
 //
 // Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
@@ -59,7 +59,6 @@ struct Options
     std::string present = "vsync";
     std::string view = "full";   // the part of the frame shown: full | screen | content (pictureview.h)
     uint32_t framesInFlight = 1;
-    int presentDelay = 0;
     double seconds = 0;
     double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
@@ -336,7 +335,6 @@ int main(int argc, char** argv)
         else if (k == "--file") opt.file = v;
         else if (k == "--present") opt.present = v;
         else if (k == "--fif") opt.framesInFlight = static_cast<uint32_t>(std::stoi(v));
-        else if (k == "--delay") opt.presentDelay = std::stoi(v);
         else if (k == "--view")
         {
             PictureView::Mode parsed;
@@ -402,7 +400,6 @@ int main(int argc, char** argv)
     }
     if (!emu.OpenAudio(&error))
         SDL_Log("audio: %s", error.c_str());
-    emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
     emu.Start();
 
     if (opt.headless)
@@ -494,8 +491,8 @@ int main(int argc, char** argv)
     frameLog.Open(deckpoc::LogPath("p01-frames", "csv"), "acquire_wait_us,copy_us,submit_us,emu_frame,emu_step,audio_queued,underruns,swapchain_ok,border_white,swapchain_w,swapchain_h,window_flags");
     deckpoc::CsvLog pressLog;
     pressLog.Open(deckpoc::LogPath("p01-presses", "csv"), "event_ns,first_frame_submit_ns,software_latency_ms,frames_waited");
-    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u delay=%d view=%s gpu=%s video=%s audio_rate=%u",
-                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.presentDelay, opt.view.c_str(),
+    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u view=%s gpu=%s video=%s audio_rate=%u",
+                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.view.c_str(),
                  SDL_GetGPUDeviceDriver(device), SDL_GetCurrentVideoDriver(), emu.AudioRate());
 
     SDL_Gamepad* pad = nullptr;

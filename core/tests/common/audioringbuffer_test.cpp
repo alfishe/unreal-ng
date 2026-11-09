@@ -172,3 +172,25 @@ TEST(AudioRingBuffer_Test, DiscardAdvancesReadPointer)
     EXPECT_EQ(ring.discard(100000), 396u);
     EXPECT_EQ(ring.getOccupancyStereoFrames(), 0u);
 }
+
+/// The stream positions the audio clock maps to time: written counts what got in, read counts
+/// everything that left (played, discarded by a hard resync, dropped by clear)
+TEST(AudioRingBuffer_Test, LifetimeStreamPositions)
+{
+    AudioRingBuffer<int16_t, 64> ring;
+    int16_t samples[80] = {0};
+
+    EXPECT_EQ(ring.enqueue(samples, 40), 40u);  // 20 frames
+    EXPECT_EQ(ring.enqueue(samples, 40), 23u);  // full: 63 samples fit, 23 of these
+    EXPECT_EQ(ring.getWrittenStereoFrames(), 31u) << "only what got in; 63 samples, frame units round down";
+
+    int16_t out[80];
+    EXPECT_EQ(ring.dequeue(out, 20), 20u);
+    EXPECT_EQ(ring.getReadStereoFrames(), 10u);
+    EXPECT_EQ(ring.discard(10), 10u);
+    EXPECT_EQ(ring.getReadStereoFrames(), 15u);
+    ring.clear();
+    EXPECT_EQ(ring.getReadStereoFrames(), ring.getWrittenStereoFrames()) << "clear drops the rest";
+    EXPECT_EQ(ring.dequeue(out, 20), 0u) << "an underrun reads nothing";
+    EXPECT_EQ(ring.getReadStereoFrames(), ring.getWrittenStereoFrames());
+}

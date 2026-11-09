@@ -56,8 +56,4 @@ float MouseCurve(float value, const AnalogOptions& options);
 /// the speed-dependent gain of a host pointer (options.padAccel). Sign kept, 0 for 0
 float PadMouseTravel(float travel, const AnalogOptions& options);
 
-/// The scrub curve (debug-and-ttd.md §3.2): a trigger's travel 0..1 -> emulated frames per second. 0 below 0.08 (a
-/// resting finger), then 1, 5, 50, 500 and 5000 frames/s at 0.08, 0.30, 0.60, 0.90 and 1.0, exponential between
-float ScrubSpeed(float travel);
-
 }  // namespace controllers

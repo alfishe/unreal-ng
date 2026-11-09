@@ -6,14 +6,25 @@
 //             link: CAMetalDisplayLink with preferredFrameRateRange = the source rate, newest frame per callback
 //   d-locked  CAMetalDisplayLink at the display's rate drives the producer: tick, wait for the frame, present it
 //
+//   The refresh callback (b, d, c-link): --link metal (CAMetalDisplayLink, macOS 14), ca (CADisplayLink, macOS 14) or
+//   cv (CVDisplayLink, any macOS: the one that builds with an SDK before 14 and runs on macOS 12-13)
+//
 // Every present has a presented handler: MTLDrawable.presentedTime is the time the frame reached the screen (0 when
 // the system dropped it), on the base of CACurrentMediaTime = mach_absolute_time = NowNs().
 
 #include "presenter.h"
 
 #import <AppKit/AppKit.h>
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
+
+// CAMetalDisplayLink and -[NSScreen displayLinkWithTarget:selector:] come with the macOS 14 SDK
+#if defined(__MAC_14_0) && __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_14_0
+#define POC037_HAVE_MACOS14_LINKS 1
+#else
+#define POC037_HAVE_MACOS14_LINKS 0
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -23,10 +34,12 @@ namespace poc037
 class MetalPresenter;
 }
 
+#if POC037_HAVE_MACOS14_LINKS
 @interface Poc037LinkTarget : NSObject <CAMetalDisplayLinkDelegate>
 @property(nonatomic, assign) poc037::MetalPresenter* owner;
 - (void)tick:(CADisplayLink*)link;
 @end
+#endif
 
 namespace poc037
 {
@@ -125,7 +138,9 @@ public:
     std::string Describe() const override
     {
         std::string s = "Metal CAMetalLayer, ";
-        const std::string link = _o.link == "ca" ? "CADisplayLink + nextDrawable" : "CAMetalDisplayLink";
+        const std::string link = _o.link == "ca"   ? "CADisplayLink + nextDrawable"
+                                 : _o.link == "cv" ? "CVDisplayLink + nextDrawable"
+                                                   : "CAMetalDisplayLink";
         if (_o.variant == "b")
             s += link + " at the display rate, newest frame per refresh";
         else if (_o.variant == "d")
@@ -139,6 +154,7 @@ public:
         return s;
     }
 
+#if POC037_HAVE_MACOS14_LINKS
     /// The CAMetalDisplayLink's callback (its own thread's run loop): the drawable comes with the update
     void OnLink(CAMetalDisplayLinkUpdate* update)
     {
@@ -148,6 +164,17 @@ public:
     void OnTick(CADisplayLink* link)
     {
         OnRefresh(nil, SecondsToNs(link.targetTimestamp), SecondsToNs(link.targetTimestamp));
+    }
+#endif
+    /// The CVDisplayLink's callback (its own thread): outputTime is the refresh the frame is for
+    void OnCvTick(const CVTimeStamp* output)
+    {
+        @autoreleasepool
+        {
+            const int64_t target = static_cast<int64_t>(
+                static_cast<double>(output->hostTime) * 1e9 / CVGetHostClockFrequency());
+            OnRefresh(nil, target, target);
+        }
     }
 
 private:
@@ -236,6 +263,12 @@ private:
     void RunLink()
     {
         RaiseThreadPriority(false);
+        if (_o.link == "cv" || !POC037_HAVE_MACOS14_LINKS)
+        {
+            RunCvLink();
+            return;
+        }
+#if POC037_HAVE_MACOS14_LINKS
         @autoreleasepool
         {
             UpdateDrawableSize();
@@ -275,6 +308,44 @@ private:
             [metalLink invalidate];
             [caLink invalidate];
         }
+#endif
+    }
+
+    /// CVDisplayLink at the display's rate; c-vrr link has no frame rate range here (the link always runs at the
+    /// display's current rate)
+    void RunCvLink()
+    {
+        @autoreleasepool
+        {
+            UpdateDrawableSize();
+        }
+        CVDisplayLinkRef link = nullptr;
+        if (CVDisplayLinkCreateWithActiveCGDisplays(&link) != kCVReturnSuccess)
+            return;
+        CVDisplayLinkSetOutputCallback(
+            link,
+            [](CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp* output, CVOptionFlags, CVOptionFlags*,
+               void* self) -> CVReturn {
+                static_cast<MetalPresenter*>(self)->OnCvTick(output);
+                return kCVReturnSuccess;
+            },
+            this);
+        CVDisplayLinkSetCurrentCGDisplay(link, CGMainDisplayID());
+        _log.Meta("cv_nominal_hz", std::to_string([&] {
+                      const CVTime t = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(link);
+                      return t.timeValue ? static_cast<double>(t.timeScale) / t.timeValue : 0.0;
+                  }()));
+        CVDisplayLinkStart(link);
+        while (!_stop)
+        {
+            @autoreleasepool
+            {
+                UpdateDrawableSize();
+            }
+            SleepUntilNs(NowNs() + 250000000);
+        }
+        CVDisplayLinkStop(link);
+        CVDisplayLinkRelease(link);
     }
 
     void RunTimed()
@@ -372,6 +443,7 @@ DisplayFacts QueryDisplay(void* handle)
 
 }  // namespace poc037
 
+#if POC037_HAVE_MACOS14_LINKS
 @implementation Poc037LinkTarget
 - (void)metalDisplayLink:(CAMetalDisplayLink*)link needsUpdate:(CAMetalDisplayLinkUpdate*)update
 {
@@ -383,3 +455,4 @@ DisplayFacts QueryDisplay(void* handle)
     self.owner->OnTick(link);
 }
 @end
+#endif

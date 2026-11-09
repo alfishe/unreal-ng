@@ -222,7 +222,6 @@ TEST_F(Vdac2Card_Test, MonitorShowsTheFt812PictureWhileMselIsSet)
     EXPECT_GE(Card()->LatchedFrames(), before + 3) << "one latch per FT812 frame";
 
     std::vector<uint8_t> presented(shown.memoryBufferSize);
-    screen->SetPresentDelayFrames(0);
     ASSERT_TRUE(screen->CopyPresentedFramebuffer(presented.data(), presented.size()));
     const size_t center = (static_cast<size_t>(10) * 40 + 20) * 4;
     EXPECT_EQ(presented[center + 0], 0xFF) << "R";

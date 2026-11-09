@@ -11,6 +11,9 @@ The Emulator Control Interface (ECI) provides a unified high-level abstraction f
 - **Scripting** (Lua, Python bindings)
 - **Debugger Protocols** (Future: GDB Remote Serial Protocol, ADB-style universal debugging)
 
+The programs' windows and views (the debugger's panes, the video wall) are not driven here: they have the separate
+[GUI control plane](../gui-control/README.md), which the core does not depend on.
+
 Each interface layer translates its protocol-specific requests into standardized internal commands that operate on the emulator core.
 
 > **Rule.** A verb added here is added to **every** plane in the same change, and documented down the chain: this
@@ -1782,9 +1785,9 @@ same option names on the CLI, `POST /api/v1/emulator/{id}/video/record` (`action
 toggle / status, `preset`, `mode`, `container`, ...; `GET /api/v1/recording/presets` lists the presets), MCP
 `capture_media` (`record_start` with `preset`, `container`, `record_mode`; `record_presets`), Lua
 `video_record(action, opts)` / `recording_presets()`, Python `emu.video_record(action, opts)` /
-`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause`; the
-WebSocket `call` of the route, the topic `cap.record` (recording, paused, frames, seconds, bytes, output) pushes the
-state.
+`unreal_emulator.recording_presets()` and the catalogue actions `cap.record_toggle` / `cap.record_pause` / `cap.record_start` / `cap.record_stop`; the
+WebSocket `call` of the route, the topic `cap.record` (recording, paused, video, audio_only, frames, seconds, bytes,
+output) pushes the state.
 
 **Sound track**: `--audio CODEC` records the emulated sound with the picture (the default is video
 only). The codec must fit the file's container: `.mp4` aac/mp3/opus/flac, `.mov` aac/mp3/pcm_s16le,
@@ -1856,11 +1859,26 @@ and its viewport do not: they are the machine's, off on every new Pentagon.
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window` / `video window status` | | Show the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `view` = full / screen / content (which part of the frame the window shows, see below); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window <key>=<value> ...` | `gpu`, `crt`, `blending`, `fullscreen`, `toolbar`, `status_bar`, `hud`, `osd_keyboard`, `next_layers` = on / off; `crt_profile` = one of `crt_profiles` (none, basic, ..., shader:<name>: a libretro preset or a custom shader, GPU only); `blending_frames` = 2..5; `blending_weights` = equal / exponential; `blending_decay` = 0.1..0.9 (exponential: each older frame's share of the newer one); `smooth_motion` = off / blend / interpolate / auto (auto: View > Video Synchronization, interpolate only while the display has neither VRR nor a fitting rate) and `effects_device` = gpu / cpu (the shown instance's `[VIDEO] SmoothMotion` / `EffectsDevice` until it restarts; frame presenter design, section 4.3-4.5); `present_policy` = auto / vrr / vsync (the shown instance's `[VIDEO] PresentPolicy`: the native presenter shows each frame at its own time or on the refresh grid, at once; `UNREAL_PRESENT_POLICY` overrides it); `display_rate` = keep / match (the shown instance's `[VIDEO] DisplayRate`: with `match`, while the emulator is the active application, the display under the window runs its mode at the same resolution whose rate fits the machine's, e.g. 50 Hz for a 48.83 Hz Pentagon on a 60 Hz monitor; its own mode back on focus loss, another display, `keep` and quit; macOS and Windows; frame presenter design, section 4.7); `lip_sync_offset_ms` = -200..200 (the shown instance's `[VIDEO] LipSyncOffsetMs`, added to every frame's target time from the next frame, positive = the picture later); `view` = full / screen / content (which part of the frame the window shows, see below); `scale` = 1..4; `hud_theme` = one of `hud_themes`; `hud_notice.<id>` = on / off (ids of `hud_notices`); `osd_keyboard_picture` = one of `osd_keyboard_pictures`; `osd_keyboard_style` = photo / schematic / hybrid; `next_layers_mode` = layers / composed / winner; `next_layer.<ula\|layer2\|tilemap\|sprites>` = on / off | Change any of them, the way the View menu does (its checks follow). `gpu` re-creates the screen and carries the other settings over; a profile other than `none` switches CRT on, `none` switches it off; `scale` leaves full screen and fits the window to the picture; full screen follows after the window system's transition. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window crt_params` | `[<name>=<value> \| <name>+=<steps> \| <name>-=<steps> \| reset \| reset=<name> ...]` | The active CRT profile's parameters: list them, set one (clamped to its range), move one by a dial's steps (its own step), reset all or one. A libretro preset (`shader:crt-geom`, ...) has its own (its `preset.json`, 3..177); `basic` and a custom shader take the built-in ones (`curvature`, `corner_radius`, `scanline_weight`, `bloom_strength`, `bloom_radius`, `saturation`, `brightness`, `contrast`, `gamma`); `none` and the beam models (`crt-lottes`, ...) have none. A preset's values are kept per preset across a GPU switch and in the settings. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `backend` (`gpu` / `software`), `gpu_available`, `gpu`, `crt`, `crt_profile`, `crt_profiles` (offered),
-`blending`, `blending_frames`, `blending_weights`, `blending_decay`, `emulator` (the instance the window shows),
+`blending`, `blending_frames`, `blending_weights`, `blending_decay`, `smooth_motion`, `effects_device`, `present_policy`, `display_rate`, `lip_sync_offset_ms`, `present` (how
+the frames reach the screen: `presenter` metal / dxgi / gl-timed (Linux: a thread swaps GL at the frame's time) /
+gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
+yes / no / unknown, `reason`: X11 RandR `vrr_capable` and a fullscreen window, unknown on Wayland and Windows}, `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
+it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
+on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo, `none`),
+`timing` {`delay_clamped` (the frame timed last: its sound comes later than the screen holds its frames, a long audio
+path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_delay_ms` after its frame's end and the
+picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
+(refreshes that found no frame due yet: start up), `carried` (steps of the frames' clock carried and paid back by
+0.2 ms a frame: a device came or went, an underrun), `cuts` (breaks of the frame sequence: a pause, a seek, turbo),
+`carry_ms` (the carry being paid back now)}, `presented`, `shown`, `dropped`, `late` (a refresh late), `beat` {`frames` judged, `off`: on screen for a refresh count
+outside floor / ceil of their span over the refresh, a refresh missed, a frame held or never shown}, `lead_ms`,
+`error_ms` {p50, p99, max}, `sound_offset_ms` {p50, p99: screen time minus the picture's sound, the lip-sync trim
+taken out}, `gpu_wait_ms` {p50, max}: the native presenter's last 600 presents (the beat since the start); `gpu_ms` {`smooth`, `smooth_cpu`, `picture`: {p50, max over the last 600, `longest` since the GL context was made, `measured`}: `smooth` the GPU time of smooth motion's passes alone (timer-query segments, the CPU's work between them left out), `smooth_cpu` its whole refresh on the CPU's clock (the readback waits included), `picture` the GPU time of the picture (CRT composition, beam model, custom shader or preset), a pass over 100 ms logged; where GL has no timer (macOS reads 0) `smooth` and `picture` stay `measured` 0; `smooth` {`mode` in effect, `device`, `game`, `frames`, `pictures`,
+`renders`, `blended`, `interpolated`, `motion_fields`, `on_device`, `held_flicker`}; `display` {`state` keep / matched / unchanged, `reason` (why unchanged), `hz` the display's rate now, `original_hz` its own, `machine_hz` the machine's own frame rate: its frame length at its CPU clock, 48.83 on a Pentagon}), `emulator` (the instance the window shows),
 `fullscreen`, `view` (`full`) with `views` (`full`, `screen`, `content`), `scale` (1..4 while the window is fitted to the picture, 0 when resized by hand, maximized or full
 screen), `toolbar`, `status_bar`, `hud`, `hud_theme`, `hud_themes` (`dark_glass`, `retro_zx`, `cyberpunk`,
 `amber_crt`, `emerald_crt`, `light_modern`), `hud_notices` ({id: shown}, the 22 categories of View > HUD
@@ -3632,11 +3650,8 @@ emu.ttd_seek(result["frame"], result["tinframe"])
 
 ### 9. Videowall API
 
-Commands specifically for managing the multi-emulator videowall environment.
-
-| Command | Aliases | Arguments | Description | Implementation Status |
-| :--- | :--- | :--- | :--- | :--- |
-| `videowall singlesync <on\|off> [id]` | | `on` or `off`, `[id]` (optional) | Toggles the Single Sync Mode which locks an emulator tile into a synchronous rendering loop for 100% accurate recording without performance drops. | ✅ Implemented |
+None. The video wall's single sync mode is a GUI matter: the video wall serves it on the GUI control plane as
+`tilegrid.single_sync {on?}` ([gui-control](../gui-control/README.md)), not on the emulator's planes.
 
 ### 10. Tape Control Commands
 
@@ -4184,8 +4199,10 @@ scenario runs instead of REST steps (`input.key`, `input.type`, `input.joystick`
 `set.speed`, `set.toggle`, `set.value`, `audio.mute_toggle`, `audio.source_mute`, `audio.source_solo`,
 `audio.source_volume`, `audio.volume_by` (a source or a channel `ay1.a`), `media.open`, `media.tape`, `media.eject`,
 `snapshot.quick`, `video.overscan_toggle`, `dbg.mode_toggle`, `ttd.seek`, ...: the full list with their params in
-[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and, with the
-Qt client, its GUI actions (`dbg.open`, the debugger panes, `cap.screenshot`, `ttd.scrub_*`). Each takes the companion
+[actions.md §1.1](../../../inprogress/2026-10-18-control-surfaces/actions.md#11-scenario-actions-sd6)) and the scrub
+(`ttd.scrub_*`). The GUI's own verbs (the debugger and its panes, the windows, the screenshot to the clipboard, the
+on-screen keyboard, the Controllers window) are not actions: they are commands of the
+[GUI control plane](../gui-control/README.md). Each takes the companion
 scope of the REST route it replaces. The core `ActionRegistry` (`core/src/emulator/actions/`) holds them; a pad,
 the Surface Dial, a Stream Deck and every plane below run the same ids, on one actions worker per instance, in order.
 The gate of the caller's origin applies: an automation client that changes the machine gets the implicit run-control
@@ -4194,7 +4211,7 @@ control.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, `gui`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "the machine is running: pause it first", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
+| `action [list]` | `[--json]` | Every action: id, label, group, kind (`press`, `delta`, `level`, `text`), `held`, the companion scope it needs now, `needs_pause`, the `params` it reads (one line, `?` = optional), and whether it can run now for this caller or why not (`not_now` "the machine is running: pause it first", `Not Implemented` for the stubs, `Run-control held`, `companion_forbidden`, `held_by_other`) | ✅ Implemented |
 | `action run` | `<id> [value] [param=val ...] [--json]` | Run one on the selected instance and wait for it. Value by kind: press `press` (default) / `release`; delta signed steps; level 0..1; text. Parameters as `name=value` words: `run.to_scanline line=N`, `run.frames count=N`, `input.key key=caps+1`, `media.open path=game.tap`, `feature.toggle name=turbomode`, `ttd.seek_by unit= min= max= rate_lo= rate_hi= rate=`. The reply: `ok`, `error`, `message`, `result` (a step: `pc`, `sp`, `state`, `stop`) | ✅ Implemented |
 | `action context` | `[--json]` | The instance's surface context: the one in force, whether somebody set it and who (`by`), the default it returns to | ✅ Implemented |
 
@@ -4233,9 +4250,6 @@ companion scope (their routes change nothing).
 | `hud.toggle` | press | `on?` | The HUD | `toggle.hud.toggle` |
 | `hud.theme` | press | `theme?` (a name, `next`, `prev`) | The HUD's theme | |
 | `hud.notice` | press | `name` (a `hud_notices` id), `on?` | One notice category | `toggle.hud.notice.<id>` |
-| `osd.keyboard` | press | | The on-screen keyboard window (the Qt client's GUI action) | `toggle.osd.keyboard` |
-| `ctl.open` | press | | The Controllers window (the Qt client's GUI action) | |
-| `ctl.learn` | press | `device` (a host device id) | The Controllers window with the learn wizard for the device: it starts the `learn` session (or follows a running one) and shows its prompts | |
 | `osd.keyboard_picture` | press | `picture?` (an id, `next`, `prev`) | The keyboard picture for the machine shown | |
 | `osd.keyboard_style` | press | `style?` (`photo`, `schematic`, `hybrid`, `next`, `prev`) | How the on-screen keyboard is drawn | |
 
@@ -4264,13 +4278,13 @@ Run, step and time-travel units (Stream Deck use cases D1, D2, D3, D5, D6; `core
 | `run.pace_stop`, `run.pace_step` | press | | Stop the pace; one step at it |
 | `run.to_pixel` | press | | To the first paper pixel (needs a pause) |
 | `run.until_pc` | press | `pc`, `max_tstates?`, `breakpoints?` | Until PC = `pc` (needs a pause); `hit`, `stop` |
-| `run.to_cursor` | press | `addr?` (else the disassembly's cursor row), `max_tstates?` | To the cursor; a breakpoint on the way stops it (needs a pause). The cursor row moves with a click, Up / Down, PageUp / PageDown and `dbg.cursor_up` / `_down`, `dbg.page_up` / `_down` on the disassembly pane (from PC when there is none; the view scrolls to keep it visible); the memory pane's keys move its cursor, which `ttd.find_last*` take |
+| `run.to_cursor` | press | `addr`, `max_tstates?` | To the address; a breakpoint on the way stops it (needs a pause). The GUI passes its disassembly cursor (`disassembly.run_to_cursor` on the [GUI control plane](../gui-control/README.md)); without `addr` it is `Bad Request` |
 | `run.step_line`, `run.to_line` | press | `max_tstates?`; `line` | Source level (a loaded listing; `Conflict` "No listing loaded") |
 | `run.step_by` | delta | `unit?` (instructions, frames, scanlines, tstates), `count?` | Forward runs `count` units a step, back steps back through the history in the unit |
 | `ttd.step_back_scanline`, `ttd.step_forward_scanline` | press | `count?` 1..1000 | A scanline (N) back (`reverse-step scanlines`) or forward (a seek to the T-state) |
 | `ttd.bookmark_prev`, `ttd.bookmark_next` | press | | The previous / next bookmark from the position; `Conflict` "no earlier bookmark" / "no later bookmark" |
 | `ttd.bookmarks` | press | | The bookmark list |
-| `ttd.find_last_write`, `ttd.find_last` | press | `addr?` (else the memory view's cursor, then the disassembly's), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
+| `ttd.find_last_write`, `ttd.find_last` | press | `addr` (find_last: or a range; the GUI passes its memory cursor: `memory.find_last_write`, `memory.find_last`), `access?` (find_last: write, read, execute, io), `seek?` (true), and the find-last filters | The last access before now, then the seek there (`seeked`, `arrived_at`) |
 | `ttd.seek_start`, `ttd.seek_end` | press | | The history's first frame / its end |
 | `ttd.unit_back`, `ttd.unit_forward` | press | `unit?`, `count?` | One step of the scrub unit |
 | `ttd.scrub_unit` | text | `count?` | The unit a dial scrubs in: `frames`, `seconds`, `batch` (10 frames), `instructions`, `tstates` (100), `scanlines`, `bookmarks`, or `next` / `prev`; the `ttd.position` topic and readout show it (`unit`, `unit_count`) |
@@ -4302,8 +4316,8 @@ kind), `not_now`, `Run-control held`, `held_by_other`, `revoked_by_user`, `compa
 `Not Implemented`; the WebAPI answers 404, 400, 409, 403, 501.
 
 The catalogue rows also carry `description` (one sentence, for a palette's tooltip) and `toggle` (the action has an
-on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when the Qt
-client registers or drops its GUI actions; `NC_ACTION_CATALOGUE`).
+on / off state, shown by the readout `toggle.<id>`); the list has `rev`, the catalogue's revision (bumped when an action
+is registered or dropped; `NC_ACTION_CATALOGUE`).
 
 #### 16.1 Surface targets, readouts, activity
 
@@ -4396,6 +4410,7 @@ the same name: `media.recent`, `media.rzx`, `cap.record`, `machine.switches`, `i
 | `input.joystick_type` | `kind` (kempston, sinclair1, sinclair2, cursor, fuller, keys, md6, none), `connector?` | The joystick on a connector (§15) | `input.connectors` |
 | `input.mouse_button`, `input.mouse_release` | `button`, `hold?`, `frames?` | Kempston mouse buttons (§11); the mouse itself is `feature.toggle name=kempstonmouse` | |
 | `cap.record_toggle`, `cap.record_pause` | `preset?`, `format?`, `container?`, `audio?`, `mode?`, `profile?`, `path?`, ... | Video recording (§5.8) over `capture::RecordingControl`; a start without a path writes `<user data>/recordings/` | `toggle.cap.record_toggle`, `cap.record` |
+| `cap.record_start`, `cap.record_stop` | start: as `cap.record_toggle` | The Stream Deck's REC and STOP keys: `cap.record_start` starts a recording (`conflict` while one runs; state `toggle.cap.record_start` while one runs), `cap.record_stop` stops it and is unavailable (`not_now`) while nothing records, so a deck dims its key. The `cap.record` readout's `video` / `audio_only` say which kind runs (the VIDEO and AUDIO pages light their own REC key) | `toggle.cap.record_start`, `cap.record` |
 | `cap.clip_last` | `seconds?` (10), `format?` (gif), `path?`, `scale?` | The last seconds of a running TTD recording as a video file: the recording pauses for browsing at its end, the clip is written, the recording goes on from that point, the run state as it was. Without a recording: `not_now` | |
 | `ttd.export_clip` | `from`, `to`, `path?`, `codec?`, `scale?` | A TTD range as a clip: a `.gif` / `.mp4` / `.mkv` / `.webm` / `.mov` / `.avi` path writes a video (`ttd export-clip` takes such a path on every plane too), a folder the lossless clip | |
 | `cap.audio_capture` | `source?`, `seconds?` (5), `path?` | One sound source (or the mix) for N emulated seconds into a WAV (needs a running machine; waits for the capture) | |
@@ -4408,6 +4423,23 @@ The plane verbs that came with them:
 | `recent` | `[kind] [--json]`, `clear [kind]` | The files opened lately per kind (`snapshot`, `tape`, `disk`, `rzx`, `image`, `cd`), newest first. WebAPI `GET` / `DELETE /api/v1/recent[?kind=]`, MCP `media` `recent` / `recent_clear`, Lua `recent_files([kind])` / `recent_clear([kind])`, Python `recent_files(kind)` / `recent_clear(kind)`, WebSocket topic `media.recent`, Qt File > Recent Files | ✅ Implemented |
 | `videorecord presets` | | The recording presets (§5.8). WebAPI `GET /api/v1/recording/presets`, MCP `capture_media` `record_presets`, Lua / Python `recording_presets()` | ✅ Implemented |
 | `media create` | `--format trdos` | A formatted TR-DOS blank (also `disk create <drive> [cyl] [sides] trdos`, `POST /disk/{drive}/create {"format": "trdos"}`, Lua / Python `disk_create`) | ✅ Implemented |
+
+#### 16.4 The GUI control plane's methods
+
+What the program's windows and views do (scroll a memory view, zoom the screen, focus a tile) is the GUI control
+plane's ([gui-control](../gui-control/README.md), design
+[§4.10](../../../inprogress/2026-11-07-gui-control-plane/README.md#410-one-port-the-gui-methods-in-the-cores-api)).
+A program with a core and the plane (unreal-qt, the video wall) registers its methods with the core
+(`core/automation/common/guimethods.h`); the core hands each call over and passes the plane's answer back, so the
+same commands, targets and refusals as `unreal-gui` reach every GUI program on the machine through this program's
+ports. No session or companion scope. Without a plane (headless) every call answers `no_gui`.
+
+| Command | Arguments | Description | Implementation Status |
+| :--- | :--- | :--- | :--- |
+| `gui list` | `[--json]` | Every GUI program on the machine: its windows and views, their interfaces, commands, state and machine, the focus records. WebAPI `GET /api/v1/gui`, MCP `gui_list`, Lua / Python `gui_list()` | ✅ Implemented |
+| `gui catalogue` | `[--json]` | The interfaces, their commands and parameters (`name=kind`, `?` optional). WebAPI `GET /api/v1/gui/catalogue`, Lua / Python `gui_catalogue()`; MCP: one tool per interface | ✅ Implemented |
+| `gui state` | `<target>` | A node's state, interfaces and machine (`main/screen`, `debugger/memory`, `memory`, `memory@<instance>`). WebAPI `GET /api/v1/gui/state?target=`, MCP `gui_state`, Lua / Python `gui_state(target)` | ✅ Implemented |
+| `gui <method>` | `[name=value ..] [target=<node>] [--json]` | Run a command: `gui memory.goto addr=0x6000`, `gui screen.zoom factor=2 target=main/screen`. A whole number is an int, `true` / `false` a bool, the rest text. Waits up to 15 s; prints the body, or `Error: <error>: <message>`. WebAPI `POST /api/v1/gui/{method}` (body: the parameters and `target`), MCP `gui_<interface>` (`action`: the command), Lua `gui_call(method, [params], [target])`, Python `gui_call(method, target="", **params)` | ✅ Implemented |
 
 ### 17. Monitoring
 
@@ -4422,9 +4454,10 @@ by its manager's revision.
 
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
-| `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `devices` (`controllers.devices`), `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
+| `monitor [all]` | `[instance=]` | Everything: `host`, `clients`, `video`, `devices` (`controllers.devices`), `instances` [{`instance`, `index`, `model`, and each instance name below}] (every instance, or the one named) | ✅ Implemented |
 | `monitor host.stats` | | The process (never per instance): `cpu_percent` (over the last 0.5 s, 100 = one core busy), `cpu_percent_host` (of all `cores`), `rss_bytes`, `peak_rss_bytes`, `virtual_bytes`, `threads`, `cpu_time_s`, `uptime_s`, `interval_s`. macOS task_info / proc_pidinfo, Linux /proc/self/status, Windows GetProcessTimes / GetProcessMemoryInfo; sampled at most twice a second | ✅ Implemented |
 | `monitor host.clients` | | Per plane (`rest` HTTP requests, `ws` `/api/v1/ws` sockets and their `call`s, `events` `/api/v1/companions/events`, `debug_ws` `/api/v1/websocket`, `mcp` POST `/mcp`, `cli` connections and commands): `connections` (open now), `opened`, `requests`, `dropped` (closed by the server for reading too slowly: a `ws` slow consumer); `companions` (paired), `instances`. An MCP tool's own WebAPI calls are not counted as REST | ✅ Implemented |
+| `monitor video.present` | | The GUI window's way to the screen, the parts that change with the setup and never per frame (the counters stay in `video window`): `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl-timed / gl / software), `present_policy`, `fixed_display`, `vrr`, `vrr_support` {`state`, `reason`}, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}, `delay` {`clamped` (the picture leads its sound: `video window` present.timing), `max_ms`}. The window publishes it when it changes, checked once a second (frame presenter design, section 6.4) | ✅ Implemented |
 | `monitor controllers.devices` | | The host input devices (the process): `available` (false without a host input owner: no Qt client), `revision` (one more per change), `devices` [the `controllers devices` entries: `id`, `name`, `family`, `layout`, `backend`, `role`, `pin`, `layers`, `context`, `outputs`, `battery` {`known`, `text`, ...}, `light` {`available`, `reason`}, `notice`]. Published by the owner's poll when it changed, so a read never waits for the GUI thread ([surfaces, the topic](../../../inprogress/2026-10-17-controller-manager/surfaces.md#the-controllersdevices-topic-built)); in `monitor all` as `devices` | ✅ Implemented |
 | `monitor emulator.stats` | `[instance=]` | The measured pace (MainLoop, a 0.5 s window, no lock on the emulation thread): `state`, `measuring` (false while paused or stopped), `fps`, `nominal_fps`, `speed_percent` (emulated time over wall time: fps / nominal × the host multiplier; 2x shows 200, turbo its rate), `frame_time_us` {`avg`, `max`} (the host time a frame's emulation took), `frame_budget_percent` (avg over the frame period), `halted_percent` (T-states in HALT), `interrupts_per_frame` (INTs the CPU accepted), `frame`, `t_states` (cumulative; while it runs taken at the window's end, so the value changes twice a second), `turbo`, `cpu` {`mhz`, `base_mhz`, `multiplier` (host × the machine's own turbo), `host_multiplier`, `hw_turbo_ratio`} | ✅ Implemented |
 | `monitor debug.breakpoints` | `[instance=]` | The user breakpoints: `total`, `active`, `inactive`, `owned` (analyzers', DeZog's, hidden traps: not counted), `by_kind` {`memory`, `exec`, `read`, `write`, `port`, `port_in`, `port_out`, `keyboard`, `nextreg`, `beam`, `copper`, `magic`}, `groups` [{`name`, `total`, `active`}], `last_hit` {`id`, `type`, `address`, `access`, `group`, `note`} or null | ✅ Implemented |
@@ -4447,7 +4480,7 @@ by its manager's revision.
 | :--- | :--- | :--- | :--- |
 | CLI | `monitor` | `monitor emulator.stats 1`, `monitor host.stats --json` | - |
 | WebAPI | `GET /api/v1/monitor[?instance=]` | `GET /api/v1/monitor/{name}[?instance=]`, `GET /api/v1/emulator/{id}/breakpoints/groups` | - |
-| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients`, `controllers.devices` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `debug.cpuprofile`, `controllers.state`, `game.events`, `devices.access` (per instance); the same names as surface readouts |
+| WebSocket | `{"op":"call","method":"GET","path":"/api/v1/monitor"}` | the same `call` per name | topics `host.stats`, `host.clients`, `video.present`, `controllers.devices` (the process: no `instance`), `emulator.stats`, `debug.breakpoints`, `media.slots`, `recording.state`, `debug.labels`, `ttd.status`, `debug.analyzers`, `debug.cpuprofile`, `controllers.state`, `game.events`, `devices.access` (per instance); the same names as surface readouts |
 | MCP | `inspect_state` aspect `monitor` | the aspect's JSON (the `all` body of the instance); `breakpoints` aspect carries `groups` | - |
 | Python | `emu.monitor()` | `emu.monitor("emulator.stats")`, `emu.bp_groups()` | - |
 | Lua | `monitor()` | `monitor("emulator.stats", {instance = 1})`, `bp_groups()` | - |

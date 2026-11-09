@@ -40,6 +40,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `openapi_media.inc` | Media | The drive collection: `/media`, `/media/{slot}` (also `formats`, `targets?path=`), `/media/{slot}/{verb}`; verbs and options generated from `MediaControl` |
 | `openapi_media_schemas.inc` | Media (schemas) | `MediaReply`, `MediaSlot`, `MediaMedium`, `MediaFileClass`, `MediaTarget` |
 | `openapi_monitoring.inc` | Monitoring | `/monitor`, `/monitor/{name}` (host.stats, host.clients, emulator.stats, debug.breakpoints, media.slots, ...: the /api/v1/ws topics of the same names), `/emulator/{id}/breakpoints/groups` (monitoring::Call) |
+| `openapi_gui.inc` | GUI | The GUI control plane's methods: `/gui`, `/gui/catalogue`, `/gui/state?target=`, `/gui/{method}` (`GuiPlane`, `gui_api.cpp`) |
 | `openapi_snapshot.inc` | Snapshot Control | Load, save, info |
 | `openapi_capture.inc` | Capture | Screen capture, OCR |
 | `openapi_window.inc` | Screen State | The GUI window's display settings `/video/window`, the CRT profile's parameters `/video/window/crt_params` (+ `/reset`), the overscan viewport `/video/viewport`; schemas `WindowDisplay`, `CrtParameters`, `VideoViewport` in `openapi_window_schemas.inc` |
@@ -82,6 +83,7 @@ The specification is split into a slim skeleton (`openapi_spec.cpp`, ~160 lines)
 | `debug_api.cpp` | Debug commands |
 | `profiler_api.cpp` | Profiler commands |
 | `interpreter_api.cpp` | Python/Lua interpreter |
+| `gui_api.cpp` | The GUI control plane's methods (`GuiPlane`) |
 
 ### Core Files
 - **`src/emulator_api.h`** - Main API interface with `ADD_METHOD_TO` route registrations
