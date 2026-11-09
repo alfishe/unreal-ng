@@ -19,6 +19,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -130,6 +132,13 @@ id<MTLRenderPipelineState> FlipPipeline(id<MTLDevice> device)
 }
 }  // namespace
 
+/// The display link's target: the link retains it, it holds the presenter's tick by a plain pointer the presenter
+/// clears before the link is invalidated (both on the GUI thread, where the link ticks)
+@interface UnrealDisplayLinkTarget : NSObject
+@property(nonatomic, assign) void* owner;  // MetalPresenter::Impl, nullptr once it is gone
+- (void)tick:(id)link;  // a CADisplayLink (macOS 14+; untyped for macOS 12-13 builds)
+@end
+
 struct MetalPresenter::Impl
 {
     struct Slot
@@ -157,8 +166,50 @@ struct MetalPresenter::Impl
     std::string dumpPath;  // UNREAL_PRESENT_DUMP: a drawable as shown, a PPM (from the 200th present, again once deleted)
     std::shared_ptr<Feedback> fb = std::make_shared<Feedback>();
 
+    // b-vsync on the display link (GUI thread)
+    id link = nil;  // a CADisplayLink (macOS 14+), made with the first handler
+    UnrealDisplayLinkTarget* linkTarget = nil;
+    RefreshHandler refreshHandler = nullptr;
+    void* refreshContext = nullptr;
+    bool wantRefreshes = false;
+    std::function<bool()> vrr;  // MetalPresenter::Vrr
+
+    bool Paces() const { return link && refreshHandler && !vrr(); }
+
+    /// The link runs while the window wants refreshes and the presenter paces
+    void UpdateLink()
+    {
+        if (@available(macOS 14.0, *))
+        {
+            if (link)
+                static_cast<CADisplayLink*>(link).paused = !(wantRefreshes && Paces());
+        }
+    }
+
+    void Tick(id tick)
+    {
+        if (!refreshHandler || vrr())
+        {
+            UpdateLink();
+            return;
+        }
+        if (@available(macOS 14.0, *))
+        {
+            CADisplayLink* l = static_cast<CADisplayLink*>(tick);
+            const int64_t refreshNs = SecondsToNs(l.targetTimestamp);
+            const int64_t periodNs = SecondsToNs(l.targetTimestamp - l.timestamp);
+            refreshHandler(refreshContext, refreshNs, periodNs > 0 ? periodNs : SecondsToNs(l.duration));
+        }
+    }
+
     ~Impl()
     {
+        if (link)
+        {
+            linkTarget.owner = nullptr;
+            [link invalidate];
+            link = nil;
+        }
         for (id<NSObject> observer : observers)
         {
             if (observer)
@@ -308,8 +359,18 @@ std::unique_ptr<MetalPresenter> MetalPresenter::Create(void* nsView)
         beginActivityWithOptions:NSActivityLatencyCritical | NSActivityUserInitiatedAllowingIdleSystemSleep
                           reason:@"Presenting emulator frames at their audio time"];
     p.WatchWindow();
+    MetalPresenter* raw = presenter.get();
+    p.vrr = [raw]() { return raw->Vrr(); };
     return presenter;
 }
+
+@implementation UnrealDisplayLinkTarget
+- (void)tick:(id)link
+{
+    if (_owner)
+        static_cast<MetalPresenter::Impl*>(_owner)->Tick(link);
+}
+@end
 
 std::unique_ptr<NativePresenter> NativePresenter::Create(void* windowHandle)
 {
@@ -557,6 +618,55 @@ bool MetalPresenter::IsVisible() const
 void MetalPresenter::SetPolicy(PresentPolicy policy)
 {
     _impl->policy.store(static_cast<uint8_t>(policy), std::memory_order_relaxed);
+    _impl->UpdateLink();
+}
+
+bool MetalPresenter::SetRefreshHandler(RefreshHandler handler, void* context)
+{
+    Impl& p = *_impl;
+    p.refreshHandler = handler;
+    p.refreshContext = context;
+    if (!handler)
+    {
+        p.UpdateLink();
+        return false;
+    }
+    if (!p.link)
+    {
+        if (const char* off = getenv("UNREAL_PRESENT_DISPLAY_LINK"); off && std::strcmp(off, "0") == 0)
+            return false;
+        if (@available(macOS 14.0, *))
+        {
+            p.linkTarget = [UnrealDisplayLinkTarget new];
+            p.linkTarget.owner = &p;
+            CADisplayLink* link = [p.view displayLinkWithTarget:p.linkTarget selector:@selector(tick:)];
+            if (!link)
+            {
+                p.linkTarget = nil;
+                return false;
+            }
+            link.paused = YES;
+            [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+            p.link = link;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    p.UpdateLink();
+    return true;
+}
+
+void MetalPresenter::WantRefreshes(bool want)
+{
+    _impl->wantRefreshes = want;
+    _impl->UpdateLink();
+}
+
+bool MetalPresenter::PacesRefreshes() const
+{
+    return _impl->Paces();
 }
 
 bool MetalPresenter::Vrr() const
@@ -619,12 +729,13 @@ std::string MetalPresenter::Describe() const
     const Stats s = GetStats();
     char line[448];
     std::snprintf(line, sizeof(line),
-                  "Metal present-at-time: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
+                  "Metal %s: %llu presented, %llu shown, %llu dropped, %llu a refresh late (lead %.1f ms); "
                   "error p50 %.2f p99 %.2f max %.2f ms; "
                   "GL wait p50 %.2f max %.2f ms, %llu timed out; drawable wait p50 %.2f max %.2f ms; display "
                   "%.1f-%.1f Hz%s, %s%s",
-                  static_cast<unsigned long long>(s.presented), static_cast<unsigned long long>(s.shown),
-                  static_cast<unsigned long long>(s.dropped), static_cast<unsigned long long>(s.late), s.leadMs,
+                  PacesRefreshes() ? "display link" : "present-at-time", static_cast<unsigned long long>(s.presented),
+                  static_cast<unsigned long long>(s.shown), static_cast<unsigned long long>(s.dropped),
+                  static_cast<unsigned long long>(s.late), s.leadMs,
                   s.errorP50, s.errorP99, s.errorMax, s.gpuWaitP50, s.gpuWaitMax,
                   static_cast<unsigned long long>(s.gpuWaitTimeouts), s.drawableWaitP50, s.drawableWaitMax,
                   s.minRefreshHz, s.maxRefreshHz, s.maxRefreshHz - s.minRefreshHz > 1.0 ? " (VRR)" : " (fixed)",

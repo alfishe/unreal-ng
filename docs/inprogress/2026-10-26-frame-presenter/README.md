@@ -583,6 +583,24 @@ classDiagram
     machine rate in the publish key changed every second: 4-5 refreshes skipped every 1-3 s. The probe runs once per
     process, the key leaves the measured rate out. The system rounds a present to the nearest vsync: 2-3 % of the frames show
     up to 0.5 ms before their target.
+  - **`b-vsync` on a display link** (a fixed grid: `vsync`, or `auto` on a fixed display; macOS 14+). The presenter
+    makes a `CADisplayLink` on the view (`displayLinkWithTarget:selector:`, in the main run loop's common modes: it
+    ticks through live resizes and menu tracking) and hands each tick to the window (`NativePresenter::
+    SetRefreshHandler`). The window draws for the first refresh on the link's grid a present handed over now can
+    make, asked for half a refresh before it a lead ahead (the same adaptive lead as the timer's way), the frame due
+    when that refresh reaches the screen (`FrameAt(t)`, smooth motion's picture for it), and presents it for that
+    refresh. The link's own target timestamp is a refresh away: presents for it came a refresh late, 30 % of the
+    frames (off) and all of them (blend) on the Mac at 60 Hz. One refresh per tick: a lead grown by a step does not
+    ask for the same refresh twice. The link runs while frames come to a visible window
+    (`NativePresenter::WantRefreshes`), pauses when the window is idle, starts again with the next latch.
+    - The system stops a display link whose view it does not show. The occlusion check runs in the draw, so a
+      watchdog (the window's timer, 100 ms after the last tick) hands the window back to the timer's way until the
+      ticks come again: hidden and shown three times, every frame on screen after each.
+    - Measured (M1 Ultra, Dell U4320Q at 60 Hz, Pentagon 48.83 Hz, Aleste, 10 s per run, interleaved with the timer's
+      way, `UNREAL_PRESENT_DISPLAY_LINK=0`): off: error p99 8.48 ms against 16.0 ms, 0 of 488 late, the beat exact;
+      blend: the same as the timer (error 8.4 ms on every present, 0 late). Runs where other windows covered the
+      window or the compositor fell behind under load were left out for both ways (0 presents, or every present a
+      refresh late, as section 6.2 describes).
   - Diagnostics: `UNREAL_PRESENT_LOG` (stats every 5 s), `UNREAL_PRESENT_TRACE` (one line per present),
     `UNREAL_PRESENT_DUMP` (the drawable as shown, read back: checked upright with crt-geom and the HUD).
 - **A GPU reset** (Windows TDR: a pass ran too long and the system reset the GPU; seen on .101, the screen froze)
@@ -818,8 +836,8 @@ Each phase lands on its own with tests and docs.
    other readers of `CopyPresentedFramebuffer` (screenshots, recording, the video wall) move to time as well, and
    `AVSyncDelayFrames` goes. Measured on a real device: the audio clock's target interval error (section 9).
 3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`. On the
-   branch: `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2); not yet `b-vsync`
-   on a display link.
+   branch: `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2), and `b-vsync` on a
+   display link (section 6.2, macOS 14+; the window's timer on macOS 12-13).
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
    fallback, `ES_DISPLAY_REQUIRED`. On the branch (`dxgipresenter.cpp`, behind the `NativePresenter` interface the
    Metal presenter shares): the interop ring, a presenter thread (waitable object, the copy into the back buffer,

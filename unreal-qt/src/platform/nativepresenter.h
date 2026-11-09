@@ -94,6 +94,24 @@ public:
     /// for each of them. false: none seen yet, or the display follows the presents (VRR: every frame at its own time)
     virtual bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const = 0;
 
+    /// b-vsync paced by the display (section 4.2; macOS: a display link). `handler(refreshNs, periodNs)` runs on the
+    /// GUI thread once per refresh while the presenter paces, with the time that refresh reaches the screen (steady
+    /// clock, ns): the window draws the frame due then and presents it for that refresh. false: the presenter cannot
+    /// pace, the window's timer does
+    using RefreshHandler = void (*)(void* context, int64_t refreshNs, int64_t periodNs);
+    virtual bool SetRefreshHandler(RefreshHandler handler, void* context)
+    {
+        (void)handler;
+        (void)context;
+        return false;
+    }
+    /// The window wants refreshes (frames coming to a visible window) or not (idle, hidden): the display link runs
+    /// only while it wants them and the presenter paces
+    virtual void WantRefreshes(bool want) { (void)want; }
+    /// The presenter paces the presents now (a handler set, a fixed refresh grid, the link available): the window's
+    /// timer stays off but for forced repaints and the hidden poll
+    virtual bool PacesRefreshes() const { return false; }
+
     /// Presents handed over so far, the number of the newest one shown a refresh late (counting from 1; 0: none) and
     /// its lag in refreshes, the number of the newest one shown on time. A presenter that queues every present (Metal)
     /// shows each one after the one before: one late, all after it are late while one comes every refresh, until a

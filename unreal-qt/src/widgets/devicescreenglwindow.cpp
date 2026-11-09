@@ -355,6 +355,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
         }
 #endif
         _presenter->SetPolicy(_presentPolicy);
+        // b-vsync on the display's refreshes where the presenter can pace them (macOS: a display link)
+        _presenter->SetRefreshHandler(&DeviceScreenGLWindow::onDisplayRefresh, this);
         qInfo().noquote() << "DeviceScreenGLWindow: native presenter, lead" << presentLeadNs() / 1'000'000 << "ms;"
                           << QString::fromStdString(_presenter->Describe());
     }
@@ -373,6 +375,18 @@ void DeviceScreenGLWindow::renderNative(bool force)
     }
     _presentHidden = false;
 
+    // The presenter paces (b-vsync on a display link): its tick gives the refresh to draw for, the timer only forced
+    // repaints. A wake of the timer left over from before draws nothing. Ticks that stop (the system stops a display
+    // link whose view it does not show: an occluded window) leave the timer's way in charge until they come again
+    const bool paced = linkPacing();
+    const int64_t linkRefreshNs = _linkRefreshNs;
+    _linkRefreshNs = 0;
+    if (paced && linkRefreshNs == 0 && !force)
+    {
+        scheduleNative();
+        return;
+    }
+
     // The frame due a lead from now: drawn now, shown at its own target
     const int64_t now = SteadyNowNs();
     const uint64_t uploads = _frameSerial;
@@ -387,7 +401,28 @@ void DeviceScreenGLWindow::renderNative(bool force)
     int64_t periodNs = 0;
     const int64_t lastRefreshNs = _smoothRefreshNs;
     _smoothRefreshNs = 0;
-    if (smooth && _presenter->RefreshGrid(refreshNs, periodNs))
+    int64_t pacedRefreshNs = 0;
+    if (paced && linkRefreshNs != 0)
+    {
+        // The display link's grid: the first refresh a present handed over now can make (asked for half a refresh
+        // before it, a lead ahead: the link's own target, a refresh away, came a refresh late for 30-100 % of the
+        // presents on the Mac at 60 Hz), the frame (or smooth motion's picture) due when it reaches the screen,
+        // presented for it (frame presenter design, section 4.2). One refresh per tick: a lead grown by a step does not
+        // ask for the same refresh twice (a queued present shows after the one before)
+        const int64_t period = _linkPeriodNs;
+        const int64_t ahead = now + lead + period / 2 - linkRefreshNs;
+        pacedRefreshNs = linkRefreshNs + (ahead > 0 ? (ahead + period - 1) / period : 0) * period;
+        if (_lastPacedRefreshNs != 0 && pacedRefreshNs < _lastPacedRefreshNs + period / 2)
+            pacedRefreshNs = _lastPacedRefreshNs + period;
+        _lastPacedRefreshNs = pacedRefreshNs;
+        if (smooth)
+        {
+            _smoothRefreshNs = pacedRefreshNs;
+            _smoothPeriodNs = period;
+        }
+        updateTexture(pacedRefreshNs, smooth);
+    }
+    else if (smooth && _presenter->RefreshGrid(refreshNs, periodNs))
     {
         const int64_t half = periodNs / 2;
         const int64_t ahead = now + lead + half - refreshNs;
@@ -446,6 +481,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
             // smooth motion's picture for its refresh
             NativePresenter::TraceInfo trace{_shownInfo.serial, _shownInfo.latchNs, _presentPlannedNs, now,
                                              _shownInfo.serial, at};
+            if (newFrame && pacedRefreshNs != 0)
+                at = pacedRefreshNs - _linkPeriodNs / 2;  // shown at the first refresh after it: that one
             if (newFrame && _smoothRefreshNs != 0)
             {
                 at = _smoothRefreshNs - _smoothPeriodNs / 2;
@@ -602,12 +639,22 @@ void DeviceScreenGLWindow::scheduleNative()
     const int64_t now = SteadyNowNs();
     int64_t wakeNs = 0;
     const int idleLimit = this->idleLimit();
+    if (_presenter)
+        _presenter->WantRefreshes(!_presentHidden && _idleRefreshes <= idleLimit);
     if (_presentHidden)
     {
         if (_idleRefreshes > idleLimit)
             return;
         _presentPlannedNs = 0;
         _presentTimer->start(kHiddenPollMs);
+        return;
+    }
+    if (linkPacing())
+    {
+        // The display link's ticks draw, until the window is idle (WantRefreshes above); each one sets this again,
+        // so it wakes only when they stop
+        _presentPlannedNs = 0;
+        _presentTimer->start(kLinkWatchdogMs);
         return;
     }
     if (_smoothRefreshNs != 0)
@@ -1132,6 +1179,14 @@ void DeviceScreenGLWindow::refresh()
         _syncTimer->start();
     if (_native)
     {
+        // The display link runs while frames come; started again after an idle stop (the timer's way draws until it
+        // ticks)
+        if (_presenter && _presenter->PacesRefreshes())
+        {
+            _presenter->WantRefreshes(true);
+            if (linkPacing())
+                return;
+        }
         // The timer runs while frames come; started again after an idle stop
         if (!_presentTimer->isActive())
             _presentTimer->start(0);
@@ -1149,6 +1204,22 @@ void DeviceScreenGLWindow::onFrameSwapped()
         return;
     if (_idleRefreshes <= idleLimit())
         requestUpdate();
+}
+
+void DeviceScreenGLWindow::onDisplayRefresh(void* context, int64_t refreshNs, int64_t periodNs)
+{
+    auto* self = static_cast<DeviceScreenGLWindow*>(context);
+    self->_linkRefreshNs = refreshNs;
+    self->_linkPeriodNs = periodNs;
+    self->_lastLinkTickNs = SteadyNowNs();
+    self->renderNative(false);
+    self->_linkRefreshNs = 0;  // a tick that drew nothing (a stall) leaves none behind for a timer's wake
+}
+
+bool DeviceScreenGLWindow::linkPacing() const
+{
+    return _presenter && _presenter->PacesRefreshes() &&
+           (_linkRefreshNs != 0 || SteadyNowNs() - _lastLinkTickNs < kLinkWatchdogMs * 1'000'000);
 }
 
 int64_t DeviceScreenGLWindow::refreshPeriodNs() const

@@ -244,6 +244,12 @@ private:
     int idleLimit() const;
     /// After a swap: the next refresh, while frames are pending
     void onFrameSwapped();
+    /// Native way, the presenter pacing (NativePresenter::SetRefreshHandler): a refresh of the display to draw for
+    static void onDisplayRefresh(void* context, int64_t refreshNs, int64_t periodNs);
+    /// The display link draws: the presenter paces and a tick came within kLinkWatchdogMs (or is being drawn)
+    bool linkPacing() const;
+    /// Native way: ticks of the display link stopped this long, the window's timer draws until they come again
+    static constexpr int kLinkWatchdogMs = 100;
     void setupVSync();
     bool compileCustomShader(const QString& source);  ///< the context current; empty: none
     bool applySlangPreset(const QString& name);       ///< the context current; empty: none
@@ -297,6 +303,10 @@ private:
     int64_t _presentLeadNs = 0;                   ///< native way: UNREAL_PRESENT_LEAD_MS, 0 = presentLeadNs() picks
     int64_t _statusLogNs = 0;                     ///< native way: the last stats line in the log
     int64_t _presentPlannedNs = 0;                ///< native way: the wake the timer was set for (trace)
+    int64_t _linkRefreshNs = 0;                   ///< native way: the display link's refresh being drawn (0: none)
+    int64_t _linkPeriodNs = 0;                    ///< ... and the refresh period it gave
+    int64_t _lastPacedRefreshNs = 0;              ///< native way: the refresh the last link tick drew for
+    int64_t _lastLinkTickNs = 0;                  ///< native way: when the display link last ticked
 
     QOpenGLTexture* _texture = nullptr;
     std::atomic<bool> _textureNeedsUpdate{true};

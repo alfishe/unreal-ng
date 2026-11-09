@@ -34,6 +34,13 @@ public:
     void SetPolicy(PresentPolicy policy) override;
     /// The last present's presentedTime and the screen's refresh interval; false while each present shows at its time
     bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const override;
+    /// A display link on the view (macOS 14+, NSView displayLinkWithTarget:selector:, in the main run loop's common
+    /// modes, so it ticks through live resizes and menu tracking): on a fixed grid each tick hands the handler the
+    /// link's target timestamp, the refresh the present made now reaches. Not on macOS 12-13, nor with
+    /// UNREAL_PRESENT_DISPLAY_LINK=0 (the window's timer paces then, as under VRR)
+    bool SetRefreshHandler(RefreshHandler handler, void* context) override;
+    void WantRefreshes(bool want) override;
+    bool PacesRefreshes() const override;
     uint64_t Presented() const override;
     uint64_t LastLatePresent() const override;
     uint32_t LastLateLag() const override;
@@ -41,9 +48,11 @@ public:
     Stats GetStats() const override;
     std::string Describe() const override;
 
+    /// Defined in metalpresenter.mm only; named here for the display link's Objective-C target there
+    struct Impl;
+
 private:
     MetalPresenter();
     bool Vrr() const;  // each present at its time: the policy, or (auto) the display's refresh range
-    struct Impl;
     std::unique_ptr<Impl> _impl;
 };
