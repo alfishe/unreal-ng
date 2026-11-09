@@ -289,8 +289,9 @@ def test_me_and_pairing_routes(s):
         status, answer, _ = http(s, 'POST', '/api/v1/companions/pairings', {'name': 'probe'}, token=False)
         expect(status == 503 and answer.get('error') == 'pairing_unavailable', 'no GUI: no pairing', answer)
         return
+    # A request from a browser page (an Origin header) is not "from this host": it waits for the user at the GUI
     status, pairing, _ = http(s, 'POST', '/api/v1/companions/pairings', {'name': 'probe', 'scopes': ['run']},
-                              token=False)
+                              token=False, headers={'Origin': 'http://example.invalid'})
     expect(status == 202 and len(pairing.get('code', '')) == 6, 'a pairing is requested', pairing)
     pid = pairing['pairing_id']
     status, poll, _ = http(s, 'GET', f'/api/v1/companions/pairings/{pid}', token=False)
@@ -299,6 +300,19 @@ def test_me_and_pairing_routes(s):
     expect(status == 200 and answer.get('cancelled'), 'the device cancels it', answer)
     status, poll, _ = http(s, 'GET', f'/api/v1/companions/pairings/{pid}', token=False)
     expect(status == 404, 'gone', poll)
+
+    # A request from this host (loopback, no Origin) is approved at once: the first poll hands out the token
+    status, pairing, _ = http(s, 'POST', '/api/v1/companions/pairings', {'name': 'probe-local', 'scopes': ['run']},
+                              token=False)
+    expect(status == 202, 'a local pairing is requested', pairing)
+    pid = pairing['pairing_id']
+    status, poll, _ = http(s, 'GET', f'/api/v1/companions/pairings/{pid}', token=False)
+    expect(status == 200 and poll.get('state') == 'approved' and str(poll.get('token', '')).startswith('unc_'),
+           'a request from this host is approved at once', poll)
+    revoked = s.call('companion_manage', {'action': 'revoke', 'id': poll['companion_id']})
+    expect('revoked' in revoked.text, 'the probe companion is revoked again', revoked.text)
+    status, poll, _ = http(s, 'GET', f'/api/v1/companions/pairings/{pid}', token=False)
+    expect(status == 404, 'the token is handed out once', poll)
 
 
 def test_events_follow_the_machine(s):

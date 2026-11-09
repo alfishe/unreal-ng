@@ -1130,6 +1130,7 @@ PictureGeometry Screen::DescribeNativeFrame() const
     g.height = _framebuffer.height;
     g.stride = static_cast<uint32_t>(g.width) * RGBA_SIZE;
     g.screenWindow = WorkingWindow();
+    g.contentWindow = ContentWindow();
     g.videoMode = _framebuffer.videoMode;
     g.source = FrameSource::Native;
     g.frameNumber = _context ? _context->emulatorState.frame_counter : 0;

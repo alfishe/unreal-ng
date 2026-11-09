@@ -827,6 +827,11 @@ StateNode RecordingReadout(Emulator& emulator)
     const RecordingManager::RecordingStats stats = rm->GetStats();
     node["recording"] = rm->IsRecording() || rm->IsPaused();
     node["paused"] = rm->IsPaused();
+    // What runs: a recording with a picture, or sound alone (the video and audio REC keys of a surface)
+    const bool on = rm->IsRecording() || rm->IsPaused();
+    const bool audioOnly = rm->GetRecordingMode() == RecordingMode::AudioOnly;
+    node["video"] = on && !audioOnly;
+    node["audio_only"] = on && audioOnly;
     node["frames"] = static_cast<uint64_t>(stats.framesRecorded);
     node["seconds"] = std::round(stats.emulatedDuration * 10.0) / 10.0;
     node["bytes"] = static_cast<uint64_t>(stats.outputFileSize);

@@ -5,6 +5,7 @@
 #include <mutex>
 
 #include "emulator/video/next/nextlayerframe.h"
+#include "emulator/video/next/nextpicturewindow.h"
 #include "emulator/video/next/nextvideorenderer.h"
 #include "emulator/video/screen.h"
 
@@ -39,6 +40,10 @@ public:
     /// (bank 5), Layer 2 (NR #12, 3 to 5 banks by NR #70), the tilemap (NR #6E / #6F, bank 5 or the 8K of bank 7).
     /// Sprite patterns and the palettes live in the Next state, not counted
     void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const override;
+    /// The paper, or the whole frame in Layer 2's 320 x 256 / 640 x 256 modes (no border); the bounding box of the
+    /// enabled layers' clip windows (nextpicturewindow.h)
+    PictureRect WorkingWindow() const override;
+    PictureRect ContentWindow() const override;
     /// endregion
 
     /// Copper time (28 MHz clocks from the first paper line) of a T-state of the frame
@@ -90,6 +95,9 @@ public:
     /// endregion
 
 private:
+    /// The layers' registers as nextpicturewindow.h reads them; false without a Next port decoder
+    bool PictureWindowInputs(NextPictureWindow::Inputs& out) const;
+
     PortDecoder_Next* Decoder() const;
     void PrepareLayerFrame();
     void CompleteLayerFrame();

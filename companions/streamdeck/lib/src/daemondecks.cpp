@@ -640,6 +640,32 @@ void DaemonDecks::AddRoutes(automation::Api& api)
                  }
                  return rep;
              }});
+    api.Add({"POST",
+             "/api/v1/packs/reload",
+             "Read the icon packs again from disk and draw every deck's keys anew",
+             "After the pack PNGs changed (tools/icons/regenerate_streamdeck_icons.py) while the daemon runs: drops "
+             "the cached packs and glyphs, every deck draws all its keys again at once; answers once they show them "
+             "(202 when a deck's thread did not come round). decks: the decks drawn again",
+             {"decks", "packs", "icons"},
+             {},
+             nullptr,
+             [this](const Request&) {
+                 packs::ClearCache();
+                 std::vector<scn::Runtime::Ticket> tickets;
+                 json decks = json::array();
+                 ForEach([&](const std::string& serial, scn::Runtime& runtime) {
+                     runtime.RedrawAll();
+                     tickets.push_back(runtime.Posted());
+                     decks.push_back(serial);
+                 });
+                 bool applied = true;
+                 for (auto& t : tickets)
+                     applied = t.Wait(std::chrono::milliseconds(_options.applyTimeoutMs)) && applied;
+                 Reply rep = Reply::Ok({{"decks", decks}, {"packs", packs::List().size()}, {"applied", applied}});
+                 if (!applied)
+                     rep.status = 202;
+                 return rep;
+             }});
     api.Add({"GET",
              "/api/v1/decks/{serial}/scenario",
              "The scenario a deck plays",

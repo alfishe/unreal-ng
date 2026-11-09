@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 
+#include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/windowview.h"
 #include "crtprofiles.h"
@@ -67,7 +68,7 @@ public:
     void refresh();
 
     /// @brief Set frame copy function for tear-free rendering
-    void setFrameSource(std::function<bool(uint8_t*, size_t)> fn);
+    void setFrameSource(std::function<bool(uint8_t*, size_t, PictureGeometry*)> fn);
 
     /// @brief Thread-safe cut of the frame source and legacy live-buffer path.
     /// Safe to call from the MessageCenter worker while an emulator instance
@@ -85,6 +86,10 @@ public:
 
     /// @brief Clear display viewport (show full frame)
     void clearDisplayViewport();
+
+    /// @brief The part of the frame shown: full, the working picture or the layers' content (window setting `view`)
+    void setPictureView(PictureView::Mode mode);
+    PictureView::Mode pictureView() const { return _pictureView; }
 
     /// @brief Check if a viewport is currently set
     bool hasViewport() const { return _hasViewport; }
@@ -203,5 +208,6 @@ private:
     // Track viewport state for getters
     DisplayViewport _displayViewport;
     bool _hasViewport = false;
+    PictureView::Mode _pictureView = PictureView::Mode::Full;
     float _pictureAspect = 0.0f;
 };

@@ -636,6 +636,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::hudSettingsRequested, this, &MainWindow::handleHudSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+    connect(_menuManager, &MenuManager::pictureViewChanged, this, [this](int mode) {
+        WindowDisplayChange change;
+        change.view = PictureView::NameOf(static_cast<PictureView::Mode>(mode));
+        applyWindowDisplay(change);
+        schedulePublishWindowDisplay();
+        saveViewSettings();
+    });
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
     connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
             &MainWindow::handleZXPolyConfigurationRequested);
@@ -2641,8 +2648,8 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
                     return false;
 
                 // Stamp video presentation latency (paint - latch), EMA 1/8:
@@ -2803,7 +2810,7 @@ bool MainWindow::attachScreenToZXPolyDisplay()
                          static_cast<uint16_t>(group->GetDisplayHeight()),
                          const_cast<uint32_t*>(group->GetDisplayBuffer()));
     _screenWrapper->clearDisplayViewport();
-    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize) { return group->CopyDisplay(dst, dstSize); });
+    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize, PictureGeometry*) { return group->CopyDisplay(dst, dstSize); });
     return true;
 }
 
@@ -4292,8 +4299,8 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
                     return false;
 
                 // Stamp video presentation latency (paint - latch), EMA 1/8:
@@ -4744,6 +4751,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
     const QString crtShader = _screenWrapper->customShader();
     bool hasViewport = _screenWrapper->hasViewport();
     DisplayViewport savedViewport = _screenWrapper->displayViewport();
+    const PictureView::Mode savedPictureView = _screenWrapper->pictureView();
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
     int temporalHistorySize = _screenWrapper->temporalHistorySize();
     int temporalWeightMode = _screenWrapper->temporalWeightMode();
@@ -4806,12 +4814,14 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
             auto& fb = screen->GetFramebufferDescriptor();
             _screenWrapper->init(fb, *context->pScreen);
 
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                return context && screen->CopyPresentedFramebuffer(dst, dstSize);
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
+                return context && screen->CopyPresentedFramebuffer(dst, dstSize, geometry);
             });
         }
         _screenWrapper->setEmulator(_emulator);
     }
+
+    _screenWrapper->setPictureView(savedPictureView);
 
     // Restore viewport state
     if (hasViewport)
@@ -5642,8 +5652,8 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
             // overwrites the live buffer while the GUI thread paints it).
             // _screenWrapper->detach() clears this on emulator switch/shutdown.
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize))
+            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
+                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
                     return false;
 
                 // Stamp video presentation latency (paint - latch), EMA 1/8:

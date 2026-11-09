@@ -313,7 +313,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     return true;
 }
 
-void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t)> fn)
+void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t, PictureGeometry*)> fn)
 {
     if (_useGPU && _gpuWindow)
         _gpuWindow->setFrameSource(fn);
@@ -353,6 +353,16 @@ void DeviceScreenWrapper::setDisplayViewport(const DisplayViewport& viewport)
     else if (_software)
         _software->setDisplayViewport(viewport);
 
+    emit pictureGeometryChanged();
+}
+
+void DeviceScreenWrapper::setPictureView(PictureView::Mode mode)
+{
+    _pictureView = mode;
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setPictureView(mode);
+    else if (_software)
+        _software->setPictureView(mode);
     emit pictureGeometryChanged();
 }
 

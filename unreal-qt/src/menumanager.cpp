@@ -378,6 +378,21 @@ void MenuManager::createViewMenu()
     _overscanAction->setEnabled(false);  // Enabled only for Pentagon
     connect(_overscanAction, &QAction::triggered, this, &MenuManager::overscanModeToggled);
 
+    // Picture submenu: which part of the frame the window shows, on every machine
+    QMenu* pictureMenu = _viewMenu->addMenu(tr("&Picture"));
+    pictureMenu->setStatusTip(tr("Which part of the frame the window shows"));
+    _pictureViewGroup = new QActionGroup(this);
+    _pictureViewGroup->setExclusive(true);
+    const char* pictureTitles[3] = {"&Full frame", "&Screen (without border)", "&Content (layers' clip window)"};
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        _pictureViewActions[mode] = pictureMenu->addAction(tr(pictureTitles[mode]));
+        _pictureViewActions[mode]->setCheckable(true);
+        _pictureViewGroup->addAction(_pictureViewActions[mode]);
+        connect(_pictureViewActions[mode], &QAction::triggered, this, [this, mode]() { emit pictureViewChanged(mode); });
+    }
+    _pictureViewActions[0]->setChecked(true);
+
     // Viewport submenu (only meaningful in overscan mode)
     _viewportMenu = _viewMenu->addMenu(tr("Display &Viewport"));
     _viewportMenu->setStatusTip(tr("Crop framebuffer for display"));
@@ -1774,6 +1789,12 @@ void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& acti
 void MenuManager::resetViewportSelection()
 {
     _viewportSymmetricAction->setChecked(true);
+}
+
+void MenuManager::setPictureViewSelection(int mode)
+{
+    if (mode >= 0 && mode < 3 && _pictureViewActions[mode])
+        _pictureViewActions[mode]->setChecked(true);  // setChecked does not emit triggered
 }
 
 void MenuManager::setViewportSelection(int presetIndex)

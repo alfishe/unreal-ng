@@ -1,7 +1,7 @@
 """Re-skinning the MagicWB drawings into other pixel styles (NewIcons, GlowIcons, Workbench 1.3).
 
 The MagicWB generator draws every glyph with semantic palette keys ('g' backdrop, 'k' outline / black detail, 'w'
-white, 'l' light, 'd' dark, 'b' blue accent, 'e' warm accent) through `streamdeck_pixel.Canvas`. A `RampCanvas` keeps
+white, 'l' light, 'd' dark, 'b' blue accent, 'e' warm accent, 'r' the record marker's red in every pack) through `streamdeck_pixel.Canvas`. A `RampCanvas` keeps
 those keys and, for each solid shape, the position of every pixel on a light-to-shade ramp; a `Skin` turns keys and
 ramp positions into colours. So every pack shows the same 148 drawings, each in its own palette and shading.
 """
@@ -22,7 +22,7 @@ import streamdeck_pixel as sp  # noqa: E402
 
 ROOT_DIR = magicwb.ROOT_DIR
 N = magicwb.N
-KEYS = 'gkwldbe'
+KEYS = 'gkwldber'
 
 
 def ramp_index(mask, steps, light=0.9, edge=0.3):
