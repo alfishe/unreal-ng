@@ -3,14 +3,16 @@
 /// /video/window/record*, CLI `video window record`, Lua / Python window_record*(), MCP capture_media window_record_*):
 /// no window headless, the words a start takes, the ranges refused before the window is asked, the report.
 ///
-/// The front end is a fake provider; one test makes a machine (not started) for the frames' checks.
+/// The front end is a fake provider; two tests make a machine for the frames' checks (one not started, one paused).
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <memory>
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testwaithelper.h"
 #include "emulator/emulator.h"
 #include "emulator/video/windowrecording.h"
 
@@ -62,9 +64,16 @@ public:
     }
     bool GetWindowRecording(WindowRecordingStatus& out, std::string&) override
     {
+        if (failAtRead > 0 && ++reads >= failAtRead)  // the writer failed: the recorder stops itself
+        {
+            status.recording = false;
+            status.error = "ffmpeg stopped taking frames";
+        }
         out = status;
         return true;
     }
+    int failAtRead = 0;  ///< > 0: the recording stops at this status read
+    int reads = 0;
 };
 
 /// Registers a provider for one test, and always takes it away again: the registry is process-wide
@@ -235,5 +244,27 @@ TEST(WindowRecording_Test, FramesNeedARangeAndAPausedMachine)
     const WindowRecording::Result running = WindowRecording::RunFrames(*emulator, 5);
     EXPECT_EQ(running.status, WindowRecording::Status::NotPaused) << "a machine not paused runs no recorded frames";
     EXPECT_STREQ(WindowRecording::StatusName(running.status), "not-paused");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(WindowRecording_Test, FramesEndAtOnceWhenTheRecordingStops)
+{
+    // 2026-11 on Windows the sound file was never opened: the recorder stopped at the first frame and the step
+    // waited out its 10 s, reported as "recorded nothing" instead of the recorder's error
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    emulator->StartAsync();  // a recorded step needs a paused machine, and only a started one is paused
+    ASSERT_TRUE(TestWait::For([emulator] { return emulator->GetState() == StateRun; }));
+    emulator->Pause();
+    ASSERT_TRUE(emulator->IsPaused());
+    auto fake = std::make_shared<FakeRecorder>();
+    ScopedProvider registered(fake);
+    ASSERT_TRUE(WindowRecording::Start("id", Valid()).status == WindowRecording::Status::Ok);
+    fake->failAtRead = 3;  // the first wait for the frame's picture
+    const auto started = std::chrono::steady_clock::now();
+    const WindowRecording::Result stopped = WindowRecording::RunFrames(*emulator, 5);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1)) << "no wait for a dead recorder";
+    EXPECT_EQ(stopped.status, WindowRecording::Status::Unavailable);
+    EXPECT_EQ(stopped.error, "The recording stopped: ffmpeg stopped taking frames");
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

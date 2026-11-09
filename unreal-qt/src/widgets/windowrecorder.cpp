@@ -378,6 +378,14 @@ struct WindowRecorder::Writer
 #endif
             return true;
         };
+        if (!process.waitForStarted(5000))
+            failure = "ffmpeg did not start: " + process.errorString().toStdString();
+        else if (!mux.soundPath.isEmpty())  // no FIFO (Windows): the sound into its own file, muxed at the end
+        {
+            sound.setFileName(mux.soundPath);
+            if (!sound.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                failure = "Cannot write " + mux.soundPath.toStdString() + ": " + sound.errorString().toStdString();
+        }
         auto fail = [&](const std::string& why) {
             if (failure.empty())
                 failure = why;
