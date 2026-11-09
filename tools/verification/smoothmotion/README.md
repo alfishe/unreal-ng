@@ -12,7 +12,7 @@ and a baseline.
 | [`testdata/video/smoothmotion`](../../../testdata/video/smoothmotion/README.md) | the synthetic Z80 programs (`.sna`) and their ground truth, synced from their own repo |
 | `sync-testdata.sh` | copies the built programs and the truth from that repo, checks the sums |
 | `filters.cpp` | the filters harness: the shipped modes through the core's CPU reference plus POC 047's experiments, 60 Hz refreshes as raw RGBA (`FILTERS_RAW=1`) and videos |
-| `compile-tool.sh` | builds a tool (`filters.cpp`, `live/replay.cpp`, POC 048's `smoothmotion-eval.cpp`) with the core sources it needs, no CMake |
+| `compile-tool.sh` | builds a tool (`filters.cpp`, `live/replay.cpp`, POC 049's `smoothmotion-eval.cpp`) with the core sources it needs, no CMake |
 | `run_scenes.sh` | the scenes end to end: capture, filters, `smoothness.py`, `regress.py` |
 | `smoothness.py` | the measurement: source frames + a filter's refreshes -> numbers per region and filter |
 | `regress.py` | hard gates and the baseline comparison of `smoothness.py` results |

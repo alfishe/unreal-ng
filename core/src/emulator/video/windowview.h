@@ -148,6 +148,7 @@ struct WindowDisplaySettings
                                            ///< counters as of the publish, at most once a second)
 
     bool fullscreen = false;               ///< the window fills the display
+    std::string view = "full";             ///< the part of the frame shown: "full", "screen", "content" (pictureview.h)
     int scale = 0;                         ///< the whole zoom the window was fitted to, 1..4; 0 = none (resized by hand)
     bool toolbar = true;                   ///< View > Toolbar
     bool statusBar = true;                 ///< View > Status Bar
@@ -184,6 +185,7 @@ struct WindowDisplayChange
     std::optional<std::string> displayRate;
     std::optional<int> lipSyncOffsetMs;
     std::optional<bool> fullscreen;
+    std::optional<std::string> view;
     std::optional<int> scale;
     std::optional<bool> toolbar;
     std::optional<bool> statusBar;
@@ -200,7 +202,7 @@ struct WindowDisplayChange
     bool Empty() const
     {
         return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
-               !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
+               !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !view && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }
 };

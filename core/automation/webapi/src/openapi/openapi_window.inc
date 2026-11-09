@@ -31,7 +31,7 @@
             "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
             "[VIDEO] settings), present_policy, display_rate and lip_sync_offset_ms (the shown instance's [VIDEO] "
             "PresentPolicy, DisplayRate, LipSyncOffsetMs), present (the frame presenter's on-screen timing and smooth motion's counters), the "
-            "emulator the window shows, fullscreen, scale, toolbar, status_bar, "
+            "emulator the window shows, fullscreen, view and the views offered, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
             "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
             "next_layers_mode, next_layers_shown). The settings are the window's, whichever instance it shows, and "
@@ -78,6 +78,10 @@
             field("lip_sync_offset_ms", "integer",
                   "-200..200: added to every frame's target time, positive = the picture later; from the next frame");
             field("fullscreen", "boolean", "Full screen on / off (follows after the window system's transition)");
+            field("view", "string",
+                  "The part of the frame shown, one of views: full (the whole frame, default), screen (the working picture: "
+                  "the paper, or the whole frame in a mode without a border) or content (what the layers draw: the working "
+                  "picture cut by the clip windows of the ZX Next's layers). Fitted by height, aspect kept");
             field("scale", "integer", "Fit the window to the picture at 1..4x (leaves full screen)");
             field("toolbar", "boolean", "View > Toolbar");
             field("status_bar", "boolean", "View > Status Bar");

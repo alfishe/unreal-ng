@@ -212,9 +212,9 @@ bool EmuHost::FrameSize(FrameInfo& info) const
     return true;
 }
 
-bool EmuHost::CopyFrameTo(uint8_t* dst, size_t size)
+bool EmuHost::CopyFrameTo(uint8_t* dst, size_t size, PictureGeometry* geometry)
 {
-    return _emulator->GetContext()->pScreen->CopyPresentedFramebuffer(dst, size);
+    return _emulator->GetContext()->pScreen->CopyPresentedFramebuffer(dst, size, geometry);
 }
 
 void EmuHost::JoystickPress(uint8_t mask)

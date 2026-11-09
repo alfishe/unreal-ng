@@ -354,6 +354,10 @@ struct PictureGeometry
     uint16_t height = 0;
     uint32_t stride = 0;
     PictureRect screenWindow;  ///< the working picture; the whole frame when the frame has no border
+    /// Where the layers actually draw: the working picture cut down to what the enabled layers' clip windows leave
+    /// (a ZX Next game that clips its layers to 240x176 inside the 256x192 paper). Empty = no finer window than
+    /// screenWindow. Read it through PictureView::Source, never directly
+    PictureRect contentWindow;
     VideoModeEnum videoMode = M_NUL;
     FrameSource source = FrameSource::Native;
     uint64_t frameNumber = 0;  ///< emulated frame the pixels belong to
@@ -1286,6 +1290,11 @@ public:
     /// the raster descriptor's screen window; modes whose window moves (TS-Conf) override this.
     /// Emulation thread (it reads renderer state)
     virtual PictureRect WorkingWindow() const;
+
+    /// The part of the frame the enabled layers draw into, inside the frame (the ZX Next: the union of its layers'
+    /// clip windows). Empty (the default) = the working window is all there is. Changes with the program's clip
+    /// registers, so it is latched with each frame. Emulation thread
+    virtual PictureRect ContentWindow() const { return PictureRect{}; }
 
     /// The picture the monitor shows: the machine's framebuffer, or the
     /// external picture while one is active (SetExternalPicture)

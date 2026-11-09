@@ -21,6 +21,7 @@
 #include <atomic>
 
 #include "emulator/video/displayrate.h"
+#include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"
 #include "emulator/video/smoothtrace.h"
 #include "crtbeammodel.h"
@@ -131,6 +132,10 @@ public:
     QRect pictureDeviceRect() const;
     void setDisplayViewport(const DisplayViewport& viewport);
     void clearDisplayViewport();
+    /// The part of the frame shown (the window setting `view`): the whole frame, the working picture or the layers'
+    /// content. The picture's shape follows the cut; full is the shape the window was initialised with
+    void setPictureView(PictureView::Mode mode);
+    PictureView::Mode pictureView() const { return _pictureView; }
     QImage grabFramebuffer();
     /// The window as it draws now (picture, letterbox, CRT shader, HUD), rendered afresh into an image in device
     /// pixels. QOpenGLWindow::grabFramebuffer only reads the back buffer, which after a swap may hold an older frame
@@ -368,6 +373,11 @@ private:
 
     static constexpr float kNativeRatio = static_cast<float>(kNativeWidth) / static_cast<float>(kNativeHeight);
     float ratio = kNativeRatio;  // the shape the picture is drawn in (init)
+    float _baseRatio = kNativeRatio;  // the shape init gave: what view "full" draws in
+
+    PictureView::Mode _pictureView = PictureView::Mode::Full;
+    PictureGeometry _frameGeometry;  ///< the geometry latched with the frame last uploaded (GUI thread)
+    void applyPictureViewRatio();
 
     std::shared_ptr<Emulator> _emulator = nullptr;
     class MouseCaptureController* _mouseCapture = nullptr;  // owned by DeviceScreenWrapper

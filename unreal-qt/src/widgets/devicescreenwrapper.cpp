@@ -364,6 +364,16 @@ void DeviceScreenWrapper::setDisplayViewport(const DisplayViewport& viewport)
     emit pictureGeometryChanged();
 }
 
+void DeviceScreenWrapper::setPictureView(PictureView::Mode mode)
+{
+    _pictureView = mode;
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setPictureView(mode);
+    else if (_software)
+        _software->setPictureView(mode);
+    emit pictureGeometryChanged();
+}
+
 void DeviceScreenWrapper::setHudOverlay(HudOverlay* overlay)
 {
     _hudOverlay = overlay;

@@ -50,6 +50,9 @@ public:
 
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
+    // Check the picture view shown (0 full, 1 screen, 2 content) without emitting pictureViewChanged
+    void setPictureViewSelection(int mode);
+
     // Check the viewport preset shown (0 full, 1 symmetric, 2 standard, 3 screen only) without emitting viewportChanged
     void setViewportSelection(int presetIndex);
 
@@ -210,6 +213,8 @@ signals:
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
     void viewportChanged(int presetIndex);
+    /// View > Picture: 0 full, 1 screen, 2 content (PictureView::Mode)
+    void pictureViewChanged(int mode);
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
@@ -325,6 +330,8 @@ private:
     QAction* _viewportSymmetricAction;
     QAction* _viewportStandardAction;
     QAction* _viewportScreenOnlyAction;
+    QActionGroup* _pictureViewGroup = nullptr;
+    QAction* _pictureViewActions[3] = {nullptr, nullptr, nullptr};
 
     // Run Menu Actions
     QAction* _startAction;

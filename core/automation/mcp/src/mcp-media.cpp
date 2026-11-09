@@ -507,7 +507,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
         "display_rate (keep, match: while the emulator is active, the display runs the rate of the machine), "
         "lip_sync_offset_ms (-200..200, positive = the picture later), "
-        "fullscreen (bool), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
+        "fullscreen (bool), view (full, screen, content: the part of the frame shown, fitted by height with the "
+        "aspect kept), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
         "osd_keyboard_pictures), osd_keyboard_style (photo, schematic, hybrid: the hybrid shows what a combination key "
         "presses), next_layers (bool), next_layers_mode (layers, composed, winner), next_layers_shown "
@@ -516,8 +517,8 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "hud_theme",
-                             "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
+    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "view",
+                             "hud_theme", "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";

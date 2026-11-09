@@ -1,6 +1,6 @@
 #!/bin/bash
 # POC 047: clips through the filters, 4 at a time: run.sh [clip ...]
-# FRAMES=<dir>: the captures (default POC 048's). Each clip: grid.mp4 + single videos of every filter, and
+# FRAMES=<dir>: the captures (default POC 049's). Each clip: grid.mp4 + single videos of every filter, and
 # grid-short.mp4 (the shortlist, 3x).
 cd "$(dirname "$0")/../../.."
 D=scratch/2026-10-28-poc-047

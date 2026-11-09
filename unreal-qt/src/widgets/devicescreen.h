@@ -8,6 +8,7 @@
 #include <mutex>
 #include <cstdint>
 
+#include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
 #include "framesource.h"
@@ -92,6 +93,11 @@ public:
         // Aspect ratio is fixed (see sizeHint) - only the source rectangle changes
         update();  // Trigger repaint with new viewport
     }
+
+    /// The part of the frame shown (the window setting `view`); the picture's shape follows the cut and the widget
+    /// re-fits itself to it. Full is the shape init gave
+    void setPictureView(PictureView::Mode mode);
+    PictureView::Mode pictureView() const { return _pictureView; }
 
     /// Copy of the currently presented frame (viewport-cropped), for screenshots.
     /// Null image when no framebuffer is attached.
@@ -189,6 +195,11 @@ private:
 
     std::shared_ptr<Emulator> _emulator = nullptr;  // Reference to emulator for UUID tagging
     bool _isShuttingDown = false;  // Flag to block refreshes during shutdown
+
+    float _baseRatio = kNativeRatio;  // the shape init gave: what view "full" draws in
+    PictureView::Mode _pictureView = PictureView::Mode::Full;
+    PictureGeometry _frameGeometry;   // the geometry latched with the frame last drawn (GUI thread)
+    void applyPictureViewRatio();     // ratio from the cut; re-fits the widget when it changed
 
     // Viewport cropping for overscan mode
     DisplayViewport _displayViewport;

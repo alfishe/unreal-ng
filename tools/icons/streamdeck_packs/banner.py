@@ -16,7 +16,8 @@ NAVY = (10, 12, 40)
 NAVY_ON = (30, 44, 120)
 SHADOW = (58, 64, 168)
 WHITE = (250, 250, 252)
-COLOURS = {'w': WHITE, 'l': WHITE, 'e': WHITE, 'b': WHITE, 'd': (150, 156, 196), 'k': None, 'g': None}
+COLOURS = {'w': WHITE, 'l': WHITE, 'e': WHITE, 'b': WHITE, 'd': (150, 156, 196), 'r': (236, 52, 52), 'k': None,
+           'g': None}
 
 
 def render(g):

@@ -115,7 +115,7 @@ TEST_F(HostActionsMachine_Test, TheAreaActionsAreInTheCatalogueWithParamsScopesA
     for (const char* id : {"mach.switch", "mach.previous", "media.insert", "media.swap", "media.export",
                            "media.discard", "media.rescan", "media.open_recent", "rzx.play", "rzx.stop", "rzx.seek",
                            "input.joystick_type", "input.mouse_button", "input.mouse_release", "cap.record_toggle",
-                           "cap.record_pause", "cap.clip_last", "cap.audio_capture", "ttd.export_clip"})
+                           "cap.record_start", "cap.record_stop", "cap.record_pause", "cap.clip_last", "cap.audio_capture", "ttd.export_clip"})
     {
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info.has_value()) << id;
@@ -440,6 +440,38 @@ TEST_F(HostActionsMachine_Test, RecordToggleStartsAGifPausesAndStopsAndRefusesBa
     EXPECT_FALSE(control.Execute("status").body.find("recording")->b);
     EXPECT_EQ(control.Execute("stop").error, "Conflict");
     EXPECT_EQ(control.Execute("start", {{"bogus", "1"}}).error, "Bad Request");
+}
+
+/// The REC / STOP pair of a surface page: the start is the recording's state and refuses a second start, the stop is
+/// unavailable until a recording runs; the readout says whether the picture or the sound alone is recorded
+TEST_F(HostActionsMachine_Test, RecordStartAndStopAreTheRecAndStopKeys)
+{
+    ActionRegistry& registry = ActionRegistry::Instance();
+    const std::string folder = Scratch("record-start-stop");
+    EXPECT_EQ(registry.ToggleState("cap.record_start", _id), false);
+    EXPECT_EQ(Run("cap.record_stop", Press()).error, "not_now") << "nothing to stop";
+
+    const std::string wav = FileHelper::PathCombine(folder, "sound.wav");
+    const ActionResult audio = Run("cap.record_start", Press({{"preset", "audio"}, {"path", wav}}));
+    ASSERT_TRUE(audio.ok) << audio.message;
+    EXPECT_EQ(registry.ToggleState("cap.record_start", _id), true);
+    ReadoutSet readout = ReadReadouts(_id, {"cap.record"});
+    EXPECT_TRUE(Field(readout.values, {"cap.record", "audio_only"})->b);
+    EXPECT_FALSE(Field(readout.values, {"cap.record", "video"})->b);
+    EXPECT_EQ(Run("cap.record_start", Press({{"preset", "audio"}, {"path", wav}})).error, "Conflict")
+        << "one recording at a time";
+    ASSERT_TRUE(Run("cap.record_stop", Press()).ok);
+    EXPECT_EQ(registry.ToggleState("cap.record_start", _id), false);
+    EXPECT_EQ(Run("cap.record_stop", Press()).error, "not_now");
+
+    const std::string gif = FileHelper::PathCombine(folder, "clip.gif");
+    ASSERT_TRUE(Run("cap.record_start", Press({{"preset", "gif"}, {"path", gif}})).ok);
+    readout = ReadReadouts(_id, {"cap.record"});
+    EXPECT_TRUE(Field(readout.values, {"cap.record", "video"})->b);
+    EXPECT_FALSE(Field(readout.values, {"cap.record", "audio_only"})->b);
+    ASSERT_TRUE(Run("cap.record_stop", Press()).ok);
+    readout = ReadReadouts(_id, {"cap.record"});
+    EXPECT_FALSE(Field(readout.values, {"cap.record", "video"})->b);
 }
 
 /// The last seconds of a TTD recording as a GIF, the recording going on after it. Boot-bound (a machine started, a few

@@ -1984,7 +1984,7 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'match'), 'lip_sync_offset_ms'
                                      #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',
                                      #   'renders', 'interpolated', ...}, 'display': {'state', 'reason', 'hz', ...}} (the frame presenter's timing), 'emulator' (the instance the
-                                     #   window shows), 'fullscreen', 'scale' (1..4, 0 = resized by hand), 'toolbar',
+                                     #   window shows), 'fullscreen', 'view' ('full' / 'screen' / 'content'), 'views', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},
                                      #   'osd_keyboard', 'osd_keyboard_picture', 'osd_keyboard_pictures',
                                      #   'osd_keyboard_style', 'osd_keyboard_styles',
@@ -1998,7 +1998,7 @@ emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=,
                                      #   blending_decay= (0.3), smooth_motion= ('interpolate'), effects_device=
                                      #   ('gpu' / 'cpu'), present_policy= ('vsync'), display_rate= ('match'),
                                      #   lip_sync_offset_ms= (-40),
-                                     #   scale= (1..4), hud_theme=, hud_notices=
+                                     #   view= ('full' / 'screen' / 'content'), scale= (1..4), hud_theme=, hud_notices=
                                      #   {'ram-page': False}, osd_keyboard_picture=, osd_keyboard_style=
                                      #   ('photo' / 'schematic' / 'hybrid'), next_layers_mode=,
                                      #   next_layers_shown={'sprites': False}; applied the way the View menu does.

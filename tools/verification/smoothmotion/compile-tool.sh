@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds a smooth-motion measuring tool against the core's CPU reference, without CMake: the one source list for
-# the filters harness (filters.cpp), live/replay.cpp, POC 048's smoothmotion-eval.cpp and POC 047's run.sh.
+# the filters harness (filters.cpp), live/replay.cpp, POC 049's smoothmotion-eval.cpp and POC 047's run.sh.
 #
 #   compile-tool.sh <tool.cpp> <output binary> [extra compiler flags]
 #

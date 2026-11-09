@@ -95,6 +95,22 @@ std::string NoTtd(Emulator& emulator, const ActionValue&)
                                                                       : std::string("time travel is not available");
 }
 
+/// Time travel recording now (ttd.stop: nothing to stop otherwise)
+std::string NotRecording(Emulator& emulator, const ActionValue& value)
+{
+    if (std::string why = NoTtd(emulator, value); !why.empty())
+        return why;
+    return emulator.GetContext()->pTimeTravelHooks->IsRecording() ? std::string() : std::string("not recording");
+}
+
+std::optional<bool> TtdRecording(Emulator& emulator, const ActionValue&)
+{
+    EmulatorContext* context = emulator.GetContext();
+    if (context == nullptr || context->pTimeTravelHooks == nullptr)
+        return std::nullopt;
+    return context->pTimeTravelHooks->IsRecording();
+}
+
 /// Time travel with a recorded history (the published cursor: never waits for the machine)
 std::string NoHistory(Emulator& emulator, const ActionValue& value)
 {
@@ -1564,8 +1580,15 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         rules.unavailable = history ? NoHistory : NoTtd;
         return rules;
     };
-    add("ttd.start", "Start recording", ttdGroup, ValueKind::Press, "", verb("start"), ttdRules("POST", "/ttd/start"));
-    add("ttd.stop", "Stop recording", ttdGroup, ValueKind::Press, "", verb("stop"), ttdRules("POST", "/ttd/stop"));
+    {
+        // Its state is the recording (a REC key lit while it records); ttd.stop is unavailable until one runs
+        ActionRules start = ttdRules("POST", "/ttd/start");
+        start.state = TtdRecording;
+        add("ttd.start", "Start recording", ttdGroup, ValueKind::Press, "", verb("start"), std::move(start));
+        ActionRules stop = ttdRules("POST", "/ttd/stop");
+        stop.unavailable = NotRecording;
+        add("ttd.stop", "Stop recording", ttdGroup, ValueKind::Press, "", verb("stop"), std::move(stop));
+    }
     add("ttd.seek", "Go to a frame or bookmark", ttdGroup, ValueKind::Press, "frame + tinframe?, or bookmark",
         verb("seek"), ttdRules("POST", "/ttd/seek", true));
     add("ttd.bookmark_delete", "Delete a bookmark", ttdGroup, ValueKind::Press, "label", verb("bookmark-delete"),

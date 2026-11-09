@@ -7551,7 +7551,7 @@ namespace PythonBindings
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         }, "The GUI window's display settings: backend, gpu_available, gpu, crt, crt_profile, crt_profiles, blending, "
-           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, scale, toolbar, status_bar, hud, "
+           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, view, views, scale, toolbar, status_bar, hud, "
            "hud_theme, hud_themes, hud_notices, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures, "
            "osd_keyboard_style, osd_keyboard_styles, next_layers, "
            "next_layers_mode, next_layers_shown; {ok: False, error, kind: 'no-window'} headless")
@@ -7601,7 +7601,7 @@ namespace PythonBindings
         }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending=, "
            "fullscreen=, toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool), crt_profile= (one of "
            "crt_profiles: none, basic, ...), blending_frames= (2..5), blending_weights= ('equal', 'exponential'), "
-           "blending_decay= (0.1..0.9), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
+           "blending_decay= (0.1..0.9), view= ('full', 'screen', 'content'), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
            "osd_keyboard_picture= (one of osd_keyboard_pictures), osd_keyboard_style= ('photo', 'schematic', 'hybrid'), "
            "next_layers_mode= ('layers', 'composed', 'winner'), "
            "next_layers_shown= ({'ula'|'layer2'|'tilemap'|'sprites': bool}); returns the settings after the change, "

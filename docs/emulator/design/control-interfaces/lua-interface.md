@@ -1538,7 +1538,7 @@ emu.window_display()                 -- GUI window display settings: { backend (
                                      --   present = { presenter, vrr, vrr_support = { state, reason }, clock, timing = { delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms }, late, beat = { frames, off }, lead_ms, error_ms, sound_offset_ms = { p50, p99 }, gpu_wait_ms, gpu_ms = { smooth, smooth_cpu, picture = { p50, max, longest, measured } }, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
                                      --   display = { state, reason, hz, ... } }
                                      --   (the frame presenter's timing), emulator (the instance the window shows),
-                                     --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
+                                     --   fullscreen, view ("full" / "screen" / "content"), views, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
                                      --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
                                      --   osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style,
                                      --   osd_keyboard_styles, next_layers, next_layers_mode,
@@ -1552,7 +1552,7 @@ emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu,
                                      --   blending_decay (0.3), smooth_motion ("interpolate"), effects_device
                                      --   ("gpu" / "cpu"), present_policy ("vsync"), display_rate ("match"),
                                      --   lip_sync_offset_ms (-40),
-                                     --   scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   view ("full" / "screen" / "content"), scale (1..4), hud_theme, hud_notices = {["ram-page"]
                                      --   = false}, osd_keyboard_picture, osd_keyboard_style ("photo" / "schematic" /
                                      --   "hybrid"), next_layers_mode ("layers" / "composed" /
                                      --   "winner"), next_layers_shown = {sprites = false}; applied the way the View

@@ -35,10 +35,11 @@ cleared and labelled first (48K ROM font from `rom/48.rom`).
 
 ```bash
 # Deck, Game Mode, non-Steam game: ~/steamdeck-poc/p01-sdl-gpu-latency  (Launch Options below)
---present vsync --fif 1 --crop full          # baseline
+--present vsync --fif 1 --view full          # baseline
 --present vsync --fif 2                                # smoother, +1 frame?
 --present mailbox --fif 1                              # if gamescope offers it
---crop deckfit                                         # 320x200 x4 = 1280x800
+--view screen                                          # the working picture only: the paper of a Spectrum, the whole frame without a border
+--view content                                         # what the layers draw (a ZX Next game that clips its layers: no black around it)
 --model 128K-class with Kempston, e.g. PENTAGON (default, 48.83 Hz); a bare 48K has no Kempston: refused
 --file /home/deck/ZX/game.tap                          # any program (press logging only works for the border test)
 --windowed                                             # desktop development: a 1280x800 window
@@ -73,6 +74,11 @@ temporal blending: `gpu=off` and `blending=on` are refused; the window grab (scr
 
 Built with automation (the default) the instance is driven over the network: WebAPI on `:8090`
 ([README.md, Remote control](../README.md#remote-control-webapi-mcp)).
+
+Picture: `--view full|screen|content` (default `full`), the window setting `view` of every automation surface
+(`PUT /video/window {"view":"screen"}`, CLI `video window view=screen`, Lua / Python / MCP). The picture is always
+fitted by height with its aspect kept; the cut comes from the geometry latched with the frame (`core/src/emulator/video/pictureview.h`,
+the same rule as unreal-qt). A router action `view.next` (or the Up arrow) steps full, screen, content on the Deck.
 
 Controls: A (or Space) = Kempston fire; D-pad = directions; View + Menu = quit.
 

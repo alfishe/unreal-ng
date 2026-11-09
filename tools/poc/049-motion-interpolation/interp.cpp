@@ -1,4 +1,4 @@
-// POC 048: in-between pictures of emulated frames, three variants (README.md):
+// POC 049: in-between pictures of emulated frames, three variants (README.md):
 //   a-repeat  the newest frame
 //   b-blend   (1 - w) A + w B
 //   c-block   per 8x8 block a motion vector within +-R px, the warp by w, the blend where the warped sources disagree

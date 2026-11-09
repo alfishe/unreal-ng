@@ -53,6 +53,8 @@ void DeviceScreen::init(uint16_t width, uint16_t height, void* buffer, float asp
     // Note: the widget's aspect ratio is the CRT frame's 352x288 regardless of the framebuffer size;
     // larger (overscan) framebuffers are scaled into the same frame. A video card's picture brings its own
     ratio = aspect > 0.0f ? aspect : kNativeRatio;
+    _baseRatio = ratio;
+    _frameGeometry = PictureGeometry{};
 
     devicePixelsRect = QRectF(0.0, 0.0, width, height);
     // RGBX8888: same byte layout as RGBA8888, but alpha is IGNORED (treated as
@@ -210,8 +212,6 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     // Source rectangle with optional viewport cropping - applies to BOTH
     // paint paths (the tear-free latched frame and the legacy live buffer
     // share the same framebuffer geometry)
-    const QRectF sourceRect = displaySourceRect();
-
     // Destination is always the full widget - clip to dirty region for efficiency.
     // Using event->rect() as destination would squeeze the entire source into
     // a partial rectangle when sibling widgets (HUD overlay) trigger partial repaints.
@@ -225,6 +225,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     // read on owned memory.
     QImage legacyCopy;
     QImage* drawImage = nullptr;
+    PictureGeometry geometry;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
 
@@ -241,6 +242,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
+            geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
             _shownClock = info.source;
             if (_smoothAuto)
             {
@@ -318,6 +320,12 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             drawImage = &_smoothFrame;
         }
     }
+    if (_pictureView != PictureView::Mode::Full)
+    {
+        _frameGeometry = geometry;
+        applyPictureViewRatio();
+    }
+    const QRectF sourceRect = displaySourceRect();
 
     // Temporal blending: push frame to history and use blended result
     if (_temporalEnabled)
@@ -454,8 +462,41 @@ void DeviceScreen::setCRTProfile(const CRTProfileParams& params)
     update();
 }
 
+void DeviceScreen::setPictureView(PictureView::Mode mode)
+{
+    if (mode == _pictureView)
+        return;
+    _pictureView = mode;
+    _frameHistory.clear();
+    applyPictureViewRatio();
+    update();
+}
+
+void DeviceScreen::applyPictureViewRatio()
+{
+    float wanted = _baseRatio;
+    if (_pictureView != PictureView::Mode::Full && !devicePixelsRect.isEmpty())
+    {
+        const PictureView::Cut cut = PictureView::CutOf(_frameGeometry, static_cast<uint16_t>(devicePixelsRect.width()),
+                                                        static_cast<uint16_t>(devicePixelsRect.height()), _pictureView);
+        if (cut.aspect > 0.0)
+            wanted = static_cast<float>(cut.aspect);
+    }
+    if (wanted != ratio)
+    {
+        ratio = wanted;
+        fitToParent();  // the widget's shape is the picture's
+    }
+}
+
 QRectF DeviceScreen::displaySourceRect() const
 {
+    if (_pictureView != PictureView::Mode::Full && !devicePixelsRect.isEmpty())
+    {
+        const PictureView::Cut cut = PictureView::CutOf(_frameGeometry, static_cast<uint16_t>(devicePixelsRect.width()),
+                                                        static_cast<uint16_t>(devicePixelsRect.height()), _pictureView);
+        return QRectF(cut.source.x, cut.source.y, cut.source.width, cut.source.height);
+    }
     QRectF sourceRect = devicePixelsRect;
     if (_hasViewport)
     {

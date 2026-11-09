@@ -195,6 +195,12 @@ void TestDaemonDecks()
         CHECK(Call(fastApi, "PUT", "/api/v1/decks/EMU1/pack", {{"pack", "scenario"}}).body.value("pack", "") == "os4");
         own.rt.Step(0);
         CHECK_EQ(own.rt.GetStats().keyWrites, ownWrites + 2);
+        // The packs read again from disk: every key drawn anew, the glyph key and the plain one alike
+        r = Call(fastApi, "POST", "/api/v1/packs/reload");
+        CHECK(r.status == 202 && r.body["decks"] == json::array({"EMU1"}) && r.body.value("packs", 0) >= 8);
+        own.rt.Step(0);
+        CHECK(own.rt.GetStats().keyWrites >= ownWrites + 4);
+        CHECK_EQ(real.rt.GetStats().keyWrites, realWrites);
         fast.Remove("EMU1");
         data::SetRoot({});
     }

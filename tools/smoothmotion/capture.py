@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Capture consecutive emulated frames of snapshots and RZX recordings through the WebAPI: the input of
-draft-video-profile.py, the smooth-motion measurements (tools/verification/smoothmotion) and POC 048 / 047.
+draft-video-profile.py, the smooth-motion measurements (tools/verification/smoothmotion) and POC 049 / 047.
 
 For each file: load it (.rzx: played with rzx/play; a recording or snapshot for another model switches the model and
 the instance id changes: the script follows it), tap a key if given, run `--warmup` frames, then `--frames` frames one

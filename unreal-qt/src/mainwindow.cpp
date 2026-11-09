@@ -690,6 +690,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::hudSettingsRequested, this, &MainWindow::handleHudSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
+    connect(_menuManager, &MenuManager::pictureViewChanged, this, [this](int mode) {
+        WindowDisplayChange change;
+        change.view = PictureView::NameOf(static_cast<PictureView::Mode>(mode));
+        applyWindowDisplay(change);
+        schedulePublishWindowDisplay();
+        saveViewSettings();
+    });
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
     connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
             &MainWindow::handleZXPolyConfigurationRequested);
@@ -4870,6 +4877,7 @@ void MainWindow::rebuildScreen(bool enabled, bool force)
     const QString crtShader = _screenWrapper->customShader();
     bool hasViewport = _screenWrapper->hasViewport();
     DisplayViewport savedViewport = _screenWrapper->displayViewport();
+    const PictureView::Mode savedPictureView = _screenWrapper->pictureView();
     bool temporalEnabled = _screenWrapper->temporalBlendingEnabled();
     int temporalHistorySize = _screenWrapper->temporalHistorySize();
     int temporalWeightMode = _screenWrapper->temporalWeightMode();
@@ -4936,6 +4944,8 @@ void MainWindow::rebuildScreen(bool enabled, bool force)
         }
         _screenWrapper->setEmulator(_emulator);
     }
+
+    _screenWrapper->setPictureView(savedPictureView);
 
     // Restore viewport state
     if (hasViewport)

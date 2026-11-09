@@ -895,6 +895,8 @@ void DeviceScreenGLWindow::init(uint16_t width, uint16_t height, void* buffer, f
 {
     detach();
     ratio = aspect > 0.0f ? aspect : kNativeRatio;
+    _baseRatio = ratio;
+    _frameGeometry = PictureGeometry{};
 
     _devicePixelsRect = QRectF(0.0, 0.0, width, height);
     _devicePixels = new QImage(static_cast<const unsigned char*>(buffer), width, height, QImage::Format_RGBA8888);
@@ -1254,6 +1256,30 @@ void DeviceScreenGLWindow::setDisplayViewport(const DisplayViewport& viewport)
     _frameHistory.clear();
     _textureNeedsUpdate = true;
     update();
+}
+
+void DeviceScreenGLWindow::setPictureView(PictureView::Mode mode)
+{
+    if (mode == _pictureView)
+        return;
+    _pictureView = mode;
+    _frameHistory.clear();
+    applyPictureViewRatio();
+    _textureNeedsUpdate = true;
+    update();
+}
+
+void DeviceScreenGLWindow::applyPictureViewRatio()
+{
+    // The shape of the cut: the window draws the picture in it, fitted by height with the aspect kept
+    if (_pictureView == PictureView::Mode::Full || _devicePixelsRect.isEmpty())
+    {
+        ratio = _baseRatio;
+        return;
+    }
+    const PictureView::Cut cut = PictureView::CutOf(_frameGeometry, static_cast<uint16_t>(_devicePixelsRect.width()),
+                                                    static_cast<uint16_t>(_devicePixelsRect.height()), _pictureView);
+    ratio = cut.aspect > 0.0 ? static_cast<float>(cut.aspect) : _baseRatio;
 }
 
 void DeviceScreenGLWindow::clearDisplayViewport()
@@ -1624,6 +1650,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
     const bool forced = _textureNeedsUpdate.exchange(false, std::memory_order_relaxed);
     QImage* sourceImage = nullptr;
     bool newFrame = forced;
+    PictureGeometry geometry;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
         PresentFrameInfo info;
@@ -1631,6 +1658,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
             _frameSource(hostNs, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             sourceImage = &_latchedFrame;
+            geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
             newFrame = info.serial == 0 || info.serial != _uploadedSerial;
             // Nothing new and nothing pending: one more idle refresh
             if (newFrame || info.nextSerial != 0)
@@ -1681,6 +1709,9 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
     pushSmooth();
     if (!sourceImage || sourceImage->isNull())
         return;
+
+    _frameGeometry = geometry;
+    applyPictureViewRatio();
 
     // Smooth motion: the picture for the time, drawn again only when it is another one
     _smoothChanged = false;
@@ -2139,6 +2170,14 @@ void DeviceScreenGLWindow::focusOutEvent(QFocusEvent* event)
 
 QRectF DeviceScreenGLWindow::displaySourceRect() const
 {
+    if (_pictureView != PictureView::Mode::Full && !_devicePixelsRect.isEmpty())
+    {
+        // The frame in hand is the texture's: _devicePixelsRect is its size (init), the geometry came with its pixels
+        const QSize frame = _shownFrame ? _shownFrame->size() : _devicePixelsRect.size().toSize();
+        const PictureView::Cut cut = PictureView::CutOf(_frameGeometry, static_cast<uint16_t>(frame.width()),
+                                                        static_cast<uint16_t>(frame.height()), _pictureView);
+        return QRectF(cut.source.x, cut.source.y, cut.source.width, cut.source.height);
+    }
     if (!_hasViewport)
         return _devicePixelsRect;
     return QRectF(_displayViewport.cropLeft, _displayViewport.cropTop,

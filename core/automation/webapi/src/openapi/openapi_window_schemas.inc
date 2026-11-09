@@ -82,6 +82,10 @@
                "machine_hz}");
         }
         field("fullscreen", "boolean", "The window fills the display");
+        field("view", "string", "The part of the frame shown: full, screen or content");
+        s["properties"]["views"]["type"] = "array";
+        s["properties"]["views"]["items"]["type"] = "string";
+        s["properties"]["views"]["description"] = "The views the window offers: full, screen, content";
         field("scale", "integer", "The whole zoom the window is fitted to, 1..4; 0 when resized by hand, maximized or full screen");
         field("toolbar", "boolean", "View > Toolbar");
         field("status_bar", "boolean", "View > Status Bar");

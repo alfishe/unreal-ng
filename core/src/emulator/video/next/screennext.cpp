@@ -299,6 +299,47 @@ uint32_t ScreenNext::LineEndT(unsigned y) const
     return GridFirstT() + (y + 1) * _rasterState.tstatesPerLine;
 }
 
+bool ScreenNext::PictureWindowInputs(NextPictureWindow::Inputs& out) const
+{
+    PortDecoder_Next* decoder = Decoder();
+    if (!decoder)
+        return false;
+    NextBoard& board = decoder->Board();
+    const NextVideoRegs& video = board.Video();
+    for (unsigned window = 0; window < NextVideoRegs::kClipWindows; window++)
+        for (unsigned c = 0; c < 4; c++)
+            out.clip[window][c] = video.Clip(window, c);
+    out.nr15 = board.Stored(0x15);
+    out.nr68 = board.Stored(0x68);
+    out.nr6B = board.Stored(0x6B);
+    out.nr70 = board.Stored(0x70);
+    out.layer2Enabled = video.Layer2Enabled();
+    out.spritesVisible = board.Sprites().AnyVisible();
+    return true;
+}
+
+PictureRect ScreenNext::WorkingWindow() const
+{
+    NextPictureWindow::Inputs in;
+    if (!PictureWindowInputs(in))
+        return Screen::WorkingWindow();
+    const NextPictureWindow::FrameBox box = NextPictureWindow::Screen(in);
+    // The frame is 640 x 512 whenever this picture is on; a frame of another size (a mode switch under way) has no window
+    if (_framebuffer.width != NextVideoRenderer::kWidth || _framebuffer.height != NextVideoRenderer::kHeight * 2)
+        return Screen::WorkingWindow();
+    return PictureRect{box.x, box.y, box.width, box.height};
+}
+
+PictureRect ScreenNext::ContentWindow() const
+{
+    NextPictureWindow::Inputs in;
+    if (!PictureWindowInputs(in) || _framebuffer.width != NextVideoRenderer::kWidth ||
+        _framebuffer.height != NextVideoRenderer::kHeight * 2)
+        return PictureRect{};
+    const NextPictureWindow::FrameBox box = NextPictureWindow::Content(in);
+    return PictureRect{box.x, box.y, box.width, box.height};
+}
+
 void ScreenNext::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const
 {
     out.clear();

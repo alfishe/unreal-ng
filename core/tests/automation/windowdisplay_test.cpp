@@ -63,6 +63,8 @@ public:
             settings.blendingFrames = *change.blendingFrames;
         if (change.blendingWeights)
             settings.blendingWeights = *change.blendingWeights;
+        if (change.view)
+            settings.view = *change.view;
         out = settings;
         return true;
     }
@@ -112,6 +114,44 @@ TEST(WindowDisplay_Test, WordsMakeAChange)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "blending_weights", "linear", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "shader", "x", error));
     EXPECT_NE(error.find(WindowDisplay::kKeys), std::string::npos) << "an unknown key lists the keys: " << error;
+}
+
+TEST(WindowDisplay_Test, ViewWordsAndTheReport)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "view", "Content", error)) << error;
+    EXPECT_EQ(change.view, "content") << "any case in, the canonical word out";
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "view", "screen", error));
+    EXPECT_EQ(change.view, "screen");
+    EXPECT_FALSE(change.Empty());
+
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "view", "paper", error));
+    EXPECT_NE(error.find("full, screen, content"), std::string::npos) << "a bad word lists the views: " << error;
+    EXPECT_EQ(change.view, "screen") << "a refused word changes nothing";
+    EXPECT_NE(std::string(WindowDisplay::kKeys).find("view"), std::string::npos);
+
+    FakeDisplay fake;
+    const StateNode report = WindowDisplay::Report(fake.settings);
+    const StateNode* view = report.find("view");
+    ASSERT_NE(view, nullptr);
+    EXPECT_EQ(view->s, "full") << "the whole frame until asked";
+    const StateNode* views = report.find("views");
+    ASSERT_NE(views, nullptr);
+    ASSERT_EQ(views->items.size(), 3u);
+    EXPECT_EQ(views->items[1].s, "screen");
+}
+
+TEST(WindowDisplay_Test, ViewIsAppliedThroughTheProvider)
+{
+    auto fake = std::make_shared<FakeDisplay>();
+    ScopedDisplay registered(fake);
+    WindowDisplayChange change;
+    change.view = "content";
+    const WindowDisplay::Result r = WindowDisplay::Set(change);
+    ASSERT_TRUE(r.Ok()) << r.error;
+    EXPECT_EQ(r.settings.view, "content");
+    EXPECT_NE(WindowDisplay::Summary(r.settings).find("view content"), std::string::npos);
 }
 
 TEST(WindowDisplay_Test, SetAppliesAndAnswersTheNewSettings)
@@ -178,14 +218,14 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "blending_decay smooth_motion effects_device present_policy display_rate lip_sync_offset_ms present emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "blending_decay smooth_motion effects_device present_policy display_rate lip_sync_offset_ms present emulator fullscreen view views scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
                     "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, present auto, scale free, "
-              "hud off");
+              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, present auto, view full, "
+              "scale free, hud off");
     fake.settings.blendingWeights = "exponential";
     fake.settings.blendingDecay = 0.3;
     fake.settings.scale = 2;
@@ -194,7 +234,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.smoothMotion = "interpolate";
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
               "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion interpolate "
-              "(gpu), present auto, scale 2x, hud on (retro_zx)");
+              "(gpu), present auto, view full, scale 2x, hud on (retro_zx)");
 
     // The presenter's timing and smooth motion's counters
     fake.settings.present.presenter = "metal";
@@ -227,7 +267,7 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     fake.settings.lipSyncOffsetMs = -40;
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
               "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion off, "
-              "present vsync (vsync), lip sync -40 ms, scale 2x, hud on (retro_zx)");
+              "present vsync (vsync), lip sync -40 ms, view full, scale 2x, hud on (retro_zx)");
 
     // How the frames are timed: the screen's counters, a delay it cannot hold named in the line
     PresentTimingStats timing;
