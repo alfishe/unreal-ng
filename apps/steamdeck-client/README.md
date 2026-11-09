@@ -66,6 +66,17 @@ Every POC writes its logs to `~/steamdeck-poc-logs/` (Game Mode has no visible s
 
 `deploy.sh` then installs the app (table above); from a stick, run `~/steamdeck-poc/deck-install.sh` once.
 
+### Library artwork
+
+The Steam library shows the entry with the app's own pictures: a poster, the wide capsule, the hero banner with its
+logo, and the icon. They are shared with the unreal-qt Steam Deck bundle and live in
+[`install/steamdeck/art/`](../../install/steamdeck/art/), drawn by
+[`tools/icons/generate_steam_art.py`](../../tools/icons/generate_steam_art.py). `deploy.sh` copies them along with
+[`install/steamdeck/steam-library.py`](../../install/steamdeck/steam-library.py), and `deck-install.sh` runs its `art`
+command. The script copies the pictures to `config/grid/` under the entry's app id. Steam shows them after a restart.
+
+unreal-qt itself installs on the Deck from its own bundle: [`install/steamdeck/README.md`](../../install/steamdeck/README.md).
+
 ### Remote control (WebAPI, MCP)
 
 Built with automation (the default), the emulator inside `p01-sdl-gpu-latency` serves the WebAPI on

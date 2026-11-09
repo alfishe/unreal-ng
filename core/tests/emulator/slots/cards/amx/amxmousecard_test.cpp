@@ -11,6 +11,9 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdreplaycheck.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -262,6 +265,78 @@ TEST_F(AmxMouseCard_Test, TtdBlobRoundTrip)
     EXPECT_EQ(card->Pending(1), 4);
     EXPECT_EQ(card->Pio().GetPort(0).vector, 0xF0);
     EXPECT_TRUE(_context->HasStepWork(EmulatorContext::kStepWorkDeviceInt)) << "the restore re-arms the chain";
+}
+
+/// The card in a recording: the motion enters through the TTD input journal, the program counts its interrupts; a seek
+/// to any recorded frame shows the counters and the card as they were, and every frame replays exactly (the PIO's
+/// interrupt state, the pending motion and the strobe pacing are in the card's blob). 12 frames of a 48K
+TEST_F(AmxMouseCard_Test, RecordedMotionReplaysAndSeeks)
+{
+    Create({{"edge.1", "amx-mouse"}});
+    AmxMouseCard* card = Card();
+    ASSERT_NE(card, nullptr);
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* ttd = _context->pTimeTravelController;
+    ASSERT_NE(ttd, nullptr);
+    LoadAmxProgram();
+    _emulator->RunFrame(true);
+    ASSERT_TRUE(card->Pio().GetPort(0).ie && card->Pio().GetPort(1).ie) << "the program set up the PIO";
+
+    struct Seen
+    {
+        ttd::TTDTimePoint at;
+        std::vector<uint8_t> counters;
+        std::vector<uint8_t> blob;
+    };
+    std::vector<CardTtdDevice> devices;
+    card->CollectTtdDevices(devices);
+    ASSERT_EQ(devices.size(), 1u);
+    auto see = [&]() {
+        Seen s;
+        s.at = ttd->CurrentPosition();
+        for (uint16_t a = 0x9000; a <= 0x9003; a++)
+            s.counters.push_back(Peek(a));
+        s.blob.resize(devices[0].device->TTDStateSize());
+        devices[0].device->TTDSaveState(s.blob.data());
+        return s;
+    };
+    auto move = [&](int16_t dx, int16_t dy) {
+        ttd::TTDInputEvent ev;
+        ev.kind = ttd::TTDInputKind::MouseMove;
+        ev.dx = dx;
+        ev.dy = dy;
+        ASSERT_TRUE(ttd->SubmitLiveInput(ev));
+    };
+
+    ASSERT_TRUE(ttd->StartRecording());
+    std::vector<Seen> seen;
+    for (int f = 0; f < 12; f++)
+    {
+        if (f == 2)
+            move(20, -3);   // more than one frame's strobes: paced over frames
+        if (f == 7)
+            move(-2, 1);
+        _emulator->RunFrame(true);
+        seen.push_back(see());
+    }
+    ttd->StopRecording();
+    EXPECT_EQ(seen.back().counters, (std::vector<uint8_t>{20, 2, 1, 3})) << "right, left, up, down";
+
+    const ttd::TTDReplayCheckResult check = ttd->QueryReplayCheck({});
+    ASSERT_TRUE(check.error.empty()) << check.error;
+    EXPECT_GE(check.checked, 10u);
+    EXPECT_EQ(check.diverged, 0u) << ttd::TTDReplayCheckText(check);
+
+    for (size_t i : {size_t(1), size_t(3), size_t(8), seen.size() - 1})
+    {
+        SCOPED_TRACE("frame " + std::to_string(i));
+        ASSERT_TRUE(ttd->SeekTo(seen[i].at));
+        const Seen now = see();
+        EXPECT_EQ(now.counters, seen[i].counters);
+        EXPECT_EQ(now.blob, seen[i].blob) << "the card's blob";
+    }
 }
 
 /// No card: the chain is empty, the plain step

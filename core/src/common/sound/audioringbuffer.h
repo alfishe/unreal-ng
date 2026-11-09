@@ -25,6 +25,11 @@ protected:
     std::atomic<size_t> _readPtr;
     std::atomic<size_t> _writePtr;
 
+    // Lifetime totals in samples: every sample written / removed (played, discarded or cleared). The position of a
+    // sample in the stream, which the audio clock maps to the time it is heard
+    std::atomic<uint64_t> _writtenTotal{0};
+    std::atomic<uint64_t> _readTotal{0};
+
     /// region <Diagnostics>
 protected:
     std::atomic<size_t> _enqueueErrorCount{0};  // Full-buffer drops (producer)
@@ -46,7 +51,10 @@ public:
     /// window's production stayed queued forever).
     void clear()
     {
-        _readPtr.store(_writePtr.load(std::memory_order_acquire), std::memory_order_release);
+        const size_t readPtr = _readPtr.load(std::memory_order_acquire);
+        const size_t writePtr = _writePtr.load(std::memory_order_acquire);
+        _readTotal.fetch_add((writePtr - readPtr + Size) % Size, std::memory_order_relaxed);
+        _readPtr.store(writePtr, std::memory_order_release);
         std::fill(_buffer, _buffer + Size, 0);
     }
 
@@ -60,6 +68,7 @@ public:
         const size_t writePtr = _writePtr.load(std::memory_order_acquire);
         const size_t available = (writePtr - readPtr + Size) % Size;
         const size_t toDrop = std::min(samples, available);
+        _readTotal.fetch_add(toDrop, std::memory_order_relaxed);
         _readPtr.store((readPtr + toDrop) % Size, std::memory_order_release);
         return toDrop;
     }
@@ -117,6 +126,7 @@ public:
         }
 
         // Publish: data writes must be visible before the index moves
+        _writtenTotal.fetch_add(samplesToCopy, std::memory_order_relaxed);
         _writePtr.store(getBufferIndex(writePtr, samplesToCopy), std::memory_order_release);
 
         return samplesToCopy;
@@ -146,6 +156,7 @@ public:
             memcpy(samples + firstChunk, _buffer, secondChunk * sizeof(T));
         }
 
+        _readTotal.fetch_add(samplesToCopy, std::memory_order_relaxed);
         _readPtr.store(getBufferIndex(readPtr, samplesToCopy), std::memory_order_release);
 
         return samplesToCopy;
@@ -170,6 +181,18 @@ public:
     inline size_t getOccupancyStereoFrames() const
     {
         return getAvailableData() / 2;
+    }
+
+    /// Stereo frames written since construction (producer side: exact; others: a recent value)
+    inline uint64_t getWrittenStereoFrames() const
+    {
+        return _writtenTotal.load(std::memory_order_relaxed) / 2;
+    }
+
+    /// Stereo frames removed since construction: played, discarded or cleared (consumer side: exact)
+    inline uint64_t getReadStereoFrames() const
+    {
+        return _readTotal.load(std::memory_order_relaxed) / 2;
     }
 
     inline size_t getEnqueueErrorCount() const

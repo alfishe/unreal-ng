@@ -705,6 +705,12 @@ void EmulatorAPI::getTTDCauseChain(const HttpRequestPtr& req, std::function<void
     RespondTTD(id, "cause-chain", OptionsFromQuery(req, "cause-chain"), callback);
 }
 
+void EmulatorAPI::getTTDBacktrace(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    RespondTTD(id, "backtrace", OptionsFromQuery(req, "backtrace"), callback);
+}
+
 void EmulatorAPI::getTTDFindEvent(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {

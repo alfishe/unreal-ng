@@ -767,7 +767,7 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
 }
 
-/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, controllers.devices, emulator.stats,
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, video.present, controllers.devices, emulator.stats,
 /// debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state,
 /// game.events, devices.access) with its args as keywords (instance= an id or an index; default this emulator for an
 /// instance's name); the reply every plane returns
@@ -2890,8 +2890,8 @@ namespace PythonBindings
             .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
-                 "Monitoring (all, host.stats, host.clients, controllers.devices, emulator.stats, debug.breakpoints, "
-                 "media.slots, "
+                 "Monitoring (all, host.stats, host.clients, video.present, controllers.devices, emulator.stats, "
+                 "debug.breakpoints, media.slots, "
                  "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -3146,6 +3146,7 @@ namespace PythonBindings
                     Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
                     result["success"] = r.mounted;
                     result["started"] = r.started;
+                    result["ttd_session_ended"] = r.ttdSessionEnded;
                     result["message"] = r.message;
                 }
                 else
@@ -6969,6 +6970,19 @@ namespace PythonBindings
                 py::arg("phys_page") = py::none(), py::arg("depth") = 4, py::arg("max_links") = 32,
                 py::arg("max_frames") = 50, py::arg("flags") = false, py::arg("text") = false);
 
+        emulatorClass.def("ttd_backtrace", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "backtrace", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The call stack at a moment (frame, tinframe; default: the current position): each return address "
+               "above SP with the CALL / RST / interrupt that pushed it and when; max_depth, max_slots, text");
+
         emulatorClass.def("ttd_find_event", [](Emulator& self, const std::string& kind, py::kwargs kwargs) -> py::object {
                 std::map<std::string, std::string> options;
                 TtdKwargsPy(options, kwargs);
@@ -7572,7 +7586,7 @@ namespace PythonBindings
             }
             return StateNodeToPy(r.Ok() ? WindowDisplay::Report(r.settings) : WindowDisplay::ErrorNode(r));
         }, "The GUI window's display settings: backend, gpu_available, gpu, crt, crt_profile, crt_profiles, blending, "
-           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, scale, toolbar, status_bar, hud, "
+           "blending_frames, blending_weights, blending_decay, emulator, fullscreen, view, views, scale, toolbar, status_bar, hud, "
            "hud_theme, hud_themes, hud_notices, osd_keyboard, osd_keyboard_picture, osd_keyboard_pictures, "
            "osd_keyboard_style, osd_keyboard_styles, next_layers, "
            "next_layers_mode, next_layers_shown; {ok: False, error, kind: 'no-window'} headless")
@@ -7622,7 +7636,7 @@ namespace PythonBindings
         }, "Change the GUI window's display settings, the way the View menu does: any of gpu=, crt=, blending=, "
            "fullscreen=, toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool), crt_profile= (one of "
            "crt_profiles: none, basic, ...), blending_frames= (2..5), blending_weights= ('equal', 'exponential'), "
-           "blending_decay= (0.1..0.9), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
+           "blending_decay= (0.1..0.9), view= ('full', 'screen', 'content'), scale= (1..4), hud_theme= (one of hud_themes), hud_notices= ({id: bool}), "
            "osd_keyboard_picture= (one of osd_keyboard_pictures), osd_keyboard_style= ('photo', 'schematic', 'hybrid'), "
            "next_layers_mode= ('layers', 'composed', 'winner'), "
            "next_layers_shown= ({'ula'|'layer2'|'tilemap'|'sprites': bool}); returns the settings after the change, "

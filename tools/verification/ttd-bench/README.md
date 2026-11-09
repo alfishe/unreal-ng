@@ -49,7 +49,7 @@ The following environment variables control a run:
 
 | Variable | Values | Default |
 |---|---|---|
-| `UNREAL_TTD_BENCH_SET` | `ci`, `turbo`, `full` | `ci` |
+| `UNREAL_TTD_BENCH_SET` | `ci`, `turbo`, `heavy` (the costliest recordings: Pentagon with and without GS512, ZX-Evo with and without its sound cards, Sprinter, TS-Conf with VDAC2, Next), `full` | `ci` |
 | `UNREAL_TTD_BENCH_ENGINE` | `controller`, `all`, or a comma-separated list | `controller` |
 | `UNREAL_TTD_BENCH_PERIPHERALS` | an overlay applied to every configuration: `none`, or a list such as `ay+gs512+moon` (items: `ay`/`ts`, `tsfm`, `gs128`, `gs512`, `moon`, `covox`, `beta`, `mouse`) | the matrix's own sets |
 | `UNREAL_TTD_BENCH_FRAMES` | the number of recorded frames, replacing every workload's own count | the workload's count |

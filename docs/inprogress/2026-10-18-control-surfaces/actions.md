@@ -111,7 +111,7 @@ without `on` the action toggles the current state.
 | `sym.set_toggle` (toggle `toggle.sym_set.<id>`) | P | `id`, `on?` | free | `SymbolControl` `set` |
 | `prof.toggle` (toggle `toggle.profiler.<name>`), `prof.pause_toggle` (toggle `toggle.profiler_paused.<name>`), `prof.clear` | P | `name` (opcode, memory, calltrace, coverage, porttrace, gsporttrace, pchist, aylog, audio, all), `on?`, `keep?`, `capacity?`, `seconds?`, `source?` | free (`/profiler/*`) | `tracecontrol::Execute` |
 | `analyzer.toggle` (toggle `toggle.analyzer.<name>`), `analyzer.clear` | P | `name` (trdos, editor-input, coverage, aylog, audiocapture), `on?` | free (`/analyzer/*`) | `AnalyzerManager` |
-| `ttd.start`, `ttd.stop`, `ttd.invalidate` | P | | free (`/ttd/start`, ...) | `TTDControl` verbs |
+| `ttd.start`, `ttd.stop`, `ttd.invalidate` | P | | free (`/ttd/start`, ...) | `TTDControl` verbs; `ttd.start` has a state (`toggle.ttd.start`: recording), `ttd.stop` is unavailable while nothing records (`not_now`, "not recording": the deck dims its STOP key) |
 | `ttd.seek` | P | `frame` + `tinframe?`, or `bookmark` | rewind (`/ttd/seek`) | `TTDControl` `seek` |
 | `ttd.bookmark_delete`, `ttd.history_limit`, `ttd.journal`, `ttd.dump`, `ttd.load` | P | `label`; `frames?`, `bytes?`; `enabled`; `path` | debug | `TTDControl` verbs |
 
@@ -145,6 +145,8 @@ C3.3, C4.3, C4.5, C5, C6.4, C6.5, C7, U1.3, U1.5). Readouts of their own in `mac
 | `input.mouse_button` | P, held | `button` (left, right, middle), `hold?` (false: a click), `frames?` (2) | input (`/mouse/press`) | `DebugMouseManager` `Click` / `PressButton` / `ReleaseButton` |
 | `input.mouse_release` | P | | input | `DebugMouseManager::ReleaseAllButtons` |
 | `cap.record_toggle` | P, toggle | `preset?` (gameplay, music, audio, gif, hq, multitrack), `format?`, `container?`, `audio?`, `mode?` (single, multi, audio), `profile?`, `path?`, `fps?`, `scale?`, `region?` | free (`/video/record`) | `capture::RecordingControl` `toggle`: start (default folder `<user data>/recordings`) or stop |
+| `cap.record_start` | P, toggle | as `cap.record_toggle` | free | `RecordingControl` `start`; the Stream Deck REC key: `conflict` while a recording runs; state: a recording runs (`toggle.cap.record_start`) |
+| `cap.record_stop` | P | | free | `RecordingControl` `stop`; the Stream Deck STOP key: unavailable (`not_now`, "no recording runs") while nothing records, so the deck dims it |
 | `cap.record_pause` | P, toggle | | free | `RecordingControl` `pause` / `resume`; `not_now` without a recording |
 | `cap.clip_last` | P | `seconds?` (10), `format?` (gif, mp4, mkv, webm, mov, avi), `path?`, `scale?` | free (`/ttd/export-clip`); `not_now` without a TTD recording | `capture::ClipLast`: the recording pauses for browsing at its end (D8), the last seconds go to a video file, the recording goes on from the paused point, the run state as it was |
 | `ttd.export_clip` | P | `from`, `to`, `path?` (a video file; a folder: the lossless clip), `codec?`, `scale?`, `chunk?` | free | `TTDControl` `export-clip` (a video path: `capture::ExportTtdClip`) |

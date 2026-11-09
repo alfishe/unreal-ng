@@ -7,6 +7,7 @@
 #include "haptics/hapticprofile.h"
 #include "haptics/surfacehaptics.h"
 #include "match.h"  // core/swsignature: header-only, no core symbols
+#include "profiles/videoprofile.h"
 #include "profiles/memoryprofile.h"
 #include "profiles/yaml.h"
 
@@ -25,7 +26,7 @@ const char* const kOptionFields[] = {"turbo",        "on",           "off",   "c
                                      "curve",        "params"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "joystick_keys", "options", "layers", "layer_key", "haptics",
-                                      "events", "memory"};
+                                      "events", "video", "memory"};
 
 template <size_t N>
 bool OneOf(const char* const (&names)[N], const std::string& name)
@@ -747,6 +748,19 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
                                                : !ParseHapticProfile(*haptics, game, error))
             return false;
         profile.haptics = *haptics;
+    }
+    if (const JsonValue* video = root.Find("video"))
+    {
+        // The game's picture cadence (§7.7): a play profile's
+        if (profile.kind != ProfileKind::Play)
+        {
+            error = "'video' belongs to a play profile";
+            return false;
+        }
+        VideoProfile parsed;
+        if (!ParseVideoProfile(*video, parsed, error))
+            return false;
+        profile.video = *video;
     }
     if (const JsonValue* memory = root.Find("memory"))
     {

@@ -85,6 +85,7 @@
 #include "ttdwritejournal.h"
 #include "ttdprobe.h"
 #include "ttdcausechain.h"
+#include "ttdbacktrace.h"
 #include "ttdfindevent.h"
 #include "ttdexplainframe.h"
 #include "ttddiffmoments.h"
@@ -753,6 +754,19 @@ public:
     /// find-last's beforeGlobalT, the journal segments and the engine's events
     /// share it. Without a session: frame x FrameSpan() + tInFrame
     uint64_t GlobalT(const TTDTimePoint& at) const;
+    /// GlobalT of a moment in @p frame, the start of the frame cached: a journaled write asks for the frame being
+    /// recorded at every store, and the frame table's lookups cost more than the record itself. The start depends
+    /// only on the frame, the table (its generation) and the frame span, so the cache is keyed by them
+    uint64_t GlobalTInFrame(uint64_t frame, uint32_t tInFrame) const;
+    struct FrameStartCache
+    {
+        uint64_t frame = UINT64_MAX;
+        uint64_t generation = 0;
+        uint32_t span = 0;
+        bool open = false;
+        uint64_t start = 0;
+    };
+    mutable FrameStartCache _frameStartCache;
     /// @brief The position of machine time @p globalT (the inverse of GlobalT)
     TTDTimePoint TimePointAt(uint64_t globalT) const;
     /// @brief The first barrier in (@p from, @p to] on the engine's event log,
@@ -1303,6 +1317,12 @@ public:
     /// memory. Replays the frames it needs with the instruction and bus hooks and puts the machine back exactly
     /// where it stood; a live recording pauses for browsing
     TTDCauseResult QueryCauseChain(const TTDCauseQuery& query);
+
+    /// @brief The call stack at a moment (docs/inprogress/2026-11-07-ttd-backtrace/README.md): the return addresses on
+    /// the stack above SP, innermost first, each with the CALL / RST / interrupt that pushed it and when. Each stack
+    /// word is named by its last write before the moment (the write journal, the frame's trace); the machine is put
+    /// back exactly where it stood; a live recording pauses for browsing
+    TTDBacktraceResult QueryBacktrace(const TTDBacktraceQuery& query);
 
     /// @brief Find event (docs/inprogress/2026-11-02-ttd-find-event): the first (or last) moments in a frame window
     /// where a described event happened - a memory value meets a condition, the screen changed as a whole, an address

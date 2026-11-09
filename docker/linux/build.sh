@@ -10,7 +10,12 @@
 # Usage: docker/linux/build.sh [options] [target]
 #   target            ninja target, default: core-tests
 #   --platform ARCH   amd64 | arm64 (default: host native)
-#   --test            run core-tests after a successful build
+#   --test            run core-tests after a successful build (and unreal-qt-tests, offscreen, when the
+#                     targets name it; its GL 3.3 core tests skip there: Qt's offscreen platform has GL
+#                     only through GLX)
+#   --qt-gl           unreal-qt-tests on an Xvfb display (installed into the throwaway container when the
+#                     image lacks it): the offscreen platform gets GLX on Mesa llvmpipe, so the GL tests
+#                     (smooth motion's passes against the CPU, GPU pass times, slang presets) run
 #   --filter EXPR     gtest filter for --test (default: all)
 #   --jobs N          parallel jobs (default: half the logical cores)
 #   --cpus N          hard CPU cap for the whole container: configure, link and the
@@ -49,12 +54,14 @@ JOBS=$(( CORES / 2 )); JOBS=$(( JOBS < 1 ? 1 : JOBS ))
 CPUS=""
 SANITIZE=""
 STREAMDECK=0
+QTGL=0
 TARGET_SET=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2 ;;
     --test) RUNTESTS=1; shift ;;
+    --qt-gl) QTGL=1; shift ;;
     --filter) FILTER="$2"; shift 2 ;;
     --jobs) JOBS="$2"; shift 2 ;;
     --cpus) CPUS="$2"; shift 2 ;;
@@ -125,7 +132,7 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
   ${SANITIZER_ARGS[@]+"${SANITIZER_ARGS[@]}"} \
   --tmpfs /scratch-tmp:exec,size=4g -e UNREAL_TEST_SCRATCH_DIR=/scratch-tmp \
   -e TYPE="$TYPE" -e TARGET="$TARGET" -e JOBS="$JOBS" \
-  -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" -e STREAMDECK="$STREAMDECK" \
+  -e BUILDDIR="/src/$BUILDDIR" -e RUNTESTS="$RUNTESTS" -e FILTER="$FILTER" -e STREAMDECK="$STREAMDECK" -e QTGL="$QTGL" \
   "$IMAGE" bash -c '
     set -e
     git config --global --add safe.directory "*"
@@ -161,5 +168,17 @@ docker run --rm --platform "linux/$PLATFORM" --cpus "$CPUS" \
       # copies CMake puts next to core-tests), and the scratch helper expects the same layout
       cd "$BUILDDIR/bin"
       ${RUN[@]+"${RUN[@]}"} ./core-tests --gtest_filter="$FILTER" --gtest_color=no
+      case " $TARGET " in
+        *" unreal-qt-tests "*)
+          if [ "$QTGL" = 1 ]; then
+            if ! command -v Xvfb > /dev/null; then
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends xvfb > /dev/null
+            fi
+            Xvfb :99 -screen 0 1280x800x24 > /dev/null 2>&1 &
+            export DISPLAY=:99
+            for _ in $(seq 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
+          fi
+          QT_QPA_PLATFORM=offscreen ${RUN[@]+"${RUN[@]}"} ./unreal-qt-tests --gtest_color=no ;;
+      esac
     fi
   '

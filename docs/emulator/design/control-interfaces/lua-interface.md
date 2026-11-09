@@ -1391,6 +1391,14 @@ local chain = ttd_cause_chain(0x5C78, {depth = 6})
 --   inputs = {"A=#03"}}, ... }, stops = 0, frames_traced = 2, ms = ... }
 local why = ttd_cause_chain("HL", {frame = 150, tinframe = 20000})
 
+-- The call stack at a moment (default: the current position); options frame, tinframe, max_depth (16),
+-- max_slots (256), text
+local bt = ttd_backtrace{frame = 150, tinframe = 20000, text = true}
+-- { at = {frame = 150, tinframe = 20000}, pc = 0x8020, sp = 0xBFFA, routine = 0x8020,
+--   frames = { {depth = 1, kind = "call", slot = 0xBFFA, return_address = 0x8014, caller_pc = 0x8011,
+--   text = "CALL #8020", frame = 149, tinframe = ..., callee = 0x8020, routine = 0x8010, data_words = 0}, ... },
+--   stop = "before_session", stop_slot = 0xC000, slots_scanned = 3, data_words = 1, text = "#0  pc #8020 ..." }
+
 -- When did it happen: kind mem / screen / exec / port / border / key, options as the WebAPI query
 -- (cond, addr, phys_page, size, value, bit, exact, min_changed, addr_to, dir, port, port_mask, value_mask, key,
 -- pressed, order = "first" | "last", from_frame, to_frame, limit, max_frames, text)
@@ -1524,8 +1532,14 @@ emu.video_temporal_set("mod-tpgwafsd") -- switch it on; "off" or "" switches it 
 emu.window_display()                 -- GUI window display settings: { backend ("gpu" / "software"), gpu_available,
                                      --   gpu, crt, crt_profile, crt_profiles = {...}, blending (temporal blending),
                                      --   blending_frames (2..5), blending_weights ("equal" / "exponential"),
-                                     --   blending_decay (0.1..0.9), emulator (the instance the window shows),
-                                     --   fullscreen, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
+                                     --   blending_decay (0.1..0.9), smooth_motion ("off" / "blend" /
+                                     --   "interpolate" / "auto"), effects_device ("gpu" / "cpu"), present_policy
+                                     --   ("auto" / "vrr" / "vsync"), display_rate ("keep" / "match"),
+                                     --   lip_sync_offset_ms (-200..200),
+                                     --   present = { presenter, vrr, vrr_support = { state, reason }, clock, timing = { delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms }, late, beat = { frames, off }, lead_ms, error_ms, sound_offset_ms = { p50, p99 }, gpu_wait_ms, gpu_ms = { smooth, smooth_cpu, picture = { p50, max, longest, measured } }, sync = { mode, reason }, smooth = { mode, renders, interpolated, ... },
+                                     --   display = { state, reason, hz, ... } }
+                                     --   (the frame presenter's timing), emulator (the instance the window shows),
+                                     --   fullscreen, view ("full" / "screen" / "content"), views, scale (1..4, 0 = resized by hand), toolbar, status_bar, hud,
                                      --   hud_theme, hud_themes, hud_notices = {id = shown}, osd_keyboard,
                                      --   osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style,
                                      --   osd_keyboard_styles, next_layers, next_layers_mode,
@@ -1536,7 +1550,10 @@ emu.window_display_set({crt_profile = "basic", blending = true})  -- any of gpu,
                                      --   crt_profile (one of crt_profiles: none, basic, ...,
                                      --   shader:<name> (a preset or a custom shader) with the GPU; other
                                      --   than none switches CRT on), blending_frames, blending_weights,
-                                     --   blending_decay (0.3), scale (1..4), hud_theme, hud_notices = {["ram-page"]
+                                     --   blending_decay (0.3), smooth_motion ("interpolate"), effects_device
+                                     --   ("gpu" / "cpu"), present_policy ("vsync"), display_rate ("match"),
+                                     --   lip_sync_offset_ms (-40),
+                                     --   view ("full" / "screen" / "content"), scale (1..4), hud_theme, hud_notices = {["ram-page"]
                                      --   = false}, osd_keyboard_picture, osd_keyboard_style ("photo" / "schematic" /
                                      --   "hybrid"), next_layers_mode ("layers" / "composed" /
                                      --   "winner"), next_layers_shown = {sprites = false}; applied the way the View

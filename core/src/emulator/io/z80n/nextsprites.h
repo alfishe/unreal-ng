@@ -8,6 +8,7 @@
 /// output stage (NR #15 bit 0, the clip window) lets through; the renderer doubles it. The collision and "too many sprites" flags are
 /// events with the machine clock of the engine's step (PostFill), read-and-cleared through port #303B at the clock of the read.
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -90,10 +91,15 @@ public:
     bool AnyVisible() const;
 
     /// region <Const view for the next_sprites report: nothing here clears a flag or steps an upload index (design-automation-coverage.md R3)>
-    /// The state the sprite engine fills a line's buffer from changes with every write: a snapshot taken at the fill is valid while the
-    /// epoch is the same (ScreenNext, POC 028: the engine fills paper row R during row R - 1, in index order)
+    /// Moves when an attribute changes (a write of the value already there does not, nor a pattern write): ScreenNext's pass end, which
+    /// depends on the attributes only (FillClocks), is valid while the epoch is the same
     uint32_t Epoch() const { return _epoch; }
-    void Touch() { _epoch++; }
+    /// The attributes changed behind the writers' back (a state load): every cache over them is made again
+    void Touch()
+    {
+        _epoch++;
+        _fillValid = false;
+    }
     /// The 28 MHz clocks the engine needs for row y: one per sprite to qualify and the process clocks (16 << x scale, fewer at the right
     /// edge) of each one drawn (sprites.vhd S_QUALIFY / S_PROCESS; the last drawn sprite ends the visible fill)
     unsigned FillClocks(unsigned y) const;
@@ -162,7 +168,18 @@ private:
     void Resolve(unsigned s, const Anchor& anchor, Effective& out) const;
     void UpdateAnchor(unsigned s, Anchor& anchor) const;
     bool PatternPixel(const Effective& sprite, int patternCol, int rowIndex, uint8_t transparentIndex, uint8_t& index) const;
-    void SetAttribute(unsigned sprite, unsigned byte, uint8_t value) { _attr[sprite & 127][byte] = value; }
+    /// An attribute byte; the epoch moves only when it changes (a program that uploads the same table every frame changes nothing)
+    void SetAttribute(unsigned sprite, unsigned byte, uint8_t value)
+    {
+        sprite &= 127;
+        if (_attr[sprite][byte] == value)
+            return;
+        _attr[sprite][byte] = value;
+        _epoch++;
+        _fillDirtyLo = std::min(_fillDirtyLo, sprite);
+        _fillDirtyHi = std::max(_fillDirtyHi, sprite);
+    }
+    void AnchorOf(unsigned s, const Effective& e, Anchor& anchor) const;
 
     uint8_t _attr[kSprites][5] = {};
     uint8_t _pattern[kPatternBytes] = {};
@@ -178,4 +195,24 @@ private:
     std::vector<int64_t> _pendingTooMany;
     int64_t _lastRead = kNever;  ///< the clock of the last #303B read: an event up to it was cleared by it
     uint32_t _epoch = 0;
+
+    // FillClocks' view of the attributes (not state): each sprite resolved, and the visible ones in order with the line each
+    // starts on, its height and the process clocks of its x; the sprites whose attributes changed since (the dirty range) are
+    // resolved again. FillClocks is asked once per line and after every attribute write that moves the epoch; decoding the 128
+    // sprites there each time was a fifth of a 28 MHz frame on the Steam Deck
+    struct FillEntry
+    {
+        uint16_t index = 0;
+        uint16_t y = 0;
+        uint16_t height = 0;
+        uint16_t ticks = 0;
+    };
+    void MakeFillEntries() const;
+    bool FillLine(unsigned vcount, uint8_t control, uint8_t transparentIndex, unsigned lineClocks, LineBuffer& out,
+                  std::vector<uint16_t>& collisions) const;
+    mutable FillEntry _fillEntries[kSprites] = {};
+    mutable unsigned _fillCount = 0;
+    mutable Effective _fillEffective[kSprites] = {};
+    mutable unsigned _fillDirtyLo = kSprites, _fillDirtyHi = 0;
+    mutable bool _fillValid = false;
 };

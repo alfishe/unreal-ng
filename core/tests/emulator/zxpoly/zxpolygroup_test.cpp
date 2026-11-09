@@ -6,6 +6,7 @@
 #include "common/image/imagehelper.h"
 #include "common/modulelogger.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "debugger/mouse/debugmousemanager.h"
@@ -1379,7 +1380,6 @@ TEST_F(ZXPolyGroup_Test, ScreenshotOfTheMasterIsTheComposedDisplayFrame)
     ZXPolyGroup* group = manager->GetZXPolyGroup(master->GetId());
     ASSERT_NE(group, nullptr);
     group->RunFrames(5);
-    master->GetContext()->pScreen->SetPresentDelayFrames(0);
     const ZXPolyGroup::Status status = group->GetStatus();
 
     ScreenshotOptions full;
@@ -1403,7 +1403,6 @@ TEST_F(ZXPolyGroup_Test, ScreenshotOfTheMasterIsTheComposedDisplayFrame)
     // Slave 2 is not shown: its own native frame
     std::shared_ptr<Emulator> slave = manager->GetEmulator(status.memberIds[2]);
     ASSERT_TRUE(slave);
-    slave->GetContext()->pScreen->SetPresentDelayFrames(0);
     slave->GetContext()->pScreen->LatchFramebuffer();
     const ScreenshotResult own = Screenshotter::Take(status.memberIds[2], full);
     ASSERT_TRUE(own.ok) << own.errorMessage;
@@ -1510,6 +1509,29 @@ TEST_F(ZXPolyGroup_Test, FortyEightKGroupRunsReplicatedSoftwareButRefusesEdition
     _group->ReplicateFromMaster();
     ZXPolyGroup::Divergence divergence;
     EXPECT_EQ(RunInLockstep(50, divergence), 50u) << divergence.what;
+}
+
+/// A module's own time travel would split it from the other three: every module refuses a recording of its own with
+/// the reason, before the group's timeline, and again once the group's recording ends (it lifts the refusal only while
+/// it records all four together)
+TEST_F(ZXPolyGroup_Test, AModuleAloneRefusesTimeTravelWithTheReason)
+{
+    CreateGroup("PENTAGON");
+    auto refuses = [&](size_t m, const char* when) {
+        const ttd::TTDReply reply = ttd::TTDControl(_group->GetContext(m)).Execute({"start", {}});
+        EXPECT_EQ(reply.error, ttd::TTDControlError::Conflict) << "module " << m << " " << when;
+        EXPECT_NE(reply.message.find("ZX-Poly"), std::string::npos) << "module " << m << " " << when << ": "
+                                                                    << reply.message;
+    };
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        refuses(m, "before the group records");
+
+    std::string error;
+    ASSERT_TRUE(_group->StartRecording(&error)) << error;
+    _group->RunFrame();
+    _group->StopRecording();
+    for (size_t m = 0; m < ZXPolyGroup::MODULES; m++)
+        refuses(m, "after the group's recording");
 }
 
 /// Group TTD: four sessions started together, group input journaled in each,

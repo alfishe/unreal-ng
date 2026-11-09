@@ -63,6 +63,8 @@ public:
             settings.blendingFrames = *change.blendingFrames;
         if (change.blendingWeights)
             settings.blendingWeights = *change.blendingWeights;
+        if (change.view)
+            settings.view = *change.view;
         out = settings;
         return true;
     }
@@ -112,6 +114,44 @@ TEST(WindowDisplay_Test, WordsMakeAChange)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "blending_weights", "linear", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "shader", "x", error));
     EXPECT_NE(error.find(WindowDisplay::kKeys), std::string::npos) << "an unknown key lists the keys: " << error;
+}
+
+TEST(WindowDisplay_Test, ViewWordsAndTheReport)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "view", "Content", error)) << error;
+    EXPECT_EQ(change.view, "content") << "any case in, the canonical word out";
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "view", "screen", error));
+    EXPECT_EQ(change.view, "screen");
+    EXPECT_FALSE(change.Empty());
+
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "view", "paper", error));
+    EXPECT_NE(error.find("full, screen, content"), std::string::npos) << "a bad word lists the views: " << error;
+    EXPECT_EQ(change.view, "screen") << "a refused word changes nothing";
+    EXPECT_NE(std::string(WindowDisplay::kKeys).find("view"), std::string::npos);
+
+    FakeDisplay fake;
+    const StateNode report = WindowDisplay::Report(fake.settings);
+    const StateNode* view = report.find("view");
+    ASSERT_NE(view, nullptr);
+    EXPECT_EQ(view->s, "full") << "the whole frame until asked";
+    const StateNode* views = report.find("views");
+    ASSERT_NE(views, nullptr);
+    ASSERT_EQ(views->items.size(), 3u);
+    EXPECT_EQ(views->items[1].s, "screen");
+}
+
+TEST(WindowDisplay_Test, ViewIsAppliedThroughTheProvider)
+{
+    auto fake = std::make_shared<FakeDisplay>();
+    ScopedDisplay registered(fake);
+    WindowDisplayChange change;
+    change.view = "content";
+    const WindowDisplay::Result r = WindowDisplay::Set(change);
+    ASSERT_TRUE(r.Ok()) << r.error;
+    EXPECT_EQ(r.settings.view, "content");
+    EXPECT_NE(WindowDisplay::Summary(r.settings).find("view content"), std::string::npos);
 }
 
 TEST(WindowDisplay_Test, SetAppliesAndAnswersTheNewSettings)
@@ -178,20 +218,81 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     for (const auto& member : report.members)
         keys += member.first + " ";
     EXPECT_EQ(keys, "backend gpu_available gpu crt crt_profile crt_profiles blending blending_frames blending_weights "
-                    "blending_decay emulator fullscreen scale toolbar status_bar hud hud_theme hud_themes hud_notices "
+                    "blending_decay smooth_motion effects_device present_policy display_rate lip_sync_offset_ms present emulator fullscreen view views scale toolbar status_bar hud hud_theme hud_themes hud_notices "
                     "osd_keyboard osd_keyboard_picture osd_keyboard_pictures osd_keyboard_style osd_keyboard_styles next_layers "
                     "next_layers_mode "
                     "next_layers_shown ");
 
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, equal), scale free, hud off");
+              "gpu off (unavailable), crt basic, blending off (4 frames, equal), smooth motion off, present auto, view full, "
+              "scale free, hud off");
     fake.settings.blendingWeights = "exponential";
     fake.settings.blendingDecay = 0.3;
     fake.settings.scale = 2;
     fake.settings.hud = true;
     fake.settings.hudTheme = "retro_zx";
+    fake.settings.smoothMotion = "interpolate";
     EXPECT_EQ(WindowDisplay::Summary(fake.settings),
-              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), scale 2x, hud on (retro_zx)");
+              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion interpolate "
+              "(gpu), present auto, view full, scale 2x, hud on (retro_zx)");
+
+    // The presenter's timing and smooth motion's counters
+    fake.settings.present.presenter = "metal";
+    fake.settings.present.late = 3;
+    fake.settings.present.smooth = "interpolate";
+    fake.settings.present.heldFlicker = 7;
+    fake.settings.present.clock = "audio";
+    fake.settings.present.beatFrames = 500;
+    fake.settings.present.offBeat = 4;
+    fake.settings.present.soundOffsetP99Ms = 6.5;
+    StateNode full = WindowDisplay::Report(fake.settings);
+    const StateNode& present = full["present"];
+    ASSERT_NE(present.find("smooth"), nullptr);
+    EXPECT_EQ(present.find("presenter")->s, "metal");
+    EXPECT_EQ(present.find("late")->i, 3);
+    EXPECT_EQ(present.find("clock")->s, "audio");
+    ASSERT_NE(present.find("beat"), nullptr);
+    EXPECT_EQ(present.find("beat")->find("frames")->i, 500);
+    EXPECT_EQ(present.find("beat")->find("off")->i, 4);
+    ASSERT_NE(present.find("sound_offset_ms"), nullptr);
+    EXPECT_DOUBLE_EQ(present.find("sound_offset_ms")->find("p99")->d, 6.5);
+    EXPECT_EQ(present.find("smooth")->find("mode")->s, "interpolate");
+    EXPECT_EQ(present.find("smooth")->find("held_flicker")->i, 7);
+    ASSERT_NE(present.find("vrr"), nullptr);
+    ASSERT_NE(present.find("display"), nullptr);
+
+    // The present policy shows for a native presenter, the lip sync trim when set
+    fake.settings.smoothMotion = "off";
+    fake.settings.presentPolicy = "vsync";
+    fake.settings.lipSyncOffsetMs = -40;
+    EXPECT_EQ(WindowDisplay::Summary(fake.settings),
+              "gpu off (unavailable), crt basic, blending off (4 frames, exponential 0.3), smooth motion off, "
+              "present vsync (vsync), lip sync -40 ms, view full, scale 2x, hud on (retro_zx)");
+
+    // How the frames are timed: the screen's counters, a delay it cannot hold named in the line
+    PresentTimingStats timing;
+    timing.delayClamped = true;
+    timing.maxDelayNs = 184'320'000;
+    timing.clampedFrames = 50;
+    timing.early = 2;
+    timing.carried = 1;
+    timing.cuts = 4;
+    timing.carryNs = -1'500'000;
+    FillPresentTiming(fake.settings.present, timing);
+    const StateNode timed = WindowDisplay::Report(fake.settings)["present"];
+    const StateNode* node = timed.find("timing");
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(node->find("delay_clamped")->b);
+    EXPECT_DOUBLE_EQ(node->find("max_delay_ms")->d, 184.32);
+    EXPECT_EQ(node->find("clamped_frames")->i, 50);
+    EXPECT_EQ(node->find("early")->i, 2);
+    EXPECT_EQ(node->find("carried")->i, 1);
+    EXPECT_EQ(node->find("cuts")->i, 4);
+    EXPECT_DOUBLE_EQ(node->find("carry_ms")->d, -1.5);
+    EXPECT_NE(WindowDisplay::Summary(fake.settings)
+                  .find("video delay held at 184 ms (the sound comes later: the picture leads it)"),
+              std::string::npos)
+        << WindowDisplay::Summary(fake.settings);
 }
 
 TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
@@ -235,6 +336,58 @@ TEST(WindowDisplay_Test, TheWindowsOtherWordsMakeAChange)
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layers_mode", "stacked", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "next_layer.copper", "on", error));
     EXPECT_FALSE(WindowDisplay::ApplyWord(change, "hud_notice.ram-page", "maybe", error));
+}
+
+TEST(WindowDisplay_Test, SmoothMotionWords)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "Interpolate", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "effects_device", "CPU", error)) << error;
+    EXPECT_EQ(change.smoothMotion, "interpolate");
+    EXPECT_EQ(change.effectsDevice, "cpu");
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "smooth_motion", "motion", error));
+    EXPECT_NE(error.find("off, blend, interpolate or auto"), std::string::npos) << error;
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "effects_device", "npu", error));
+    // View > Video Synchronization's mode
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "smooth_motion", "AUTO", error)) << error;
+    EXPECT_EQ(change.smoothMotion, "auto");
+}
+
+TEST(WindowDisplay_Test, VideoSyncStepInTheReportAndSummary)
+{
+    WindowDisplaySettings s;
+    s.smoothMotion = "auto";
+    s.present.sync = "interpolate";
+    s.present.syncReason = "no VRR: the display has a fixed refresh";
+    StateNode report = WindowDisplay::Report(s);
+    const StateNode* sync = report["present"].find("sync");
+    ASSERT_NE(sync, nullptr);
+    EXPECT_EQ(sync->find("mode")->s, "interpolate");
+    EXPECT_EQ(sync->find("reason")->s, "no VRR: the display has a fixed refresh");
+    EXPECT_NE(WindowDisplay::Summary(s).find("video sync interpolate (no VRR: the display has a fixed refresh)"),
+              std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.present.sync = "off";
+    EXPECT_EQ(WindowDisplay::Summary(s).find("video sync"), std::string::npos);
+}
+
+TEST(WindowDisplay_Test, PresentPolicyAndLipSyncWords)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(change.Empty());
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "present_policy", "VRR", error)) << error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "lip_sync_offset_ms", "-200", error)) << error;
+    EXPECT_EQ(change.presentPolicy, "vrr");
+    EXPECT_EQ(change.lipSyncOffsetMs, -200);
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "present_policy", "gsync", error));
+    EXPECT_NE(error.find("auto, vrr or vsync"), std::string::npos) << error;
+    for (const char* bad : {"201", "-201", "2.5", "x", ""})
+        EXPECT_FALSE(WindowDisplay::ApplyWord(change, "lip_sync_offset_ms", bad, error)) << bad;
+    EXPECT_EQ(change.lipSyncOffsetMs, -200) << "a refused word keeps the last value";
 }
 
 TEST(WindowDisplay_Test, NumbersInWordsIgnoreTheLocale)
@@ -322,4 +475,30 @@ TEST(WindowDisplay_Test, ThePublishedCopyEndsWithTheWindow)
     WindowView::SetProvider(nullptr);
     EXPECT_FALSE(WindowView::PublishedSettings()) << "no window: nothing published stays";
     EXPECT_FALSE(WindowView::PublishedCrtParameters());
+}
+
+TEST(WindowDisplay_Test, DisplayRateWordsAndSummary)
+{
+    WindowDisplayChange change;
+    std::string error;
+    EXPECT_TRUE(WindowDisplay::ApplyWord(change, "display_rate", "Match", error)) << error;
+    EXPECT_EQ(change.displayRate, "match");
+    EXPECT_FALSE(change.Empty());
+    EXPECT_FALSE(WindowDisplay::ApplyWord(change, "display_rate", "50", error));
+    EXPECT_NE(error.find("keep or match"), std::string::npos) << error;
+
+    WindowDisplaySettings s;
+    s.displayRate = "match";
+    s.present.displayState = "matched";
+    s.present.displayHz = 50;
+    s.present.machineHz = 48.83;
+    s.present.originalHz = 60;
+    EXPECT_NE(WindowDisplay::Summary(s).find("display rate match (50 Hz for 48.83, was 60)"), std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.present.displayState = "unchanged";
+    s.present.displayReason = "no mode within 5 % of 48.83 Hz";
+    EXPECT_NE(WindowDisplay::Summary(s).find("display rate match (no mode within 5 % of 48.83 Hz)"), std::string::npos)
+        << WindowDisplay::Summary(s);
+    s.displayRate = "keep";
+    EXPECT_EQ(WindowDisplay::Summary(s).find("display rate"), std::string::npos);
 }

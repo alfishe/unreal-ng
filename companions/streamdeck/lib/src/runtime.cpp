@@ -256,6 +256,11 @@ void Runtime::Step(int timeoutMs)
     {
         std::lock_guard l(_mu);
         handled = _posted;
+        if (_redrawAll)
+        {
+            _redrawAll = false;
+            force = true;
+        }
         while (!_injected.empty())
         {
             const Event e = _injected.front();
@@ -1033,6 +1038,13 @@ void Runtime::SetPack(const std::string& pack)
     std::lock_guard l(_mu);
     _pack = pack;
     ++_posted;  // a Ticket taken now is done once a step has drawn the keys in the new pack
+}
+
+void Runtime::RedrawAll()
+{
+    std::lock_guard l(_mu);
+    _redrawAll = true;
+    ++_posted;
 }
 
 std::string Runtime::PackSetting() const

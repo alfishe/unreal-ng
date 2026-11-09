@@ -3,7 +3,10 @@
 
 #include <gtest/gtest.h>
 
+#include <sstream>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "base/featuremanager.h"
@@ -16,6 +19,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/keyboard/keyboard.h"
 #include "emulator/memory/memory.h"
+#include "emulator/memory/next/nextmemory.h"
 
 namespace
 {
@@ -273,6 +277,127 @@ TEST_F(TTDReplayCheck_Test, R6_NextDmaReadingAPortReplaysExactly)
     EXPECT_EQ(r.diverged, 0u) << ttd::TTDReplayCheckText(r);
 }
 
+/// R7 (088897e5b): on the Next the MMU is the paging, #7FFD only one way to set it. A program pages RAM into slots
+/// 0, 1, 6 and 7 by NEXTREG (slot 6 an odd 8K page: the other half of its 16K page); a seek to any recorded moment
+/// shows the MMU and the bytes behind it as they were, not slots re-derived from #7FFD; the frames replay exactly
+TEST_F(TTDReplayCheck_Test, R7_NextSeekKeepsTheRestoredMmu)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    _emulator->EnableTurboMode();
+    _ttd = _context->pTimeTravelController;
+    auto* next = dynamic_cast<NextMemory*>(_context->pMemory);
+    ASSERT_NE(next, nullptr);
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);   // the boot sets the board up
+
+    constexpr uint8_t kMmu[8] = {20, 21, 10, 11, 4, 5, 33, 40};
+    // DI; NEXTREG #50,20 / #51,21 / #56,33 / #57,40; markers in slots 0, 6, 7; loop: INC (#E001); JR loop
+    const uint8_t code[] = {0xF3,
+                            0xED, 0x91, 0x50, kMmu[0], 0xED, 0x91, 0x51, kMmu[1],
+                            0xED, 0x91, 0x56, kMmu[6], 0xED, 0x91, 0x57, kMmu[7],
+                            0x3E, 0xA1, 0x32, 0x00, 0x00,    // LD A,#A1 : LD (#0000),A
+                            0x3E, 0xA6, 0x32, 0x00, 0xC0,    // LD A,#A6 : LD (#C000),A
+                            0x3E, 0xA7, 0x32, 0x00, 0xE0,    // LD A,#A7 : LD (#E000),A
+                            0x21, 0x01, 0xE0, 0x34, 0x18, 0xFD};   // LD HL,#E001 : INC (HL) : JR $-1
+    for (size_t i = 0; i < sizeof(code); ++i)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), code[i]);
+    _context->pCore->GetZ80()->pc = 0x8000;
+
+    struct Seen
+    {
+        ttd::TTDTimePoint at;
+        uint8_t mmu[8] = {};
+        uint8_t bytes[4] = {};
+    };
+    auto see = [&]() {
+        Seen s;
+        s.at = _ttd->CurrentPosition();
+        for (unsigned slot = 0; slot < 8; ++slot)
+            s.mmu[slot] = next->GetMmu(slot);
+        const uint16_t at[4] = {0x0000, 0xC000, 0xE000, 0xE001};
+        for (int i = 0; i < 4; ++i)
+            s.bytes[i] = _context->pMemory->DirectReadFromZ80Memory(at[i]);
+        return s;
+    };
+    ASSERT_TRUE(_ttd->StartRecording());
+    std::vector<Seen> seen;
+    for (int f = 0; f < 6; ++f)
+    {
+        _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+        seen.push_back(see());
+    }
+    _ttd->StopRecording();
+    for (unsigned slot = 0; slot < 8; ++slot)
+        ASSERT_EQ(seen.back().mmu[slot], kMmu[slot]) << "the program paged slot " << slot;
+    EXPECT_EQ(seen.back().bytes[0], 0xA1);
+    EXPECT_EQ(seen.back().bytes[2], 0xA7);
+
+    // The live machine pages back to the reset MMU: a seek must bring the program's MMU back
+    for (unsigned slot = 0; slot < 8; ++slot)
+        next->SetMmu(slot, NextMemory::kResetMmu[slot]);
+    for (size_t i : {size_t(1), size_t(3), seen.size() - 1})
+    {
+        SCOPED_TRACE("frame " + std::to_string(seen[i].at.frame));
+        ASSERT_TRUE(_ttd->SeekTo(seen[i].at));
+        const Seen now = see();
+        for (unsigned slot = 0; slot < 8; ++slot)
+            EXPECT_EQ(now.mmu[slot], seen[i].mmu[slot]) << "slot " << slot;
+        for (int b = 0; b < 4; ++b)
+            EXPECT_EQ(now.bytes[b], seen[i].bytes[b]) << "byte " << b;
+    }
+
+    const ttd::TTDReplayCheckResult r = Check();
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_GE(r.checked, 4u) << ttd::TTDReplayCheckText(r);
+    EXPECT_EQ(r.diverged, 0u) << ttd::TTDReplayCheckText(r);
+}
+
+/// R8: the Next's system area (the ROMs its firmware loads, the DivMMC RAM) is machine state, not the ROM set. A
+/// session recorded after the boot loads into a machine that has not booted, and a seek there shows the area as
+/// recorded
+TEST_F(TTDReplayCheck_Test, R8_NextSessionLoadsIntoAFreshMachine)
+{
+    _emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(_emulator, nullptr);
+    _context = _emulator->GetContext();
+    _context->pFeatureManager->setFeature(Features::kDebugMode, true);
+    _context->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    _context->pMemory->UpdateFeatureCache();
+    _emulator->EnableTurboMode();
+    _ttd = _context->pTimeTravelController;
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);   // the firmware fills the system area
+    const size_t areaBytes = static_cast<size_t>(NextMemory::kSystemAreaPages) * PAGE_SIZE;
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+    const ttd::TTDTimePoint at = _ttd->CurrentPosition();
+    const std::vector<uint8_t> area(_context->pMemory->ROMBase(), _context->pMemory->ROMBase() + areaBytes);
+    _ttd->StopRecording();
+    std::stringstream session;
+    std::string error;
+    ASSERT_TRUE(_ttd->SerializeSession(session, error)) << error;
+
+    Emulator* fresh = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError);
+    ASSERT_NE(fresh, nullptr);
+    EmulatorContext* freshContext = fresh->GetContext();
+    freshContext->pFeatureManager->setFeature(Features::kDebugMode, true);
+    freshContext->pFeatureManager->setFeature(Features::kTimeTravel, true);
+    freshContext->pMemory->UpdateFeatureCache();
+    ttd::TimeTravelController* freshTtd = freshContext->pTimeTravelController;
+    session.seekg(0);
+    EXPECT_TRUE(freshTtd->DeserializeSession(session, error)) << error;
+    if (error.empty())
+    {
+        EXPECT_TRUE(freshTtd->SeekTo(at));
+        const uint8_t* now = freshContext->pMemory->ROMBase();
+        EXPECT_TRUE(std::equal(area.begin(), area.end(), now)) << "the system area as recorded";
+    }
+    EmulatorTestHelper::CleanupEmulator(fresh);
+}
+
 /// R5: every model the TTD tests boot: the ROM boot's replay matches each next checkpoint
 class TTDReplayCheckModels_Test : public TTDReplayCheck_Test, public ::testing::WithParamInterface<const char*>
 {
@@ -280,7 +405,7 @@ class TTDReplayCheckModels_Test : public TTDReplayCheck_Test, public ::testing::
 
 TEST_P(TTDReplayCheckModels_Test, R5_RomBootReplaysExactly)
 {
-    Record(GetParam(), 10);
+    ASSERT_NO_FATAL_FAILURE(Record(GetParam(), 10));
     const ttd::TTDReplayCheckResult r = Check();
     ASSERT_TRUE(r.error.empty()) << r.error;
     EXPECT_GT(r.checked, 0u);
@@ -291,7 +416,8 @@ TEST_P(TTDReplayCheckModels_Test, R5_RomBootReplaysExactly)
 
 INSTANTIATE_TEST_SUITE_P(AcrossModels, TTDReplayCheckModels_Test,
                          ::testing::Values("48K", "128k", "PENTAGON", "PLUS2A", "PLUS3", "SCORPION", "PROFSCORP", "GMX",
-                                           "PROFI", "ATM710", "ATM3", "TSL", "SPRINTER", "NEXT"),
+                                           "PROFI", "PROFI3", "ATM710", "ATM450", "ATM3", "TSL", "SPRINTER", "NEXT",
+                                           "PLUS2"),
                          [](const ::testing::TestParamInfo<const char*>& info) { return std::string(info.param); });
 
 }  // namespace

@@ -65,8 +65,9 @@ Everyone needs these, on every deck and in every scenario, in the same place.
 - C7.1 TTD history: start / stop `ttd.record_toggle`, `ttd.start`, `ttd.stop`; its length `ttd.history_limit`; clear
   `ttd.invalidate`; save to / open from a file `ttd.dump` (`path`), `ttd.load` (`path`); *readouts* `ttd.position`,
   `ttd.status`
-- C7.2 Video: `cap.record_toggle` (`preset` gameplay, gif, hq, multitrack), `cap.record_pause`; *readout* `cap.record`
-- C7.2a Audio only: `cap.record_toggle` (`preset` music (FLAC), audio (WAV); `mode` audio)
+- C7.2 Video: `cap.record_toggle` (`preset` gameplay, gif, hq, multitrack), the REC / STOP keys `cap.record_start` /
+  `cap.record_stop`, `cap.record_pause`; *readout* `cap.record` (`video`, `audio_only`)
+- C7.2a Audio only: `cap.record_toggle` or `cap.record_start` (`preset` music (FLAC), audio (WAV); `mode` audio)
 - C7.3 The last seconds as a clip: `cap.clip_last` (`seconds`, `format`); a TTD range: `ttd.export_clip`
 - C7.4 One sound source to a WAV: `cap.audio_capture` (`source`, `seconds`)
 - C7.5 Screenshot: `cap.screenshot` (clipboard, *gui*), `cap.screenshot_save` (`format` png / gif, `area`, `source`)

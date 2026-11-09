@@ -351,6 +351,7 @@ private:
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
     TTDReply CauseChain(const TTDRequest& request);
+    TTDReply Backtrace(const TTDRequest& request);
     TTDReply FindEvent(const TTDRequest& request);
     TTDReply ExplainFrame(const TTDRequest& request);
     TTDReply DiffMoments(const TTDRequest& request);
@@ -449,7 +450,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
     return verbs;
 }
 
@@ -488,6 +489,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
         {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
                          "text"}},
+        {"backtrace", {"frame", "tinframe", "max_depth", "max_slots", "text"}},
         {"find-event", {"kind", "cond", "addr", "addr_to", "phys_page", "size", "value", "bit", "exact", "min_changed",
                         "dir", "port", "port_mask", "value_mask", "key", "pressed", "order", "from_frame", "to_frame",
                         "limit", "max_frames", "text"}},
@@ -594,6 +596,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return Timeline(request);
     if (verb == "cause-chain")
         return CauseChain(request);
+    if (verb == "backtrace")
+        return Backtrace(request);
     if (verb == "find-event")
         return FindEvent(request);
     if (verb == "explain-frame")
@@ -2959,6 +2963,88 @@ TTDReply TTDControlBackend::CauseChain(const TTDRequest& request)
     reply.body["ms"] = res.ms;
     if (text)
         reply.body["text"] = TTDCauseChainText(res);
+    return reply;
+}
+
+TTDReply TTDControlBackend::Backtrace(const TTDRequest& request)
+{
+    TTDBacktraceQuery q;
+    uint64_t n = 0;
+    if (const std::string* t = Option(request, "frame"))
+    {
+        if (!ParseU64(*t, n))
+            return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *t + "'");
+        q.hasTime = true;
+        q.at.frame = n;
+        if (const std::string* tin = Option(request, "tinframe"))
+        {
+            if (!ParseUpTo(*tin, UINT32_MAX, n))
+                return Fail(TTDControlError::BadRequest, "Invalid tinframe: '" + *tin + "'");
+            q.at.tInFrame = static_cast<uint32_t>(n);
+        }
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe goes with frame");
+    for (const auto& [name, max, out] : {std::tuple<const char*, uint32_t, uint32_t*>{"max_depth", TTDBacktraceQuery::kMaxDepth, &q.maxDepth},
+                                         {"max_slots", TTDBacktraceQuery::kMaxSlots, &q.maxSlots}})
+        if (const std::string* t = Option(request, name))
+        {
+            if (!ParseUpTo(*t, max, n) || n == 0)
+                return Fail(TTDControlError::BadRequest,
+                            std::string("Invalid ") + name + ": '" + *t + "' (expected 1.." + std::to_string(max) + ")");
+            *out = static_cast<uint32_t>(n);
+        }
+    bool text = false;
+    if (std::string flag = FlagOption(request, "text", text); !flag.empty())
+        return Fail(TTDControlError::BadRequest, flag);
+
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDBacktraceResult res = _manager->QueryBacktrace(q);
+    if (!res.error.empty())
+        return Fail(TTDControlError::NotAvailable, res.error);
+
+    TTDReply reply;
+    StateNode& b = reply.body;
+    StateNode at = StateNode::Object();
+    AddPosition(at, res.at);
+    b["at"] = at;
+    b["pc"] = static_cast<unsigned>(res.pc);
+    b["code_page"] = PhysPageNode(res.codePage);
+    b["sp"] = static_cast<unsigned>(res.sp);
+    if (!res.frames.empty() && res.frames.front().hasCallee)
+        b["routine"] = static_cast<unsigned>(res.frames.front().callee);
+    StateNode frames = StateNode::Array();
+    for (size_t i = 0; i < res.frames.size(); ++i)
+    {
+        const TTDBacktraceFrame& f = res.frames[i];
+        StateNode node = StateNode::Object();
+        node["depth"] = static_cast<uint64_t>(i + 1);
+        node["kind"] = TTDBacktraceKindName(f.kind);
+        node["slot"] = static_cast<unsigned>(f.slot);
+        node["return_address"] = static_cast<unsigned>(f.returnAddress);
+        node["caller_pc"] = static_cast<unsigned>(f.callerPc);
+        node["caller_page"] = PhysPageNode(f.callerPage);
+        node["text"] = f.text;
+        AddPosition(node, f.calledAt);
+        if (f.hasCallee)
+            node["callee"] = static_cast<unsigned>(f.callee);
+        // The routine the caller's code is in: what the frame above it entered
+        if (i + 1 < res.frames.size() && res.frames[i + 1].hasCallee)
+            node["routine"] = static_cast<unsigned>(res.frames[i + 1].callee);
+        node["data_words"] = static_cast<unsigned>(f.dataWords);
+        frames.push(node);
+    }
+    b["frames"] = frames;
+    b["stop"] = res.stop;
+    b["stop_slot"] = static_cast<unsigned>(res.stopSlot);
+    b["slots_scanned"] = static_cast<unsigned>(res.slotsScanned);
+    b["data_words"] = static_cast<unsigned>(res.dataWords);
+    b["frames_traced"] = static_cast<unsigned>(res.framesTraced);
+    b["ms"] = res.ms;
+    if (text)
+        b["text"] = TTDBacktraceText(res);
     return reply;
 }
 

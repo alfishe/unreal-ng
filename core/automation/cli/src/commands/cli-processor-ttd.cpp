@@ -329,6 +329,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDCauseChain(session, context, args);
     }
+    else if (subcommand == "bt" || subcommand == "backtrace")
+    {
+        HandleTTDBacktrace(session, context, args);
+    }
     else if (subcommand == "event" || subcommand == "find-event")
     {
         HandleTTDFindEvent(session, context, args);
@@ -456,6 +460,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--min-phase-ms N]              The recording cut into phases of the same activity (no replay)" << NEWLINE;
     ss << "  ttd cause <addr>[:page] | <reg> [--frame F [--tin T]] [--depth N] [--links N] [--frames N] [--flags]" << NEWLINE;
     ss << "      Where a byte or a register got its value: the chain back to constants, ports, initial memory" << NEWLINE;
+    ss << "  ttd bt [F[+T]] [--depth N] [--slots N]   The call stack at moment F+T (default: the current position):" << NEWLINE;
+    ss << "      each return address above SP with the CALL / RST / interrupt that pushed it and when" << NEWLINE;
     ss << "  ttd event <kind> ... [--last] [--from F] [--to F] [--limit N]   When did it happen (frames filtered, hits replayed)"
        << NEWLINE;
     ss << "    mem <addr>[:page] [changed|increased|decreased|equals V|becomes V|differs V|bit_set B|bit_clear B]" << NEWLINE;
@@ -474,7 +480,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      and compare each with the next checkpoint: what diverged (cpu, chipset, ram, device, region)" << NEWLINE;
     ss << "  ttd seek-check [on|off]   Every seek also replay-checks the frame it lands in (off by default); the counts" << NEWLINE;
     ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
-          "find-event=event, explain-frame=explain" << NEWLINE;
+          "backtrace=bt, find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
     ss << "  - Seek/step/resume require the emulator to be paused." << NEWLINE;
@@ -1733,6 +1739,44 @@ void CLIProcessor::HandleTTDCauseChain(const ClientSession& session, EmulatorCon
     for (char c : text)
         out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
     session.SendResponse(out);
+}
+
+/// `ttd bt [F[+T]] [--depth N] [--slots N]`: the call stack at a moment, one line per frame
+void CLIProcessor::HandleTTDBacktrace(const ClientSession& session, EmulatorContext* context,
+                                      const std::vector<std::string>& args)
+{
+    static const std::map<std::string, std::string> flags = {{"--depth", "max_depth"}, {"--slots", "max_slots"}};
+    const std::string usage = std::string("Usage: ttd bt [F[+T]] [--depth N] [--slots N]") + NEWLINE;
+    std::map<std::string, std::string> options = {{"text", "true"}};
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+        else if (i == 1 && !args[i].empty() && args[i][0] != '-')
+        {
+            const size_t plus = args[i].find('+');
+            options["frame"] = args[i].substr(0, plus);
+            if (plus != std::string::npos)
+                options["tinframe"] = args[i].substr(plus + 1);
+        }
+        else
+        {
+            session.SendResponse(usage);
+            return;
+        }
+    }
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"backtrace", options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::string text = reply.body.find("text")->s;
+    std::string out;
+    for (char c : text)
+        out += c == '\n' ? std::string(NEWLINE) : std::string(1, c);
+    session.SendResponse(out + NEWLINE);
 }
 
 /// `ttd event <kind> ... [--last] [--from F] [--to F] [--limit N]`: the first (or last) moments an event happened,

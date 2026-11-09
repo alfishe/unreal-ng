@@ -13,6 +13,9 @@
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/video/atm/atmgeometry.h"
+#include "emulator/video/displayrate.h"
+#include "emulator/video/presentpolicy.h"
+#include "emulator/video/smoothmotion.h"
 #include "emulator/io/network/networkspec.h"
 #include "emulator/io/serial/comportspec.h"
 #include "emulator/io/serial/hayesmodempeer.h"
@@ -1140,11 +1143,60 @@ bool Config::ParseConfig(IniFile& inimanager)
 			MLOGWARNING("Config: unsupported [SOUND] DecimatorQuality='%s', using Reference", line);
 	}
 	// VIDEO section
-	// A/V sync video delay: auto (-1) = match the audio path latency
-	// (~2 frames); 0 = lowest input latency (audio trails by the ring depth)
+	// A/V sync: every frame is shown when its sound is heard (frame presenter design, section 3); the user trims it
 	{
-		long delay = inimanager.GetLongValue(video, "AVSyncDelayFrames", -1);  // "auto" parses as 0 - use -1 default
-		config.videoPresentDelayFrames = (delay >= -1 && delay <= 3) ? (int)delay : -1;
+		// The frame-count delay it replaces: the audio clock does its job, the key is ignored
+		if (inimanager.GetValue(video, "AVSyncDelayFrames", nullptr) != nullptr)
+			MLOGWARNING("Config: [VIDEO] AVSyncDelayFrames is retired and ignored: video follows the audio clock, "
+						"[VIDEO] LipSyncOffsetMs trims it");
+		const long lipSync = inimanager.GetLongValue(video, "LipSyncOffsetMs", 0);
+		const bool inRange = lipSync >= kMinLipSyncOffsetMs && lipSync <= kMaxLipSyncOffsetMs;
+		if (!inRange)
+			MLOGWARNING("Config: unsupported [VIDEO] LipSyncOffsetMs=%ld (%d..%d), using 0", lipSync,
+						kMinLipSyncOffsetMs, kMaxLipSyncOffsetMs);
+		config.lipSyncOffsetMs = inRange ? (int)lipSync : 0;
+	}
+	// The native presenter's policy: auto (default) | vrr | vsync. Unknown values warn and keep auto
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "PresentPolicy", nullptr), line, sizeof line);
+		PresentPolicy policy = PresentPolicy::Auto;
+		if (line[0] != '\0' && !ParsePresentPolicy(line, policy))
+			MLOGWARNING("Config: unsupported [VIDEO] PresentPolicy='%s', using auto", line);
+		config.presentPolicy = static_cast<uint8_t>(policy);
+	}
+	// The display's rate for the machine's: keep (default) | match. Unknown values warn and keep keep
+	{
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "DisplayRate", nullptr), line, sizeof line);
+		DisplayRate rate = DisplayRate::Keep;
+		if (line[0] != '\0' && !ParseDisplayRate(line, rate))
+			MLOGWARNING("Config: unsupported [VIDEO] DisplayRate='%s', using keep", line);
+		config.displayRate = static_cast<uint8_t>(rate);
+	}
+	// Smooth motion on a fixed display: off (default) | blend | interpolate | auto (interpolate when the display neither
+	// runs VRR nor a rate fitting the machine's: View > Video Synchronization). Unknown values warn and keep off
+	{
+		config.smoothMotion = static_cast<uint8_t>(smoothmotion::Mode::Off);
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "SmoothMotion", nullptr), line, sizeof line);
+		smoothmotion::Mode mode = smoothmotion::Mode::Off;
+		if (line[0] != '\0' && !smoothmotion::ParseMode(line, mode))
+			MLOGWARNING("Config: unsupported [VIDEO] SmoothMotion='%s', using off", line);
+		config.smoothMotion = static_cast<uint8_t>(mode);
+	}
+	// The screen's effects on the GPU (default) or the CPU
+	{
+		config.effectsOnCpu = false;
+		line[0] = '\0';
+		CopyStringValue(inimanager.GetValue(video, "EffectsDevice", nullptr), line, sizeof line);
+		const auto is = [&line](const char* name) {
+			return StringHelper::CompareCaseInsensitive(line, name, strlen(name)) == 0 && line[strlen(name)] == '\0';
+		};
+		if (is("cpu"))
+			config.effectsOnCpu = true;
+		else if (line[0] != '\0' && !is("gpu"))
+			MLOGWARNING("Config: unsupported [VIDEO] EffectsDevice='%s', using gpu", line);
 	}
 
 	// Media set: [MEDIA] + legacy keys; relative paths are relative to the config file

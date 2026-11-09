@@ -1,0 +1,2 @@
+# The built test programs live in bin/ (the root .gitignore drops every bin folder)
+!bin/

@@ -2,6 +2,8 @@
 
 #include "nextinterrupts.h"
 
+#include <bit>
+
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 
@@ -10,6 +12,7 @@ NextInterruptSource::NextInterruptSource(EmulatorContext* context) : _context(co
 void NextInterruptSource::SetGeometry(const NextTiming& timing)
 {
     _timing = timing;
+    _lineStartKnown = false;
 }
 
 void NextInterruptSource::Reset()
@@ -22,6 +25,7 @@ void NextInterruptSource::Reset()
     _enableCtc = _enableUart = 0;
     _dma[0] = _dma[1] = _dma[2] = 0;
     _lineControl = _lineValue = 0;
+    _lineStartKnown = false;
     _pending = _inService = 0;
     _lastT = 0;
 }
@@ -34,9 +38,11 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
     {
         case kRegLineControl:
             _lineControl = value & 0x07;
+            _lineStartKnown = false;
             return true;
         case kRegLineValue:
             _lineValue = value;
+            _lineStartKnown = false;
             return true;
         case kRegControl:
             _control = value & 0xE9;  // vector 7:5, stackless NMI 3, mode 0
@@ -217,6 +223,8 @@ bool NextInterruptSource::DmaDelay(bool nmiActive) const
 uint32_t NextInterruptSource::BaseT(uint32_t t) const
 {
     const uint32_t multiplier = _context->emulatorState.current_z80_frequency_multiplier ? _context->emulatorState.current_z80_frequency_multiplier : 1u;
+    if ((multiplier & (multiplier - 1)) == 0)
+        return t >> std::countr_zero(multiplier);  // every instruction asks: a shift for 1, 2, 4, 8 (a division is dear on x86)
     return t / multiplier;
 }
 
@@ -235,11 +243,18 @@ uint32_t NextInterruptSource::CounterOrigin() const
 
 uint32_t NextInterruptSource::LineStartT() const
 {
+    // Asked on every instruction while the line interrupt is on: six divisions, dear on x86 (the Steam Deck spent a sixth
+    // of a 28 MHz frame here). Kept until one of its inputs is written: the geometry, NR #22 / #23, the counter offset,
+    // Reset, the state codec's load
+    if (_lineStartKnown) [[likely]]
+        return _lineStartT;
     const uint32_t lines = _timing.frame / _timing.line;
     const uint32_t target = (static_cast<uint32_t>(_lineControl & 1) << 8) | _lineValue;
     const uint32_t counterLine = target == 0 ? lines - 1 : (target - 1) % lines;
     // zxula_timing.vhd: int_line fires at hc_ula = 255 of the row BEFORE the target (the counter steps at hc 0): 128 T into it
-    return (CounterOrigin() + counterLine * _timing.line + 128) % _timing.frame;
+    _lineStartT = (CounterOrigin() + counterLine * _timing.line + 128) % _timing.frame;
+    _lineStartKnown = true;
+    return _lineStartT;
 }
 
 uint16_t NextInterruptSource::CurrentLine() const

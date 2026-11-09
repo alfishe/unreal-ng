@@ -161,10 +161,11 @@ uint8_t Z80NEngine::MemRead(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind,
     if (kind == Z80nCpuAccessM1)
     {
         // Z80::m1_cycle's host half: board logic before the fetch, the fetch through MemoryReadM1, board logic at the refresh edge
-        if (z.machineM1Hook)
+        const bool hooked = z.machineM1Hook && addr < z.machineM1HookEnd;
+        if (hooked) [[unlikely]]
             z.NotifyMachineM1Before(addr);
         value = (e._memory->*z.MemIf->MemoryReadM1)(addr, true);
-        if (z.machineM1Hook)
+        if (hooked) [[unlikely]]
             z.NotifyMachineM1(addr);
     }
     else

@@ -490,6 +490,39 @@ The merge is the field-by-field merge of §6.2, so a scheme behaves as a profile
 entry is mostly `id`, `label`, `match` and `extends`: a few hundred bytes. A scheme is not chosen by itself; a scheme
 that names another scheme is allowed, a cycle is an error.
 
+### 7.7 Video: the game's picture cadence
+
+A game profile may carry the presenter's smoothing settings for the game (frame presenter design,
+[section 4.5](../2026-10-26-frame-presenter/README.md#45-games-their-own-picture-cadence-from-the-game-profile)).
+Most games draw a picture every 2nd-5th frame; the presenter can smooth the step between the game's own pictures
+without added latency, and the profile says how, instead of the presenter guessing at run time:
+
+```yaml
+video:
+  picture_period: 5                 # frames per picture (the usual one)
+  smooth: cadence                   # off | cadence | carry
+  window: [32, 24, 256, 160]        # play area on the framebuffer: x, y, width, height
+  exclude: [[32, 168, 256, 16]]     # regions inside the window left alone (score, status row)
+```
+
+- `smooth`: `cadence` interpolates to the next picture once it is in the presenter's lookahead; `carry` carries the
+  last motion on through the period. `off` keeps the frame repeat for this game even when `SmoothMotion =
+  interpolate`.
+- `window` / `exclude` in framebuffer pixels of the machine's video mode, border included (the coordinates
+  `capture/framebuffer` returns). Outside the window the presenter shows the frame as it is.
+- The presenter takes a burst of changed frames as one picture and `picture_period` as the expected distance.
+- The section applies only with `[VIDEO] SmoothMotion = interpolate`; the owner's switch stays the global one.
+- Validation: `picture_period` 1..16, `window` inside the largest framebuffer of the profile's machines, `exclude`
+  inside `window`; any other field is refused. A profile without `video:` is unchanged.
+- Drafting: `tools/smoothmotion/capture.py` captures frames of the game in play through the WebAPI (`run_frame` +
+  `capture/framebuffer`); `tools/smoothmotion/draft-video-profile.py` measures the period (the median distance
+  between pictures, a burst of changed frames one picture), the window (the 8x8 blocks that change on the game's
+  beat) and the exclusions (blocks redrawn off the beat on at least half of the pictures, a status row drawn a frame
+  later) and prints the section with the evidence. Capture play, not an idle screen: an idle scene's changes cover
+  part of the play area only (then the window is set from the picture). The mode is chosen by watching the 60 Hz
+  comparison (`smoothmotion-eval render`). The built-in examples: `games/pentagon/darkwing-duck.yaml`,
+  `games/spectrum/thundercats.yaml`, `games/spectrum/garfield.yaml`.
+
 ## 8. Defaults out of the box
 
 The global default play bindings per family, used when no game or user profile applies. The retro target is the

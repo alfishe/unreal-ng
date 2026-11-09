@@ -678,6 +678,21 @@
    "params": "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? (single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?"
   },
   {
+   "id": "cap.record_start",
+   "label": "Start recording",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false,
+   "params": "preset? (gameplay|music|audio|gif|hq|multitrack), format?, container?, audio?, mode? (single|multi|audio), profile? (native|1080p|1440p|4k), path?, fps?, scale?, region?"
+  },
+  {
+   "id": "cap.record_stop",
+   "label": "Stop recording",
+   "group": "Capture and machine",
+   "kind": "press",
+   "held": false
+  },
+  {
    "id": "cap.record_pause",
    "label": "Pause recording",
    "group": "Capture and machine",

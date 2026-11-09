@@ -389,10 +389,10 @@ private:
         EmulatorContext* context = _emulator.GetContext();
         if (context == nullptr || context->pControllerManager == nullptr)
             return;
-        const PortReadEvidence evidence = context->pControllerManager->PortReads();
+        const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
         if (!evidence.active)
             return;
-        const AutoDecision decision = DecideFromPortReads(evidence);
+        const AutoDecision decision = DecideAuto(evidence);
         if (decision.decisive || decision.keyboard)
             ApplyAuto(decision);
     }
@@ -405,16 +405,23 @@ private:
             return;
         _autoDone = true;
         manager->WatchPortReads(false);
-        if (decision.keyboard || decision.device == "kempston-mouse")
+        if (decision.keyboard || decision.device == "kempston-mouse" || decision.device == "amx-mouse")
             return;
         std::string connector = decision.connector;
-        if (!connector.empty())
+        if (connector.empty())
         {
-            if (manager->Find(connector) < 0)
-                return;
+            // The machine's connector for the reads the decision rests on: `kempston` on a Pentagon, `next.left` on
+            // a Next (as unreal-qt's HostControllers::checkAuto)
+            if (const int found = manager->FindForInput(decision.input, decision.source); found >= 0)
+                connector = manager->At(static_cast<size_t>(found)).id;
         }
-        else
+        else if (manager->Find(connector) < 0)
         {
+            return;  // the machine has no such connector: the default stays
+        }
+        if (connector.empty())
+        {
+            // No connector of the machine answers those reads: plug the device where one takes it
             ControllerRequest request{"plug", "auto", decision.device, {{"async", ""}}};
             if (!decision.option.empty())
                 request.options[decision.option] = decision.optionValue;

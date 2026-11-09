@@ -6,6 +6,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/mainloop.h"
 #include "emulator/platform.h"
 #include "emulator/sound/audio.h"
 
@@ -126,3 +127,56 @@ TEST_F(FramePacing_Test, ConfigLoad_ComputesFrameDuration_Pentagon)
 }
 
 /// endregion </Config load integration>
+
+/// region <MainLoop::NextFrameDeadline>
+
+namespace
+{
+using Clock = std::chrono::steady_clock;
+using std::chrono::microseconds;
+}  // namespace
+
+TEST_F(FramePacing_Test, Deadline_SteadyStateAdvancesByOneFrame)
+{
+    const Clock::time_point t0{microseconds(1'000'000)};
+    const microseconds frame(20'000);
+    // the frame that waited for t0 ran 12 ms
+    EXPECT_EQ(MainLoop::NextFrameDeadline(t0, t0 + microseconds(12'000), frame), t0 + frame);
+    // one overrun of a few ms is caught up, not re-anchored
+    EXPECT_EQ(MainLoop::NextFrameDeadline(t0, t0 + microseconds(25'000), frame), t0 + frame);
+}
+
+TEST_F(FramePacing_Test, Deadline_BehindStartsTheNextFrameAtOnce)
+{
+    const Clock::time_point t0{microseconds(1'000'000)};
+    const microseconds frame(20'000);
+    const Clock::time_point now = t0 + microseconds(45'000);
+    EXPECT_EQ(MainLoop::NextFrameDeadline(t0, now, frame), now);
+    // the first frame after start (a zero deadline) does not wait either
+    EXPECT_EQ(MainLoop::NextFrameDeadline(Clock::time_point{}, now, frame), now);
+}
+
+TEST_F(FramePacing_Test, Deadline_AheadWaitsOneFrameFromNow)
+{
+    const Clock::time_point t0{microseconds(1'000'000)};
+    const microseconds frame(20'000);
+    const Clock::time_point now = t0 - microseconds(30'000);
+    EXPECT_EQ(MainLoop::NextFrameDeadline(t0, now, frame), now + frame);
+}
+
+TEST_F(FramePacing_Test, Deadline_AMachineSlowerThanRealTimeNeverSleeps)
+{
+    // 28 ms of work per 20 ms frame (the Next at 28 MHz on a Steam Deck): every deadline is already past when it is set,
+    // so the loop runs frame after frame; before, every few frames re-anchored to now + one frame and slept 20 ms
+    const microseconds frame(20'000), work(28'000);
+    Clock::time_point now{microseconds(1'000'000)};
+    Clock::time_point deadline = now;
+    for (int i = 0; i < 200; i++)
+    {
+        now += work;
+        deadline = MainLoop::NextFrameDeadline(deadline, now, frame);
+        ASSERT_LE(deadline, now) << "frame " << i << " would sleep " << (deadline - now).count() << " ns";
+    }
+}
+
+/// endregion </MainLoop::NextFrameDeadline>

@@ -85,6 +85,8 @@ struct Profile
     std::vector<std::pair<std::string, JsonValue::Members>> layers;
     /// `haptics` as written (haptics.md §7), checked by ParseHapticProfile; null when the profile has none
     JsonValue haptics;
+    /// `video` as written (§7.7), checked by ParseVideoProfile; null when the profile has none
+    JsonValue video;
     /// `memory` as written (memoryprofile.h): regions, labels, label files, entries and comments of the program,
     /// checked by ParseMemoryProfile; null when the profile has none
     JsonValue memory;

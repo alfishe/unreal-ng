@@ -1,0 +1,36 @@
+{
+ "scene": "dots",
+ "note": "rect in paper pixels; dot matrix on an 8 px grid moving left step16/16 px per frame",
+ "paper": [
+  48,
+  48
+ ],
+ "regions": [
+  {
+   "name": "D8",
+   "rect": [
+    32,
+    24,
+    256,
+    48
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 128,
+   "period": 1
+  },
+  {
+   "name": "D4",
+   "rect": [
+    32,
+    112,
+    256,
+    136
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 64,
+   "period": 1
+  }
+ ]
+}

@@ -138,6 +138,9 @@ public:
     [[nodiscard]] std::string PackSetting() const;  // "" = the scenario's
     [[nodiscard]] std::string Pack() const;         // the pack drawn: the setting, settings.pack, else magicwb
     [[nodiscard]] std::string ScenarioPack() const;  // the scenario's settings.pack ("" = none)
+    // Draw every key, the strip and the page again at the next step, whatever was sent (the icon packs read again
+    // from disk: POST /api/v1/packs/reload); a Ticket taken now is done once that step has drawn them.
+    void RedrawAll();
     // What the loaded scenario needs from the core: readouts, state paths, target
     [[nodiscard]] SurfaceNeeds Needs() const;
     // After a reload is applied (the device thread, no lock held): the surface client asks Needs() again
@@ -230,6 +233,7 @@ private:
     std::string _notice;                   // a lasting strip line
     std::string _activityLook;             // SetActivityLook ("" = the scenario's)
     std::string _pack;                     // SetPack ("" = the scenario's)
+    bool _redrawAll = false;               // RedrawAll: the next step draws everything (under _mu)
     [[nodiscard]] std::string PackLocked() const;
     std::string _activityLine;             // activity.strip "line": what another surface did
     std::int64_t _activityUntil = 0;

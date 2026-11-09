@@ -1,0 +1,103 @@
+{
+ "scene": "cadence",
+ "note": "rect in paper pixels; in a cycle of `cycle` pictures, picture k = n mod cycle shows a ball at x = floor(step16 * floor(k / period) / 16) px (drawn at paper x 48 + x) while x < end; past it the ball is gone. A cycle ends two pictures after the last ball is gone, then all start again at 0",
+ "end": 192,
+ "cycle": 194,
+ "paper": [
+  48,
+  48
+ ],
+ "regions": [
+  {
+   "name": "c2/1",
+   "rect": [
+    44,
+    4,
+    256,
+    20
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 32,
+   "period": 1
+  },
+  {
+   "name": "c4/2",
+   "rect": [
+    44,
+    28,
+    256,
+    44
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 64,
+   "period": 2
+  },
+  {
+   "name": "c6/3",
+   "rect": [
+    44,
+    52,
+    256,
+    68
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 96,
+   "period": 3
+  },
+  {
+   "name": "c8/4",
+   "rect": [
+    44,
+    76,
+    256,
+    92
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 128,
+   "period": 4
+  },
+  {
+   "name": "c10/5",
+   "rect": [
+    44,
+    100,
+    256,
+    116
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 160,
+   "period": 5
+  },
+  {
+   "name": "c2/2",
+   "rect": [
+    44,
+    148,
+    256,
+    164
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 32,
+   "period": 2
+  },
+  {
+   "name": "c6/2",
+   "rect": [
+    44,
+    172,
+    256,
+    188
+   ],
+   "axis": "x",
+   "dir": 1,
+   "step16": 96,
+   "period": 2
+  }
+ ]
+}

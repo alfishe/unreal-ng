@@ -2975,6 +2975,78 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheNewSettingsAndTheir
         EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
 }
 
+/// The present report's timing and GPU times are in the text: an agent may see nothing else
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["timing"]["delay_clamped"] = true;
+    present["timing"]["max_delay_ms"] = 184.32;
+    present["timing"]["clamped_frames"] = 1200;
+    present["timing"]["early"] = 3;
+    present["timing"]["carried"] = 2;
+    present["timing"]["cuts"] = 1;
+    present["gpu_ms"]["smooth"]["p50"] = 0.4123;
+    present["gpu_ms"]["smooth"]["max"] = 1.25;
+    present["gpu_ms"]["smooth"]["measured"] = 600;
+    present["gpu_ms"]["smooth_cpu"]["p50"] = 3.1;
+    present["gpu_ms"]["smooth_cpu"]["max"] = 9.5;
+    present["gpu_ms"]["smooth_cpu"]["measured"] = 600;
+    present["gpu_ms"]["picture"]["measured"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"clock audio", "video delay held at 184.3 ms: the sound comes later, the picture leads it (1200 frames)",
+                             "3 refreshes before any frame was due, 2 clock steps carried, 1 cuts",
+                             "gpu smooth p50 0.41 max 1.25 ms", "smooth refresh (CPU clock) p50 3.1 max 9.5 ms"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+    EXPECT_EQ(read.text.find("gpu picture"), std::string::npos) << "a pass never measured is left out: " << read.text;
+
+    // In reach: no clamp named
+    settings["present"]["timing"]["delay_clamped"] = false;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult fits = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(fits.isError) << fits.text;
+    EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
+}
+
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "gl-timed";
+    present["refresh_hz"]["max"] = 60.0;
+    present["vrr"] = false;
+    present["vrr_support"]["state"] = "unknown";
+    present["vrr_support"]["reason"] = "Wayland: the compositor decides";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"on the refresh grid (vsync)", "VRR support unknown (Wayland: the compositor decides)"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+
+    // A display that can follow the frames needs no word
+    settings["present"]["vrr"] = true;
+    settings["present"]["vrr_support"]["state"] = "yes";
+    settings["present"]["vrr_support"]["reason"] = "";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult yes = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(yes.isError) << yes.text;
+    EXPECT_NE(yes.text.find("each frame at its time (vrr)"), std::string::npos) << yes.text;
+    EXPECT_EQ(yes.text.find("VRR support"), std::string::npos) << yes.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_CrtParamsAndViewport_UseTheirRoutes)
 {
     Json::Value params;

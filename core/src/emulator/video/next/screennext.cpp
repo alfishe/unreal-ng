@@ -299,6 +299,47 @@ uint32_t ScreenNext::LineEndT(unsigned y) const
     return GridFirstT() + (y + 1) * _rasterState.tstatesPerLine;
 }
 
+bool ScreenNext::PictureWindowInputs(NextPictureWindow::Inputs& out) const
+{
+    PortDecoder_Next* decoder = Decoder();
+    if (!decoder)
+        return false;
+    NextBoard& board = decoder->Board();
+    const NextVideoRegs& video = board.Video();
+    for (unsigned window = 0; window < NextVideoRegs::kClipWindows; window++)
+        for (unsigned c = 0; c < 4; c++)
+            out.clip[window][c] = video.Clip(window, c);
+    out.nr15 = board.Stored(0x15);
+    out.nr68 = board.Stored(0x68);
+    out.nr6B = board.Stored(0x6B);
+    out.nr70 = board.Stored(0x70);
+    out.layer2Enabled = video.Layer2Enabled();
+    out.spritesVisible = board.Sprites().AnyVisible();
+    return true;
+}
+
+PictureRect ScreenNext::WorkingWindow() const
+{
+    NextPictureWindow::Inputs in;
+    if (!PictureWindowInputs(in))
+        return Screen::WorkingWindow();
+    const NextPictureWindow::FrameBox box = NextPictureWindow::Screen(in);
+    // The frame is 640 x 512 whenever this picture is on; a frame of another size (a mode switch under way) has no window
+    if (_framebuffer.width != NextVideoRenderer::kWidth || _framebuffer.height != NextVideoRenderer::kHeight * 2)
+        return Screen::WorkingWindow();
+    return PictureRect{box.x, box.y, box.width, box.height};
+}
+
+PictureRect ScreenNext::ContentWindow() const
+{
+    NextPictureWindow::Inputs in;
+    if (!PictureWindowInputs(in) || _framebuffer.width != NextVideoRenderer::kWidth ||
+        _framebuffer.height != NextVideoRenderer::kHeight * 2)
+        return PictureRect{};
+    const NextPictureWindow::FrameBox box = NextPictureWindow::Content(in);
+    return PictureRect{box.x, box.y, box.width, box.height};
+}
+
 void ScreenNext::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const
 {
     out.clear();
@@ -657,14 +698,42 @@ void ScreenNext::UpdateScreen()
 {
     if (_turboRenderSkip || !_feature_screenhq_enabled)
         return;
-    const uint32_t now = GetCurrentTstate();
-    // lines whose end the beam has passed
-    unsigned done = 0;
+    // Called after every instruction: until the beam ends the line being drawn there is nothing to do (RenderUpTo would return).
+    // That line end is kept in the CPU's own T-states, with the line, the geometry and the clock it was made for: one compare
+    // here (the T-state conversion and the division below were a twentieth of a 28 MHz frame on the Steam Deck)
+    const Z80* cpu = _context->pCore->GetZ80();
+    const EmulatorState& state = _context->emulatorState;
     const uint32_t perLine = _rasterState.tstatesPerLine;
     const uint32_t first = GridFirstT();
+    const uint32_t clock = state.current_z80_frequency_multiplier | (state.hw_clock_den_applied << 8);
+    if (cpu->t < _lineEndCpuT && _nextLine == _lineEndLine && first == _lineEndFirst && perLine == _lineEndPerLine &&
+        clock == _lineEndClock) [[likely]]
+        return;
+    const uint32_t now = state.CpuToBaseT(cpu->t);
+    if (_nextLine >= NextVideoRenderer::kHeight || now < first + (_nextLine + 1) * perLine)
+    {
+        _lineEndLine = _nextLine;
+        _lineEndFirst = first;
+        _lineEndPerLine = perLine;
+        _lineEndClock = clock;
+        _lineEndCpuT = _nextLine >= NextVideoRenderer::kHeight ? ~0u : FirstCpuTAt(state, first + (_nextLine + 1) * perLine);
+        return;
+    }
+    // lines whose end the beam has passed
+    unsigned done = 0;
     if (now > first)
         done = (now - first) / perLine;
     RenderLinesUpTo(done);
+}
+
+/// The first CPU T-state whose base T-state (EmulatorState::CpuToBaseT) is `baseT` or later
+uint32_t ScreenNext::FirstCpuTAt(const EmulatorState& state, uint32_t baseT)
+{
+    const uint64_t multiplier = state.current_z80_frequency_multiplier ? state.current_z80_frequency_multiplier : 1u;
+    const uint64_t den = state.hw_clock_den_applied;
+    // floor(t / m) >= b <=> t >= b * m; floor(t * d / m) >= b <=> t >= ceil(b * m / d)
+    const uint64_t t = den <= 1 ? baseT * multiplier : (baseT * multiplier + den - 1) / den;
+    return t > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(t);
 }
 
 void ScreenNext::DrawRange(uint32_t fromTstate, uint32_t toTstate)

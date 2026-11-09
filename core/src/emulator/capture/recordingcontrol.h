@@ -2,9 +2,9 @@
 
 /// @file recordingcontrol.h
 /// @brief Video and audio recording for every surface, the way MediaControl is for media: the WebAPI (and MCP through
-/// it), CLI, Lua, Python and the catalogue actions (cap.record_toggle, cap.record_pause, cap.clip_last) turn their
-/// input into options and the reply into their output, so the presets, the option names, the defaults and the
-/// refusals cannot drift apart. The machine's RecordingManager does the work.
+/// it), CLI, Lua, Python and the catalogue actions (cap.record_toggle, cap.record_start, cap.record_stop,
+/// cap.record_pause, cap.clip_last) turn their input into options and the reply into their output, so the presets,
+/// the option names, the defaults and the refusals cannot drift apart. The machine's RecordingManager does the work.
 ///
 /// Verbs: start, stop, pause, resume, toggle (start, or stop a running one), status, presets.
 ///
@@ -110,7 +110,8 @@ RecordingReply ExportTtdClip(Emulator& emulator, uint64_t fromFrame, uint64_t to
 RecordingReply ClipLast(Emulator& emulator, double seconds, const std::string& format, const std::string& path,
                         uint32_t scale = 1);
 
-/// The status a key shows: {recording, paused, frames, seconds, bytes, output, available}. Reads only (cheap)
+/// The status a key shows: {recording, paused, video, audio_only, frames, seconds, bytes, output, available}; video /
+/// audio_only: a recording (or a paused one) of that kind runs. Reads only (cheap)
 StateNode RecordingReadout(Emulator& emulator);
 
 }  // namespace capture

@@ -1,0 +1,142 @@
+# TTD branches: storage
+
+Part of [TTD branches](README.md). Status: **design** (2026-11-08). Format reference: `core/src/debugger/ttd/ttd.ksy`
+(schema 2), container `engine/ttdcontainer.*`, session `engine/ttdsessionfile.*`, folder `ttdrecordingfolders.*`,
+writer `engine/ttdrecordingwriter.*`.
+
+## 1. Requirements
+
+| Id | Requirement | From |
+|---|---|---|
+| S-1 | A session without branches is written byte-identical to today's | zero overhead |
+| S-2 | A build without branch support opens a branched file as its trunk, unchanged | FR-23 |
+| S-3 | Every branch is on disk as it records; a crash keeps every complete part of every branch | Q-3, F-1 |
+| S-4 | Opening one branch (or seeking into an evicted segment) reads only that branch's data: no scan of the folder or of the whole file | owner: fast demux |
+| S-5 | Append-only: no file is rewritten in place; metadata edits and deletions are appended records | owner: immutable stream |
+| S-6 | Branch content is relocatable: extracting a lineage or dropping branches copies parts verbatim, no re-encoding of records | tools.md |
+| S-7 | The whole session on disk, no limit; a full disk stops recording with a warning before | Q-3a |
+| S-8 | A clean close deletes an unsaved folder; a crash folder keeps the 7-day cleanup | Q-3c |
+| S-9 | Save keeps every branch by default; "this lineage only" is an option and gives a linear file | Q-9, Q-7 |
+| S-10 | Media writes are in the branch streams | Q-10 |
+
+## 2. What the format gives already
+
+- Streams declared **ancillary** are skipped by a reader that does not know them (`ttdcontainer.cpp:319`); required
+  unknown streams refuse the file.
+- Ids 0x0200-0x02FF are reserved for branches (`ttd.ksy:105-109`, `ttdsessionfile.h:81-82`).
+- `part_end.branch` and `index_part.branch` (u16) exist, always 0 (`ttd.ksy:262, 313`).
+- The index lists per part `part_end_offset`, `first_frame`, `frame_count`, `branch`; parts list the parts they
+  depend on.
+- A part-end flag marks a file start: the loader restarts the numbering of versions and journal positions there.
+- The loader does **not** look at `part.branch` today: records of a branch must therefore not sit in the trunk's
+  stream ids, or an old reader would load them as trunk records (§3.2).
+
+## 3. Encoding
+
+### 3.1 Branch identity
+
+- Stream **0x0200 `branch-table`** (ancillary): one record per branch event, appended: `create {local id, GUID,
+  parent local id, fork {frame, T}, fork checkpoint, meta}`, `update {local id, changed meta fields}`, `delete
+  {local id}`. The table of a file is the replay of its records. Written only when the session has a second branch
+  (S-1).
+- `part_end.branch` / `index_part.branch` = the local id of the branch whose records the part holds. **A part holds
+  one branch's records.**
+- Local ids are per file: `save` / `join` / `extract` renumber them densely; GUIDs never change.
+
+### 3.2 Branch content streams
+
+A branch other than the trunk writes its records into the branch range, ancillary, so an old reader skips them
+(S-2):
+
+| Trunk stream | Branch stream |
+|---|---|
+| 0x0001-0x003F (pieces 1, checkpoints 3, events 5, configuration 6, write journal 7, coverage 8-10, bookmarks 12, bus / media journals 13-16, holder 17-0x3F) | 0x0200 + id (0x0201-0x023F); 0x0200 itself is the branch table |
+| 0x0100-0x013F frame streams | 0x0240-0x027F |
+| (new) media writes | 4 for the trunk (2 and 4 are the engine ids not taken; 17-0xFF belong to the holder), 0x0204 for branches (S-10) |
+| 0x0280-0x02FF | reserved |
+
+Holder streams above 0x3F have no branch twin; the holders in use (8-12, 17 on) fit.
+
+### 3.3 Numbering and references (relocatable, S-6)
+
+- Each branch numbers its own piece versions and journal positions in its own streams, from 0 at its first part
+  (and again at each file start, as the trunk does).
+- A reference to a piece of an ancestor is `(branch local id, version)`; inside its own branch, `version` alone
+  (today's encoding, so the trunk's records do not change).
+- Removing branches or the trunk's parts after the latest fork therefore does not renumber anything that stays;
+  only the branch table and the `branch` fields of part ends and the index are rewritten.
+
+### 3.4 Media writes
+
+Record `{frame, T, slot, unit kind, index, image}` per changed unit and frame (after-image), plus `{base, ...}` the
+first time a unit is written in the session (its image before). A protect-switch change is a one-byte image. The
+per-unit index of architecture.md §7 is rebuilt from these records on load.
+
+## 4. Recording folder
+
+```text
+<user data>/ttd/<date-time>-<name>/
+  owner.pid
+  branches.tdx                 # folder index, append-only (from the second branch on)
+  segment-0000.ttd             # trunk, as today
+  segment-0001.ttd
+  segment-0002-b3.ttd          # branch local id 3, its first segment
+  segment-0003-b3.ttd
+  segment-0004.ttd             # trunk again (capture order numbers the files)
+```
+
+### 4.1 Demultiplexing: options and the proposal
+
+| Option | How a branch is found | Write | Read one branch / one segment | Crash | Many short branches |
+|---|---|---|---|---|---|
+| (a) parts of several branches mixed in one segment file | the file's index | one open file | read the index, seek to the parts | as today | few files |
+| (b) a file per branch and segment | the file name | a file open per active branch only (only the active one records) | open the file | as today | one small file per experiment |
+| (c) (a) or (b) plus a folder index | `branches.tdx` | one more append per segment and per branch event | one index read, then the file | index rebuilt from the files' own indexes | - |
+
+**Proposal: (b) + (c).**
+
+- Only the active branch records, so (b) never has two files open for writing; a switch closes the current
+  segment (it already has to: a segment is one branch).
+- The file name answers "which files hold branch 3"; `branches.tdx` answers "which file holds branch 3, frame
+  f" and "what is the tree" without opening any segment file.
+- `branches.tdx` is an append-only list of records: the branch-table records (§3.1), and per closed segment
+  `{file name, branch, first frame, frame count, first checkpoint, bytes, CRC of the file's index}`. It is a
+  container file like a segment (same record headers and CRCs), so the same reader and the same fuzz harness serve
+  it. When it is missing or damaged, it is rebuilt by reading each segment file's trailer index (no record scan).
+- Measured before freezing (B-5): open one branch out of 1000 in a folder; seek into an evicted segment; the
+  number of files for the UC-5 workload (1000 experiments of 200 frames); against (a). If (b) gives too many small
+  files, branches shorter than one segment share a file per fork position (still one branch per part).
+
+### 4.2 Lifecycle
+
+| Event | Folder |
+|---|---|
+| Recording starts | folder created lazily at the first capture, as today |
+| Resume / edit in the past | a new branch: the current segment file closes, the branch's first file opens; nothing deleted (F-1 fixed) |
+| Switch | the current segment closes; recording on the target opens its next file |
+| Delete / prune | `delete` records appended to `branches.tdx`, then the branch's files deleted |
+| Memory eviction | nothing on disk (the files are complete before a segment may leave memory) |
+| Disk full | warning at a free-space threshold (default 1 GB or 10 minutes at the measured rate), recording pauses at the limit (S-7) |
+| Clean close | unsaved folder deleted (S-8) |
+| Crash | folder kept; the next start offers recovery (as today), 7-day cleanup |
+| Loaded session forks (Q-11) | a folder is created for the new branches; `branches.tdx` records the source file (UUID, path, size, index CRC); save joins both |
+
+## 5. Save, load, join
+
+- **Save (all branches, default):** `JoinSessionFiles` (`ttdrecordingwriter.cpp:97-207`) copies parts verbatim
+  (it already copies `part.branch`); it adds the branch table stream and the index. Branch local ids are
+  renumbered densely; parts of deleted branches are left out.
+- **Save lineage (option):** a linear file: the lineage's parts with branch records moved to trunk stream ids.
+  This needs re-encoding of references (3.3) and is done by the C++ engine (verb `ttd save lineage=`), not by the
+  tools.
+- **Load:** the index gives the parts per branch; the branch table gives the tree. With two tiers the load reads
+  the active lineage's last window into memory (PR-8 style) and leaves the rest on disk for read back.
+- **Old reader:** sees the trunk streams only, its parts with `branch == 0` contain all its records; the branch
+  parts contain only skipped streams. Tested (test-strategy.md T-F5).
+
+## 6. Sizes (to measure, B-4 / B-5)
+
+- Branch table record: about 64 bytes plus strings.
+- A branch's first segment on disk: one baseline (the machine's pages and regions, compressed) plus its deltas. A
+  Pentagon 128K baseline is expected in the tens of kilobytes; 1000 experiments would add tens of megabytes. To be
+  measured, with the fallback of §4.1.

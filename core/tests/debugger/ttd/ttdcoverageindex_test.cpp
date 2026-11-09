@@ -546,3 +546,41 @@ TEST(TTD_CoverageIndex_Test, PartialFirstFrameBecomesAHoleThatProvesNothing)
     EXPECT_TRUE(loaded.CoversFrame(TTDCoverageKind::Written, 11));
     EXPECT_TRUE(loaded.CoversFrame(TTDCoverageKind::Written, 13));
 }
+
+/// The seal yields a frame's keys sorted either way: a sort below kSortedWalkMinKeys keys, a walk over the bitmap
+/// above it. Both give exactly the set recorded (repeats, keys in one 64-key word, the no-page bucket, the top of the
+/// key space), and the next frame starts with nothing left over from it
+TEST(TTD_CoverageIndex_Test, EverySetSizeSealsExactlyAndLeavesTheNextFrameClean)
+{
+    for (size_t count : {size_t(0), size_t(1), size_t(63), size_t(255), size_t(256), size_t(257), size_t(6000)})
+    {
+        SCOPED_TRACE("keys " + std::to_string(count));
+        TTDCoverageIndex index;
+        std::set<TTDCoverageKey> expected;
+        std::vector<TTDCoverageKey> keys;
+        uint32_t x = 12345u + static_cast<uint32_t>(count);
+        for (size_t i = 0; expected.size() < count; ++i)
+        {
+            x = x * 1103515245u + 12345u;
+            TTDCoverageKey key;
+            switch (i % 4)
+            {
+                case 0: key = MakeCoverageKey(static_cast<ttd::PhysPage>((x >> 8) & 0xFF), static_cast<uint16_t>(x >> 16)); break;
+                case 1: key = MakeCoverageKey(ttd::kPhysPageNone, static_cast<uint16_t>(x >> 12)); break;
+                case 2: key = keys.empty() ? 0u : (keys.back() ^ 1u); break;   // a neighbour in the same word
+                default: key = (TTDCoverageKey{1} << 23) - 1 - (x & 0xFF); break;   // the top of the key space
+            }
+            expected.insert(key);
+            keys.push_back(key);
+            keys.push_back(key);   // a repeat
+        }
+        SealFrameWith(index, 10, TTDCoverageKind::Read, keys);
+        SealFrameWith(index, 11, TTDCoverageKind::Read, {MakeCoverageKey(1, 0x0123)});
+
+        std::vector<TTDCoverageKey> got;
+        ASSERT_TRUE(index.GetFrameKeys(TTDCoverageKind::Read, 10, got));
+        EXPECT_EQ(got, std::vector<TTDCoverageKey>(expected.begin(), expected.end()));
+        ASSERT_TRUE(index.GetFrameKeys(TTDCoverageKind::Read, 11, got));
+        EXPECT_EQ(got, std::vector<TTDCoverageKey>{MakeCoverageKey(1, 0x0123)}) << "nothing of frame 10 left over";
+    }
+}

@@ -11,6 +11,7 @@ docker/linux/build.sh --filter '*FatName*' --test
 docker/linux/build.sh --tsan --test --filter 'ExecutionArbiter*'   # ThreadSanitizer (-DSANITIZE=thread)
 docker/linux/build.sh --asan --test        # AddressSanitizer + UBSan; any list: --sanitize LIST
 docker/linux/build.sh --streamdeck --test  # the Stream Deck companion (daemon, sdctl, studio) and its two test suites
+docker/linux/build.sh --test --qt-gl "unreal-qt-tests core-tests"  # + the Qt tests, GL ones on Xvfb (Mesa llvmpipe)
 docker/linux/build.sh --help
 ```
 

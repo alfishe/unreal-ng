@@ -1,0 +1,15 @@
+# Garfield (48K): the game's picture cadence for smooth motion (mapping-and-profiles.md §7.7, frame presenter design
+# section 4.5). The period from tools/smoothmotion/draft-video-profile.py on 200 frames of the snapshot
+# testdata/loaders/rzx/oracle/garfield-300.z80: 53 pictures, 3 frames apart (34 times; 4: 12). The window is the
+# room, above the status panel (the cats, the counters, the message line): taken from the picture, since the idle
+# snapshot's changes also touch the message line. Matches the Zero emulator's sample recording and the snapshot.
+schema: 1
+kind: play
+id: builtin/game/garfield
+label: Garfield
+match:
+  file_sha256: ["18ec80ba760878f100eb907dde398eeb9f708342b864991b50d657b6ae99c4e0", "2171523c0fe4f3c94334918ca34de12709c0d6066f0170c9de1e03d1842b4750"]
+video:
+  picture_period: 3
+  smooth: cadence
+  window: [48, 48, 256, 128]

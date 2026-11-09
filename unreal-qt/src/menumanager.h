@@ -50,6 +50,9 @@ public:
 
     // Reset viewport selection to default (Full Overscan)
     void resetViewportSelection();
+    // Check the picture view shown (0 full, 1 screen, 2 content) without emitting pictureViewChanged
+    void setPictureViewSelection(int mode);
+
     // Check the viewport preset shown (0 full, 1 symmetric, 2 standard, 3 screen only) without emitting viewportChanged
     void setViewportSelection(int presetIndex);
 
@@ -91,6 +94,7 @@ public:
     void setCustomShadersEnabled(bool enabled);
     void populateCrtProfileMenu();
     void setTemporalBlendingChecked(bool checked);
+    void setVideoSyncChecked(bool checked);
     void setTemporalBlendingEnabled(bool enabled);
 
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
@@ -190,6 +194,8 @@ signals:
     void crtProfileChanged(int profileIndex);
     void crtShaderChanged(const QString& name);  ///< a custom shader (GPU only)
     void temporalBlendingToggled(bool enabled);
+    void videoSyncToggled(bool on);              // View -> Video Synchronization
+    void videoSyncWindowRequested();             // Tools -> Video Synchronization...
     void debuggerToggled(bool visible);
     /// Debug > Debugger > eCat / Unreal TUI / Unreal TUI, TS-Conf: start that program (externaldebuggers.h) over this window's emulator
     void externalDebuggerRequested(const QString& program);
@@ -207,6 +213,8 @@ signals:
     void scaleRequested(int scale);  // View -> Scale -> Nx
     void overscanModeToggled(bool enabled);
     void viewportChanged(int presetIndex);
+    /// View > Picture: 0 full, 1 screen, 2 content (PictureView::Mode)
+    void pictureViewChanged(int mode);
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
@@ -294,6 +302,8 @@ private:
     QMenu* _crtProfileMenu = nullptr;
     QActionGroup* _crtProfileGroup = nullptr;
     QAction* _temporalBlendingAction = nullptr;
+    QAction* _videoSyncAction = nullptr;
+    QAction* _videoSyncWindowAction = nullptr;
     QAction* _debuggerAction;
     QAction* _tuiTsConfDebuggerAction = nullptr;  // Debug > Debugger > Unreal TUI, TS-Conf: only on a TS-Conf machine
     QAction* _logWindowAction;
@@ -320,6 +330,8 @@ private:
     QAction* _viewportSymmetricAction;
     QAction* _viewportStandardAction;
     QAction* _viewportScreenOnlyAction;
+    QActionGroup* _pictureViewGroup = nullptr;
+    QAction* _pictureViewActions[3] = {nullptr, nullptr, nullptr};
 
     // Run Menu Actions
     QAction* _startAction;

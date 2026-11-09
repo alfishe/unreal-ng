@@ -343,20 +343,26 @@
    "id": "ttd.record",
    "group": "ttd",
    "title": "TTD recording (off)",
-   "draw": "record button, idle"
+   "draw": "record key: a flat red dot, no ring (the deck writes the label)"
   },
   {
    "id": "ttd.record.on",
    "group": "ttd",
    "title": "TTD recording (on)",
-   "draw": "record button, lit",
+   "draw": "record key while recording: the flat red dot on the pressed backdrop",
    "variant_of": "ttd.record"
   },
   {
    "id": "ttd.stop",
    "group": "ttd",
    "title": "Stop recording",
-   "draw": "stop square inside the record ring"
+   "draw": "stop key: a flat square centred like the record dot, no ring"
+  },
+  {
+   "id": "ttd.recordings",
+   "group": "ttd",
+   "title": "Time travel recording (page)",
+   "draw": "recorded frames behind the record ring, no red"
   },
   {
    "id": "ttd.step_back_frame",
@@ -1309,14 +1315,45 @@
    "id": "cap.record",
    "group": "video",
    "title": "Record video (off)",
-   "draw": "video camera"
+   "draw": "video camera with its red record light"
   },
   {
    "id": "cap.record.on",
    "group": "video",
    "title": "Record video (on)",
-   "draw": "video camera with the record light on",
+   "draw": "video camera with the red record light lit",
    "variant_of": "cap.record"
+  },
+  {
+   "id": "cap.record_stop",
+   "group": "video",
+   "title": "Stop recording",
+   "draw": "stop key: a flat square centred like the record dot, no ring"
+  },
+  {
+   "id": "cap.video",
+   "group": "video",
+   "title": "Video recording (page)",
+   "draw": "movie camera with two film reels, no red"
+  },
+  {
+   "id": "cap.audio",
+   "group": "video",
+   "title": "Audio recording (page)",
+   "draw": "studio microphone on a stand, no red"
+  },
+  {
+   "id": "cap.record_audio",
+   "group": "video",
+   "title": "Record audio (off)",
+   "draw": "microphone with a red record dot"
+  },
+  {
+   "id": "cap.record_audio.on",
+   "group": "video",
+   "title": "Record audio (on)",
+   "draw": "microphone with the red record dot lit",
+   "variant_of": "cap.record_audio"
   },
   {
    "id": "cap.clip_last",
@@ -1626,7 +1663,9 @@
    "state": "toggle.ttd.record_toggle"
   },
   "ttd.start": {
-   "face": "ttd.record.on"
+   "face": "ttd.record",
+   "face_on": "ttd.record.on",
+   "state": "toggle.ttd.start"
   },
   "ttd.stop": {
    "face": "ttd.stop"
@@ -1720,6 +1759,14 @@
    "face": "cap.record",
    "face_on": "cap.record.on",
    "state": "toggle.cap.record_toggle"
+  },
+  "cap.record_start": {
+   "face": "cap.record",
+   "face_on": "cap.record.on",
+   "state": "toggle.cap.record_start"
+  },
+  "cap.record_stop": {
+   "face": "cap.record_stop"
   },
   "cap.clip_last": {
    "face": "cap.clip_last"

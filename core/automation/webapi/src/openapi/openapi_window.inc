@@ -28,7 +28,10 @@
         get["description"] =
             "How the GUI window draws the picture: backend (gpu / software), gpu_available, gpu, crt, crt_profile and "
             "the crt_profiles offered, blending (temporal blending, gigascreen smoothing), blending_frames, "
-            "blending_weights, blending_decay, the emulator the window shows, fullscreen, scale, toolbar, status_bar, "
+            "blending_weights, blending_decay, smooth motion (smooth_motion, effects_device: the shown instance's "
+            "[VIDEO] settings), present_policy, display_rate and lip_sync_offset_ms (the shown instance's [VIDEO] "
+            "PresentPolicy, DisplayRate, LipSyncOffsetMs), present (the frame presenter's on-screen timing and smooth motion's counters), the "
+            "emulator the window shows, fullscreen, view and the views offered, scale, toolbar, status_bar, "
             "the HUD (hud, hud_theme, hud_themes, hud_notices), the on-screen keyboard (osd_keyboard, "
             "osd_keyboard_picture, osd_keyboard_pictures, osd_keyboard_style, osd_keyboard_styles) and the ZX Next layers window (next_layers, "
             "next_layers_mode, next_layers_shown). The settings are the window's, whichever instance it shows, and "
@@ -61,7 +64,24 @@
             field("blending_frames", "integer", "Frames blended, 2..5");
             field("blending_weights", "string", "equal or exponential (newer frames stronger)");
             field("blending_decay", "number", "Exponential weights: each older frame's share of the newer one, 0.1..0.9");
+            field("smooth_motion", "string",
+                  "off, blend, interpolate or auto (View > Video Synchronization): the shown instance's smooth "
+                  "motion until it restarts ([VIDEO] SmoothMotion keeps the default)");
+            field("effects_device", "string", "gpu or cpu: where smooth motion's steps run (the same bits)");
+            field("present_policy", "string",
+                  "auto, vrr or vsync: how the native presenter shows the frames (auto: each at its time on a VRR "
+                  "display, the refresh grid on a fixed one; vrr / vsync force one), until the instance restarts");
+            field("display_rate", "string",
+                  "keep or match: while the emulator is the active application, the display under the window runs the "
+                  "mode of the same resolution whose rate fits the machine's (50 Hz, 100 Hz); restored on focus loss "
+                  "and on quit; until the instance restarts");
+            field("lip_sync_offset_ms", "integer",
+                  "-200..200: added to every frame's target time, positive = the picture later; from the next frame");
             field("fullscreen", "boolean", "Full screen on / off (follows after the window system's transition)");
+            field("view", "string",
+                  "The part of the frame shown, one of views: full (the whole frame, default), screen (the working picture: "
+                  "the paper, or the whole frame in a mode without a border) or content (what the layers draw: the working "
+                  "picture cut by the clip windows of the ZX Next's layers). Fitted by height, aspect kept");
             field("scale", "integer", "Fit the window to the picture at 1..4x (leaves full screen)");
             field("toolbar", "boolean", "View > Toolbar");
             field("status_bar", "boolean", "View > Status Bar");

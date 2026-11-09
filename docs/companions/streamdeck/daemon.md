@@ -10,7 +10,7 @@ Built with `-DUNREAL_STREAMDECK=ON`.
 | Command | What |
 |:--|:--|
 | `unreal-streamdeck run [scenario] [options]` | Play a scenario (`.json`, `.yaml`, `.csv`, `.tsv`) on the deck; without one, the data directory's product scenario (`streamdeck/scenarios/unreal.deck.yaml`) on decks of the model it is made for and the built-in [idle scenario](#the-idle-scenario) (the UnrealNG look) on the others, until a scenario is loaded for a deck |
-| `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (approved at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
+| `unreal-streamdeck pair [--webapi URL] [--name NAME] [--file F]` | Pair with unreal-ng as a companion (on the same host approved at once, over the network at the emulator's GUI); the token goes to `~/.config/unreal-streamdeck/companion.json` (mode 0600). With a daemon running (and no `--file`) it pairs through it (`POST /api/v1/pair`) and prints its state |
 | `unreal-streamdeck scenario check \| convert \| upgrade \| extract \| resolve ...` | Check scenario files (`check` also warns about action ids the catalogue lacks: `$data/streamdeck/catalogue.json` or `--catalogue F`), convert them to another file format, upgrade format v1 to v2 |
 | `unreal-streamdeck --help` | The usage on stdout, exit 0 (without a command: the same, exit 2) |
 
@@ -88,8 +88,10 @@ HISTORY`); a time-travel step with nothing recorded (no history, or one emptied:
 ## Pairing
 
 The daemon pairs **once** for all its decks (`name: "Stream Deck daemon"`, the companion protocol's
-`POST /api/v1/companions/pairings`); the user approves it in unreal-qt (its pairing prompt, or Tools > Stream Deck...),
-never an automation plane. The token goes to the companion file (`--companion`, default
+`POST /api/v1/companions/pairings`). A daemon on the same host as unreal-qt (the supervised one, or any loopback
+request without a browser `Origin`) is approved at once: anything on the host drives the WebAPI already, so a code
+proves nothing there. Over the network the user approves it in unreal-qt (its pairing prompt, or Tools > Stream
+Deck...), never an automation plane; turning pairing requests off at the GUI refuses both. The token goes to the companion file (`--companion`, default
 `~/.config/unreal-streamdeck/companion.json`, mode 0600, written through a temporary file), and the surface client
 connects within 2 s (`sdb/pairing.h`).
 
@@ -275,6 +277,7 @@ deck, else the first deck); the runtime routes take `?deck=SERIAL` with the same
 | `GET` / `PUT /api/v1/decks/{serial}/brightness` | The deck's brightness; `{"value": 0..100}` or `{"delta": n}` (clamped). The runtime sends it on its next step, viewers get it as a feature report |
 | `GET` / `PUT /api/v1/decks/{serial}/pack` | The icon pack the deck draws its glyph faces (`face.glyph`) from: `{"pack": "duotone"}` over the scenario's `settings.pack`, `{"pack": "scenario"}` clears it (400: a pack the data directory lacks). The keys with a glyph are drawn again at once; the answer comes once the deck shows them (202 when its thread did not come round). GET: `pack` (drawn), `setting`, `scenario_pack` |
 | `GET /api/v1/packs` | The icon packs of the data directory (`data/streamdeck/icons/packs`): `name`, `title`, `style`, `source`, `fallback`, `background`; `default`: `magicwb` |
+| `POST /api/v1/packs/reload` | Read the icon packs again from disk after their PNGs changed while the daemon runs (`tools/icons/regenerate_streamdeck_icons.py`, or a pack script): the cached packs and glyphs dropped, every deck draws all its keys anew; the answer comes once they show them (202 when a deck's thread did not come round). `decks`: the decks drawn again, `packs`: how many packs there are |
 | `GET /api/v1/decks/{serial}/scenario` | The deck's file, whether it is the start scenario, watched, the scenario's name; `?document=true` adds the document |
 | `PUT /api/v1/decks/{serial}/scenario` | `{"file": path, "watch": true}`: this deck plays another file (the other decks keep theirs), the menu stack kept; watched by default, so edits reload it. A file with errors is refused (422) and the deck keeps what it plays |
 | `DELETE /api/v1/decks/{serial}/scenario` | The deck plays the daemon's start scenario again |
@@ -323,7 +326,7 @@ surface client adds no thread; each further deck adds its device thread and its 
 | Platform | Deck access | Actions | Built with |
 |:--|:--|:--|:--|
 | macOS | IOHID (hidapi), exclusive open | `shell` via `/bin/sh`, `open`, `keys` (CGEvent) | Apple clang |
-| Linux | hidraw (hidapi; libudev enumerates): the udev rule below | `shell` via `/bin/sh`, `open` via `xdg-open`, `keys` via `xdotool` (X11, optional; missing: the action fails with "xdotool not found") | gcc 14 (the CI image) |
+| Linux | hidraw (hidapi; libudev enumerates): the udev rule below; the deck's evdev keyboard grabbed (below) | `shell` via `/bin/sh`, `open` via `xdg-open`, `keys` via `xdotool` (X11, optional; missing: the action fails with "xdotool not found") | gcc 14 (the CI image) |
 | Windows | HID.dll (hidapi), no driver | `shell` via `cmd.exe` (output, timeout; the whole process tree ends on timeout), `open` via `start`, `keys` via `SendInput` | MSVC 2019, MinGW gcc 15 |
 
 A `keys` combo takes the same names everywhere (`sdb::scn::ParseKeyCombo`, `KeyNames()` in `sdb/actions.h`; US
@@ -355,6 +358,19 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 `uaccess` needs a local login session. A user without a seat (SSH only, a service account) needs a group instead:
 copy the rule with `MODE="0660", GROUP="plugdev"` in place of `TAG+="uaccess"` and add the user to the group.
 
+On a Steam Deck the bundle's installer puts the rule in place: `install.sh --udev`
+([install/steamdeck/README.md](../../../install/steamdeck/README.md)).
+
+### Linux: the deck's keyboard device
+
+The kernel's hid-generic driver also makes an input device of the deck's HID interface: an evdev keyboard
+(`/dev/input/eventN`) that sends `KEY_UNKNOWN` on each key press. A window manager or Qt takes those for shortcuts:
+on the Steam Deck and on KDE every press maximised and restored unreal-qt's window. So when the daemon opens a deck
+(`companions/streamdeck/lib/src/hid/transporthid.cpp`), it finds the event nodes of the same HID device
+(`/sys/class/hidraw/hidrawN/device/input/input*/event*`) and grabs them (`EVIOCGRAB`): their events reach the daemon
+only, and the daemon does not read them. The grab is released when the deck is closed or unplugged. It is best effort:
+a node the user cannot open (no `uaccess` on input devices) stays ungrabbed, and the deck works anyway.
+
 ## Installed
 
 Every release package carries the daemon (the release workflow builds with `-DUNREAL_STREAMDECK=ON`; layout and
@@ -366,6 +382,7 @@ rationale: [packaging.md](../../inprogress/2026-10-19-streamdeck-integration/pac
 | Windows ZIP | `unreal-streamdeck.exe` beside `unreal-qt.exe` |
 | DEB | `/usr/lib/unreal-ng/unreal-streamdeck`, linked from `/usr/bin`; the udev rule in `/usr/lib/udev/rules.d` |
 | AppImage | `usr/bin/unreal-streamdeck` in the image (`--appimage-extract` to run it alone); the rule in `usr/lib/udev/rules.d`, not installed |
+| Steam Deck bundle | the AppImage in `~/Applications/unreal-ng/`; `install.sh --udev` installs the rule ([install/steamdeck/README.md](../../../install/steamdeck/README.md)) |
 | Linux tarball | `unreal-streamdeck` at the top; the rule in `lib/udev/rules.d` |
 
 Default scenarios and themes (`data/streamdeck/`) are not packaged yet (SD5).

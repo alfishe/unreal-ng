@@ -109,11 +109,14 @@ matches; it names the recipe(s) for that action.
 | [machines/tsconf-vdac2.md](machines/tsconf-vdac2.md) | port-trace |
 | Counting/mapping memory access | [analysis/memory-counters.md](analysis/memory-counters.md) | port-trace, ttd-* |
 | Starting a game from its title screen (which keys / joystick) | [analysis/game-start-input.md](analysis/game-start-input.md) | memory-counters, port-trace, input/joystick |
+| Building, installing or driving Unreal NG on a Steam Deck (the bundle, Game Mode, the Steam library, a Stream Deck on its USB-C, screenshots with gamescopectl) | [testing/steamdeck.md](testing/steamdeck.md) | everything else |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
-| Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
+| Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/steamdeck.md](testing/steamdeck.md) | Unreal NG on a Steam Deck: build the bundle, install or update it, start it in Game Mode through Steam, screenshots of the composed screen, a Stream Deck on the Deck's USB-C, logs |
+| [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | A demo video of the GUI window (CRT effects, on-screen keyboard), every frame, 4K for YouTube | [media/window-recording.md](media/window-recording.md) | video-recording.md (the emulated frame only) |
+| Smooth motion, VRR or the refresh grid, the display rate switch; the presenter's report (late presents, timing error, GPU time per pass) and its `video.present` topic | [media/frame-presenter.md](media/frame-presenter.md) | crt-effects.md (the picture's effects, not its timing) |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
 | A full multi-step investigation (memory corruption, boot verification, disk protection) | check [articles/](articles/) first — it may already compose the recipes you'd otherwise assemble by hand | the individual recipes it cites; open those only if the article sends you there |
@@ -149,6 +152,7 @@ call.
 | [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | Viewing emulator screen as agent: native MCP/WebAPI server-side binary saving without base64 transcript corruption |
 | [media/window-recording.md](media/window-recording.md) | Record the unreal-qt window as drawn (CRT shader) with the on-screen keyboard lighting the held keys: start / frames / stop over MCP and WebAPI, a paused machine stepped frame by frame (every frame, any host load), ProRes 4444 / H.264 4:4:4, the 4K layout that survives YouTube's 4:2:0 |
 | [media/crt-effects.md](media/crt-effects.md) | CRT effects in the GUI window: read / set `gpu`, `crt`, `crt_profile` (Basic, seven models, libretro `shader:` presets), `source=window` grabs, the GPU-only and no-window errors, a GPU vs software bit-for-bit check |
+| [media/frame-presenter.md](media/frame-presenter.md) | The frame presenter over MCP and WebAPI: `smooth_motion` (off / blend / interpolate / auto), `present_policy`, `display_rate`, the `present` report (`late`, `error_ms`, `gpu_ms`), the `video.present` monitor name and WebSocket topic |
 | [media/disk-sector-and-catalog-inspection.md](media/disk-sector-and-catalog-inspection.md) | Inspect a loaded disk: catalog, info, sysinfo, decoded and raw sectors and tracks, image download, create / eject |
 | [media/sprinter-hdd.md](media/sprinter-hdd.md) | Sprinter hard disks: IDE slots ide0/ide1, mounting an HDD image, booting DSS from it (DSS 1.71 needs BIOS 3.06), state ide |
 | [media/sprinter-test-images.md](media/sprinter-test-images.md) | A Sprinter disk that boots straight into your program: a composite over the system disk (no copy), a copy with `make-test-image.sh`, or the in-session `SYSTEM.BAT` rewrite of the tests; the same boot every time |

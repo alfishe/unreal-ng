@@ -1846,6 +1846,11 @@ timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buc
 # Where a value came from: target a Z80 address (int) or a register name ('A', 'HL', "E'");
 # also frame, tinframe, phys_page, depth=4, max_links=32, max_frames=50, flags=False, text=False
 chain = emu.ttd_cause_chain(0x5C78, depth=6, text=True)
+
+# The call stack at a moment (default: the current position): frame, tinframe, max_depth=16, max_slots=256, text
+bt = emu.ttd_backtrace(frame=150, tinframe=20000, text=True)
+# {'pc': 32800, 'sp': 49146, 'frames': [{'depth': 1, 'kind': 'call', 'caller_pc': 32785, 'text': 'CALL #8020',
+#   'return_address': 32788, 'callee': 32800, 'frame': 149, ...}, ...], 'stop': 'before_session', 'text': '#0 ...'}
 # {'target': {'kind': 'memory', 'name': '(#5C78 RAM 5)', ...}, 'links': [{'id': 0, 'parent': -1, 'kind': 'store',
 #   'value': 3, 'pc': 35348, 'text': 'LD (HL),A', 'inputs': ['A=#03'], ...}, ...], 'text': '(#5C78 RAM 5) = #03 ...'}
 
@@ -1981,8 +1986,13 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
 emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
                                      #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
-                                     #   'exponential'), 'blending_decay' (0.1..0.9), 'emulator' (the instance the
-                                     #   window shows), 'fullscreen', 'scale' (1..4, 0 = resized by hand), 'toolbar',
+                                     #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
+                                     #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
+                                     #   'present_policy' ('auto' / 'vrr' / 'vsync'), 'display_rate' ('keep' /
+                                     #   'match'), 'lip_sync_offset_ms'
+                                     #   (-200..200), 'present' {'presenter', 'vrr', 'vrr_support': {'state', 'reason'}, 'sync': {'mode', 'reason'}, 'clock', 'timing': {'delay_clamped', 'max_delay_ms', 'clamped_frames', 'early', 'carried', 'cuts', 'carry_ms'}, 'late', 'beat': {'frames', 'off'}, 'lead_ms', 'error_ms', 'sound_offset_ms': {'p50', 'p99'}, 'gpu_wait_ms', 'gpu_ms': {'smooth', 'smooth_cpu', 'picture': {'p50', 'max', 'longest', 'measured'}}, 'smooth': {'mode',
+                                     #   'renders', 'interpolated', ...}, 'display': {'state', 'reason', 'hz', ...}} (the frame presenter's timing), 'emulator' (the instance the
+                                     #   window shows), 'fullscreen', 'view' ('full' / 'screen' / 'content'), 'views', 'scale' (1..4, 0 = resized by hand), 'toolbar',
                                      #   'status_bar', 'hud', 'hud_theme', 'hud_themes', 'hud_notices' {id: shown},
                                      #   'osd_keyboard', 'osd_keyboard_picture', 'osd_keyboard_pictures',
                                      #   'osd_keyboard_style', 'osd_keyboard_styles',
@@ -1993,7 +2003,10 @@ emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=,
                                      #   crt_profile= (one of crt_profiles: none, basic, ...,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other
                                      #   than none switches CRT on), blending_frames=, blending_weights=,
-                                     #   blending_decay= (0.3), scale= (1..4), hud_theme=, hud_notices=
+                                     #   blending_decay= (0.3), smooth_motion= ('interpolate'), effects_device=
+                                     #   ('gpu' / 'cpu'), present_policy= ('vsync'), display_rate= ('match'),
+                                     #   lip_sync_offset_ms= (-40),
+                                     #   view= ('full' / 'screen' / 'content'), scale= (1..4), hud_theme=, hud_notices=
                                      #   {'ram-page': False}, osd_keyboard_picture=, osd_keyboard_style=
                                      #   ('photo' / 'schematic' / 'hybrid'), next_layers_mode=,
                                      #   next_layers_shown={'sprites': False}; applied the way the View menu does.

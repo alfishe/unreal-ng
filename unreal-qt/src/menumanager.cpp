@@ -346,6 +346,14 @@ void MenuManager::createViewMenu()
     _temporalBlendingAction->setChecked(false);
     connect(_temporalBlendingAction, &QAction::triggered, this, &MenuManager::temporalBlendingToggled);
 
+    // The machine's frames even on the display: VRR, else a display rate fitting the machine's, else interpolation
+    _videoSyncAction = _viewMenu->addAction(tr("Video &Synchronization"));
+    _videoSyncAction->setStatusTip(tr("Show every frame for the same time: the display's VRR, else a display rate "
+                                      "fitting the machine's (50 / 100 Hz), else interpolation between the frames"));
+    _videoSyncAction->setCheckable(true);
+    _videoSyncAction->setChecked(false);
+    connect(_videoSyncAction, &QAction::triggered, this, &MenuManager::videoSyncToggled);
+
     // Full Screen
     // Single full-screen entry: Cmd+F on macOS, Alt+Enter elsewhere (KeyboardManager::fullScreenKey).
     // Cocoa's own "Enter Full Screen" View-menu item is suppressed in main().
@@ -377,6 +385,21 @@ void MenuManager::createViewMenu()
     _overscanAction->setCheckable(true);
     _overscanAction->setEnabled(false);  // Enabled only for Pentagon
     connect(_overscanAction, &QAction::triggered, this, &MenuManager::overscanModeToggled);
+
+    // Picture submenu: which part of the frame the window shows, on every machine
+    QMenu* pictureMenu = _viewMenu->addMenu(tr("&Picture"));
+    pictureMenu->setStatusTip(tr("Which part of the frame the window shows"));
+    _pictureViewGroup = new QActionGroup(this);
+    _pictureViewGroup->setExclusive(true);
+    const char* pictureTitles[3] = {"&Full frame", "&Screen (without border)", "&Content (layers' clip window)"};
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        _pictureViewActions[mode] = pictureMenu->addAction(tr(pictureTitles[mode]));
+        _pictureViewActions[mode]->setCheckable(true);
+        _pictureViewGroup->addAction(_pictureViewActions[mode]);
+        connect(_pictureViewActions[mode], &QAction::triggered, this, [this, mode]() { emit pictureViewChanged(mode); });
+    }
+    _pictureViewActions[0]->setChecked(true);
 
     // Viewport submenu (only meaningful in overscan mode)
     _viewportMenu = _viewMenu->addMenu(tr("Display &Viewport"));
@@ -487,6 +510,12 @@ void MenuManager::setTemporalBlendingChecked(bool checked)
     {
         _temporalBlendingAction->setChecked(checked);
     }
+}
+
+void MenuManager::setVideoSyncChecked(bool checked)
+{
+    if (_videoSyncAction && _videoSyncAction->isChecked() != checked)
+        _videoSyncAction->setChecked(checked);
 }
 
 void MenuManager::setTemporalBlendingEnabled(bool enabled)
@@ -1339,6 +1368,12 @@ void MenuManager::createToolsMenu()
     _temporalEffectsAction->setStatusTip(tr("Configure frame blending for gigascreen smoothing"));
     connect(_temporalEffectsAction, &QAction::triggered, this, &MenuManager::temporalEffectsRequested);
 
+    // Video Synchronization: the step in effect and the interpolation's work, live
+    _videoSyncWindowAction = _toolsMenu->addAction(tr("&Video Synchronization..."));
+    _videoSyncWindowAction->setStatusTip(tr("Show how the frames reach the display: VRR, the display rate or "
+                                            "interpolation, and what the interpolation does"));
+    connect(_videoSyncWindowAction, &QAction::triggered, this, &MenuManager::videoSyncWindowRequested);
+
     // HUD Settings
     _hudSettingsAction = _toolsMenu->addAction(tr("&HUD Settings..."));
     _hudSettingsAction->setStatusTip(tr("Configure which HUD notifications to display"));
@@ -1774,6 +1809,12 @@ void MenuManager::updateFrontPanelSwitches(const std::shared_ptr<Emulator>& acti
 void MenuManager::resetViewportSelection()
 {
     _viewportSymmetricAction->setChecked(true);
+}
+
+void MenuManager::setPictureViewSelection(int mode)
+{
+    if (mode >= 0 && mode < 3 && _pictureViewActions[mode])
+        _pictureViewActions[mode]->setChecked(true);  // setChecked does not emit triggered
 }
 
 void MenuManager::setViewportSelection(int presetIndex)

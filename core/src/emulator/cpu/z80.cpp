@@ -691,7 +691,7 @@ __forceinline uint8_t Z80::FetchM1()
     r_low = ((r_low + 1) & 0x7f) | (r_low & 0x80);  // Keep memory refresh register ticking
 
     // Board logic that decides what this fetch sees (ZX-Evo trdemu page swap)
-    if (machineM1Hook) [[unlikely]]
+    if (machineM1Hook && cpu.pc < machineM1HookEnd) [[unlikely]]
         NotifyMachineM1Before(cpu.pc);
 
     // The opcode read; the contended interfaces also handle the refresh that follows it (ULA snow)
@@ -699,7 +699,7 @@ __forceinline uint8_t Z80::FetchM1()
 
     // Board logic clocked by the M1 refresh (ZX-Evo NMI exit / breakpoint).
     // Out of line like NotifyInstructionStart: the hot path is one pointer test
-    if (machineM1Hook) [[unlikely]]
+    if (machineM1Hook && cpu.pc < machineM1HookEnd) [[unlikely]]
         NotifyMachineM1(cpu.pc);
 
     // Point PC to next byte
@@ -1201,6 +1201,9 @@ Z80::StepResult Z80::StepInstructionWithWork(uint32_t work, bool skipBreakpoints
     // the access that ran it, where a replay applies the recorded edit too
     if ((work & EmulatorContext::kStepWorkScriptEdits) && _context->pDebugManager) [[unlikely]]
         _context->pDebugManager->GetScriptCallbacks()->ApplyEdits();
+    // The input and the edits may arm work for this very step: a mouse motion arms an IM2 device's line
+    // (kStepWorkDeviceInt), and its interrupt decision belongs to this instruction, as when the input came before it
+    work = _context->stepWork.load(std::memory_order_relaxed);
 
     StepResult result;
 
@@ -1516,13 +1519,13 @@ void Z80::HaltedM1()
     RecordInstructionStart(cpu.pc);  // the HALT repeating: one instruction start per idle fetch, as before
 
     cpu.r_low = ((cpu.r_low + 1) & 0x7f) | (cpu.r_low & 0x80);
-    if (machineM1Hook) [[unlikely]]
+    if (machineM1Hook && fetch < machineM1HookEnd) [[unlikely]]
         NotifyMachineM1Before(fetch);
     // The memory tracker's L0 facts: this fetch is not an instruction byte
     if (uint8_t* sink = _accessContextSink.load(std::memory_order_relaxed)) [[unlikely]]
         *sink = static_cast<uint8_t>(AccessContext::HaltFetch);
     (void)rdM1(fetch);  // contention, the +2A / +3 latch, snow, the host bus overlays, the access tracker
-    if (machineM1Hook) [[unlikely]]
+    if (machineM1Hook && fetch < machineM1HookEnd) [[unlikely]]
         NotifyMachineM1(fetch);
     IncrementCPUCyclesCounter(1);
 

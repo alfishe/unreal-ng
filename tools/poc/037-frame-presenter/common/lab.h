@@ -32,7 +32,7 @@ struct Options
     std::string backend = "native"; ///< gl (Qt QOpenGLWindow), gpu (SDL_GPU), native (Metal / DXGI on the shell's window)
     std::string vrr = "at";         ///< c-vrr: at (present at a time), min (present after a minimum duration), link (display link at the rate)
     std::string target = "latch";  ///< c-vrr: latch (latch + period + delay) or clock (anchor + n periods + delay)
-    std::string link = "metal";  ///< macOS refresh callback: metal (CAMetalDisplayLink) or ca (CADisplayLink + nextDrawable)
+    std::string link = "metal";  ///< macOS refresh callback: metal (CAMetalDisplayLink), ca (CADisplayLink + nextDrawable), cv (CVDisplayLink + nextDrawable, any macOS)
     std::string tag;                ///< free text for the run's file name
     std::string out = ".";          ///< the folder for the logs
     double rate = 50.080128;        ///< the source rate, Hz

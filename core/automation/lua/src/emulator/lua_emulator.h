@@ -2482,7 +2482,7 @@ public:
             return StateNodeToLua(s, companion::streamdeck::Call(verb.value_or("status"), args).body);
         });
         // monitor(name, {instance = }) -> the reply table of a monitoring verb (monitoring::Call: all, host.stats,
-        // host.clients, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
+        // host.clients, video.present, emulator.stats, debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status,
         // debug.analyzers, controllers.state, game.events, devices.access; an instance's name defaults to this emulator), as WebAPI
         // /api/v1/monitor[/{name}], the CLI `monitor`, MCP inspect_state aspect `monitor` and Python monitor()
         lua.set_function("monitor", [this](sol::this_state s, sol::optional<std::string> verb, sol::optional<sol::table> opts) {
@@ -2773,6 +2773,7 @@ public:
                 Emulator::DiskAutostartResult r = emulator->AutostartDisk(path, static_cast<uint8_t>(drive));
                 result["success"] = r.mounted;
                 result["started"] = r.started;
+                result["ttd_session_ended"] = r.ttdSessionEnded;
                 result["message"] = r.message;
             }
             else
@@ -6539,6 +6540,16 @@ public:
             else
                 options["addr"] = name;
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("cause-chain", options)));
+        });
+
+        // ttd_backtrace({frame=, tinframe=, max_depth=, max_slots=, text=}): the call stack at a moment (default: the
+        // current position) - each return address above SP with the CALL / RST / interrupt that pushed it and when
+        lua.set_function("ttd_backtrace", [this](sol::this_state ts, sol::optional<sol::table> argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("backtrace", options)));
         });
 
         // ttd_find_event(kind, {cond=, addr=, addr_to=, phys_page=, size=, value=, bit=, exact=, min_changed=, dir=,

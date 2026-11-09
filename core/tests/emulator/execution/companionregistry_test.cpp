@@ -398,3 +398,55 @@ TEST_F(CompanionRegistry_Test, PairingTurnedOffRefusesRequestsAndDeniesTheWaitin
     _registry.SetPairingAllowed(true);
     EXPECT_EQ(_registry.RequestPairing("Tablet", "", 0, "192.168.1.42").error, "");
 }
+
+TEST_F(CompanionRegistry_Test, ARequestFromThisHostIsApprovedAtOnce)
+{
+    std::vector<std::string> events;
+    std::mutex eventsMutex;
+    MessageCenter& center = MessageCenter::DefaultMessageCenter();
+    const uint64_t observer = center.AddObserver(NC_COMPANION_CHANGED, [&](int, Message* message) {
+        auto* payload = message ? dynamic_cast<CompanionChangedPayload*>(message->obj) : nullptr;
+        if (payload && payload->name == "Local deck")
+        {
+            std::lock_guard<std::mutex> lock(eventsMutex);
+            events.push_back(payload->event);
+        }
+    });
+
+    const companion::PairingRequestResult request =
+        _registry.RequestPairing("Local deck", "daemon", ScopeRun | ScopeInput, "127.0.0.1", true);
+    ASSERT_EQ(request.error, "") << request.message;
+    EXPECT_EQ(request.pairing.state, companion::PairingState::Approved);
+    EXPECT_TRUE(_registry.Pending().empty()) << "no prompt waits";
+    const companion::PairingPoll poll = _registry.PollPairing(request.pairing.id);
+    ASSERT_EQ(poll.state, "approved");
+    EXPECT_EQ(poll.scopes, ScopeRun | ScopeInput) << "the scopes asked for";
+    const std::optional<companion::CompanionInfo> me = _registry.Authenticate(poll.token);
+    ASSERT_TRUE(me.has_value());
+    EXPECT_EQ(me->name, "Local deck");
+    ASSERT_TRUE(TestWait::For([&] {
+        std::lock_guard<std::mutex> lock(eventsMutex);
+        return !events.empty();
+    }));
+    center.RemoveObserverById(NC_COMPANION_CHANGED, observer);
+    {
+        std::lock_guard<std::mutex> lock(eventsMutex);
+        EXPECT_EQ(events, std::vector<std::string>{"paired"}) << "paired, never pairing_requested (no prompt)";
+    }
+
+    // The same request from the network waits for the user; pairing turned off refuses this host too
+    EXPECT_EQ(_registry.RequestPairing("Phone", "", 0, "192.168.1.41").pairing.state, companion::PairingState::Pending);
+    _registry.SetPairingAllowed(false);
+    EXPECT_EQ(_registry.RequestPairing("Local 2", "", 0, "127.0.0.1", true).error, "pairing_disabled");
+}
+
+TEST(CompanionRegistryPeer_Test, LoopbackPeers)
+{
+    EXPECT_TRUE(CompanionRegistry::IsLoopbackPeer("127.0.0.1"));
+    EXPECT_TRUE(CompanionRegistry::IsLoopbackPeer("127.1.2.3"));
+    EXPECT_TRUE(CompanionRegistry::IsLoopbackPeer("::1"));
+    EXPECT_TRUE(CompanionRegistry::IsLoopbackPeer("::ffff:127.0.0.1"));
+    EXPECT_FALSE(CompanionRegistry::IsLoopbackPeer("192.168.1.40"));
+    EXPECT_FALSE(CompanionRegistry::IsLoopbackPeer("::ffff:10.0.0.1"));
+    EXPECT_FALSE(CompanionRegistry::IsLoopbackPeer(""));
+}

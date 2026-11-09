@@ -1145,6 +1145,11 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         return result;
     }
 
+    // A boot ends the TTD session (D42; a black box starts a new one at the next frame): the answer says so, else
+    // a caller sees "Autostart: boot" and keeps asking a session that is gone
+    ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+    const bool hadSession = ttd != nullptr && ttd->GetState() != ttd::TTDSessionState::Idle;
+
     std::string loadError;
     result.mounted = LoadDisk(path, drive, &loadError);
     if (!result.mounted)
@@ -1191,7 +1196,11 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     }
 
     result.started = request.started;
-    report(request.plan.message, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
+    result.ttdSessionEnded = hadSession && ttd->GetState() == ttd::TTDSessionState::Idle;
+    std::string text = request.plan.message;
+    if (result.ttdSessionEnded)
+        text += " (the TTD session ended)";
+    report(text, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
     return result;
 }
 
@@ -3276,6 +3285,9 @@ Emulator::DirectStepScope::~DirectStepScope()
         // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
             screen->UpdateScreen();
+        // A direct run is not paced to real time and leaves the machine stopped: its frames are due at once
+        if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr)
+            screen->SettlePresentTiming();
         _emulator.NoteDebugChange();   // the direct run stopped
         // The GUI's one refresh, now it may read; the payload says whether a breakpoint ended the run
         auto* payload = new CpuStepPayload(_emulator.GetId());

@@ -240,11 +240,7 @@ void MainLoop::Run(const std::atomic<bool>& stopRequested)
             // a ~2x period the audio ring cannot cover, heard as a dropout on
             // every overrun. Up to one frame of catch-up is allowed instead;
             // DRC absorbs the residual (audio-sync design).
-            if (_nextFrameTime < now - 2 * frameDuration || _nextFrameTime > now + frameDuration)
-            {
-                _nextFrameTime = now;
-            }
-            _nextFrameTime += frameDuration;
+            _nextFrameTime = NextFrameDeadline(_nextFrameTime, now, frameDuration);
 
             // Precise, interruptible sleep (polls the stop flag every few ms).
             // Must NOT be std::condition_variable::wait_until: on Windows it
@@ -303,6 +299,9 @@ bool MainLoop::Park(Emulator* emulator, execution::ExecutionArbiter* arbiter)
         // Nothing plays while paused: cleared here, on the thread that renders the sound (Emulator::OnIntentEdge)
         if (_soundManager)
             _soundManager->onEmulatorPaused();
+        // Nothing to keep the picture in step with: the frames latched are due at once
+        if (_context->pScreen)
+            _context->pScreen->SettlePresentTiming();
     }
     return arbiter->LoopWait();
 }
@@ -808,6 +807,36 @@ void MainLoop::OnFrameEnd()
         {
             // Log error but don't crash - audio failure shouldn't stop emulation
             MLOGERROR("SoundManager::handleFrameEnd failed: %s", e.what());
+        }
+    }
+
+    // The frame's times (frame presenter design, section 3): when its sound is heard, when it ends on the emulated
+    // clock. The frames latched this frame get their target times from them
+    {
+        uint64_t audioEnd = 0;
+        uint32_t audioFrames = 0;
+        const bool haveAudio = _context->pSoundManager && _context->pSoundManager->takeFrameAudioEnd(&audioEnd, &audioFrames);
+        if (!_context->ttdReplayActive)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const std::chrono::microseconds frameDuration(_context->config.frame_duration_us);
+            FrameStampInput stamp;
+            stamp.nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+            stamp.periodNs = std::chrono::duration_cast<std::chrono::nanoseconds>(frameDuration).count();
+            stamp.haveAudio = haveAudio;
+            stamp.audioEndStreamFrame = audioEnd;
+            stamp.audioFramesPerFrame = audioFrames;
+            // The deadline is the emulated clock only while it paces the frames: not in turbo, not in a run that
+            // never waited on it (stepping, a test's frame loop)
+            const auto frameEnd = _nextFrameTime + frameDuration;
+            if (!_context->config.turbo_mode && _nextFrameTime.time_since_epoch().count() != 0 &&
+                frameEnd > now - std::chrono::seconds(1) && frameEnd < now + std::chrono::seconds(1))
+            {
+                stamp.haveEmulated = true;
+                stamp.emulatedEndNs =
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(frameEnd.time_since_epoch()).count();
+            }
+            _context->pScreen->StampPresentTiming(stamp);
         }
     }
 

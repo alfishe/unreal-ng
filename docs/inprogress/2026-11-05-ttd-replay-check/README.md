@@ -1,6 +1,6 @@
 # TTD replay check
 
-Status (2026-11-05): implemented (worktree `scratch/wt-ttd-seek-verify`, branch `ttd-seek-verify`): the verb, the
+Status (2026-11-06): landed on github/master (`124fb512f`): the verb, the
 seek check, the findings of section 6 fixed.
 
 ## 1. Problem

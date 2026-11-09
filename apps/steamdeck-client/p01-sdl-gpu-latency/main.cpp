@@ -1,7 +1,8 @@
 // P-01 SDL_GPU latency: the render path of rendering.md §3 with the core's own pacing (core-clocked).
 //
 // Per display refresh: acquire the swapchain image -> CopyPresentedFramebuffer straight into a mapped
-// transfer buffer (cycle) -> upload to the frame texture -> one linear blit (fills the screen, aspect kept, crop)
+// transfer buffer (cycle) -> upload to the frame texture -> one linear blit (fitted by height, aspect kept; the part
+// of the frame shown is the window setting `view`: PictureView, the same rule as unreal-qt)
 // -> submit. With a CRT preset (--crt <key>, or WebAPI /video/window crt_profile=shader:<key>) the frame goes through
 // the libretro passes of unreal-qt (crtpreset.h) at the picture's size first.
 //
@@ -12,7 +13,7 @@
 // counter step (0 = repeated frame, 2+ = a frame skipped).
 //
 //   p01-sdl-gpu-latency [--model PENTAGON] [--file game.tap] [--present vsync|mailbox|immediate] [--fif 1|2]
-//                       [--delay 0..3] [--crop full|sides|deckfit|paper] [--seconds N] [--windowed] [--autofire MS]
+//                       [--view full|screen|content] [--seconds N] [--windowed] [--autofire MS]
 //                       [--headless] [--boot] [--sound-haptics] [--crt <preset key>]
 //
 // Built with automation (build.sh default) the instance is driven over the network: WebAPI on port 8090
@@ -33,6 +34,7 @@
 #include "emuhost.h"
 #include "emulator/emulator.h"
 #include "emulator/video/displaygeometry.h"
+#include "emulator/video/pictureview.h"
 #include "emulator/video/windowview.h"
 #include "timinglog.h"
 
@@ -55,9 +57,8 @@ struct Options
     std::string model = "PENTAGON";   // decodes Kempston at #1F (a bare 48K does not)
     std::string file;
     std::string present = "vsync";
-    std::string crop = "full";
+    std::string view = "full";   // the part of the frame shown: full | screen | content (pictureview.h)
     uint32_t framesInFlight = 1;
-    int presentDelay = 0;
     double seconds = 0;
     double autofireMs = 0;   // > 0: toggle fire on a timer, no human needed (automated latency runs)
     bool windowed = false;   // development on a desktop: a 1280x800 window instead of fullscreen
@@ -67,38 +68,14 @@ struct Options
     std::string crt;         // a CRT preset key (shaders/crt/<key>), "" = none
 };
 
-struct Rect { uint32_t x, y, w, h; };
-
-/// Source rectangle for a crop of a 352x288-style frame (48 px border); other sizes fall back to full
-Rect CropRect(const std::string& crop, uint32_t w, uint32_t h)
-{
-    if (w == 352 && h == 288)
-    {
-        if (crop == "deckfit")
-            return {16, 44, 320, 200};
-        if (crop == "sides")   // the border cut above and below only: 352x264, the 4:3 of a whole frame's width
-            return {0, 12, 352, 264};
-        if (crop == "paper")
-            return {48, 48, 256, 192};
-    }
-    return {0, 0, w, h};
-}
-
-/// Fill the screen with a picture of the given width : height, centred (a 352:288 frame -> 978x800 on the Deck)
-Rect Fit(double aspect, uint32_t dw, uint32_t dh)
-{
-    const uint32_t w = std::min(dw, static_cast<uint32_t>(dh * aspect + 0.5));
-    const uint32_t h = std::min(dh, static_cast<uint32_t>(dw / aspect + 0.5));
-    return {(dw - w) / 2, (dh - h) / 2, w, h};
-}
-
 /// The window's display settings for the automation surfaces (WebAPI / CLI / MCP /video/window): the CRT preset is
 /// the one setting the Deck client has. The surfaces call from their threads; the render loop picks the change up
 class DisplayProvider : public IWindowViewProvider
 {
 public:
-    DisplayProvider(std::vector<std::string> presets, std::string emulatorId, const std::string& initial)
-        : _presets(std::move(presets)), _emulatorId(std::move(emulatorId))
+    DisplayProvider(std::vector<std::string> presets, std::string emulatorId, const std::string& initial,
+                    PictureView::Mode view = PictureView::Mode::Full)
+        : _presets(std::move(presets)), _emulatorId(std::move(emulatorId)), _view(view)
     {
         _last = !initial.empty() ? initial
               : std::find(_presets.begin(), _presets.end(), "crt-lottes") != _presets.end() ? "crt-lottes"
@@ -126,6 +103,21 @@ public:
         if (_active)
             _last = _presets[next - 1];
         return _active ? std::to_string(next) + "/" + std::to_string(count - 1) + " " + _last : "none";
+    }
+
+    /// The part of the frame shown (the window setting `view`); read per frame by the render loop
+    PictureView::Mode View()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _view;
+    }
+
+    /// The next view of full, screen, content, wrapping; the label to show: "view <name>"
+    std::string StepView()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _view = static_cast<PictureView::Mode>((static_cast<int>(_view) + 1) % static_cast<int>(PictureView::Names().size()));
+        return "view " + PictureView::NameOf(_view);
     }
 
     /// The render loop could not load `key`: back to no preset
@@ -171,6 +163,16 @@ public:
         }
         if (change.crt)
             _active = *change.crt && !_last.empty();
+        if (change.view)
+        {
+            PictureView::Mode mode;
+            if (!PictureView::Parse(*change.view, mode))
+            {
+                error = "'view' takes " + PictureView::NameList() + ", not '" + *change.view + "'";
+                return false;
+            }
+            _view = mode;
+        }
         Report(out);
         return true;
     }
@@ -189,6 +191,7 @@ private:
         for (const std::string& key : _presets)
             out.crtProfiles.push_back(kShader + key);
         out.emulatorId = _emulatorId;
+        out.view = PictureView::NameOf(_view);
     }
 
     std::mutex _mutex;
@@ -196,6 +199,7 @@ private:
     const std::string _emulatorId;
     std::string _last;     // the preset crt=on takes
     bool _active = false;
+    PictureView::Mode _view = PictureView::Mode::Full;
 };
 
 /// TEMPORARY (D-pad preview): a line of text over the picture, drawn with SDL's built-in 8x8 debug font on a software
@@ -331,8 +335,16 @@ int main(int argc, char** argv)
         else if (k == "--file") opt.file = v;
         else if (k == "--present") opt.present = v;
         else if (k == "--fif") opt.framesInFlight = static_cast<uint32_t>(std::stoi(v));
-        else if (k == "--delay") opt.presentDelay = std::stoi(v);
-        else if (k == "--crop") opt.crop = v;
+        else if (k == "--view")
+        {
+            PictureView::Mode parsed;
+            if (!PictureView::Parse(v, parsed))
+            {
+                SDL_Log("--view takes %s, not '%s'", PictureView::NameList().c_str(), v.c_str());
+                return 2;
+            }
+            opt.view = PictureView::NameOf(parsed);
+        }
         else if (k == "--seconds") opt.seconds = std::stod(v);
         else if (k == "--autofire") opt.autofireMs = std::stod(v);
         else if (k == "--crt") opt.crt = v;
@@ -388,7 +400,6 @@ int main(int argc, char** argv)
     }
     if (!emu.OpenAudio(&error))
         SDL_Log("audio: %s", error.c_str());
-    emu.SetPresentDelayFrames(static_cast<uint8_t>(opt.presentDelay));
     emu.Start();
 
     if (opt.headless)
@@ -439,27 +450,35 @@ int main(int argc, char** argv)
         SDL_Log("CRT preset %s not in %s", opt.crt.c_str(), crtRoot.c_str());
         opt.crt.clear();
     }
-    auto display = std::make_shared<DisplayProvider>(presets, emu.Get()->GetId(), opt.crt);
+    PictureView::Mode viewMode = PictureView::Mode::Full;
+    PictureView::Parse(opt.view, viewMode);
+    auto display = std::make_shared<DisplayProvider>(presets, emu.Get()->GetId(), opt.crt, viewMode);
     WindowView::SetProvider(display);
     deckpoc::CrtPreset crt;
     std::string crtKey;   // the loaded preset
     // TEMPORARY (D-pad preview): D-pad left / right (router actions crt.prev / crt.next, see README) or the arrow keys
     constexpr uint64_t kCrtStepThrottleNs = 300'000'000ull;   // at most one preset step per 300 ms
     int crtStep = 0;
+    bool viewStep = false;   // View > Picture, one step of full / screen / content (router action view.next, or the Up arrow)
     OsdLabel osd;
     std::string osdText;
     uint64_t osdNs = 0;
     if (controllers)
-        controllers->SetActionSink([&crtStep, held = std::array<bool, 2>{}](const std::string& action,
-                                                                           bool pressed) mutable {
-            const int which = action == "crt.next" ? 0 : action == "crt.prev" ? 1 : -1;
+        controllers->SetActionSink([&crtStep, &viewStep, held = std::array<bool, 3>{}](const std::string& action,
+                                                                                bool pressed) mutable {
+            const int which = action == "crt.next" ? 0 : action == "crt.prev" ? 1 : action == "view.next" ? 2 : -1;
             if (which < 0)
                 return;
             SDL_Log("action %s %s", action.c_str(), pressed ? "down" : "up");
             // One step per physical press: the same press can arrive twice (a binding in more than one profile
             // layer), a step is taken on the edge only
             if (pressed && !held[which])
-                crtStep = which == 0 ? 1 : -1;
+            {
+                if (which == 2)
+                    viewStep = true;
+                else
+                    crtStep = which == 0 ? 1 : -1;
+            }
             held[which] = pressed;
         });
 
@@ -472,8 +491,8 @@ int main(int argc, char** argv)
     frameLog.Open(deckpoc::LogPath("p01-frames", "csv"), "acquire_wait_us,copy_us,submit_us,emu_frame,emu_step,audio_queued,underruns,swapchain_ok,border_white,swapchain_w,swapchain_h,window_flags");
     deckpoc::CsvLog pressLog;
     pressLog.Open(deckpoc::LogPath("p01-presses", "csv"), "event_ns,first_frame_submit_ns,software_latency_ms,frames_waited");
-    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u delay=%d crop=%s gpu=%s video=%s audio_rate=%u",
-                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.presentDelay, opt.crop.c_str(),
+    pressLog.Row(deckpoc::NowNs(), "# model=%s present=%s fif=%u view=%s gpu=%s video=%s audio_rate=%u",
+                 opt.model.c_str(), opt.present.c_str(), opt.framesInFlight, opt.view.c_str(),
                  SDL_GetGPUDeviceDriver(device), SDL_GetCurrentVideoDriver(), emu.AudioRate());
 
     SDL_Gamepad* pad = nullptr;
@@ -515,6 +534,7 @@ int main(int argc, char** argv)
                 if (e.key.key == SDLK_ESCAPE) quit = true;
                 if (e.key.down && !e.key.repeat && e.key.key == SDLK_RIGHT) crtStep = 1;
                 if (e.key.down && !e.key.repeat && e.key.key == SDLK_LEFT) crtStep = -1;
+                if (e.key.down && !e.key.repeat && e.key.key == SDLK_UP) viewStep = true;
                 if (e.key.key == SDLK_SPACE && !e.key.repeat) setFire(e.key.down, e.key.timestamp);
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -590,7 +610,8 @@ int main(int argc, char** argv)
             const size_t size = static_cast<size_t>(texW) * texH * 4;
             auto* mapped = static_cast<uint8_t*>(SDL_MapGPUTransferBuffer(device, transfer, true));
             const uint64_t c0 = deckpoc::NowNs();
-            const bool copied = mapped && emu.CopyFrameTo(mapped, size);
+            PictureGeometry frameGeometry;
+            const bool copied = mapped && emu.CopyFrameTo(mapped, size, &frameGeometry);
             copyNs = deckpoc::NowNs() - c0;
             // Border colour from the bottom-left corner pixel: white (7) vs black (0)
             if (copied)
@@ -633,23 +654,34 @@ int main(int argc, char** argv)
                 }
             }
 
-            const Rect s = CropRect(opt.crop, texW, texH);
-            // Stored pixels are not square (TS-Conf: 720x288): the shape comes from DisplayGeometry, as in unreal-qt.
-            // A CRT preset draws on a whole multiple of the source lines and resamples that to this size (crtpreset.h)
-            const Rect d = Fit(DisplayGeometry::WindowAspect(static_cast<uint16_t>(texW), static_cast<uint16_t>(texH),
-                                                             static_cast<uint16_t>(s.w), static_cast<uint16_t>(s.h)),
-                               sw, sh);
+            if (viewStep && deckpoc::NowNs() - osdNs >= kCrtStepThrottleNs)
+            {
+                osdText = display->StepView();
+                osdNs = deckpoc::NowNs();
+                osd.Show(device, cmd, osdText, osdNs);
+                SDL_Log("%s", osdText.c_str());
+            }
+            viewStep = false;
+
+            // The part of the frame shown and its shape, from the geometry latched with this frame (PictureView, the same
+            // rule as unreal-qt): the whole frame, the working picture, or what the layers draw. Stored pixels are not
+            // square (TS-Conf: 720x288): the shape comes from DisplayGeometry. Fitted by height, aspect kept. A CRT
+            // preset draws on a whole multiple of the source lines and resamples that to this size (crtpreset.h)
+            const PictureView::Cut cut =
+                PictureView::CutOf(frameGeometry, static_cast<uint16_t>(texW), static_cast<uint16_t>(texH), display->View());
+            const PictureRect& s = cut.source;
+            const PictureView::Placement d = PictureView::Fit(cut.aspect, sw, sh);
             SDL_GPUBlitInfo blit{};
             blit.source.texture = frameTexture;
-            blit.source.x = s.x; blit.source.y = s.y; blit.source.w = s.w; blit.source.h = s.h;
-            if (SDL_GPUTexture* shaded = crt.Loaded() ? crt.Render(cmd, frameTexture, s.x, s.y, s.w, s.h, d.w, d.h) : nullptr)
+            blit.source.x = s.x; blit.source.y = s.y; blit.source.w = s.width; blit.source.h = s.height;
+            if (SDL_GPUTexture* shaded = crt.Loaded() ? crt.Render(cmd, frameTexture, s.x, s.y, s.width, s.height, d.width, d.height) : nullptr)
             {
                 // The preset drew at the picture's size: 1:1 onto the screen
                 blit.source.texture = shaded;
-                blit.source.x = 0; blit.source.y = 0; blit.source.w = d.w; blit.source.h = d.h;
+                blit.source.x = 0; blit.source.y = 0; blit.source.w = d.width; blit.source.h = d.height;
             }
             blit.destination.texture = swapchain;
-            blit.destination.x = d.x; blit.destination.y = d.y; blit.destination.w = d.w; blit.destination.h = d.h;
+            blit.destination.x = d.x; blit.destination.y = d.y; blit.destination.w = d.width; blit.destination.h = d.height;
             blit.load_op = SDL_GPU_LOADOP_CLEAR;
             blit.clear_color = SDL_FColor{0, 0, 0, 1};
             blit.filter = SDL_GPU_FILTER_LINEAR;   // a fractional scale: nearest would make uneven pixel columns
