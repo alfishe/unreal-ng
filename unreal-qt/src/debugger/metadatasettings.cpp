@@ -2,22 +2,19 @@
 
 #include <QSettings>
 
-#include "emulator/readoutschanged.h"
-
 namespace
 {
 struct Entry
 {
-    const char* key;     ///< in the settings
-    const char* action;  ///< the catalogue's
+    const char* key;  ///< in the settings
 };
 
 constexpr Entry kEntries[MetadataSettings::kCount] = {
-    {"Debugger/Metadata", "dbg.metadata_toggle"},
-    {"Debugger/MetadataRegions", "dbg.metadata_regions_toggle"},
-    {"Debugger/MetadataColours", "dbg.metadata_colours_toggle"},
-    {"Debugger/MetadataNotes", "dbg.metadata_notes_toggle"},
-    {"Debugger/Labels", "dbg.labels_toggle"},
+    {"Debugger/Metadata"},
+    {"Debugger/MetadataRegions"},
+    {"Debugger/MetadataColours"},
+    {"Debugger/MetadataNotes"},
+    {"Debugger/Labels"},
 };
 }  // namespace
 
@@ -53,11 +50,5 @@ void MetadataSettings::Set(Switch which, bool on)
         return;
     QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
     settings.setValue(QLatin1String(kEntries[index].key), on);
-    NotifyReadoutsChanged(std::string(), "debugger.metadata");  // the toggles' states on the control surfaces
     emit changed();
-}
-
-const char* MetadataSettings::ActionId(Switch which)
-{
-    return kEntries[static_cast<size_t>(which)].action;
 }

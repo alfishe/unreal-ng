@@ -47,8 +47,12 @@ def act(ws, action_id, value=None, rid=1, timeout=10):
     if value is not None:
         message['value'] = value
     ws.send(message)
-    return ws.until(lambda m: m.get('rid') == rid and m.get('op') in ('result', 'error'), f'the result of {action_id}',
-                    timeout)
+    # A readout the action caused may come before its result: kept for the reads that follow
+    before = []
+    answered = lambda m: (m.get('rid') == rid and m.get('op') in ('result', 'error')) or before.append(m)  # noqa: E731
+    result = ws.until(answered, f'the result of {action_id}', timeout)
+    ws.unread(before)
+    return result
 
 
 def position(s, emu):

@@ -17,7 +17,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
-#include "automation-lua.h"  // its LuaEmulator declares the Automation singleton
+#include "automation-lua.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
@@ -31,18 +31,6 @@
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/soundmanager.h"
 #include "hooks/luahookhost.h"
-
-// The Lua bindings call the Automation singleton only for the videowall sync mode; automation.cpp brings every
-// automation module (WebAPI, Drogon) along, so core-tests defines the two members here and no test calls them
-Automation& Automation::GetInstance()
-{
-    std::abort();
-}
-
-bool Automation::SetVideowallSingleSyncMode(bool, const std::string&)
-{
-    return false;
-}
 
 namespace
 {

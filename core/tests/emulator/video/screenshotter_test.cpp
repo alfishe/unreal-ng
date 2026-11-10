@@ -484,7 +484,6 @@ protected:
         ASSERT_NE(_emulator, nullptr);
         _screen = _emulator->GetContext()->pScreen;
         ASSERT_NE(_screen, nullptr);
-        _screen->SetPresentDelayFrames(0);
         _emulator->RunNFrames(3);
     }
 

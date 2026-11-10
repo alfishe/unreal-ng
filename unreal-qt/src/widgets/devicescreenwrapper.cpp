@@ -103,6 +103,9 @@ void DeviceScreenWrapper::setupMouseCapture()
         _mouseCapture->setSourceSizeProvider([screen] { return screen->displaySourceRect().size(); });
         screen->setMouseCapture(_mouseCapture);
     }
+    // gamescope composes the Steam Deck's touchscreen as an absolute pointer (motion and a press, no touch events):
+    // captured, the pointer is a relative pad, not a mouse to warp
+    surface.pointerIsTouch = qEnvironmentVariable("XDG_CURRENT_DESKTOP") == QLatin1String("gamescope");
     _mouseCapture->setSurface(std::move(surface));
 
     _mouseCapture->setHostSettingsProvider([this] {
@@ -313,12 +316,20 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     return true;
 }
 
-void DeviceScreenWrapper::setFrameSource(std::function<bool(uint8_t*, size_t, PictureGeometry*)> fn)
+void DeviceScreenWrapper::setFrameSource(ScreenFrames source)
 {
     if (_useGPU && _gpuWindow)
-        _gpuWindow->setFrameSource(fn);
+        _gpuWindow->setFrameSource(std::move(source));
     else if (_software)
-        _software->setFrameSource(fn);
+        _software->setFrameSource(std::move(source));
+}
+
+void DeviceScreenWrapper::setGameVideo(const smoothmotion::GameVideo* game)
+{
+    if (_gpuWindow)
+        _gpuWindow->setGameVideo(game);
+    if (_software)
+        _software->setGameVideo(game);
 }
 
 void DeviceScreenWrapper::clearFrameSource()
@@ -555,12 +566,26 @@ bool DeviceScreenWrapper::isGPUAvailable()
     return DeviceScreenGLWindow::probeGPUAcceleration();
 }
 
+bool DeviceScreenWrapper::recheckGPUAvailable()
+{
+    return DeviceScreenGLWindow::reprobeGPUAcceleration();
+}
+
 void DeviceScreenWrapper::setTemporalBlendingEnabled(bool enabled)
 {
     if (_useGPU && _gpuWindow)
         _gpuWindow->setTemporalBlendingEnabled(enabled);
     else if (_software)
         _software->setTemporalBlendingEnabled(enabled);
+}
+
+WindowPresentStats DeviceScreenWrapper::presentStats() const
+{
+    if (_useGPU && _gpuWindow)
+        return _gpuWindow->presentStats();
+    if (_software)
+        return _software->presentStats();
+    return {};
 }
 
 bool DeviceScreenWrapper::temporalBlendingEnabled() const

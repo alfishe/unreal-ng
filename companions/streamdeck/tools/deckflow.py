@@ -69,7 +69,7 @@ MENU_GLYPH = "nav.folder"
 NAV_GLYPHS = {"back": "nav.back", "home": "nav.home"}
 
 # Fields of a key entry, of a menu section, of a dial; the order fresh entries are written in
-KEY_FIELDS = ["at", "uc", "open", "action", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
+KEY_FIELDS = ["at", "uc", "open", "action", "gui", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
               "glyph", "glyph_on", "state", "show", "face", "face_on", "tags", "activity", "extra"]
 INCLUDE_FIELDS = ["at", "open", "uc", "title", "label", "glyph", "face", "tags", "extra"]
 MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "readonly", "strip", "back", "navigation", "face", "tags",
@@ -91,6 +91,7 @@ class Paths:
         self.sync = os.path.join(self.scen, ".sync")
         self.docs = docs or os.path.join(root, "docs", "inprogress", "2026-10-19-streamdeck-integration", "scenarios")
         self.catalogue = os.path.join(self.data, "streamdeck", "catalogue.json")
+        self.gui_catalogue = os.path.join(self.data, "streamdeck", "gui-catalogue.json")
         self.glyphs = os.path.join(self.data, "streamdeck", "icons", "glyphs.json")
         self.packs = os.path.join(self.data, "streamdeck", "icons", "packs")
         self.use_cases = os.path.join(root, "docs", "inprogress", "2026-10-19-streamdeck-integration", "use-cases.md")
@@ -143,6 +144,8 @@ class Vocab:
         self.paths = paths
         self.catalogue = gen.load_json(paths.catalogue)
         self.actions = {a["id"]: a for a in self.catalogue["actions"]}
+        # The GUI control plane's commands (gui-catalogue.json, written by the build): {method: command + level}
+        self.gui = gen.gui_commands(gen.load_json(paths.gui_catalogue)) if os.path.exists(paths.gui_catalogue) else {}
         g = gen.load_json(paths.glyphs)
         self.glyph_list = g["glyphs"]
         self.glyphs = {x["id"]: x for x in g["glyphs"]}
@@ -197,13 +200,24 @@ class Vocab:
                 break
         state = a.get("state")
         if state and "<" in state:
-            name = value.get("name") if isinstance(value, dict) else None
-            state = re.sub(r"<[^>]+>", str(name), state) if name else None
+            # toggle.feature.<name>: the value's name; gui.metadata.<switch>: the GUI command's param of that name
+            got = value if isinstance(value, dict) else {}
+            if aid in self.gui:
+                keys = re.findall(r"<([^>]+)>", state)
+                state = re.sub(r"<([^>]+)>", lambda m: str(got[m.group(1)]), state) if all(
+                    got.get(k) is not None for k in keys) else None
+            else:
+                name = got.get("name")
+                state = re.sub(r"<[^>]+>", str(name), state) if name else None
         return face, (a.get("face_on") if state else None), state
 
     def readout_ok(self, path):
         if not re.match(r"^[a-z][A-Za-z0-9_.-]*$", path) or ".." in path or path.endswith(".") or "." not in path:
             return False
+        if path.startswith("gui."):
+            # the GUI program's root state (the daemon reads it from the plane): a host interface's field or object
+            first = path[len("gui."):].split(".")[0]
+            return first in gen.gui_root_fields(self.gui)
         if path.startswith("toggle."):
             rest = path[len("toggle."):]
             return rest.startswith("feature.") or any(rest == a or rest.startswith(a + ".")
@@ -591,6 +605,8 @@ def place_auto(model, spec=None):
 def first_action(n):
     if n.get("action"):
         return n["action"], n.get("value")
+    if n.get("gui"):
+        return n["gui"], n.get("params")
     for s in n.get("steps") or []:
         if isinstance(s, dict) and s.get("action"):
             return s["action"], s.get("value")
@@ -610,6 +626,10 @@ def defaults(n, vocab):
         face, face_on, state = vocab.glyph_for(aid, value)
         d.update(glyph=face, glyph_on=face_on, state=state, hold=vocab.default_hold(aid))
         d["title"] = vocab.actions.get(aid, {}).get("label")
+    elif n.get("gui"):
+        face, face_on, state = vocab.glyph_for(aid, value)
+        d.update(glyph=face, glyph_on=face_on, state=state, hold=bool(vocab.gui.get(aid, {}).get("repeats")))
+        d["title"] = vocab.gui.get(aid, {}).get("label")
     elif aid:
         d["glyph"] = vocab.glyph_for(aid, value)[0]
         d["title"] = vocab.actions.get(aid, {}).get("label")
@@ -757,6 +777,12 @@ class Project:
                         out[f] = n[f]
                 if e.get("hold"):
                     out["hold"] = True
+            elif n.get("gui"):
+                out["gui"] = n["gui"]
+                if n.get("params") is not None:
+                    out["params"] = n["params"]
+                if e.get("hold"):
+                    out["hold"] = True  # a command that repeats (cursor, page) repeats while the key is held
             elif n.get("steps"):
                 out["steps"] = [self.step(s) for s in n["steps"]]
             elif n.get("nav"):
@@ -784,12 +810,14 @@ class Project:
         s = spec_step(s)
         if isinstance(s, dict) and s.get("action") and "hold" not in s and self.vocab.default_hold(s["action"]):
             s["hold"] = True
+        if isinstance(s, dict) and s.get("gui") and "hold" not in s and self.vocab.gui.get(s["gui"], {}).get("repeats"):
+            s["hold"] = True
         return s
 
     def document(self, model, include_file):
         spec = self.gen_spec(model, include_file)
         try:
-            doc = gen.Generator(self.vocab.catalogue, spec).scenario()
+            doc = gen.Generator(self.vocab.catalogue, spec, self.vocab.gui).scenario()
         except gen.SpecError as e:
             raise Failed([Issue(model["doc"].get("name", "?"), str(e))]) from None
         if model["doc"].get("extra"):
@@ -838,6 +866,14 @@ def decompile_step(s, vocab):
         if isinstance(s.get("params"), dict):
             out["params"] = s["params"]
         if bool(s.get("hold")) != vocab.default_hold(s["id"]):
+            out["hold"] = bool(s.get("hold"))
+        return out
+    if s.get("kind") == "gui" and set(s) <= {"kind", "method", "params", "target", "hold"} and s.get("method"):
+        out = {"gui": s["method"]}
+        for f in ("params", "target"):
+            if f in s:
+                out[f] = s[f]
+        if bool(s.get("hold")) != bool(vocab.gui.get(s["method"], {}).get("repeats")):
             out["hold"] = bool(s.get("hold"))
         return out
     if s.get("kind") == "nav" and set(s) <= {"kind", "to", "node"}:
@@ -961,6 +997,11 @@ def project_model(doc, vocab, base=None, where=""):
                     for f in ("value", "params"):
                         if f in ds:
                             m[f] = ds[f]
+                    m["_hold"] = bool(do.get("hold"))
+                elif "gui" in ds and "target" not in ds:
+                    m["gui"] = ds["gui"]
+                    if "params" in ds:
+                        m["params"] = ds["params"]
                     m["_hold"] = bool(do.get("hold"))
                 elif "nav" in ds:
                     m["nav"] = ds["nav"]
@@ -1224,6 +1265,8 @@ def map_step(st):
         return ""
     if st.get("action"):
         return str(st["action"])
+    if st.get("gui"):
+        return str(st["gui"])
     if st.get("nav"):
         return "go " + str(st["nav"])
     return ""
@@ -1558,15 +1601,43 @@ def check_model(model, vocab, spec=None, where_default=""):
                                                     + (f" (in its group: {', '.join(near)})" if near else "")))
                 return
             check_params(aid, s.get("value"), s.get("params"), nid, field)
+        elif "gui" in s:
+            check_gui(s, nid, field)
         elif "nav" in s and "kind" not in s:
             t = s["nav"]
             if t not in ("back", "home") and t not in nodes:
                 issues.append(Issue(at(nid, field), f"nav: '{t}' is back, home or a node of this document"))
+        elif s.get("kind") == "gui":
+            check_gui(dict({"gui": s.get("method")}, **{k: s[k] for k in ("params", "target") if k in s}), nid, field)
         elif "kind" in s:
             if s["kind"] in ("shell", "open", "keys", "webapi"):
                 issues.append(Issue(at(nid, field), f"kind '{s['kind']}' is not for a shipped scenario (ACC-5)"))
         else:
             issues.append(Issue(at(nid, field), "a step needs action, nav or kind"))
+
+    def check_gui(s, nid, field):
+        """A GUI control plane command (gui-catalogue.json): its method and the parameters it declares."""
+        method = s["gui"]
+        bad = [f for f in s if f not in ("gui", "params", "target", "hold")]
+        if bad:
+            issues.append(Issue(at(nid, field), f"a gui step takes gui, params, target, hold; not {', '.join(bad)}"))
+        if not vocab.gui:
+            issues.append(Issue(at(nid, field), "no gui-catalogue.json (the build writes it: tools/build/build.sh "
+                                                "gui-catalogue)"))
+            return
+        c = vocab.gui.get(method)
+        if c is None:
+            near = [m for m in vocab.gui if m.split(".")[0] == str(method).split(".")[0]][:8]
+            issues.append(Issue(at(nid, field), f"gui '{method}' is not a GUI control plane command"
+                                                + (f" (its interface: {', '.join(near)})" if near else "")))
+            return
+        params = s.get("params")
+        if params is not None and not isinstance(params, dict):
+            issues.append(Issue(at(nid, field), f"{method}: params is a mapping"))
+            return
+        why = gen.gui_params_error(c, params or {})
+        if why:
+            issues.append(Issue(at(nid, field), why))
 
     def check_params(aid, value, params, nid, field):
         p = vocab.params(aid)
@@ -1653,9 +1724,15 @@ def check_model(model, vocab, spec=None, where_default=""):
             # the glyphs the key shows (its own or its action's): every pack must draw them
             glyph(n.get(f) if n.get(f) not in (None, "none") or n["kind"] == "include" else e.get(f), nid, f)
         if n["kind"] == "key":
-            acts = [n] if n.get("action") else []
+            acts = [n] if n.get("action") or n.get("gui") else []
             if n.get("action"):
                 step({k: n[k] for k in ("action", "value", "hold", "params") if k in n}, nid, "action")
+            if n.get("gui"):
+                if "value" in n:
+                    issues.append(Issue(at(nid, "gui"), f"key {nid}: a gui command takes params, not value"))
+                if n.get("hold") and not vocab.gui.get(n["gui"], {}).get("repeats"):
+                    issues.append(Issue(at(nid, "hold"), f"{n['gui']} does not repeat: hold does nothing", False))
+                step({k: n[k] for k in ("gui", "params") if k in n}, nid, "gui")
             for s in n.get("steps") or []:
                 step(s, nid, "steps")
             if n.get("nav") is not None:
@@ -1665,9 +1742,10 @@ def check_model(model, vocab, spec=None, where_default=""):
             if n.get("show") is not None:
                 show(n["show"], nid)
             if not (acts or n.get("steps") or n.get("nav") or n.get("do") or n.get("show")):
-                issues.append(Issue(at(nid), f"key {nid} does nothing: give it action, steps, nav, do, open or show"))
-            if sum(1 for f in ("action", "steps", "nav", "do") if n.get(f) is not None) > 1:
-                issues.append(Issue(at(nid), f"key {nid}: one of action, steps, nav, do"))
+                issues.append(Issue(at(nid), f"key {nid} does nothing: give it action, gui, steps, nav, do, open or "
+                                             "show"))
+            if sum(1 for f in ("action", "gui", "steps", "nav", "do") if n.get(f) is not None) > 1:
+                issues.append(Issue(at(nid), f"key {nid}: one of action, gui, steps, nav, do"))
             if n.get("then") not in (None, "stay", "back", "home"):
                 issues.append(Issue(at(nid, "then"), f"then: stay, back or home (not '{n['then']}')"))
             if e.get("state") and not vocab.readout_ok(e["state"]):
@@ -1675,9 +1753,9 @@ def check_model(model, vocab, spec=None, where_default=""):
                                                       "(readouts.h: run.state.paused, toggle.<action id>, ...)"))
             if e.get("state") and not e.get("glyph_on") and not n.get("face_on"):
                 issues.append(Issue(at(nid, "state"), "state without glyph_on: the face never changes", False))
-            if n.get("action") and not e.get("glyph") and not n.get("show"):
-                issues.append(Issue(at(nid), f"{n['action']} has no glyph (glyphs.json binds none): the key shows "
-                                             "its title", False))
+            if (n.get("action") or n.get("gui")) and not e.get("glyph") and not n.get("show"):
+                issues.append(Issue(at(nid), f"{n.get('action') or n.get('gui')} has no glyph (glyphs.json binds "
+                                             "none): the key shows its title", False))
             if n.get("hold") and n.get("action") and not vocab.actions.get(n["action"], {}).get("held"):
                 issues.append(Issue(at(nid, "hold"), f"{n['action']} is not a held action", False))
         if n["kind"] == "menu":
@@ -2227,6 +2305,11 @@ class MetaDoc:
             if s.get("hold"):
                 t += " (held)"
             return t
+        if "gui" in s:
+            t = f"`{s['gui']}`"
+            if s.get("params"):
+                t += " " + deckyaml.flow(s["params"])
+            return t + " (GUI)"
         if "nav" in s:
             return f"go to {s['nav']}"
         return deckyaml.flow(s)
@@ -2239,6 +2322,8 @@ class MetaDoc:
             return f"opens menu `{kn.get('id', '')}`".replace("``", "") if False else "opens the menu"
         if kn.get("action"):
             t = self.step_text({"action": kn["action"], "value": kn.get("value"), "hold": ke.get("hold")})
+        elif kn.get("gui"):
+            t = self.step_text({"gui": kn["gui"], "params": kn.get("params")})
         elif kn.get("steps"):
             t = "; ".join(self.step_text(s) for s in kn["steps"])
         elif kn.get("nav"):

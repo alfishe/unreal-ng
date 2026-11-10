@@ -30,6 +30,10 @@
 #include "pch.h"
 #include "unrealdisk/trdosfs.h"
 
+#ifdef ENABLE_RECORDING
+#include "ffmpeg_probe.h"
+#endif
+
 using namespace actions;
 
 namespace
@@ -119,7 +123,6 @@ TEST_F(HostActionsMachine_Test, TheAreaActionsAreInTheCatalogueWithParamsScopesA
     {
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info.has_value()) << id;
-        EXPECT_FALSE(info->gui) << id;
         EXPECT_FALSE(info->description.empty()) << id << " has a description";
     }
     EXPECT_TRUE(registry.Find("mach.switch")->toggle);
@@ -446,6 +449,12 @@ TEST_F(HostActionsMachine_Test, RecordToggleStartsAGifPausesAndStopsAndRefusesBa
 /// unavailable until a recording runs; the readout says whether the picture or the sound alone is recorded
 TEST_F(HostActionsMachine_Test, RecordStartAndStopAreTheRecAndStopKeys)
 {
+#ifdef ENABLE_RECORDING
+    if (!FFmpegProbe::isAvailable())
+        GTEST_SKIP() << "ffmpeg not available on this machine (the recordings run through it)";
+#else
+    GTEST_SKIP() << "no recording in this build (ENABLE_RECORDING=OFF)";
+#endif
     ActionRegistry& registry = ActionRegistry::Instance();
     const std::string folder = Scratch("record-start-stop");
     EXPECT_EQ(registry.ToggleState("cap.record_start", _id), false);

@@ -59,6 +59,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Create the executable
 add_executable(${PROJECT_NAME} ${SOURCES})
 
+# The GUI control plane (guicontrol/): the window `main` and its view `screen`
+if (NOT TARGET guicontrol-widgets)
+    add_subdirectory("${ROOT_DIR}/guicontrol" guicontrol)
+endif ()
+target_link_libraries(${PROJECT_NAME} PRIVATE guicontrol-widgets)
+
 # Application icon (shared with unreal-qt) as a Qt resource: window / taskbar
 # icon on Windows and Linux. AUTORCC is off, so the .qrc is compiled explicitly.
 qt6_add_resources(APP_ICON_RESOURCES "${ROOT_DIR}/unreal-qt/resources/appicon.qrc")

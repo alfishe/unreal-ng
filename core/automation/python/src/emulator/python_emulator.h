@@ -134,6 +134,7 @@
 #include "emulator/video/viewportcontrol.h"
 #include "emulator/video/windowrecording.h"
 #include "../../../windowdisplay.h"
+#include "../../../common/guicall.h"
 #include "../../../operationsstatus.h"
 #include <emulator/io/rtc/rtcaccess.h>
 #include <emulator/io/sprinter/isa/isaaccess.h>
@@ -666,7 +667,6 @@ inline pybind11::object ActionsPy(Emulator& self)
         row["group"] = status.info.group;
         row["kind"] = actions::ValueKindName(status.info.kind);
         row["held"] = status.info.held;
-        row["gui"] = status.info.gui;
         row["scope"] = automation_gate::CompanionScopeName(status.scope);
         row["needs_pause"] = status.needsPause;
         row["toggle"] = status.info.toggle;
@@ -767,7 +767,7 @@ inline pybind11::object StreamDeckPy(const std::string& verb, const pybind11::kw
     return StateNodeToPy(companion::streamdeck::Call(verb, args).body);
 }
 
-/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, controllers.devices, emulator.stats,
+/// A monitoring verb (monitoring::Call: all, host.stats, host.clients, video.present, controllers.devices, emulator.stats,
 /// debug.breakpoints, media.slots, recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state,
 /// game.events, devices.access) with its args as keywords (instance= an id or an index; default this emulator for an
 /// instance's name); the reply every plane returns
@@ -1565,6 +1565,45 @@ namespace PythonBindings
         m.def("companions", []() -> py::object {
             return StateNodeToPy(companion::CompanionRegistry::Instance().Report());
         }, "Companion clients and pending pairings: {companions: [...], pairings: [...], approval_available, pairing_allowed}");
+        // The GUI control plane's methods the program registered (gui-control-plane design §4.10), as `unreal-gui`,
+        // the CLI `gui`, WebAPI /api/v1/gui. Each answers the plane's result {ok, body} or {ok: False, error, message};
+        // waits up to 15 s with the GIL released (the GUI thread may want it)
+        m.def("gui_list", []() -> py::object {
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait("list", {}, StateNode::Object());
+            }
+            return StateNodeToPy(result);
+        }, "The GUI programs on this machine: hosts[{program, windows[{id, interfaces, state, views[...]}], focus}]");
+        m.def("gui_catalogue", []() -> py::object {
+            StateNode catalogue;
+            if (!StateNodeFromJsonText(GuiPlane::Catalogue(), catalogue))
+                return StateNodeToPy(gui_call::Parse(GuiPlane::Failure(GuiPlane::kNoGui, "no GUI catalogue")));
+            return StateNodeToPy(catalogue);
+        }, "The GUI interfaces: interfaces[{name, level, description, state, commands[{method, params}]}]");
+        m.def("gui_state", [](const std::string& target) -> py::object {
+            StateNode params = StateNode::Object();
+            params["target"] = target;
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait("state", {}, params);
+            }
+            return StateNodeToPy(result);
+        }, "A node's state, interfaces and machine: gui_state('main/screen')", py::arg("target"));
+        m.def("gui_call", [](const std::string& method, const std::string& target, const py::kwargs& kwargs) -> py::object {
+            StateNode params = StateNode::Object();
+            for (const auto& item : kwargs)
+                params[py::str(item.first).cast<std::string>()] = PyToStateNode(item.second);
+            StateNode result;
+            {
+                py::gil_scoped_release release;
+                result = gui_call::CallAndWait(method, target, params);
+            }
+            return StateNodeToPy(result);
+        }, "Run a GUI command: gui_call('memory.goto', addr='0x6000'), gui_call('screen.zoom', 'main/screen', factor=2)",
+           py::arg("method"), py::arg("target") = "");
         m.def("companion_revoke", [](const std::string& idOrName) -> size_t {
             return companion::CompanionRegistry::Instance().Revoke(idOrName);
         }, "Revoke a companion by id or name ('all': every one); the number revoked", py::arg("id"));
@@ -1849,10 +1888,6 @@ namespace PythonBindings
             auto* mgr = EmulatorManager::GetInstance();
             return mgr && mgr->SetSelectedEmulatorId(id);
         }, "Set emulator as currently selected by ID", py::arg("id"));
-
-        m.def("videowall_singlesync", [](bool enable, const std::string& emulatorId) -> bool {
-            return Automation::GetInstance().SetVideowallSingleSyncMode(enable, emulatorId);
-        }, "Enable or disable Single Emulator Sync Mode for the videowall", py::arg("enable"), py::arg("emulator_id") = "");
 
         // The user took control back from this script's automation session (execution arbiter design §6a)
         py::register_exception<execution::script::ControlRevoked>(m, "ControlRevoked");
@@ -2855,8 +2890,8 @@ namespace PythonBindings
             .def("monitor", [](Emulator& self, const std::string& verb, const py::kwargs& options) {
                      return MonitorPy(self, verb, options);
                  }, py::arg("verb") = "all",
-                 "Monitoring (all, host.stats, host.clients, controllers.devices, emulator.stats, debug.breakpoints, "
-                 "media.slots, "
+                 "Monitoring (all, host.stats, host.clients, video.present, controllers.devices, emulator.stats, "
+                 "debug.breakpoints, media.slots, "
                  "recording.state, debug.labels, ttd.status, debug.analyzers, controllers.state, game.events, devices.access): "
                  "monitor('emulator.stats') -> {ok, instance, fps, speed_percent, ...} as WebAPI /api/v1/monitor")
             .def("surfaces", [](Emulator&, const std::string& verb, const py::kwargs& options) {
@@ -2866,7 +2901,7 @@ namespace PythonBindings
                  "view_update, view_remove, session_open, session_close) with its args as keywords: "
                  "surfaces('pin', session='s1', target='view:v1'); {ok, ...} as WebAPI /api/v1/surfaces")
             .def("actions", [](Emulator& self) { return ActionsPy(self); },
-                 "The host actions: {instance, actions: [{id, label, group, kind, held, gui, scope, needs_pause, "
+                 "The host actions: {instance, actions: [{id, label, group, kind, held, scope, needs_pause, "
                  "available, error, reason}]} (the CLI `action list`, WebAPI GET /controllers/actions, MCP actions)")
             .def("action", [](Emulator& self, const std::string& id, const py::object& value, const py::kwargs& params) {
                      return ActionPy(self, id, value, params);

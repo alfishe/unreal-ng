@@ -12,7 +12,9 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from http.client import HTTPConnection
 
 from mcplib import COMPANION_NARROW_TOKEN, expect, main
 from test_actions import http, instance, release_mcp_session, webapi, ws_calls
@@ -252,16 +254,26 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
     try:
         def frames_in(seconds, poll):
             latencies = []
+            statuses = set()
             stop = threading.Event()
 
             def poller():
+                # One kept-alive connection, as the companion's: a fresh local connect alone takes a timer tick
+                # (15.6 ms) on Windows, whatever the server
+                url = urllib.parse.urlparse(webapi(s))
+                connection = HTTPConnection(url.hostname, url.port, timeout=30)
                 next_at = time.monotonic()
                 while not stop.is_set():
-                    started = time.monotonic()
-                    position(s, emu)
-                    latencies.append((time.monotonic() - started) * 1000)
+                    # perf_counter: monotonic ticks in 15.6 ms steps on Windows (GetTickCount64)
+                    started = time.perf_counter()
+                    connection.request('GET', f'/api/v1/emulator/{emu}/ttd/position')
+                    response = connection.getresponse()
+                    response.read()
+                    latencies.append((time.perf_counter() - started) * 1000)
+                    statuses.add(response.status)
                     next_at += 0.02
                     time.sleep(max(0.0, next_at - time.monotonic()))
+                connection.close()
 
             thread = threading.Thread(target=poller) if poll else None
             before = position(s, emu)['current']['frame']
@@ -273,6 +285,7 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
             if thread:
                 thread.join()
             after = position(s, emu)['current']['frame']
+            expect(statuses <= {200}, 'every poll answers the position', statuses)
             return (after - before) / (time.monotonic() - started), latencies
 
         at = position(s, emu)

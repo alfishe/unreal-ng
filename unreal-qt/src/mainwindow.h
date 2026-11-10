@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -30,6 +31,7 @@
 #include "emulator/zxpoly/zxpolygroup.h"
 #include "emulator/media/mediatargets.h"
 #include "emulator/soundmanager.h"
+#include "emulator/state/statenode.h"
 #include "logviewer/logwindow.h"
 #include "menumanager.h"
 #include "common/displayrefreshrate.h"
@@ -72,6 +74,11 @@ class RecordingWidget;
 #endif
 class DockingManager;
 
+namespace guicontrol
+{
+class Host;
+}
+
 QT_BEGIN_NAMESPACE
 namespace Ui
 {
@@ -106,6 +113,10 @@ public:
     void openFromCommandLine(const QString& filePath, const QString& zxpolyModel);
     /// The headless runner (--script without a file): the machine the Machine menu picks, as Start does
     void startEmulatorIfNone() { handleStartEmulator(); }
+    /// The GUI control plane (docs/inprogress/2026-11-07-gui-control-plane): the host, the main window and the
+    /// debugger as `window` nodes. tcpPort: -1 none (the environment may still turn it on), 0 any free port
+    void startGuiControl(int tcpPort, const QString& tcpBind);
+
     /// A machine of this model and RAM when none runs (Steam Deck Game Mode: a Pentagon 128K)
     void startEmulatorIfNone(const std::string& model, uint32_t ramKb)
     {
@@ -196,10 +207,11 @@ private slots:
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
     void handleStepOver();
-    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor on the instance's actions worker
+    /// Step out / run to the cursor: the actions run.step_out / run.to_cursor (the disassembly's cursor row as its addr)
+    /// on the instance's actions worker
     void handleStepOut();
     void handleRunToCursor();
-    void submitGuiAction(const char* id);
+    void submitGuiAction(const char* id, StateNode params = StateNode::Object());
     // Debug menu: breakpoints and the debugger's panes
     void handleToggleBreakpoint();
     void handleClearAllBreakpoints();
@@ -213,11 +225,24 @@ private slots:
     void handleStatusBarToggled(bool visible);
     void handleHudOverlayToggled(bool visible);
     void handleGpuAccelerationToggled(bool enabled);
+    /// The screen made anew on the GPU or the software one (the picture's settings carry over); `force`: also when it
+    /// already runs there (the GPU changed under it)
+    void rebuildScreen(bool gpu, bool force);
+    /// The GPU asked again on a session, display or adapter change (mainwindow_display.cpp): the screen follows it
+    /// without a restart, View > GPU Acceleration stays the user's wish
+    void watchDisplayChanges();
+    void unwatchDisplayChanges();
+    void scheduleGpuRecheck(const char* why);
+    void recheckGpu();
     void handleCrtEffectsToggled(bool enabled);
     void handleCrtProfileChanged(int profileIndex);
     void handleCrtShaderChanged(const QString& name);
     static int crtProfileIndex(CRTProfile profile);  ///< the entry of View > CRT Profile
     void handleTemporalBlendingToggled(bool enabled);
+    /// View > Video Synchronization: the shown instance's [VIDEO] settings (ApplyVideoSync), kept in View/VideoSync
+    void handleVideoSyncToggled(bool on);
+    /// Tools > Video Synchronization: the window with the step in effect, live
+    void handleVideoSyncWindowRequested();
     void handleDebuggerToggled(bool visible);
     void handleExternalDebuggerRequested(const QString& program);
     void handleDebuggerVisibilityChanged(bool visible);
@@ -273,6 +298,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void changeEvent(QEvent* event) override;
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragLeaveEvent(QDragLeaveEvent* event) override;
@@ -298,6 +324,8 @@ protected:
     void registerWindowView();
     /// The View menu's display settings (GPU, CRT, temporal blending) for the automation. GUI thread
     WindowDisplaySettings windowDisplaySettings() const;
+    /// The present part of the settings (the emulator, smooth motion, the policy, the display rate, the presenter)
+    void fillPresentSettings(WindowDisplaySettings& s) const;
     /// Apply an automation change (validated by the core) through the View menu's handlers, menu checks in step. GUI thread
     void applyWindowDisplay(const WindowDisplayChange& change);
     /// The active CRT profile's parameters: a libretro preset's own, the built-in profile's (basic, a custom shader's
@@ -311,6 +339,7 @@ protected:
     void schedulePublishWindowDisplay();
     /// The View menu's changes, the side windows and the window state all publish (once, from the constructor)
     void connectWindowDisplayPublishing();
+    void publishIfPresentChanged();
     /// QSettings View/*: GPU, CRT profile / shader and its values, blending, scale, HUD and theme (not overscan: the machine's).
     /// UNREAL_QT_VIEW_SETTINGS=off: neither read nor written
     void saveViewSettings() const;
@@ -483,11 +512,12 @@ private:
     HostControllers* _hostControllers = nullptr;        // host game controllers: service, profiles, player connectors
     ControllersDialog* _controllersDialog = nullptr;    // Tools -> Controllers
     ControllerToast* _controllerToast = nullptr;        // the auto-profile toast (port reads)
+    std::unique_ptr<guicontrol::Host> _guiHost;          // the GUI control plane's host (startGuiControl)
     std::unique_ptr<GuiActions> _guiActions;            // the GUI host actions in the core registry; device events
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     class WindowRecorder* _windowRecorder = nullptr;      // the window recording (WindowView), made on first use
-    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, the osd.keyboard action
+    OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, unrealqt.osd_keyboard
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity
     SlotChangeController* _slotChangeController = nullptr;   // plan, confirm, restart, Undo (every slot change)
@@ -542,6 +572,22 @@ private:
     void startZXPoly(const QString& filePath, const QString& model = QString());
     void releaseZXPolyGroup();
     bool attachScreenToZXPolyDisplay();
+    /// The resolved game profile's `video:` section into the screen's smooth motion (mapping-and-profiles.md §7.7)
+    void applyGameVideo();
+    /// The shown instance's frames handed to the screen again: its [VIDEO] SmoothMotion / EffectsDevice changed (the
+    /// automation's smooth_motion, effects_device). A ZX-Poly master's group display has no timed frames: left alone
+    void refreshFrameSource();
+    /// TimedFrameSource for the shown instance; one the window starts showing takes View > Video Synchronization
+    ScreenFrames frameSourceFor(Screen* screen, EmulatorContext* context);
+    /// View > Video Synchronization (View/VideoSync, on unless set off); none with UNREAL_QT_VIEW_SETTINGS=off: the
+    /// instances keep their [VIDEO] settings
+    std::optional<bool> _videoSync;
+    std::string _videoSyncApplied;  ///< the instance it went to last
+    bool _gpuWanted = true;              ///< View > GPU Acceleration as asked (View/Gpu); the screen runs it when it can
+    QTimer* _gpuRecheckTimer = nullptr;  ///< the GPU asked again a moment after a change (the driver follows late)
+    int _gpuRechecksLeft = 0;            ///< more asks while the GPU wanted is not there yet
+    void* _sessionNotifyWindow = nullptr;  ///< Windows: the HWND registered for session changes
+    QPointer<class VideoSyncWindow> _videoSyncWindow;  ///< Tools > Video Synchronization, made on first use
     bool _switchingModel = false;  // True while model switch is in progress (prevents notification handler interference)
 
     QPoint _lastCursorPos;
@@ -554,6 +600,8 @@ private:
     double _zoomFactor = 2.0;  // Window zoom over the picture's native size, kept across video modes
     int _startScale = 2;       // the zoom of the first fit (View/Scale)
     QTimer* _publishTimer = nullptr;  // coalesces publishWindowDisplay after a burst of changes
+    QTimer* _presentWatch = nullptr;  // once a second: publishes when the way to the screen changed (video.present)
+    std::string _presentShown;        // that way as last published
     bool _viewSettingsEnabled = true; // UNREAL_QT_VIEW_SETTINGS=off: View/* neither read nor written
     HudThemeId _hudTheme = HudThemeId::DarkGlass;
     QSize _chrome;  // Last sane windowChrome()

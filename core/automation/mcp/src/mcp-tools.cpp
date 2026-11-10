@@ -22,6 +22,7 @@
 #include "mcp-history.h"
 #include "mcp-slots.h"
 #include "mcp-actions.h"
+#include "mcp-gui.h"
 #include "mcp-streamdeck.h"
 #include "mcp-audio.h"
 #include "mcp-controllers.h"
@@ -32,6 +33,7 @@
 #include "mcp-tool-utils.h"
 
 #include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
+#include "../../common/guimethods.h"   // the GUI plane's catalogue, when the program registered one (header only)
 
 #include "../../../src/debugger/callbacks/callbacktext.h"  // the callback line every plane prints (header only)
 
@@ -7834,6 +7836,10 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+
+    // gui_<interface>, gui_list, gui_state: the GUI control plane's methods, when the program registered them before
+    // the start (gui-control-plane design §4.10)
+    RegisterGui(*registry, GuiPlane::Catalogue());
 
     // Router tools (search_api + invoke_api)
     RegisterRouterTools(*registry, std::move(caller));

@@ -1,4 +1,7 @@
 #include "mainwindow.h"
+#ifdef ENABLE_CONTROLLERS
+#include "profiles/videoprofile.h"
+#endif
 #include <emulator/video/displaygeometry.h>
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
@@ -53,6 +56,7 @@
 #include <QScopedValueRollback>
 #include <QShortcut>
 #include <QThread>
+#include <QJsonArray>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -71,6 +75,7 @@
 #include "common/modulelogger.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassemblerwidget.h"
 #include "debugger/symbolbundlepreferences.h"
 #include "emulator/filemanager.h"
 #include "emulator/hostkeyboardmenu.h"
@@ -83,6 +88,7 @@
 #include "emulator/soundmanager.h"
 #include "debugger/widgets/audiosettingswidget.h"
 #include "cardslots/midiactivitywindow.h"
+#include "ui/videosyncwindow.h"
 #include "cardslots/slotchangecontroller.h"
 #include "cardslots/slotswindow.h"
 #include "nextlayers/nextlayerswindow.h"
@@ -118,6 +124,13 @@
 #include "emulator/mousecapturecontroller.h"
 #include "emulator/companioncontroller.h"
 #include "emulator/remotecontrolguard.h"
+#include "automation/common/guimethods.h"
+#include "guicontrol/corebridge.h"
+#include "guicontrol/host.h"
+#include "guicontrol/screenbinding.h"
+#include "guicontrol/windowbinding.h"
+#include "guiplane/debuggercontrol.h"
+#include "guiplane/programcontrol.h"
 
 namespace
 {
@@ -174,6 +187,53 @@ QString buildExtPattern(const QStringList& exts)
 QString buildFilterGroup(const QString& label, const QStringList& exts)
 {
     return QString("%1 (%2)").arg(label, buildExtPattern(exts));
+}
+
+// The screen's frames by time for the screen widget, and the video presentation latency readout (EMA 1/8, half of
+// the realtime A/V offset): when the frame reaches the screen minus its latch. The frames in order for smooth motion
+// ([VIDEO] SmoothMotion)
+/// View > Video Synchronization into an instance's [VIDEO] settings: on = smooth motion auto (VRR, else a fitting
+/// display rate, else interpolation), present policy auto, display rate match; off = the frame of each refresh
+/// (smooth motion off, present policy vsync, display rate keep)
+void ApplyVideoSync(CONFIG& config, bool on)
+{
+    config.smoothMotion = static_cast<uint8_t>(on ? smoothmotion::Mode::Auto : smoothmotion::Mode::Off);
+    config.presentPolicy = static_cast<uint8_t>(on ? PresentPolicy::Auto : PresentPolicy::Vsync);
+    config.displayRate = static_cast<uint8_t>(on ? DisplayRate::Match : DisplayRate::Keep);
+}
+
+ScreenFrames TimedFrameSource(Screen* screen, EmulatorContext* context)
+{
+    ScreenFrames source;
+    source.next = [screen, context](uint64_t afterSerial, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        return context && screen->CopyNextFrame(afterSerial, dst, dstSize, info, false);
+    };
+    if (context && context->config.smoothMotion <= static_cast<uint8_t>(smoothmotion::Mode::Auto))
+        source.smooth = static_cast<smoothmotion::Mode>(context->config.smoothMotion);
+    source.onCpu = context && context->config.effectsOnCpu;
+    if (context && context->config.presentPolicy <= static_cast<uint8_t>(PresentPolicy::Vsync))
+        source.policy = static_cast<PresentPolicy>(context->config.presentPolicy);
+    if (context && context->config.displayRate <= static_cast<uint8_t>(DisplayRate::Match))
+        source.displayRate = static_cast<DisplayRate>(context->config.displayRate);
+    source.at = [screen, context](int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        PresentFrameInfo shown;
+        if (!context || !screen->CopyFrameAt(hostNs, dst, dstSize, &shown))
+            return false;
+        if (info)
+            *info = shown;
+        // A refresh asks with `info`; a grab (a screenshot, no info) is not a frame reaching the screen
+        if (info && shown.latchNs != 0)
+        {
+            // Signed EMA: unsigned (sample - prev) wraps when the new sample is smaller, exploding the average
+            const int64_t sample = std::clamp<int64_t>((hostNs - shown.latchNs) / 1000, 0, 1000000);
+            const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
+            const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
+            context->pVideoPresentLatencyUs.store(static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)),
+                                                  std::memory_order_relaxed);
+        }
+        return true;
+    };
+    return source;
 }
 }  // namespace
 
@@ -384,30 +444,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
-    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): the core ActionRegistry runs them on the
-    // instance's actions worker; the GUI ones are registered here, and a device's action bindings go there
+    // Host actions (debug-and-ttd.md §3, control surfaces architecture §3): a device's action bindings go to the core
+    // ActionRegistry (the instance's actions worker) or, for a GUI control plane command, to the program's host.
     // A seek's marks come back to the device that moved: it feels them (control surfaces architecture.md §9)
-    GuiActionHooks guiHooks{debuggerWindow, [this] { handleDebuggerToggled(true); },
-                            [this] { handleScreenshotRequested(); },
-                            [this](const QString& text) { statusBar()->showMessage(text, 3000); },
-                            [this] { handleOsdKeyboardToggled(!_osdKeyboardWindow || !_osdKeyboardWindow->isVisible()); },
+    GuiActionHooks guiHooks{[this](const QString& text) { statusBar()->showMessage(text, 3000); },
                             [this](const std::string& device, const std::vector<std::string>& marks) {
                                 _hostControllers->PlayMarks(device, marks);
                             }};
-    const auto showControllers = [this] {
-        _controllersDialog->show();
-        _controllersDialog->raise();
-        _controllersDialog->activateWindow();
-    };
-    guiHooks.showControllers = showControllers;
-    guiHooks.learn = [this, showControllers](const std::string& device) {
-        showControllers();
-        return _controllersDialog->openLearnWizard(device);
-    };
     _guiActions = std::make_unique<GuiActions>(m_binding, std::move(guiHooks));
     _controllersDialog->setActions(&_guiActions->Registry());
     connect(_hostControllers, &HostControllers::actionTriggered, this,
             [this](const HostActionEvent& event) { _guiActions->Trigger(event); });
+    connect(_hostControllers, &HostControllers::gameVideoChanged, this, &MainWindow::applyGameVideo);
     // The debugger closed: a debug.* context the GUI set returns to the default
     connect(debuggerWindow, &DebuggerWindow::visibilityChanged, _hostControllers, &HostControllers::OnDebuggerVisible);
     _controllerToast = new ControllerToast(this);
@@ -486,7 +534,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _nextLayersWindow->setBinding(m_binding);
     _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
 
-    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or osd.keyboard
+    // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or unrealqt.osd_keyboard
     _osdKeyboardWindow = new OsdKeyboardWindow(this);
     _osdKeyboardWindow->setBinding(m_binding);
 
@@ -633,6 +681,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::intParametersRequested, this, &MainWindow::handleIntParametersRequested);
     connect(_menuManager, &MenuManager::audioSettingsRequested, this, &MainWindow::handleAudioSettingsRequested);
     connect(_menuManager, &MenuManager::temporalEffectsRequested, this, &MainWindow::handleTemporalEffectsRequested);
+    connect(_menuManager, &MenuManager::videoSyncToggled, this, &MainWindow::handleVideoSyncToggled);
+    connect(_menuManager, &MenuManager::videoSyncWindowRequested, this, &MainWindow::handleVideoSyncWindowRequested);
     connect(_menuManager, &MenuManager::hudSettingsRequested, this, &MainWindow::handleHudSettingsRequested);
     connect(_menuManager, &MenuManager::overscanModeToggled, this, &MainWindow::handleOverscanModeToggled);
     connect(_menuManager, &MenuManager::viewportChanged, this, &MainWindow::handleViewportChanged);
@@ -955,6 +1005,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
 
 MainWindow::~MainWindow()
 {
+    unwatchDisplayChanges();
     setAcceptDrops(false);
     _guiActions.reset();  // the GUI actions leave the core registry before the windows they drive
     WindowView::SetProvider(nullptr);  // the automation's "window" screenshots end with the window
@@ -1091,6 +1142,7 @@ void MainWindow::showEvent(QShowEvent* event)
     {
         _initialFitDone = true;
         QTimer::singleShot(0, this, [this]() { fitWindowToScreen(_startScale); });
+        watchDisplayChanges();  // the GPU and the displays may come and go (a remote session, a monitor, an adapter)
 
         // Turbo render cap follows the display we are on (and moves with the window)
         applyDisplayRefreshRate();
@@ -2648,31 +2700,7 @@ void MainWindow::handleVideoModeChanged(int id, Message* message)
 
             // init() -> detach() clears the tear-free frame source - re-install
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(frameSourceFor(screen, context));
         },
         Qt::QueuedConnection);
 }
@@ -2810,8 +2838,79 @@ bool MainWindow::attachScreenToZXPolyDisplay()
                          static_cast<uint16_t>(group->GetDisplayHeight()),
                          const_cast<uint32_t*>(group->GetDisplayBuffer()));
     _screenWrapper->clearDisplayViewport();
-    _screenWrapper->setFrameSource([group](uint8_t* dst, size_t dstSize, PictureGeometry*) { return group->CopyDisplay(dst, dstSize); });
+    // The group composes its display from its machines' frames on request: no serials, no times
+    _screenWrapper->setFrameSource([group](int64_t, uint8_t* dst, size_t dstSize, PresentFrameInfo* info) {
+        if (info)
+            *info = PresentFrameInfo{};
+        return group->CopyDisplay(dst, dstSize);
+    });
     return true;
+}
+
+ScreenFrames MainWindow::frameSourceFor(Screen* screen, EmulatorContext* context)
+{
+    // View > Video Synchronization: an instance the window starts showing takes the window's choice (later changes,
+    // the automation's included, stay for that instance). The callers pass the shown instance's context
+    if (_videoSync && context && _emulator && _videoSyncApplied != _emulator->GetId())
+    {
+        _videoSyncApplied = _emulator->GetId();
+        ApplyVideoSync(context->config, *_videoSync);
+    }
+    if (_menuManager && context)
+        _menuManager->setVideoSyncChecked(context->config.smoothMotion == static_cast<uint8_t>(smoothmotion::Mode::Auto));
+    return TimedFrameSource(screen, context);
+}
+
+void MainWindow::refreshFrameSource()
+{
+    if (!_screenWrapper || !_emulator)
+        return;
+    EmulatorContext* context = _emulator->GetContext();  // lifetime-ok: held by _emulator
+    if (!context || !context->pScreen)
+        return;
+    if (ZXPolyGroup* group = _emulatorManager->GetZXPolyGroup(_emulator->GetId()); group && group->GetMaster() == _emulator)
+        return;
+    _screenWrapper->setFrameSource(frameSourceFor(context->pScreen, context));
+}
+
+void MainWindow::applyGameVideo()
+{
+    if (!_screenWrapper)
+        return;
+#ifdef ENABLE_CONTROLLERS
+    const controllers::ResolvedProfiles& resolved = _hostControllers->Resolved();
+    controllers::VideoProfile video;
+    std::string error;
+    if (resolved.video.IsNull() || !controllers::ParseVideoProfile(resolved.video, video, error))
+    {
+        if (!error.empty())
+            qWarning("video: %s: %s", resolved.videoProfile.c_str(), error.c_str());
+        _screenWrapper->setGameVideo(nullptr);
+        return;
+    }
+    if (EmulatorContext* context = _hostControllers->BoundContext(); context && context->pScreen)
+    {
+        const FramebufferDescriptor& fb = context->pScreen->GetFramebufferDescriptor();
+        if (!controllers::VideoProfileFits(video, fb.width, fb.height, error))
+        {
+            qWarning("video: %s: %s", resolved.videoProfile.c_str(), error.c_str());
+            _screenWrapper->setGameVideo(nullptr);
+            return;
+        }
+    }
+    smoothmotion::GameVideo game;
+    game.picturePeriod = static_cast<int>(video.picturePeriod);
+    game.mode = video.smooth;
+    const auto rect = [](const controllers::VideoProfile::Rect& r) { return smoothmotion::Rect{r[0], r[1], r[2], r[3]}; };
+    game.window = rect(video.window);
+    for (const controllers::VideoProfile::Rect& r : video.exclude)
+        game.exclude.push_back(rect(r));
+    qInfo("video: %s: picture every %d frames, %s", resolved.videoProfile.c_str(), game.picturePeriod,
+          smoothmotion::GameModeName(game.mode));
+    _screenWrapper->setGameVideo(&game);
+#else
+    _screenWrapper->setGameVideo(nullptr);
+#endif
 }
 
 void MainWindow::startZXPoly(const QString& filePath, const QString& requestedModel)
@@ -3912,10 +4011,19 @@ void MainWindow::handleStepOut()
 
 void MainWindow::handleRunToCursor()
 {
-    submitGuiAction("run.to_cursor");
+    const std::optional<uint16_t> cursor =
+        debuggerWindow != nullptr ? debuggerWindow->disassembler()->cursorAddress() : std::nullopt;
+    if (!cursor)
+    {
+        statusBar()->showMessage(tr("Run to cursor: the disassembly has no cursor row, click one first"), 5000);
+        return;
+    }
+    StateNode params = StateNode::Object();
+    params["addr"] = static_cast<int>(*cursor);
+    submitGuiAction("run.to_cursor", std::move(params));
 }
 
-void MainWindow::submitGuiAction(const char* id)
+void MainWindow::submitGuiAction(const char* id, StateNode params)
 {
     if (!_emulator)
         return;
@@ -3925,7 +4033,9 @@ void MainWindow::submitGuiAction(const char* id)
     origin.client = "menu";
     QPointer<MainWindow> self(this);
     // The actions worker runs it (a run never blocks the GUI thread); a refusal goes to the status bar
-    actions::ActionRegistry::Instance().Submit(id, actions::ActionValue{}, _emulator->GetId(), std::move(origin),
+    actions::ActionValue value;
+    value.params = std::move(params);
+    actions::ActionRegistry::Instance().Submit(id, std::move(value), _emulator->GetId(), std::move(origin),
                                                [self](actions::ActionResult result) {
                                                    if (result.ok)
                                                        return;
@@ -4254,6 +4364,48 @@ void MainWindow::handleAudioSettingsRequested()
     _audioSettingsWidget->activateWindow();
 }
 
+void MainWindow::handleVideoSyncToggled(bool on)
+{
+    if (_viewSettingsEnabled)
+    {
+        _videoSync = on;
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue("View/VideoSync", on);
+    }
+    if (EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr)  // lifetime-ok: held by _emulator
+    {
+        ApplyVideoSync(context->config, on);
+        _videoSyncApplied = _emulator->GetId();
+        refreshFrameSource();
+    }
+    if (_menuManager)
+        _menuManager->setVideoSyncChecked(on);
+    if (_videoSyncWindow)
+        _videoSyncWindow->setSyncChecked(on);
+    schedulePublishWindowDisplay();
+}
+
+void MainWindow::handleVideoSyncWindowRequested()
+{
+    if (!_videoSyncWindow)
+    {
+        _videoSyncWindow = new VideoSyncWindow(
+            [this]() {
+                WindowDisplaySettings s;
+                if (_screenWrapper)
+                    fillPresentSettings(s);
+                return s;
+            },
+            this);
+        _videoSyncWindow->setWindowFlags(Qt::Dialog);
+        _videoSyncWindow->setAttribute(Qt::WA_DeleteOnClose);
+        connect(_videoSyncWindow, &VideoSyncWindow::syncToggled, this, &MainWindow::handleVideoSyncToggled);
+    }
+    _videoSyncWindow->show();
+    _videoSyncWindow->raise();
+    _videoSyncWindow->activateWindow();
+}
+
 void MainWindow::handleTemporalEffectsRequested()
 {
     if (!_screenWrapper)
@@ -4299,31 +4451,7 @@ void MainWindow::handleOverscanModeToggled(bool enabled)
 
             // init() -> detach() clears the tear-free frame source - re-install it
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(frameSourceFor(screen, context));
 
             if (enabled)
             {
@@ -4728,15 +4856,20 @@ void MainWindow::handleHudOverlayToggled(bool visible)
 
 void MainWindow::handleGpuAccelerationToggled(bool enabled)
 {
-    if (enabled == _screenWrapper->isGPUAccelerated())
-        return;
-
     // Check if GPU is available when trying to enable
     if (enabled && !DeviceScreenWrapper::isGPUAvailable())
     {
         _menuManager->setGpuAccelerationChecked(false);
         return;
     }
+    _gpuWanted = enabled;
+    rebuildScreen(enabled, false);
+}
+
+void MainWindow::rebuildScreen(bool enabled, bool force)
+{
+    if (!force && enabled == _screenWrapper->isGPUAccelerated())
+        return;
 
     // Close dialogs that hold raw pointers to _screenWrapper
     for (auto* dialog : findChildren<TemporalEffectsDialog*>())
@@ -4814,9 +4947,7 @@ void MainWindow::handleGpuAccelerationToggled(bool enabled)
             auto& fb = screen->GetFramebufferDescriptor();
             _screenWrapper->init(fb, *context->pScreen);
 
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
-                return context && screen->CopyPresentedFramebuffer(dst, dstSize, geometry);
-            });
+            _screenWrapper->setFrameSource(frameSourceFor(screen, context));
         }
         _screenWrapper->setEmulator(_emulator);
     }
@@ -5304,11 +5435,126 @@ void MainWindow::saveLastDirectory(const QString& path)
     }
 }
 
+void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
+{
+    guicontrol::HostOptions options;
+    options.program = QStringLiteral("unreal-qt");
+    options.version = QCoreApplication::applicationVersion();
+    options.FromEnvironment();
+    if (tcpPort >= 0)
+        options.tcpPort = tcpPort;
+    if (!tcpBind.isEmpty())
+        options.tcpBind = tcpBind;
+    // The WebAPI this process serves: where a client crosses from a window to its machine (design §4.6)
+    options.endpoints = []() {
+        QJsonArray endpoints;
+#ifdef ENABLE_AUTOMATION
+        if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+            endpoints.append(QStringLiteral("http://127.0.0.1:%1").arg(port));
+#endif
+        return endpoints;
+    };
+    _guiHost = std::make_unique<guicontrol::Host>(std::move(options));
+    QString error;
+    if (!_guiHost->Start(&error))
+    {
+        qWarning().noquote() << "GUI control: not started:" << error;
+        _guiHost.reset();
+        return;
+    }
+    static const bool declared = (DeclareUnrealQtInterface(), true);
+    (void)declared;
+#ifdef ENABLE_AUTOMATION
+    // The plane's methods on the core's WebAPI port and MCP (design §4.10): before the automation starts (300 ms
+    // after the window), the MCP tools are made from the catalogue then
+    auto methods = std::make_shared<GuiMethods>();
+    methods->catalogueJson = guicontrol::corebridge::CatalogueJson;
+    methods->call = guicontrol::corebridge::Call;
+    GuiPlane::Set(std::move(methods));
+#endif
+    const auto webApi = []() {
+#ifdef ENABLE_AUTOMATION
+        if (const int port = Automation::GetInstance().GetWebAPIPort(); port > 0)
+            return QStringLiteral("http://127.0.0.1:%1").arg(port);
+#endif
+        return QString();
+    };
+    new guicontrol::WindowBinding(*_guiHost, this, QStringLiteral("main"));
+    // The main screen: View > Scale and full screen, the machine it shows
+    guicontrol::ScreenBinding::Hooks screenHooks;
+    screenHooks.nativeSize = [this] { return pictureNativeSize(); };
+    screenHooks.zoom = [this](int factor) {
+        handleScaleRequested(factor);
+        return QString();
+    };
+    screenHooks.fullscreen = [this](bool on) { setFullScreen(on); };
+    screenHooks.instance = [this, webApi]() {
+        Emulator* emulator = m_binding ? m_binding->emulator() : nullptr;
+        if (emulator == nullptr)
+            return QJsonObject();
+        return QJsonObject{{"endpoint", webApi()}, {"id", QString::fromStdString(emulator->GetId())}};
+    };
+    QPointer<guicontrol::ScreenBinding> screenControl =
+        new guicontrol::ScreenBinding(*_guiHost, this, ui->contentFrame, QStringLiteral("main"),
+                                      QStringLiteral("screen"), std::move(screenHooks));
+    if (m_binding)
+    {
+        connect(m_binding, &EmulatorBinding::bound, screenControl, &guicontrol::ScreenBinding::Publish);
+        connect(m_binding, &EmulatorBinding::unbound, screenControl, &guicontrol::ScreenBinding::Publish);
+    }
+    QPointer<DebuggerControl> debuggerControl;
+    if (debuggerWindow != nullptr)
+    {
+        new guicontrol::WindowBinding(*_guiHost, debuggerWindow, QStringLiteral("debugger"));
+        DebuggerControl::Hooks hooks;
+        hooks.showDebugger = [this] { handleDebuggerToggled(true); };
+        hooks.endpoint = webApi;
+        debuggerControl = new DebuggerControl(*_guiHost, debuggerWindow, m_binding, std::move(hooks));
+    }
+    ProgramControl::Hooks programHooks;
+    programHooks.keyboardShown = [this] { return _osdKeyboardWindow != nullptr && _osdKeyboardWindow->isVisible(); };
+    programHooks.showKeyboard = [this](bool on) { handleOsdKeyboardToggled(on); };
+    programHooks.showControllers = [this] {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        _controllersDialog->activateWindow();
+    };
+    programHooks.learn = [this](const std::string& device) {
+        _controllersDialog->show();
+        _controllersDialog->raise();
+        return _controllersDialog->openLearnWizard(device);
+    };
+    new ProgramControl(*_guiHost, std::move(programHooks), this);
+    // The controller bindings of GUI commands go to this host in process (design §4.7)
+    if (_guiActions)
+        _guiActions->SetGuiHost(_guiHost.get());
+
+#ifdef ENABLE_AUTOMATION
+    // The WebAPI comes up on its own thread: the discovery file and the views name it once it listens (up to 15 s)
+    auto* poll = new QTimer(this);
+    auto tries = std::make_shared<int>(0);
+    connect(poll, &QTimer::timeout, this, [this, poll, tries, debuggerControl, screenControl]() {
+        if (Automation::GetInstance().GetWebAPIPort() > 0 || ++*tries >= 60)
+        {
+            if (_guiHost)
+                _guiHost->RefreshDiscovery();
+            if (debuggerControl)
+                debuggerControl->PublishInstance();
+            if (screenControl)
+                screenControl->Publish();
+            poll->deleteLater();
+        }
+    });
+    poll->start(250);
+#endif
+}
+
 void MainWindow::cleanupAutomation()
 {
 #ifdef ENABLE_AUTOMATION
     if (_automation)
     {
+        GuiPlane::Set(nullptr);  // no /api/v1/gui call reaches the windows from here on
         _automation->stop();
         qDebug() << "Automation cleanup complete";
         // Note: Singleton handles its own lifetime
@@ -5652,31 +5898,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
             // overwrites the live buffer while the GUI thread paints it).
             // _screenWrapper->detach() clears this on emulator switch/shutdown.
             Screen* screen = context->pScreen;
-            _screenWrapper->setFrameSource([screen, context](uint8_t* dst, size_t dstSize, PictureGeometry* geometry) {
-                if (!screen->CopyPresentedFramebuffer(dst, dstSize, geometry))
-                    return false;
-
-                // Stamp video presentation latency (paint - latch), EMA 1/8:
-                // half of the realtime A/V offset readout
-                const uint64_t latchUs = screen->GetLastLatchTimestampUs();
-                if (latchUs != 0)
-                {
-                    const uint64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                                               std::chrono::steady_clock::now().time_since_epoch())
-                                               .count();
-                    // Signed EMA: unsigned (sample - prev) wraps when the new
-                    // sample is smaller, exploding the average
-                    // Include the A/V-sync present delay: the painted frame is
-                    // GetPresentDelayFrames older than the newest latch
-                    const int64_t sample = static_cast<int64_t>(std::min<uint64_t>(nowUs - latchUs, 1000000)) +
-                                           screen->GetPresentDelayUs();
-                    const int64_t prev = context->pVideoPresentLatencyUs.load(std::memory_order_relaxed);
-                    const int64_t next = (prev == 0) ? sample : prev + (sample - prev) / 8;
-                    context->pVideoPresentLatencyUs.store(
-                        static_cast<uint32_t>(std::clamp<int64_t>(next, 0, 1000000)), std::memory_order_relaxed);
-                }
-                return true;
-            });
+            _screenWrapper->setFrameSource(frameSourceFor(screen, context));
 
             // A ZX-Poly master (started here or through automation) shows its
             // group's double-resolution display frame instead

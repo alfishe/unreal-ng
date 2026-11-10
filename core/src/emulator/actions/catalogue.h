@@ -2,11 +2,10 @@
 
 /// @file catalogue.h
 /// @brief The catalogue fields the core knows for the action ids (Stream Deck integration protocol.md §5): a one
-/// sentence description of every core and GUI action, and the state of the toggles (the readout `toggle.<id>`). The
-/// registry applies them at Register when the registration brings none, so the executors stay where they are and
-/// the GUI's actions get their text even though the Qt client registers them. The GUI's actions are declared here too
-/// (id, label, group, kind, params; unreal-qt's GuiActions binds the executors), so the shipped catalogue
-/// (data/streamdeck/catalogue.json) is written at build time without the GUI (tools/actioncatalogue).
+/// sentence description of every core action, and the state of the toggles (the readout `toggle.<id>`). The registry
+/// applies them at Register when the registration brings none, so the executors stay where they are. The shipped
+/// catalogue (data/streamdeck/catalogue.json) is written at build time (tools/actioncatalogue). The GUI's verbs are
+/// not actions: they are commands of the GUI control plane (docs/emulator/design/gui-control).
 
 #include <functional>
 #include <optional>
@@ -31,23 +30,8 @@ struct DefaultToggle
 /// The toggle of a known id; null when the id is not a toggle
 const DefaultToggle* DefaultToggleOf(std::string_view id);
 
-/// One of the Qt client's actions as the catalogue shows it (the label and group untranslated)
-struct GuiActionDeclaration
-{
-    const char* id;
-    const char* label;
-    const char* group;
-    ValueKind kind = ValueKind::Press;
-    bool held = false;
-    const char* params = "";
-};
-/// The Qt client's actions in its registration order
-const std::vector<GuiActionDeclaration>& GuiActionDeclarations();
-/// The declaration of a GUI action; null for any other id
-const GuiActionDeclaration* GuiActionDeclarationOf(std::string_view id);
-
-/// The shipped catalogue (`unreal-ng-action-catalogue` v1: id, label, group, kind, held, gui, params?; no
-/// availability) of `actions` and then the GUI's declared ones they lack, as JSON text indented by one space
+/// The shipped catalogue (`unreal-ng-action-catalogue` v1: id, label, group, kind, held, params?; no availability) of
+/// `actions`, as JSON text indented by one space
 std::string ShippedCatalogueJson(const std::vector<ActionInfo>& actions);
 
 }  // namespace actions

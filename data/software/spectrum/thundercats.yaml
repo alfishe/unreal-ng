@@ -1,0 +1,15 @@
+# Thundercats (128K): the game's picture cadence for smooth motion (mapping-and-profiles.md §7.7, frame presenter
+# design section 4.5). The period from tools/smoothmotion/draft-video-profile.py on 200 frames of the snapshot
+# testdata/loaders/rzx/oracle/thundercats-300.z80: 17 pictures, 4 frames apart (14 times). The window is the play
+# area above the status rows (LEVEL, the timer), taken from the picture: the snapshot is idle, its changes cover only
+# part of it. Matches the Zero emulator's sample recording and the snapshot taken from it.
+schema: 1
+kind: play
+id: builtin/game/thundercats
+label: Thundercats
+match:
+  file_sha256: ["397d890ca0eb502cdcc8587fcd713761aa67d8a2254127f155c022be1deb4126", "d583390aea25f1736e444d0490822208bf672d52a1b6a579685bff1df1cc917f"]
+video:
+  picture_period: 4
+  smooth: cadence
+  window: [48, 48, 256, 168]

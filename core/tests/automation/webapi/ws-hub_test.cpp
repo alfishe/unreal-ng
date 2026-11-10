@@ -172,7 +172,7 @@ protected:
 
         _registry = std::make_unique<ActionRegistry>();
         // test.echo: a delta that answers what it got (the value, the rate, the params)
-        Add({"test.echo", "Echo", "Test", ValueKind::Delta, false, false, "unit?, min?"},
+        Add({"test.echo", "Echo", "Test", ValueKind::Delta, false, "unit?, min?"},
             [this](const ActionCall& call) {
                 if (_slow.load())
                 {
@@ -186,7 +186,7 @@ protected:
                 return ActionResult::Success(std::move(body), "echoed");
             });
         // test.press: a press that answers what it got (pressed, the params), as set.speed takes {value}
-        Add({"test.press", "Press", "Test", ValueKind::Press, false, false, "value?"}, [](const ActionCall& call) {
+        Add({"test.press", "Press", "Test", ValueKind::Press, false, "value?"}, [](const ActionCall& call) {
             StateNode body = StateNode::Object();
             body["pressed"] = StateNode(call.value.pressed);
             body["params"] = call.value.params;
@@ -195,7 +195,7 @@ protected:
         // test.rewind: needs the rewind scope (the narrow companion has run only)
         ActionRules rewind;
         rewind.scope = ActionRules::Fixed(automation_gate::ScopeRewind);
-        Add({"test.rewind", "Rewind", "Test", ValueKind::Press, false, false, {}},
+        Add({"test.rewind", "Rewind", "Test", ValueKind::Press, false, {}},
             [](const ActionCall&) { return ActionResult::Success(); }, std::move(rewind));
 
         _hub = std::make_unique<WsHub>();

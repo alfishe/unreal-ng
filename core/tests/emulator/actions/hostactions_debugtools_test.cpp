@@ -93,7 +93,6 @@ TEST_F(HostActionsDebugTools_Test, TheCatalogueHasTheActionsWithDescriptionsAndT
         const std::optional<ActionInfo> info = registry.Find(id);
         ASSERT_TRUE(info.has_value()) << id;
         EXPECT_FALSE(info->description.empty()) << id;
-        EXPECT_FALSE(info->gui) << id;
     }
     for (const char* id : {"dbg.breakpoint_toggle_pc", "dbg.bp_toggle", "dbg.bp_group_toggle", "sym.set_toggle",
                            "prof.toggle", "prof.pause_toggle", "analyzer.toggle"})

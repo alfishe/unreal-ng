@@ -4,6 +4,8 @@
 // warp are off, so the test never touches the real pointer.
 
 #include <QApplication>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWidget>
@@ -42,17 +44,7 @@ protected:
         _other.resize(100, 100);
         _controller = std::make_unique<MouseCaptureController>();
 
-        MouseCaptureController::Surface surface;
-        surface.centerGlobal = [this] { return _screen.mapToGlobal(_screen.rect().center()); };
-        surface.logicalSize = [this] { return _screen.size(); };
-        surface.devicePixelRatio = [] { return 1.0; };
-        surface.setCursorHidden = [](bool) {};
-        surface.takeFocus = [] {};
-        surface.allowNativeCapture = false;
-        // A simulated pointer: the warp moves it, the backend reads it
-        surface.warpCursor = [this](QPoint global) { _cursor = global; };
-        surface.cursorPosition = [this] { return _cursor; };
-        _controller->setSurface(surface);
+        _controller->setSurface(MakeSurface());
         _controller->setSourceSizeProvider([] { return QSizeF(320, 240); });
         _controller->setHostSettingsProvider([this] {
             MouseCaptureController::HostSettings settings;
@@ -64,6 +56,27 @@ protected:
     }
 
     void TearDown() override { _controller.reset(); }
+
+    MouseCaptureController::Surface MakeSurface()
+    {
+        MouseCaptureController::Surface surface;
+        surface.centerGlobal = [this] { return _screen.mapToGlobal(_screen.rect().center()); };
+        surface.logicalSize = [this] { return _screen.size(); };
+        surface.devicePixelRatio = [] { return 1.0; };
+        surface.setCursorHidden = [](bool) {};
+        surface.takeFocus = [] {};
+        surface.allowNativeCapture = false;
+        // A simulated pointer: the warp moves it, the backend reads it
+        surface.warpCursor = [this](QPoint global) { _cursor = global; };
+        surface.cursorPosition = [this] { return _cursor; };
+        return surface;
+    }
+
+    /// A mouse event as Qt delivers it to the screen, positions in the screen's logical pixels
+    static QMouseEvent MouseEvent(QEvent::Type type, QPointF position, Qt::MouseButton button, Qt::MouseButtons buttons)
+    {
+        return QMouseEvent(type, position, position, button, buttons, Qt::NoModifier);
+    }
 
     /// Send a key press + release to `target`, as Qt delivers it; true when the press was consumed
     bool Tap(QObject* target, int key, Qt::KeyboardModifiers modifiers)
@@ -315,3 +328,99 @@ TEST_F(MouseCaptureController_Test, StaleMovesBeforeTheWarpAreNotCountedAgain)
     EXPECT_EQ(sumX, 30) << "30 pixels of travel, counted once (not 10 + 20 + 30)";
     EXPECT_EQ(sumY, 0);
 }
+
+/// region <Touchscreen: gamescope hands it over as an absolute pointer>
+
+class MouseCaptureControllerTouch_Test : public MouseCaptureController_Test
+{
+protected:
+    void SetUp() override
+    {
+        MouseCaptureController_Test::SetUp();
+        MouseCaptureController::Surface surface = MakeSurface();
+        surface.pointerIsTouch = true;
+        _controller->setSurface(surface);
+        MouseCaptureController::Poster poster;
+        poster.move = [this](int dx, int dy) { _moves.emplace_back(dx, dy); };
+        poster.buttons = [this](uint8_t mask) { _masks.push_back(mask); };
+        _controller->setPoster(poster);
+        _cursor = QPoint(-1, -1);  // the real pointer is somewhere else: a warp would show
+    }
+
+    bool Press(QPointF at) { auto e = MouseEvent(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton); return _controller->handleMousePress(&e); }
+    bool Move(QPointF at, Qt::MouseButtons buttons = Qt::LeftButton) { auto e = MouseEvent(QEvent::MouseMove, at, Qt::NoButton, buttons); return _controller->handleMouseMove(&e); }
+    bool Release(QPointF at) { auto e = MouseEvent(QEvent::MouseButtonRelease, at, Qt::LeftButton, Qt::NoButton); return _controller->handleMouseRelease(&e); }
+
+    std::vector<std::pair<int, int>> _moves;
+    std::vector<uint8_t> _masks;
+};
+
+/// The tap that captures is not a click for the guest; after it a drag moves the cursor by the finger's travel
+/// (320 px of screen = 320 emulated pixels here), wherever the finger lands, and the real pointer is never warped
+TEST_F(MouseCaptureControllerTouch_Test, CapturingTapIsNotForwardedAndADragIsRelative)
+{
+    EXPECT_TRUE(Press({250, 40})) << "the press captures";
+    ASSERT_TRUE(_controller->isCaptured());
+    Release({250, 40});
+    EXPECT_TRUE(_moves.empty());
+    EXPECT_TRUE(_masks.empty()) << "the capturing tap is no click";
+
+    Press({50, 200});  // lands far from the centre
+    Move({70, 200});
+    Move({70, 190});
+    Release({70, 190});
+    ASSERT_EQ(_moves.size(), 2u);
+    EXPECT_EQ(_moves[0], std::make_pair(20, 0));
+    EXPECT_EQ(_moves[1], std::make_pair(0, 10)) << "the finger went up the screen: the mouse's Y grows upward";
+    EXPECT_TRUE(_masks.empty()) << "a drag is no click";
+    EXPECT_EQ(_cursor, QPoint(-1, -1)) << "no warp: the finger stays where it is";
+}
+
+TEST_F(MouseCaptureControllerTouch_Test, ATapClicksTheLeftButtonForAMoment)
+{
+    _controller->capture();
+    ASSERT_TRUE(_controller->isCaptured());
+    qint64 now = 1000;
+    _controller->setClock([&now] { return now; });
+
+    Press({100, 100});
+    now += 120;
+    Release({102, 101});
+    ASSERT_EQ(_masks.size(), 1u);
+    EXPECT_EQ(_masks[0], 0xFE) << "left pressed (active low)";
+    EXPECT_TRUE(_moves.empty()) << "a tap's wobble moves nothing the guest sees... ";
+
+    QElapsedTimer timer;
+    timer.start();
+    while (_masks.size() < 2 && timer.elapsed() < 1000)
+        QCoreApplication::processEvents();
+    ASSERT_EQ(_masks.size(), 2u);
+    EXPECT_EQ(_masks[1], 0xFF) << "and released";
+}
+
+TEST_F(MouseCaptureControllerTouch_Test, AMoveWithoutAContactAndALeapOfTheReportMoveNothing)
+{
+    _controller->capture();
+    Move({300, 220}, Qt::NoButton);  // the pointer hovering or jumping to a touch
+    EXPECT_TRUE(_moves.empty());
+
+    Press({10, 10});
+    Move({310, 230});  // the pointer jumps to the finger around the press
+    EXPECT_TRUE(_moves.empty()) << "a catch-up is not travel";
+    Move({314, 230});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(4, 0));
+}
+
+TEST_F(MouseCaptureControllerTouch_Test, ReleasingTheCaptureForgetsTheContact)
+{
+    _controller->capture();
+    Press({100, 100});
+    _controller->release();
+    EXPECT_FALSE(_controller->isCaptured());
+    _controller->capture();
+    Move({140, 100});
+    EXPECT_TRUE(_moves.empty()) << "the old finger is gone";
+}
+
+/// endregion </Touchscreen>

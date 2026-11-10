@@ -185,6 +185,32 @@ class SpecTest(Base):
         self.expect(', show: {readout: host.stats.cpu_percent, format: "{:.0f}%", warn: 80, alert: 95}}', "}",
                     "key cpu does nothing", 29)
 
+    def test_gui_keys(self):
+        """A `gui:` key: a GUI control plane command (gui-catalogue.json) with its params, glyph and title."""
+        if not self.vocab.gui:
+            self.skipTest("no data/streamdeck/gui-catalogue.json (the build writes it)")
+        self.assertEqual([i for i in self.issues_of("action: mach.nmi}", "gui: debugger.cursor_move, params: "
+                                                    "{dir: up}}") if " error:" in i], [])
+        m = self.spec_model()["nodes"]["nmi"]
+        e = df.effective(m, self.vocab, "nmi")
+        self.assertEqual((e["glyph"], e["hold"]), ("dbg.cursor_up", True))  # a repeating command repeats when held
+        self.build()
+        key = find(y.load(read(self.paths.project("fx")))["root"], "nmi")
+        self.assertEqual(key["do"], {"kind": "gui", "method": "debugger.cursor_move", "params": {"dir": "up"},
+                                     "hold": True})
+        self.assertEqual(self.project_model()["nodes"]["nmi"].get("gui"), "debugger.cursor_move")
+        write(self.paths.spec("fx"), read(os.path.join(FIXTURE, "src", "fx.spec.yaml")))
+        labels = self.issues_of("action: mach.nmi}", "gui: metadata.set, params: {switch: labels}}")
+        self.assertEqual([i for i in labels if " error:" in i], [])
+        e = df.effective(self.spec_model()["nodes"]["nmi"], self.vocab, "nmi")
+        self.assertEqual(e["glyph"], "dbg.labels_toggle")
+        write(self.paths.spec("fx"), read(os.path.join(FIXTURE, "src", "fx.spec.yaml")))
+        self.expect("action: mach.nmi}", "gui: debugger.nothing}", "is not a GUI control plane command", 15)
+        self.expect("action: mach.nmi}", "gui: debugger.cursor_move}", "missing dir", 15)
+        self.expect("action: mach.nmi}", "gui: debugger.cursor_move, params: {dir: up, n: 2}}",
+                    "unknown parameter n", 15)
+        self.expect("action: mach.nmi}", "gui: debugger.open, action: mach.nmi}", "one of action, gui", 15)
+
     def test_auto_slot_and_defaults(self):
         m = self.spec_model()["nodes"]
         self.assertEqual(m["nmi"]["at"], [0, 2])  # the first free key

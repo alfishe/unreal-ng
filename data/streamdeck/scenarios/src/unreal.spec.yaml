@@ -58,7 +58,7 @@ menu home:
     machine: {at: [2, 0], open: machine}
     sound:   {at: [2, 1], open: sound}
     picture: {at: [2, 2], open: picture}
-    shot:    {at: [2, 6], uc: C7.5, action: cap.screenshot}
+    shot:    {at: [2, 6], uc: C7.5, do: {gui: window.screenshot, target: main}, glyph: cap.screenshot, title: Screenshot}
     video:   {at: [2, 7], open: video}
     audio:   {at: [2, 8], open: audio}
     # D2, D4, D6, D1, D3: the programmer's pages; U2, C7.1, D3.7: rewind, the history recording, a bookmark;
@@ -131,7 +131,7 @@ menu video:
     vidstart: {at: [0, 1], uc: C7.2, action: cap.record_start, value: {preset: gameplay}, label: REC, state: cap.record.video}
     vidstop:  {at: [0, 2], uc: C7.2, action: cap.record_stop, label: STOP}
     vidpause: {at: [0, 3], uc: C7.2, action: cap.record_pause, label: PAUSE}
-    vidshot:  {at: [0, 5], uc: C7.5, action: cap.screenshot, label: SHOT}
+    vidshot:  {at: [0, 5], uc: C7.5, do: {gui: window.screenshot, target: main}, glyph: cap.screenshot, label: SHOT}
     vidsshot: {at: [0, 6], uc: C7.5, action: cap.screenshot_save, value: {path: $user/screenshots/deck.png}, label: SHOT PNG}
     vidclip:  {at: [0, 7], uc: C7.3, action: cap.clip_last, value: {seconds: 10}, label: CLIP 10S}
     vidgif:   {at: [1, 1], uc: C7.2, action: cap.record_start, value: {preset: gif}, label: GIF, glyph_on: cap.record}
@@ -444,7 +444,7 @@ menu picture:
     teffect: {at: [2, 1], uc: C9.5, action: video.temporal_effect, value: {effect: next}, label: EFFECT, show: {readout: video.temporal.dlss, format: '{?ZX DLSS|BLEND}'}}
     hud:     {at: [3, 0], uc: C9.6, action: hud.toggle, label: HUD}
     hudth:   {at: [3, 1], uc: C9.6, action: hud.theme, value: {theme: next}, label: HUD LOOK}
-    osdkb:   {at: [3, 3], uc: C9.7, action: osd.keyboard, label: KEYBOARD}
+    osdkb:   {at: [3, 3], uc: C9.7, gui: unrealqt.osd_keyboard, label: KEYBOARD}
     osdpic:  {at: [3, 4], uc: C9.7, action: osd.keyboard_picture, value: {picture: next}, label: KB LOOK}
 
 # C10: monitoring, read-only (a press changes nothing): value keys show the readouts (row 0 the instances and the host,
@@ -646,9 +646,9 @@ menu time:
     bmadd:   {at: [3, 1], uc: D3.7, action: ttd.bookmark_add, label: MARK}
     bmnext:  {at: [3, 2], uc: D3.7, action: ttd.bookmark_next, label: MARK >}
     bmlist:  {at: [3, 3], uc: D3.7, action: ttd.bookmarks, label: MARKS}
-    lastw:   {at: [3, 5], uc: D5.1, action: ttd.find_last_write, label: WRITE}
-    lastr:   {at: [3, 6], uc: D5.1, action: ttd.find_last, value: {access: read}, label: READ}
-    laste:   {at: [3, 7], uc: D5.1, action: ttd.find_last, value: {access: execute}, label: EXEC}
+    lastw:   {at: [3, 5], uc: D5.1, gui: memory.find_last_write, label: WRITE}
+    lastr:   {at: [3, 6], uc: D5.1, gui: memory.find_last, params: {access: read}, label: READ}
+    laste:   {at: [3, 7], uc: D5.1, gui: memory.find_last, params: {access: execute}, label: EXEC}
     timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
 
 # D2, D4, D6, D8, D10: the debugger. Row 0 pause and the steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
@@ -675,12 +675,12 @@ menu debug:
     debstepin: {at: [0, 2], uc: D2.1, action: run.step_in, label: STEP IN}
     debstepovr: {at: [0, 3], uc: D2.1, action: run.step_over, label: STEP OVER}
     debstepout: {at: [0, 4], uc: D2.1, action: run.step_out, label: STEP OUT}
-    debcursor: {at: [0, 5], uc: D2.6, action: run.to_cursor, label: TO CURSOR}
+    debcursor: {at: [0, 5], uc: D2.6, gui: disassembly.run_to_cursor, label: TO CURSOR}
     int:     {at: [0, 6], uc: D2.3, action: run.wait_int, label: TO INT}
     debframe: {at: [0, 7], uc: D2.3, action: run.frame_step, label: FRAME}
     line:    {at: [0, 8], uc: D2.7, action: run.step_line, label: LINE}
     debbppc: {at: [1, 0], uc: D4.1, action: dbg.breakpoint_toggle_pc, label: BP PC}
-    bpcur:   {at: [1, 1], uc: D4.1, action: dbg.breakpoint_toggle_cursor, label: BP CUR}
+    bpcur:   {at: [1, 1], uc: D4.1, gui: disassembly.breakpoint_toggle_cursor, label: BP CUR}
     bpfe:    {at: [1, 2], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: fe}, label: OUT FE}
     bp7ffd:  {at: [1, 3], uc: D4.2, action: dbg.bp_add, value: {kind: out, preset: 7ffd}, label: 7FFD}
     bpall:   {at: [1, 4], uc: D4.3, action: dbg.bp_toggle, label: BPS ON}
@@ -688,21 +688,21 @@ menu debug:
     debbphits: {at: [1, 6], uc: D4.3, action: dbg.breakpoint_hits_reset, label: HITS 0}
     pixel:   {at: [1, 7], uc: D2.4, action: run.to_pixel, label: TO PIXEL}
     debdbgmode: {at: [1, 8], uc: D4.4, action: dbg.mode_toggle, label: DEBUG MODE}
-    open:    {at: [2, 0], uc: D6.1, action: dbg.open, label: SHOW DEBUG}
-    pprev:   {at: [2, 1], uc: D6.1, action: dbg.focus_prev_pane, label: PANE <}
-    pnext:   {at: [2, 2], uc: D6.1, action: dbg.focus_next_pane, label: PANE >}
-    pgup:    {at: [2, 3], uc: D6.2, action: dbg.page_up}
-    cup:     {at: [2, 4], uc: D6.2, action: dbg.cursor_up}
-    pgdn:    {at: [2, 5], uc: D6.2, action: dbg.page_down}
-    follow:  {at: [2, 6], uc: D6.4, action: dbg.follow_pc, label: FOLLOW}
-    memf:    {at: [2, 7], uc: D6.3, action: dbg.memory_follow, label: MEM PC}
-    labels:  {at: [2, 8], uc: D6.4, action: dbg.labels_toggle, label: LABELS}
+    open:    {at: [2, 0], uc: D6.1, gui: debugger.open, label: SHOW DEBUG}
+    pprev:   {at: [2, 1], uc: D6.1, gui: debugger.focus_prev, label: PANE <, title: Previous debugger pane}
+    pnext:   {at: [2, 2], uc: D6.1, gui: debugger.focus_next, label: PANE >, title: Next debugger pane}
+    pgup:    {at: [2, 3], uc: D6.2, gui: debugger.page, params: {n: -1}, title: Page up}
+    cup:     {at: [2, 4], uc: D6.2, gui: debugger.cursor_move, params: {dir: up}, title: Cursor up}
+    pgdn:    {at: [2, 5], uc: D6.2, gui: debugger.page, params: {n: 1}, title: Page down}
+    follow:  {at: [2, 6], uc: D6.4, gui: disassembly.follow_pc, label: FOLLOW}
+    memf:    {at: [2, 7], uc: D6.3, gui: debugger.activate, label: MEM PC}
+    labels:  {at: [2, 8], uc: D6.4, gui: metadata.set, params: {switch: labels}, label: LABELS}
     symload: {at: [3, 0], uc: D8.2, action: sym.import, value: {path: $user/build/main.sym}, label: LOAD SYM}
     symlive: {at: [3, 1], uc: D8.2, action: sym.import_live, label: LIVE SYM}
     symsave: {at: [3, 2], uc: D8.2, action: sym.export, value: {path: $user/build/deck.sym}, label: SAVE SYM}
-    cleft:   {at: [3, 3], uc: D6.2, action: dbg.cursor_left}
-    cdown:   {at: [3, 4], uc: D6.2, action: dbg.cursor_down}
-    cright:  {at: [3, 5], uc: D6.2, action: dbg.cursor_right}
+    cleft:   {at: [3, 3], uc: D6.2, gui: debugger.cursor_move, params: {dir: left}, title: Cursor left}
+    cdown:   {at: [3, 4], uc: D6.2, gui: debugger.cursor_move, params: {dir: down}, title: Cursor down}
+    cright:  {at: [3, 5], uc: D6.2, gui: debugger.cursor_move, params: {dir: right}, title: Cursor right}
     prof:    {at: [3, 6], uc: D10.1, action: prof.toggle, value: {name: opcode}, label: PROF OPS}
     cover:   {at: [3, 7], uc: D10.1, action: prof.toggle, value: {name: coverage}, label: COVERAGE}
     trace:   {at: [3, 8], uc: D10.1, action: prof.toggle, value: {name: calltrace}, label: CALLS}

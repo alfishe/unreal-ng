@@ -1,0 +1,178 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "emulator/video/presentpolicy.h"
+
+/// A native presenter (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.1 and 6.2): the
+/// GL renderer draws each picture into a texture shared with the platform's API, and the presenter shows it on the
+/// window at the frame's audio time. On a VRR display every frame is on screen for its own period; on a fixed one it
+/// shows at the first refresh after its time.
+///
+/// - macOS: IOSurfaces, CAMetalLayer presentDrawable:atTime: (metalpresenter.mm)
+/// - Windows: WGL_NV_DX_interop2 onto D3D11 textures, a DXGI flip swap chain presented by its own thread at the time,
+///   tearing allowed for VRR (dxgipresenter.cpp)
+/// - Linux: GL textures, a present thread with its own GL context on the window swapping at the time (swap interval 0
+///   under VRR, 1 on a fixed display), GLX_OML_sync_control for the screen times (linux/gltimedpresenter.cpp)
+///
+/// BeginFrame, PresentFrame and the destructor on the thread whose GL context draws (the GUI thread); the rest from
+/// any thread (what they read of the window system is cached on the GUI thread).
+class NativePresenter
+{
+public:
+    /// On-screen timing over the last presents, ms
+    struct Stats
+    {
+        uint64_t presented = 0;  ///< presents since the start
+        uint64_t shown = 0;      ///< reached the screen
+        uint64_t dropped = 0;    ///< never on screen (replaced, or the system dropped it)
+        uint64_t late = 0;       ///< shown more than a refresh after the time asked for (a refresh late)
+        double leadMs = 0.0;     ///< the lead in effect (LeadNs at the last refresh period asked)
+        uint32_t window = 0;     ///< presents the percentiles cover
+        double errorP50 = 0.0;   ///< screen time minus the time asked for
+        double errorP99 = 0.0;
+        double errorMax = 0.0;
+        double gpuWaitP50 = 0.0;  ///< the wait for GL's draw before the native pass
+        double gpuWaitMax = 0.0;
+        uint64_t gpuWaitTimeouts = 0;  ///< GL's draw not done in time: the picture not presented (Metal)
+        double drawableWaitP50 = 0.0;  ///< the wait for a free drawable / back buffer
+        double drawableWaitMax = 0.0;
+        double minRefreshHz = 0.0;  ///< the display's range (min = max: fixed)
+        double maxRefreshHz = 0.0;
+        bool visible = true;  ///< some of the window is on screen
+        bool vrr = false;     ///< each frame at its own time (c-vrr); false: on the refresh grid (b-vsync)
+        uint64_t beatFrames = 0;   ///< pictures judged against the beat pattern (ScreenBeat)
+        uint64_t offBeat = 0;      ///< ... on screen for a refresh count outside it
+        double soundOffsetP50 = 0.0;  ///< screen time minus the picture's target (its sound plus the lip-sync trim)
+        double soundOffsetP99 = 0.0;
+        /// Can the display follow the frames: "yes" / "no" / "unknown" with the reason (empty: the presenter does not
+        /// say; the window derives it from the refresh range)
+        std::string vrrSupport;
+        std::string vrrReason;
+    };
+
+    /// Where a present came from (steady clock, ns; 0 = unknown): UNREAL_PRESENT_TRACE's columns, and the picture and
+    /// its target the screen times are judged by (ScreenBeat)
+    struct TraceInfo
+    {
+        uint64_t serial = 0;
+        int64_t latchNs = 0;    ///< the frame was latched
+        int64_t plannedNs = 0;  ///< the wake the window planned
+        int64_t wokeNs = 0;     ///< the wake that drew it
+        uint64_t picture = 0;   ///< the picture's number: the frame's serial, or smooth motion's count of pictures
+        int64_t targetNs = 0;   ///< the picture's time on the frame clock (0: a repaint, not judged)
+    };
+
+    /// The platform's presenter for a window (QWindow::winId(); Linux: the QWindow itself, the present thread's context
+    /// is made current on it), the GL context that will draw current. nullptr: none here, or the platform lacks what it
+    /// needs (the window then presents with GL)
+    static std::unique_ptr<NativePresenter> Create(void* windowHandle);
+    /// Do the presenters here learn each present's screen time: 1 yes, 0 no (Linux without GLX_OML_sync_control:
+    /// Wayland, EGL), -1 not known before the first one is made. macOS and Windows: 1
+    static int PresentFeedback();
+    virtual ~NativePresenter() = default;
+
+    /// The GL context current: a framebuffer of `width` x `height` device pixels to draw the next picture into,
+    /// bound as GL_FRAMEBUFFER. @return its name, 0 on failure
+    virtual unsigned BeginFrame(int width, int height) = 0;
+    /// The picture drawn: shown at `atNs` (steady clock; at once when it is 0 or past). GL rows count from the bottom,
+    /// the presenter turns them over
+    virtual void PresentFrame(int64_t atNs, const TraceInfo& trace) = 0;
+
+    /// [VIDEO] PresentPolicy, from any thread; the next present follows it
+    virtual void SetPolicy(PresentPolicy policy) = 0;
+    /// Some of the window is on screen: an occluded or minimized window's presents would be dropped
+    virtual bool IsVisible() const = 0;
+    /// How long before a frame's target the window draws it and hands it over
+    virtual int64_t LeadNs(int64_t refreshPeriodNs) const = 0;
+    /// A fixed display's refreshes (steady clock, ns): a recent one and the period. Smooth motion draws a picture
+    /// for each of them. false: none seen yet, or the display follows the presents (VRR: every frame at its own time)
+    virtual bool RefreshGrid(int64_t& refreshNs, int64_t& periodNs) const = 0;
+
+    /// b-vsync paced by the display (section 4.2; macOS: a display link). `handler(refreshNs, periodNs)` runs on the
+    /// GUI thread once per refresh while the presenter paces, with the time that refresh reaches the screen (steady
+    /// clock, ns): the window draws the frame due then and presents it for that refresh. false: the presenter cannot
+    /// pace, the window's timer does
+    using RefreshHandler = void (*)(void* context, int64_t refreshNs, int64_t periodNs);
+    virtual bool SetRefreshHandler(RefreshHandler handler, void* context)
+    {
+        (void)handler;
+        (void)context;
+        return false;
+    }
+    /// The window wants refreshes (frames coming to a visible window) or not (idle, hidden): the display link runs
+    /// only while it wants them and the presenter paces
+    virtual void WantRefreshes(bool want) { (void)want; }
+    /// The presenter paces the presents now (a handler set, a fixed refresh grid, the link available): the window's
+    /// timer stays off but for forced repaints and the hidden poll
+    virtual bool PacesRefreshes() const { return false; }
+
+    /// Presents handed over so far, the number of the newest one shown a refresh late (counting from 1; 0: none) and
+    /// its lag in refreshes, the number of the newest one shown on time. A presenter that queues every present (Metal)
+    /// shows each one after the one before: one late, all after it are late while one comes every refresh, until a
+    /// refresh comes without one (smooth motion leaves one out). A presenter that replaces the present still waiting
+    /// (DXGI Present(1)) has no such queue: 0
+    virtual uint64_t Presented() const { return 0; }
+    virtual uint64_t LastLatePresent() const { return 0; }
+    virtual uint32_t LastLateLag() const { return 0; }
+    virtual uint64_t LastOnTimePresent() const { return 0; }
+
+    /// Why the last BeginFrame gave no framebuffer (empty: none failed)
+    virtual std::string LastFailure() const { return {}; }
+    /// The device is gone (a GPU reset removed it): BeginFrame fails from now on, only a new presenter presents
+    virtual bool Lost() const { return false; }
+
+    virtual Stats GetStats() const = 0;
+    /// One line for the log
+    virtual std::string Describe() const = 0;
+};
+
+/// The presenters' shared bookkeeping (nativepresenter.cpp): the sample rings their statistics come from and the
+/// UNREAL_PRESENT_TRACE file. Not locked: each presenter keeps them under its own statistics mutex
+namespace presentstats
+{
+/// The last presents the percentiles cover
+constexpr size_t kWindow = 600;
+
+/// The last kWindow samples (ms)
+class Ring
+{
+public:
+    void Add(double value);
+    const std::vector<double>& Values() const { return _values; }
+
+private:
+    std::vector<double> _values;
+    size_t _next = 0;
+};
+
+/// The `q` quantile of `values` (0 when empty)
+double Percentile(std::vector<double> values, double q);
+/// Stats::window and the error, GL wait and drawable wait percentiles from copies of the rings
+void Fill(NativePresenter::Stats& s, std::vector<double> errors, std::vector<double> gpuWaits,
+          std::vector<double> drawableWaits);
+
+/// UNREAL_PRESENT_TRACE (environment-variables.md): one line per present, "serial atNs submittedNs screenNs latchNs
+/// plannedNs wokeNs drawableWaitNs" (steady clock ns; screenNs 0: never on screen). The first presenter of the process
+/// starts the file, a later one (made anew after a GPU reset) appends: the lines before the reset stay
+class Trace
+{
+public:
+    Trace();
+    ~Trace();
+    Trace(const Trace&) = delete;
+    Trace& operator=(const Trace&) = delete;
+
+    bool Active() const { return _file != nullptr; }
+    void Write(const NativePresenter::TraceInfo& info, int64_t atNs, int64_t submittedNs, int64_t screenNs,
+               int64_t drawableWaitNs);
+
+private:
+    FILE* _file = nullptr;
+};
+}  // namespace presentstats

@@ -1,0 +1,16 @@
+{
+ "scene": "mixed",
+ "note": "rect in paper pixels; several motions share rows. dir +1: right (x) or down (y). A region with offsets moves to dir * offsets[n % len] px (a bounce) and is judged against the pairwise ideal: between frames k and k+1 on the straight line",
+ "paper": [48, 48],
+ "regions": [
+  {"name": "boxtext", "rect": [40, 11, 248, 25], "axis": "y", "dir": 1, "offsets": [0, 1, 2, 3, 3, 2, 1, 0]},
+  {"name": "boxtop", "rect": [32, 8, 256, 10], "axis": "x", "dir": 1, "step16": 16, "period": 1},
+  {"name": "boxbottom", "rect": [32, 26, 256, 28], "axis": "x", "dir": -1, "step16": 16, "period": 1},
+  {"name": "boxleft", "rect": [32, 10, 34, 26], "axis": "y", "dir": 1, "step16": 16, "period": 1},
+  {"name": "boxright", "rect": [254, 10, 256, 26], "axis": "y", "dir": -1, "step16": 16, "period": 1},
+  {"name": "L2", "rect": [32, 48, 144, 64], "axis": "x", "dir": -1, "step16": 32, "period": 1},
+  {"name": "R3", "rect": [144, 48, 256, 64], "axis": "x", "dir": 1, "step16": 48, "period": 1},
+  {"name": "V1", "rect": [32, 88, 144, 104], "axis": "y", "dir": -1, "step16": 16, "period": 1},
+  {"name": "H2", "rect": [144, 88, 256, 104], "axis": "x", "dir": -1, "step16": 32, "period": 1}
+ ]
+}

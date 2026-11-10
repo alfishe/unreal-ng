@@ -11,6 +11,7 @@
 #include "emulator/video/screen.h"
 #include "emulator/video/windowview.h"
 #include "crtprofiles.h"
+#include "framesource.h"
 #include "slangpresetrunner.h"
 
 class Emulator;
@@ -67,8 +68,12 @@ public:
     /// @brief Request screen refresh
     void refresh();
 
-    /// @brief Set frame copy function for tear-free rendering
-    void setFrameSource(std::function<bool(uint8_t*, size_t, PictureGeometry*)> fn);
+    /// @brief Set the frame source: the frame due at a time, tear-free, and the frames in order for smooth motion
+    /// (framesource.h)
+    void setFrameSource(ScreenFrames source);
+    void setFrameSource(FrameSourceFn fn) { setFrameSource(ScreenFrames{std::move(fn)}); }
+    /// @brief The game's picture cadence from its profile (nullptr: none), kept across frame sources
+    void setGameVideo(const smoothmotion::GameVideo* game);
 
     /// @brief Thread-safe cut of the frame source and legacy live-buffer path.
     /// Safe to call from the MessageCenter worker while an emulator instance
@@ -144,6 +149,8 @@ public:
 
     /// @brief Check if GPU acceleration is available on this system
     static bool isGPUAvailable();
+    /// Asks again (a session, display or adapter change). @return the answer or the GPU's renderer changed
+    static bool recheckGPUAvailable();
 
     /// @brief Enable/disable CRT effects (GPU mode only)
     void setCRTEffectsEnabled(bool enabled);
@@ -175,6 +182,9 @@ public:
     QString customShader() const;
     /// @brief Get list of available custom shaders
     static std::vector<QString> availableShaders();
+
+    /// The presenter's on-screen timing and smooth motion's counters (the automation's `present`)
+    WindowPresentStats presentStats() const;
 
     /// @brief Enable/disable temporal blending (gigascreen smoothing)
     void setTemporalBlendingEnabled(bool enabled);

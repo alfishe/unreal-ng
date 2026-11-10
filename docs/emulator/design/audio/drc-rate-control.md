@@ -64,7 +64,7 @@ settings ⓘ popup.
 | Ring target `DRC_TARGET_MS` | **40 ms** | `soundmanager.h` | Floor is structural: production is bursty (one whole ~20.5 ms frame lands at once) while the DAC drains continuously, so occupancy must cover ≥1 frame + scheduler jitter. 40 ms = ~7 callback periods of underrun margin. 70 ms (the original value) was audibly late. |
 | Device HW buffer | ~11.6 ms | frontend `init()` (2 x 256 frames) | miniaudio low-latency profile. |
 | Device output latency | device-dependent | queried from CoreAudio (device latency + safety offset) | **Below our pipeline.** Virtual loopback devices (Background Music, BlackHole) report large values here — this is how a desync living outside the emulator is identified. |
-| Video present delay | **2 frames** (~41 ms), `[VIDEO] AVSyncDelayFrames=auto\|0..3` | `Screen` present queue | Instead of shrinking the ring into underrun territory, video is delayed to match audio: both land at the same constant latency, net offset ≈ **+11 ms**. `0` = lowest input latency (audio trails by the full ring). Recording is unaffected (taps emulated time upstream of presentation). |
+| Video present delay | the audio path's (~52 ms), no setting | `Screen` frame times (`FrameClock`) | Every latched frame gets the time its sound is heard; readers are served the frame due at their time ([frame presenter](../../../inprogress/2026-10-26-frame-presenter/README.md), section 3). `[VIDEO] LipSyncOffsetMs` trims it; the old `AVSyncDelayFrames` is ignored. Recording is unaffected (taps emulated time upstream of presentation). |
 | Emergency refill `EMERGENCY_REFILL_MS` | **15 ms** | `soundmanager.h`, used by `mainloop.cpp` | Must sit BELOW the occupancy sawtooth trough (target − 1 frame ≈ 19.5 ms) — see field note 6.4. Rate-aware (converted to device frames at the live device rate). |
 | Hard resync `HARD_RESYNC_MS` | **160 ms** (4x target) | `soundmanager.h`, used by frontend device callback | Overfill beyond this is unrecoverable by ±0.5% trim in reasonable time; the consumer discards down to target in one step — see field note 6.6. |
 
@@ -214,8 +214,8 @@ same device kept the old negotiated rate behind a hidden OS resampler.
   over/underrun counters. Error counters must stay at zero permanently
   under converged control — growth is the first sign of trouble.
 - Video side: `Screen::LatchFramebuffer` stamps a steady-clock timestamp;
-  the GUI frame source computes paint−latch (+ present delay) as a signed
-  EMA into `pVideoPresentLatencyUs`. (The EMA must be signed — the first
+  the GUI frame source computes the refresh's time minus the latch of the
+  frame it shows (`Screen::CopyFrameAt`, the frame presenter) as a signed EMA into `pVideoPresentLatencyUs`. (The EMA must be signed — the first
   version used unsigned arithmetic and wrapped to −4.2M ms.)
 - UI: audio settings shows a static identity line (device @ native rate,
   core rate) and an ⓘ popup with the full component breakdown refreshing

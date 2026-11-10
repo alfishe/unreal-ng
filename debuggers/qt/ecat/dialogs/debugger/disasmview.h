@@ -36,6 +36,18 @@ public:
     //The cursor to the address, the listing built there if needed
     void go_to(unsigned int address);
     unsigned int cursor_address() const;
+    //The address of the top row
+    unsigned int top_address() const;
+    //The cursor to the address, the address at the top
+    void show_at_top(unsigned int address);
+    //The cursor to the address; the listing scrolls only when the row is not in view
+    void place_cursor(unsigned int address);
+    //The cursor rows down (below 0 up); a page moves the rows shown with it
+    void move_cursor(int delta, bool page);
+    //By bytes: a step of the cursor decodes the listing again from the next or the previous byte (code that is
+    //data, a jump into an instruction); off: by whole instructions
+    void set_byte_scroll(bool on) { m_byte_scroll = on; }
+    bool byte_scroll() const { return m_byte_scroll; }
     //Memory may have changed: the bytes are read again
     void refresh_memory();
     //The same while the machine runs: only the rows that changed are
@@ -60,6 +72,8 @@ public:
 signals:
     void breakpoints_changed();
     void cursor_moved(unsigned int address);
+    //The listing scrolled: another address at the top
+    void top_moved(unsigned int address);
     void memory_changed();
 
 protected:
@@ -92,6 +106,8 @@ private:
     CellEditor * m_editor;
     int m_edit_line;
     unsigned int m_shown_cursor;    //What cursor_moved() said last
+    unsigned int m_shown_top = ~0u;  //What top_moved() said last
+    bool m_byte_scroll = false;
     PaintedRows m_painted;
     //The labels' column: its width in characters (0: none), whether there are labels, the labels it was laid out for
     int m_label_chars = 0;
@@ -139,7 +155,6 @@ private:
     //addresses: lines added above move them, lines dropped may lose them
     template <typename F> void keep_place(F op);
     void fill();
-    void move_cursor(int delta, bool page);
     void scroll_rows(int delta);
     void top_to(unsigned int address);
     void make_visible();

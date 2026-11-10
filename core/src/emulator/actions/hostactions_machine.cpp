@@ -733,7 +733,7 @@ std::vector<RegistrationHandle> RegisterMachineAreaActions(ActionRegistry& regis
     std::vector<RegistrationHandle> handles;
     auto add = [&](const char* id, const char* label, const char* group, ValueKind kind, const char* params,
                    const char* description, Executor run, ActionRules rules, bool held = false) {
-        handles.push_back(registry.Register({id, label, group, kind, held, false, params, description, false},
+        handles.push_back(registry.Register({id, label, group, kind, held, params, description, false},
                                             std::move(run), std::move(rules)));
     };
     const char* machine = "Capture and machine";

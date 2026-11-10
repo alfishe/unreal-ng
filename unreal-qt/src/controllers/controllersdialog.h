@@ -76,7 +76,7 @@ public:
     /// Import mapping…'s work for @p text (a gamecontrollerdb.txt, many lines: the one with the selected device's
     /// VID:PID, else the first; or a RetroArch .cfg); the answer for the status line
     QString importMapping(const QString& text);
-    /// The learn wizard for @p device (Learn…, the learn toast, the ctl.learn action): selects the device, opens the
+    /// The learn wizard for @p device (Learn…, the learn toast, unrealqt.controllers_learn): selects the device, opens the
     /// wizard and starts its session; an empty answer when it runs, else the reason (also in the status line)
     QString openLearnWizard(const std::string& device);
     /// The wizard open now (nullptr when none); for the tests

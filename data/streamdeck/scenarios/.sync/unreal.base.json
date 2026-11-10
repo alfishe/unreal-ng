@@ -278,7 +278,7 @@
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Toggle a breakpoint at the cursor"
+   "title": "Breakpoint at the cursor"
   },
   "bpfe": {
    "glyph": "dbg.bp_add",
@@ -369,14 +369,14 @@
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Cursor down in the pane"
+   "title": "Cursor down"
   },
   "cleft": {
    "glyph": "dbg.cursor_left",
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Cursor left in the pane"
+   "title": "Cursor left"
   },
   "clients": {
    "glyph": null,
@@ -418,7 +418,7 @@
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Cursor right in the pane"
+   "title": "Cursor right"
   },
   "crt": {
    "glyph": "video.crt",
@@ -446,7 +446,7 @@
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Cursor up in the pane"
+   "title": "Cursor up"
   },
   "cursor": {
    "glyph": "input.joystick_type",
@@ -684,7 +684,7 @@
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Disassembly follows PC"
+   "title": "Show PC"
   },
   "fop": {
    "glyph": "ttd.step_forward_instruction",
@@ -936,14 +936,14 @@
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Labels in the disassembly"
+   "title": "Metadata switch"
   },
   "laste": {
    "glyph": "ttd.find_last",
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Last access here"
+   "title": "Last access to the cursor"
   },
   "lasthit": {
    "glyph": null,
@@ -957,14 +957,14 @@
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Last access here"
+   "title": "Last access to the cursor"
   },
   "lastw": {
    "glyph": "ttd.find_last_write",
    "glyph_on": null,
    "hold": false,
    "state": null,
-   "title": "Last write here"
+   "title": "Last write to the cursor"
   },
   "lblcnt": {
    "glyph": null,
@@ -1172,9 +1172,9 @@
   "memf": {
    "glyph": "dbg.memory_follow",
    "glyph_on": null,
-   "hold": true,
+   "hold": false,
    "state": null,
-   "title": "Memory follows the value under the cursor"
+   "title": "Enter in the focused pane"
   },
   "mevo": {
    "glyph": "mach.start",
@@ -1566,14 +1566,14 @@
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Page down in the pane"
+   "title": "Page down"
   },
   "pgup": {
    "glyph": "dbg.page_up",
    "glyph_on": null,
    "hold": true,
    "state": null,
-   "title": "Page up in the pane"
+   "title": "Page up"
   },
   "picfull": {
    "glyph": "view.fullscreen",
@@ -2019,7 +2019,7 @@
   "shot": {
    "glyph": "cap.screenshot",
    "glyph_on": null,
-   "hold": false,
+   "hold": null,
    "state": null,
    "title": "Screenshot"
   },
@@ -2537,9 +2537,9 @@
   "vidshot": {
    "glyph": "cap.screenshot",
    "glyph_on": null,
-   "hold": false,
+   "hold": null,
    "state": null,
-   "title": "Screenshot"
+   "title": "vidshot"
   },
   "vidsize": {
    "glyph": null,
@@ -3365,11 +3365,11 @@
    ]
   },
   "bpcur": {
-   "action": "dbg.breakpoint_toggle_cursor",
    "at": [
     1,
     1
    ],
+   "gui": "disassembly.breakpoint_toggle_cursor",
    "in": "debug",
    "kind": "key",
    "label": "BP CUR",
@@ -3572,25 +3572,33 @@
    }
   },
   "cdown": {
-   "action": "dbg.cursor_down",
    "at": [
     3,
     4
    ],
+   "gui": "debugger.cursor_move",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "dir": "down"
+   },
+   "title": "Cursor down",
    "uc": [
     "D6.2"
    ]
   },
   "cleft": {
-   "action": "dbg.cursor_left",
    "at": [
     3,
     3
    ],
+   "gui": "debugger.cursor_move",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "dir": "left"
+   },
+   "title": "Cursor left",
    "uc": [
     "D6.2"
    ]
@@ -3675,13 +3683,17 @@
    ]
   },
   "cright": {
-   "action": "dbg.cursor_right",
    "at": [
     3,
     5
    ],
+   "gui": "debugger.cursor_move",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "dir": "right"
+   },
+   "title": "Cursor right",
    "uc": [
     "D6.2"
    ]
@@ -3736,13 +3748,17 @@
    }
   },
   "cup": {
-   "action": "dbg.cursor_up",
    "at": [
     2,
     4
    ],
+   "gui": "debugger.cursor_move",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "dir": "up"
+   },
+   "title": "Cursor up",
    "uc": [
     "D6.2"
    ]
@@ -3819,11 +3835,11 @@
    ]
   },
   "debcursor": {
-   "action": "run.to_cursor",
    "at": [
     0,
     5
    ],
+   "gui": "disassembly.run_to_cursor",
    "in": "debug",
    "kind": "key",
    "label": "TO CURSOR",
@@ -4294,11 +4310,11 @@
    ]
   },
   "follow": {
-   "action": "dbg.follow_pc",
    "at": [
     2,
     6
    ],
+   "gui": "disassembly.follow_pc",
    "in": "debug",
    "kind": "key",
    "label": "FOLLOW",
@@ -4945,33 +4961,36 @@
    }
   },
   "labels": {
-   "action": "dbg.labels_toggle",
    "at": [
     2,
     8
    ],
+   "gui": "metadata.set",
    "in": "debug",
    "kind": "key",
    "label": "LABELS",
+   "params": {
+    "switch": "labels"
+   },
    "uc": [
     "D6.4"
    ]
   },
   "laste": {
-   "action": "ttd.find_last",
    "at": [
     3,
     7
    ],
+   "gui": "memory.find_last",
    "in": "time",
    "kind": "key",
    "label": "EXEC",
+   "params": {
+    "access": "execute"
+   },
    "uc": [
     "D5.1"
-   ],
-   "value": {
-    "access": "execute"
-   }
+   ]
   },
   "lasthit": {
    "at": [
@@ -4990,27 +5009,27 @@
    ]
   },
   "lastr": {
-   "action": "ttd.find_last",
    "at": [
     3,
     6
    ],
+   "gui": "memory.find_last",
    "in": "time",
    "kind": "key",
    "label": "READ",
+   "params": {
+    "access": "read"
+   },
    "uc": [
     "D5.1"
-   ],
-   "value": {
-    "access": "read"
-   }
+   ]
   },
   "lastw": {
-   "action": "ttd.find_last_write",
    "at": [
     3,
     5
    ],
+   "gui": "memory.find_last_write",
    "in": "time",
    "kind": "key",
    "label": "WRITE",
@@ -5477,11 +5496,11 @@
    ]
   },
   "memf": {
-   "action": "dbg.memory_follow",
    "at": [
     2,
     7
    ],
+   "gui": "debugger.activate",
    "in": "debug",
    "kind": "key",
    "label": "MEM PC",
@@ -6197,11 +6216,11 @@
    ]
   },
   "open": {
-   "action": "dbg.open",
    "at": [
     2,
     0
    ],
+   "gui": "debugger.open",
    "in": "debug",
    "kind": "key",
    "label": "SHOW DEBUG",
@@ -6210,11 +6229,11 @@
    ]
   },
   "osdkb": {
-   "action": "osd.keyboard",
    "at": [
     3,
     3
    ],
+   "gui": "unrealqt.osd_keyboard",
    "in": "picture",
    "kind": "key",
    "label": "KEYBOARD",
@@ -6374,25 +6393,33 @@
    }
   },
   "pgdn": {
-   "action": "dbg.page_down",
    "at": [
     2,
     5
    ],
+   "gui": "debugger.page",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "n": 1
+   },
+   "title": "Page down",
    "uc": [
     "D6.2"
    ]
   },
   "pgup": {
-   "action": "dbg.page_up",
    "at": [
     2,
     3
    ],
+   "gui": "debugger.page",
    "in": "debug",
    "kind": "key",
+   "params": {
+    "n": -1
+   },
+   "title": "Page up",
    "uc": [
     "D6.2"
    ]
@@ -6470,14 +6497,15 @@
    }
   },
   "pnext": {
-   "action": "dbg.focus_next_pane",
    "at": [
     2,
     2
    ],
+   "gui": "debugger.focus_next",
    "in": "debug",
    "kind": "key",
    "label": "PANE >",
+   "title": "Next debugger pane",
    "uc": [
     "D6.1"
    ]
@@ -6499,14 +6527,15 @@
    }
   },
   "pprev": {
-   "action": "dbg.focus_prev_pane",
    "at": [
     2,
     1
    ],
+   "gui": "debugger.focus_prev",
    "in": "debug",
    "kind": "key",
    "label": "PANE <",
+   "title": "Previous debugger pane",
    "uc": [
     "D6.1"
    ]
@@ -7419,13 +7448,18 @@
    }
   },
   "shot": {
-   "action": "cap.screenshot",
    "at": [
     2,
     6
    ],
+   "do": {
+    "gui": "window.screenshot",
+    "target": "main"
+   },
+   "glyph": "cap.screenshot",
    "in": "home",
    "kind": "key",
+   "title": "Screenshot",
    "uc": [
     "C7.5"
    ]
@@ -8789,11 +8823,15 @@
    ]
   },
   "vidshot": {
-   "action": "cap.screenshot",
    "at": [
     0,
     5
    ],
+   "do": {
+    "gui": "window.screenshot",
+    "target": "main"
+   },
+   "glyph": "cap.screenshot",
    "in": "video",
    "kind": "key",
    "label": "SHOT",

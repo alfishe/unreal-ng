@@ -71,6 +71,7 @@ A binding is **source → target, with options**. A profile is a list of binding
 | `frames` | 1..50 | 2 | Tap length, like `DebugJoystickManager::Tap`. |
 | `invert` | bool | false | For axes, and for "released = pressed" oddities. |
 | `repeat` | `{delay, rate}` in frames (1..500 each), or `none` | none | Key repeat for a held ZX key from a pad (menu navigation). Built: a held key or retro control is released for one emulated frame `delay` frames after the press and then every `rate` frames (`rate` 2 or more), so a menu that waits for a new press sees one, and a recording replays it; a held action (a debug layer's step keys) runs again on the host clock, `delay` and then every `rate` frames of 20 ms, also while the machine is paused ([debug-and-ttd.md §3.3](debug-and-ttd.md#33-debugger-ui)). Refused with `turbo`, `press: tap`, a `level` action, an encoder or a mouse target. |
+| `params` | object | none | An `action` target's parameters as the action declares them: `{ action: debugger.cursor_move, params: { dir: up } }` (a [GUI control plane](../../emulator/design/gui-control/README.md) command, run on the program's own host). The action checks them when it runs. Not with a `curve` object (a scrub action's parameters). |
 | `label` | string | none | The game's meaning ("Fire", "Hyperspace"), shown in the picture callouts (RetroArch descriptors). |
 
 ## 2. Routing and layers
@@ -125,6 +126,8 @@ DT-5, in words:
 | Triggers | the resting value is measured at connect (raw APIs report -1 at rest, Nestopia's bug); `lt.click` at 0.5 of the calibrated travel | 0.5 |
 | Hair-trigger stops (Elite) | the trigger's full value is the maximum seen in the session, not 1.0; it adapts as the stop changes | adaptive |
 | Stick → mouse | `v = sign(x) · max(0, |x| - dz)^γ · speed`, accumulated in sub-pixels, sent as integer mouse counts per frame | γ 1.8, speed 8 counts/frame at full deflection |
+| Touchpad → mouse | relative, like a laptop's pad: the finger's travel since the last sample moves the pointer, `travel · min(5, 1 + accel · 10 · |travel|) · scale` counts (the pad spans -1..1, so 2.0 is its width), accumulated in sub-pixels. The first sample of a touch only anchors, a lifted finger moves nothing, so where the finger rests means nothing and a touch at the edge does not jump. A pad is a pointing surface: no dead zone, no γ | `accel` 0.25, `scale` 72 counts per pad unit (the Deck profile) |
+| Host sensitivity on top | `[INPUT] MouseScale` (2^n, -3..3) multiplies every pointer count from a pad or stick, as it does the host mouse's; the fraction is carried | 0 (identity) |
 | Stick → mouse, precision | a held modifier (default `rstick.click`) scales speed by 0.25 | |
 | Gyro → mouse | angular velocity × scale, only while a chosen control is held (a ratchet), never always-on | hold `lb` |
 | Gyro or stick → pointer | absolute: the stick (or gyro integrated with recentring on `rstick.click`) gives a screen position for light guns and pens | |
@@ -186,6 +189,13 @@ machine setting (`HostKeyboard=`); the controller manager shows it and links to 
   `SwapMouse=` stays a preference applied on top.
 - **Wheel.** The Kempston wheel is a 4-bit absolute counter in #FADF bits 7:4 (Next, Evo), not a delta. The device
   accumulates host wheel steps into it; a pad can drive it (`{"mouse": "wheel"}` from `dpad.up` / `dpad.down`).
+- **A pad's pointer takes the same road as the host mouse.** `ControllerManager::SubmitMouse` feeds the journaled
+  `DebugMouseManager` funnel (`ApplyHostMove`), which hands the counts to the `MouseManager` and so to every
+  `IMouseSink` the machine has (the Kempston interface, the ZX Next mouse, the Sprinter and the Evo / TS-Conf PS/2
+  mouse), with `MouseScale` applied by the one `MouseDeltaAccumulator`. A trackpad (`ltouchpad.x`, `rtouchpad.y`, ...)
+  as the source of `{mouse: dx}` / `{mouse: dy}` is relative (the table in §3); any other axis keeps the joystick
+  meaning, the deflection is the speed. The binding's `scale` is counts per pad unit for a pad and counts per frame
+  at full deflection for a stick; `accel` (0..10) is the pad's pointer acceleration, 0 = linear.
 - Existing settings (`[INPUT] Mouse=`, `Wheel=`, `SwapMouse=`, `MouseScale=`, `MouseReleaseKey=`) stay where they are.
 
 ## 6. Profile selection
@@ -488,6 +498,39 @@ layers:
 The merge is the field-by-field merge of §6.2, so a scheme behaves as a profile one step below the game. A bundle
 entry is mostly `id`, `label`, `match` and `extends`: a few hundred bytes. A scheme is not chosen by itself; a scheme
 that names another scheme is allowed, a cycle is an error.
+
+### 7.7 Video: the game's picture cadence
+
+A game profile may carry the presenter's smoothing settings for the game (frame presenter design,
+[section 4.5](../2026-10-26-frame-presenter/README.md#45-games-their-own-picture-cadence-from-the-game-profile)).
+Most games draw a picture every 2nd-5th frame; the presenter can smooth the step between the game's own pictures
+without added latency, and the profile says how, instead of the presenter guessing at run time:
+
+```yaml
+video:
+  picture_period: 5                 # frames per picture (the usual one)
+  smooth: cadence                   # off | cadence | carry
+  window: [32, 24, 256, 160]        # play area on the framebuffer: x, y, width, height
+  exclude: [[32, 168, 256, 16]]     # regions inside the window left alone (score, status row)
+```
+
+- `smooth`: `cadence` interpolates to the next picture once it is in the presenter's lookahead; `carry` carries the
+  last motion on through the period. `off` keeps the frame repeat for this game even when `SmoothMotion =
+  interpolate`.
+- `window` / `exclude` in framebuffer pixels of the machine's video mode, border included (the coordinates
+  `capture/framebuffer` returns). Outside the window the presenter shows the frame as it is.
+- The presenter takes a burst of changed frames as one picture and `picture_period` as the expected distance.
+- The section applies only with `[VIDEO] SmoothMotion = interpolate`; the owner's switch stays the global one.
+- Validation: `picture_period` 1..16, `window` inside the largest framebuffer of the profile's machines, `exclude`
+  inside `window`; any other field is refused. A profile without `video:` is unchanged.
+- Drafting: `tools/smoothmotion/capture.py` captures frames of the game in play through the WebAPI (`run_frame` +
+  `capture/framebuffer`); `tools/smoothmotion/draft-video-profile.py` measures the period (the median distance
+  between pictures, a burst of changed frames one picture), the window (the 8x8 blocks that change on the game's
+  beat) and the exclusions (blocks redrawn off the beat on at least half of the pictures, a status row drawn a frame
+  later) and prints the section with the evidence. Capture play, not an idle screen: an idle scene's changes cover
+  part of the play area only (then the window is set from the picture). The mode is chosen by watching the 60 Hz
+  comparison (`smoothmotion-eval render`). The built-in examples: `games/pentagon/darkwing-duck.yaml`,
+  `games/spectrum/thundercats.yaml`, `games/spectrum/garfield.yaml`.
 
 ## 8. Defaults out of the box
 

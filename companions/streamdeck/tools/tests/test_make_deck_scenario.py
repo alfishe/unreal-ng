@@ -85,6 +85,27 @@ class GeneratorTest(unittest.TestCase):
                           "more keys than")
         self.assertEqual(gen.main([SPEC, "--catalogue", CATALOGUE, "--out", EXPECTED + ".nope", "--check"]), 1)
 
+    def test_gui_step(self):
+        """A GUI control plane command: checked against the GUI catalogue, written as a `gui` step."""
+        gui = gen.gui_commands({"interfaces": [{"name": "debugger", "level": "host", "state": ["open"], "commands": [
+            {"method": "debugger.cursor_move", "repeats": True,
+             "params": [{"name": "dir", "kind": "string", "optional": False}]}]}]})
+        spec = copy.deepcopy(self.spec)
+        spec["root"]["items"].append({"id": "cup", "gui": "debugger.cursor_move", "params": {"dir": "up"}, "hold": True})
+        key = gen.Generator(self.catalogue, spec, gui).scenario()["root"]["items"][-1]
+        self.assertEqual(key["do"], {"kind": "gui", "method": "debugger.cursor_move", "params": {"dir": "up"},
+                                     "hold": True})
+        self.assertEqual(gen.gui_root_fields(gui), {"debugger", "open"})
+        for item, text in (({"id": "x", "gui": "debugger.nothing"}, "not in the GUI catalogue"),
+                           ({"id": "x", "gui": "debugger.cursor_move"}, "missing dir; it takes dir"),
+                           ({"id": "x", "gui": "debugger.cursor_move", "params": {"dir": "up", "n": 1}},
+                            "unknown parameter n")):
+            spec = copy.deepcopy(self.spec)
+            spec["root"]["items"].append(item)
+            with self.assertRaises(gen.SpecError) as e:
+                gen.Generator(self.catalogue, spec, gui).scenario()
+            self.assertIn(text, str(e.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

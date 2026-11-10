@@ -68,6 +68,14 @@ public:
 
     void go_to(unsigned int address);
     unsigned int cursor() const { return m_cursor; }
+    //The cursor to the address (in the characters' column or the values'); the dump scrolls only when the line is
+    //not in view. A move of the cursor drops the selection
+    void set_cursor(unsigned int address, bool chars);
+    //The address of the first line shown
+    unsigned int top() const { return m_top; }
+    //The bytes from..to (both in) marked, the cursor on the first
+    void select(unsigned int from, unsigned int to);
+    bool selection(unsigned int &from, unsigned int &to) const;
     void refresh();
     //The values now are what changes are shown against
     void mark_stop();
@@ -119,7 +127,6 @@ private:
     int x_chars() const;
     unsigned int value_at(unsigned int address) const;
     bool hit(const QPoint &pos, unsigned int &address, bool &chars) const;
-    void set_cursor(unsigned int address, bool chars);
     void make_visible();
     void update_scrollbar();
     void start_edit(unsigned int address, bool chars);
@@ -131,6 +138,14 @@ private:
 
     PaintedRows m_painted;
     std::vector<AddressWindow> m_windows;
+    //Some of the bytes from the address on are selected
+    bool selected(unsigned int address, unsigned int count) const
+    {
+        return m_selected && address <= m_sel_to && address + count > m_sel_from;
+    }
+    bool m_selected = false;
+    unsigned int m_sel_from = 0;
+    unsigned int m_sel_to = 0;
     //What a line of the view shows, for PaintedRows
     QString row_key(int row) const;
     //The label of the window starting at the line, empty when none does
@@ -187,6 +202,8 @@ public:
     void mark_stop();
     //The processor's dump at an address
     void show_address(CPU * cpu, unsigned int address);
+    //The processor's dump, null when it has none; shown: its tab in front (the focus stays where it is)
+    MemoryView * view_of(CPU * cpu, bool shown = false);
     //The page that holds a processor's address, in the pages tab, at that byte
     void show_page(CPU * cpu, unsigned int address);
     void set_read_only(bool on);

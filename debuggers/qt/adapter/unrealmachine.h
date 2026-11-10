@@ -10,6 +10,9 @@
 #include <vector>
 
 #include "ecatshim.h"
+#include "machineaction.h"
+
+class QObject;
 
 struct MachineOptions {
     std::string model = "PENTAGON";
@@ -27,3 +30,10 @@ uint64_t UnrealMachineFrames(ecatshim::Emulator * e);
 
 // The Z80 listing decoder without a machine (no labels): the remote machine's
 ecatshim::DisAsm * CreatePlainZ80DisAsm();
+
+// The GUI control plane: the machine's id in the core (the instance its views show)
+std::string UnrealMachineId(ecatshim::Emulator * e);
+// A core action on the machine through the registry (params: a JSON object's text); done runs on context's thread,
+// never after context is gone
+void UnrealMachineAction(ecatshim::Emulator * e, const std::string &action, const std::string &params, QObject * context,
+                         MachineActionDone done);

@@ -61,7 +61,6 @@ constexpr char const* NC_AUDIO_FRAME_REFRESH = "AUDIO_FRAME_REFRESH";           
 constexpr char const* NC_VIDEO_FRAME_REFRESH = "VIDEO_FRAME_REFRESH";           // Video frame ready (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEO_MODE_CHANGED = "VIDEO_MODE_CHANGED";             // Video mode switched: framebuffer geometry (and possibly its address) changed - consumers holding raw pointers or cached dimensions must re-attach (payload: EmulatorFramePayload with ID)
 constexpr char const* NC_VIDEO_VIEWPORT_CHANGED = "VIDEO_VIEWPORT_CHANGED";     // The display viewport (the crop of an overscan frame) changed: a front end crops its picture the same (payload: EmulatorFramePayload with ID)
-constexpr char const* NC_VIDEOWALL_SINGLE_SYNC_MODE = "VIDEOWALL_SINGLE_SYNC_MODE"; // Request videowall single sync mode (payload: VideowallSyncModePayload)
 
 constexpr char const* NC_FDD_MOTOR_STARTED = "FDD_MOTOR_START";                 // Floppy drive motor started
 constexpr char const* NC_FDD_MOTOR_STOPPED = "FDD_MOTOR_STOP";                  // Floppy drive motor stopped
@@ -398,6 +397,23 @@ private:
 	std::atomic<bool> _value;
 };
 
+/// LiveFlag's number: a setting another thread changes while the machine runs, read where it is used
+class LiveInt
+{
+public:
+	LiveInt(int value = 0) : _value(value) {}
+	LiveInt(const LiveInt& other) : _value(other.Get()) {}
+	LiveInt& operator=(const LiveInt& other) { Set(other.Get()); return *this; }
+	LiveInt& operator=(int value) { Set(value); return *this; }
+	operator int() const { return Get(); }
+
+	int Get() const { return _value.load(std::memory_order_relaxed); }
+	void Set(int value) { _value.store(value, std::memory_order_relaxed); }
+
+private:
+	std::atomic<int> _value;
+};
+
 struct TMemModel
 {
 	const char *FullName;
@@ -682,13 +698,20 @@ struct CONFIG
 	uint8_t soundfilter; //Alone Coder (IDC_SOUNDFILTER)
 	uint8_t RejectDC;
 
-	/// Video presentation delay in frames for A/V sync ([VIDEO]
-	/// AVSyncDelayFrames). Audio trails the emulated frame by the DRC ring
-	/// target + device HW buffer (~2 frames); delaying video by the same
-	/// amount collapses the net A/V offset to ~0 at the cost of input
-	/// latency. -1 = auto (2 frames), 0 = present immediately (lowest input
-	/// latency), 1..3 explicit.
-	int videoPresentDelayFrames;
+	/// Lip-sync trim in milliseconds ([VIDEO] LipSyncOffsetMs, -200..200): added to every frame's target time, the
+	/// time its sound is heard (frame presenter design, section 3). Positive = the picture later. Set at run time
+	/// (automation's lip_sync_offset_ms), read per latch
+	LiveInt lipSyncOffsetMs = 0;
+	/// How the native presenter shows the frames ([VIDEO] PresentPolicy: auto | vrr | vsync; a PresentPolicy)
+	uint8_t presentPolicy = 0;
+	/// The display's refresh rate while the emulator is active ([VIDEO] DisplayRate: keep | match; a DisplayRate)
+	uint8_t displayRate = 0;
+	/// The picture between two frames on a fixed display ([VIDEO] SmoothMotion: off | blend | interpolate; a
+	/// smoothmotion::Mode). Off: the frame due (frame presenter design, sections 4.3-4.5)
+	uint8_t smoothMotion = 0;
+	/// Where the screen's effects run ([VIDEO] EffectsDevice: gpu | cpu): the GPU screen's passes, or the CPU reference
+	/// (the same bits). The software screen is always the CPU
+	bool effectsOnCpu = false;
 
 	struct
 	{

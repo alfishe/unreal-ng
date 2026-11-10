@@ -4,6 +4,8 @@
 #include "crtrenderer.h"
 
 #include <QDebug>
+#include <QScreen>
+#include <QTimer>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -81,6 +83,7 @@ void DeviceScreen::detach()
             devicePixels = nullptr;
         }
         _frameSource = nullptr;
+        _nextFrameSource = nullptr;
     }
     _latchedFrame = QImage();
 
@@ -96,6 +99,76 @@ void DeviceScreen::detach()
     update();
 }
 
+void DeviceScreen::setFrameSource(ScreenFrames source)
+{
+    _displayRate = source.displayRate;
+    smoothmotion::Mode mode = source.smooth;
+    const QByteArray forced = qgetenv("UNREAL_SMOOTH_MOTION");
+    if (!forced.isEmpty() && !smoothmotion::ParseMode(forced.constData(), mode))
+        qWarning() << "DeviceScreen: UNREAL_SMOOTH_MOTION=" << forced << "is not off | blend | interpolate | auto";
+    {
+        std::lock_guard<std::mutex> lock(_frameSourceMutex);
+        _frameSource = std::move(source.at);
+        _nextFrameSource = std::move(source.next);
+    }
+    _smoothAuto = mode == smoothmotion::Mode::Auto;
+    _sync = VideoSync::Off;
+    _syncReason.clear();
+    _smooth.Reset();
+    _smooth.SetMode(mode);
+    _smoothShown = {};
+    updateVideoSync();
+}
+
+void DeviceScreen::updateVideoSync()
+{
+    if (!_smoothAuto)
+    {
+        _sync = VideoSync::Off;
+        _syncReason.clear();
+        return;
+    }
+    const QScreen* display = screen();
+    const double displayHz = display ? display->refreshRate() : 0.0;
+    const double machineHz = _frameRate.Hz();
+    const VideoSync sync = PickVideoSync(false, displayHz, machineHz, _sync);
+    _syncReason = "no VRR and no display rate switch on the software screen (gpu on has them)";
+    if (sync == VideoSync::Interpolate && machineHz <= 0.0)
+        _syncReason += "; the machine's frame rate is not steady yet";
+    if (sync == _sync)
+        return;
+    _sync = sync;
+    _smooth.Reset();
+    _smoothShown = {};
+}
+
+WindowPresentStats DeviceScreen::presentStats() const
+{
+    WindowPresentStats out;
+    out.presenter = "software";
+    out.vrrSupport = "no";
+    out.vrrReason = "the software screen presents on the refresh grid";
+    const QScreen* display = screen();
+    out.minRefreshHz = out.maxRefreshHz = display ? display->refreshRate() : 0.0;
+    FillSmoothStats(_smooth, smoothActive(), false, out);
+    out.sync = VideoSyncName(_sync);
+    out.syncReason = _syncReason;
+    out.machineHz = _frameRate.Hz();
+    out.clock = FrameClockSourceName(_shownClock);
+    if (_displayRate == DisplayRate::Match)
+    {
+        out.displayState = "unchanged";
+        out.displayReason = "the software screen does not switch the display's mode (gpu on does)";
+    }
+    return out;
+}
+
+bool DeviceScreen::smoothActive() const
+{
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
+           (!_smoothAuto || _sync == VideoSync::Interpolate);
+}
+
 void DeviceScreen::clearFrameSource()
 {
     // Runs on the MessageCenter worker inside the pre-free drain window:
@@ -103,6 +176,7 @@ void DeviceScreen::clearFrameSource()
     // touches only owned memory. No Qt calls here (cross-thread safe).
     std::lock_guard<std::mutex> lock(_frameSourceMutex);
     _frameSource = nullptr;
+    _nextFrameSource = nullptr;
     if (devicePixels)
     {
         delete devicePixels;
@@ -162,10 +236,59 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         // Draw into the widget's FULL rect - QPainter clips to event->rect()
         // automatically. Targeting event->rect() squeezed the whole framebuffer
         // into partial dirty rects (move/scroll damage), stretching the image.
+        const int64_t now = SteadyNowNs();
+        PresentFrameInfo info;
         if (_frameSource && !_latchedFrame.isNull() &&
-            _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &geometry))
+            _frameSource(now, _latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), &info))
         {
             drawImage = &_latchedFrame;
+            geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
+            _shownClock = info.source;
+            if (_smoothAuto)
+            {
+                if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
+                {
+                    _meteredSerial = info.serial;
+                    // A turbo frame (timed by its latch) says nothing about the machine's rate
+                    if (info.source == FrameClockSource::Latch)
+                        _frameRate.PushUnpaced();
+                    else
+                        _frameRate.Push(info.targetNs, info.periodNs);
+                }
+                updateVideoSync();
+            }
+            const bool smooth = smoothActive();
+            if (smooth)
+            {
+                // Each frame once, in order (the screen holds a few)
+                if (_nextFrame.size() != _latchedFrame.size())
+                    _nextFrame = QImage(_latchedFrame.size(), QImage::Format_RGBX8888);
+                for (size_t k = 0; k < smoothmotion::SmoothMotion::kFrames; k++)
+                {
+                    PresentFrameInfo next;
+                    if (!_nextFrameSource(_smooth.LastSerial(), _nextFrame.bits(),
+                                          static_cast<size_t>(_nextFrame.sizeInBytes()), &next) ||
+                        next.serial == 0)
+                        break;
+                    _smooth.Push(next.serial, next.targetNs, reinterpret_cast<const uint32_t*>(_nextFrame.constBits()),
+                                 _nextFrame.width(), _nextFrame.height());
+                }
+            }
+            // The next frame is due later than this paint: a repaint at its time (frames by time, no vsync here).
+            // Smooth motion: a repaint a refresh on, the picture moves in between
+            if (info.nextSerial != 0 && !_repaintScheduled)
+            {
+                _repaintScheduled = true;
+                const QScreen* display = screen();
+                const double hz = display && display->refreshRate() >= 20.0 ? display->refreshRate() : 60.0;
+                const int64_t waitMs =
+                    smooth ? std::max<int64_t>(1, static_cast<int64_t>(1000.0 / hz))
+                           : std::clamp<int64_t>((info.nextTargetNs - now + 999'999) / 1'000'000, 1, 100);
+                QTimer::singleShot(static_cast<int>(waitMs), this, [this] {
+                    _repaintScheduled = false;
+                    refresh();
+                });
+            }
         }
         // A frame source is installed: never fall back to devicePixels. It wraps the emulator's framebuffer, which is
         // freed and reallocated when the guest switches video mode (Profi 352x288 <-> 512x240 hi-res, ATM, AlCo)
@@ -180,6 +303,23 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     if (!drawImage || drawImage->isNull())
         return;
 
+    // Smooth motion: the picture for now, drawn again only when it is another one
+    if (drawImage == &_latchedFrame && smoothActive() && _smooth.Width() == drawImage->width() &&
+        _smooth.Height() == drawImage->height())
+    {
+        const smoothmotion::SmoothMotion::Result plan = _smooth.Plan(SteadyNowNs());
+        if (_smoothFrame.size() != drawImage->size())
+        {
+            _smoothFrame = QImage(drawImage->size(), QImage::Format_RGBX8888);
+            _smoothShown = {};
+        }
+        if (plan.kind != smoothmotion::SmoothMotion::Kind::None &&
+            (plan == _smoothShown || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()))))
+        {
+            _smoothShown = plan;
+            drawImage = &_smoothFrame;
+        }
+    }
     if (_pictureView != PictureView::Mode::Full)
     {
         _frameGeometry = geometry;
@@ -373,10 +513,11 @@ QRectF DeviceScreen::displaySourceRect() const
 QImage DeviceScreen::grabFramebuffer()
 {
     QImage frame;
-    if (_frameSource && !_latchedFrame.isNull() &&
-        _frameSource(_latchedFrame.bits(), static_cast<size_t>(_latchedFrame.sizeInBytes()), nullptr))
+    QImage grabbed(_latchedFrame.size(), _latchedFrame.format());
+    if (_frameSource && !grabbed.isNull() &&
+        _frameSource(SteadyNowNs(), grabbed.bits(), static_cast<size_t>(grabbed.sizeInBytes()), nullptr))
     {
-        frame = _latchedFrame;  // Tear-free latched frame (shared bits; copied below)
+        frame = grabbed;  // Tear-free latched frame, the one on screen now
     }
     else if (!_frameSource && devicePixels != nullptr)
     {

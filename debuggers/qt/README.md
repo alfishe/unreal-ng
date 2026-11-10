@@ -15,6 +15,7 @@ and is adapted freely.
 | `shimapi/ecatshim.h` | the part of ecat's core API the views call (Emulator, CPU, DisAsm, devices), declared over nothing |
 | `shim/` | ecat's header names (`emulator/core.h`, ...) standing for that API |
 | `adapter/` | the API over unreal-ng: `unrealmachine.cpp` (the core in this process), `remotemachine.cpp` (a running emulator through its WebAPI) |
+| `guiplane/` | the window on the GUI control plane: `debugger`, `disassembly`, `memory` (views' side, no core header) |
 | `main.cpp` | the program: options, the screen window, the checks |
 
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
@@ -33,3 +34,9 @@ unreal-debugger --measure 10                                frames/s and CPU: sc
 ```
 
 Run from the build's `bin/` (the core finds `data/` there; in the macOS package, `UnrealNG.app/Contents/Resources`).
+
+The window is on the GUI control plane as program `unreal-debugger` (`unreal-gui list`, `unreal-gui memory.goto 0x6000`):
+the same `debugger`, `disassembly` and `memory` commands as unreal-qt's debugger, on the listing and the dump of the
+processor in front. `UNREAL_GUI_CONTROL_DIR` and `UNREAL_GUI_CONTROL_PORT` as for every GUI program; see
+[the GUI control plane](../../docs/emulator/design/gui-control/README.md#6-interfaces). Check:
+`python3 tools/guicontrol/verify_debugger.py`.

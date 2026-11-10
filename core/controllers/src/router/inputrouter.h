@@ -325,6 +325,9 @@ private:
         uint16_t tapBits = 0;
         bool latched = false;    ///< toggle / autohold
         float remainder = 0.0f;  ///< a mouse axis: the counts not sent yet
+        float padLast = 0.0f;    ///< a touchpad mouse axis: the finger's position at the last sample
+        float padVelocity = 0.0f;  ///< the last travel per sample, what a coasting pointer continues with
+        bool padTouching = false;  ///< and whether the finger was down (the first sample of a touch only anchors)
     };
     struct Instance
     {

@@ -94,6 +94,7 @@ public:
     void setCustomShadersEnabled(bool enabled);
     void populateCrtProfileMenu();
     void setTemporalBlendingChecked(bool checked);
+    void setVideoSyncChecked(bool checked);
     void setTemporalBlendingEnabled(bool enabled);
 
     // Actions shared with the transport toolbar (ToolBarManager). Their visible /
@@ -193,6 +194,8 @@ signals:
     void crtProfileChanged(int profileIndex);
     void crtShaderChanged(const QString& name);  ///< a custom shader (GPU only)
     void temporalBlendingToggled(bool enabled);
+    void videoSyncToggled(bool on);              // View -> Video Synchronization
+    void videoSyncWindowRequested();             // Tools -> Video Synchronization...
     void debuggerToggled(bool visible);
     /// Debug > Debugger > eCat / Unreal TUI / Unreal TUI, TS-Conf: start that program (externaldebuggers.h) over this window's emulator
     void externalDebuggerRequested(const QString& program);
@@ -299,6 +302,8 @@ private:
     QMenu* _crtProfileMenu = nullptr;
     QActionGroup* _crtProfileGroup = nullptr;
     QAction* _temporalBlendingAction = nullptr;
+    QAction* _videoSyncAction = nullptr;
+    QAction* _videoSyncWindowAction = nullptr;
     QAction* _debuggerAction;
     QAction* _tuiTsConfDebuggerAction = nullptr;  // Debug > Debugger > Unreal TUI, TS-Conf: only on a TS-Conf machine
     QAction* _logWindowAction;

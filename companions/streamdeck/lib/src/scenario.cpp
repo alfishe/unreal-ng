@@ -445,6 +445,22 @@ struct Validator
                 CheckValuePaths(v, id);
             }
         }
+        else if (a.kind == "gui")
+        {
+            // A command of the GUI control plane (interface.command: memory.page, metadata.set)
+            const std::string method = j.contains("method") && j["method"].is_string() ? j["method"].get<std::string>() : "";
+            if (method.empty())
+                Error(id, "gui needs 'method' (a GUI control plane command, e.g. debugger.open)");
+            else if (method.find('.') == std::string::npos || method.front() == '.' || method.back() == '.' ||
+                     method.find_first_of(" \t/@") != std::string::npos)
+                Error(id, "gui method '" + method + "' is not a command (interface.command)");
+            if (j.contains("params") && !j["params"].is_object())
+                Error(id, "gui: params must be an object");
+            if (j.contains("hold") && !j["hold"].is_boolean())
+                Error(id, "gui: hold must be true or false");
+            if (j.contains("target") && !j["target"].is_string())
+                Error(id, "gui: target must be a string (debugger, memory, memory@<instance>)");
+        }
         else if (a.kind == "webapi")
             need("path");
         else if (a.kind == "http")
@@ -639,9 +655,9 @@ std::optional<Crumbs> CrumbsByName(std::string_view s)
 
 std::span<const std::string_view> ActionKinds()
 {
-    static constexpr std::string_view kKinds[] = {"action", "webapi",     "http",  "multi", "toggle",
-                                                  "first",  "dir",        "delay", "ttd_seek", "run_toggle",
-                                                  "shell",  "open",       "keys",  "nav",      "brightness"};
+    static constexpr std::string_view kKinds[] = {"action", "gui",   "webapi",   "http",       "multi",
+                                                  "toggle", "first", "dir",      "delay",      "ttd_seek",
+                                                  "run_toggle", "shell", "open", "keys", "nav", "brightness"};
     return kKinds;
 }
 

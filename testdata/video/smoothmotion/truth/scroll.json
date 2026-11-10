@@ -1,0 +1,88 @@
+{
+ "scene": "scroll",
+ "note": "rect in paper pixels; the content moves left (x) or up (y) step16/16 px per frame",
+ "paper": [
+  48,
+  48
+ ],
+ "regions": [
+  {
+   "name": "H.5",
+   "rect": [
+    32,
+    16,
+    256,
+    32
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 8,
+   "period": 1
+  },
+  {
+   "name": "H1",
+   "rect": [
+    32,
+    48,
+    256,
+    64
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 16,
+   "period": 1
+  },
+  {
+   "name": "H2",
+   "rect": [
+    32,
+    80,
+    256,
+    96
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 32,
+   "period": 1
+  },
+  {
+   "name": "H3",
+   "rect": [
+    32,
+    112,
+    256,
+    128
+   ],
+   "axis": "x",
+   "dir": -1,
+   "step16": 48,
+   "period": 1
+  },
+  {
+   "name": "V1",
+   "rect": [
+    32,
+    144,
+    256,
+    160
+   ],
+   "axis": "y",
+   "dir": -1,
+   "step16": 16,
+   "period": 1
+  },
+  {
+   "name": "V2",
+   "rect": [
+    32,
+    176,
+    256,
+    192
+   ],
+   "axis": "y",
+   "dir": -1,
+   "step16": 32,
+   "period": 1
+  }
+ ]
+}

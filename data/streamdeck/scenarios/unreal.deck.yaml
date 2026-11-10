@@ -3965,8 +3965,8 @@ root:
             - 3
             - 3
           do:
-            id: osd.keyboard
-            kind: action
+            kind: gui
+            method: unrealqt.osd_keyboard
           face:
             glyph: osd.keyboard
             label: KEYBOARD
@@ -4007,8 +4007,9 @@ root:
         - 2
         - 6
       do:
-        id: cap.screenshot
-        kind: action
+        kind: gui
+        method: window.screenshot
+        target: main
       face:
         glyph: cap.screenshot
       id: shot
@@ -4081,15 +4082,16 @@ root:
             - 0
             - 5
           do:
-            id: cap.screenshot
-            kind: action
+            kind: gui
+            method: window.screenshot
+            target: main
           face:
             glyph: cap.screenshot
             label: SHOT
           id: vidshot
           tags:
             - uc:C7.5
-          title: Screenshot
+          title: vidshot
           type: action
         -
           at:
@@ -4638,8 +4640,8 @@ root:
             - 0
             - 5
           do:
-            id: run.to_cursor
-            kind: action
+            kind: gui
+            method: disassembly.run_to_cursor
           face:
             glyph: run.to_cursor
             label: "TO CURSOR"
@@ -4713,15 +4715,15 @@ root:
             - 1
             - 1
           do:
-            id: dbg.breakpoint_toggle_cursor
-            kind: action
+            kind: gui
+            method: disassembly.breakpoint_toggle_cursor
           face:
             glyph: dbg.breakpoint_toggle_cursor
             label: "BP CUR"
           id: bpcur
           tags:
             - uc:D4.1
-          title: "Toggle a breakpoint at the cursor"
+          title: "Breakpoint at the cursor"
           type: action
         -
           at:
@@ -4843,8 +4845,8 @@ root:
             - 2
             - 0
           do:
-            id: dbg.open
-            kind: action
+            kind: gui
+            method: debugger.open
           face:
             glyph: debug.menu
             label: "SHOW DEBUG"
@@ -4858,8 +4860,8 @@ root:
             - 2
             - 1
           do:
-            id: dbg.focus_prev_pane
-            kind: action
+            kind: gui
+            method: debugger.focus_prev
           face:
             glyph: dbg.focus_prev_pane
             label: "PANE <"
@@ -4873,8 +4875,8 @@ root:
             - 2
             - 2
           do:
-            id: dbg.focus_next_pane
-            kind: action
+            kind: gui
+            method: debugger.focus_next
           face:
             glyph: dbg.focus_next_pane
             label: "PANE >"
@@ -4889,14 +4891,16 @@ root:
             - 3
           do:
             hold: true
-            id: dbg.page_up
-            kind: action
+            kind: gui
+            method: debugger.page
+            params:
+              n: -1
           face:
             glyph: dbg.page_up
           id: pgup
           tags:
             - uc:D6.2
-          title: "Page up in the pane"
+          title: "Page up"
           type: action
         -
           at:
@@ -4904,14 +4908,16 @@ root:
             - 4
           do:
             hold: true
-            id: dbg.cursor_up
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: up
           face:
             glyph: dbg.cursor_up
           id: cup
           tags:
             - uc:D6.2
-          title: "Cursor up in the pane"
+          title: "Cursor up"
           type: action
         -
           at:
@@ -4919,60 +4925,63 @@ root:
             - 5
           do:
             hold: true
-            id: dbg.page_down
-            kind: action
+            kind: gui
+            method: debugger.page
+            params:
+              n: 1
           face:
             glyph: dbg.page_down
           id: pgdn
           tags:
             - uc:D6.2
-          title: "Page down in the pane"
+          title: "Page down"
           type: action
         -
           at:
             - 2
             - 6
           do:
-            id: dbg.follow_pc
-            kind: action
+            kind: gui
+            method: disassembly.follow_pc
           face:
             glyph: dbg.follow_pc
             label: FOLLOW
           id: follow
           tags:
             - uc:D6.4
-          title: "Disassembly follows PC"
+          title: "Show PC"
           type: action
         -
           at:
             - 2
             - 7
           do:
-            hold: true
-            id: dbg.memory_follow
-            kind: action
+            kind: gui
+            method: debugger.activate
           face:
             glyph: dbg.memory_follow
             label: "MEM PC"
           id: memf
           tags:
             - uc:D6.3
-          title: "Memory follows the value under the cursor"
+          title: "Enter in the focused pane"
           type: action
         -
           at:
             - 2
             - 8
           do:
-            id: dbg.labels_toggle
-            kind: action
+            kind: gui
+            method: metadata.set
+            params:
+              switch: labels
           face:
             glyph: dbg.labels_toggle
             label: LABELS
           id: labels
           tags:
             - uc:D6.4
-          title: "Labels in the disassembly"
+          title: "Metadata switch"
           type: action
         -
           at:
@@ -5029,14 +5038,16 @@ root:
             - 3
           do:
             hold: true
-            id: dbg.cursor_left
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: left
           face:
             glyph: dbg.cursor_left
           id: cleft
           tags:
             - uc:D6.2
-          title: "Cursor left in the pane"
+          title: "Cursor left"
           type: action
         -
           at:
@@ -5044,14 +5055,16 @@ root:
             - 4
           do:
             hold: true
-            id: dbg.cursor_down
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: down
           face:
             glyph: dbg.cursor_down
           id: cdown
           tags:
             - uc:D6.2
-          title: "Cursor down in the pane"
+          title: "Cursor down"
           type: action
         -
           at:
@@ -5059,14 +5072,16 @@ root:
             - 5
           do:
             hold: true
-            id: dbg.cursor_right
-            kind: action
+            kind: gui
+            method: debugger.cursor_move
+            params:
+              dir: right
           face:
             glyph: dbg.cursor_right
           id: cright
           tags:
             - uc:D6.2
-          title: "Cursor right in the pane"
+          title: "Cursor right"
           type: action
         -
           at:
@@ -5622,24 +5637,24 @@ root:
             - 3
             - 5
           do:
-            id: ttd.find_last_write
-            kind: action
+            kind: gui
+            method: memory.find_last_write
           face:
             glyph: ttd.find_last_write
             label: WRITE
           id: lastw
           tags:
             - uc:D5.1
-          title: "Last write here"
+          title: "Last write to the cursor"
           type: action
         -
           at:
             - 3
             - 6
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: read
           face:
             glyph: ttd.find_last
@@ -5647,16 +5662,16 @@ root:
           id: lastr
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:
             - 3
             - 7
           do:
-            id: ttd.find_last
-            kind: action
-            value:
+            kind: gui
+            method: memory.find_last
+            params:
               access: execute
           face:
             glyph: ttd.find_last
@@ -5664,7 +5679,7 @@ root:
           id: laste
           tags:
             - uc:D5.1
-          title: "Last access here"
+          title: "Last access to the cursor"
           type: action
         -
           at:

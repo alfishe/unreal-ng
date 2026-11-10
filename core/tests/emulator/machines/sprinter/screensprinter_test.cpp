@@ -994,7 +994,7 @@ TEST_F(ScreenSprinterTemporal_Test, NativeMode_NotApplicable)
     EXPECT_FALSE(stats.active);
     EXPECT_FALSE(stats.applicable);
     EXPECT_EQ(stats.inactiveReason.rfind("not applicable: Sprinter native mode", 0), 0u) << stats.inactiveReason;
-    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), _screen->GetPresentDelayFrames()) << "no delay for nothing";
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), Screen::kAudioPathDelayFrames) << "no delay for nothing";
     ASSERT_TRUE(_screen->SetTemporalAlgorithm(""));
     EXPECT_TRUE(_screen->GetTemporalStats().applicable) << "off: nothing to apply";
 }

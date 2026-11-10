@@ -209,6 +209,12 @@ else ()
     )
 endif ()
 
+# The GUI control plane (guicontrol/): the host the video wall serves its window and tile grid through
+if (NOT TARGET guicontrol-widgets)
+    add_subdirectory("${ROOT_DIR}/guicontrol" guicontrol)
+endif ()
+target_link_libraries(${PROJECT_NAME} PRIVATE guicontrol-widgets)
+
 # Debug output
 message(STATUS "Binary: ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 

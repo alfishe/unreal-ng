@@ -46,6 +46,14 @@ public:
     }
     // The `action` kind: a call of the host's action registry (sdb/actionexec.h)
     virtual ActionResult RunAction(const ActionCall& call);
+    // The `gui` kind: a command of the GUI control plane (sdb/guiplane.h) on the program that serves the WebAPI,
+    // the step {method, params?, target?, hold?} after substitution. phase: 0 once; a held key (hold: a command that
+    // repeats) +1 on the press (it runs, then repeats after 300 ms every 60 ms) and -1 on the release (it stops)
+    virtual ActionResult RunGui(const json& step, int phase)
+    {
+        (void)phase;
+        return {false, "gui " + step.value("method", "") + ": the GUI control plane is not available here"};
+    }
     // A readout a state-bound face shows (scenarios.md §4), polled while no surface topic delivers it; null =
     // unknown here. The system host answers run.state.paused.
     virtual json Readout(const std::string& path)

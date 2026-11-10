@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file osdkeyboardwindow.h
-/// @brief The on-screen keyboard (controller manager `osd.keyboard`, POC 031): the bound machine's own keyboard in a
+/// @brief The on-screen keyboard (`unrealqt.osd_keyboard`, POC 031): the bound machine's own keyboard in a
 /// window of its own that never takes the focus from the screen. A click presses a key while the button is held; a
 /// modifier (CS, SS, PC Shift / Ctrl / Alt / Win) latches until the next key goes up, a second click lets it go. The
 /// machines with more than one keyboard (the PC clones: their PC keyboard and the 40-key ZX matrix; Pentagon,

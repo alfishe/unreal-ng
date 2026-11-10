@@ -38,6 +38,7 @@
 #include "debugger/ttd/ttdinputjournal.h"
 #include "debugger/ttd/ttdserializable.h"
 #include "emulator/io/keyboard/keyboard.h"
+#include "emulator/io/mouse/mousedeltaaccumulator.h"
 #include "emulator/ports/deviceaccesswatch.h"
 
 class BreakpointConditionProgram;
@@ -276,6 +277,7 @@ private:
     std::vector<PcKey> _ps2HostKeys;  ///< the PC keys the overlay holds on a PS/2 sink (machine thread only)
     std::array<uint8_t, 2> _pcOnlyKeys{};  ///< the PC-only keys of a profile (rows 8 and 9 of HostKeys), not in the TTD blob; _mutex
     std::array<uint8_t, 8> _hostKeys{};  ///< the host key overlay, active high (journaled, in the blob); _mutex
+    MouseDeltaAccumulator _mouseMotion;  ///< the controllers' mouse counts x [INPUT] MouseScale, the fraction carried
     uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample
 
     /// The watch request (0 none, 1 start, 2 stop), taken at the frame boundary

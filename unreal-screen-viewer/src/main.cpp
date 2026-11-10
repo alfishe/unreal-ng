@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QIcon>
 
 #include "MainWindow.h"
@@ -35,7 +36,16 @@ int main(int argc, char* argv[])
     QApplication::setOrganizationName("Unreal-NG");
     setApplicationIcon(app);
 
-    MainWindow window;
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral("The screens of running emulators, through their WebAPI"));
+    parser.addHelpOption();
+    const QCommandLineOption connect(QStringLiteral("connect"),
+                                     QStringLiteral("The WebAPI to watch (not kept in the settings)."),
+                                     QStringLiteral("host:port"));
+    parser.addOption(connect);
+    parser.process(app);
+
+    MainWindow window(parser.value(connect));
     window.show();
 
     return app.exec();

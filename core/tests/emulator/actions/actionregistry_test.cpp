@@ -16,6 +16,7 @@
 #include "common/uuid.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/builtinactions.h"
+#include "emulator/actions/catalogue.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
@@ -127,7 +128,7 @@ protected:
 
     void Add(const char* id, ValueKind kind, Executor run, ActionRules rules = {}, bool held = false)
     {
-        _handles.push_back(_registry->Register({id, id, "Test", kind, held, false, {}, {}, false}, std::move(run), std::move(rules)));
+        _handles.push_back(_registry->Register({id, id, "Test", kind, held, {}, {}, false}, std::move(run), std::move(rules)));
     }
 
     Emulator* _emulator = nullptr;
@@ -382,9 +383,9 @@ TEST_F(ActionRegistry_Test, DroppingTheInstanceAnswersQueuedJobsNotFoundAndEndsI
 
 TEST_F(ActionRegistry_Test, AHandleUnregistersOnlyItsOwnRegistration)
 {
-    RegistrationHandle first = _registry->Register({"t.same", "First", "Test", ValueKind::Press, false, true, {}, {}, false},
+    RegistrationHandle first = _registry->Register({"t.same", "First", "Test", ValueKind::Press, false, {}, {}, false},
                                                    [](const ActionCall&) { return ActionResult::Success(); });
-    RegistrationHandle second = _registry->Register({"t.same", "Second", "Test", ValueKind::Press, false, true, {}, {}, false},
+    RegistrationHandle second = _registry->Register({"t.same", "Second", "Test", ValueKind::Press, false, {}, {}, false},
                                                     [](const ActionCall&) { return ActionResult::Success(); });
     first.Reset();  // replaced already: the newer registration stays
     ASSERT_TRUE(_registry->Find("t.same").has_value());
@@ -427,14 +428,15 @@ TEST(ActionRegistryBuiltins_Test, TheCoreRegistersTheMovedActions)
                            "ttd.bookmark_add", "ttd.resume_live", "ttd.jog_frames", "ttd.jog_instructions",
                            "mach.reset", "mach.nmi", "mach.turbo_toggle"})
     {
-        const std::optional<ActionInfo> info = registry.Find(id);
-        ASSERT_TRUE(info.has_value()) << id;
-        EXPECT_FALSE(info->gui) << id;
+        EXPECT_TRUE(registry.Find(id).has_value()) << id;
     }
     EXPECT_EQ(registry.Find("ttd.jog_frames")->kind, ValueKind::Delta);
     EXPECT_TRUE(registry.Find("mach.reset")->held);
     EXPECT_TRUE(registry.Find("run.turbo_hold")->held);
-    EXPECT_FALSE(registry.Find("dbg.open").has_value()) << "a GUI action: only the Qt client registers it";
+    // GUI verbs are not actions: they are commands of the GUI control plane (debugger.open, ...)
+    for (const char* id : {"dbg.open", "dbg.cursor_up", "cap.screenshot", "osd.keyboard", "ctl.open"})
+        EXPECT_FALSE(registry.Find(id).has_value()) << id;
+    EXPECT_EQ(ShippedCatalogueJson(registry.List()).find("\"gui\""), std::string::npos);
 }
 
 /// Builtins over a paused machine: the step goes through RunControl on the actions worker, and the reset fires on a

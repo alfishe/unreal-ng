@@ -528,6 +528,21 @@ bool InputRouter::Consumes(const HostDeviceId& id, const std::string& control) c
     return false;
 }
 
+namespace
+{
+/// "rtouchpad" for "rtouchpad.x" / "rtouchpad.y" (and the left pad's), else empty: the axes of a pad that point
+std::string TouchpadOf(const std::string& control)
+{
+    for (const char* pad : {"ltouchpad", "rtouchpad"})
+    {
+        const std::string prefix = std::string(pad) + ".";
+        if (control == prefix + "x" || control == prefix + "y")
+            return pad;
+    }
+    return {};
+}
+}  // namespace
+
 float InputRouter::Value(const Device& device, const std::string& control)
 {
     const auto it = device.values.find(control);
@@ -1516,7 +1531,43 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                                 for (size_t j = 0; j < compiled.sources.size(); j++)
                                 {
                                     const CompiledSource& source = compiled.sources[j];
-                                    if (source.kind == SourceKind::Axis)
+                                    const std::string pad = source.kind == SourceKind::Axis ? TouchpadOf(source.control)
+                                                                                            : std::string();
+                                    if (!pad.empty())
+                                    {
+                                        // A touchpad is a pointing surface, not a stick: the finger's travel since the
+                                        // last sample moves the pointer (anchored at the touch, nothing while it is up),
+                                        // so where the finger rests means nothing and a touch at the edge does not jump
+                                        const auto stale = device.gates.find(source.control);
+                                        const bool down = Value(device, pad + ".touch") > 0.5f &&
+                                                          (stale == device.gates.end() || !stale->second.stale);
+                                        const float position = Value(device, source.control);
+                                        const AnalogOptions& analog = compiled.binding.options.analog;
+                                        if (down && phase.padTouching)
+                                        {
+                                            const float step = position - phase.padLast;
+                                            if (std::fabs(step) <= kPadMaxStep)
+                                            {
+                                                phase.padVelocity = PadMouseTravel(step, analog);
+                                                amount += phase.padVelocity;
+                                            }
+                                            else
+                                                phase.padVelocity = 0.0f;  // the report caught up: re-anchor, no leap
+                                        }
+                                        else if (!down && analog.padInertia)
+                                        {
+                                            // The finger is up: the pointer coasts and slows
+                                            amount += phase.padVelocity;
+                                            phase.padVelocity *= analog.padInertiaDecay;
+                                            if (std::fabs(phase.padVelocity) < kPadCoastStop)
+                                                phase.padVelocity = 0.0f;
+                                        }
+                                        else
+                                            phase.padVelocity = 0.0f;
+                                        phase.padTouching = down;
+                                        phase.padLast = position;
+                                    }
+                                    else if (source.kind == SourceKind::Axis)
                                     {
                                         const auto gate = device.gates.find(source.control);
                                         const bool gated = gate != device.gates.end() && gate->second.stale;

@@ -7,6 +7,7 @@
 #include "haptics/hapticprofile.h"
 #include "haptics/surfacehaptics.h"
 #include "match.h"  // core/swsignature: header-only, no core symbols
+#include "profiles/videoprofile.h"
 #include "profiles/memoryprofile.h"
 #include "profiles/yaml.h"
 
@@ -21,11 +22,11 @@ const char* const kTargetFields[] = {"retro", "key", "keys", "macro", "mouse", "
 /// Known and kept, not acted on yet (TODO.md C2c): `invert`
 const char* const kOptionFields[] = {"turbo",        "on",           "off",   "count",    "press",
                                      "frames",       "label",        "consume", "ways",   "deadzone",
-                                     "saturation",   "diagonal_hold", "gamma", "invert", "repeat",
-                                     "curve"};
+                                     "saturation",   "diagonal_hold", "gamma", "accel", "inertia", "invert", "repeat",
+                                     "curve",        "params"};
 const char* const kProfileFields[] = {"schema",  "kind",    "id",     "label",     "match",  "applies_to", "extends",
                                       "connectors", "players", "joystick_keys", "options", "layers", "layer_key", "haptics",
-                                      "events", "memory"};
+                                      "events", "video", "memory"};
 
 template <size_t N>
 bool OneOf(const char* const (&names)[N], const std::string& name)
@@ -187,6 +188,18 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         return Fraction(value, options.analog.diagonalHold, field, error, 90.0f);
     if (field == "gamma")
         return Fraction(value, options.analog.mouseGamma, field, error, 5.0f);
+    if (field == "inertia")
+    {
+        if (!value.IsBool())
+        {
+            error = "'inertia' is true or false";
+            return false;
+        }
+        options.analog.padInertia = value.AsBool();
+        return true;
+    }
+    if (field == "accel")
+        return Fraction(value, options.analog.padAccel, field, error, 10.0f);
     if (field == "label")
     {
         if (!value.IsString())
@@ -207,10 +220,34 @@ bool ApplyOption(const std::string& field, const JsonValue& value, BindingOption
         options.consume = value.AsBool();
         return true;
     }
+    if (field == "params")
+    {
+        // The action's parameters as it declares them (`debugger.cursor_move {dir}`, a GUI control plane command);
+        // the action checks them when it runs. A scrub curve is `curve`, so not both
+        if (!value.IsObject())
+        {
+            error = "'params' is an object: the action's parameters ({dir: up})";
+            return false;
+        }
+        if (!options.params.IsNull())
+        {
+            error = "'params' and a 'curve' object both set the action's parameters: one of them";
+            return false;
+        }
+        options.params = value;
+        return true;
+    }
     if (field == "curve")
     {
         if (value.IsObject())
+        {
+            if (!options.params.IsNull())
+            {
+                error = "'params' and a 'curve' object both set the action's parameters: one of them";
+                return false;
+            }
             return CurveParams(value, options, error);
+        }
         if (!value.IsString() || value.AsString() != "scrub")
         {
             error = "'curve' is scrub (an analog scrub) or an action's scrub curve {unit, min, max, rate_lo, rate_hi}";
@@ -723,6 +760,19 @@ bool ParseProfile(const JsonValue& root, Profile& out, std::string& error)
                                                : !ParseHapticProfile(*haptics, game, error))
             return false;
         profile.haptics = *haptics;
+    }
+    if (const JsonValue* video = root.Find("video"))
+    {
+        // The game's picture cadence (§7.7): a play profile's
+        if (profile.kind != ProfileKind::Play)
+        {
+            error = "'video' belongs to a play profile";
+            return false;
+        }
+        VideoProfile parsed;
+        if (!ParseVideoProfile(*video, parsed, error))
+            return false;
+        profile.video = *video;
     }
     if (const JsonValue* memory = root.Find("memory"))
     {

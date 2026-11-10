@@ -22,6 +22,7 @@ class DisasmView;
 class RegistersView;
 class FlagsView;
 class MemoryTabs;
+class MemoryView;
 class StackView;
 class BreakpointsView;
 class HistoryView;
@@ -49,6 +50,32 @@ public:
     double zoom() const;
     //The processor whose tab is in front
     CPU * current_cpu();
+
+    //The GUI control plane's way in (guiplane/, not in ecat): the listing and the dump of the processor in front;
+    //shown: the dump's tab in front
+    DisasmView * current_code();
+    //The machine's own processor (the first tab), whose history the time travel records
+    CPU * main_cpu() { return m_panes.empty() ? nullptr : m_panes.front().cpu; }
+    MemoryView * current_memory(bool shown = false);
+    //The pane the keyboard is in: "disassembly", "registers", "memory", "stack", or "" (none of them)
+    QString focused_pane();
+    bool focus_pane(const QString &name);
+    void move_pane_focus(int delta);
+    //A key into the pane the keyboard is in (the listing when it is in none)
+    void send_pane_key(int key);
+    //Where the dump of the processor in front goes when the machine stops: a register ("pc", "sp", "bc", "de",
+    //"hl", "ix", "iy") or "off"
+    bool set_memory_follow(const QString &name);
+    QString memory_follow() const { return m_memory_follow.isEmpty() ? QString("off") : m_memory_follow; }
+    //The machine is held (paused, a step made): the steps and the run to the cursor can be made
+    bool held();
+    //F4 and F2 at the cursor of the listing in front; false when the machine is not held, or only seen
+    bool run_to_cursor();
+    bool toggle_breakpoint_at_cursor();
+
+signals:
+    //The views were read again: after a stop, and while the machine runs
+    void views_refreshed();
 
 public slots:
     void update_view() override;
@@ -112,6 +139,9 @@ private:
     //The machine only seen or changed too: every view follows (editors closed, actions off)
     void set_read_only(bool on);
     int m_device_tick;
+    QString m_memory_follow;    //The register the dump follows, "" none
+    //The dump of the processor in front at the register it follows
+    void follow_register();
 
     CpuPane * pane();
     QString code_text(unsigned int address);

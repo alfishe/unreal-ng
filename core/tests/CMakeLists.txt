@@ -261,6 +261,7 @@ if (NOT TARGET ${PROJECT_NAME})
             ${ROOT_DIR}/core/automation/mcp/src/mcp-slots.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-controllers.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-actions.cpp
+            ${ROOT_DIR}/core/automation/mcp/src/mcp-gui.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-streamdeck.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-bus.cpp
             ${ROOT_DIR}/core/automation/mcp/src/mcp-history.cpp

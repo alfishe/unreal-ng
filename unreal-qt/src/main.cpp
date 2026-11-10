@@ -160,11 +160,28 @@ int main(int argc, char *argv[])
     parser.addOption(headlessOption);
     parser.addOption(scriptOption);
     parser.addOption(exitOnScriptOption);
+    // The GUI control plane's TCP listener (docs/inprogress/2026-11-07-gui-control-plane §4.8); the local socket is
+    // always on
+    QCommandLineOption guiControlPortOption(QStringLiteral("gui-control-port"),
+                                            QStringLiteral("Serve the GUI control plane on this TCP port too (0: any "
+                                                           "free port), without authentication"),
+                                            QStringLiteral("port"));
+    QCommandLineOption guiControlBindOption(QStringLiteral("gui-control-bind"),
+                                            QStringLiteral("The address of that TCP port (default: all interfaces)"),
+                                            QStringLiteral("address"));
+    parser.addOption(guiControlPortOption);
+    parser.addOption(guiControlBindOption);
     parser.process(app);
 
     // Instantiate main application window
     MainWindow window;
     window.show();
+    {
+        bool portOk = false;
+        const int guiControlPort = parser.value(guiControlPortOption).toInt(&portOk);
+        window.startGuiControl(portOk && guiControlPort >= 0 && guiControlPort <= 65535 ? guiControlPort : -1,
+                               parser.value(guiControlBindOption));
+    }
 
     const QStringList files = parser.positionalArguments();
     if (!files.isEmpty())

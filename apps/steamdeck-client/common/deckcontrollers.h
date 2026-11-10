@@ -46,7 +46,7 @@ public:
     /// or the machine changed. @p focused: the window has the focus (Game Mode: always)
     void Poll(bool focused);
 
-    /// Router actions (`osd.keyboard`, ...): the client acts on the ones it has
+    /// Router actions (the ids a profile binds: core actions, GUI plane commands): the client acts on the ones it has
     void SetActionSink(std::function<void(const std::string& action, bool pressed)> sink);
 
     controllers::HostInputService& Service();

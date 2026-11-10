@@ -8,6 +8,9 @@
 #include <string>
 
 #include "ecatshim.h"
+#include "machineaction.h"
+
+class QObject;
 
 struct RemoteOptions {
     std::string host = "127.0.0.1";
@@ -22,3 +25,11 @@ std::unique_ptr<ecatshim::Emulator> CreateRemoteMachine(const RemoteOptions &opt
 uint64_t RemoteMachineFrames(ecatshim::Emulator * e);
 // What the connection did: requests and bytes received since the start
 void RemoteMachineTraffic(ecatshim::Emulator * e, uint64_t &requests, uint64_t &bytes);
+
+// The GUI control plane: the emulator's id on the WebAPI (empty while there is none) and the WebAPI's address
+std::string RemoteMachineId(ecatshim::Emulator * e);
+std::string RemoteMachineEndpoint(ecatshim::Emulator * e);
+// A core action on the emulator, POST /api/v1/controllers/actions/{action} (params: a JSON object's text), without
+// blocking: done runs on context's thread, never after context is gone
+void RemoteMachineAction(ecatshim::Emulator * e, const std::string &action, const std::string &params, QObject * context,
+                         MachineActionDone done);

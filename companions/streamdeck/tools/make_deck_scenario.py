@@ -17,7 +17,9 @@ Spec (JSON):
             "back"?: [row, col] | false (submenus: default [0, 0]), "dials"?: [DIAL], "items": [MENU | KEY], "at"?}
   KEY    = {"id", "title", "at"?, "icon"?, "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?,
             "tags"?, STEP | "steps": [STEP]}
-  STEP   = {"action": id, "value"?: ..., "hold"?: true} or {"kind": ..., ...} (any other step kind as it is)
+  STEP   = {"action": id, "value"?: ..., "hold"?: true}, {"gui": method, "params"?: {...}, "target"?: ...} (a
+            GUI control plane command, checked against data/streamdeck/gui-catalogue.json) or {"kind": ..., ...} (any
+            other step kind as it is)
   INCLUDE = {"id", "include": FILE, "node"?, "at"?, "title"?, "tags"?, "face"?}   (a link to a subtree in FILE)
   Also (deckflow.py, the scenario pipeline): "face" / "face_on" given as objects are used as they are; "tags" on
   menus; "navigation" (more nav fields of a menu); "extra" (any other fields of the node, as they are); a spec with
@@ -61,9 +63,47 @@ def data_file(path):
     return os.path.join(DATA, path[len("$data/"):].split("#")[0])
 
 
+GUI_CATALOGUE = os.path.join(DATA, "streamdeck", "gui-catalogue.json")
+
+
+def gui_commands(gui_catalogue):
+    """{method: command} of a GUI catalogue (gui-catalogue.json); each command carries its interface's level."""
+    out = {}
+    for iface in (gui_catalogue or {}).get("interfaces", []):
+        for c in iface.get("commands", []):
+            out[c["method"]] = dict(c, level=iface.get("level", "view"), interface=iface["name"],
+                                    state=list(iface.get("state", [])))
+    return out
+
+
+def gui_root_fields(commands):
+    """The fields a GUI program's root state may hold: the host interfaces' names and state fields."""
+    out = set()
+    for c in commands.values():
+        if c.get("level") == "host":
+            out |= {c["interface"], *c.get("state", [])}
+    return out
+
+
+def gui_params_error(command, params):
+    """None when params fit the command's declaration (unknown and missing ones are refused), else why not."""
+    declared = {p["name"]: p for p in command.get("params", [])}
+    takes = ", ".join(p["name"] + ("?" if p.get("optional") else "") for p in command.get("params", [])) or "nothing"
+    unknown = [k for k in params if k not in declared]
+    missing = [n for n, p in declared.items() if not p.get("optional") and n not in params]
+    if not unknown and not missing:
+        return None
+    parts = [f"unknown parameter {', '.join(unknown)}"] if unknown else []
+    parts += [f"missing {', '.join(missing)}"] if missing else []
+    return f"{command['method']}: {'; '.join(parts)}; it takes {takes}"
+
+
 class Generator:
-    def __init__(self, catalogue, spec):
+    def __init__(self, catalogue, spec, gui=None):
         self.ids = {a["id"] for a in catalogue["actions"]}
+        if gui is None and os.path.exists(GUI_CATALOGUE):
+            gui = gui_commands(load_json(GUI_CATALOGUE))
+        self.gui = gui or {}
         self.spec = spec
         self.icons = spec.get("icons", DEFAULT_ICONS).rstrip("/")
         self.rows, self.cols = GRIDS.get(spec.get("model", "plusxl"), (4, 9))
@@ -87,8 +127,26 @@ class Generator:
                 out["params"] = s["params"]
             self.paths(s.get("value"), where)
             return out
+        if "gui" in s:
+            # A command of the GUI control plane: the daemon sends it to the program that serves its WebAPI
+            method = s["gui"]
+            command = self.gui.get(method)
+            if command is None:
+                self.fail(where, f"gui '{method}' is not in the GUI catalogue (data/streamdeck/gui-catalogue.json)")
+            params = s.get("params") if isinstance(s.get("params"), dict) else {}
+            why = gui_params_error(command, params)
+            if why:
+                self.fail(where, why)
+            out = {"kind": "gui", "method": method}
+            if params:
+                out["params"] = params
+            if s.get("target"):
+                out["target"] = s["target"]
+            if s.get("hold"):
+                out["hold"] = True  # repeated while the key is held (a command that repeats: cursor, page)
+            return out
         if "kind" not in s:
-            self.fail(where, "a step needs \"action\" or \"kind\"")
+            self.fail(where, "a step needs \"action\", \"gui\" or \"kind\"")
         if s["kind"] in ("shell", "open", "keys", "webapi"):
             self.fail(where, f"kind '{s['kind']}' is not for a shipped scenario (ACC-5)")
         return dict(s)
@@ -144,7 +202,7 @@ class Generator:
             out["do"] = self.step(n["do"], n["id"])
         elif "steps" in n:
             out["do"] = {"kind": "multi", "steps": [self.step(s, n["id"]) for s in n["steps"]]}
-        elif "action" in n or "kind" in n or "value" not in out["face"]:
+        elif "action" in n or "gui" in n or "kind" in n or "value" not in out["face"]:
             out["do"] = self.step(n, n["id"])
         # else: a display-only key, its face shows a value (face.value) and a press does nothing
         if n.get("then"):
@@ -259,7 +317,7 @@ def shipped_catalogue(reply):
     rows = []
     for a in reply["actions"]:
         row = {"id": a["id"], "label": a.get("label", a["id"]), "group": a.get("group", ""),
-               "kind": a.get("kind", "press"), "held": bool(a.get("held", False)), "gui": bool(a.get("gui", False))}
+               "kind": a.get("kind", "press"), "held": bool(a.get("held", False))}
         if a.get("params"):
             row["params"] = a["params"]
         rows.append(row)

@@ -15,7 +15,9 @@
 #include "unrealmachine.h"
 #include "zxwindows.h"
 
+#include <QCoreApplication>
 #include <QDir>
+#include <QPointer>
 #include <QSettings>
 
 #include <algorithm>
@@ -32,6 +34,7 @@
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
+#include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/config.h"
@@ -41,6 +44,7 @@
 #include "emulator/cpu/core.h"
 #include "emulator/memory/memory.h"
 #include "emulator/memory/rom.h"
+#include "emulator/state/statenodejson.h"
 #include "emulator/notifications.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -1209,4 +1213,38 @@ uint64_t UnrealMachineFrames(ecatshim::Emulator * e)
 ecatshim::DisAsm * CreatePlainZ80DisAsm()
 {
     return new Z80DisAsm(nullptr, false);
+}
+
+std::string UnrealMachineId(ecatshim::Emulator * e)
+{
+    auto * m = dynamic_cast<UnrealMachine *>(e);
+    return m ? m->core()->GetId() : std::string();
+}
+
+void UnrealMachineAction(ecatshim::Emulator * e, const std::string &action, const std::string &params, QObject * context,
+                         MachineActionDone done)
+{
+    auto * m = dynamic_cast<UnrealMachine *>(e);
+    actions::ActionValue value;
+    std::string error;
+    if (m == nullptr || !StateNodeFromJsonText(params.empty() ? std::string("{}") : params, value.params, &error)) {
+        done(MachineActionResult{false, m ? "Bad Request" : "not_now", m ? error : "no machine", "{}"});
+        return;
+    }
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;  // as the debugger's own buttons
+    origin.identity = "gui-control|unreal-debugger";
+    origin.client = "unreal-debugger";
+    // The registry answers on the machine's actions worker: the answer goes over to the GUI thread, where the
+    // context's life is known
+    const QPointer<QObject> alive(context);
+    actions::ActionRegistry::Instance().Submit(
+        action, std::move(value), m->core()->GetId(), std::move(origin), [alive, done](actions::ActionResult result) {
+            MachineActionResult r{result.ok, result.error, result.message, StateNodeToJsonText(result.body)};
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(), [alive, done, r]() {
+                    if (alive) done(r);
+                },
+                Qt::QueuedConnection);
+        });
 }

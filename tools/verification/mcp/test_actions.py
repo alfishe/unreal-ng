@@ -82,9 +82,12 @@ def test_list_names_every_action_and_why_not(s):
     r = s.call('actions', {'action': 'list'})
     for action_id in ('run.pause_toggle', 'run.step_in', 'ttd.jog_frames', 'mach.nmi'):
         expect(action_id in r.text, f'{action_id} in the text', r.text[:800])
-    expect('dbg.open' in r.text and 'gui' in r.text, 'the Qt client registered its GUI actions', r.text[:2000])
-    expect('not available yet' in r.text, 'a stub says why', r.text[:3000])
     rows = {a['id']: a for a in r.structured['actions']}
+    gui = [i for i in ('dbg.open', 'dbg.cursor_up', 'cap.screenshot', 'osd.keyboard', 'ctl.open') if i in rows]
+    expect(not gui and 'gui' not in r.structured['actions'][0],
+           'no GUI verb among the actions (they are GUI control plane commands)', gui)
+    refused = [a for a in rows.values() if not a['available'] and a.get('reason')]
+    expect(refused and refused[0]['reason'] in r.text, 'an action that cannot run says why', refused[:1])
     expect(rows['run.step_in']['available'], 'a step can run on the paused machine', rows['run.step_in'])
     expect(rows['ttd.jog_frames']['kind'] == 'delta', 'the jog is a delta', rows['ttd.jog_frames'])
 

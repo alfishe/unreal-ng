@@ -164,6 +164,19 @@ std::string WindowDisplaySummary(const Json::Value& s)
             ")";
     if (s.get("blending_weights", "").asString() == "exponential" && s.isMember("blending_decay"))
         line += ", decay " + NumberText(s["blending_decay"].asDouble());
+    if (s.isMember("smooth_motion"))
+    {
+        const std::string smooth = s["smooth_motion"].asString();
+        line += ", smooth motion " + smooth + (smooth == "off" ? "" : " (" + s.get("effects_device", "").asString() + ")");
+    }
+    if (s.isMember("present_policy"))
+    {
+        line += ", present policy " + s["present_policy"].asString();
+        const int lipSync = s.get("lip_sync_offset_ms", 0).asInt();
+        line += ", lip sync " + std::string(lipSync > 0 ? "+" : "") + std::to_string(lipSync) + " ms";
+    }
+    if (s.isMember("display_rate"))
+        line += ", display rate " + s["display_rate"].asString();
     if (s.isMember("fullscreen"))
     {
         const int scale = s.get("scale", 0).asInt();
@@ -179,6 +192,91 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     (s.get("osd_keyboard_style", "").asString().empty() ? "" : ", " + s["osd_keyboard_style"].asString()) +
                     ")";
         line += std::string(", next layers ") + (s.get("next_layers", false).asBool() ? "on" : "off");
+    }
+    // How the frames reach the screen
+    const Json::Value& present = s["present"];
+    if (present.isObject())
+    {
+        const Json::Value& refresh = present["refresh_hz"];
+        line += "\npresent: " + present.get("presenter", "").asString() + ", " +
+                NumberText(refresh.get("max", 0.0).asDouble()) + " Hz" +
+                (present.get("fixed_display", true).asBool()     ? " fixed"
+                 : refresh.get("min", 0.0).asDouble() <= 0.0 ? " variable (its low end not reported)"
+                                                             : " range from " + NumberText(refresh.get("min", 0.0).asDouble()));
+        const std::string presenter = present.get("presenter", "").asString();
+        if (presenter == "metal" || presenter == "dxgi" || presenter == "gl-timed")
+            line += present.get("vrr", false).asBool() ? ", each frame at its time (vrr)" : ", on the refresh grid (vsync)";
+        const Json::Value& vrrSupport = present["vrr_support"];
+        if (vrrSupport.isObject() && vrrSupport.get("state", "").asString() != "yes" &&
+            !vrrSupport.get("state", "").asString().empty())
+            line += ", VRR support " + vrrSupport["state"].asString() +
+                    (vrrSupport.get("reason", "").asString().empty() ? "" : " (" + vrrSupport["reason"].asString() + ")");
+        const Json::Value& sync = present["sync"];
+        if (sync.isObject() && sync.get("mode", "off").asString() != "off")
+            line += ", video sync " + sync["mode"].asString() +
+                    (sync.get("reason", "").asString().empty() ? "" : " (" + sync["reason"].asString() + ")");
+        if (present.get("presented", 0).asUInt64() > 0)
+        {
+            const Json::Value& error = present["error_ms"];
+            line += ", " + std::to_string(present["presented"].asUInt64()) + " presented, " +
+                    std::to_string(present.get("dropped", 0).asUInt64()) + " dropped, " +
+                    std::to_string(present.get("late", 0).asUInt64()) + " a refresh late, lead " +
+                    NumberText(std::round(present.get("lead_ms", 0.0).asDouble() * 10) / 10) + " ms, error p50 " +
+                    NumberText(std::round(error.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(error.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
+            const Json::Value& beat = present["beat"];
+            const Json::Value& sound = present["sound_offset_ms"];
+            line += ", " + std::to_string(beat.get("off", 0).asUInt64()) + " of " +
+                    std::to_string(beat.get("frames", 0).asUInt64()) + " frames off the beat, screen to sound p50 " +
+                    NumberText(std::round(sound.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(sound.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
+        }
+        line += ", clock " + present.get("clock", "none").asString();
+        // How the frames are timed: a delay the screen cannot hold (the picture leads its sound), the clock's steps
+        const Json::Value& timing = present["timing"];
+        if (timing.isObject())
+        {
+            if (timing.get("delay_clamped", false).asBool())
+                line += ", video delay held at " +
+                        NumberText(std::round(timing.get("max_delay_ms", 0.0).asDouble() * 10) / 10) +
+                        " ms: the sound comes later, the picture leads it (" +
+                        std::to_string(timing.get("clamped_frames", 0).asUInt64()) + " frames)";
+            line += ", " + std::to_string(timing.get("early", 0).asUInt64()) + " refreshes before any frame was due, " +
+                    std::to_string(timing.get("carried", 0).asUInt64()) + " clock steps carried, " +
+                    std::to_string(timing.get("cuts", 0).asUInt64()) + " cuts";
+        }
+        // The GPU time of the window's passes (what a slow refresh costs)
+        const Json::Value& gpu = present["gpu_ms"];
+        if (gpu.isObject())
+            for (const auto& [pass, name] : {std::pair<const char*, const char*>{"smooth", "gpu smooth"},
+                                             std::pair<const char*, const char*>{"smooth_cpu", "smooth refresh (CPU clock)"},
+                                             std::pair<const char*, const char*>{"picture", "gpu picture"}})
+            {
+                const Json::Value& times = gpu[pass];
+                if (!times.isObject() || times.get("measured", 0).asUInt64() == 0)
+                    continue;
+                line += std::string(", ") + name + " p50 " +
+                        NumberText(std::round(times.get("p50", 0.0).asDouble() * 100) / 100) + " max " +
+                        NumberText(std::round(times.get("max", 0.0).asDouble() * 100) / 100) + " ms";
+            }
+        // [VIDEO] DisplayRate: the display's mode switched for the machine, or why not
+        const Json::Value& display = present["display"];
+        const std::string state = display.get("state", "keep").asString();
+        if (state == "matched")
+            line += ", display at " + NumberText(display.get("hz", 0.0).asDouble()) + " Hz for the machine's " +
+                    NumberText(display.get("machine_hz", 0.0).asDouble()) + " (was " +
+                    NumberText(display.get("original_hz", 0.0).asDouble()) + ")";
+        else if (state == "unchanged")
+            line += ", display rate unchanged: " + display.get("reason", "").asString();
+        const Json::Value& smooth = present["smooth"];
+        const std::string mode = smooth.get("mode", "off").asString();
+        line += "; smooth motion in effect " + mode;
+        if (mode != "off")
+            line += std::string(smooth.get("game", false).asBool() ? " + game cadence" : "") + " on " +
+                    smooth.get("device", "").asString() + ": " + std::to_string(smooth.get("renders", 0).asUInt64()) +
+                    " renders, " + std::to_string(smooth.get("blended", 0).asUInt64()) + " blended, " +
+                    std::to_string(smooth.get("interpolated", 0).asUInt64()) + " interpolated, " +
+                    std::to_string(smooth.get("held_flicker", 0).asUInt64()) + " with flicker held";
     }
     // The words the setters take: an agent may see only this text
     for (const char* list : {"crt_profiles", "hud_themes", "osd_keyboard_pictures", "osd_keyboard_styles"})
@@ -403,6 +501,12 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         "window_display_set: any of gpu (bool), crt (bool), crt_profile (one of the window's crt_profiles: "
         "none, basic, ...; other than none switches CRT on), blending (bool, temporal blending / gigascreen "
         "smoothing), blending_frames (2..5), blending_weights (equal, exponential), blending_decay (0.1..0.9), "
+        "smooth_motion (off, blend, interpolate: the shown instance's picture between two frames on a fixed display; "
+        "auto: View > Video Synchronization, interpolate only when the display has neither VRR nor a rate fitting the "
+        "machine's), "
+        "effects_device (gpu, cpu), present_policy (auto, vrr, vsync: how the native presenter shows the frames), "
+        "display_rate (keep, match: while the emulator is active, the display runs the rate of the machine), "
+        "lip_sync_offset_ms (-200..200, positive = the picture later), "
         "fullscreen (bool), view (full, screen, content: the part of the frame shown, fitted by height with the "
         "aspect kept), scale (1..4), toolbar, status_bar, hud (bool), hud_theme (one of hud_themes), "
         "hud_notices ({id: bool}, ids from window_display), osd_keyboard (bool), osd_keyboard_picture (one of "
@@ -413,11 +517,12 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     for (const char* flag : {"gpu", "crt", "blending", "fullscreen", "toolbar", "status_bar", "hud", "osd_keyboard",
                              "next_layers"})
         schema["properties"]["display"]["properties"][flag]["type"] = "boolean";
-    for (const char* word : {"crt_profile", "blending_weights", "view", "hud_theme", "osd_keyboard_picture", "osd_keyboard_style",
-                             "next_layers_mode"})
+    for (const char* word : {"crt_profile", "blending_weights", "smooth_motion", "effects_device", "present_policy", "display_rate", "view",
+                             "hud_theme", "osd_keyboard_picture", "osd_keyboard_style", "next_layers_mode"})
         schema["properties"]["display"]["properties"][word]["type"] = "string";
     schema["properties"]["display"]["properties"]["blending_frames"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["scale"]["type"] = "integer";
+    schema["properties"]["display"]["properties"]["lip_sync_offset_ms"]["type"] = "integer";
     schema["properties"]["display"]["properties"]["blending_decay"]["type"] = "number";
     for (const char* map : {"hud_notices", "next_layers_shown"})
     {

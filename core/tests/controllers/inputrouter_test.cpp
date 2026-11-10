@@ -830,6 +830,154 @@ TEST_F(InputRouter_Test, Targets_KeysMacroAndMouse)
     EXPECT_EQ(_last.mouse.dx, 0) << "inside the dead zone";
 }
 
+/// A touchpad drives the pointer like a laptop's pad: its finger's travel, not where it rests (mapping-and-profiles.md §3)
+TEST_F(InputRouter_Test, TouchpadMouse_TheFingersTravelMovesThePointer)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding x = To({"rtouchpad.x"}, Mouse("dx", 100));
+    Binding y = To({"rtouchpad.y"}, Mouse("dy", 100));
+    x.options.analog.padAccel = 0.0f;  // linear: the counts are exact
+    y.options.analog.padAccel = 0.0f;
+    SetBindings({x, y});
+
+    // The finger lands at the right edge: no jump, nothing moves, however far from the centre it rests
+    Set("fake:1", "rtouchpad.touch", 1);
+    Set("fake:1", "rtouchpad.x", 0.75f);
+    Set("fake:1", "rtouchpad.y", -0.5f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "the first sample of a touch only anchors";
+    EXPECT_EQ(_last.mouse.dy, 0);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "a finger resting off the centre is not a stick held over";
+
+    // A quarter of the pad to the right and down: 25 counts (scale 100), the machine's y is up
+    Set("fake:1", "rtouchpad.x", 1.0f);
+    Set("fake:1", "rtouchpad.y", -0.25f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 25);
+    EXPECT_EQ(_last.mouse.dy, -25);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "the finger stopped";
+
+    // Lifted: the pad reads the centre, which is not a swipe
+    Set("fake:1", "rtouchpad.touch", 0);
+    Set("fake:1", "rtouchpad.x", 0.0f);
+    Set("fake:1", "rtouchpad.y", 0.0f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0);
+    EXPECT_EQ(_last.mouse.dy, 0);
+
+    // The next touch anchors afresh, then moves left
+    Set("fake:1", "rtouchpad.touch", 1);
+    Set("fake:1", "rtouchpad.x", 0.5f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "no jump from the centre to where the finger landed";
+    Set("fake:1", "rtouchpad.x", 0.25f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, -25);
+}
+
+TEST_F(InputRouter_Test, TouchpadMouse_AFasterSwipeGoesFartherWithAcceleration)
+{
+    _router.OnDeviceAdded(kPad);
+    SetBindings({To({"rtouchpad.x"}, Mouse("dx", 100))});  // the default accel
+    Set("fake:1", "rtouchpad.touch", 1);
+    Set("fake:1", "rtouchpad.x", 0.0f);
+    Sample();
+
+    // Slow: a small travel is nearly linear
+    Set("fake:1", "rtouchpad.x", 0.01f);
+    Sample();
+    const int slow = _last.mouse.dx;
+    Set("fake:1", "rtouchpad.x", 0.01f);
+    Sample();
+    EXPECT_LE(slow, 1) << "0.01 of the pad, a hundred counts per unit: one count at most";
+
+    // Fast: the same travel ten times over goes more than ten times as far
+    Set("fake:1", "rtouchpad.x", 0.11f);
+    Sample();
+    EXPECT_GT(_last.mouse.dx, 10) << "accelerated: the gain grows with the speed";
+    EXPECT_LE(_last.mouse.dx, 100 * 5 / 10) << "the gain is capped";
+}
+
+// A touch whose position report arrives late (the contact flag first, the centre a pad reads untouched) must not leap
+TEST_F(InputRouter_Test, TouchpadMouse_ALateReportReAnchorsInsteadOfLeaping)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding x = To({"rtouchpad.x"}, Mouse("dx", 100));
+    x.options.analog.padAccel = 0.0f;
+    SetBindings({x});
+
+    Set("fake:1", "rtouchpad.touch", 1);  // the contact first, the pad still reads the centre
+    Set("fake:1", "rtouchpad.x", 0.0f);
+    Sample();
+    Set("fake:1", "rtouchpad.x", 0.875f);  // the real position arrives: not 87 counts of travel
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0) << "a jump no finger makes only moves the anchor";
+    Set("fake:1", "rtouchpad.x", 0.9375f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 6) << "then the travel counts from there (0.0625 * 100)";
+}
+
+TEST_F(InputRouter_Test, TouchpadMouse_InertiaCoastsAfterTheLiftAndStops)
+{
+    _router.OnDeviceAdded(kPad);
+    Binding x = To({"rtouchpad.x"}, Mouse("dx", 100));
+    x.options.analog.padAccel = 0.0f;
+    x.options.analog.padInertia = true;
+    SetBindings({x});
+
+    Set("fake:1", "rtouchpad.touch", 1);
+    Set("fake:1", "rtouchpad.x", 0.0f);
+    Sample();
+    Set("fake:1", "rtouchpad.x", 0.25f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 25);
+
+    Set("fake:1", "rtouchpad.touch", 0);
+    Set("fake:1", "rtouchpad.x", 0.0f);
+    Sample();
+    const int first = _last.mouse.dx;
+    EXPECT_EQ(first, 25) << "the pointer carries on at the speed of the lift";
+    std::vector<int> counts{first};
+    int zeros = 0;
+    for (int f = 0; f < 300 && zeros < 3; f++)
+    {
+        Sample();
+        zeros = _last.mouse.dx == 0 ? zeros + 1 : 0;
+        counts.push_back(_last.mouse.dx);
+    }
+    EXPECT_EQ(zeros, 3) << "it stops";
+    int total = 0;
+    for (size_t i = 0; i < counts.size(); i++)
+    {
+        total += counts[i];
+        // Whole counts carry a fraction from frame to frame (+-1): the trend is checked four frames apart
+        if (counts[i] > 8 && i + 4 < counts.size())
+            EXPECT_LT(counts[i + 4], counts[i]) << "slowing at " << i;
+    }
+    EXPECT_GT(total, 150) << "after travelling on a while (the geometric tail of 25 at 0.9 is about 250)";
+    EXPECT_LT(total, 300) << "and no farther";
+
+    // A new touch stops it at once
+    Set("fake:1", "rtouchpad.touch", 1);
+    Set("fake:1", "rtouchpad.x", 0.5f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 0);
+}
+
+TEST_F(InputRouter_Test, TouchpadMouse_AStickStillSetsASpeed)
+{
+    // The same target from a stick keeps the joystick-mouse meaning: the deflection is the speed
+    _router.OnDeviceAdded(kPad);
+    SetBindings({To({"rstick.x"}, Mouse("dx", 4))});
+    Set("fake:1", "rstick.x", 1.0f);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 4);
+    Sample();
+    EXPECT_EQ(_last.mouse.dx, 4) << "held over: still moving";
+}
+
 /// mapping-and-profiles.md §4.2
 TEST_F(InputRouter_Test, Consume_KeyboardBindings)
 {

@@ -378,6 +378,14 @@ struct WindowRecorder::Writer
 #endif
             return true;
         };
+        if (!process.waitForStarted(5000))
+            failure = "ffmpeg did not start: " + process.errorString().toStdString();
+        else if (!mux.soundPath.isEmpty())  // no FIFO (Windows): the sound into its own file, muxed at the end
+        {
+            sound.setFileName(mux.soundPath);
+            if (!sound.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                failure = "Cannot write " + mux.soundPath.toStdString() + ": " + sound.errorString().toStdString();
+        }
         auto fail = [&](const std::string& why) {
             if (failure.empty())
                 failure = why;
@@ -899,8 +907,8 @@ void WindowRecorder::onRefreshed()
         target = _sink->lastFrame - _sink->firstFrame + 1;
         sounds.swap(_sink->pending);
     }
-    // The window shows the frame latched the present delay ago (2 frames for the A/V sync, more while ZX DLSS looks
-    // ahead): the sound and the keyboard wait as long, so all three in the file are of the same emulated frame
+    // The window shows the frame whose sound is heard now, some frames behind the newest latch (more while ZX DLSS
+    // looks ahead): the sound and the keyboard wait as long, so all three in the file are of the same emulated frame
     const size_t delay = presentDelay();
     for (FrameSound& sound : sounds)
     {
@@ -966,7 +974,7 @@ size_t WindowRecorder::presentDelay() const
 {
     const std::shared_ptr<Emulator> emulator = _emulator.lock();
     EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;  // lifetime-ok: locked
-    return context && context->pScreen ? context->pScreen->GetEffectivePresentDelayFrames() : 0;
+    return context && context->pScreen ? context->pScreen->GetShownDelayFrames() : 0;
 }
 
 void WindowRecorder::fill(WindowRecordingStatus& out)

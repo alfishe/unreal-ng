@@ -179,6 +179,10 @@ Result RunFrames(Emulator& emulator, int frames)
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (provider->GetWindowRecording(r.recording, why) && r.recording.frames <= before)
         {
+            // ffmpeg or the files failed: the recorder stopped, no frame comes (its error once the file is finished)
+            if (!r.recording.recording)
+                return Fail(Status::Unavailable, "The recording stopped" +
+                                                     (r.recording.error.empty() ? std::string() : ": " + r.recording.error));
             if (std::chrono::steady_clock::now() > deadline)
                 return Fail(Status::Unavailable,
                             "The window recorded nothing within 10 s (frame " + std::to_string(frame) + ")");

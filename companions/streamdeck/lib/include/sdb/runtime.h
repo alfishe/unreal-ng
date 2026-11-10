@@ -192,6 +192,7 @@ private:
     [[nodiscard]] json PageLocked() const;  // DescribePage and what the value faces show (_mu held)
     void PollReadouts();
     void EnsureMonitor();
+    [[nodiscard]] bool PageReadsGuiLocked() const;  // a key of the page reads a gui.* path (_mu held)
 
     Device& _dev;
     const Model& _m;

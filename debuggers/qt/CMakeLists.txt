@@ -42,7 +42,17 @@ elseif (UNIX)
     target_link_libraries(unreal-debugger-adapter PUBLIC pthread)
 endif ()
 
+# The GUI control plane (guicontrol/): the window, the `debugger` interface and the views disassembly and memory, on
+# the views' side (no core header); the machine's id and its core actions come from main through hooks
+if (NOT TARGET guicontrol-widgets)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/guicontrol" guicontrol)
+endif ()
+add_library(unreal-debugger-plane STATIC guiplane/debuggercontrol.cpp)
+set_target_properties(unreal-debugger-plane PROPERTIES AUTOMOC ON)
+target_include_directories(unreal-debugger-plane PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/guiplane)
+target_link_libraries(unreal-debugger-plane PUBLIC unreal-debugger-views guicontrol-widgets)
+
 add_executable(unreal-debugger main.cpp resources/ecat.qrc)
 set_target_properties(unreal-debugger PROPERTIES AUTOMOC ON AUTORCC ON RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-target_link_libraries(unreal-debugger PRIVATE unreal-debugger-views unreal-debugger-adapter Qt6::Widgets)
+target_link_libraries(unreal-debugger PRIVATE unreal-debugger-plane unreal-debugger-adapter Qt6::Widgets)
 add_dependencies(unreal-debugger runtime-data)

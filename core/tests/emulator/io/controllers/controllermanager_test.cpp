@@ -393,6 +393,31 @@ TEST_F(ControllerManager_Test, HostSource_KeysOnTheOverlayAndTheMouse)
     _manager->SetHostInputSource(nullptr);
 }
 
+// The pad's pointer follows the host mouse's sensitivity ([INPUT] MouseScale, 2^n), the fraction carried
+TEST_F(ControllerManager_Test, HostSource_MouseFollowsTheMouseScaleSetting)
+{
+    Init("48K");
+    auto source = std::make_shared<FakeHostSource>();
+    _manager->SetHostInputSource(source);
+    Mouse* mouse = _context->pMouse;
+    ASSERT_NE(mouse, nullptr);
+
+    _context->config.input.mousescale = static_cast<char>(-1);  // half
+    const uint8_t x = mouse->GetX();
+    source->mouse.dx = 3;
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(static_cast<uint8_t>(mouse->GetX() - x), 1) << "1.5 counts: one now";
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(static_cast<uint8_t>(mouse->GetX() - x), 3) << "the carried half joins the next 1.5";
+
+    _context->config.input.mousescale = 2;  // four times
+    source->mouse.dx = 2;
+    const uint8_t before = mouse->GetX();
+    _emulator->RunNFrames(1);
+    EXPECT_EQ(static_cast<uint8_t>(mouse->GetX() - before), 8);
+    _manager->SetHostInputSource(nullptr);
+}
+
 /// endregion </Routing and the host source>
 
 /// region <TTD>

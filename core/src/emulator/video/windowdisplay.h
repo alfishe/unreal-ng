@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file windowdisplay.h
-/// @brief The GUI window's display settings (GPU acceleration, CRT effects and profile, temporal blending, full screen,
+/// @brief The GUI window's display settings (GPU acceleration, CRT effects and profile, temporal blending, smooth motion
+/// and the frame presenter's timing, full screen,
 /// scale, toolbar / status bar, HUD with its theme and notices, on-screen keyboard and its picture, the ZX Next layers
 /// window) and the active CRT profile's parameters, shared by every automation surface: CLI `video window`, WebAPI
 /// /video/window and /video/window/crt_params, Lua / Python window_display() / window_display_set() /
@@ -13,6 +14,9 @@
 /// Validation lives here, so every surface refuses the same words with the same message; the provider only applies.
 
 #include <emulator/state/statenode.h>
+#include <emulator/video/displayrate.h>
+#include <emulator/video/presentpolicy.h>
+#include <emulator/video/smoothmotion.h>
 #include <emulator/video/pictureviewmode.h>
 #include <emulator/video/windowview.h>
 
@@ -28,7 +32,8 @@ namespace WindowDisplay
 {
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
-    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, fullscreen, view, scale, toolbar, "
+    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
+    "present_policy, display_rate, lip_sync_offset_ms, fullscreen, view, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
 
@@ -241,6 +246,62 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         change.blendingDecay = decay;
         return true;
     }
+    if (k == "smooth_motion")
+    {
+        smoothmotion::Mode mode = smoothmotion::Mode::Off;
+        if (!smoothmotion::ParseMode(value.c_str(), mode))
+        {
+            error = "'smooth_motion' takes off, blend, interpolate or auto, not '" + value + "'";
+            return false;
+        }
+        change.smoothMotion = smoothmotion::ModeName(mode);
+        return true;
+    }
+    if (k == "effects_device")
+    {
+        const std::string device = Lower(value);
+        if (device != "gpu" && device != "cpu")
+        {
+            error = "'effects_device' takes gpu or cpu, not '" + value + "'";
+            return false;
+        }
+        change.effectsDevice = device;
+        return true;
+    }
+    if (k == "present_policy")
+    {
+        PresentPolicy policy = PresentPolicy::Auto;
+        if (!ParsePresentPolicy(value.c_str(), policy))
+        {
+            error = "'present_policy' takes auto, vrr or vsync, not '" + value + "'";
+            return false;
+        }
+        change.presentPolicy = PresentPolicyName(policy);
+        return true;
+    }
+    if (k == "display_rate")
+    {
+        DisplayRate rate = DisplayRate::Keep;
+        if (!ParseDisplayRate(value.c_str(), rate))
+        {
+            error = "'display_rate' takes keep or match, not '" + value + "'";
+            return false;
+        }
+        change.displayRate = DisplayRateName(rate);
+        return true;
+    }
+    if (k == "lip_sync_offset_ms")
+    {
+        double ms = 0;
+        if (!ParseNumber(value, ms) || ms != std::floor(ms) || ms < kMinLipSyncOffsetMs || ms > kMaxLipSyncOffsetMs)
+        {
+            error = "'lip_sync_offset_ms' takes " + std::to_string(kMinLipSyncOffsetMs) + ".." +
+                    std::to_string(kMaxLipSyncOffsetMs) + " (ms, positive = the picture later), not '" + value + "'";
+            return false;
+        }
+        change.lipSyncOffsetMs = static_cast<int>(ms);
+        return true;
+    }
     if (k == "fullscreen")
         return flag(change.fullscreen);
     if (k == "view")
@@ -405,8 +466,102 @@ inline Result Set(const WindowDisplayChange& change)
     return r;
 }
 
+/// The frame presenter's part of the report: presenter, fixed_display, vrr, vrr_support {state, reason}, sync {mode, reason}, refresh_hz {min, max},
+/// clock, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
+/// dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms {p50, p99}, gpu_wait_ms
+/// {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
+/// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
+/// machine_hz}
+inline StateNode PresentReport(const WindowPresentStats& p)
+{
+    StateNode node = StateNode::Object();
+    node["presenter"] = p.presenter;
+    node["fixed_display"] = p.fixedDisplay;
+    node["vrr"] = p.vrr;
+    StateNode vrrSupport = StateNode::Object();
+    vrrSupport["state"] = p.vrrSupport;
+    vrrSupport["reason"] = p.vrrReason;
+    node["vrr_support"] = vrrSupport;
+    StateNode sync = StateNode::Object();
+    sync["mode"] = p.sync;
+    sync["reason"] = p.syncReason;
+    node["sync"] = sync;
+    StateNode refresh = StateNode::Object();
+    refresh["min"] = p.minRefreshHz;
+    refresh["max"] = p.maxRefreshHz;
+    node["refresh_hz"] = refresh;
+    node["clock"] = p.clock;
+    StateNode timing = StateNode::Object();
+    timing["delay_clamped"] = p.delayClamped;
+    timing["max_delay_ms"] = p.maxDelayMs;
+    timing["clamped_frames"] = p.clampedFrames;
+    timing["early"] = p.early;
+    timing["carried"] = p.carried;
+    timing["cuts"] = p.cuts;
+    timing["carry_ms"] = p.carryMs;
+    node["timing"] = timing;
+    node["presented"] = p.presented;
+    node["shown"] = p.shown;
+    node["dropped"] = p.dropped;
+    node["late"] = p.late;
+    StateNode beat = StateNode::Object();
+    beat["frames"] = p.beatFrames;
+    beat["off"] = p.offBeat;
+    node["beat"] = beat;
+    node["lead_ms"] = p.leadMs;
+    StateNode error = StateNode::Object();
+    error["p50"] = p.errorP50Ms;
+    error["p99"] = p.errorP99Ms;
+    error["max"] = p.errorMaxMs;
+    node["error_ms"] = error;
+    StateNode sound = StateNode::Object();
+    sound["p50"] = p.soundOffsetP50Ms;
+    sound["p99"] = p.soundOffsetP99Ms;
+    node["sound_offset_ms"] = sound;
+    StateNode wait = StateNode::Object();
+    wait["p50"] = p.gpuWaitP50Ms;
+    wait["max"] = p.gpuWaitMaxMs;
+    node["gpu_wait_ms"] = wait;
+    StateNode gpu = StateNode::Object();
+    for (const auto& [name, pass] : {std::pair<const char*, const GpuPassMs*>{"smooth", &p.gpuSmooth},
+                                     std::pair<const char*, const GpuPassMs*>{"smooth_cpu", &p.gpuSmoothCpu},
+                                     std::pair<const char*, const GpuPassMs*>{"picture", &p.gpuPicture}})
+    {
+        StateNode times = StateNode::Object();
+        times["p50"] = pass->p50;
+        times["max"] = pass->max;
+        times["longest"] = pass->longest;
+        times["measured"] = pass->measured;
+        gpu[name] = times;
+    }
+    node["gpu_ms"] = gpu;
+    StateNode smooth = StateNode::Object();
+    smooth["mode"] = p.smooth;
+    smooth["device"] = p.smoothDevice;
+    smooth["game"] = p.game;
+    smooth["frames"] = p.frames;
+    smooth["pictures"] = p.pictures;
+    smooth["renders"] = p.renders;
+    smooth["blended"] = p.blended;
+    smooth["interpolated"] = p.interpolated;
+    smooth["motion_fields"] = p.motionFields;
+    smooth["on_device"] = p.onDevice;
+    smooth["held_flicker"] = p.heldFlicker;
+    node["smooth"] = smooth;
+    StateNode display = StateNode::Object();
+    display["state"] = p.displayState;
+    display["reason"] = p.displayReason;
+    display["hz"] = p.displayHz;
+    display["original_hz"] = p.originalHz;
+    display["machine_hz"] = p.machineHz;
+    node["display"] = display;
+    return node;
+}
+
 /// The report every surface returns: backend, gpu_available, gpu, crt, crt_profile, crt_profiles[], blending,
-/// blending_frames, blending_weights, emulator (the instance the window shows, "" = none)
+/// blending_frames, blending_weights, smooth_motion, effects_device, present_policy, display_rate, lip_sync_offset_ms, present
+/// (PresentReport), emulator (the instance
+/// the window shows, "" = none)
 inline StateNode Report(const WindowDisplaySettings& s)
 {
     StateNode node = StateNode::Object();
@@ -423,6 +578,12 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["blending_frames"] = s.blendingFrames;
     node["blending_weights"] = s.blendingWeights;
     node["blending_decay"] = s.blendingDecay;
+    node["smooth_motion"] = s.smoothMotion;
+    node["effects_device"] = s.effectsDevice;
+    node["present_policy"] = s.presentPolicy;
+    node["display_rate"] = s.displayRate;
+    node["lip_sync_offset_ms"] = s.lipSyncOffsetMs;
+    node["present"] = PresentReport(s.present);
     node["emulator"] = s.emulatorId;
     node["fullscreen"] = s.fullscreen;
     node["view"] = s.view;
@@ -481,6 +642,28 @@ inline std::string Summary(const WindowDisplaySettings& s)
     line += std::string(", blending ") + (s.blending ? "on" : "off") + " (" + std::to_string(s.blendingFrames) +
             " frames, " + s.blendingWeights + (s.blendingWeights == "exponential" ? " " + NumberWord(s.blendingDecay) : "") +
             ")";
+    line += ", smooth motion " + s.smoothMotion + (s.smoothMotion == "off" ? "" : " (" + s.effectsDevice + ")");
+    // The policy in effect only where a native presenter applies it
+    const bool native =
+        s.present.presenter == "metal" || s.present.presenter == "dxgi" || s.present.presenter == "gl-timed";
+    line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
+    if (s.present.sync != "off")
+        line += ", video sync " + s.present.sync + (s.present.syncReason.empty() ? "" : " (" + s.present.syncReason + ")");
+    if (s.displayRate != "keep")
+    {
+        const WindowPresentStats& p = s.present;
+        line += ", display rate " + s.displayRate +
+                (p.displayState == "matched"
+                     ? " (" + NumberWord(p.displayHz) + " Hz for " + NumberWord(p.machineHz) + ", was " +
+                           NumberWord(p.originalHz) + ")"
+                     : (p.displayReason.empty() ? "" : " (" + p.displayReason + ")"));
+    }
+    if (s.present.delayClamped)
+        line += ", video delay held at " + NumberWord(std::round(s.present.maxDelayMs)) +
+                " ms (the sound comes later: the picture leads it)";
+    if (s.lipSyncOffsetMs != 0)
+        line += ", lip sync " + std::string(s.lipSyncOffsetMs > 0 ? "+" : "") + std::to_string(s.lipSyncOffsetMs) +
+                " ms";
     line += ", view " + s.view;
     line += s.fullscreen ? ", full screen" : (s.scale > 0 ? ", scale " + std::to_string(s.scale) + "x" : ", scale free");
     line += std::string(", hud ") + (s.hud ? "on" : "off") + (s.hudTheme.empty() ? "" : " (" + s.hudTheme + ")");

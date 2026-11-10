@@ -35,6 +35,12 @@ application).
 
 ---
 
+### Mouse (`mouse/`)
+
+[`mouse/`](mouse/README.md): a Kempston mouse cursor program (`cursor.asm`, built with `build.sh`) that shows what the
+machine's mouse receives, and `mouse-strokes.py`, which records a running emulator's mouse strokes through the WebAPI
+(a pad's trackpad, a touchscreen, the host mouse, automation).
+
 ### Analysis drafts (`analysis/`)
 
 [`analysis/score_draft.py`](analysis/README.md): scores a SkoolKit ctl / skool draft against a reference disassembly

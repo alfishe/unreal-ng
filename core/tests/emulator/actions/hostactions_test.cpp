@@ -159,8 +159,7 @@ TEST_F(HostActions_Test, TheCatalogueHasTheScenarioActionsWithTheirKindsParamsAn
                            "ttd.load"})
     {
         const std::optional<ActionInfo> info = registry.Find(id);
-        ASSERT_TRUE(info.has_value()) << id;
-        EXPECT_FALSE(info->gui) << id << ": a core action, present headless";
+        EXPECT_TRUE(info.has_value()) << id << ": a core action, present headless";
     }
     EXPECT_EQ(registry.Find("input.type")->kind, ValueKind::Text);
     EXPECT_EQ(registry.Find("basic.inject")->kind, ValueKind::Text);

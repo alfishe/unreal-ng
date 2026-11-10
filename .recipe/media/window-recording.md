@@ -60,7 +60,8 @@ not draw (a busy GUI, a running machine under load, turbo) repeats the last pict
 the picture and the sound stay together however slow or fast the host runs the machine, stepped or running.
 A muted instance (`audio/mixer/master muted`) still records its sound.
 
-The window shows the frame latched the present delay ago (2 frames for the A/V sync, 7 with ZX DLSS
+The window shows the frame whose sound is heard now, the present delay behind the latch (about 2 frames, the audio
+path's delay; 7 with ZX DLSS
 `PUT /video/temporal {"algorithm":"mod-tpgwafsd"}`, which looks ahead); the recording delays the sound and the
 keyboard by the same frames, so a key lights, clicks and draws its character in one video frame. Switch ZX DLSS on
 before the start: a delay changed while recording inserts silence (longer) or drops sound (shorter) for the difference.
