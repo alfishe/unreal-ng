@@ -2,7 +2,7 @@
 """Live check of the plane on every GUI program (design phase 6): an offscreen unreal-qt on ports of its own with a
 fresh muted machine, unreal-debugger and unreal-screen-viewer connected to it, and an offscreen unreal-videowall on
 ports of its own. `unreal-gui list` shows the four programs; the `screen` interface runs on unreal-qt's main screen
-and on the screen viewer, `tilegrid` and `window` on the video wall.
+and on the screen viewer, `tilegrid` on the video wall, `window` on every window of the four.
 
     python3 tools/guicontrol/verify_programs.py [--port-base 28800] [--wall-port-base 28810]
 
@@ -148,10 +148,47 @@ def conform_wall(gui, wall_port, mcp):
     mute_all(wall_port)
     expect(refused(gui, 'tilegrid.layout', 'bad_request', preset='mosaic'), 'an unknown preset is refused')
 
-    gui.call('window.move', target='main', x=40, y=60, w=700, h=500)
-    geometry = until(lambda: gui.state('main')['state']['geometry'])
-    expect(geometry.get('w') == 700 and geometry.get('h') == 500, 'video wall: window.move resizes the window',
-           geometry)
+
+def conform_window(gui, name, target, out):
+    """The contract of `window` (design §4.3), alike on every program's windows: the state, hide / show / raise with
+    the state pushed, move and resize (the fields not given stay), a screenshot to a file, the refusals"""
+    say = lambda what: f'{name} {target}: {what}'  # noqa: E731
+    state = lambda: gui.state(target)['state']  # noqa: E731
+
+    node = gui.state(target)
+    expect('window' in node['interfaces'], say('the node implements window'), node)
+    expect({'title', 'geometry', 'visible', 'active'} <= set(node['state']), say('the state has its four fields'),
+           node['state'])
+    gui.call('window.show', target=target)
+    expect(until(lambda: state()['visible'] is True), say('window.show: visible'), state())
+    gui.call('window.hide', target=target)
+    expect(until(lambda: state()['visible'] is False), say('window.hide: hidden'), state())
+    gui.call('window.raise', target=target)
+    expect(until(lambda: state()['visible'] is True), say('window.raise: shown again'), state())
+
+    # Sizes above every window's own minimum (the Qt debugger's panes want 1064 x 599)
+    before = state()['geometry']
+    moved = gui.call('window.move', target=target, x=50, y=70, w=1300, h=900)
+    expect(moved.get('geometry', {}).get('w') == 1300 and moved['geometry'].get('h') == 900,
+           say('window.move answers the new geometry'), moved)
+    expect(until(lambda: state()['geometry'].get('w') == 1300), say('the state has it'), state())
+    gui.call('window.move', target=target, w=1400)
+    expect(until(lambda: state()['geometry'].get('w') == 1400 and state()['geometry'].get('h') == 900),
+           say('window.move w alone: the height stays'), state())
+    # Below the minimum the window keeps its least size: the answer is the size it took, as the state says
+    small = gui.call('window.move', target=target, w=100, h=100).get('geometry', {})
+    expect(small.get('w', 0) >= 100 and small.get('h', 0) >= 100 and until(lambda: state()['geometry'] == small),
+           say('a size below the minimum answers the size taken'), (small, state()))
+    expect(refused(gui, 'window.move', 'bad_request', target=target, w=0), say('w 0 is refused'))
+    expect(refused(gui, 'window.move', 'bad_request', target=target, z=1), say('an unknown field is refused'))
+    gui.call('window.move', target=target, **before)
+
+    png = os.path.join(out, f"window-{name}-{target.replace('/', '-')}.png")
+    if os.path.exists(png):
+        os.remove(png)
+    shot = gui.call('window.screenshot', target=target, path=png)
+    expect(os.path.exists(png) and os.path.getsize(png) > 0 and shot.get('width', 0) > 0 and shot.get('path') == png,
+           say('window.screenshot to a file'), shot)
 
 
 def cli(unreal_gui, *args):
@@ -193,7 +230,7 @@ def main():
         processes.append(mcplib.launch(args.unreal_videowall, args.wall_port_base))
         mute_all(args.wall_port_base)
         wall = connect(processes[3].pid)
-        connect(processes[1].pid).close()
+        debugger = connect(processes[1].pid)
 
         code, out = cli(args.unreal_gui, 'list')
         expect(code == 0 and all(program in out for program in PROGRAMS), 'unreal-gui list shows the four programs',
@@ -206,11 +243,17 @@ def main():
         conform_wall(wall, args.wall_port_base,
                      mcplib.Session(f'http://127.0.0.1:{args.wall_port_base + 200}/mcp', 'PENTAGON'))
 
+        # `window` alike on every program's windows
+        for gui, name, target in ((qt, 'unreal-qt', 'main'), (qt, 'unreal-qt', 'debugger'),
+                                  (debugger, 'unreal-debugger', 'debugger'), (viewer, 'unreal-screen-viewer', 'main'),
+                                  (wall, 'unreal-videowall', 'main')):
+            conform_window(gui, name, target, args.out)
+
         # One command across programs: the host given, then the only screen of that machine in the plane
         code, out = cli(args.unreal_gui, '--host', str(processes[2].pid), 'screen.zoom', '--target', 'main/screen',
                         'factor=2')
         expect(code == 0, 'unreal-gui --host <viewer> screen.zoom factor=2', out)
-        for gui in (qt, viewer, wall):
+        for gui in (qt, debugger, viewer, wall):
             gui.close()
     finally:
         for process in reversed(processes):

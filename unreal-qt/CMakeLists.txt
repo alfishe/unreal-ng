@@ -657,6 +657,10 @@ if (TESTS)
         "${ROOT_DIR}/guicontrol/tests/guicontrol_test.cpp"
         # The shipped controller profiles bind GUI commands of the plane, never GUI actions of the core
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/guiplaneprofiles_test.cpp"
+        # A binding naming a plane command runs on the host in process (design §4.7)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/guiactions_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/guiactions.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/guiactions.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/guiplane/unrealqtinterface.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/guiplane/unrealqtinterface.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/mousecapturecontroller.cpp"

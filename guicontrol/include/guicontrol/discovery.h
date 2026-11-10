@@ -44,4 +44,10 @@ bool Write(const QString& file, const Entry& entry, QString* error = nullptr);
 
 bool ProcessAlive(qint64 pid);
 
+/// When the process began, ms since the epoch; 0 when the system does not say
+qint64 ProcessStarted(qint64 pid);
+
+/// The entry's process is alive and is the host that wrote it: not a later process given a dead host's pid
+bool HostAlive(const Entry& entry);
+
 }  // namespace guicontrol::discovery
