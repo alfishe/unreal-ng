@@ -126,6 +126,8 @@ DT-5, in words:
 | Triggers | the resting value is measured at connect (raw APIs report -1 at rest, Nestopia's bug); `lt.click` at 0.5 of the calibrated travel | 0.5 |
 | Hair-trigger stops (Elite) | the trigger's full value is the maximum seen in the session, not 1.0; it adapts as the stop changes | adaptive |
 | Stick → mouse | `v = sign(x) · max(0, |x| - dz)^γ · speed`, accumulated in sub-pixels, sent as integer mouse counts per frame | γ 1.8, speed 8 counts/frame at full deflection |
+| Touchpad → mouse | relative, like a laptop's pad: the finger's travel since the last sample moves the pointer, `travel · min(5, 1 + accel · 10 · |travel|) · scale` counts (the pad spans -1..1, so 2.0 is its width), accumulated in sub-pixels. The first sample of a touch only anchors, a lifted finger moves nothing, so where the finger rests means nothing and a touch at the edge does not jump. A pad is a pointing surface: no dead zone, no γ | `accel` 0.25, `scale` 72 counts per pad unit (the Deck profile) |
+| Host sensitivity on top | `[INPUT] MouseScale` (2^n, -3..3) multiplies every pointer count from a pad or stick, as it does the host mouse's; the fraction is carried | 0 (identity) |
 | Stick → mouse, precision | a held modifier (default `rstick.click`) scales speed by 0.25 | |
 | Gyro → mouse | angular velocity × scale, only while a chosen control is held (a ratchet), never always-on | hold `lb` |
 | Gyro or stick → pointer | absolute: the stick (or gyro integrated with recentring on `rstick.click`) gives a screen position for light guns and pens | |
@@ -187,6 +189,13 @@ machine setting (`HostKeyboard=`); the controller manager shows it and links to 
   `SwapMouse=` stays a preference applied on top.
 - **Wheel.** The Kempston wheel is a 4-bit absolute counter in #FADF bits 7:4 (Next, Evo), not a delta. The device
   accumulates host wheel steps into it; a pad can drive it (`{"mouse": "wheel"}` from `dpad.up` / `dpad.down`).
+- **A pad's pointer takes the same road as the host mouse.** `ControllerManager::SubmitMouse` feeds the journaled
+  `DebugMouseManager` funnel (`ApplyHostMove`), which hands the counts to the `MouseManager` and so to every
+  `IMouseSink` the machine has (the Kempston interface, the ZX Next mouse, the Sprinter and the Evo / TS-Conf PS/2
+  mouse), with `MouseScale` applied by the one `MouseDeltaAccumulator`. A trackpad (`ltouchpad.x`, `rtouchpad.y`, ...)
+  as the source of `{mouse: dx}` / `{mouse: dy}` is relative (the table in §3); any other axis keeps the joystick
+  meaning, the deflection is the speed. The binding's `scale` is counts per pad unit for a pad and counts per frame
+  at full deflection for a stick; `accel` (0..10) is the pad's pointer acceleration, 0 = linear.
 - Existing settings (`[INPUT] Mouse=`, `Wheel=`, `SwapMouse=`, `MouseScale=`, `MouseReleaseKey=`) stay where they are.
 
 ## 6. Profile selection

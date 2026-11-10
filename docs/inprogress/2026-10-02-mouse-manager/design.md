@@ -168,6 +168,16 @@ Source for the AVR behavior:
 - **What it posts:** relative motion in physical pixels (`MouseDeltaAccumulator`,
   `[INPUT] MouseScale`), buttons with `[INPUT] SwapMouse`, wheel steps
   (`MouseWheelAccumulator`), all to the shown emulator's manager.
+- **Touchscreen (the Steam Deck in Game Mode):** gamescope composes the touchscreen as an absolute pointer (motion and
+  a press, no touch events), and a finger stays where it is, so the warp backend (travel = pointer minus centre) reads
+  every touch as a leap across the screen. With `Surface::pointerIsTouch` (`XDG_CURRENT_DESKTOP=gamescope`, or a mouse
+  event Qt synthesized from a touch) the captured pointer is a relative pad, as the Deck's trackpad is
+  (`TouchPointerTracker`, `core/src/emulator/io/mouse/touchpointertracker.h`): the finger's travel since its last
+  position moves the guest (no warp, so where it lands or rests means nothing; a position that jumps further than a
+  finger can is a report catching up and only moves the anchor), the same speed matching and `MouseScale` apply, a
+  tap (under 400 ms, within 14 px) is a left click held 70 ms for a program that polls once a frame. The tap that
+  captures is not a click. In Game Mode every pointer counts as a touch, so a USB mouse there moves the cursor only
+  with a button held.
 - **Speed matching (on by default, switchable at any time):** the travel is the
   host pointer's own on every platform (macOS: NSEvent deltas of the dissociated
   pointer; Windows / Linux: the offset from the center the pointer is warped back

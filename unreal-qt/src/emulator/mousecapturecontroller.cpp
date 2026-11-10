@@ -160,6 +160,7 @@ void MouseCaptureController::capture()
     _reachTimer.start();
     _motion.Reset();
     _wheel.Reset();
+    _touch.Reset();
     _buttonMask = 0xFF;
     _swallowKey = 0;
 
@@ -182,7 +183,7 @@ void MouseCaptureController::capture()
                          ? MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
                                                     [this](double dx, double dy) { applyHostMotion(dx, dy); })
                          : nullptr;
-    if (!_nativeCapture)
+    if (!_nativeCapture && !_surface.pointerIsTouch)
     {
         _warpCenterGlobal = centerGlobal;
         recenterCursor();
@@ -201,7 +202,8 @@ void MouseCaptureController::capture()
         }
     }
 
-    const char* backend = _nativeCapture ? "macOS native" : (_windowsCapture ? "Windows native" : "Qt warp");
+    const char* backend = _nativeCapture ? "macOS native"
+                          : (_windowsCapture ? "Windows native" : (_surface.pointerIsTouch ? "touch (relative, no warp)" : "Qt warp"));
     qDebug() << "MouseCaptureController: capture ON  (target" << QString::fromStdString(_targetId) << ", backend"
              << backend << ", release" << _releaseKey.toString() << ")";
     emit stateChanged();
@@ -240,6 +242,7 @@ void MouseCaptureController::release()
 
     _motion.Reset();
     _wheel.Reset();
+    _touch.Reset();
 
     qDebug() << "MouseCaptureController: capture OFF";
     emit stateChanged();
@@ -287,6 +290,14 @@ bool MouseCaptureController::handleMousePress(QMouseEvent* event)
         return _captured;
     }
 
+    if (isTouchEvent(event))
+    {
+        // The finger goes down: the contact's anchor. Nothing is pressed in the guest, a tap clicks when it lifts
+        if (event->button() == Qt::LeftButton)
+            _touch.Down(event->position().x(), event->position().y(), now());
+        return true;
+    }
+
     const uint8_t previous = _buttonMask;
     _buttonMask &= static_cast<uint8_t>(~buttonBit(event->button()));
 
@@ -311,10 +322,32 @@ uint8_t MouseCaptureController::buttonBit(Qt::MouseButton button) const
     }
 }
 
+bool MouseCaptureController::isTouchEvent(const QMouseEvent* event) const
+{
+    return _surface.pointerIsTouch || event->source() != Qt::MouseEventNotSynthesized;
+}
+
 bool MouseCaptureController::handleMouseRelease(QMouseEvent* event)
 {
     if (!_captured)
         return false;
+
+    if (isTouchEvent(event))
+    {
+        if (event->button() == Qt::LeftButton && _touch.Up(now()))
+        {
+            // A tap: the left button down for a moment, so a program polling once a frame sees it
+            _buttonMask &= static_cast<uint8_t>(~buttonBit(Qt::LeftButton));
+            postButtons();
+            QTimer::singleShot(kTapClickMs, this, [this] {
+                if (!_captured)
+                    return;
+                _buttonMask |= buttonBit(Qt::LeftButton);
+                postButtons();
+            });
+        }
+        return true;
+    }
 
     const uint8_t previous = _buttonMask;
     _buttonMask |= buttonBit(event->button());
@@ -328,6 +361,15 @@ bool MouseCaptureController::handleMouseMove(QMouseEvent* event)
 {
     if (!_captured)
         return false;
+
+    // A touchscreen: the finger's own travel, never a warp (the finger stays where it is)
+    if (isTouchEvent(event))
+    {
+        const TouchPointerTracker::Travel travel = _touch.Move(event->position().x(), event->position().y());
+        if (travel.dx != 0.0 || travel.dy != 0.0)
+            applyHostMotion(travel.dx, travel.dy);
+        return true;
+    }
 
     // Native capture reads deltas from NSEvent; the frozen cursor's Qt events carry no travel
     if (_nativeCapture)

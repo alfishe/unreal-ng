@@ -44,6 +44,10 @@ pattern: pause, inject, `run_frames N`, read.
 Buttons from automation and from the host's mouse are kept apart and joined:
 an automation press stays held while the user clicks, and the other way round.
 
+To see what the guest reads, load a cursor program: `tools/verification/mouse/build.sh`, then `snapshot/load` of
+`tools/verification/mouse/build/cursor.sna` ([README](../../tools/verification/mouse/README.md)); `mouse-strokes.py`
+there records strokes (net travel, biggest step, reversals) from any source.
+
 > **How to use the sections:** [MCP](#mcp-preferred) is preferred. Use
 > [WebAPI](#webapi) only inside host-side pipelines or when MCP is unavailable
 > (policy: [_common/transports.md](../_common/transports.md)).

@@ -11,6 +11,7 @@
 #include <string>
 
 #include "emulator/io/mouse/mousedeltaaccumulator.h"
+#include "emulator/io/mouse/touchpointertracker.h"
 
 class QKeyEvent;
 class QMouseEvent;
@@ -74,6 +75,11 @@ public:
         bool allowNativeCapture = true;
         std::function<void(QPoint global)> warpCursor;  ///< empty = QCursor::setPos
         std::function<QPoint()> cursorPosition;         ///< global logical; empty = QCursor::pos
+        /// The pointer is a touchscreen's (gamescope composes the Steam Deck's touchscreen as an absolute pointer:
+        /// motion and a press, no touch events). Captured, it is a relative pad (TouchPointerTracker): no warp, the
+        /// finger's travel moves the guest, a tap clicks. A mouse event Qt synthesized from a touch is handled so
+        /// on every platform
+        bool pointerIsTouch = false;
     };
 
     /// Machine-side settings read at capture time
@@ -124,6 +130,10 @@ public:
     };
     void setPoster(Poster poster) { _poster = std::move(poster); }
 
+    /// A tap on the touchscreen clicks the left button for this long (ms): a program that polls the mouse once a
+    /// frame sees the press
+    static constexpr int kTapClickMs = 70;
+
     /// Unreachable this long (ms) while captured releases the capture
     static constexpr qint64 kUnreachableReleaseMs = 3000;
     /// Milliseconds clock for that rule (default: a monotonic timer). Tests replace it
@@ -167,6 +177,8 @@ signals:
 
 private:
     bool isReleaseKey(const QKeyEvent* event) const;
+    /// A touchscreen's pointer: the surface says so, or Qt synthesized the mouse event from a touch
+    bool isTouchEvent(const QMouseEvent* event) const;
     void postButtons();
     void recenterCursor();
     uint8_t buttonBit(Qt::MouseButton button) const;
@@ -195,6 +207,7 @@ private:
     uint8_t _buttonMask = 0xFF;  // Active-low: D0 = Left, D1 = Right, D2 = Middle
     MouseDeltaAccumulator _motion;
     MouseWheelAccumulator _wheel;
+    TouchPointerTracker _touch;  ///< the finger's contact while captured
 
     // The release key press is consumed together with its auto-repeats and its
     // release, whichever path delivers it (the screen's own key handler or the
