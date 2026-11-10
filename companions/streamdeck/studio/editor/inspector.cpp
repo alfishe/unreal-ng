@@ -77,6 +77,8 @@ json ActionTemplate(const std::string& kind)
     const json resume{{"kind", "webapi"}, {"method", "POST"}, {"path", "/resume"}};
     if (kind == "action")  // a catalogue action (the inspector's picker lists them)
         return {{"kind", kind}, {"id", "run.pause_toggle"}};
+    if (kind == "gui")  // a GUI control plane command (interface.command)
+        return {{"kind", kind}, {"method", "debugger.open"}};
     if (kind == "webapi")
         return pause;
     if (kind == "http")

@@ -32,7 +32,7 @@ namespace
 
 std::string Env(const char* name)
 {
-#ifdef _WIN32
+#ifdef _MSC_VER  // MinGW has no _dupenv_s at link time; its getenv is not deprecated
     char* value = nullptr;
     size_t size = 0;
     if (_dupenv_s(&value, &size, name) != 0 || value == nullptr)
