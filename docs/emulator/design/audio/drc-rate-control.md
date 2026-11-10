@@ -214,8 +214,8 @@ same device kept the old negotiated rate behind a hidden OS resampler.
   over/underrun counters. Error counters must stay at zero permanently
   under converged control — growth is the first sign of trouble.
 - Video side: `Screen::LatchFramebuffer` stamps a steady-clock timestamp;
-  the GUI frame source computes paint−latch (+ present delay) as a signed
-  EMA into `pVideoPresentLatencyUs`. (The EMA must be signed — the first
+  the GUI frame source computes the refresh's time minus the latch of the
+  frame it shows (`Screen::CopyFrameAt`, the frame presenter) as a signed EMA into `pVideoPresentLatencyUs`. (The EMA must be signed — the first
   version used unsigned arithmetic and wrapped to −4.2M ms.)
 - UI: audio settings shows a static identity line (device @ native rate,
   core rate) and an ⓘ popup with the full component breakdown refreshing

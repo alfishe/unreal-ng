@@ -25,13 +25,14 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   | `display_rate` | `keep`, `match` | switch the display to a rate fitting the machine (50 / 100 Hz) while the window shows it |
   | `lip_sync_offset_ms` | -200..200 | moves the frames' target times against the sound |
 
-- **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl` / `software`),
+- **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl-timed` on Linux / `gl` / `software`),
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
   `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
   blended, interpolated, motion_fields, on_device, held_flicker}, `display` {state, reason, hz, original_hz,
-  machine_hz}. The counters cover the native presenter's last 600 presents; the GL and software paths have no screen
-  times (they stay 0).
+  machine_hz}. The counters cover the native presenter's last 600 presents; `gl-timed` has screen times only where GLX
+  has `GLX_OML_sync_control` (X11, XWayland on KDE, gamescope); the plain `gl` and `software` paths have none (they
+  stay 0).
 - **`gpu_ms`**: the GPU time of smooth motion's steps (`smooth`) and of the picture (`picture`: CRT composition,
   beam model, preset), from GL timestamps read back frames later. `measured` 0: no timer queries (or the CPU path).
   `longest` is since the GL context was made: a GPU reset makes a new one.

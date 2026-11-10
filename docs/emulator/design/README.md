@@ -142,6 +142,18 @@ Documentation for emulation speed control and turbo mode:
   - Why ROM can be read at any T-state and RAM cannot (Scorpion Even M1)
   - Which machines contend, and how unreal-ng models it
 
+## Video: Rendering and Presenting
+
+- **[Screen Rendering Pipeline](video/screen-rendering-pipeline.md)** 🖼️
+  - How the emulated frame is drawn (per T-state, batched, ScreenHQ)
+  - Screenshots of the presented frame
+- **[Frame Presenter](../../inprogress/2026-10-26-frame-presenter/README.md)** 🎞️
+  ([what is done](../../inprogress/2026-10-26-frame-presenter/DONE.md))
+  - Every frame timed by its sound; the audio device is the master clock
+  - VRR (present at the frame's time) and fixed displays (the frame of each refresh); Metal, DXGI, GL
+  - Smooth motion (blend, interpolation, a game's cadence), the display rate switch, Video Synchronization
+  - Automation: [recipe](../../../.recipe/media/frame-presenter.md)
+
 ## Snapshot System
 
 Documentation for snapshot loading/saving:
