@@ -5521,7 +5521,7 @@ root:
             label: FRAME
             value:
               format: "{}"
-              readout: ttd.position.current.frame
+              readout: ttd.position.frame
           id: tframe
           tags:
             - uc:D3.2
@@ -6031,7 +6031,7 @@ root:
             label: FRAME
             value:
               format: "{}"
-              readout: ttd.position.current.frame
+              readout: ttd.position.frame
           id: ttdpos
           tags:
             - uc:D3.2

@@ -380,10 +380,11 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const TimeTravelEngine& engine = *_engine;
+    const LineageViewGuard lineageView{*this};   // with branches the frame is read on the lineage line holding it
+    const LineageEngine engine{*this};            // checkpoint indices below: the lineage's (engine)
     const size_t firstCp = engine.FirstCheckpoint();
     const size_t cpCount = engine.CheckpointCount();
-    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator || cpCount <= firstCp)
+    if (_line->timeline.empty() || !memory || !z80 || !_context->pEmulator || cpCount <= firstCp)
     {
         result.error = "no recorded history";
         return finish();
@@ -395,10 +396,11 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     const uint64_t heldFrom = engine.Checkpoint(firstCp)->position.frame;
     const TTDTimePoint sessionEnd = SessionEndPosition();
     const uint64_t frame = query.hasFrame ? query.frame : CurrentPosition().frame;
-    const int64_t ciSigned = TimelineIndexAtOrBefore({frame, 0});
+    const int64_t ciSigned = ViewLineageIndexAtOrBefore({frame, 0});
     const int64_t eiSigned = engine.CheckpointIndexOf({0, frame, 0});
-    if (frame < heldFrom || sessionEnd < TTDTimePoint{frame, 0} || ciSigned < 0 ||
-        _timeline[static_cast<size_t>(ciSigned)].time.frame != frame || eiSigned < 0)
+    const TTDCheckpoint* frameCp = ciSigned < 0 ? nullptr : ViewLineageCheckpoint(static_cast<size_t>(ciSigned));
+    if (frame < heldFrom || sessionEnd < TTDTimePoint{frame, 0} || !frameCp || frameCp->time.frame != frame ||
+        eiSigned < 0)
     {
         result.error = "frame " + std::to_string(frame) + " is outside the recorded history (frames " +
                        std::to_string(heldFrom) + ".." + std::to_string(sessionEnd.frame) + ")";
@@ -406,7 +408,7 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     }
     const size_t ci = static_cast<size_t>(ciSigned);
     const size_t ei = static_cast<size_t>(eiSigned);
-    const TTDCheckpoint& cp = _timeline[ci];
+    const TTDCheckpoint& cp = *frameCp;
     result.frame = frame;
     result.frameT = FrameSpan();
     uint32_t endT = frame == sessionEnd.frame ? sessionEnd.tInFrame : result.frameT;
@@ -467,8 +469,8 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     // IFF1 off at the frame start: the code may be inside an interrupt routine acknowledged in the frame before. That
     // frame's trace gives the call frames still open at its end (from the interrupt up), carried into this one
     std::shared_ptr<TTDFrameTrace> before;
-    if (cp.cpu.iff1 == 0 && ci > 0 && _timeline[ci - 1].time.frame + 1 == frame &&
-        !FirstBarrierBetween(_timeline[ci - 1].time, cp.time))
+    const TTDCheckpoint* prev = ci > firstCp ? ViewLineageCheckpoint(ci - 1) : nullptr;
+    if (cp.cpu.iff1 == 0 && prev && prev->time.frame + 1 == frame && !FirstBarrierBetween(prev->time, cp.time))
     {
         before = TraceCauseFrame(ci - 1, result.frameT);
         ++result.framesReplayed;
@@ -539,7 +541,7 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     uint32_t isrDepth = 0;
     std::vector<OpenBefore> carried;
     if (before)
-        carried = OpenAtTheEnd(*before, _timeline[ci - 1].cpu.im);
+        carried = OpenAtTheEnd(*before, prev->cpu.im);
     if (!insns.empty() && !carried.empty())
     {
         for (const OpenBefore& o : carried)
@@ -1115,7 +1117,7 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     if (sections & kExplainInput)
     {
         std::vector<uint8_t> held;
-        for (const TTDInputEvent& e : _inputJournal.Events())
+        for (const TTDInputEvent& e : LineageInputEvents())
         {
             if (e.kind != TTDInputKind::Key)
                 continue;
@@ -1139,7 +1141,8 @@ TTDExplainFrameResult TimeTravelController::QueryExplainFrame(const TTDExplainFr
     // ---- markers ----
     if (sections & kExplainMarkers)
     {
-        for (const TTDExternalEvent& e : _externalEvents.Events())
+        ViewOwnerOfFrame(frame);   // the frame's markers are its owner line's
+        for (const TTDExternalEvent& e : _line->externalEvents.Events())
             if (e.time.frame == frame)
                 result.markers.push_back("+" + std::to_string(e.time.tInFrame) + " " +
                                          std::string(e.reason, strnlen(e.reason, sizeof(e.reason))));

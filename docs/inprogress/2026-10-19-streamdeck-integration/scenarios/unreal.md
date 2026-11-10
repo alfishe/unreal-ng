@@ -547,7 +547,7 @@ Title: Time; use cases D1, D3; context `ttd`; opened from `home` at [3, 1]; stri
 | `rcont` | [2, 0] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.reverse_continue.png" width="28" alt="ttd.reverse_continue"> `ttd.reverse_continue` + label REV RUN | Reverse continue | `ttd.reverse_continue` | D3.5 |
 | `rstep` | [2, 1] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.reverse_step.png" width="28" alt="ttd.reverse_step"> `ttd.reverse_step` + label REV STEP | Reverse step | `ttd.reverse_step` | D3.5 |
 | `uback` | [2, 3] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.unit_back.png" width="28" alt="ttd.unit_back"> `ttd.unit_back` + label BACK | Back one unit | `ttd.unit_back` | D3.3 |
-| `tframe` | [2, 4] | (none) + label FRAME | tframe | shows `{}` of `ttd.position.current.frame` | D3.2 |
+| `tframe` | [2, 4] | (none) + label FRAME | tframe | shows `{}` of `ttd.position.frame` | D3.2 |
 | `ufwd` | [2, 5] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.unit_forward.png" width="28" alt="ttd.unit_forward"> `ttd.unit_forward` + label FORWARD | Forward one unit | `ttd.unit_forward` | D3.3 |
 | `timlive` | [2, 8] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.resume_live.png" width="28" alt="ttd.resume_live"> `ttd.resume_live` + label LIVE | Resume live | `ttd.resume_live` | D3.6 |
 | `bmprev` | [3, 0] | <img src="../../../../data/streamdeck/icons/packs/magicwb/src/ttd.bookmark_prev.png" width="28" alt="ttd.bookmark_prev"> `ttd.bookmark_prev` + label MARK < | Previous bookmark | `ttd.bookmark_prev` | D3.7 |
@@ -596,7 +596,7 @@ Title: TTD REC; use cases C7.1, D3; context `ttd`; opened from `home` at [3, 5];
 | `ttdfrms` | [2, 2] | (none) + label FRAMES | ttdfrms | shows `{:k}` of `ttd.status.frames` | C10.7 |
 | `ttdbytes` | [2, 3] | (none) + label TTD MEM | ttdbytes | shows `{:b}` of `ttd.status.memory_bytes` | C10.7 |
 | `ttdmarks` | [2, 4] | (none) + label MARKS | ttdmarks | shows `{}` of `ttd.status.bookmarks` | C10.7 |
-| `ttdpos` | [2, 5] | (none) + label FRAME | ttdpos | shows `{}` of `ttd.position.current.frame` | D3.2 |
+| `ttdpos` | [2, 5] | (none) + label FRAME | ttdpos | shows `{}` of `ttd.position.frame` | D3.2 |
 
 | Dial | Label | Turn | Press | Use case |
 |:--|:--|:--|:--|:--|

@@ -111,7 +111,7 @@ menu ttd:
     ttdfrms:  {at: [2, 2], uc: C10.7, label: FRAMES, show: {readout: ttd.status.frames, format: "{:k}"}}
     ttdbytes: {at: [2, 3], uc: C10.7, label: TTD MEM, show: {readout: ttd.status.memory_bytes, format: "{:b}"}}
     ttdmarks: {at: [2, 4], uc: C10.7, label: MARKS, show: {readout: ttd.status.bookmarks}}
-    ttdpos:   {at: [2, 5], uc: D3.2, label: FRAME, show: {readout: ttd.position.current.frame, format: '{}'}}
+    ttdpos:   {at: [2, 5], uc: D3.2, label: FRAME, show: {readout: ttd.position.frame, format: '{}'}}
 
 # C7.2, C7.3, C7.5: video. Row 0 REC (red, lit while a video records) and STOP (dimmed until a recording runs), pause,
 # the screenshots and the last seconds; row 1 the other formats (each starts a recording); row 2 what records.
@@ -639,7 +639,7 @@ menu time:
     rcont:   {at: [2, 0], uc: D3.5, action: ttd.reverse_continue, label: REV RUN}
     rstep:   {at: [2, 1], uc: D3.5, action: ttd.reverse_step, label: REV STEP}
     uback:   {at: [2, 3], uc: D3.3, action: ttd.unit_back, label: BACK}
-    tframe:  {at: [2, 4], uc: D3.2, label: FRAME, show: {readout: ttd.position.current.frame, format: '{}'}}
+    tframe:  {at: [2, 4], uc: D3.2, label: FRAME, show: {readout: ttd.position.frame, format: '{}'}}
     ufwd:    {at: [2, 5], uc: D3.3, action: ttd.unit_forward, label: FORWARD}
     timlive: {at: [2, 8], uc: D3.6, action: ttd.resume_live, label: LIVE}
     bmprev:  {at: [3, 0], uc: D3.7, action: ttd.bookmark_prev, label: MARK <}

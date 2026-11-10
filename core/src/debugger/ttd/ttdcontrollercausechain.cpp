@@ -87,7 +87,10 @@ std::string FrameText(const TTDTimePoint& t)
 std::shared_ptr<TTDFrameTrace> TimeTravelController::TraceCauseFrame(size_t cpIndex, uint32_t endT)
 {
     auto trace = std::make_shared<TTDFrameTrace>();
-    const TTDCheckpoint& cp = _timeline[cpIndex];
+    const TTDCheckpoint* held = ViewLineageCheckpoint(cpIndex);   // an engine index of the active lineage
+    if (!held)
+        return trace;
+    const TTDCheckpoint& cp = *held;
     trace->frame = cp.time.frame;
     Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
     Memory* memory = _context->pMemory;
@@ -222,6 +225,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     // Replays checkpoints and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDCauseResult result;
+    const LineageViewGuard lineageView{*this};   // with branches the walk views each lineage line it reads
     auto finish = [&]() -> TTDCauseResult& {
         result.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         return result;
@@ -231,7 +235,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator)
+    if (_line->timeline.empty() || !memory || !z80 || !_context->pEmulator)
     {
         result.error = "no recorded history";
         return finish();
@@ -244,7 +248,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         result.error = "unknown register '" + query.reg + "'";
         return finish();
     }
-    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint sessionStart = _lines.front()->timeline.front().time;   // the lineage starts on the trunk
     const TTDTimePoint at = query.hasTime ? query.at : CurrentPosition();
     if (at < sessionStart || SessionEndPosition() < at)
     {
@@ -253,7 +257,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         return finish();
     }
     result.at = at;
-    const int64_t atIndex = TimelineIndexAtOrBefore(at);
+    const int64_t atIndex = ViewLineageIndexAtOrBefore(at);   // checkpoint indices below: the lineage's (engine)
     if (atIndex < 0)
     {
         result.error = "no checkpoint at or before " + FrameText(at);
@@ -306,7 +310,10 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
                 cache.splice(cache.end(), cache, it);
                 return cache.back().second;
             }
-        const TTDCheckpoint& cp = _timeline[cpIndex];
+        const TTDCheckpoint* held = ViewLineageCheckpoint(cpIndex);
+        if (!held)
+            return std::make_shared<TTDFrameTrace>();
+        const TTDCheckpoint& cp = *held;
         const TTDTimePoint end = SessionEndPosition();
         uint32_t endT = cp.time.frame == end.frame ? end.tInFrame : FrameSpan();
         if (const std::optional<TTDExternalEvent> barrier = FirstBarrierBetween(cp.time, TTDTimePoint{cp.time.frame, endT}))
@@ -371,7 +378,11 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
     };
     auto barrierBefore = [&](size_t cpIndex) {
         // A marker between the frame before and this one: the state jumped, the producer is not in the replay
-        return cpIndex > 0 && FirstBarrierBetween(_timeline[cpIndex - 1].time, _timeline[cpIndex].time).has_value();
+        if (cpIndex <= LineageFirstIndex())
+            return false;
+        const TTDTimePoint from = ViewLineageCheckpoint(cpIndex - 1)->time;
+        const TTDTimePoint to = ViewLineageCheckpoint(cpIndex)->time;
+        return FirstBarrierBetween(from, to).has_value();
     };
 
     auto findProducer = [&](const TTDCauseName& name, Place from) {
@@ -396,7 +407,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
                     p.insn = k;
                     return p;
                 }
-            if (cpIndex == 0)
+            if (cpIndex <= LineageFirstIndex())
             {
                 p.stop = name.memory ? "" : "session_start";
                 return p;
@@ -424,7 +435,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
         q.hasPhysPageFilter = name.page != kPhysPageNone;
         q.physPage = name.page;
         q.flip = static_cast<int8_t>(name.flip);
-        const uint64_t frameStart = GlobalT(_timeline[cpIndex].time);
+        const uint64_t frameStart = GlobalT(ViewLineageCheckpoint(cpIndex)->time);
         if (frameStart == 0)
             return p;
         q.beforeGlobalT = frameStart - 1;
@@ -436,7 +447,7 @@ TTDCauseResult TimeTravelController::QueryCauseChain(const TTDCauseQuery& query)
             return p;   // never written in the history
         }
         const TTDSearchResult& hit = found.hits.front().access;
-        const int64_t hitIndex = TimelineIndexAtOrBefore(hit.time);
+        const int64_t hitIndex = ViewLineageIndexAtOrBefore(hit.time);
         if (hitIndex < 0)
             return p;
         std::shared_ptr<TTDFrameTrace> trace = traceOf(size_t(hitIndex));

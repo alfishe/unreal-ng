@@ -2235,7 +2235,7 @@ namespace PythonBindings
                         throw std::runtime_error(refused);
                     return true;
                 }
-                // A tool edit (TTD records it); refused in the recorded past: a script error
+                // A tool edit (TTD records it; in the recorded past it forks a branch); a refusal is a script error
                 std::string refused;
                 const bool set = self.SetRegisterFromTool("python register", name, value, &refused);
                 if (!refused.empty())

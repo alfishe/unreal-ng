@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -127,4 +129,121 @@ TEST(TTDRecordingWriter_Test, TheFilesJoinIntoOne)
         sum += FileHelper::GetFileSize(f);
     EXPECT_LT(FileHelper::GetFileSize(target), sum) << "one header and index instead of ten";
     EXPECT_FALSE(JoinSessionFiles(r.files, target, false, error)) << "an existing file stays unless asked";
+}
+
+namespace
+{
+std::vector<uint8_t> ReadBytes(const std::string& path)
+{
+    std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+}  // namespace
+
+/// A recording resumed from the past (finding F-1 of the branches design,
+/// docs/inprogress/2026-11-08-ttd-branches/README.md §4): 60 frames in files
+/// of 10, cut inside frame 33, 30 new frames. The files before the cut's
+/// segment stay as they were written; the cut's segment is written again from
+/// its baseline; the folder loads as a session that recorded only the kept
+/// past and the new frames
+TEST(TTDRecordingWriter_Test, ResumingFromThePastKeepsTheFilesBeforeTheCut)
+{
+    const std::string root = TestPathHelper::GetUniqueTestScratchPath("ttd-recordings-rewind");
+    FileHelper::DeleteFolder(root);
+    std::string error;
+    std::unique_ptr<TTDRecordingFolder> folder = TTDRecordingFolder::Create(root, "synthetic", 1'759'581'012, error);
+    ASSERT_NE(folder, nullptr) << error;
+    TTDSessionSaveParams params;
+    params.checkpointsPerPart = 4;
+    TTDRecordingWriter writer([&folder](uint32_t n) { return folder->SegmentPath(n); }, params);
+
+    Session cut(Growable(10));
+    Session ref(Growable(10));
+    cut.Frame();
+    ASSERT_TRUE(writer.Begin(cut.engine, error)) << error;
+    for (int i = 1; i < 60; ++i)
+        ASSERT_TRUE((cut.Frame(), writer.Collect(cut.engine))) << writer.Error();
+    for (int i = 0; i < 34; ++i)
+        ref.Frame();
+    ASSERT_EQ(folder->Segments().size(), 6u);
+    std::vector<std::vector<uint8_t>> before;
+    for (uint32_t n = 0; n < 3; ++n)
+        before.push_back(ReadBytes(folder->SegmentPath(n)));
+
+    writer.StopWriting();
+    ASSERT_TRUE(cut.engine.TruncateAfter(33, {0, 33, 1500}, error)) << error;
+    ASSERT_TRUE(writer.RewindToLastSegment(cut.engine, error)) << error;
+    EXPECT_EQ(folder->Segments().size(), 4u) << "files 0-2 kept, the cut's segment (3) open again, 4-5 gone";
+
+    cut.memory = ref.memory;
+    cut.frame = ref.frame;
+    for (int i = 0; i < 30; ++i)
+    {
+        cut.Frame();
+        ref.Frame();
+        ASSERT_TRUE(writer.Collect(cut.engine)) << writer.Error();
+    }
+    ASSERT_TRUE(writer.Finish(cut.engine)) << writer.Error();
+
+    for (uint32_t n = 0; n < 3; ++n)
+        EXPECT_EQ(ReadBytes(folder->SegmentPath(n)), before[n]) << "file " << n << " is not written again";
+    const std::vector<std::string> files = folder->Segments();
+    ASSERT_EQ(files.size(), 7u) << "frames 0-63 in files of 10";
+    TimeTravelEngine whole;
+    TTDSessionLoadReport report;
+    ASSERT_TRUE(LoadRecording(whole, files, 0, error, &report)) << error;
+    EXPECT_TRUE(report.complete) << report.stoppedAt;
+    ASSERT_EQ(whole.CheckpointCount(), ref.engine.CheckpointCount());
+    ExpectRange(whole, ref.engine, 0);
+    EXPECT_EQ(whole.Events().Count(), ref.engine.Events().Count());
+}
+
+/// The writer behind the engine when the cut comes (captures it has not
+/// collected yet, a later segment it never opened): its open file has no
+/// index, so it is written again from its own baseline, then the cut's segment
+TEST(TTDRecordingWriter_Test, ResumingFromThePastWithTheWriterBehind)
+{
+    const std::string root = TestPathHelper::GetUniqueTestScratchPath("ttd-recordings-rewind-behind");
+    FileHelper::DeleteFolder(root);
+    std::string error;
+    std::unique_ptr<TTDRecordingFolder> folder = TTDRecordingFolder::Create(root, "synthetic", 1'759'581'012, error);
+    ASSERT_NE(folder, nullptr) << error;
+    TTDSessionSaveParams params;
+    params.checkpointsPerPart = 4;
+    TTDRecordingWriter writer([&folder](uint32_t n) { return folder->SegmentPath(n); }, params);
+
+    Session cut(Growable(10));
+    Session ref(Growable(10));
+    cut.Frame();
+    ASSERT_TRUE(writer.Begin(cut.engine, error)) << error;
+    for (int i = 1; i < 15; ++i)
+        ASSERT_TRUE((cut.Frame(), writer.Collect(cut.engine))) << writer.Error();
+    for (int i = 15; i < 30; ++i)
+        cut.Frame();   // the writer's open file is segment 1; segment 2 (20-29) only in memory
+    for (int i = 0; i < 26; ++i)
+        ref.Frame();
+    const std::vector<uint8_t> first = ReadBytes(folder->SegmentPath(0));
+
+    writer.StopWriting();
+    ASSERT_TRUE(cut.engine.TruncateAfter(25, {0, 25, 1500}, error)) << error;   // frame 25's bus read (T 1000) kept
+    ASSERT_TRUE(writer.RewindToLastSegment(cut.engine, error)) << error;
+    cut.memory = ref.memory;
+    cut.frame = ref.frame;
+    for (int i = 0; i < 10; ++i)
+    {
+        cut.Frame();
+        ref.Frame();
+        ASSERT_TRUE(writer.Collect(cut.engine)) << writer.Error();
+    }
+    ASSERT_TRUE(writer.Finish(cut.engine)) << writer.Error();
+
+    EXPECT_EQ(ReadBytes(folder->SegmentPath(0)), first) << "file 0 is not written again";
+    const std::vector<std::string> files = folder->Segments();
+    ASSERT_EQ(files.size(), 4u) << "frames 0-35 in files of 10";
+    TimeTravelEngine whole;
+    TTDSessionLoadReport report;
+    ASSERT_TRUE(LoadRecording(whole, files, 0, error, &report)) << error;
+    EXPECT_TRUE(report.complete) << report.stoppedAt;
+    ASSERT_EQ(whole.CheckpointCount(), ref.engine.CheckpointCount());
+    ExpectRange(whole, ref.engine, 0);
 }

@@ -625,7 +625,7 @@ reads and writes the sound card CPU (General Sound / NeoGS) instead of the machi
 clock `card_time` for the frame time), its 64K as its four windows map them, its code from its PC (no labels: they
 are the machine's). `registers pc --cpu gs`, `r a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `memory write 0x4000 01 02 --cpu gs`, `memory info --cpu gs` (the windows: ROM / RAM and page), `disasm --cpu gs`.
-Edits are tool edits (refused in the recorded past, recorded by a time travel session). A card without a CPU or an
+Edits are tool edits (recorded by a time travel session; in the recorded past they fork a branch there). A card without a CPU or an
 empty slot answers that the CPU is not there. On `step [count]`, `steps <count>`, `stepover` and `stepout` it steps
 the card CPU: the machine resumes until the card's step ends and pauses again; the main CPU moves on to where the
 card catches up (a host port access or the frame end). The reply names the card's PC and SP and the main PC. Every
@@ -3366,11 +3366,18 @@ Not on this list (still refused while recording, unchanged): `ttd invalidate`, h
 
 **A media change while recording is an event of the recording** (the engine; owner decision 2026-10-10). Tape load / eject, disk load / eject (and an autostart's insert), disk create, `media insert` / `eject` / `discard` on any slot (SD cards, CD) are accepted from every surface: the change lands at the next frame boundary (a paused machine: the next frame it runs; meanwhile the slot shows `pending`), the recording goes on, and the history keeps "the medium changed in slot X, the new one is Y", then ports and sectors only. Seeking back to before the frame a medium came in, that slot is empty for its device; from that frame on (and back live) the medium is there. The operation log entry: `done`, mode `recording`, effect `none`. `endRecording` / `end_recording` still ends the recording and changes the medium at once.
 
+**A media change in the recorded past is refused** (TTD branches, owner decision 2026-11-08). While the machine sits
+at a point of a history (`detached`) or a replay runs, tape / disk load and eject, disk create and `media insert` /
+`eject` / `discard` on any slot are refused with the reason "the machine is in recorded history ...: media stay as
+recorded. Go back to the branch end, or resume recording here first (that forks a branch), then change the media".
+Nothing ends: the history, its branches, the position and the slots stay as they were.
+
 **Switching `timetravel` or `debugmode` off stops the recording instead (FR-17).** It is not refused: the
 recording stops cleanly first - the machine is parked, everything recorded up to that instant stays and is
 browsable - and then the feature switches off. The status field `last_stop_reason` says why it stopped
 (`feature-off:timetravel` or `feature-off:debugmode`; `capture-failed` when the history's store did not take a
-frame, everything before it kept; empty / `null` otherwise, cleared by the next `ttd start`).
+frame, everything before it kept; `disk-full` when the disk of the recording's folder fell under 128 MB, its files
+finished whole, after a warning under 1 GB or ten minutes of recording; empty / `null` otherwise, cleared by the next `ttd start`).
 A later seek switches what capture needs back on, as `ttd start` does. With `timetravel` off the write
 journal's memory (about 64 MB) is released: the history stays, and "who wrote this last" queries on it replay
 a frame instead of reading the journal.
@@ -3394,7 +3401,7 @@ Only a recording you started (`ttd start` without `black_box`, the TTD panel's R
 | :--- | :--- |
 | Snapshot load | RAM and registers replaced wholesale. |
 | Tape load | New media. |
-| Disk load, disk create | New media. |
+| Disk load, disk create | New media (in `detached` they are refused, see above). |
 | ROM reload | The machine's code changed under the history. |
 | General Sound card type switch | The device set changed under the history (`gs-card-switch`); a seek could not put the other card type back. |
 | `ttd invalidate` (or WebAPI `POST /ttd/invalidate`, Lua/Python `ttd_invalidate`) | Explicit. |

@@ -1,7 +1,11 @@
 #include "debugger/ttd/engine/ttdsessionfile.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <iterator>
+#include <map>
+#include <optional>
 #include <set>
 #include <unordered_map>
 
@@ -161,10 +165,24 @@ struct Range
 };
 }  // namespace
 
+namespace
+{
+std::atomic<bool> g_branchReading{true};
+}  // namespace
+
+void TTDSessionFile::SetBranchReadingForTesting(bool on)
+{
+    g_branchReading = on;
+}
+
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
     if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
+    if (id == kBranchTable)
+        return true;
+    if (const uint16_t trunk = TrunkOfTwin(id))
+        return KnownStream(trunk);
     for (const TTDStreamDesc& s : Streams())
         if (s.id == id)
             return true;
@@ -209,7 +227,7 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
     }
     _sink = &sink;
     _params = params;
-    _next = first == SIZE_MAX ? e._cpBase : first;
+    _next = first == SIZE_MAX ? e._line->cpBase : first;
     _limits = limits;
     _liveItem.assign(e._regions.size(), {});
     for (size_t r = 0; r < e._regions.size(); ++r)
@@ -233,6 +251,42 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
             return false;
         }
         header.streams.push_back({h.id, 1, TTDStreamKind::Ancillary, h.name});
+    }
+    // Branches: the table and the twins of every stream a branch writes (ancillary: an old reader loads the trunk)
+    size_t liveLines = 0;
+    for (uint32_t l = 0; l < e._lines.size(); ++l)
+        liveLines += e._lines[l] != nullptr;
+    const bool branchFile = params.fileLine != UINT32_MAX && params.fileLine != 0;
+    if (branchFile)
+    {
+        _lineId = params.fileLine;
+        _local = params.fileLine;
+    }
+    if ((params.allLines && liveLines > 1 && params.fileLine == UINT32_MAX) || branchFile)
+    {
+        const size_t trunkStreams = header.streams.size();
+        header.streams.push_back({kBranchTable, 1, TTDStreamKind::Ancillary, "branch-table"});
+        for (size_t k = 0; k < trunkStreams; ++k)
+        {
+            const TTDStreamDesc& d = header.streams[k];
+            if (const uint16_t twin = BranchTwin(d.id))
+                header.streams.push_back({twin, d.layoutVersion, TTDStreamKind::Ancillary, "branch-" + d.name});
+        }
+        std::set<uint16_t> declared;
+        for (const TTDStreamDesc& d : header.streams)
+            declared.insert(d.id);
+        for (const auto& [line, streams] : params.lineHolderStreams)
+            for (const TTDHolderStream& h : streams)
+            {
+                const uint16_t twin = BranchTwin(h.id);
+                if (!IsHolderStream(h.id) || !twin)
+                {
+                    error = "branch holder stream " + std::to_string(h.id) + " has no branch twin";
+                    return false;
+                }
+                if (declared.insert(twin).second)
+                    header.streams.push_back({twin, 1, TTDStreamKind::Ancillary, "branch-" + h.name});
+            }
     }
     {
         TTDByteWriter w;
@@ -398,13 +452,15 @@ void TTDSessionWriter::Write(PartJob& job)
 bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job)
 {
     const TTDPieceStore& store = *e._store;
-    const std::vector<TTDEvent>& events = e._events.Events();
+    const std::vector<TTDEvent>& events = e._line->events.Events();
     // The file's last part takes everything up to the next checkpoint after
     // it (the next segment's baseline), or everything left at the session's end
     const bool lastPart = final && last == _end;
     const bool atSessionEnd = last >= e.CheckpointCount();
     const TTDEngineCheckpoint& head = e.CpAt(first);
-    const bool fileStart = _part == 0;
+    const bool fileStart = _linePart == 0;
+    const bool forkCopy = _local != 0 && first == e._line->cpBase;   // a branch's first checkpoint (the fork's copy)
+    const bool folderFile = _params.fileLine != UINT32_MAX;
     if (fileStart)
     {
         // Journal positions in the file count from its first record, so files
@@ -424,7 +480,9 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         const TTDEngineCheckpoint& cp = e.CpAt(i);
         checkpoints.Varint(cp.position.frame - previousFrame);
         previousFrame = cp.position.frame;
-        checkpoints.U8(cp.baseline ? 1 : 0);
+        // A folder file's fork copy: every piece whole, a segment's start of its own
+        const bool whole = forkCopy && folderFile && i == first;
+        checkpoints.U8(cp.baseline || whole ? 1 : 0);
         checkpoints.U64(cp.start);
         checkpoints.Raw(&cp.cpu, sizeof(cp.cpu));
         checkpoints.Raw(&cp.chipset, sizeof(cp.chipset));
@@ -434,47 +492,107 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         checkpoints.Varint(cp.busWriteCursor - _base[1]);
         checkpoints.Varint(cp.mediaReadCursor - _base[2]);
         checkpoints.Varint(cp.busVectorCursor - _base[3]);
+        // One version, numbered as it appears; @p asFull: a difference decoded and stored whole (a folder file's fork
+        // copy: its delta bases are in another file)
+        auto version = [&](uint32_t region, uint32_t piece, TTDPieceId id, bool asFull) {
+            checkpoints.Varint(piece);
+            const uint32_t item = static_cast<uint32_t>(_itemPart.size());
+            _itemOf[id] = item;
+            _itemPart.push_back(static_cast<uint32_t>(_part));
+            auto encoding = store.EncodingOf(id);
+            if (asFull && TTDPieceStore::IsDifference(encoding))
+            {
+                std::array<uint8_t, kTTDPieceSize> raw{};
+                if (!store.Decode(id, raw.data()))
+                {
+                    _buildError = "a version of the fork could not be decoded";
+                    return false;
+                }
+                const bool zero = codec::IsAllZero(raw.data(), raw.size());
+                const std::vector<uint8_t> packed = zero ? std::vector<uint8_t>{} : codec::Compress(raw.data(), raw.size());
+                pieces.U8(static_cast<uint8_t>(zero ? TTDPieceStore::Encoding::Zero : TTDPieceStore::Encoding::Full));
+                pieces.Varint(0);   // depth
+                pieces.Varint(0);   // no base
+                pieces.U32(store.CrcOf(id));
+                pieces.Varint(packed.size());
+                pieces.Bytes(packed.data(), packed.size());
+                _liveItem[region][piece] = item;
+                return true;
+            }
+            uint32_t baseItem = kNoItem, baseLocal = _local;
+            if (TTDPieceStore::IsDifference(encoding))
+            {
+                // A branch's version may build on an ancestor's (its delta base at the fork)
+                uint32_t basePart = 0;
+                if (!FindItem(store.BaseOf(id), baseLocal, baseItem, basePart))
+                {
+                    _buildError = "a version's base is not in the session";
+                    return false;
+                }
+                if (basePart != _part)
+                    dependencies.insert(basePart);
+            }
+            pieces.U8(static_cast<uint8_t>(encoding));
+            pieces.Varint(store.DepthOf(id));
+            if (_local != 0)
+            {
+                // Branch records: the base's line, then its number there (storage.md §3.3)
+                pieces.Varint(baseItem == kNoItem ? 0 : uint64_t(baseLocal) + 1);
+                if (baseItem != kNoItem)
+                    pieces.Varint(baseItem);
+            }
+            else
+                pieces.Varint(baseItem == kNoItem ? 0 : uint64_t(baseItem) + 1);
+            pieces.U32(store.CrcOf(id));
+            pieces.Varint(store.PayloadSize(id));
+            pieces.Bytes(store.PayloadData(id), store.PayloadSize(id));
+            _liveItem[region][piece] = item;
+            return true;
+        };
+        if (whole)
+        {
+            // Every piece from the copy's full tables
+            uint64_t regions = 0;
+            for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
+                for (uint32_t p = 0; refs.snapshot && p < e._regions[refs.region].pieces; ++p)
+                    if (e._tables->Get(refs.snapshot, p) != TTDPieceStore::kNone)
+                    {
+                        ++regions;
+                        break;
+                    }
+            checkpoints.Varint(regions);
+            for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
+            {
+                uint32_t count = 0;
+                for (uint32_t p = 0; refs.snapshot && p < e._regions[refs.region].pieces; ++p)
+                    count += e._tables->Get(refs.snapshot, p) != TTDPieceStore::kNone;
+                if (count == 0)
+                    continue;
+                checkpoints.Varint(refs.region);
+                checkpoints.Varint(count);
+                for (uint32_t p = 0; p < e._regions[refs.region].pieces; ++p)
+                    if (const TTDPieceId id = e._tables->Get(refs.snapshot, p); id != TTDPieceStore::kNone)
+                        if (!version(refs.region, p, id, true))
+                            return false;
+            }
+            continue;
+        }
+        // A branch's fork copy in a saved file: its tables are its parent's at the fork, rebuilt on load
+        // (ImportForkLine)
+        const bool noChanges = forkCopy && i == first;
         uint64_t changedRegions = 0;
         for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
-            changedRegions += refs.changeCount > 0;
+            changedRegions += refs.changeCount > 0 && !noChanges;
         checkpoints.Varint(changedRegions);
         for (const TTDEngineCheckpoint::RegionRefs& refs : cp.regions)
         {
-            if (refs.changeCount == 0)
+            if (refs.changeCount == 0 || noChanges)
                 continue;
             checkpoints.Varint(refs.region);
             checkpoints.Varint(refs.changeCount);
             for (uint32_t k = refs.firstChange; k < refs.firstChange + refs.changeCount; ++k)
-            {
-                const auto& change = e.ChangeAt(k);
-                checkpoints.Varint(change.piece);
-                // The version itself, numbered as it appears
-                const TTDPieceId id = change.id;
-                const uint32_t item = static_cast<uint32_t>(_itemPart.size());
-                _itemOf[id] = item;
-                _itemPart.push_back(static_cast<uint32_t>(_part));
-                const auto encoding = store.EncodingOf(id);
-                uint32_t baseItem = kNoItem;
-                if (TTDPieceStore::IsDifference(encoding))
-                {
-                    const auto base = _itemOf.find(store.BaseOf(id));
-                    if (base == _itemOf.end())
-                    {
-                        _buildError = "a version's base is not in the session";
-                        return false;
-                    }
-                    baseItem = base->second;
-                    if (_itemPart[baseItem] != _part)
-                        dependencies.insert(_itemPart[baseItem]);
-                }
-                pieces.U8(static_cast<uint8_t>(encoding));
-                pieces.Varint(store.DepthOf(id));
-                pieces.Varint(baseItem == kNoItem ? 0 : uint64_t(baseItem) + 1);
-                pieces.U32(store.CrcOf(id));
-                pieces.Varint(store.PayloadSize(id));
-                pieces.Bytes(store.PayloadData(id), store.PayloadSize(id));
-                _liveItem[refs.region][change.piece] = item;
-            }
+                if (!version(refs.region, e.ChangeAt(k).piece, e.ChangeAt(k).id, false))
+                    return false;
         }
     }
     // Every piece's current version at the part's end
@@ -483,8 +601,40 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
             if (item != kNoItem && _itemPart[item] != _part)
                 dependencies.insert(_itemPart[item]);
 
-    job.records.emplace_back(kPieces, std::move(pieces.bytes));
-    job.records.emplace_back(kCheckpoints, std::move(checkpoints.bytes));
+    if (_local != 0 && folderFile)
+    {
+        // A folder's branch file: its first file starts with the branch's creation; nothing outside the file
+        if (fileStart && forkCopy)
+            job.records.emplace_back(kBranchTable, CreateRecord(_local, e._line->parent, e._line->fork.frame,
+                                                                e._line->fork.tInFrame, _lineId));
+    }
+    else if (_local != 0)
+    {
+        // A branch: its first part starts with its creation; every part needs the line's previous one, the first
+        // the parent's parts from the fork's segment start to the fork
+        if (fileStart)
+        {
+            const LineLayout& parent = _layouts.at(_layouts.at(_lineId).parent);
+            const TimeTravelEngine::BranchLine& parentLine = *e._lines[_layouts.at(_lineId).parent];
+            const size_t forkIndex = e._line->forkIndex;
+            size_t segmentStart = forkIndex;
+            while (segmentStart > parentLine.cpBase && !parentLine.checkpoints[segmentStart - parentLine.cpBase].baseline)
+                --segmentStart;
+            for (size_t k = 0; k < parent.parts.size(); ++k)
+            {
+                const size_t partEnd = k + 1 < parent.parts.size() ? parent.parts[k + 1].first : SIZE_MAX;
+                if (partEnd > segmentStart && parent.parts[k].first <= forkIndex)
+                    dependencies.insert(parent.parts[k].second);
+            }
+            job.records.emplace_back(kBranchTable, CreateRecord(_local, parent.local, e._line->fork.frame,
+                                                                e._line->fork.tInFrame, _lineId));
+        }
+        else
+            dependencies.insert(_layouts.at(_lineId).parts.back().second);
+        dependencies.erase(_part);
+    }
+    job.records.emplace_back(StreamOf(kPieces), std::move(pieces.bytes));
+    job.records.emplace_back(StreamOf(kCheckpoints), std::move(checkpoints.bytes));
 
     // Events up to the next part's start
     TTDMachineTime until = 0;
@@ -493,8 +643,8 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     TTDByteWriter ev;
     size_t count = 0;
     // By time, not by index: a ring drops old events, which shifts the indices
-    const size_t eventsFrom = first == 0 ? 0 : e._events.CursorAt(head.start);
-    const size_t eventsTo = atSessionEnd ? events.size() : e._events.CursorAt(until);
+    const size_t eventsFrom = first == 0 ? 0 : e._line->events.CursorAt(head.start);
+    const size_t eventsTo = atSessionEnd ? events.size() : e._line->events.CursorAt(until);
     count = eventsTo - eventsFrom;
     ev.Varint(count);
     TTDMachineTime previousTime = 0;
@@ -520,12 +670,12 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     TTDByteWriter config;
     const uint64_t frameUntil = atSessionEnd ? UINT64_MAX : e.CpAt(last).position.frame;
     const size_t configFrom = _nextConfig;
-    while (_nextConfig < e._configs.size() && e._configs[_nextConfig].frame < frameUntil)
+    while (_nextConfig < e._line->configs.size() && e._line->configs[_nextConfig].frame < frameUntil)
         ++_nextConfig;
     config.Varint(_nextConfig - configFrom);
     for (size_t k = configFrom; k < _nextConfig; ++k)
     {
-        const TTDConfigEntry& c = e._configs[k];
+        const TTDConfigEntry& c = e._line->configs[k];
         config.U64(c.frame);
         config.Varint(c.fingerprint.fields.size());
         for (const TTDConfigField& f : c.fingerprint.fields)
@@ -536,7 +686,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         }
     }
     std::vector<std::pair<const TTDMediaSlot*, std::pair<uint32_t, TTDMediaVersion>>> media;
-    for (const TTDMediaSlot& slot : e._mediaSlots)
+    for (const TTDMediaSlot& slot : e._line->mediaSlots)
         for (const auto& change : slot.changes)
             if (change.first >= first && change.first < last)
                 media.push_back({&slot, change});
@@ -556,29 +706,29 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
         return Range{first == 0 ? 0 : head.*cursor, atSessionEnd ? size : e.CpAt(last).*cursor};
     };
     TTDByteWriter reads, writes, vectors, mediaReads;
-    const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._busReads.Size());
-    const Range wr = range(&TTDEngineCheckpoint::busWriteCursor, e._busWrites.Size());
-    const Range vr = range(&TTDEngineCheckpoint::busVectorCursor, e._busVectors.Size());
-    const Range mr = range(&TTDEngineCheckpoint::mediaReadCursor, e._mediaReads.Size());
-    WritePortRecords(reads, e._busReads, rr.from, rr.to);
-    WritePortRecords(writes, e._busWrites, wr.from, wr.to);
-    WritePortRecords(vectors, e._busVectors, vr.from, vr.to);
+    const Range rr = range(&TTDEngineCheckpoint::busReadCursor, e._line->busReads.Size());
+    const Range wr = range(&TTDEngineCheckpoint::busWriteCursor, e._line->busWrites.Size());
+    const Range vr = range(&TTDEngineCheckpoint::busVectorCursor, e._line->busVectors.Size());
+    const Range mr = range(&TTDEngineCheckpoint::mediaReadCursor, e._line->mediaReads.Size());
+    WritePortRecords(reads, e._line->busReads, rr.from, rr.to);
+    WritePortRecords(writes, e._line->busWrites, wr.from, wr.to);
+    WritePortRecords(vectors, e._line->busVectors, vr.from, vr.to);
     mediaReads.Varint(mr.to - mr.from);
     for (uint64_t k = mr.from; k < mr.to; ++k)
     {
-        const TTDMediaJournal::Record& m = e._mediaReads.At(k);
+        const TTDMediaJournal::Record& m = e._line->mediaReads.At(k);
         mediaReads.U64(m.frame);
         mediaReads.U32(m.tInFrame);
-        mediaReads.Str(m.slot < e._mediaReads.SlotNames().size() ? e._mediaReads.SlotNames()[m.slot] : "");
+        mediaReads.Str(m.slot < e._line->mediaReads.SlotNames().size() ? e._line->mediaReads.SlotNames()[m.slot] : "");
         mediaReads.U64(m.lba);
         mediaReads.Varint(m.size);
-        mediaReads.Bytes(e._mediaReads.Bytes(m), m.size);
+        mediaReads.Bytes(e._line->mediaReads.Bytes(m), m.size);
     }
 
     // A stream with nothing in this part writes no record (a missing record reads as empty)
-    auto add = [&job](uint16_t stream, TTDByteWriter& w, bool empty) {
+    auto add = [&job, this](uint16_t stream, TTDByteWriter& w, bool empty) {
         if (!empty)
-            job.records.emplace_back(stream, std::move(w.bytes));
+            job.records.emplace_back(StreamOf(stream), std::move(w.bytes));
         return true;
     };
     bool ok = add(kEvents, ev, count == 0) && add(kConfiguration, config, _nextConfig == configFrom && media.empty()) &&
@@ -589,7 +739,7 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
     // with the stream's previous copy, zstd; a full copy at least every 50
     // frames, on a size change and at the file's start
     const uint64_t streamUntil = atSessionEnd ? UINT64_MAX : e.CpAt(last).position.frame;
-    for (const auto& [stream, copies] : e._streamCopies)
+    for (const auto& [stream, copies] : e._line->streamCopies)
     {
         TTDByteWriter sw;
         size_t n = 0;
@@ -623,17 +773,18 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
             previous = copy.bytes;
             sinceFull = full ? 0 : sinceFull + 1;
         }
-        job.records.emplace_back(static_cast<uint16_t>(kFrameStreamFirst + stream), std::move(sw.bytes));
+        job.records.emplace_back(StreamOf(static_cast<uint16_t>(kFrameStreamFirst + stream)), std::move(sw.bytes));
     }
 
     // The write journal (derived, D40) goes whole with the last part
-    if (ok && lastPart && atSessionEnd && (e._writes.Size() > 0 || !e._writes.Segments().empty()))
+    if (ok && !_lineage && lastPart && atSessionEnd &&
+        (e._line->writes.Size() > 0 || !e._line->writes.Segments().empty()))
     {
         // In column blocks of 2,048 records (EncodeWriteBlock)
         TTDByteWriter wj;
         std::vector<TTDWriteRecord> all;
-        all.reserve(static_cast<size_t>(e._writes.Size()));
-        e._writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
+        all.reserve(static_cast<size_t>(e._line->writes.Size()));
+        e._line->writes.ForEach([&all](const TTDWriteRecord& rec) { all.push_back(rec); });
         wj.Varint(all.size());
         for (size_t k = 0; k < all.size(); k += kWriteBlockRecords)
         {
@@ -642,25 +793,33 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
             wj.Varint(block.size());
             wj.Bytes(block.data(), block.size());
         }
-        wj.Varint(e._writes.Segments().size());
-        for (const TTDJournalSegment& s : e._writes.Segments())
+        wj.Varint(e._line->writes.Segments().size());
+        for (const TTDJournalSegment& s : e._line->writes.Segments())
         {
             wj.U64(s.from);
             wj.U64(s.to);
         }
-        job.records.emplace_back(kWriteJournal, std::move(wj.bytes));
+        job.records.emplace_back(StreamOf(kWriteJournal), std::move(wj.bytes));
     }
 
     // The holder's own data, whole, with the session's last part
-    if (ok && lastPart && atSessionEnd)
+    if (ok && lastPart && atSessionEnd && (_local == 0 || folderFile))
         for (const TTDHolderStream& h : _params.holderStreams)
             if (!h.bytes.empty())
                 job.records.emplace_back(h.id, h.bytes);
+    if (ok && lastPart && atSessionEnd && _local != 0)
+        if (const auto it = _params.lineHolderStreams.find(_lineId); it != _params.lineHolderStreams.end())
+            for (const TTDHolderStream& h : it->second)
+                if (!h.bytes.empty())
+                    job.records.emplace_back(BranchTwin(h.id), h.bytes);
 
     job.end.firstFrame = head.position.frame;
     job.end.frameCount = static_cast<uint32_t>(e.CpAt(last - 1).position.frame - head.position.frame + 1);
     job.end.dependencies.assign(dependencies.begin(), dependencies.end());
+    job.end.branch = static_cast<uint16_t>(_local);
+    _layouts[_lineId].parts.emplace_back(first, _part);
     ++_part;
+    ++_linePart;
     return ok;
 }
 
@@ -673,6 +832,39 @@ bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::st
         return false;
     }
     TTDSessionWriter writer(false);
+    size_t liveLines = 0;
+    for (const auto& line : e._lines)
+        liveLines += line != nullptr;
+    if (params.allLines && liveLines > 1)
+    {
+        // Branches: every line, the trunk first
+        if (!writer.Begin(e, sink, params, error, {}, e._lines.front()->cpBase))
+            return false;
+        if (!writer.WriteAllLines(const_cast<TimeTravelEngine&>(e)))
+        {
+            error = writer.Error();
+            return false;
+        }
+        return true;
+    }
+    if (!params.allLines && liveLines > 1)
+    {
+        // One lineage, linear: the trunk from its start
+        const uint32_t tip = params.lineageOf == UINT32_MAX ? e._lineId : params.lineageOf;
+        if (!e.HasLine(tip))
+        {
+            error = "line " + std::to_string(tip) + " is not in the session";
+            return false;
+        }
+        if (!writer.Begin(e, sink, params, error, {}, e._lines.front()->cpBase))
+            return false;
+        if (!writer.WriteLineage(const_cast<TimeTravelEngine&>(e), tip))
+        {
+            error = writer.Error();
+            return false;
+        }
+        return true;
+    }
     if (!writer.Begin(e, sink, params, error))
         return false;
     if (!writer.Finish(e))
@@ -681,6 +873,181 @@ bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::st
         return false;
     }
     return true;
+}
+
+std::vector<uint8_t> TTDBranchCreateRecord(uint32_t local, uint32_t parentLocal, uint64_t forkFrame, uint32_t forkT,
+                                           const std::vector<uint8_t>& meta)
+{
+    TTDByteWriter table;
+    table.U8(1);   // record kind: create
+    table.Varint(local);
+    table.Varint(parentLocal);
+    table.Varint(forkFrame);
+    table.Varint(forkT);
+    table.Varint(meta.size());
+    table.Bytes(meta.data(), meta.size());
+    return std::move(table.bytes);
+}
+
+std::vector<uint8_t> TTDSessionWriter::CreateRecord(uint32_t local, uint32_t parentLocal, uint64_t forkFrame,
+                                                    uint32_t forkT, uint32_t line) const
+{
+    const auto meta = _params.lineMeta.find(line);
+    return TTDBranchCreateRecord(local, parentLocal, forkFrame, forkT,
+                                 meta == _params.lineMeta.end() ? std::vector<uint8_t>{} : meta->second);
+}
+
+bool TTDSessionWriter::FindItem(uint32_t storeId, uint32_t& local, uint32_t& item, uint32_t& part) const
+{
+    if (const auto it = _itemOf.find(storeId); it != _itemOf.end())
+    {
+        local = _local;
+        item = it->second;
+        part = _itemPart[item];
+        return true;
+    }
+    // The ancestors, nearest first
+    const auto self = _layouts.find(_lineId);
+    for (uint32_t line = self == _layouts.end() ? 0xFFFFFFFFu : self->second.parent; line != 0xFFFFFFFFu;)
+    {
+        const auto layout = _layouts.find(line);
+        if (layout == _layouts.end())
+            return false;
+        if (const auto it = layout->second.itemOf.find(storeId); it != layout->second.itemOf.end())
+        {
+            local = layout->second.local;
+            item = it->second;
+            part = layout->second.itemPart[item];
+            return true;
+        }
+        line = layout->second.parent;
+    }
+    return false;
+}
+
+bool TTDSessionWriter::WriteAllLines(TimeTravelEngine& e)
+{
+    TimeTravelEngine::BranchLine* const active = e._line;
+    const uint32_t activeId = e._lineId;
+    // Lines are numbered in the file densely, in id order: a parent always comes before its children
+    uint32_t local = 0;
+    for (uint32_t id = 0; id < e._lines.size() && !Failed(); ++id)
+    {
+        if (!e._lines[id])
+            continue;
+        if (id != 0 && (_layouts.find(e._lines[id]->parent) == _layouts.end()))
+        {
+            Fail("branch line " + std::to_string(id) + " has no parent in the session");
+            break;
+        }
+        // The previous line's layout stays for its children's references
+        if (local > 0 || id != 0)
+        {
+            LineLayout& done = _layouts[_lineId];
+            done.itemOf = std::move(_itemOf);
+            done.itemPart = std::move(_itemPart);
+            _itemOf.clear();
+            _itemPart.clear();
+        }
+        e._line = e._lines[id].get();
+        e._lineId = id;
+        LineLayout& layout = _layouts[id];
+        layout.local = local;
+        layout.parent = id == 0 ? 0xFFFFFFFFu : e._line->parent;
+        _lineId = id;
+        _local = local++;
+        _linePart = 0;
+        _next = e._line->cpBase;
+        _nextConfig = 0;
+        _streamPrevious.clear();
+        _streamSinceFull.clear();
+        for (std::vector<uint32_t>& region : _liveItem)
+            std::fill(region.begin(), region.end(), kNoItem);
+        _end = e.CheckpointCount();
+        const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
+        while (!Failed() && _next < _end)
+        {
+            const size_t last = std::min(_next + perPart, _end);
+            PartJob job;
+            if (!BuildPart(e, _next, last, true, job))
+            {
+                Fail(_buildError.empty() ? "a part could not be laid out" : _buildError);
+                break;
+            }
+            _next = last;
+            Queue(std::move(job));
+        }
+    }
+    e._line = active;
+    e._lineId = activeId;
+    _finished = true;
+    PartJob finalize;
+    finalize.finalize = true;
+    Queue(std::move(finalize));
+    return !Failed();
+}
+
+bool TTDSessionWriter::WriteLineage(TimeTravelEngine& e, uint32_t tip)
+{
+    TimeTravelEngine::BranchLine* const active = e._line;
+    const uint32_t activeId = e._lineId;
+    std::vector<uint32_t> chain;
+    for (uint32_t l = tip; e.HasLine(l); l = e._lines[l]->parent)
+        chain.insert(chain.begin(), l);
+    if (chain.empty() || chain.front() != 0)
+    {
+        Fail("line " + std::to_string(tip) + " does not reach the trunk");
+        return false;
+    }
+    // Every line on trunk streams, one numbering of versions: a branch's first checkpoint (the fork's copy) carries
+    // the parent's change records at the fork, so it follows the parent's checkpoint before the fork as the parent's
+    // own fork checkpoint would
+    _lineage = chain.size() > 1;
+    _local = 0;
+    const size_t perPart = std::max<uint32_t>(_params.checkpointsPerPart, 1);
+    for (size_t k = 0; k < chain.size() && !Failed(); ++k)
+    {
+        TimeTravelEngine::BranchLine& line = *e._lines[chain[k]];
+        if (k > 0)
+        {
+            // The journals count on: the branch's positions from its fork copy follow the parent's at the fork
+            const TTDEngineCheckpoint& forkCopy = line.checkpoints.front();
+            const TTDEngineCheckpoint& parentAt = e.CpAt(line.forkIndex);   // e._line is still the parent
+            _base[0] = forkCopy.busReadCursor - (parentAt.busReadCursor - _base[0]);
+            _base[1] = forkCopy.busWriteCursor - (parentAt.busWriteCursor - _base[1]);
+            _base[2] = forkCopy.mediaReadCursor - (parentAt.mediaReadCursor - _base[2]);
+            _base[3] = forkCopy.busVectorCursor - (parentAt.busVectorCursor - _base[3]);
+        }
+        e._line = &line;
+        e._lineId = chain[k];
+        _lineId = chain[k];
+        _next = line.cpBase;
+        // The settings in force at the fork went with the parent's parts; the branch's from the fork frame on
+        _nextConfig = 0;
+        if (k > 0)
+            while (_nextConfig < line.configs.size() && line.configs[_nextConfig].frame < line.fork.frame)
+                ++_nextConfig;
+        _end = k + 1 < chain.size() ? e._lines[chain[k + 1]]->forkIndex : e.CheckpointCount();
+        while (!Failed() && _next < _end)
+        {
+            const size_t last = std::min(_next + perPart, _end);
+            PartJob job;
+            if (!BuildPart(e, _next, last, true, job))
+            {
+                Fail(_buildError.empty() ? "a part could not be laid out" : _buildError);
+                break;
+            }
+            _next = last;
+            Queue(std::move(job));
+        }
+    }
+    e._line = active;
+    e._lineId = activeId;
+    _finished = true;
+    PartJob finalize;
+    finalize.finalize = true;
+    Queue(std::move(finalize));
+    return !Failed();
 }
 
 /// endregion </Save>
@@ -750,7 +1117,11 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
 {
     TTDSessionLoadReport report;
     TTDContainerReader reader;
-    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
+    const bool branchReading = g_branchReading.load();
+    auto known = [branchReading](uint16_t id) {
+        return KnownStream(id) && (branchReading || (id != kBranchTable && TrunkOfTwin(id) == 0));
+    };
+    if (!reader.Open(source, error, known))
         return false;
     report.notes = reader.Notes();
     report.partsInFile = reader.Parts().size();
@@ -782,34 +1153,83 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
     }
 
     TTDPieceStore& store = *e._store;
-    std::vector<TTDPieceId> items;   // number in the file -> store id
-    uint64_t base[4] = {};           // the journals' positions where the current file starts
+    // Per line in the file (the trunk 0, branches 1..): number in the file -> store id, and the journals'
+    // positions where the line's current file starts
+    std::map<uint32_t, std::vector<TTDPieceId>> itemsOf;
+    std::map<uint32_t, std::array<uint64_t, 4>> basesOf;
+    std::set<uint32_t> lostLines;   // branches that could not be loaded (their parts are skipped)
     std::vector<TTDPortRecord> ports;
     auto stop = [&](size_t part, const std::string& why) {
         report.stoppedAt = "part " + std::to_string(part) + ": " + why;
     };
+    TimeTravelEngine::BranchLine* const trunk = e._lines.front().get();
+    auto toTrunk = [&]() {
+        e._line = trunk;
+        e._lineId = 0;
+    };
 
     for (const TTDPartRef& part : reader.Parts())
     {
+        const uint32_t lineOf = branchReading ? part.branch : 0;
+        // A branch's part: its line must be loaded, or be created by this part (the branch table's create)
+        if (lineOf != 0 && lostLines.count(lineOf))
+            continue;
         if (!reader.IsReachable(part.index))
         {
+            if (lineOf != 0)
+            {
+                // A branch is lost from its first unreadable part on; the trunk and the other branches stand
+                lostLines.insert(lineOf);
+                report.notes.push_back("branch " + std::to_string(lineOf) + " stops at part " +
+                                       std::to_string(part.index) + ": " +
+                                       (part.damaged ? part.damage : "it depends on a damaged part"));
+                continue;
+            }
             stop(part.index, part.damaged ? part.damage : "it depends on a damaged part");
             break;
         }
         std::vector<std::pair<uint16_t, std::vector<uint8_t>>> records;
+        std::vector<uint8_t> branchTable;
+        bool hasBranchTable = false;
         std::string why;
         bool readOk = true;
         for (const TTDRecordRef& record : part.records)
         {
-            if (!KnownStream(record.streamId))
+            if (!known(record.streamId))
+                continue;
+            // A branch's records are its streams' twins: read as the trunk's, into the branch's line. A part
+            // holds one line's records; a twin in a trunk part (or a trunk stream in a branch's) is not read
+            uint16_t stream = record.streamId;
+            if (stream == kBranchTable)
+            {
+                if (lineOf == 0)
+                    continue;
+                std::string tableWhy;
+                hasBranchTable = reader.ReadRecord(record, branchTable, &tableWhy);
+                continue;
+            }
+            if (const uint16_t mirrored = TrunkOfTwin(stream))
+            {
+                if (lineOf == 0)
+                    continue;
+                stream = mirrored;
+            }
+            else if (lineOf != 0 && !IsHolderStream(stream))
                 continue;
             std::vector<uint8_t> bytes;
-            if (IsHolderStream(record.streamId))
+            if (IsHolderStream(stream))
             {
+                // A recording folder's last file may be a branch's: the session's holder data in the trunk's ids
+                const bool trunkData = record.streamId == stream;
                 // The holder's data: ancillary, a damaged one is left out
                 std::string holderWhy;
                 if (reader.ReadRecord(record, bytes, &holderWhy))
-                    report.holderStreams[record.streamId] = std::move(bytes);
+                {
+                    if (lineOf == 0 || trunkData)
+                        report.holderStreams[stream] = std::move(bytes);
+                    else
+                        report.lineHolderStreams[lineOf][stream] = std::move(bytes);
+                }
                 else
                     report.notes.push_back("holder stream " + std::to_string(record.streamId) +
                                            " is damaged: left out (" + holderWhy + ")");
@@ -820,13 +1240,69 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                 readOk = false;
                 break;
             }
-            records.emplace_back(record.streamId, std::move(bytes));
+            records.emplace_back(stream, std::move(bytes));
+        }
+        if (!readOk && lineOf != 0)
+        {
+            lostLines.insert(lineOf);
+            report.notes.push_back("branch " + std::to_string(lineOf) + " stops at part " + std::to_string(part.index) +
+                                   ": " + why);
+            continue;
         }
         if (!readOk)
         {
             stop(part.index, why);
             break;
         }
+        // The line this part fills: the trunk, a branch loaded so far, or one the part creates
+        struct Create
+        {
+            uint32_t parent = 0;
+            uint64_t frame = 0;
+            uint32_t tInFrame = 0;
+        };
+        std::optional<Create> create;
+        if (lineOf != 0)
+        {
+            const bool known = lineOf < e._lines.size() && e._lines[lineOf] != nullptr;
+            if (!known)
+            {
+                // The branch table's create: the branch's id in the file, its parent, the fork; the holder's record
+                TTDByteReader t(branchTable);
+                uint8_t kind = 0;
+                uint32_t id = 0;
+                Create c;
+                uint64_t metaSize = 0;
+                std::vector<uint8_t> meta;
+                const bool parsed = hasBranchTable && t.U8(kind) && kind == 1 && t.VarintAs(id) && t.VarintAs(c.parent) &&
+                                    t.Varint(c.frame) && t.VarintAs(c.tInFrame) && t.Varint(metaSize) &&
+                                    metaSize <= t.Left() && t.Bytes(meta, static_cast<size_t>(metaSize));
+                std::string problem;
+                if (!parsed)
+                    problem = "its creation record is missing or damaged";
+                else if (id != lineOf || id < e._lines.size())
+                    problem = "it is numbered out of order";
+                else if (c.parent >= e._lines.size() || !e._lines[c.parent] || lostLines.count(c.parent))
+                    problem = "its parent is not loaded";
+                if (!problem.empty())
+                {
+                    lostLines.insert(lineOf);
+                    report.notes.push_back("branch " + std::to_string(lineOf) + " is left out: " + problem);
+                    continue;
+                }
+                report.lineMeta[lineOf] = std::move(meta);
+                create = c;
+            }
+            else
+            {
+                e._line = e._lines[lineOf].get();
+                e._lineId = lineOf;
+            }
+        }
+        else
+            toTrunk();
+        std::vector<TTDPieceId>& items = itemsOf[lineOf];
+        std::array<uint64_t, 4>& base = basesOf[lineOf];
         auto find = [&records](uint16_t stream) -> const std::vector<uint8_t>* {
             for (const auto& [id, bytes] : records)
                 if (id == stream)
@@ -835,17 +1311,24 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         };
         if (!part.extra.empty() && (part.extra[0] & kPartFileStart))
         {
-            // A file (or a joined segment) starts: its own numbering and positions
+            // A file (or a joined segment) starts: its own numbering and positions (a branch's new line: from 0)
             items.clear();
-            base[0] = e._busReads.Size();
-            base[1] = e._busWrites.Size();
-            base[2] = e._mediaReads.Size();
-            base[3] = e._busVectors.Size();
+            base = {};
+            if (!create)
+                base = {e._line->busReads.Size(), e._line->busWrites.Size(), e._line->mediaReads.Size(),
+                        e._line->busVectors.Size()};
         }
         const std::vector<uint8_t>* pieceBytes = find(kPieces);
         const std::vector<uint8_t>* cpBytes = find(kCheckpoints);
         if (!pieceBytes || !cpBytes)
         {
+            if (lineOf != 0)
+            {
+                lostLines.insert(lineOf);
+                report.notes.push_back("branch " + std::to_string(lineOf) + " stops at part " +
+                                       std::to_string(part.index) + ": its pieces or checkpoints are missing");
+                continue;
+            }
             stop(part.index, "its pieces or checkpoints are missing");
             break;
         }
@@ -883,12 +1366,29 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     uint64_t base = 0;
                     uint8_t encoding = 0;
                     const uint8_t* payload = nullptr;
-                    ok = c.VarintAs(piece) && p.U8(encoding) && p.VarintAs(depth) && p.Varint(base) && p.U32(crc) &&
-                         p.VarintAs(size) && p.View(payload, size) && depth <= 0xFFFF &&
-                         (base == 0 || base - 1 < items.size());
+                    TTDPieceId baseId = TTDPieceStore::kNone;
+                    ok = c.VarintAs(piece) && p.U8(encoding) && p.VarintAs(depth) && p.Varint(base);
+                    if (ok && lineOf != 0 && base != 0)
+                    {
+                        // A branch's base: (its line in the file + 1, its number there); the line is this one or an
+                        // ancestor loaded before
+                        uint64_t number = 0;
+                        const uint32_t baseLine = static_cast<uint32_t>(base - 1);
+                        const auto it = itemsOf.find(baseLine);
+                        ok = p.Varint(number) && it != itemsOf.end() && number < it->second.size() &&
+                             (baseLine == lineOf || e.IsAncestorLine(baseLine, create ? create->parent : lineOf));
+                        if (ok)
+                            baseId = it->second[static_cast<size_t>(number)];
+                    }
+                    else if (ok && base != 0)
+                    {
+                        ok = base - 1 < items.size();
+                        if (ok)
+                            baseId = items[static_cast<size_t>(base - 1)];
+                    }
+                    ok = ok && p.U32(crc) && p.VarintAs(size) && p.View(payload, size) && depth <= 0xFFFF;
                     if (!ok)
                         break;
-                    const TTDPieceId baseId = base == 0 ? TTDPieceStore::kNone : items[static_cast<size_t>(base - 1)];
                     const TTDPieceId id = store.Import(static_cast<TTDPieceStore::Encoding>(encoding), baseId,
                                                        static_cast<uint16_t>(depth), crc, payload, size);
                     ok = id != TTDPieceStore::kNone;
@@ -899,8 +1399,58 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     }
                 }
             }
-            if (ok && (!e.ImportCheckpoint(std::move(cp), changes, why)))
+            if (ok && create && i == 0)
+            {
+                // The branch's first checkpoint: the fork's copy, its tables the parent's (no changes recorded), or
+                // whole (a recording folder's branch file: every piece, nothing read from another file)
+                // The create record must name the fork the copy was taken at: the copy's frame, and the parent
+                // the copy matches (its tables the parent's: the part depends on the parent's part of the fork;
+                // whole: every piece's CRC the parent's)
+                uint32_t made = lineOf;
+                const TTDPosition cut{0, create->frame, create->tInFrame};
+                if (cp.position.frame != create->frame)
+                {
+                    ok = false;
+                    why = "its creation record names another fork than its first checkpoint's";
+                }
+                else if (changes.empty())
+                {
+                    const auto& parts = reader.Parts();
+                    const bool fromParent = std::any_of(
+                        part.dependencies.begin(), part.dependencies.end(), [&](uint32_t d) {
+                            return d < parts.size() && parts[d].branch == create->parent &&
+                                   parts[d].firstFrame <= create->frame &&
+                                   create->frame <= parts[d].firstFrame + parts[d].frameCount;
+                        });
+                    ok = fromParent;
+                    if (!ok)
+                        why = "its first part does not depend on its parent's part of the fork";
+                    ok = ok && e.ImportForkLine(create->parent, create->frame, cut, cp, made, why);
+                }
+                else
+                    ok = e.ImportBranchLine(create->parent, create->frame, cut, made, why) &&
+                         e.ImportCheckpoint(std::move(cp), changes, why) && e.ForkCopyMatchesParent(made, why);
+            }
+            else if (ok && (!e.ImportCheckpoint(std::move(cp), changes, why)))
                 ok = false;
+        }
+        if (!ok && lineOf != 0)
+        {
+            lostLines.insert(lineOf);
+            toTrunk();
+            if (create)
+            {
+                // Its first part: the branch is left out whole (a line made before the failure goes again)
+                std::string ignored;
+                if (e.HasLine(lineOf))
+                    e.ReleaseLine(lineOf, ignored);
+                report.notes.push_back("branch " + std::to_string(lineOf) + " is left out: " +
+                                       (why.empty() ? "damaged checkpoints" : why));
+                continue;
+            }
+            report.notes.push_back("branch " + std::to_string(lineOf) + " stops at part " + std::to_string(part.index) +
+                                   ": " + (why.empty() ? "damaged checkpoints" : why));
+            continue;
         }
         if (!ok)
         {
@@ -957,7 +1507,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                         field.affectsRestore = affects != 0;
                         entry.fingerprint.fields.push_back(std::move(field));
                     }
-                    e._configs.push_back(std::move(entry));
+                    e._line->configs.push_back(std::move(entry));
                 }
                 ok = ok && r.Varint(n);
                 for (uint64_t i = 0; ok && i < n; ++i)
@@ -970,12 +1520,12 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                          r.U64(v.version);
                     if (!ok)
                         break;
-                    auto it = std::find_if(e._mediaSlots.begin(), e._mediaSlots.end(),
+                    auto it = std::find_if(e._line->mediaSlots.begin(), e._line->mediaSlots.end(),
                                            [&slot](const TTDMediaSlot& s) { return s.slot == slot; });
-                    if (it == e._mediaSlots.end())
+                    if (it == e._line->mediaSlots.end())
                     {
-                        e._mediaSlots.push_back({slot, format, hasVersions != 0, {}});
-                        it = std::prev(e._mediaSlots.end());
+                        e._line->mediaSlots.push_back({slot, format, hasVersions != 0, {}});
+                        it = std::prev(e._line->mediaSlots.end());
                     }
                     it->changes.emplace_back(cp, v);
                 }
@@ -995,7 +1545,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         loadPorts(kBusReads, [&](const TTDPortRecord& rec) { e.AppendBusRead(rec); });
         loadPorts(kBusWrites, [&](const TTDPortRecord& rec) { e.AppendBusWrite(rec); });
         loadPorts(kBusVectors,
-                  [&](const TTDPortRecord& rec) { e._busVectors.OnRead(rec.port, rec.value, rec.frame, rec.tInFrame, rec.pc); });
+                  [&](const TTDPortRecord& rec) { e._line->busVectors.OnRead(rec.port, rec.value, rec.frame, rec.tInFrame, rec.pc); });
         if (ok)
             if (const std::vector<uint8_t>* bytes = find(kMediaReads))
             {
@@ -1011,7 +1561,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     ok = r.U64(frameAt) && r.U32(tInFrame) && r.Str(slot) && r.U64(lba) && r.VarintAs(size) &&
                          r.View(data, size);
                     if (ok)
-                        e._mediaReads.Append(frameAt, tInFrame, slot, lba, data, size);
+                        e._line->mediaReads.Append(frameAt, tInFrame, slot, lba, data, size);
                 }
             }
         if (ok)
@@ -1030,7 +1580,7 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                                 DecodeWriteBlock(raw, count, block);
                     if (journalOk)
                         for (const TTDWriteRecord& rec : block)
-                            e._writes.Append(rec);
+                            e._line->writes.Append(rec);
                 }
                 std::vector<TTDJournalSegment> segments;
                 journalOk = journalOk && r.Varint(n) && n <= r.Left() / 16;
@@ -1041,13 +1591,21 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
                     segments.push_back(s);
                 }
                 if (journalOk)
-                    e._writes.SetSegments(std::move(segments));
+                    e._line->writes.SetSegments(std::move(segments));
                 else
                 {
-                    e._writes.Clear();   // ancillary: dropped, the session stands
+                    e._line->writes.Clear();   // ancillary: dropped, the session stands
                     report.notes.push_back("the write journal is damaged: left out");
                 }
             }
+        if (!ok && lineOf != 0)
+        {
+            lostLines.insert(lineOf);
+            report.notes.push_back("branch " + std::to_string(lineOf) + " stops at part " + std::to_string(part.index) +
+                                   ": damaged events, configuration or journals");
+            toTrunk();
+            continue;
+        }
         if (!ok)
         {
             stop(part.index, "damaged events, configuration or journals");
@@ -1055,10 +1613,14 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         }
         report.partsLoaded++;
     }
+    toTrunk();
+    report.lines = 0;
+    for (const auto& line : e._lines)
+        report.lines += line != nullptr;
 
     report.checkpoints = e.CheckpointCount();
     report.complete = report.partsLoaded == report.partsInFile;
-    const bool any = !e._checkpoints.empty();
+    const bool any = !e._line->checkpoints.empty();
     if (!any)
         error = report.stoppedAt.empty() ? "the file holds no checkpoint" : report.stoppedAt;
     if (reportOut)

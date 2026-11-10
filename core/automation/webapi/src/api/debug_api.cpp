@@ -1961,7 +1961,7 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
         return;
     if (IsCardCpu(cpu))
     {
-        // The card CPU's register (cpuview.h): a tool edit, refused in the recorded past
+        // The card CPU's register (cpuview.h): a tool edit (in the recorded past it forks a TTD branch)
         uint16_t readBack = 0;
         bool wide = false;
         if (!CpuView::GetRegister(emulator->GetContext(), cpu, name, readBack, &wide))
@@ -1970,7 +1970,7 @@ void EmulatorAPI::setRegister(const HttpRequestPtr& req, std::function<void(cons
             CpuView::SetRegister(emulator.get(), cpu, "webapi register", name, static_cast<uint16_t>(value));
         if (!refused.empty())
         {
-            // A value the register cannot hold is the request's fault; else the recorded past refused the edit
+            // A value the register cannot hold is the request's fault; else the machine's rules refused the edit
             const bool range = refused.rfind("unknown register", 0) == 0;
             return ReplyError(callback, range ? HttpStatusCode::k400BadRequest : HttpStatusCode::k409Conflict,
                               range ? "Bad Request" : "Conflict", refused);

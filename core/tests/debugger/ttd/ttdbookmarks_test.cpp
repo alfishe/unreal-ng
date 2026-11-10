@@ -424,7 +424,7 @@ TEST_F(TTD_Bookmarks_API_Test, StopRecording_KeepsBookmarks_FreshStartRecordingC
     EXPECT_TRUE(_ttd->GetBookmarks().empty());
 }
 
-TEST_F(TTD_Bookmarks_API_Test, ResumeFromPast_DropsFutureBookmarks_KeepsPast)
+TEST_F(TTD_Bookmarks_API_Test, ResumeFromPast_KeepsEveryBookmark)
 {
     ASSERT_TRUE(_ttd->StartRecording());
     RunFrames(5);
@@ -437,14 +437,18 @@ TEST_F(TTD_Bookmarks_API_Test, ResumeFromPast_DropsFutureBookmarks_KeepsPast)
     ASSERT_TRUE(_ttd->SeekTo({2, 0}, &r));
     ASSERT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached);
 
-    // Resuming from (2,0) rewinds the timeline: bookmarks strictly after the
-    // resume point describe history that no longer exists.
+    // Resuming from (2,0) forks a branch: the old future, with the bookmark in it, stays on the trunk
     ASSERT_TRUE(_ttd->ResumeRecordingFrom({2, 0}));
+    EXPECT_EQ(_ttd->Branches().Count(), 2u);
 
-    const auto bookmarks = _ttd->GetBookmarks();
-    ASSERT_EQ(bookmarks.size(), 1u);
+    const auto bookmarks = _ttd->GetAllBookmarks();
+    ASSERT_EQ(bookmarks.size(), 2u);
     EXPECT_EQ(bookmarks[0].label, "early");
-    EXPECT_EQ(bookmarks[0].time.frame, 1u);
+    EXPECT_EQ(bookmarks[1].label, "late");
+    // The new branch's lineage holds the early one; the late one lies on the trunk's old future
+    const auto lineage = _ttd->GetBookmarks();
+    ASSERT_EQ(lineage.size(), 1u);
+    EXPECT_EQ(lineage[0].label, "early");
 }
 
 // ---------------------------------------------------------------------------

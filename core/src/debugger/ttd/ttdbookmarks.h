@@ -116,6 +116,7 @@ struct TTDBookmarkWatch
 struct TTDBookmark
 {
     TTDTimePoint time;   ///< When the bookmark points at.
+    uint32_t branch = 0; ///< The branch whose history holds the moment (TTD branches §5.1; 0 the trunk)
     std::string  label;  ///< Unique, non-empty, <= kMaxBookmarkLabelLength chars.
     std::string  note;   ///< The agent's or human's note (<= kMaxBookmarkNoteLength chars), free text
     std::vector<std::string> tags;          ///< <= kMaxBookmarkTags, each 1..kMaxBookmarkTagLength of [A-Za-z0-9_.-]
@@ -169,6 +170,9 @@ public:
 
     /// @brief Drop every bookmark before `t` (the history limit evicted that part).
     void DropBefore(const TTDTimePoint& t);
+
+    /// @brief Remove every bookmark on one of @p branches (a branch deleted); the number removed.
+    size_t RemoveOnBranches(const std::vector<uint32_t>& branches);
 
     /// @brief Remove all bookmarks. Used by StartRecording /
     /// InvalidateSession / DeserializeSession.

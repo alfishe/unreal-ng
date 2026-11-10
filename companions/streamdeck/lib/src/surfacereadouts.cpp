@@ -21,6 +21,11 @@ constexpr std::array<std::string_view, 30> kKnown = {
     "video.viewport",  "video.temporal",    "machine.previous", "machine.switches", "media.recent",     "media.rzx",
     "input.connectors", "cap.record",       "actions.unavailable", "debug.buffers"};
 
+// The fields of ttd.position as the core publishes it (core/automation/webapi/src/ws-hub.cpp, the topic and
+// GET /api/v1/surfaces/readouts): a path into it names one of them
+constexpr std::array<std::string_view, 11> kTtdPositionFields = {
+    "frame", "tinframe", "first", "end", "end_tinframe", "state", "history", "paused", "fps", "unit", "unit_count"};
+
 // The known name a path starts with, the longest ("machine.previous.model" -> machine.previous); "" = none
 std::string_view KnownName(std::string_view path)
 {
@@ -166,7 +171,16 @@ bool IsKnownReadoutPath(std::string_view path)
         return false;
     if (path.substr(0, 7) == "toggle." || (path.substr(0, 13) == "audio.source." && path.size() > 13))
         return true;
-    return !KnownName(path).empty();
+    const std::string_view name = KnownName(path);
+    if (name.empty())
+        return false;
+    if (name == "ttd.position" && path.size() > name.size())
+    {
+        const std::string_view field = path.substr(name.size() + 1);
+        const std::string_view first = field.substr(0, field.find('.'));
+        return std::find(kTtdPositionFields.begin(), kTtdPositionFields.end(), first) != kTtdPositionFields.end();
+    }
+    return true;
 }
 
 SurfaceNeeds NeedsOf(const Scenario& s)

@@ -7906,7 +7906,7 @@
    "label": "FRAME",
    "show": {
     "format": "{}",
-    "readout": "ttd.position.current.frame"
+    "readout": "ttd.position.frame"
    },
    "uc": [
     "D3.2"
@@ -8483,7 +8483,7 @@
    "label": "FRAME",
    "show": {
     "format": "{}",
-    "readout": "ttd.position.current.frame"
+    "readout": "ttd.position.frame"
    },
    "uc": [
     "D3.2"

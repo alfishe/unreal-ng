@@ -16,6 +16,7 @@
 #include <functional>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -28,6 +29,7 @@
 #include "_helpers/testpathhelper.h"
 #include "common/filehelper.h"
 #include "base/featuremanager.h"
+#include "debugger/ttd/engine/ttdrecordingwriter.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdfileinfo.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
@@ -377,8 +379,10 @@ TEST_F(TimeTravelController_Test, ResumeFromThePastContinuesAsTheMachineRan)
     ASSERT_EQ(_live.size(), before + 4u);
 
     const ttd::TimeTravelEngine& engine = _controller->GetEngine();
-    ASSERT_EQ(engine.CheckpointCount() - engine.FirstCheckpoint(), _controller->GetCheckpointCount())
-        << "the engine holds the history";
+    // The resume forked a branch: the engine views its line, the lineage starts at the trunk's first checkpoint
+    ASSERT_EQ(_controller->Branches().Count(), 2u);
+    ASSERT_EQ(engine.CheckpointCount() - engine.LineFirstCheckpoint(ttd::kTTDTrunk), _controller->GetCheckpointCount())
+        << "the engine holds the lineage";
     ASSERT_NO_FATAL_FAILURE(ExpectEverySeekShowsLive());
 }
 
@@ -930,8 +934,9 @@ TEST_F(TimeTravelController_Test, AnEditWhileRecordingIsReplayed)
 }
 
 /// D9 with D8: an edit at the paused end continues the paused recording and is
-/// recorded; one before it ends the recording where it paused (branches: Step 2b)
-TEST_F(TimeTravelController_Test, AnEditWhilePausedContinuesAtTheEndOrEndsTheRecording)
+/// recorded; one before it forks a branch there and is recorded on it, the old
+/// future stays on the trunk (TTD branches §4.5)
+TEST_F(TimeTravelController_Test, AnEditWhilePausedContinuesAtTheEndOrForks)
 {
     EmulatorContext* context = _b->GetContext();
     ASSERT_TRUE(_controller->StartRecording());
@@ -955,13 +960,18 @@ TEST_F(TimeTravelController_Test, AnEditWhilePausedContinuesAtTheEndOrEndsTheRec
     ASSERT_TRUE(_controller->GetSessionInfo().recordingPaused);
     const size_t kept = _controller->GetCheckpointCount();
     _b->EditMemoryFromTool("test edit", [&]() { context->pMemory->DirectWriteToZ80Memory(0x8101, 0xA5); });
-    EXPECT_FALSE(_controller->IsRecording());
-    EXPECT_FALSE(_controller->GetSessionInfo().recordingPaused) << "the recording ended where it paused";
-    EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "and its history stays";
-    const size_t afterStop = _controller->GetCheckpointCount();
+    EXPECT_TRUE(_controller->IsRecording()) << "the edit forked a branch and is recorded on it";
+    ASSERT_EQ(_controller->Branches().Count(), 2u);
+    EXPECT_EQ(_controller->ActiveBranch(), 1u);
+    EXPECT_EQ(_controller->Branches().Get(1)->meta.reason, "edit");
     _b->RunNFrames(2, /*skipBreakpoints=*/true);
-    EXPECT_EQ(_controller->GetCheckpointCount(), afterStop) << "running from the edited past records nothing";
+    _controller->StopRecording();
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(0x8101), 0xA5) << "the branch holds the edit";
 
+    // The first edit is on the trunk, its history whole
+    std::string error;
+    ASSERT_TRUE(_controller->SwitchBranch(ttd::kTTDTrunk, afterEdit, error)) << error;
+    EXPECT_EQ(_controller->GetCheckpointCount(), kept) << "the trunk keeps its history";
     // The first edit is in the history
     ASSERT_TRUE(_controller->SeekTo(afterEdit, nullptr));
     const MachineState seen = CaptureState(context, *_controller);
@@ -1510,6 +1520,56 @@ TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
     _controller = std::make_unique<ttd::TimeTravelController>(_b->GetContext());
     _b->GetContext()->pTimeTravelHooks = _controller.get();
     _b->GetContext()->ttdWriteSink = _controller.get();
+}
+
+/// Finding F-1 (docs/inprogress/2026-11-08-ttd-branches/README.md §4): a
+/// resume from the past keeps the recording's folder. The segment files before
+/// the resume point stay byte for byte; with branches the folder holds the
+/// trunk, complete, which loads with the trunk's checkpoints
+TEST_F(TimeTravelController_Test, ResumingFromThePastKeepsTheRecordingFolder)
+{
+    _controller->SetShadowRecordingRoot(TestPathHelper::GetUniqueTestScratchPath("ttd-recordings-resume"));
+    _controller->SetHistoryLimit(800, 0);   // segments of 100 frames: the cut lands in the second file
+    ASSERT_TRUE(_controller->StartRecording());
+    _b->RunNFrames(260, /*skipBreakpoints=*/true);
+    const std::string folder = _controller->ShadowRecordingFolder();
+    ASSERT_FALSE(folder.empty());
+    auto segmentFiles = [&folder]() {
+        std::vector<std::string> files;
+        for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(folder)))
+            if (entry.path().extension() == ".ttd")
+                files.push_back(entry.path().string());
+        std::sort(files.begin(), files.end());
+        return files;
+    };
+    auto readBytes = [](const std::string& path) {
+        std::ifstream in(FileHelper::ToFsPath(path), std::ios::binary);
+        return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    ASSERT_EQ(segmentFiles().size(), 3u);
+    const std::string firstFile = segmentFiles().front();
+    const std::vector<uint8_t> firstBytes = readBytes(firstFile);
+
+    const size_t trunkCheckpoints = _controller->GetCheckpointCount();
+    ASSERT_TRUE(_controller->ResumeRecordingFrom(_controller->GetCheckpoint(150)->time));
+    _b->RunNFrames(20, /*skipBreakpoints=*/true);
+    _controller->StopRecording();
+
+    // The resume forks a branch: the folder keeps the trunk it wrote, complete (the old future included); the
+    // branch has a file of its own (TTD branches storage.md §4)
+    EXPECT_EQ(_controller->ShadowRecordingFolder(), folder) << "the session keeps its folder";
+    EXPECT_EQ(_controller->Branches().Count(), 2u);
+    std::vector<std::string> files = segmentFiles();
+    ASSERT_EQ(files.size(), 4u) << "the trunk's frames 0-260 in files of 100, the branch's file";
+    EXPECT_NE(files.back().find("segment-0003-b1.ttd"), std::string::npos) << files.back();
+    files.pop_back();
+    EXPECT_EQ(readBytes(firstFile), firstBytes) << "the file before the fork is not written again";
+    ttd::TimeTravelEngine loaded;
+    std::string error;
+    ttd::TTDSessionLoadReport report;
+    ASSERT_TRUE(ttd::LoadRecording(loaded, files, 0, error, &report)) << error;
+    EXPECT_TRUE(report.complete) << report.stoppedAt;
+    EXPECT_EQ(loaded.CheckpointCount(), trunkCheckpoints);
 }
 
 /// Owner decision 2026-10-07: a background recording (the black box, a

@@ -114,6 +114,27 @@ The engine holds `std::vector<std::unique_ptr<TTDBranchLine>> _lines` and a poin
 through `_active` exactly as it writes through `this` today; with one branch the vector has one element and the
 pointer never changes.
 
+### 4.1a As built (P1, 2026-11-08)
+
+- `TimeTravelEngine::BranchLine` holds the per-branch objects listed above; `_lines[id]` (the trunk is 0, ids never
+  reused) and `_line`, the line read and written now. A session that never forks has one line; B-0 measured the
+  indirection at +0.1 % to +0.8 % per frame against master, inside the 1.8 % A/A bias (P1+P2, 2026-11-10).
+- **A line starts with a copy of its fork checkpoint.** `ForkAt(index, cut)` gives the new line checkpoint
+  `index` again: every region's full table (the checkpoint's own, or the last one derived with the changes since:
+  blocks and versions shared, nothing decoded or stored), its change records, and the fork frame's records up to
+  the cut (bus reads, writes, vectors, media reads, events, RZX frames, the settings in force, the frame's stream
+  copies), journal cursors rebased to 0. The line's own part is therefore self-contained: a restore or a replay at
+  or after the fork never reads the parent. Indexes stay the lineage's: the line's first checkpoint has index
+  `index` (`cpBase`), as a ring's first held one does. The frame of the fork belongs to the new line at checkpoint
+  level; positions `[{f, 0}, {f, T})` replay identically on both lines, so a mid-frame fork needs no mixed event
+  source (§4.3 below is superseded by this).
+- **Viewing and capturing are apart.** `ViewLine(id)` moves the reads (checkpoints, records, journals) to another
+  line at no cost: the capture head stays, live memory stays known (versions are the store's). A seek into the
+  part of the active lineage an ancestor owns views that ancestor; a resume there forks from it, which is the
+  owner rule of §4.5 without a lookup. The capture head is rebuilt only when a capture runs on a line it was not
+  built for (from that line's last checkpoint) or at a fork (from the fork checkpoint).
+- Journal modes pass to the line made current: recording stays recording, a replay stops.
+
 ### 4.2 Checkpoint parent and sharing
 
 `TTDEngineCheckpoint::parent` (`timetravelengine.h:99`, today `index - 1`) becomes a global checkpoint reference:
@@ -179,6 +200,43 @@ branch from the query point back to its fork, then the parent from that fork bac
 existing per-branch query, bounded by the span. Depth is small in practice (a retry chain); the cost is
 O(depth) hops plus today's per-line cost. A query option `scope=all` (later, not in the first delivery) would run
 over every branch.
+
+### 4.7a As built (P1, 2026-11-09)
+
+- **Time on the lineage.** `GlobalT`, `GlobalTInFrame` and `TimePointAt` read the frame table of the lineage line
+  that holds the frame or the time (`LineageFrames`, `LineageFramesAtT`): frames of different lengths (Sprinter
+  320/312 lines, turbo) stay exact across a fork. `FirstBarrierBetween` splits `(from, to]` by line, oldest first.
+- **Two ways a query walks the lineage.**
+  - Whole-line walkers (`FindLastAccess`, `FindAccesses`, `EnumerateM1InRange`) keep their body as `...OnLine`, and
+    `WalkLineageBack` runs it on each line from the query point back, newest line first. Each line's part ends at
+    its first checkpoint; `changes_only` candidates settle their old byte there, so the parts join as they come.
+  - Index walkers (`find-event`, `cause-chain`, `backtrace`, `explain-frame`, `probe-frames`) go over engine
+    checkpoint indices of the active lineage (`LineageFirstIndex` .. `LineageEndIndex`). `ViewLineageIndex` and
+    `ViewLineageCheckpoint` view the deepest lineage line with `LineFirstCheckpoint <= index` before the index is
+    read; `LineageEngine` wraps the engine calls a query makes, with the same names.
+  - Frame walkers (`replay-check`, coverage, `cpu-view`, frame cache) view the owner of each frame
+    (`OwnerOnLineage`). Coverage is per line from the fork on: `CoverageOfFrame`, `LineageCoveredRange`.
+  - Every query leaves through `LineageViewGuard`: the viewed line is the owner of the machine's position again.
+- **Replay and the view.** `RestoreCheckpointForReplay` views the line that holds the checkpoint it is given (by
+  address), so a query that holds checkpoint references across lines replays each on its own line. A replay does not
+  follow the lineage at a frame boundary (`OnFrameBoundary`: `!_inReplayMode`); a live run on a viewed ancestor does.
+- **Bookmarks** carry their branch in `TTDBookmark::branch` (not in `TTDTimePoint`). `GetBookmarks` and the timeline
+  readout list the active lineage's; `GetAllBookmarks` lists every branch's. A seek to a bookmark off the lineage
+  switches to its branch; deleting a branch drops its bookmarks.
+- **An empty branch leaves no trace (§4.6).** A resume or an edit forks at once. If the user then leaves the new
+  tip before anything was recorded on it (`TipIsEmpty`: one checkpoint, no inputs or markers since the fork, its end
+  at the fork), `SeekTo` to another position and `SwitchBranch` to another branch delete it (`DropEmptyTip`):
+  the parent becomes the active tip again, its end is the paused end, the id is not reused. A seek to the fork
+  itself keeps the branch.
+- **Media in the recorded past are refused (O-1).** In Replaying and Detached, media insert, eject, discard and
+  disk create are refused by the machine policy (`RefusalText`: go back to the branch end, or resume recording
+  first, which forks). Recording keeps recording them; Live allows them.
+- **Fuzz (F-2).** `TimeTravelController_BranchesFuzz_Test` runs random programs (run, seek, edit in the past,
+  switch, delete off the lineage) against a model of the tree that keeps every frame's exact position and RAM
+  hash, checks the table after each step and visits every frame of every live branch at the end. Memory only;
+  1 seed by default, 20 seeds x 200 steps in the long tier.
+- **Not lineage-wide (P1):** `BuildWriteJournal` builds the write journal of the viewed line only (journals are per
+  line); `ttd.info` coverage figures are the viewed line's.
 
 ## 5. Controller (`TimeTravelController`)
 

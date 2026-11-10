@@ -210,6 +210,10 @@ TEST_F(TTDCdDrive_Test, FolderDiscReplaysIdenticallyAndAnotherDiscIsReported)
     ASSERT_EQ(Cd().Disc()->ReadAudio(lba, first), CdImage::ReadResult::Ok);
     RunTo(endFrame, endT);
     EXPECT_EQ(Blob(), recorded) << "head, status and the disc identity as recorded";
+    // A media change in the recorded past is refused (the policy keeps history's media); the checks below load the
+    // recorded blob by hand, so the session is closed first and the machine is live
+    ASSERT_FALSE(_context->pMediaManager->Insert("ide0.slave", source, options).Ok()) << "refused in the past";
+    _ttd->InvalidateSession("the checks below swap the disc");
 
     // The same files in another folder: the same disc
     ScratchFolder copy("ttd-cd-folder-copy");

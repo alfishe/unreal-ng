@@ -575,7 +575,7 @@ def companion_revoke(id: str) -> int:
     # cpu="gs" ("ms": the MultiSound's) on get_registers, get_register, set_register, mem_read, mem_write and
     # disasm reads and writes the sound card CPU (card_time instead of t; disasm from its PC, no labels);
     # memory_map("gs") is its four windows {cpu, windows: [{start, size, kind, page, offset}]}. ValueError for
-    # another name, RuntimeError when no card with a CPU is in the slot or for an edit in the recorded past.
+    # another name, RuntimeError when no card with a CPU is in the slot (an edit in the recorded past forks a TTD branch).
     # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
     # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
     # or {ok: False, error}

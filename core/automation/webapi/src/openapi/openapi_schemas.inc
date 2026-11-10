@@ -902,7 +902,8 @@
     schemas["TTDStatusResponse"]["properties"]["last_stop_reason"]["description"] =
             "What stopped the last recording when no stop request did: feature-off:timetravel or "
             "feature-off:debugmode (FR-17, a clean stop; the history is kept), or capture-failed (the history's store "
-            "did not take a frame; everything before it is kept). Null otherwise; cleared by a new recording";
+            "did not take a frame; everything before it is kept), or disk-full (under 128 MB free for the recording's "
+            "files; they are finished whole). Null otherwise; cleared by a new recording";
 
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["type"] = "string";
     schemas["TTDStatusResponse"]["properties"]["unavailable_reason"]["nullable"] = true;

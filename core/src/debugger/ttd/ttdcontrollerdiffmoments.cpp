@@ -277,14 +277,15 @@ TTDDiffMomentsResult TimeTravelController::QueryDiffMoments(const TTDDiffMoments
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator)
+    if (_line->timeline.empty() || !memory || !z80 || !_context->pEmulator)
     {
         result.error = "no recorded history";
         return finish();
     }
     const uint32_t limit = std::clamp(query.limit, 1u, TTDDiffMomentsQuery::kMaxLimit);
     const uint32_t sections = query.sections ? query.sections : kDiffAll;
-    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint sessionStart = _lines.front()->timeline.empty() ? _line->timeline.front().time
+                                                                       : _lines.front()->timeline.front().time;   // the lineage's
     const TTDTimePoint sessionEnd = SessionEndPosition();
     const TTDTimePoint from = query.from;
     const TTDTimePoint to = query.hasTo ? query.to : CurrentPosition();
@@ -558,7 +559,7 @@ TTDDiffMomentsResult TimeTravelController::QueryDiffMoments(const TTDDiffMoments
     if (sections & kDiffBetween)
     {
         std::vector<uint8_t> held;
-        for (const TTDInputEvent& e : _inputJournal.Events())
+        for (const TTDInputEvent& e : _line->inputJournal.Events())
         {
             if (e.kind != TTDInputKind::Key)
                 continue;
@@ -584,7 +585,7 @@ TTDDiffMomentsResult TimeTravelController::QueryDiffMoments(const TTDDiffMoments
         for (uint8_t key : held)
             result.keysHeld.push_back(DebugKeyboardManager::GetKeyDisplayName(static_cast<ZXKeysEnum>(key)));
         auto inside = [&](const TTDTimePoint& t) { return early < t && (t < late || t == late); };
-        for (const TTDExternalEvent& e : _externalEvents.Events())
+        for (const TTDExternalEvent& e : _line->externalEvents.Events())
             if (inside(e.time))
                 result.markers.push_back(TimeText(e.time) + " " + std::string(e.reason, strnlen(e.reason, sizeof(e.reason))));
         for (const TTDBookmark& bm : GetBookmarks())

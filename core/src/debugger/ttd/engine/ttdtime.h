@@ -71,6 +71,14 @@ public:
     /// table starts after it (or is empty)
     int64_t IndexAtOrBefore(uint64_t frame) const;
 
+    /// An empty table whose first frame will have index @p base (a branch line starts at its fork's checkpoint)
+    void StartAt(size_t base)
+    {
+        _entries.clear();
+        _base = base;
+        ++_generation;
+    }
+
     /// Forget the oldest @p count frames (a ring releasing history); indices stay as they were
     void DropFront(size_t count)
     {

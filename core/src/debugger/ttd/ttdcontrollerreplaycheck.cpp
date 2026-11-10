@@ -158,6 +158,7 @@ TTDReplayCheckResult TimeTravelController::QueryReplayCheck(const TTDReplayCheck
     // Restores and replays, then puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDReplayCheckResult result;
+    const LineageViewGuard lineageView{*this};   // with branches each frame is checked on its lineage line
     auto finish = [&]() -> TTDReplayCheckResult& {
         result.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         return result;
@@ -166,13 +167,22 @@ TTDReplayCheckResult TimeTravelController::QueryReplayCheck(const TTDReplayCheck
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (_timeline.size() < 2 || !z80 || !_context->pEmulator || !_replayEngine)
+    const std::vector<TTDCheckpoint>& trunk = _lines.front()->timeline;
+    const std::vector<TTDCheckpoint>& tip = _lines[_tip]->timeline;
+    if (trunk.empty() || tip.empty() || (_lines.size() <= 1 && trunk.size() < 2) || !z80 || !_context->pEmulator ||
+        !_replayEngine)
     {
         result.error = "no recorded history of two frames or more";
         return finish();
     }
-    const uint64_t first = _timeline.front().time.frame;
-    const uint64_t last = _timeline.back().time.frame - 1;   // the last frame with a next checkpoint
+    // The active lineage: from the trunk's first checkpoint to the active branch's last
+    const uint64_t first = trunk.front().time.frame;
+    const uint64_t last = tip.back().time.frame - 1;   // the last frame with a next checkpoint
+    if (last < first)
+    {
+        result.error = "no recorded history of two frames or more";
+        return finish();
+    }
     result.fromFrame = query.hasFrom ? query.fromFrame : first;
     result.toFrame = query.hasTo ? query.toFrame : last;
     if (result.fromFrame < first || result.toFrame > last || result.toFrame < result.fromFrame)
@@ -199,14 +209,17 @@ TTDReplayCheckResult TimeTravelController::QueryReplayCheck(const TTDReplayCheck
         ReplayModeScope replay(*this);
         for (uint64_t frame = result.fromFrame; frame <= result.toFrame; frame += stride)
         {
+            ViewOwnerOfFrame(frame);   // the line holding the frame holds its next checkpoint too
             const int64_t at = TimelineIndexAtOrBefore(TTDTimePoint{frame, 0});
             const size_t idx = static_cast<size_t>(at);
-            if (at < 0 || _timeline[idx].time.frame != frame || idx + 1 >= _timeline.size() ||
-                _timeline[idx + 1].time.frame != frame + 1)
+            if (at < 0 || _line->timeline[idx].time.frame != frame || idx + 1 >= _line->timeline.size() ||
+                _line->timeline[idx + 1].time.frame != frame + 1)
             {
                 ++result.skippedNoNext;
                 continue;
             }
+            const TTDCheckpoint& cpN = _line->timeline[idx];
+            const TTDCheckpoint& cpNext = _line->timeline[idx + 1];
             // A barrier inside the frame (an unrecorded change) or a cut at the next frame's start (a snapshot
             // load's state): the next checkpoint is not what the replay of this frame makes
             TTDMachineTime start = 0;
@@ -225,11 +238,11 @@ TTDReplayCheckResult TimeTravelController::QueryReplayCheck(const TTDReplayCheck
 
             // The recorded truth: checkpoint N + 1 as the live machine reached it. Its memory is not copied: the
             // engine's versions of N + 1 are compared below with what the replay left
-            RestoreCheckpointForReplay(_timeline[idx + 1]);
+            RestoreCheckpointForReplay(cpNext);
             SaveLiveState(recorded, /*withMemory=*/false);
 
             // The replay: checkpoint N, the frame run to its end
-            RestoreCheckpointForReplay(_timeline[idx]);
+            RestoreCheckpointForReplay(cpN);
             // The restore leaves every piece the session knew at N's version; the trackers then mark what the run
             // writes. Without that knowledge every piece is compared
             const bool writesKnown = _engineMemoryKnown;

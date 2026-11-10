@@ -134,9 +134,115 @@ per-unit index of architecture.md §7 is rebuilt from these records on load.
 - **Old reader:** sees the trunk streams only, its parts with `branch == 0` contain all its records; the branch
   parts contain only skipped streams. Tested (test-strategy.md T-F5).
 
-## 6. Sizes (to measure, B-4 / B-5)
+### 5.1 As built (P2 step 1: one file from memory)
+
+The branches are saved from memory; the folder of §4 is §5.2.
+
+- **Save all:** `TTDSessionWriter::WriteAllLines` writes every live engine line, the trunk first, numbered densely
+  in id order (a parent always before its children). A branch's first part starts with the create record
+  `{U8 1, local, parent local, fork frame, fork T, holder bytes}` and depends on the parent's parts from the
+  fork's segment start to the fork; its later parts depend on the line's previous part. The fork's copy (the
+  branch's first checkpoint) is written without change records: the loader rebuilds its tables from the parent's
+  checkpoint of the fork frame (`TimeTravelEngine::ImportForkLine`). In branch records a version's base is
+  `Varint(base line local + 1, or 0)` and then `Varint(its number there)`.
+- **Holder data:** the trunk's streams hold the facts, the trunk's coverage and the trunk's bookmarks only (all an
+  old reader sees); stream 18 (`holderstream::kBranchState`) holds `{U8 1, active branch local, the trunk's record}`.
+  Each branch's coverage and bookmarks go into its twins (0x0208, 0x020C). The holder bytes of the create record are
+  the controller's branch record: version, GUID, name, creation time, creator, run, reason, tags, note, pinned, end.
+- **Save lineage:** `TimeTravelController::SerializeSession(out, err, /*lineageOnly=*/true)` sets
+  `TTDSessionSaveParams::allLines = false` and `lineageOf` = the active branch; `TTDSessionWriter::WriteLineage`
+  writes the trunk up to the first fork, then each branch of the lineage up to the next fork, all on trunk streams
+  with one numbering of versions. The fork's copy keeps its change records (they are the parent's fork checkpoint's),
+  so it follows the parent's checkpoint before the fork as the parent's own would. The journal positions run on
+  across each joint, the settings in force at a fork go with the parent's parts. The lineage's bookmarks move to the
+  trunk; the coverage index and the write journal are left out when the lineage has a branch (each branch's start at
+  its fork; both are derived). The verb on the automation planes is P5.
+- **Load:** a branch whose create record is damaged, out of order, with a parent not loaded, or whose fork the parent
+  does not hold is left out with a note, with its descendants; the trunk and the other branches load. The tree keeps
+  the engine's line ids: an id left out is taken by a deleted entry (`TTDBranchTable::SkipId`). A GUID taken twice
+  gives the second branch a new one. The create record must name the fork its first checkpoint was taken at (F-1
+  found records that did not, with a valid CRC): the copy's frame is the fork's; a copy written without changes
+  depends on the parent's part that holds the fork; a whole copy (a folder file) has every piece's CRC equal to the
+  parent's checkpoint at the fork (`TimeTravelEngine::ForkCopyMatchesParent`). A branch whose first part fails any
+  of these is left out whole, its line released. Only the fork's T inside the frame cannot be checked.
+- **Old reader:** `TTDSessionFile::SetBranchReadingForTesting(false)` reads as a reader without branch support (the
+  branch table and the twins unknown, every part the trunk's): it loads the trunk and stops at the first branch part,
+  whose pieces and checkpoints it does not find.
+
+### 5.2 As built (P2 step 2: the recording folder)
+
+Option (b) + (c) of §4.1, with these choices:
+
+- **A file holds one line.** The controller keeps one writer, on the active branch (`TimeTravelController::
+  StartLineFiles` / `FinishLineFiles`). A fork finishes the parent's open file, the new branch's file opens at its
+  next capture; a switch finishes the open file; recording on a line that has files again starts a segment
+  (`TimeTravelEngine::RequestBaseline`), so its next file starts with a baseline and never repeats a part.
+- **A branch's files are self-contained.** `TTDSessionSaveParams::fileLine` makes `TTDSessionWriter` write one
+  line's file: a branch's first file starts with its create record and writes the fork's copy whole (every piece of
+  every region from the copy's full tables; a difference version decoded and written as Full), flagged as a
+  baseline. No part depends on another file, so cutting, deleting or joining files never breaks a reference; the
+  loader imports such a copy with `ImportBranchLine` + `ImportCheckpoint` (the parent's checkpoint at the fork must be
+  loaded before, which capture order gives).
+- **Ids in folder files are the engine's line ids**, gaps allowed (a deleted branch's id stays unused). Join copies
+  parts verbatim and does not renumber (S-6); this replaces "renumber densely" of §5 for joins. The loader pads its
+  lines; the controller takes a missing id with `TTDBranchTable::SkipId`.
+- **Names:** one number sequence in capture order, `segment-NNNN.ttd` for the trunk, `segment-NNNN-bK.ttd` for line
+  K (`TTDRecordingFolder::LinePaths`). A folder without branches is named as before.
+- **`branches.tdx`:** a container without trailer, one synced part per record, stream 0x0200: kind 1 create (the
+  create record's bytes), 3 delete `{line}`, 4 segment `{file name, line, first frame, frame span, parts, bytes}`.
+  Created at the first fork from the files there (`RebuildBranchIndex`: delete records first, then per file the
+  branch's create before its first segment), then appended: the create before the branch's first file opens, a
+  segment record when a file closes. A cut keeps its complete records. Meta updates (rename, tags) come with P5.
+- **Delete:** the delete records are appended, then the lines' files removed. `Segments()` skips the files of
+  deleted lines; `TTDRecordingFolder::Open` deletes them (a crash between the record and the removal).
+- **Join:** the header declares the union of the files' streams (a branch file declares the branch table and the
+  twins).
+- **Holder data:** the session's holder streams go with the last file, a branch's too (trunk ids in a branch part,
+  read as the session's). The branch records of the folder are the creates' (the end as at the fork): the loaded
+  end is the line's own when it holds more. Branch state, per-branch coverage and bookmarks are not in the folder
+  (a save from memory has them).
+- **Disk full (S-7):** the free space is checked at each new file, every 25 captures and before a recording goes on
+  (`TimeTravelController::ShadowDiskSpace`): under max(1 GB, 10 minutes at the folder's measured rate) a warning,
+  under 128 MB the open file is finished whole and the recording stops at the frame's end (`last_stop_reason`
+  `disk-full`); `ResumeRecordingFrom` and a start are refused while the disk is full, and the files go on in a new
+  file (a baseline) when there is space again.
+- **Clean close (S-8):** unchanged: the controller's destruction deletes the folder, branches included; a saved file
+  stays.
+- **A loaded session's folder (Q-11):** the folder of a loaded session holds only what is recorded after the load;
+  `branches.tdx` starts with a source record (kind 2: `{Str path, Varint size, 16 bytes header UUID}` of the
+  loaded file, or the path of the loaded recording folder) and `TTDRecordingFolder::SaveAs` joins that file
+  first (a folder: its own join, sources followed up to 16 deep). A source gone or changed (size or UUID) is named
+  in the join's error; the folder alone does not load then (its branches' parents are in the source).
+- **Default names:** the per-kind counters ("resume 3") go on from the names in the table, so a loaded session
+  names its next branch "resume 4", not "resume 1 (2)".
+- **Not covered (edges):** a black box drops the oldest files by count over all lines (P3 makes the window per
+  lineage); the branch state, per-branch coverage and bookmarks are not in the folder (a save from memory has
+  them).
+
+## 6. Sizes and timings (measured, B-5 / B-9)
+
+Measured 2026-11-10 on the M-series dev machine at load 9-14, Pentagon 128K at its ROM menu, three repetitions
+(`core-benchmarks --benchmark_filter=TTD_Branch`, `core/benchmarks/debugger/ttd/ttd_branches_benchmark.cpp`).
 
 - Branch table record: about 64 bytes plus strings.
-- A branch's first segment on disk: one baseline (the machine's pages and regions, compressed) plus its deltas. A
-  Pentagon 128K baseline is expected in the tens of kilobytes; 1000 experiments would add tens of megabytes. To be
-  measured, with the fallback of §4.1.
+- **A branch's first file** (its fork's copy whole plus 20 frames): about 52 KB; a folder of 1000 branches is 1003
+  files, 52 MB (joined: 50 MB). Tens of kilobytes per experiment as expected, so the fallback of §4.1 (short
+  branches sharing a file) is not needed.
+- **B-5, find and read one branch out of 1000** (87 KB of records, the file cache warm):
+
+  | Layout | p50 | p99 |
+  |---|---|---|
+  | (a) one file, the parts mixed: open, read its index, read the branch's parts | 5.73 ms | 7.44 ms |
+  | (b) + (c) `branches.tdx`, then the branch's own file | 4.94 ms | 6.45 ms |
+
+  (b) + (c) is 14 % faster than (a): kept.
+- **B-9, a 30-minute session (90 000 frames) with 100 branches** (90 forked from the trunk, a chain of 10):
+
+  | Operation | Time (p50) | File |
+  |---|---|---|
+  | save all branches | 240 ms | 16.7 MB |
+  | save the active lineage (11 lines) | 221 ms | 14.8 MB |
+  | load the save-all file | 233 ms | - |
+
+  The load of the whole session is under PR-8's 1 s for the active lineage's window; the window load of P3 can
+  only be smaller.

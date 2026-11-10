@@ -282,7 +282,7 @@ public:
     bool IsSessionOpen() const { return _open; }
 
     const std::vector<TTDRegionDesc>& Regions() const { return _regions; }
-    const TTDFrameTable& Frames() const { return _frames; }
+    const TTDFrameTable& Frames() const { return _line->frames; }
 
     /// region <Events (Phase 3)>
 
@@ -292,7 +292,7 @@ public:
     /// the payload released, when there is no session or the event lies
     /// before the last one
     bool AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent ev);
-    const TTDEventLog& Events() const { return _events; }
+    const TTDEventLog& Events() const { return _line->events; }
     TTDPayloadStore& Payloads() { return _payloads; }
     const TTDPayloadStore& Payloads() const { return _payloads; }
     /// The position of machine time @p t (frame, offset); false before the first frame
@@ -314,7 +314,7 @@ public:
     /// entry and a ConfigChange cut at the frame's start (args: the entry
     /// index, u32). Equal settings change nothing. False without a session
     bool SetConfiguration(uint64_t frame, TTDConfigFingerprint fingerprint);
-    const std::vector<TTDConfigEntry>& Configurations() const { return _configs; }
+    const std::vector<TTDConfigEntry>& Configurations() const { return _line->configs; }
     /// The settings checkpoint @p index was recorded with (null: none set)
     const TTDConfigFingerprint* ConfigurationAt(size_t index) const;
     /// Compare checkpoint @p index's settings with @p live: one
@@ -329,7 +329,7 @@ public:
     /// slot's last one. A new slot joins the session's media table
     void NoteMediaVersion(const std::string& slot, const std::string& format, bool hasVersions,
                           const TTDMediaVersion& version);
-    const std::vector<TTDMediaSlot>& MediaSlots() const { return _mediaSlots; }
+    const std::vector<TTDMediaSlot>& MediaSlots() const { return _line->mediaSlots; }
 
     /// The bytes checkpoint @p cp's picture is read from (sorted); null: not known (a session loaded from a file)
     const std::vector<TTDScreenRange>* ScreenLayoutOf(const TTDEngineCheckpoint& cp) const
@@ -352,39 +352,39 @@ public:
     /// Bus data (Phase 3, Step 1): every IN result and every OUT of the main
     /// CPU, in execution order, in the bus journal's block format (kept from v1). Appended while
     /// recording; each checkpoint keeps where both stood
-    void AppendBusRead(const TTDPortRecord& r) { _busReads.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc); }
-    void AppendBusWrite(const TTDPortRecord& r) { _busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
+    void AppendBusRead(const TTDPortRecord& r) { _line->busReads.OnRead(r.port, r.value, r.frame, r.tInFrame, r.pc); }
+    void AppendBusWrite(const TTDPortRecord& r) { _line->busWrites.OnWrite(r.port, r.value, r.frame, r.tInFrame, r.pc); }
     /// Sectors read from media images while recording (Phase 3)
-    TTDMediaJournal& MediaReads() { return _mediaReads; }
-    const TTDMediaJournal& MediaReads() const { return _mediaReads; }
-    const TTDPortJournal& BusReads() const { return _busReads; }
-    const TTDPortJournal& BusWrites() const { return _busWrites; }
+    TTDMediaJournal& MediaReads() { return _line->mediaReads; }
+    const TTDMediaJournal& MediaReads() const { return _line->mediaReads; }
+    const TTDPortJournal& BusReads() const { return _line->busReads; }
+    const TTDPortJournal& BusWrites() const { return _line->busWrites; }
     /// The bus journals' positions, for a caller that puts a replay's position back (a throwaway replay)
-    TTDPortJournal& BusReadsMutable() { return _busReads; }
-    TTDPortJournal& BusWritesMutable() { return _busWrites; }
+    TTDPortJournal& BusReadsMutable() { return _line->busReads; }
+    TTDPortJournal& BusWritesMutable() { return _line->busWrites; }
     /// A replay reads the bus journals from these cursors (a checkpoint's):
     /// reads hand the CPU the recorded values, writes are checked
     void PlayBus(uint64_t readCursor, uint64_t writeCursor, uint64_t vectorCursor = 0)
     {
-        _busReads.StartPlayback(readCursor);
-        _busWrites.StartPlayback(writeCursor);
-        _busVectors.StartPlayback(vectorCursor);
+        _line->busReads.StartPlayback(readCursor);
+        _line->busWrites.StartPlayback(writeCursor);
+        _line->busVectors.StartPlayback(vectorCursor);
     }
     /// Interrupt vectors the CPU took (machines with their own INT logic)
-    TTDPortJournal& BusVectors() { return _busVectors; }
+    TTDPortJournal& BusVectors() { return _line->busVectors; }
     /// The write journal (D40): memory writes where it was recorded or built,
     /// and the spans it covers
-    TTDWriteIndex& Writes() { return _writes; }
-    const TTDWriteIndex& Writes() const { return _writes; }
-    const TTDPortJournal& BusVectors() const { return _busVectors; }
+    TTDWriteIndex& Writes() { return _line->writes; }
+    const TTDWriteIndex& Writes() const { return _line->writes; }
+    const TTDPortJournal& BusVectors() const { return _line->busVectors; }
     /// The journals while they play (null when a journal has nothing left): the CPU's IN / OUT hooks
     TTDPortJournal* BusReadsForPlayback()
     {
-        return _busReads.GetMode() == TTDPortJournal::Mode::Play ? &_busReads : nullptr;
+        return _line->busReads.GetMode() == TTDPortJournal::Mode::Play ? &_line->busReads : nullptr;
     }
     TTDPortJournal* BusWritesForPlayback()
     {
-        return _busWrites.GetMode() == TTDPortJournal::Mode::Play ? &_busWrites : nullptr;
+        return _line->busWrites.GetMode() == TTDPortJournal::Mode::Play ? &_line->busWrites : nullptr;
     }
 
     /// endregion </Events (Phase 3)>
@@ -404,7 +404,7 @@ public:
         uint64_t frame;
         std::vector<uint8_t> bytes;
     };
-    const std::map<uint32_t, std::deque<FrameStreamCopy_>>& FrameStreamCopies() const { return _streamCopies; }
+    const std::map<uint32_t, std::deque<FrameStreamCopy_>>& FrameStreamCopies() const { return _line->streamCopies; }
 
     /// endregion </Session>
 
@@ -437,13 +437,13 @@ public:
     /// region <Restore>
 
     /// Checkpoints recorded, counted from the session's start (dropped ones included)
-    size_t CheckpointCount() const { return _cpBase + _checkpoints.size(); }
+    size_t CheckpointCount() const { return _line->cpBase + _line->checkpoints.size(); }
     /// The first checkpoint still held: a ring drops the oldest segments (D41)
-    size_t FirstCheckpoint() const { return _cpBase; }
+    size_t FirstCheckpoint() const { return _line->cpBase; }
 
     void SetHistoryPolicy(const TTDHistoryPolicy& policy) { _policy = policy; }
     const TTDHistoryPolicy& HistoryPolicy() const { return _policy; }
-    const std::deque<TTDSegmentInfo>& Segments() const { return _segments; }
+    const std::deque<TTDSegmentInfo>& Segments() const { return _line->segments; }
     const TTDEngineCheckpoint* Checkpoint(size_t index) const;
     /// Checkpoint index of @p position's frame boundary, or -1
     int64_t CheckpointIndexOf(const TTDPosition& position) const;
@@ -464,6 +464,76 @@ public:
     /// way (it is no longer read-only). Branches that keep the old future come
     /// with Phase 5, Step 2
     bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
+
+    /// region <Branch lines>
+
+    /// A branch (docs/inprogress/2026-11-08-ttd-branches/architecture.md §4): a new line leaves the active one
+    /// inside checkpoint @p index's frame at @p cut and becomes the active line; capture continues on it as after
+    /// TruncateAfter, while the line it leaves keeps all of its history. The new line starts with a copy of
+    /// checkpoint @p index (full tables, the pieces shared) and of the frame's records up to @p cut, so its own
+    /// part needs nothing of the parent's; what lies before the fork is the parent's. @p line: the new line's id
+    /// (ids are never reused). Live memory is unknown afterwards. The journals' modes pass to the new line
+    /// (recording stays recording; a replay is stopped)
+    bool ForkAt(size_t index, const TTDPosition& cut, uint32_t& line, std::string& error);
+    /// Load (TTDSessionFile): a branch line read from a file. It forks from @p parent at @p cut, in the parent's
+    /// checkpoint of frame @p forkFrame; its first checkpoint is built as ForkAt builds it, the machine state from
+    /// @p first (the file's copy). The new line becomes the one the import fills (ImportCheckpoint and the
+    /// journals); the session is read-only, as any loaded one
+    /// @p line: in, the id it takes (at least LineIds(); the ids between stay empty: a file's branches left out),
+    /// out, the id it took
+    bool ImportForkLine(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut, const TTDEngineCheckpoint& first,
+                        uint32_t& line, std::string& error);
+    /// Load: a branch line whose file starts it with a whole checkpoint (a recording folder's branch file, the
+    /// fork's copy with every piece): the line forks from @p parent at @p cut as ImportForkLine's, empty; the
+    /// import fills it from its first checkpoint (ImportCheckpoint: a baseline)
+    bool ImportBranchLine(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut, uint32_t& line,
+                          std::string& error);
+    /// Load: line @p line's first checkpoint (the fork's copy, imported whole) holds what its parent's checkpoint at
+    /// the fork holds - the same frame and every piece's CRC. False with the reason: the file's branch names
+    /// another parent or fork than the one its copy was taken from
+    bool ForkCopyMatchesParent(uint32_t line, std::string& error);
+    /// The next capture on @p line starts a segment (every piece whole): a recording's folder starts a file there
+    /// when the line records again after a switch
+    void RequestBaseline(uint32_t line)
+    {
+        if (HasLine(line))
+            _lines[line]->baselineNext = true;
+    }
+    /// Make @p line active, capture continuing from its checkpoint @p index (one of its own: at or after its
+    /// fork). Live memory is unknown afterwards
+    bool SwitchLine(uint32_t line, size_t index, std::string& error);
+    /// Read @p line from now on (a seek into the part of the lineage it owns): checkpoints, records and journals
+    /// are its own, the capture head stays where it was until a capture on this line needs it (rebuilt then from
+    /// the line's last checkpoint). Live memory stays known (versions are the store's). Cheap: no decode
+    bool ViewLine(uint32_t line);
+    /// Release a line that is not active: its checkpoints, versions, records (its ancestors keep theirs). Its
+    /// children are the holder's to release first
+    bool ReleaseLine(uint32_t line, std::string& error);
+    uint32_t ActiveLine() const { return _lineId; }
+    /// Lines ever made, released ones included (ids 0 .. LineIds()-1)
+    size_t LineIds() const { return _lines.size(); }
+    bool HasLine(uint32_t line) const { return line < _lines.size() && _lines[line] != nullptr; }
+    /// The line @p line forks from (kNoLine for the trunk) and the checkpoint it forks at
+    uint32_t LineParent(uint32_t line) const { return HasLine(line) ? _lines[line]->parent : kNoLine; }
+    /// Another line's frame table and events (a branch's history before its fork lies in its ancestors'); null for
+    /// a line not held
+    const TTDFrameTable* LineFrames(uint32_t line) const { return HasLine(line) ? &_lines[line]->frames : nullptr; }
+    const TTDEventLog* LineEvents(uint32_t line) const { return HasLine(line) ? &_lines[line]->events : nullptr; }
+    size_t LineForkCheckpoint(uint32_t line) const { return HasLine(line) ? _lines[line]->forkIndex : 0; }
+    /// The index of the line's first checkpoint (a branch: its fork checkpoint; the trunk: the first one held)
+    size_t LineFirstCheckpoint(uint32_t line) const { return HasLine(line) ? _lines[line]->cpBase : 0; }
+    TTDPosition LineFork(uint32_t line) const { return HasLine(line) ? _lines[line]->fork : TTDPosition{}; }
+    static constexpr uint32_t kNoLine = 0xFFFFFFFFu;
+    /// @p ancestor is @p line or one of the lines it forks from
+    bool IsAncestorLine(uint32_t ancestor, uint32_t line) const
+    {
+        for (uint32_t l = line; HasLine(l); l = LineParent(l))
+            if (l == ancestor)
+                return true;
+        return false;
+    }
+
+    /// endregion </Branch lines>
 
     /// Write region @p region as it was at checkpoint @p index into @p out
     /// (the region's pieces × 4 KB). Pieces the session had not seen at that
@@ -582,24 +652,20 @@ private:
     void NoteChange(uint32_t region, uint32_t piece, TTDPieceId next);
     void CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint::RegionRefs& refs, bool snapshot, bool fresh = false);
     /// Checkpoints and change records by their index from the session's start
-    bool HasCheckpoint(size_t index) const { return index >= _cpBase && index - _cpBase < _checkpoints.size(); }
-    const TTDEngineCheckpoint& CpAt(size_t index) const { return _checkpoints[index - _cpBase]; }
+    bool HasCheckpoint(size_t index) const { return index >= _line->cpBase && index - _line->cpBase < _line->checkpoints.size(); }
+    const TTDEngineCheckpoint& CpAt(size_t index) const { return _line->checkpoints[index - _line->cpBase]; }
     /// Start a segment at the checkpoint about to be added (D41)
     void BeginSegment(uint64_t frame);
     /// Ring: drop the oldest segment while the next one alone covers the window
     void ReleaseHistory();
     void DropOldestSegment();
-    size_t _cpBase = 0;       ///< checkpoints dropped from the front
-    size_t _changeBase = 0;   ///< change records dropped from the front
     TTDHistoryPolicy _policy;
-    std::deque<TTDSegmentInfo> _segments;
-    std::map<uint32_t, std::deque<FrameStreamCopy_>> _streamCopies;   ///< by stream, oldest first
     struct PieceChange
     {
         uint32_t piece;
         TTDPieceId id;   ///< the record holds one reference to it
     };
-    const PieceChange& ChangeAt(size_t index) const { return _changes[index - _changeBase]; }
+    const PieceChange& ChangeAt(size_t index) const { return _line->changes[index - _line->changeBase]; }
 
     /// The version of every piece of @p region at checkpoint @p index
     void BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const;
@@ -637,7 +703,6 @@ private:
     std::shared_ptr<TTDPieceStore> _store;
     std::unique_ptr<TTDRefTables> _tables;
     uint32_t _snapshotInterval = kDefaultSnapshotInterval;
-    std::vector<PieceChange> _changes;
     /// Per region: the current version of every piece, and the pieces changed
     /// since the last full table
     std::vector<std::vector<TTDPieceId>> _live;
@@ -680,26 +745,62 @@ private:
     /// Per region: its latest contents, the base each new difference is
     /// computed against (sparse: a uniform piece keeps only its value)
     TTDDeltaBase _deltaBase;
-    TTDFrameTable _frames;
     TTDPayloadStore _payloads;
-    TTDEventLog _events{_payloads};   ///< after _payloads: it releases into it
-    /// The InterruptFrame facts as (RZX frames done, machine time), in order
-    std::vector<std::pair<uint64_t, TTDMachineTime>> _rzxFrames;
-    TTDPortJournal _busReads{TTDPortJournal::Direction::Read};
-    TTDPortJournal _busWrites{TTDPortJournal::Direction::Write};
-    TTDMediaJournal _mediaReads;
-    TTDPortJournal _busVectors{TTDPortJournal::Direction::Read};
-    TTDWriteIndex _writes;
     TTDStreamRegistry _streams;
-    /// A deque: no growth reserve (a vector held up to twice the records), and
-    /// records never move
     std::vector<uint32_t> _offeredByRegion;   ///< the last capture's pieces, by region
-    std::deque<TTDEngineCheckpoint> _checkpoints;
+    /// One branch's own history (docs/inprogress/2026-11-08-ttd-branches/architecture.md §4.1): what it
+    /// recorded from its fork on. The capture head, the store, the tables and the session's declarations stay
+    /// in the engine. A session that never forks holds one line, the trunk
+    struct BranchLine
+    {
+        explicit BranchLine(TTDPayloadStore& payloads) : events(payloads) {}
+
+        uint32_t parent = kNoLine;   ///< the line it forks from
+        size_t forkIndex = 0;        ///< the parent's checkpoint it forks at (its own first one is a copy)
+        bool baselineNext = false;   ///< RequestBaseline: the next capture starts a segment
+        TTDPosition fork;            ///< the fork moment, in that checkpoint's frame
+
+        size_t cpBase = 0;       ///< checkpoints dropped from the front
+        size_t changeBase = 0;   ///< change records dropped from the front
+        std::deque<TTDSegmentInfo> segments;
+        std::map<uint32_t, std::deque<FrameStreamCopy_>> streamCopies;   ///< by stream, oldest first
+        std::vector<PieceChange> changes;
+        TTDFrameTable frames;
+        TTDEventLog events;   ///< releases into the engine's payload store
+        /// The InterruptFrame facts as (RZX frames done, machine time), in order
+        std::vector<std::pair<uint64_t, TTDMachineTime>> rzxFrames;
+        TTDPortJournal busReads{TTDPortJournal::Direction::Read};
+        TTDPortJournal busWrites{TTDPortJournal::Direction::Write};
+        TTDMediaJournal mediaReads;
+        TTDPortJournal busVectors{TTDPortJournal::Direction::Read};
+        TTDWriteIndex writes;
+        /// A deque: no growth reserve (a vector held up to twice the records), and records never move
+        std::deque<TTDEngineCheckpoint> checkpoints;
+        std::vector<TTDConfigEntry> configs;
+        std::vector<std::pair<uint32_t, TTDMediaVersion>> pendingMedia;   ///< slot, version: for the next checkpoint
+        std::vector<TTDMediaSlot> mediaSlots;   ///< the slots and their version changes along this lineage
+    };
+    /// Every line, by branch id (the trunk first), and the active one: capture writes through it
+    std::vector<std::unique_ptr<BranchLine>> _lines;
+    BranchLine* _line = nullptr;
+    uint32_t _lineId = 0;
+    uint32_t _headLine = 0;   ///< the line the capture head was built for
+    /// Release a line's change records and full tables (EndSession, ReleaseLine)
+    void ReleaseLineData(BranchLine& line);
+    /// The active line's journal modes pass to @p to: recording stays recording (ForkAt, SwitchLine)
+    void HandOverJournals(BranchLine& from, BranchLine& to);
+    /// The fork checkpoint's tables for @p line from the active line's checkpoint @p index (ForkAt, ImportForkLine)
+    void ForkCheckpointTables(size_t index, BranchLine& line, TTDEngineCheckpoint& cp);
+    /// An imported branch's fork: @p parent's checkpoint @p index of frame @p forkFrame, the id @p wanted free
+    bool ImportLineHead(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut, uint32_t wanted, size_t& index,
+                        std::string& error);
+    /// An imported branch's line, empty, at id @p wanted (the ids before it padded): the one the import fills
+    BranchLine& AddImportedLine(uint32_t parent, size_t index, const TTDPosition& cut, uint32_t wanted);
+    /// Capture continues from the active line's checkpoint @p index (TruncateAfter, ForkAt, SwitchLine)
+    bool RebuildHeadFrom(size_t index, std::string& error);
+
     /// Every distinct screen layout of the session, once (a mode switch adds one; most sessions have one or two)
     std::vector<std::vector<TTDScreenRange>> _screenLayouts;
-    std::vector<TTDConfigEntry> _configs;
-    std::vector<TTDMediaSlot> _mediaSlots;
-    std::vector<std::pair<uint32_t, TTDMediaVersion>> _pendingMedia;   ///< slot, version: for the next checkpoint
 };
 
 }  // namespace ttd

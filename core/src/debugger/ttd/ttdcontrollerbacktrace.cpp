@@ -100,6 +100,7 @@ TTDBacktraceResult TimeTravelController::QueryBacktrace(const TTDBacktraceQuery&
     // Replays checkpoints and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDBacktraceResult result;
+    const LineageViewGuard lineageView{*this};   // with branches the walk views each lineage line it reads
     auto finish = [&]() -> TTDBacktraceResult& {
         result.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         return result;
@@ -109,12 +110,12 @@ TTDBacktraceResult TimeTravelController::QueryBacktrace(const TTDBacktraceQuery&
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator)
+    if (_line->timeline.empty() || !memory || !z80 || !_context->pEmulator)
     {
         result.error = "no recorded history";
         return finish();
     }
-    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint sessionStart = _lines.front()->timeline.front().time;   // the lineage starts on the trunk
     const TTDTimePoint at = query.hasTime ? query.at : CurrentPosition();
     if (at < sessionStart || SessionEndPosition() < at)
     {
@@ -184,7 +185,10 @@ TTDBacktraceResult TimeTravelController::QueryBacktrace(const TTDBacktraceQuery&
                 cache.splice(cache.end(), cache, it);
                 return cache.back().second;
             }
-        const TTDCheckpoint& cp = _timeline[cpIndex];
+        const TTDCheckpoint* held = ViewLineageCheckpoint(cpIndex);   // an engine index of the active lineage
+        if (!held)
+            return std::make_shared<TTDFrameTrace>();
+        const TTDCheckpoint& cp = *held;
         const TTDTimePoint end = SessionEndPosition();
         uint32_t endT = cp.time.frame == end.frame ? end.tInFrame : FrameSpan();
         if (const std::optional<TTDExternalEvent> barrier = FirstBarrierBetween(cp.time, TTDTimePoint{cp.time.frame, endT}))
@@ -231,7 +235,7 @@ TTDBacktraceResult TimeTravelController::QueryBacktrace(const TTDBacktraceQuery&
             break;
         }
         const TTDSearchResult& hit = found.hits.front().access;
-        const int64_t hitIndex = TimelineIndexAtOrBefore(hit.time);
+        const int64_t hitIndex = ViewLineageIndexAtOrBefore(hit.time);
         bool isFrame = false;
         TTDBacktraceFrame frame;
         if (hitIndex >= 0)

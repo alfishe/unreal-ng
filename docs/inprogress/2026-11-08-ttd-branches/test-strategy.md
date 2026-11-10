@@ -159,6 +159,21 @@ bias measured before (1.8 %) is the noise floor; a result inside it is "no diffe
 Benchmarks join the CI gate (`*TTDBench*`) where they have a pass line; the rest are reported per phase in a
 results document as the migration's phases were.
 
+Results so far (2026-11-10, load 9-14, three repetitions):
+
+| # | Result | Pass |
+|---|---|---|
+| B-2 | switch p99 0.90 ms (p50 0.78 ms) against a seek of the same distance p99 1.50-1.64 ms | yes |
+| B-0 | against the merge base 6547a2f66, 10 interleaved rounds (load 11-16): frame without TTD +0.40 %, Gaming +0.14 %, Development +0.75 %, full-frame capture +0.21 %, all inside the 1.8 % A/A bias; the full matrix (46 cases, ABBA): every memory, heap, resident and per-device byte counter equal in all four runs, file bytes differ by at most 2 bytes exactly as base differs from base | yes |
+| B-5 | one branch of 1000: (b)+(c) p50 4.94 ms, (a) 5.73 ms; 52 KB per branch | yes, (b)+(c) kept |
+| B-6 | owner lookup 3.7 / 7.1 / 18.7 ns at depth 1 / 10 / 100, the same at 100x the session length; select by tag over 10 000 branches 45 us, by creator 79 us | yes |
+| B-7 | find-last: linear 71.6 ms, depth 10 72.9 ms (+1.8 %); reverse-continue: linear 94 us, depth 10 69 us | yes |
+| B-9 | save all 240 ms (16.7 MB), save lineage 221 ms (14.8 MB), load 233 ms | yes (load < 1 s) |
+
+F-1 (`DamageNeverLoadsAnotherBranch`): 3000 loads of
+damaged branched files in about 0.4 s, 60 000 in the long tier; it found create records with a valid CRC naming
+another fork, now refused (storage.md §5.1).
+
 ## 6. Live verification
 
 - `tools/verification/mcp/` gets a `branches` block (create, run, list, switch, prune) run by `run_all.py`.

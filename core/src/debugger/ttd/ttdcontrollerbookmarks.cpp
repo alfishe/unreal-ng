@@ -20,7 +20,7 @@ bool TimeTravelController::AddAgentBookmark(TTDBookmark bookmark, bool captureCo
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     // A bookmark into empty history dangles immediately — there is no
     // checkpoint to return to. Refuse at creation instead of at seek time.
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         if (err)
             *err = "no recorded history to bookmark (start recording first)";
@@ -59,6 +59,7 @@ bool TimeTravelController::AddAgentBookmark(TTDBookmark bookmark, bool captureCo
                    std::to_string(existing.time.frame);
         return false;
     }
+    bookmark.branch = BranchHolding(bookmark.time);
     if (captureContext)
         CaptureBookmarkMoment(bookmark);
     const bool added = _bookmarks.Add(bookmark, err);
@@ -80,7 +81,7 @@ bool TimeTravelController::EditBookmark(const std::string& label, const std::fun
 bool TimeTravelController::CaptureBookmarkMoment(TTDBookmark& bookmark)
 {
     Memory* memory = _context ? _context->pMemory : nullptr;
-    if (!memory || !_context->pEmulator || _timeline.empty() || bookmark.time < _timeline.front().time ||
+    if (!memory || !_context->pEmulator || _line->timeline.empty() || bookmark.time < _line->timeline.front().time ||
         bookmark.time.tInFrame >= FrameSpan())
         return false;
 

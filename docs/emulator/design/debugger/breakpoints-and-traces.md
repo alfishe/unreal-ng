@@ -190,8 +190,8 @@ as GET /registers has them (`special.card_time`, the card's own clock, instead o
 now (wrapping at #FFFF; a write lands as the card CPU's would: a ROM or flash window and a write-protected RAM page,
 NeoGS RAMRO, keep their bytes, and the answer counts what landed: `bytes_written`, `written`), the disassembly from the card's PC without labels,
 the four 16K windows (`kind` `rom` / `ram` / `none`, `page`, `offset`). A register or memory write is a tool edit
-(`Emulator::EditMemoryFromTool`): refused in the recorded past, recorded by a time travel session (the card is a TTD
-device). The memory spaces `gs` / `ms` of `MemoryRead` serve the binary reads.
+(`Emulator::EditMemoryFromTool`): recorded by a time travel session, in the recorded past on a branch it forks there
+(the card is a TTD device). The memory spaces `gs` / `ms` of `MemoryRead` serve the binary reads.
 
 | Plane | Registers | Memory | Disassembly, windows |
 | :--- | :--- | :--- | :--- |

@@ -551,9 +551,44 @@ TEST_F(CoordinatorEmulator_Test, TtdVerbsAreLogged)
     EXPECT_EQ(log[3].summary, "seek bookmark=nowhere");
 }
 
-// M6 (owner 2026-10-11): in the recorded past a tool's edit is refused - nothing would keep it (the next seek sets the
-// point back); the surface gets the reason, the memory stays, the log has the refusal
-TEST_F(CoordinatorEmulator_Test, AToolsEditInTheRecordedPastIsRefused)
+// M6 with TTD branches (§4.5): in the recorded past a tool's edit is not refused - it forks a branch at that point and
+// is recorded there as its first event; the old future stays. The log has the edit done in the mode it saw
+// T-M7 (TTD branches O-1, owner 2026-11-08): a media change in the recorded past is refused with the hint; the
+// history, its position and the drive stay as they were
+TEST_F(CoordinatorEmulator_Test, AMediaChangeInTheRecordedPastIsRefused)
+{
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadDisk(Data("loaders/trd/EyeAche.trd"), 0, &error)) << error;
+    ttd::TTDControl control(_emulator->GetContext());
+    ASSERT_TRUE(control.Execute({"start", {}}).Ok());
+    _emulator->RunNFrames(4, /*skipBreakpoints=*/true);
+    ASSERT_TRUE(control.Execute({"stop", {}}).Ok());
+    ASSERT_TRUE(control.Execute({"seek", {{"frame", std::to_string(_ttd->CurrentFrame() - 2)}}}).Ok());
+    ASSERT_EQ(_emulator->MachineOps().Mode(), MachineMode::Detached);
+    const size_t checkpoints = _ttd->GetCheckpointCount();
+    const uint64_t frame = _ttd->CurrentFrame();
+
+    Mark();
+    MediaManager* media = _emulator->GetContext()->pMediaManager;
+    const MediaResult ejected = media->Eject(FloppyDriveSlot::IdFor(0));
+    EXPECT_FALSE(ejected.Ok());
+    EXPECT_NE(ejected.message.find("recorded history"), std::string::npos) << ejected.message;
+    error.clear();
+    EXPECT_FALSE(_emulator->LoadDisk(Data("loaders/trd/EyeAche.trd"), 1, &error));
+    EXPECT_NE(error.find("resume recording here"), std::string::npos) << error;
+
+    EXPECT_EQ(_ttd->GetState(), ttd::TTDSessionState::Detached) << "the history is not ended";
+    EXPECT_EQ(_ttd->GetCheckpointCount(), checkpoints);
+    EXPECT_EQ(_ttd->CurrentFrame(), frame);
+    const std::optional<SlotInfo> drive0 = media->Info(FloppyDriveSlot::IdFor(0));
+    const std::optional<SlotInfo> drive1 = media->Info(FloppyDriveSlot::IdFor(1));
+    EXPECT_TRUE(drive0 && drive0->present && !drive0->pending) << "the disk stays in";
+    EXPECT_FALSE(drive1 && (drive1->present || drive1->pending)) << "nothing went in";
+    for (const auto& entry : Logged())
+        EXPECT_EQ(entry.status, OpStatus::Refused) << OpKindName(entry.kind);
+}
+
+TEST_F(CoordinatorEmulator_Test, AToolsEditInTheRecordedPastForksABranch)
 {
     ttd::TTDControl control(_emulator->GetContext());
     ASSERT_TRUE(control.Execute({"start", {}}).Ok());
@@ -567,15 +602,17 @@ TEST_F(CoordinatorEmulator_Test, AToolsEditInTheRecordedPastIsRefused)
     Mark();
     const std::string refused = _emulator->EditMemoryFromTool(
         "test poke", [&]() { memory->DirectWriteToZ80Memory(0x8000, static_cast<uint8_t>(before ^ 0xFF)); });
-    EXPECT_NE(refused.find("recorded history"), std::string::npos) << refused;
-    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8000), before);
+    EXPECT_TRUE(refused.empty()) << refused;
+    EXPECT_EQ(memory->DirectReadFromZ80Memory(0x8000), static_cast<uint8_t>(before ^ 0xFF));
+    EXPECT_EQ(_ttd->Branches().Count(), 2u) << "the edit forked a branch";
+    EXPECT_TRUE(_ttd->IsRecording()) << "and records on it";
     std::string registerRefusal;
-    EXPECT_FALSE(_emulator->SetRegisterFromTool("test register", "BC", 0x1234, &registerRefusal));
-    EXPECT_EQ(registerRefusal, refused);
+    EXPECT_TRUE(_emulator->SetRegisterFromTool("test register", "BC", 0x1234, &registerRefusal)) << registerRefusal;
+    EXPECT_EQ(_ttd->Branches().Count(), 2u) << "the next edit is the branch's, no other fork";
     const auto log = Logged();
     ASSERT_EQ(log.size(), 2u);
     EXPECT_EQ(log[0].kind, OpKind::ToolEdit);
-    EXPECT_EQ(log[0].status, OpStatus::Refused);
+    EXPECT_EQ(log[0].status, OpStatus::Done);
     EXPECT_EQ(log[0].mode, MachineMode::Detached);
-    EXPECT_EQ(log[0].detail, refused);
+    EXPECT_EQ(log[1].mode, MachineMode::Recording);
 }

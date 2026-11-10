@@ -171,6 +171,9 @@ void TestValueFaces()
         CHECK(IsKnownReadoutPath("debug.breakpoints.total") && IsKnownReadoutPath("toggle.mach.turbo_toggle") &&
               IsKnownReadoutPath("cap.record") && !IsKnownReadoutPath("instances.count") &&
               !IsKnownReadoutPath("host.stat.cpu"));
+        // ttd.position carries its fields at the top: no `current` object (the REST /ttd/position shape)
+        CHECK(IsKnownReadoutPath("ttd.position.frame") && IsKnownReadoutPath("ttd.position.unit_count") &&
+              !IsKnownReadoutPath("ttd.position.current.frame"));
         CHECK(ReadoutField(SplitReadoutPath("emulator.stats.frame_time_us.avg"),
                            json{{"frame_time_us", {{"avg", 20}}}}) == 20);
     }

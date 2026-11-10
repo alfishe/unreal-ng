@@ -233,7 +233,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     // What this session cannot tell
     const MEM_MODEL model = _context ? _context->config.mem_model : MM_PENTAGON;
     const bool ulaScreen = HasUlaScreen(model);
-    const bool coverage = _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0;
+    const bool coverage = _line->coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0;
     const bool writes = engine.Writes().Size() > 0;
     if (!coverage)
         result.missing.push_back({"coverage", "the coverage index is off"});
@@ -408,7 +408,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     for (size_t i = 0; i < frameCount; ++i)
     {
         FrameFacts& f = frames[i];
-        const bool keys = coverage && _coverageIndex.GetFrameKeys(TTDCoverageKind::Written, fromFrame + i, frameKeys);
+        const bool keys = coverage && _line->coverageIndex.GetFrameKeys(TTDCoverageKind::Written, fromFrame + i, frameKeys);
         if (keys)
         {
             f.cut.written = static_cast<uint32_t>(frameKeys.size());
@@ -441,7 +441,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
 
     // Input; the keys pressed, kept for the per-range lists
     std::vector<std::pair<uint64_t, uint8_t>> keyDowns;
-    for (const TTDInputEvent& e : _inputJournal.Events())
+    for (const TTDInputEvent& e : _line->inputJournal.Events())
         if (FrameFacts* f = frameOf(e.time.frame))
         {
             if (e.kind == TTDInputKind::Key)
@@ -468,7 +468,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
         for (uint64_t frame = std::max(from, fromFrame); frame <= std::min(to, toFrame); ++frame)
             frameOf(frame)->cut.tape = true;
     };
-    for (const TTDExternalEvent& e : _externalEvents.Events())
+    for (const TTDExternalEvent& e : _line->externalEvents.Events())
     {
         const int plays = TapePlays(e);
         if (plays == 1 && !playing)
@@ -491,7 +491,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
     if (playing)
         markPlaying(playFrom, toFrame);
     for (const TTDBookmark& bm : _bookmarks.Snapshot())
-        if (frameOf(bm.time.frame) && result.events.size() < kMaxEvents)
+        if (OnActiveLineage(bm) && frameOf(bm.time.frame) && result.events.size() < kMaxEvents)
             result.events.push_back({bm.time.frame, bm.time.tInFrame, "bookmark", bm.label});
 
     // The engine's own events: media changes, config cuts, frame lengths, replay sources
@@ -560,7 +560,7 @@ TTDTimelineResult TimeTravelController::QueryTimeline(const TTDTimelineOptions& 
             uint32_t distinct = 0;
             for (uint64_t frame = b.frameStart; frame <= b.frameEnd; ++frame)
             {
-                if (!_coverageIndex.GetFrameKeys(kind, frame, frameKeys))
+                if (!_line->coverageIndex.GetFrameKeys(kind, frame, frameKeys))
                     continue;
                 if (kind == TTDCoverageKind::Executed)
                     executedPerFrame[static_cast<size_t>(frame - fromFrame)] = static_cast<uint32_t>(frameKeys.size());

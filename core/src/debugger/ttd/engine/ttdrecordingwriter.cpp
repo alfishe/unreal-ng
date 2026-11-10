@@ -1,5 +1,6 @@
 #include "debugger/ttd/engine/ttdrecordingwriter.h"
 
+#include <algorithm>
 #include <filesystem>
 
 #include "common/filehelper.h"
@@ -29,7 +30,10 @@ bool TTDRecordingWriter::Open(const TimeTravelEngine& engine, size_t first, std:
         return false;
     }
     _writer = std::make_unique<TTDSessionWriter>(_background);
+    _openPath = path;
     _first = first;
+    _fileFirsts.resize(_segment);
+    _fileFirsts.push_back(first);
     return _writer->Begin(engine, *_sink, _params, error, {}, first);
 }
 
@@ -42,6 +46,8 @@ bool TTDRecordingWriter::Close(const TimeTravelEngine& engine, size_t end)
     _writer.reset();
     _sink.reset();
     ++_segment;
+    if (ok && _onClosed)
+        _onClosed(_openPath);
     return ok;
 }
 
@@ -53,6 +59,50 @@ bool TTDRecordingWriter::Begin(const TimeTravelEngine& engine, std::string& erro
         return false;
     }
     if (!Open(engine, engine.Segments().back().firstCheckpoint, error))
+    {
+        _error = error;
+        return false;
+    }
+    return true;
+}
+
+void TTDRecordingWriter::StopWriting()
+{
+    if (!_writer)
+        return;
+    _writer.reset();   // its thread stops
+    _sink.reset();
+    _stopped = true;
+}
+
+bool TTDRecordingWriter::RewindToLastSegment(const TimeTravelEngine& engine, std::string& error)
+{
+    StopWriting();
+    const bool open = _stopped;
+    _stopped = false;
+    if (engine.Segments().empty())
+    {
+        error = "the session has no checkpoint";
+        _error = error;
+        return false;
+    }
+    const size_t cut = engine.Segments().back().firstCheckpoint;
+    // The files before the cut's segment end at the next one's baseline: complete, nothing past the cut
+    size_t keep = 0;
+    while (keep < _fileFirsts.size() && _fileFirsts[keep] < cut)
+        ++keep;
+    if (open && keep == _fileFirsts.size())
+        --keep;   // the open file starts earlier and has no index: written again from its own baseline
+    const size_t from = keep < _fileFirsts.size() ? std::min(cut, _fileFirsts[keep]) : cut;
+    for (size_t n = keep; n < _fileFirsts.size(); ++n)
+    {
+        std::error_code ec;
+        std::filesystem::remove(FileHelper::ToFsPath(_segmentPath(static_cast<uint32_t>(n))), ec);
+    }
+    _fileFirsts.resize(keep);
+    _segment = static_cast<uint32_t>(keep);
+    _error.clear();
+    if (!Open(engine, std::max(from, engine.Segments().front().firstCheckpoint), error))
     {
         _error = error;
         return false;
@@ -126,6 +176,16 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
         TTDContainerWriter writer;
         std::vector<uint8_t> tables;
         uint32_t partBase = 0;
+        // The header declares every file's streams: a branch's files declare the branch table and the twins
+        std::vector<TTDStreamDesc> later;
+        for (size_t f = 1; f < files.size(); ++f)
+        {
+            TTDFileSource source(files[f]);
+            TTDContainerReader reader;
+            std::string ignored;
+            if (source.Valid() && reader.Open(source, ignored, TTDSessionFile::KnownStream))
+                later.insert(later.end(), reader.Header().streams.begin(), reader.Header().streams.end());
+        }
         for (size_t f = 0; ok && f < files.size(); ++f)
         {
             TTDFileSource source(files[f]);
@@ -140,7 +200,11 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
             if (f == 0)
             {
                 tables = reader.Header().sessionTables;
-                if (!writer.Begin(sink, reader.Header(), &error))
+                TTDContainerHeader header = reader.Header();
+                for (const TTDStreamDesc& d : later)
+                    if (!header.Stream(d.id))
+                        header.streams.push_back(d);
+                if (!writer.Begin(sink, header, &error))
                 {
                     ok = false;
                     break;

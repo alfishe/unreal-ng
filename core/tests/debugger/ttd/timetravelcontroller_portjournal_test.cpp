@@ -412,12 +412,16 @@ TEST_F(TimeTravelController_PortReadJournal_Test, ResumeFromThePastCutsTheJourna
         return;
 
     const ttd::TTDTimePoint resumeAt{startFrame + 1, 30000};
+    ASSERT_TRUE(_rec.ttd->SeekTo({startFrame + 1, 0}));
+    const uint64_t frameStart = _rec.ttd->GetPortReadJournal().Cursor();
     ASSERT_TRUE(_rec.ttd->SeekTo(resumeAt));
     const uint64_t cursor = _rec.ttd->GetPortReadJournal().Cursor();
-    ASSERT_GT(cursor, 0u);
+    ASSERT_GT(cursor, frameStart);
     ASSERT_LT(cursor, _rec.ttd->GetPortReadJournal().Size());
     ASSERT_TRUE(_rec.ttd->ResumeRecordingFrom(resumeAt));
-    EXPECT_EQ(_rec.ttd->GetPortReadJournal().Size(), cursor) << "reads past the resume point are dead future";
+    // The new branch's journal starts at its fork frame: that frame's reads up to the resume point, the reads past
+    // it stay on the trunk's old future
+    EXPECT_EQ(_rec.ttd->GetPortReadJournal().Size(), cursor - frameStart) << "reads past the resume point leaked";
 
     DebugKeyboardManager* keys = _rec.context->pDebugManager->GetKeyboardManager();
     _rec.emulator->RunNCPUCycles(2000);

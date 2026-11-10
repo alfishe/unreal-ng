@@ -30,6 +30,8 @@ namespace holderstream
 constexpr uint16_t kFacts = sessionstream::kHolderFirstFree;   ///< 17
 constexpr uint16_t kCoverage = sessionstream::kCoverage;       ///< 8: the whole index, in the coverage format kept from v1
 constexpr uint16_t kBookmarks = sessionstream::kBookmarks;     ///< 12
+/// 18: with branches only - the active branch and the trunk's record (TTD branches P2)
+constexpr uint16_t kBranchState = sessionstream::kHolderFirstFree + 1;
 }  // namespace holderstream
 
 struct TTDSessionFacts

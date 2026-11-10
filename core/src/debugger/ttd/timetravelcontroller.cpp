@@ -11,6 +11,7 @@
 #include "emulator/readoutschanged.h"
 #include "timetravelcontroller.h"
 
+#include <filesystem>
 #include <optional>
 #include "ttddisplayparticipant.h"
 
@@ -149,7 +150,7 @@ TimeTravelController::~TimeTravelController()
 {
     // A clean close of the instance: its unsaved recording goes with it
     DiscardShadowFiles();
-    if (_context && _context->ttdCoverage == &_coverageIndex)
+    if (_context && _context->ttdCoverage == &_line->coverageIndex)
         _context->ttdCoverage = nullptr;
     if (_context && _context->ttdWriteSink == this)
         _context->ttdWriteSink = nullptr;
@@ -303,41 +304,41 @@ bool TimeTravelController::StartRecording()
 
     // Clear any prior history (StartRecording always begins a fresh session).
     ResetShadow();
-    if (!_timeline.empty())
+    if (!_line->timeline.empty())
     {
-        _timeline.clear();
+        _line->timeline.clear();
         NoteTimelineEnd();
         _blobBytes = 0;
         _dirtyTracker->ResetSession();
         _dirtyScratch.clear();
-        _inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
+        _line->inputJournal.Clear();  // Phase 2 Item 3 — drop any prior input events
         DisarmInputPlayback();
-        _externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
-        _toolEditPayloads.clear();
+        _line->externalEvents.Clear();  // Phase 2 Item 6 — drop any prior markers
+        _line->toolEditPayloads.clear();
         _bookmarks.Clear();  // TD-4 — prior bookmarks point into wiped history
-        if (_writeJournal)
-            _writeJournal->Clear();  // Phase 4 — drop any prior write records
+        if (_line->writeJournal)
+            _line->writeJournal->Clear();  // Phase 4 — drop any prior write records
     }
     // A fresh session: coverage of an earlier one (live or loaded) describes a
     // different timeline, and a stale "never touched" would prune a hit
-    _coverageIndex.Clear();
+    _line->coverageIndex.Clear();
 
     // Lazy-allocate write journal on first recording if enabled.
     // Use async allocation to avoid blocking the emulator thread.
-    if (_enableWriteJournal && !_writeJournal)
+    if (_enableWriteJournal && !_line->writeJournal)
     {
-        _writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
+        _line->writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
     }
 
     // Wait for journal allocation to complete before proceeding.
     // This synchronizes with the async allocation started above (or earlier).
-    if (_writeJournal)
+    if (_line->writeJournal)
     {
-        _writeJournal->WaitReady();
-        if (!_writeJournal->IsEmpty())
-            _writeJournal->Clear();  // it must hold this session's writes only
+        _line->writeJournal->WaitReady();
+        if (!_line->writeJournal->IsEmpty())
+            _line->writeJournal->Clear();  // it must hold this session's writes only
     }
-    _journalSegments.clear();   // a fresh session: SetState(Recording) opens the first segment
+    _line->journalSegments.clear();   // a fresh session: SetState(Recording) opens the first segment
     _journalLostUpTo = 0;
 
     _modelRamPages = ResolveModelRamPages();
@@ -380,8 +381,19 @@ bool TimeTravelController::StartRecording()
         return false;
     }
     _blobBytes += BlobBytes(baseline);
-    _timeline.push_back(std::move(baseline));
+    _line->timeline.push_back(std::move(baseline));
     NoteTimelineEnd();
+    if (_shadowDiskStop)
+    {
+        // S-7: no recording starts on a full disk (the stop releases what this call engaged)
+        _shadowDiskStop = false;
+        SetState(TTDSessionState::Recording);
+        StopRecording();
+        _lastStopReason = "disk-full";
+        cpuHold.reset();
+        _lastStartError = "the disk is full: free some space for the recording's files";
+        return false;
+    }
 
     SetState(TTDSessionState::Recording);
     DisarmInputPlayback();  // live input again (journaled while recording)
@@ -422,7 +434,7 @@ void TimeTravelController::StopRecording()
         // Compress whatever coverage is still accumulating, so size reporting
         // and any later serialization see the whole session rather than
         // all-but-the-last block. Not recording: the machine adds nothing
-        _coverageIndex.FlushOpenBlocks();
+        _line->coverageIndex.FlushOpenBlocks();
         if (_recordingPaused)
         {
             // A paused recording ends here: what it recorded stays as history
@@ -447,15 +459,15 @@ void TimeTravelController::StopRecording()
         cpuHold.emplace(*emu, "ttd");
 
     // Compress whatever coverage is still accumulating (see above)
-    _coverageIndex.FlushOpenBlocks();
+    _line->coverageIndex.FlushOpenBlocks();
 
     if (_context)
     {
         const TTDTimePoint stoppedAt = CurrentPosition();
         _recordingStoppedAtT = GlobalT(stoppedAt);
         _stoppedEnd = stoppedAt;
-        _stoppedEndValid = !_timeline.empty() && _timeline.back().time < stoppedAt &&
-                           stoppedAt.frame == _timeline.back().time.frame;
+        _stoppedEndValid = !_line->timeline.empty() && _line->timeline.back().time < stoppedAt &&
+                           stoppedAt.frame == _line->timeline.back().time.frame;
     }
     SetState(TTDSessionState::Idle);
     // The machine runs on unrecorded from here: I/O passes through
@@ -467,7 +479,7 @@ void TimeTravelController::StopRecording()
     SyncMediaReadJournal();   // no more recording into the engine
     FinishShadowFiles();
     MLOGINFO("TimeTravelController::StopRecording — timeline retained with %zu checkpoints",
-             _timeline.size());
+             _line->timeline.size());
 
     // Restore feature flags we toggled in StartRecording. Only flip back the
     // ones we actually turned ON — pre-existing user/debugger debug mode is
@@ -511,11 +523,11 @@ bool TimeTravelController::HoldBackgroundRecording()
     // else a fresh session: a gapped or empty timeline is unreachable from the present anyway
     _backgroundSession = true;
     ttd::NoteSessionChange(_context);   // the mode may follow (M4)
-    bool ok = !_timeline.empty() && ResumeRecordingLive();
+    bool ok = !_line->timeline.empty() && ResumeRecordingLive();
     if (!ok)
         ok = StartRecording();
     MLOGINFO("TimeTravelController::HoldBackgroundRecording — background history %s (timeline: %zu checkpoints)",
-             ok ? "active" : "unavailable", _timeline.size());
+             ok ? "active" : "unavailable", _line->timeline.size());
     return ok;
 }
 
@@ -536,7 +548,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _stoppedEndValid = false;
     ClearFrameCache();
 
-    if (_timeline.empty() && _state == TTDSessionState::Idle)
+    if (_line->timeline.empty() && _state == TTDSessionState::Idle)
         return;  // Nothing to invalidate
 
     // A stopped session is idle but not empty: SessionOperation took no hold, and the machine's thread reads the
@@ -546,26 +558,26 @@ void TimeTravelController::InvalidateSession(const char* reason)
         cpuHold.emplace(*_context->pEmulator, "ttd invalidate");
 
     MLOGINFO("TimeTravelController::InvalidateSession — reason='%s', dropping %zu checkpoints",
-             reason ? reason : "(null)", _timeline.size());
+             reason ? reason : "(null)", _line->timeline.size());
     DiscardShadowFiles();
     ResetShadow();
     _lastDropReason = reason ? reason : "";
     _recordingPaused = false;
     ttd::NoteSessionChange(_context);   // the mode may follow (M4)
 
-    _timeline = {};   // its capacity too: without a session the session's memory is zero
+    _line->timeline = {};   // its capacity too: without a session the session's memory is zero
     NoteTimelineEnd();
     _blobBytes = 0;
     _dirtyScratch.clear();
     ReleaseModelPeripherals();  // serializers are session-scoped, like the timeline
-    _inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
+    _line->inputJournal.Clear();  // Phase 2 Item 3 — input history invalidates with the timeline
     DisarmInputPlayback();
-    _externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
-    _toolEditPayloads.clear();
+    _line->externalEvents.Clear();  // Phase 2 Item 6 — markers invalidate with the timeline
+    _line->toolEditPayloads.clear();
     _bookmarks.Clear();  // TD-4 — bookmarks invalidate with the timeline
-    if (_writeJournal)
-        _writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
-    _journalSegments.clear();
+    if (_line->writeJournal)
+        _line->writeJournal->Clear();  // Phase 4 — write journal invalidates with the timeline
+    _line->journalSegments.clear();
     _journalLostUpTo = 0;
     _modelRamPages = 0;
     _dirtyPageOverflowReported = false;
@@ -577,7 +589,7 @@ void TimeTravelController::InvalidateSession(const char* reason)
     _loadedRomSignature = 0;
     _loadedNotRecorded.clear();
     _loadedRecordedBy.clear();
-    _coverageIndex.Clear();
+    _line->coverageIndex.Clear();
     if (_context)
         _context->ttdCoverageActive = false;
     _portJournalValid = false;
@@ -665,7 +677,7 @@ void TimeTravelController::SetState(TTDSessionState next)
 
 bool TimeTravelController::JournalLive() const
 {
-    if (_state != TTDSessionState::Recording || !_enableWriteJournal || !_writeJournal || !_context)
+    if (_state != TTDSessionState::Recording || !_enableWriteJournal || !_line->writeJournal || !_context)
         return false;
     FeatureManager* fm = _context->pFeatureManager;
     return !fm || (fm->isEnabled(Features::kTimeTravel) && fm->isEnabled(Features::kDebugMode));
@@ -673,7 +685,7 @@ bool TimeTravelController::JournalLive() const
 
 void TimeTravelController::SyncJournalSegment()
 {
-    const bool open = !_journalSegments.empty() && _journalSegments.back().to == kSegmentOpen;
+    const bool open = !_line->journalSegments.empty() && _line->journalSegments.back().to == kSegmentOpen;
     const bool live = JournalLive();
     if (live == open || !_context)
         return;
@@ -681,29 +693,29 @@ void TimeTravelController::SyncJournalSegment()
     if (live)
     {
         // Switched back on at the instant it was switched off: one segment
-        if (!_journalSegments.empty() && _journalSegments.back().to == now)
-            _journalSegments.back().to = kSegmentOpen;
+        if (!_line->journalSegments.empty() && _line->journalSegments.back().to == now)
+            _line->journalSegments.back().to = kSegmentOpen;
         else
-            _journalSegments.push_back({now, kSegmentOpen});
+            _line->journalSegments.push_back({now, kSegmentOpen});
         return;
     }
-    TTDJournalSegment& last = _journalSegments.back();
+    TTDJournalSegment& last = _line->journalSegments.back();
     last.to = now;
     if (last.to <= last.from)
-        _journalSegments.pop_back();
+        _line->journalSegments.pop_back();
 }
 
 void TimeTravelController::ClipJournalSegments(uint64_t cutT)
 {
     std::vector<TTDJournalSegment> kept;
-    for (TTDJournalSegment s : _journalSegments)
+    for (TTDJournalSegment s : _line->journalSegments)
     {
         if (s.from >= cutT)
             continue;
         s.to = std::min(s.to, cutT);
         kept.push_back(s);
     }
-    _journalSegments = std::move(kept);
+    _line->journalSegments = std::move(kept);
 }
 
 std::vector<TTDJournalSegment> TimeTravelController::JournalSegments() const
@@ -712,9 +724,9 @@ std::vector<TTDJournalSegment> TimeTravelController::JournalSegments() const
     // Records the ring overwrote are no longer covered: only times after the
     // oldest record it still holds (records at that same time may be gone)
     const uint64_t evictedUpTo = std::max(
-        _journalLostUpTo, _writeJournal && _writeJournal->HasEvictedRecords() ? _writeJournal->OldestGlobalT() : 0);
+        _journalLostUpTo, _line->writeJournal && _line->writeJournal->HasEvictedRecords() ? _line->writeJournal->OldestGlobalT() : 0);
     const uint64_t now = _context ? GlobalT(CurrentPosition()) : 0;
-    for (TTDJournalSegment s : _journalSegments)
+    for (TTDJournalSegment s : _line->journalSegments)
     {
         if (s.to == kSegmentOpen)
             s.to = now;
@@ -821,20 +833,20 @@ void TimeTravelController::UpdateFeatureCache()
 
     // Pre-allocate write journal when TTD is enabled (async, non-blocking).
     // This way allocation completes before StartRecording() is called.
-    if (ttdEnabled && _enableWriteJournal && !_writeJournal)
+    if (ttdEnabled && _enableWriteJournal && !_line->writeJournal)
     {
         MLOGINFO("TimeTravelController::UpdateFeatureCache — TTD enabled, pre-allocating write journal (async)");
-        _writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
+        _line->writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, true);
     }
 
     // When TimeTravel feature is disabled and we're not recording,
     // deallocate the write journal to free memory (~64MB). A history that
     // stays (FR-17's clean stop) loses only this accelerator: reverse queries
     // replay a frame instead, and status reports the journal absent
-    if (!ttdEnabled && _state == TTDSessionState::Idle && _writeJournal)
+    if (!ttdEnabled && _state == TTDSessionState::Idle && _line->writeJournal)
     {
         MLOGINFO("TimeTravelController::UpdateFeatureCache — TTD disabled, deallocating write journal");
-        _writeJournal.reset();
+        _line->writeJournal.reset();
     }
 }
 
@@ -847,7 +859,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.seekChecks = _seekChecks;
     info.seekCheckDivergences = _seekCheckDivergences;
     info.lastSeekDivergence = _lastSeekDivergence;
-    info.checkpointCount    = _timeline.size();
+    info.checkpointCount    = GetCheckpointCount();   // the active lineage's
     // The engine's piece store (Phase 5, C4a): its arena, the compressed
     // pieces in it, and the distinct 4 KB versions it holds - the most direct
     // measure of how much unique state has been captured
@@ -875,7 +887,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.modelRamPages     = _modelRamPages;
 
     // The recorded machine, as a file would state it (ttdfileinfo.h)
-    if (!_timeline.empty())
+    if (!_line->timeline.empty())
     {
         info.machine.modelId = info.modelId;
         info.machine.ramPageBound = _modelRamPages;
@@ -892,17 +904,17 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     // and the coverage index decides whether reverse queries run in
     // milliseconds or replay frames.
     // The engine's index, and the current frame's writes still in the ring
-    info.writeJournalRecords = static_cast<size_t>(_engine->Writes().Size()) + (_writeJournal ? _writeJournal->Size() : 0);
+    info.writeJournalRecords = static_cast<size_t>(_engine->Writes().Size()) + (_line->writeJournal ? _line->writeJournal->Size() : 0);
     info.writeJournalBytes   = info.writeJournalRecords * sizeof(TTDWriteRecord);
 
-    info.coverageIndexFrames = _coverageIndex.SealedFrameCount(TTDCoverageKind::Executed);
-    info.coverageIndexBytes  = _coverageIndex.EncodedBytes(TTDCoverageKind::Executed) +
-                               _coverageIndex.EncodedBytes(TTDCoverageKind::Written) +
-                               _coverageIndex.EncodedBytes(TTDCoverageKind::Read);
+    info.coverageIndexFrames = _line->coverageIndex.SealedFrameCount(TTDCoverageKind::Executed);
+    info.coverageIndexBytes  = _line->coverageIndex.EncodedBytes(TTDCoverageKind::Executed) +
+                               _line->coverageIndex.EncodedBytes(TTDCoverageKind::Written) +
+                               _line->coverageIndex.EncodedBytes(TTDCoverageKind::Read);
 
     info.bookmarkCount = _bookmarks.Size();
-    info.inputEventCount = _inputJournal.Size();
-    info.externalEventCount = _externalEvents.Size();
+    info.inputEventCount = _line->inputJournal.Size();
+    info.externalEventCount = _line->externalEvents.Size();
     info.inputHistoryComplete = _inputHistoryComplete;
     info.portJournalActive = _portJournalValid;
     info.portJournalOffReason = _portJournalOffReason;
@@ -930,13 +942,14 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.compressionRatio = info.livePayloadBytes
                                 ? static_cast<double>(store.LiveVersions()) * kTTDPieceSize / static_cast<double>(info.livePayloadBytes)
                                 : 0.0;
-    info.keyFrameCount    = _timeline.empty() ? 0 : _engine->Segments().size();
-    info.deltaFrameCount  = _timeline.size() - info.keyFrameCount;
+    info.keyFrameCount    = _line->timeline.empty() ? 0 : _engine->Segments().size();
+    info.deltaFrameCount  = _line->timeline.size() - info.keyFrameCount;
 
-    if (!_timeline.empty())
+    // The active lineage: the trunk's first checkpoint, the active branch's last
+    if (!_line->timeline.empty())
     {
-        const auto& first = _timeline.front();
-        const auto& last  = _timeline.back();
+        const auto& first = _lines.front()->timeline.empty() ? _line->timeline.front() : _lines.front()->timeline.front();
+        const auto& last  = _lines[_tip]->timeline.empty() ? _line->timeline.back() : _lines[_tip]->timeline.back();
         info.sessionStartFrame = first.time.frame;
         info.currentEndFrame   = last.time.frame;
     }
@@ -945,7 +958,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.evictedCheckpoints = _evictedCheckpoints;
     info.historyBytes = HistoryBytes();
 
-    info.writeJournalEnabled = _enableWriteJournal && _writeJournal != nullptr;
+    info.writeJournalEnabled = _enableWriteJournal && _line->writeJournal != nullptr;
     info.writeJournalSegments = JournalSegments();
     for (const TTDJournalSegment& s : info.writeJournalSegments)
         info.writeJournalSpans.emplace_back(TimePointAt(s.from), TimePointAt(s.to));
@@ -959,13 +972,13 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
 bool TimeTravelController::SetWriteJournalCapacity(size_t bytes)
 {
     // Only without a session: the ring holds the session's writes
-    if (_state != TTDSessionState::Idle || !_timeline.empty())
+    if (_state != TTDSessionState::Idle || !_line->timeline.empty())
         return false;
     const size_t wanted = bytes ? bytes : kDefaultWriteJournalBytes;
     if (wanted != _writeJournalBytes)
     {
         _writeJournalBytes = wanted;
-        _writeJournal.reset();   // allocated again, at this size, when a recording starts
+        _line->writeJournal.reset();   // allocated again, at this size, when a recording starts
     }
     return true;
 }
@@ -1149,16 +1162,16 @@ bool TimeTravelController::SetEnableWriteJournal(bool enable)
     // Any moment, also during a recording and inside a frame (D40): the switch
     // starts or ends a journal segment at the current instruction
     _enableWriteJournal = enable;
-    if (enable && _state == TTDSessionState::Recording && !_writeJournal)
-        _writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, false);
+    if (enable && _state == TTDSessionState::Recording && !_line->writeJournal)
+        _line->writeJournal = std::make_unique<TTDWriteJournal>(_writeJournalBytes, false);
     SyncJournalSegment();
 
     // Nothing to answer for and nothing to record into: give back the 64 MB
     // the feature pre-allocated. A retained session keeps its journal.
-    if (!enable && _state == TTDSessionState::Idle && _timeline.empty() && _writeJournal)
+    if (!enable && _state == TTDSessionState::Idle && _line->timeline.empty() && _line->writeJournal)
     {
-        _writeJournal->WaitReady();
-        _writeJournal.reset();
+        _line->writeJournal->WaitReady();
+        _line->writeJournal.reset();
     }
     return true;
 }
@@ -1172,9 +1185,9 @@ uint64_t TimeTravelController::CheckpointStartT(const TTDCheckpoint& cp) const
 
 bool TimeTravelController::JournalCoversSession(const std::vector<TTDJournalSegment>& segments) const
 {
-    if (segments.size() != 1 || _timeline.empty())
+    if (segments.size() != 1 || _line->timeline.empty())
         return false;
-    return segments[0].from <= CheckpointStartT(_timeline.front()) && segments[0].to >= GlobalT(_timeline.back().time);
+    return segments[0].from <= CheckpointStartT(_line->timeline.front()) && segments[0].to >= GlobalT(_line->timeline.back().time);
 }
 
 size_t TimeTravelController::EstimateSessionHeapBytes() const
@@ -1186,7 +1199,7 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
 {
     TTDHeapBreakdown h;
     // No session: nothing is held for one (the engine object's fixed tables are not session memory)
-    if (_timeline.empty() && !_engine->IsSessionOpen())
+    if (_line->timeline.empty() && !_engine->IsSessionOpen())
         return h;
 
     // The engine (Phase 5, C4a): its piece store, reference tables and
@@ -1196,33 +1209,33 @@ TTDHeapBreakdown TimeTravelController::GetHeapBreakdown() const
     h.pageStoreTable = e.pieceVersions + e.referenceTables + e.deltaBase + e.bookkeeping;
     h.ramPayload = e.piecePayload;
     h.ramPayloadSlack = e.arenaSlack;
-    h.checkpoints = e.checkpoints + e.frameTable + _timeline.capacity() * sizeof(TTDCheckpoint);
+    h.checkpoints = e.checkpoints + e.frameTable + _line->timeline.capacity() * sizeof(TTDCheckpoint);
     h.deviceBlobs = e.deviceBlobs + e.frameStreams;
-    for (const TTDCheckpoint& cp : _timeline)
+    for (const TTDCheckpoint& cp : _line->timeline)
         for (const auto& entry : cp.peripheralBlobs)
             h.deviceBlobs += entry.second.capacity();
 
     // Input journal + external-event journal — same pattern: capacity is
     // what's allocated, size is what's logically used. Plus the session-scope
     // dirty-page scratch buffer (reused every frame, counted once).
-    h.inputJournals = _inputJournal.Events().capacity() * sizeof(TTDInputEvent) +
-                      _externalEvents.Events().capacity() * sizeof(TTDExternalEvent) +
+    h.inputJournals = _line->inputJournal.Events().capacity() * sizeof(TTDInputEvent) +
+                      _line->externalEvents.Events().capacity() * sizeof(TTDExternalEvent) +
                       _dirtyScratch.capacity() * sizeof(uint16_t) + e.eventLog;
 
     // Write journal (committed ring chunks, not the nominal 64 MB), coverage
     // index and the decoded-frame cache hold the session's data; without a
     // session what they keep reserved is not the session's (zero, as before)
-    if (!_timeline.empty())
+    if (!_line->timeline.empty())
     {
-        if (_writeJournal)
+        if (_line->writeJournal)
         {
-            h.writeJournal = _writeJournal->HeapBytes();
-            const size_t used = _writeJournal->Size() * sizeof(TTDWriteRecord);
+            h.writeJournal = _line->writeJournal->HeapBytes();
+            const size_t used = _line->writeJournal->Size() * sizeof(TTDWriteRecord);
             h.writeJournalSlack = h.writeJournal > used ? h.writeJournal - used : 0;
         }
         h.writeJournal += e.writeJournal;
-        h.coverage = _coverageIndex.HeapBytes();
-        h.coverageSlack = _coverageIndex.CompressedSlackBytes();
+        h.coverage = _line->coverageIndex.HeapBytes();
+        h.coverageSlack = _line->coverageIndex.CompressedSlackBytes();
         h.portReads = e.portReads + e.busVectors + e.mediaReads;
         h.portWrites = e.portWrites;
         h.portJournalSlack = e.portJournalSlack;
@@ -1350,7 +1363,7 @@ void TimeTravelController::OnFrameBoundary()
         const auto captureStart = std::chrono::steady_clock::now();
         const uint64_t endedFrame = _context->emulatorState.frame_counter;
         if (_enableCoverageIndex && endedFrame > 0)
-            _coverageIndex.SealFrame(endedFrame - 1);
+            _line->coverageIndex.SealFrame(endedFrame - 1);
 
         TTDCheckpoint cp;
         if (!CaptureNow(cp))
@@ -1364,8 +1377,16 @@ void TimeTravelController::OnFrameBoundary()
             return;
         }
         _blobBytes += BlobBytes(cp);
-        _timeline.push_back(std::move(cp));
+        _line->timeline.push_back(std::move(cp));
         NoteTimelineEnd();
+        if (_shadowDiskStop)
+        {
+            // The disk is full (S-7): the files are finished, the recording pauses with this frame
+            _shadowDiskStop = false;
+            StopRecording();
+            _lastStopReason = "disk-full";
+            return;
+        }
         EnforceHistoryLimit();
         _perf.lastCaptureNs = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - captureStart).count());
@@ -1393,19 +1414,24 @@ void TimeTravelController::OnFrameBoundary()
     // D10: execution on the recorded timeline (a replay, or the machine playing
     // the history forward) that reaches a snapshot load takes the loaded state
     // there, as the recording did
-    if ((_state == TTDSessionState::Detached || _inReplayMode) && !_timeline.empty())
+    if ((_state == TTDSessionState::Detached || _inReplayMode) && !_line->timeline.empty())
     {
         const uint64_t frame = _context->emulatorState.frame_counter;
+        // Running through an ancestor's part of the active lineage: at the next branch's fork it goes on there.
+        // Not inside a replay: a query walks one line's frames (WalkLineageBack chooses the line), a seek replays
+        // on the line that owns its target
+        if (_viewId != _tip && !_inReplayMode)
+            FollowLineageAtBoundary(frame);
         if (CutAtFrameStart(frame))
         {
             const int64_t i = TimelineIndexAtOrBefore(TTDTimePoint{frame, 0});
-            if (i >= 0 && _timeline[static_cast<size_t>(i)].time.frame == frame)
-                RestoreCheckpointForReplay(_timeline[static_cast<size_t>(i)]);
+            if (i >= 0 && _line->timeline[static_cast<size_t>(i)].time.frame == frame)
+                RestoreCheckpointForReplay(_line->timeline[static_cast<size_t>(i)]);
         }
     }
-    if (_state == TTDSessionState::Detached && !_timeline.empty() && !_inReplayMode)
+    if (_state == TTDSessionState::Detached && !_line->timeline.empty() && !_inReplayMode)
     {
-        const uint64_t sessionEnd = _timeline.back().time.frame;
+        const uint64_t sessionEnd = _lines[_tip]->timeline.back().time.frame;
         const uint64_t currentFrame = _context->emulatorState.frame_counter;
         if (currentFrame > sessionEnd)
         {
@@ -1429,8 +1455,8 @@ std::string TimeTravelController::RecordingSessionLabel() const
     if (!IsRecording())
         return {};
     std::string label = "#" + std::to_string(_recordingNumber);
-    if (!_timeline.empty())
-        label += ", started at frame " + std::to_string(_timeline.front().time.frame);
+    if (!_line->timeline.empty())
+        label += ", started at frame " + std::to_string(_line->timeline.front().time.frame);
     return label;
 }
 
@@ -1575,7 +1601,7 @@ void TimeTravelController::EndSessionFor(TTDChange change, const char* reason)
 {
     const bool background = _backgroundSession;
     const bool live = _state == TTDSessionState::Recording || _recordingPaused || _blackBoxSuspended;
-    if (_timeline.empty() && !live)
+    if (_line->timeline.empty() && !live)
         return;   // nothing to end
     switch (change)
     {
@@ -1645,9 +1671,9 @@ bool TimeTravelController::CaptureNow(TTDCheckpoint& out)
 
     // --- Memory: the pieces written since the last capture go to the engine (all of them
     // on the first capture of a session, a rescan) ---
-    const bool baseline = _timeline.empty();
+    const bool baseline = _line->timeline.empty();
     out.frameKind = baseline ? TTDFrameKind::KeyFrame : TTDFrameKind::DeltaFrame;
-    out.keyFrameAnchor = baseline ? out.time.frame : _timeline.back().keyFrameAnchor;
+    out.keyFrameAnchor = baseline ? out.time.frame : _line->timeline.back().keyFrameAnchor;
     _dirtyScratch.clear();
     _dirtyTracker->CollectAndClear(_dirtyScratch);
 
@@ -1696,9 +1722,19 @@ uint16_t TimeTravelController::ResolveModelRamPages() const
 
 const TTDCheckpoint* TimeTravelController::GetCheckpoint(size_t idx) const
 {
-    if (idx >= _timeline.size())
-        return nullptr;
-    return &_timeline[idx];
+    if (_tip != kTTDTrunk)
+    {
+        // An index into the active lineage: the line holding it is the deepest one starting at or before it
+        const size_t index = _engine->LineFirstCheckpoint(kTTDTrunk) + idx;
+        uint32_t id = _tip;
+        while (id != kTTDTrunk && index < _engine->LineFirstCheckpoint(id))
+            id = _engine->LineParent(id);
+        const std::vector<TTDCheckpoint>& timeline = _lines[id]->timeline;
+        const size_t i = index - _engine->LineFirstCheckpoint(id);
+        return i < timeline.size() ? &timeline[i] : nullptr;
+    }
+    const std::vector<TTDCheckpoint>& timeline = _lines.front()->timeline;
+    return idx < timeline.size() ? &timeline[idx] : nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -1707,10 +1743,10 @@ const TTDCheckpoint* TimeTravelController::GetCheckpoint(size_t idx) const
 
 bool TimeTravelController::RestoreCheckpointForTesting(size_t idx)
 {
-    if (idx >= _timeline.size())
+    if (idx >= _line->timeline.size())
     {
         MLOGWARNING("TimeTravelController::RestoreCheckpointForTesting — idx %zu out of range (timeline size=%zu)",
-                    idx, _timeline.size());
+                    idx, _line->timeline.size());
         return false;
     }
 
@@ -1726,7 +1762,7 @@ bool TimeTravelController::RestoreCheckpointForTesting(size_t idx)
         return false;
     }
 
-    RestoreCheckpointForReplay(_timeline[idx]);
+    RestoreCheckpointForReplay(_line->timeline[idx]);
     return true;
 }
 
@@ -1963,7 +1999,7 @@ void TimeTravelController::FlushToEngine()
 {
     if (!_engine->IsSessionOpen())
         return;
-    FeedV1Events(*_engine, _inputJournal, _externalEvents, _shadowEvents, UINT64_MAX, nullptr, &_toolEditPayloads,
+    FeedV1Events(*_engine, _line->inputJournal, _line->externalEvents, _shadowEvents, UINT64_MAX, nullptr, &_line->toolEditPayloads,
                  &_shadowFacts);
     _shadowFacts.clear();
     _shadowEvents.facts = 0;
@@ -1972,23 +2008,53 @@ void TimeTravelController::FlushToEngine()
 
 void TimeTravelController::DrainWritesToEngine()
 {
-    if (!_writeJournal || !_engine->IsSessionOpen())
+    if (!_line->writeJournal || !_engine->IsSessionOpen())
         return;
     TTDWriteIndex& writes = _engine->Writes();
-    for (uint64_t seq = _writeJournal->SeqTail(); seq < _writeJournal->SeqHead(); ++seq)
-        writes.Append(_writeJournal->RecordAt(seq));
+    for (uint64_t seq = _line->writeJournal->SeqTail(); seq < _line->writeJournal->SeqHead(); ++seq)
+        writes.Append(_line->writeJournal->RecordAt(seq));
     // A frame that wrote more than the ring holds lost its oldest records:
     // the journal covers only what came after them
-    if (_writeJournal->HasEvictedRecords())
-        _journalLostUpTo = std::max(_journalLostUpTo, _writeJournal->OldestGlobalT());
-    _writeJournal->Clear();   // the ring holds one frame's writes at most
+    if (_line->writeJournal->HasEvictedRecords())
+        _journalLostUpTo = std::max(_journalLostUpTo, _line->writeJournal->OldestGlobalT());
+    _line->writeJournal->Clear();   // the ring holds one frame's writes at most
     writes.SetSegments(JournalSegments());
 }
 
 std::optional<TTDExternalEvent> TimeTravelController::FirstBarrierBetween(const TTDTimePoint& from,
                                                                           const TTDTimePoint& to) const
 {
-    const TTDEvent* ev = _engine->Events().FirstBarrierIn(GlobalT(from), GlobalT(to));
+    const TTDEvent* ev = nullptr;
+    if (_lines.size() <= 1)
+        ev = _engine->Events().FirstBarrierIn(GlobalT(from), GlobalT(to));
+    else
+    {
+        // Branches: each lineage line's part of (from, to], oldest first. A branch holds its events from its
+        // first checkpoint's start on (TimeTravelEngine::ForkAt copies the fork frame's)
+        const uint64_t a = GlobalT(from), b = GlobalT(to);
+        std::vector<uint32_t> chain;
+        for (uint32_t id = _tip;; id = _engine->LineParent(id))
+        {
+            chain.push_back(id);
+            if (id == kTTDTrunk || !_engine->HasLine(id))
+                break;
+        }
+        std::reverse(chain.begin(), chain.end());
+        auto startOf = [&](uint32_t id) -> uint64_t {
+            const std::vector<TTDCheckpoint>& t = _lines[id]->timeline;
+            return t.empty() ? 0 : GlobalT(t.front().time);
+        };
+        for (size_t k = 0; k < chain.size() && !ev; ++k)
+        {
+            const TTDEventLog* events = _engine->LineEvents(chain[k]);
+            if (!events)
+                continue;
+            const uint64_t lo = k == 0 ? a : std::max(a, startOf(chain[k]) > 0 ? startOf(chain[k]) - 1 : 0);
+            const uint64_t hi = k + 1 < chain.size() ? std::min(b, startOf(chain[k + 1]) > 0 ? startOf(chain[k + 1]) - 1 : 0) : b;
+            if (lo < hi)
+                ev = events->FirstBarrierIn(lo, hi);
+        }
+    }
     if (!ev)
         return std::nullopt;
     // As a marker (TTDExternalEvent): kind 0x0100 + TTDExternalEventKind, the reason as payload
@@ -2112,7 +2178,7 @@ void TimeTravelController::RecordInputEvent(uint8_t key, bool pressed)
     ev.kind          = TTDInputKind::Key;
     ev.key           = key;
     ev.pressed       = pressed;
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 /// Current TTDTimePoint for an input mutation happening now (see RecordInputEvent)
@@ -2135,7 +2201,7 @@ void TimeTravelController::RecordMouseMove(int dx, int dy)
     ev.kind = TTDInputKind::MouseMove;
     ev.dx   = static_cast<int16_t>(dx);
     ev.dy   = static_cast<int16_t>(dy);
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 void TimeTravelController::RecordMouseButtons(uint8_t activeLowMask)
@@ -2146,7 +2212,7 @@ void TimeTravelController::RecordMouseButtons(uint8_t activeLowMask)
     ev.time       = InputEventTimeNow(_context);
     ev.kind       = TTDInputKind::MouseButtons;
     ev.buttonMask = activeLowMask;
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 void TimeTravelController::RecordMouseWheel(int steps)
@@ -2157,7 +2223,7 @@ void TimeTravelController::RecordMouseWheel(int steps)
     ev.time       = InputEventTimeNow(_context);
     ev.kind       = TTDInputKind::MouseWheel;
     ev.wheelSteps = static_cast<int8_t>(steps);
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 void TimeTravelController::RecordKeyboardReset()
@@ -2167,7 +2233,7 @@ void TimeTravelController::RecordKeyboardReset()
     TTDInputEvent ev;
     ev.time = InputEventTimeNow(_context);
     ev.kind = TTDInputKind::KeyboardReset;
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 void TimeTravelController::RecordMouseCounters(uint8_t x, uint8_t y)
@@ -2179,7 +2245,7 @@ void TimeTravelController::RecordMouseCounters(uint8_t x, uint8_t y)
     ev.kind = TTDInputKind::MouseCounters;
     ev.dx   = x;
     ev.dy   = y;
-    _inputJournal.Record(ev);
+    _line->inputJournal.Record(ev);
 }
 
 // ---------------------------------------------------------------------------
@@ -2197,9 +2263,9 @@ bool TimeTravelController::OwnsInput() const
 
     // Seeked into the past and (possibly) running forward through it: the
     // recorded session is still being re-executed until its end
-    if (_state != TTDSessionState::Detached || _timeline.empty())
+    if (_state != TTDSessionState::Detached || _line->timeline.empty())
         return false;
-    return _context->emulatorState.frame_counter <= _timeline.back().time.frame;
+    return _context->emulatorState.frame_counter <= _line->timeline.back().time.frame;
 }
 
 void TimeTravelController::SetLiveInputInterceptor(std::function<bool(const TTDInputEvent&)> interceptor)
@@ -2313,13 +2379,13 @@ void TimeTravelController::ApplyLiveInput(TTDInputEvent ev, const TTDNetInput* n
         ev.time = InputEventTimeNow(_context);
         if (net)
         {
-            _inputJournal.Record(ev, applied, payload, applied.payloadLength);
-            applied.journalIndex = static_cast<uint32_t>(_inputJournal.NetInputs().size());
-            applied.payloadOffset = _inputJournal.NetInputs().back().payloadOffset;
+            _line->inputJournal.Record(ev, applied, payload, applied.payloadLength);
+            applied.journalIndex = static_cast<uint32_t>(_line->inputJournal.NetInputs().size());
+            applied.payloadOffset = _line->inputJournal.NetInputs().back().payloadOffset;
         }
         else
         {
-            _inputJournal.Record(ev);
+            _line->inputJournal.Record(ev);
         }
     }
     ApplyInputEvent(ev, InputDevicesOf(_context), net ? &applied : nullptr, payload);
@@ -2407,17 +2473,17 @@ void TimeTravelController::ServiceInput()
                     net.payloadLength = static_cast<uint32_t>(_replayEngine->Payloads().Bytes(ev.payload).size());
                     // The input journal's record of the same bytes (both hold the session's inputs in
                     // order): a device keeps its number, not the bytes, and a restore reads them there
-                    const auto& journalEvents = _inputJournal.Events();
-                    while (_inputCursor < journalEvents.size() && !HasNetRecord(journalEvents[_inputCursor].kind))
-                        ++_inputCursor;
-                    if (_inputCursor < journalEvents.size())
+                    const auto& journalEvents = _line->inputJournal.Events();
+                    while (_line->inputCursor < journalEvents.size() && !HasNetRecord(journalEvents[_line->inputCursor].kind))
+                        ++_line->inputCursor;
+                    if (_line->inputCursor < journalEvents.size())
                     {
-                        if (const TTDNetInput* recorded = _inputJournal.NetOf(journalEvents[_inputCursor]))
+                        if (const TTDNetInput* recorded = _line->inputJournal.NetOf(journalEvents[_line->inputCursor]))
                         {
-                            net.journalIndex = journalEvents[_inputCursor].netIndex;
+                            net.journalIndex = journalEvents[_line->inputCursor].netIndex;
                             net.payloadOffset = recorded->payloadOffset;
                         }
-                        ++_inputCursor;
+                        ++_line->inputCursor;
                     }
                 }
                 ApplyInputEvent(in, InputDevicesOf(_context), isNet ? &net : nullptr,
@@ -2429,15 +2495,15 @@ void TimeTravelController::ServiceInput()
     else if (_inputPlaybackArmed)
     {
         const TTDTimePoint now = InputEventTimeNow(_context);
-        const auto& events = _inputJournal.Events();
-        while (_inputCursor < events.size() && !(now < events[_inputCursor].time))
+        const auto& events = _line->inputJournal.Events();
+        while (_line->inputCursor < events.size() && !(now < events[_line->inputCursor].time))
         {
-            const TTDInputEvent& ev = events[_inputCursor];
-            const TTDNetInput* net = _inputJournal.NetOf(ev);
-            ApplyInputEvent(ev, InputDevicesOf(_context), net, net ? _inputJournal.PayloadOf(*net) : nullptr);
-            ++_inputCursor;
+            const TTDInputEvent& ev = events[_line->inputCursor];
+            const TTDNetInput* net = _line->inputJournal.NetOf(ev);
+            ApplyInputEvent(ev, InputDevicesOf(_context), net, net ? _line->inputJournal.PayloadOf(*net) : nullptr);
+            ++_line->inputCursor;
         }
-        if (_inputCursor >= events.size())
+        if (_line->inputCursor >= events.size())
             _inputPlaybackArmed = false;
     }
 
@@ -2527,8 +2593,8 @@ void TimeTravelController::ArmInputPlayback()
     // Events stamped with exactly the restored time were applied after the
     // checkpoint was captured, before the next instruction: the cursor starts
     // at them and the first step applies them (Z80::StepInstruction)
-    _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
-    _inputPlaybackArmed = _inputCursor < _inputJournal.Size();
+    _line->inputCursor = _line->inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
+    _inputPlaybackArmed = _line->inputCursor < _line->inputJournal.Size();
     _inputStartFrame = UINT64_MAX;   // the engine (or its frame table) may be another one now
     if (_replayEngine)
     {
@@ -2545,7 +2611,7 @@ void TimeTravelController::ArmInputPlayback()
 void TimeTravelController::DisarmInputPlayback()
 {
     _inputPlaybackArmed = false;
-    _inputCursor = 0;
+    _line->inputCursor = 0;
     _inputStartFrame = UINT64_MAX;
     if (_cardEditFrame != UINT64_MAX)
         DeliverCardEdits(UINT64_MAX);
@@ -2574,6 +2640,20 @@ void TimeTravelController::OnMachineReset()
 
 void TimeTravelController::RestoreCheckpointForReplay(const TTDCheckpoint& cp)
 {
+    // A replay reads the journals of the line that holds the checkpoint (a query walking the lineage)
+    if (_lines.size() > 1)
+    {
+        auto holds = [&](const ControllerLine& line) {
+            return !line.timeline.empty() && &cp >= line.timeline.data() && &cp < line.timeline.data() + line.timeline.size();
+        };
+        if (!holds(*_line))
+            for (uint32_t id = 0; id < _lines.size(); ++id)
+                if (_lines[id] && holds(*_lines[id]))
+                {
+                    ViewBranch(id);
+                    break;
+                }
+    }
     RestoreCheckpoint(cp);
     ArmInputPlayback();
     // A medium that came in after this checkpoint is not there for its device until the replay reaches it (M3)
@@ -2684,7 +2764,7 @@ std::vector<TTDPortContext> TimeTravelController::PortAccessContexts(const std::
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    if (_timeline.empty() || !memory || !z80 || !_context->pEmulator)
+    if (_line->timeline.empty() || !memory || !z80 || !_context->pEmulator)
     {
         for (TTDPortContext& c : contexts)
             c.error = "no recorded history";
@@ -2756,20 +2836,22 @@ std::vector<TTDPortContext> TimeTravelController::PortAccessContexts(const std::
 
 void TimeTravelController::BeginToolEdit()
 {
-    // A paused recording (D8): an edit at the paused point is the next thing
-    // that happens in it, so the recording goes on and records the edit. One
-    // before it would make the machine leave the recorded history while
-    // running into the paused point continues it: the recording ends where
-    // it paused instead (an edit in the past starts a branch with Step 2b)
-    if (_recordingPaused && _state == TTDSessionState::Detached)
+    // In the recorded past (a paused or a stopped recording, the machine at a
+    // point of it or replaying it): the recording goes on from here and records
+    // the edit. At the active branch's end that continues it (D8: an edit at the
+    // paused point is the next thing in it); before the end a branch forks here,
+    // the old future stays (TTD branches §4.5)
+    if (_state == TTDSessionState::Detached && !_line->timeline.empty() && !_inReplayMode)
     {
-        if (CurrentPosition() == _pausedEnd)
-            ContinueRecordingAt(_pausedEnd);
-        else
+        if (!_nextBranchMetaSet)
         {
-            MLOGINFO("TimeTravelController: an edit before the paused end ends the paused recording");
-            StopRecording();
+            TTDBranchMeta meta;
+            meta.reason = "edit";
+            SetNextBranchMeta(std::move(meta));
         }
+        const TTDTimePoint here = CurrentPosition();
+        ContinueRecordingAt(_recordingPaused && here == _pausedEnd ? _pausedEnd : here);
+        _nextBranchMetaSet = false;   // not taken when it continued at the end
     }
     _toolEditBefore.clear();
     _toolEditOpen = _state == TTDSessionState::Recording;
@@ -2852,10 +2934,10 @@ void TimeTravelController::EndToolEdit(const char* source)
 
     // The event sits where the edit began: a replay applies it before the
     // instruction that starts there, as the trap stood in for it
-    const size_t before = _externalEvents.Size();
+    const size_t before = _line->externalEvents.Size();
     RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source, _toolEditAt);
-    if (_externalEvents.Size() > before)
-        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+    if (_line->externalEvents.Size() > before)
+        _line->toolEditPayloads[_line->externalEvents.Size() - 1] = std::move(payload);
 }
 
 void TimeTravelController::RecordScriptEdit(const char* source, const std::vector<std::pair<uint16_t, uint8_t>>& pokes,
@@ -2891,11 +2973,11 @@ void TimeTravelController::RecordScriptEdit(const char* source, const std::vecto
     }
     if (payload.empty())
         return;
-    const size_t before = _externalEvents.Size();
+    const size_t before = _line->externalEvents.Size();
     RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
                           {_context->emulatorState.frame_counter, TInFrameNow()});
-    if (_externalEvents.Size() > before)
-        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+    if (_line->externalEvents.Size() > before)
+        _line->toolEditPayloads[_line->externalEvents.Size() - 1] = std::move(payload);
 }
 
 void TimeTravelController::RecordCardEdits(const char* source, const std::vector<TTDCardEdit>& edits)
@@ -2914,11 +2996,11 @@ void TimeTravelController::RecordCardEdits(const char* source, const std::vector
         PutEditRecord(payload, kEditCardEdit, static_cast<uint16_t>(edit.cpu | (edit.kind << 8)), edit.address,
                       bytes.data(), static_cast<uint32_t>(bytes.size()));
     }
-    const size_t before = _externalEvents.Size();
+    const size_t before = _line->externalEvents.Size();
     RecordExternalEventAt(TTDExternalEventKind::DebuggerEdit, source,
                           {_context->emulatorState.frame_counter, TInFrameNow()});
-    if (_externalEvents.Size() > before)
-        _toolEditPayloads[_externalEvents.Size() - 1] = std::move(payload);
+    if (_line->externalEvents.Size() > before)
+        _line->toolEditPayloads[_line->externalEvents.Size() - 1] = std::move(payload);
 }
 
 void TimeTravelController::DeliverCardEdits(uint64_t frame, bool fromFrameStart)
@@ -3137,7 +3219,7 @@ void TimeTravelController::RecordExternalEventAt(TTDExternalEventKind kind, cons
         ev.reason[0] = '\0';
     }
 
-    _externalEvents.Record(ev);
+    _line->externalEvents.Record(ev);
 
     MLOGINFO("TimeTravelController::RecordExternalEvent — recorded marker at "
              "(frame=%llu,tInFrame=%u) kind=%s reason='%.63s'",
@@ -3188,8 +3270,9 @@ uint64_t TimeTravelController::GlobalT(const TTDTimePoint& at) const
 {
     // The engine's frame table (Phase 5, C3): a frame starts where the one
     // before it ended, whatever its length. Frames after the table continue
-    // with the current span, frames before it count back from its first
-    const TTDFrameTable& frames = _engine->Frames();
+    // with the current span, frames before it count back from its first.
+    // On a branch: the table of the lineage line that holds the frame
+    const TTDFrameTable& frames = LineageFrames(at.frame);
     TTDMachineTime start = 0;
     if (!_engine->IsSessionOpen() || frames.Empty())
         return at.frame * FrameSpan() + at.tInFrame;
@@ -3208,14 +3291,15 @@ uint64_t TimeTravelController::GlobalT(const TTDTimePoint& at) const
 
 uint64_t TimeTravelController::GlobalTInFrame(uint64_t frame, uint32_t tInFrame) const
 {
-    const TTDFrameTable& frames = _engine->Frames();
+    const TTDFrameTable& frames = LineageFrames(frame);
     FrameStartCache& c = _frameStartCache;
     const bool open = _engine->IsSessionOpen();
     const uint32_t span = FrameSpan();
-    if (c.frame != frame || c.open != open || c.span != span || c.generation != frames.Generation())
+    if (c.frame != frame || c.open != open || c.span != span || c.generation != frames.Generation() ||
+        c.table != &frames)
     {
         // Every branch of GlobalT adds the moment's T to its frame's start
-        c = FrameStartCache{frame, frames.Generation(), span, open, GlobalT(TTDTimePoint{frame, 0})};
+        c = FrameStartCache{frame, frames.Generation(), span, open, GlobalT(TTDTimePoint{frame, 0}), &frames};
     }
     return c.start + tInFrame;
 }
@@ -3223,7 +3307,7 @@ uint64_t TimeTravelController::GlobalTInFrame(uint64_t frame, uint32_t tInFrame)
 TTDTimePoint TimeTravelController::TimePointAt(uint64_t globalT) const
 {
     const uint64_t span = FrameSpan();
-    const TTDFrameTable& frames = _engine->Frames();
+    const TTDFrameTable& frames = LineageFramesAtT(globalT);   // on a branch: the lineage line holding the time
     TTDMachineTime first = 0;
     if (!_engine->IsSessionOpen() || frames.Empty() || !frames.Start(frames.FirstFrame(), first))
         return TTDTimePoint{globalT / span, static_cast<uint32_t>(globalT % span)};
@@ -3236,7 +3320,10 @@ TTDTimePoint TimeTravelController::TimePointAt(uint64_t globalT) const
         return TTDTimePoint{frames.FirstFrame() - back, static_cast<uint32_t>(globalT - (first - back * span))};
     }
     TTDPosition p;
-    _engine->PositionOf(globalT, p);
+    uint64_t atFrame = 0;
+    TTDMachineTime atStart = 0;
+    if (frames.FrameAt(globalT, atFrame) && frames.Start(atFrame, atStart))
+        p = TTDPosition{0, atFrame, globalT - atStart};
     // Past the last recorded frame's span: the frames after it
     if (p.frame == frames.LastFrame() && p.tInFrame >= span)
         return TTDTimePoint{p.frame + p.tInFrame / span, static_cast<uint32_t>(p.tInFrame % span)};
@@ -3262,7 +3349,7 @@ void TimeTravelController::RunToTInFrame(uint32_t targetTInFrame)
 TTDTimePoint TimeTravelController::FrameEndPosition(uint64_t frame) const
 {
     const TTDTimePoint next{frame + 1, 0};
-    if (_timeline.empty())
+    if (_line->timeline.empty())
         return next;
     const TTDTimePoint end = _state == TTDSessionState::Recording ? CurrentPosition() : SessionEndPosition();
     return end < next && end.frame >= frame ? end : next;
@@ -3270,14 +3357,16 @@ TTDTimePoint TimeTravelController::FrameEndPosition(uint64_t frame) const
 
 uint32_t TimeTravelController::FrameLength(uint64_t frame) const
 {
-    if (_timeline.empty() || frame < _timeline.front().time.frame)
+    // With branches the frame may be the parent's, before the viewed line's fork: the lineage starts at the trunk
+    const auto& first = _lines.front()->timeline.empty() ? _line->timeline : _lines.front()->timeline;
+    if (first.empty() || frame < first.front().time.frame)
         return FrameSpan();
     return static_cast<uint32_t>(GlobalT({frame + 1, 0}) - GlobalT({frame, 0}));
 }
 
 void TimeTravelController::NoteTimelineEnd()
 {
-    const TTDTimePoint end = _timeline.empty() ? TTDTimePoint{} : _timeline.back().time;
+    const TTDTimePoint end = _line->timeline.empty() ? TTDTimePoint{} : _line->timeline.back().time;
     std::lock_guard<std::mutex> lock(_liveEndMutex);
     _liveEnd = end;
 }
@@ -3297,16 +3386,18 @@ TTDTimePoint TimeTravelController::SessionEndPosition() const
 
 TTDTimePoint TimeTravelController::TimelineEnd() const
 {
-    if (_timeline.empty())
+    // The active branch's end, wherever on its lineage the machine stands
+    const std::vector<TTDCheckpoint>& timeline = _lines[_tip]->timeline;
+    if (timeline.empty())
         return TTDTimePoint{};
     // A paused recording reaches to where it paused, inside its last frame;
     // a stopped one to where it stopped
     if (_recordingPaused)
         return _pausedEnd;
-    if (_state != TTDSessionState::Recording && _stoppedEndValid && _timeline.back().time < _stoppedEnd &&
-        _stoppedEnd.frame == _timeline.back().time.frame)
+    if (_state != TTDSessionState::Recording && _stoppedEndValid && timeline.back().time < _stoppedEnd &&
+        _stoppedEnd.frame == timeline.back().time.frame)
         return _stoppedEnd;
-    return _timeline.back().time;
+    return timeline.back().time;
 }
 
 void TimeTravelController::PublishCursor() const
@@ -3316,11 +3407,12 @@ void TimeTravelController::PublishCursor() const
     cursor.frame = position.frame;
     cursor.tinframe = position.tInFrame;
     cursor.state = _state.load();
-    cursor.history = !_timeline.empty();
+    cursor.history = !_line->timeline.empty();
     if (cursor.history)
     {
         const TTDTimePoint end = TimelineEnd();
-        cursor.first = _timeline.front().time.frame;
+        cursor.first = _lines.front()->timeline.empty() ? _line->timeline.front().time.frame
+                                                         : _lines.front()->timeline.front().time.frame;
         cursor.end = end.frame;
         cursor.endTinframe = end.tInFrame;
     }
@@ -3382,6 +3474,8 @@ bool TimeTravelController::SeekTo(const TTDTimePoint& target, TTDSeekResult* out
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
+    // A branch that recorded nothing since its fork goes when the user seeks elsewhere (§4.6)
+    DropEmptyTip(target);
 
     TTDSeekResult localResult;
     TTDSeekResult& result = outResult ? *outResult : localResult;
@@ -3419,6 +3513,14 @@ bool TimeTravelController::AddBookmark(const TTDTimePoint& time, const std::stri
 }
 
 std::vector<TTDBookmark> TimeTravelController::GetBookmarks() const
+{
+    std::vector<TTDBookmark> all = GetAllBookmarks();
+    all.erase(std::remove_if(all.begin(), all.end(), [&](const TTDBookmark& b) { return !OnActiveLineage(b); }),
+              all.end());
+    return all;
+}
+
+std::vector<TTDBookmark> TimeTravelController::GetAllBookmarks() const
 {
     // The bookmark store locks itself: a running recording is not parked for a read of it (the machine's thread only
     // drops the bookmarks an eviction leaves behind, under that lock)
@@ -3463,6 +3565,24 @@ bool TimeTravelController::SeekToBookmark(const std::string& label, TTDSeekResul
             *err = "unknown bookmark '" + label + "'";
         MLOGWARNING("TimeTravelController::SeekToBookmark — unknown label '%s'", label.c_str());
         return false;
+    }
+
+    // A bookmark on another branch: that branch becomes active, standing at the bookmark (TTD branches §5.1)
+    if (!OnActiveLineage(bookmark))
+    {
+        std::string error;
+        const bool switched = SwitchBranch(bookmark.branch, bookmark.time, error);
+        if (outResult)
+        {
+            *outResult = TTDSeekResult{};
+            outResult->reached = switched;
+            outResult->arrivedAt = switched ? CurrentPosition() : TTDTimePoint{};
+            if (!switched)
+                outResult->haltReason = TTDSeekHaltReason::OutOfRange;
+        }
+        if (!switched && err)
+            *err = error;
+        return switched;
     }
 
     // Nothing bookmark-specific from here on — a bookmark seek IS a seek.
@@ -3547,11 +3667,14 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
         MLOGWARNING("TimeTravelController::SeekToInternal — null _context");
         return false;
     }
+    // The machine reads the branch of the active lineage that holds the target
+    if (_lines.size() > 1)
+        ViewBranch(OwnerOnLineage(target.frame));
 
     // Idle-with-history is allowed (typical after StopRecording); Detached
     // is the other valid state. Recording is also allowed for internal
     // callers (ResumeRecordingFrom) — they manage the invariant themselves.
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::SeekToInternal — timeline is empty "
                     "(state=%s)",
@@ -3559,7 +3682,7 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
         return false;
     }
 
-    const TTDTimePoint sessionEnd = _timeline.back().time;
+    const TTDTimePoint sessionEnd = _line->timeline.back().time;
     // Reject only if the target frame is beyond the session. Intra-frame
     // replay at the session-end frame IS allowed: checkpoints sit at frame
     // boundaries (tInFrame == 0), so {lastFrame, T>0} is a valid target
@@ -3596,17 +3719,17 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
         if (outResult)
         {
             outResult->arrivedAt = CurrentPosition();
-            outResult->earliest = _timeline.front().time;
+            outResult->earliest = _line->timeline.front().time;
             outResult->beforeEarliest = true;
         }
         MLOGWARNING("TimeTravelController::SeekTo — target frame %llu is before the earliest kept frame %llu",
                     static_cast<unsigned long long>(target.frame),
-                    static_cast<unsigned long long>(_timeline.front().time.frame));
+                    static_cast<unsigned long long>(_line->timeline.front().time.frame));
         return false;
     }
 
     const size_t cpIdx = static_cast<size_t>(atOrBefore);
-    const TTDCheckpoint& cp = _timeline[cpIdx];
+    const TTDCheckpoint& cp = _line->timeline[cpIdx];
 
     MLOGINFO("TimeTravelController::SeekTo — target=(frame=%llu,tInFrame=%u) "
              "restoring from checkpoint idx=%zu (frame=%llu)",
@@ -3675,7 +3798,7 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
                 outResult->arrivedAt = TTDTimePoint{cp.time.frame, at};
                 outResult->haltReason = TTDSeekHaltReason::ExternalEvent;
                 // The marker the replay stops at, as recorded: its kind and reason (a loaded session's too)
-                for (const TTDExternalEvent& m : _externalEvents.SnapshotEvents())
+                for (const TTDExternalEvent& m : _line->externalEvents.SnapshotEvents())
                     if (m.time == outResult->arrivedAt)
                     {
                         outResult->blockingMarker = m;
@@ -3788,7 +3911,7 @@ void TimeTravelController::RunToFrameEnd()
 
 void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame)
 {
-    if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen || _timeline.empty())
+    if (!_context || !_context->pEmulator || !_context->pCore || !_context->pScreen || _line->timeline.empty())
         return;
 
     Z80* z80 = _context->pCore->GetZ80();
@@ -3801,7 +3924,7 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
     // Last checkpoint at or before `f`; nullptr when `f` precedes the session.
     auto checkpointAtOrBefore = [this](uint64_t f) -> const TTDCheckpoint* {
         const int64_t i = TimelineIndexAtOrBefore(TTDTimePoint{f, 0});
-        return i < 0 ? nullptr : &_timeline[static_cast<size_t>(i)];
+        return i < 0 ? nullptr : &_line->timeline[static_cast<size_t>(i)];
     };
 
     // Deliberately a LOCAL snapshot, not the shared _liveSnapshot member:
@@ -3935,7 +4058,7 @@ bool TimeTravelController::StepBackFrame()
         PauseRecordingForBrowsing();
 
     // Idle-with-history is allowed; only the timeline-empty case fails.
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepBackFrame — no recorded history");
         return false;
@@ -3963,7 +4086,7 @@ bool TimeTravelController::StepForwardFrame()
         PauseRecordingForBrowsing();
 
     // Idle-with-history is allowed; only the timeline-empty case fails.
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepForwardFrame — no recorded history");
         return false;
@@ -4011,14 +4134,23 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
         return false;
     }
 
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingFrom — timeline is empty");
         return false;
     }
 
+    // S-7: a recording that writes files does not go on on a full disk
+    if (_shadowFolder && !_shadowFilesStopped && !CheckShadowDiskSpace())
+    {
+        _shadowDiskStop = false;
+        _lastStartError = "the disk is full: free some space for the recording's files";
+        MLOGWARNING("TimeTravelController::ResumeRecordingFrom — refused: %s", _lastStartError.c_str());
+        return false;
+    }
+
     // A paused recording reaches to where it paused, inside the last frame
-    const TTDTimePoint sessionEnd = _recordingPaused ? _pausedEnd : _timeline.back().time;
+    const TTDTimePoint sessionEnd = _recordingPaused ? _pausedEnd : _line->timeline.back().time;
     if (sessionEnd < from)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingFrom — target "
@@ -4053,9 +4185,9 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
 bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
-    const size_t preTimelineSize  = _timeline.size();
-    const size_t preJournalSize   = _inputJournal.Size();
-    const size_t preMarkerCount   = _externalEvents.Size();
+    const size_t preTimelineSize  = _line->timeline.size();
+    const size_t preJournalSize   = _line->inputJournal.Size();
+    const size_t preMarkerCount   = _line->externalEvents.Size();
 
     // ------------------------------------------------------------------
     // Step 2: truncate timeline + page refs after `from`. Page refs held
@@ -4069,14 +4201,33 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     const TTDTimePoint here = CurrentPosition();
     const TTDTimePoint cut = (from < here) ? here : from;
 
+    // History after the resume point (the active branch's own past, or an ancestor's part of the lineage) stays:
+    // a new branch forks there and records (§4.5). At the active branch's end the recording just goes on
+    if (HasHistoryAfter(cut) && ForkBranchAt(from, cut))
+    {
+        EngageCaptureFeatures();
+        SetState(TTDSessionState::Recording);
+        _recordingPaused = false;
+        ttd::NoteSessionChange(_context);
+        DisarmInputPlayback();
+        _context->ttdCoverageActive = _enableCoverageIndex;
+        ResumeBusRecording();
+        SyncPortJournalHook();
+        MLOGINFO("TimeTravelController::ResumeRecordingFrom — resumed at (frame=%llu, tInFrame=%u) on branch %u, "
+                 "the old future stays on branch %u",
+                 static_cast<unsigned long long>(cut.frame), static_cast<unsigned>(cut.tInFrame), _tip,
+                 _engine->LineParent(_tip));
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Step 3: truncate input journal after the resume point. Events exactly
     // at it are kept (they happened at the resume point, not after it).
     // ------------------------------------------------------------------
-    _inputJournal.DropAfter(cut);
-    _externalEvents.DropAfter(cut);  // Phase 2 Item 6 — markers past the resume point are dead future
-    for (auto it = _toolEditPayloads.begin(); it != _toolEditPayloads.end();)
-        it = it->first >= _externalEvents.Size() ? _toolEditPayloads.erase(it) : std::next(it);
+    _line->inputJournal.DropAfter(cut);
+    _line->externalEvents.DropAfter(cut);  // Phase 2 Item 6 — markers past the resume point are dead future
+    for (auto it = _line->toolEditPayloads.begin(); it != _line->toolEditPayloads.end();)
+        it = it->first >= _line->externalEvents.Size() ? _line->toolEditPayloads.erase(it) : std::next(it);
     _bookmarks.DropAfter(cut);  // TD-4 — bookmarks past the resume point are dead future
 
     // Coverage of the discarded future must go too, or reverse search prunes
@@ -4084,18 +4235,18 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     // frame stay indexed; the resume frame itself is re-collected only from
     // the resume point on, so unless the machine stands exactly at that
     // frame's checkpoint it becomes a hole (queries replay it)
-    const bool atCheckpoint = _seekLandedOnCheckpoint && !_timeline.empty() &&
-                              _timeline.back().time.frame == cut.frame;
-    _coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
+    const bool atCheckpoint = _seekLandedOnCheckpoint && !_line->timeline.empty() &&
+                              _line->timeline.back().time.frame == cut.frame;
+    _line->coverageIndex.DropFramesFrom(cut.frame, !atCheckpoint);
 
     // Port records past the resume point are dead future: the engine cuts
     // its bus journals at the cut with the rest (TruncateTimelineAfter)
 
     // Phase 4 — write journal: convert the resume point to a globalT and
     // drop records strictly past it. Records exactly at it are kept.
-    if (_writeJournal)
+    if (_line->writeJournal)
     {
-        _writeJournal->DropAfter(GlobalT(cut));
+        _line->writeJournal->DropAfter(GlobalT(cut));
     }
     ClipJournalSegments(GlobalT(cut));
 
@@ -4124,9 +4275,9 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
              "journal %zu→%zu events, markers %zu→%zu, state=Recording",
              static_cast<unsigned long long>(from.frame),
              static_cast<unsigned>(from.tInFrame),
-             preTimelineSize, _timeline.size(),
-             preJournalSize, _inputJournal.Size(),
-             preMarkerCount, _externalEvents.Size());
+             preTimelineSize, _line->timeline.size(),
+             preJournalSize, _line->inputJournal.Size(),
+             preMarkerCount, _line->externalEvents.Size());
 
     return true;
 }
@@ -4155,7 +4306,7 @@ bool TimeTravelController::ResumeRecordingLive()
         return false;
     }
 
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingLive — timeline is empty "
                     "(StartRecording begins a fresh session)");
@@ -4169,7 +4320,7 @@ bool TimeTravelController::ResumeRecordingLive()
     // produce wrong state, so the caller must wipe and StartRecording
     // instead (a fresh session).
     const TTDTimePoint present = CurrentPosition();
-    const TTDTimePoint recordedEnd = _timeline.back().time;
+    const TTDTimePoint recordedEnd = _line->timeline.back().time;
     if (present.frame != recordedEnd.frame)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingLive — refused: present frame %llu is %s "
@@ -4212,7 +4363,7 @@ bool TimeTravelController::ResumeRecordingLive()
              "timeline keeps %zu checkpoints, appending after (frame=%llu, tInFrame=%u)",
              static_cast<unsigned long long>(present.frame),
              static_cast<unsigned>(present.tInFrame),
-             _timeline.size(),
+             _line->timeline.size(),
              static_cast<unsigned long long>(recordedEnd.frame),
              static_cast<unsigned>(recordedEnd.tInFrame));
 
@@ -4292,26 +4443,26 @@ void TimeTravelController::SyncTimelineFront()
     if (!_engine->IsSessionOpen())
         return;
     const size_t held = _engine->CheckpointCount() - _engine->FirstCheckpoint();
-    if (_timeline.size() <= held)
+    if (_line->timeline.size() <= held)
         return;
-    const size_t count = _timeline.size() - held;
+    const size_t count = _line->timeline.size() - held;
     for (size_t i = 0; i < count; ++i)
     {
-        _blobBytes -= BlobBytes(_timeline[i]);
+        _blobBytes -= BlobBytes(_line->timeline[i]);
     }
-    _timeline.erase(_timeline.begin(), _timeline.begin() + static_cast<std::ptrdiff_t>(count));
+    _line->timeline.erase(_line->timeline.begin(), _line->timeline.begin() + static_cast<std::ptrdiff_t>(count));
     NoteTimelineEnd();
     _evictedCheckpoints += count;
 
     // The journals start where the history now starts
-    const TTDCheckpoint& front = _timeline.front();
+    const TTDCheckpoint& front = _line->timeline.front();
     _engine->Writes().DropBefore(CheckpointStartT(front));
-    _inputJournal.DropBefore(front.time);
-    _externalEvents.DropBefore(front.time);
+    _line->inputJournal.DropBefore(front.time);
+    _line->externalEvents.DropBefore(front.time);
     _bookmarks.DropBefore(front.time);
     // (the engine dropped the bus journals with its segments)
     if (_inputPlaybackArmed)
-        _inputCursor = _inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
+        _line->inputCursor = _line->inputJournal.FirstIndexAtOrAfter(InputEventTimeNow(_context));
     ClearFrameCache();
 }
 
@@ -4322,7 +4473,7 @@ std::vector<TTDRestoreIssue> TimeTravelController::PlanCut(const TTDTimePoint& f
     const int64_t at = TimelineIndexAtOrBefore(from);
     if (!media || at < 0)
         return issues;
-    const int64_t index = _engine->CheckpointIndexOf({0, _timeline[static_cast<size_t>(at)].time.frame, 0});
+    const int64_t index = _engine->CheckpointIndexOf({0, _line->timeline[static_cast<size_t>(at)].time.frame, 0});
     if (index < 0)
         return issues;
     std::vector<MediaVersionInfo> live;
@@ -4363,7 +4514,7 @@ int64_t TimeTravelController::TimelineIndexAtOrBefore(const TTDTimePoint& t) con
     if (index < 0)
         return -1;
     const size_t i = static_cast<size_t>(index) - _engine->FirstCheckpoint();
-    return i < _timeline.size() ? static_cast<int64_t>(i) : -1;
+    return i < _line->timeline.size() ? static_cast<int64_t>(i) : -1;
 }
 
 void TimeTravelController::SetShadowEngine(TimeTravelEngine* engine)
@@ -4459,9 +4610,97 @@ void TimeTravelController::FinishShadowFiles()
     // finished recording's folder loads like a saved session
     if (_shadowWriter && _shadowEngine)
         _shadowWriter->SetHolderStreams(SessionHolderStreams(/*declareAll=*/true));
-    if (_shadowWriter && _shadowEngine && !_shadowWriter->Finish(*_shadowEngine))
+    FinishLineFiles();   // the folder stays the session's until a new one starts or it is invalidated
+}
+
+bool TimeTravelController::CheckShadowDiskSpace()
+{
+    _shadowSinceSpaceCheck = 0;
+    if (!_shadowFolder)
+        return false;
+    uint64_t free = UINT64_MAX;
+    if (_freeSpaceProbe)
+        free = _freeSpaceProbe(_shadowFolder->Path());
+    else
+    {
+        std::error_code ec;
+        const std::filesystem::space_info space =
+            std::filesystem::space(FileHelper::ToFsPath(_shadowFolder->Path()), ec);
+        if (!ec)
+            free = space.available;
+    }
+    // Ten minutes at the rate the folder grew so far (50 frames a second)
+    const uint64_t perFrame = _shadowFramesWritten ? _shadowClosedBytes / _shadowFramesWritten : 0;
+    const uint64_t warn = std::max<uint64_t>(kTTDDiskWarnBytes, perFrame * 50 * 600);
+    const TTDDiskSpace before = _shadowDiskSpace;
+    _shadowDiskSpace = free < kTTDDiskStopBytes ? TTDDiskSpace::Full : free < warn ? TTDDiskSpace::Low : TTDDiskSpace::Ok;
+    if (_shadowDiskSpace == TTDDiskSpace::Low && before != TTDDiskSpace::Low)
+        MLOGWARNING("TimeTravelController: %llu MB free for the recording's files in %s; they stop under %llu MB",
+                    static_cast<unsigned long long>(free >> 20), _shadowFolder->Path().c_str(),
+                    static_cast<unsigned long long>(kTTDDiskStopBytes >> 20));
+    if (_shadowDiskSpace != TTDDiskSpace::Full)
+        return true;
+    if (before != TTDDiskSpace::Full)
+        MLOGWARNING("TimeTravelController: the disk is full (%llu MB free): the recording pauses, its files are "
+                    "finished whole",
+                    static_cast<unsigned long long>(free >> 20));
+    // S-7: the open file is finished whole and the recording stops at this frame's end (OnFrameBoundary); a new
+    // recording checks again and writes files when the space is back
+    FinishLineFiles();
+    _shadowDiskStop = true;
+    return false;
+}
+
+bool TimeTravelController::StartLineFiles(TimeTravelEngine& engine)
+{
+    if (!_shadowFolder || _shadowWriter || engine.Segments().empty() || !CheckShadowDiskSpace())
+        return false;
+    const uint32_t line = engine.ActiveLine();
+    // A branch without files is written from its fork only (its first file holds the fork's copy whole); one
+    // loaded or forked before the folder's files covered it stays in memory (storage.md §5.2)
+    if (line != 0 && !_shadowLinesWithFiles.count(line) &&
+        engine.Segments().back().firstCheckpoint != engine.FirstCheckpoint())
+        return false;
+    TTDSessionSaveParams params = _shadowParams;
+    params.fileLine = line;
+    if (line != 0 && !params.lineMeta.count(line))
+        params.lineMeta[line] = BranchRecordBytes(line);
+    TTDRecordingFolder* folder = _shadowFolder.get();
+    _shadowWriter = std::make_unique<TTDRecordingWriter>(folder->LinePaths(line), params);
+    _shadowWriter->SetOnFileClosed([this, folder](const std::string& path) {
+        folder->NoteSegmentClosed(path);
+        std::error_code ec;
+        const uint64_t size = std::filesystem::file_size(FileHelper::ToFsPath(path), ec);
+        _shadowClosedBytes += ec ? 0 : size;
+    });
+    std::string why;
+    if (!_shadowWriter->Begin(engine, why))
+    {
+        MLOGWARNING("TimeTravelController: the recording's files of branch %u: %s", line, why.c_str());
+        _shadowWriter.reset();
+        return false;
+    }
+    _shadowWriterLine = line;
+    _shadowLinesWithFiles.insert(line);
+    return true;
+}
+
+void TimeTravelController::FinishLineFiles()
+{
+    if (!_shadowWriter)
+        return;
+    // Finished on the line it writes (the view may be on an ancestor)
+    TimeTravelEngine& engine = _shadowEngine ? *_shadowEngine : *_engine;
+    const uint32_t viewed = engine.ActiveLine();
+    if (viewed != _shadowWriterLine && engine.HasLine(_shadowWriterLine))
+        engine.ViewLine(_shadowWriterLine);
+    if (!_shadowWriter->Finish(engine))
         MLOGWARNING("TimeTravelController: the shadow session's files: %s", _shadowWriter->Error().c_str());
-    _shadowWriter.reset();   // the folder stays the session's until a new one starts or it is invalidated
+    if (engine.HasLine(_shadowWriterLine))
+        engine.RequestBaseline(_shadowWriterLine);
+    if (viewed != engine.ActiveLine() && engine.HasLine(viewed))
+        engine.ViewLine(viewed);
+    _shadowWriter.reset();
 }
 
 void TimeTravelController::DiscardShadowFiles()
@@ -4470,6 +4709,12 @@ void TimeTravelController::DiscardShadowFiles()
     if (_shadowFolder)
         _shadowFolder->Discard();
     _shadowFolder.reset();
+    _shadowLinesWithFiles.clear();
+    _shadowFilesStopped = false;
+    _shadowDiskStop = false;
+    _shadowDiskSpace = TTDDiskSpace::Ok;
+    _shadowClosedBytes = 0;
+    _shadowFramesWritten = 0;
 }
 
 void TimeTravelController::KeepShadowFiles()
@@ -4480,6 +4725,12 @@ void TimeTravelController::KeepShadowFiles()
     else if (_shadowFolder)
         MLOGINFO("TimeTravelController: the black box's previous recording stays in %s", _shadowFolder->Path().c_str());
     _shadowFolder.reset();
+    _shadowLinesWithFiles.clear();
+    _shadowFilesStopped = false;
+    _shadowDiskStop = false;
+    _shadowDiskSpace = TTDDiskSpace::Ok;
+    _shadowClosedBytes = 0;
+    _shadowFramesWritten = 0;
 }
 
 void TimeTravelController::ResetShadow()
@@ -4492,6 +4743,8 @@ void TimeTravelController::ResetShadow()
     _shadowDeviceRegions.clear();
     if (_shadowEngine)
         _shadowEngine->EndSession();
+    // The engine holds the trunk alone now: so do the controller's lines
+    ResetBranches();
 }
 
 void TimeTravelController::ArmShadowRegions(bool on)
@@ -4651,8 +4904,8 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
         ArmShadowRegions(true);
         _shadowRescan = true;
         // Events and bus data the engine gets from here on: what the controller journals after this point
-        _shadowEvents.input = _inputJournal.Size();
-        _shadowEvents.external = _externalEvents.Size();
+        _shadowEvents.input = _line->inputJournal.Size();
+        _shadowEvents.external = _line->externalEvents.Size();
         _shadowEvents.facts = 0;
         _shadowFacts.clear();
         RegisterScreenshotStream(engine);
@@ -4812,7 +5065,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // The write journal's new records and its spans (D40)
     DrainWritesToEngine();
     // What the controller journaled up to this boundary: input, network, markers (Phase 3, Step 1)
-    FeedV1Events(engine, _inputJournal, _externalEvents, _shadowEvents, out.time.frame, nullptr, &_toolEditPayloads,
+    FeedV1Events(engine, _line->inputJournal, _line->externalEvents, _shadowEvents, out.time.frame, nullptr, &_line->toolEditPayloads,
                  &_shadowFacts);
     _shadowFacts.erase(_shadowFacts.begin(), _shadowFacts.begin() + static_cast<std::ptrdiff_t>(_shadowEvents.facts));
     _shadowEvents.facts = 0;
@@ -4837,7 +5090,7 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
     // Written as it records, a file per segment (Phase 4)
     if (!_shadowRecordingRoot.empty())
     {
-        if (!_shadowWriter && !_shadowFolder)
+        if (!_shadowFolder && !_shadowFilesStopped)
         {
             const TMemModel* model = Config::FindModelByEnum(_context->config.mem_model);
             std::string why;
@@ -4845,25 +5098,44 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
                                                        std::time(nullptr), why);
             if (_shadowFolder)
             {
-                TTDSessionSaveParams params;
-                params.createdMicros = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                                                 std::chrono::system_clock::now().time_since_epoch())
-                                                                 .count());
+                _shadowParams = {};
+                _shadowParams.createdMicros = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
                 std::random_device random;
-                for (uint8_t& b : params.uuid)
+                for (uint8_t& b : _shadowParams.uuid)
                     b = static_cast<uint8_t>(random());
-                params.holderStreams = SessionHolderStreams(/*declareAll=*/true);
-                TTDRecordingFolder* folder = _shadowFolder.get();
-                _shadowWriter = std::make_unique<TTDRecordingWriter>(
-                    [folder](uint32_t n) { return folder->SegmentPath(n); }, params);
-                if (!_shadowWriter->Begin(engine, why))
-                    _shadowWriter.reset();
+                _shadowParams.holderStreams = SessionHolderStreams(/*declareAll=*/true);
+                _shadowLinesWithFiles.clear();
+                // A loaded session's folder holds what is recorded after the load: the loaded file comes first
+                // when the folder is joined (Q-11)
+                std::string sourceWhy;
+                if (_loadedFromFile && !_sourcePath.empty() && !_shadowFolder->NoteSource(_sourcePath, &sourceWhy))
+                    MLOGWARNING("TimeTravelController: the recording folder does not name the loaded session %s: %s",
+                                _sourcePath.c_str(), sourceWhy.c_str());
+                if (!StartLineFiles(engine))
+                    why = _shadowWriter ? std::string() : "the first file cannot be written";
             }
-            if (!_shadowWriter)
+            if (!_shadowWriter && !_shadowDiskStop)
+            {
+                _shadowFilesStopped = true;
                 MLOGWARNING("TimeTravelController: the shadow session is not written: %s", why.c_str());
+            }
         }
+        else if (_shadowFolder && !_shadowWriter && !_shadowFilesStopped)
+            StartLineFiles(engine);   // the active branch records again (after a switch or a fork)
         else if (_shadowWriter && !_shadowWriter->Collect(engine))
+        {
             MLOGWARNING("TimeTravelController: writing the shadow session stopped: %s", _shadowWriter->Error().c_str());
+            _shadowFilesStopped = true;
+        }
+        if (_shadowWriter)
+        {
+            ++_shadowFramesWritten;
+            if (++_shadowSinceSpaceCheck >= 25)
+                CheckShadowDiskSpace();
+        }
     }
     return true;
 }
@@ -4874,13 +5146,15 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
     const int64_t keep = TimelineIndexAtOrBefore(from);
     if (keep < 0)
         return;
-    const size_t dropCount = _timeline.size() - static_cast<size_t>(keep) - 1;
+    const size_t dropCount = _line->timeline.size() - static_cast<size_t>(keep) - 1;
     const size_t keepEngine = _engine->FirstCheckpoint() + static_cast<size_t>(keep);
-    const TTDCheckpoint& kept = _timeline[static_cast<size_t>(keep)];
+    const TTDCheckpoint& kept = _line->timeline[static_cast<size_t>(keep)];
 
-    // The files written as it recorded hold the old future: they go, and the
-    // continued session writes a folder of its own from its next capture
-    DiscardShadowFiles();
+    // The files written as it recorded: those before the cut's segment stay,
+    // the rest hold the old future and are written again from the cut's
+    // segment after the truncate (F-1). The writer reads the engine: it stops first
+    if (_shadowWriter)
+        _shadowWriter->StopWriting();
 
     std::string error;
     const TTDPosition engineCut{0, cut.frame, cut.frame == kept.time.frame ? cut.tInFrame : 0};
@@ -4893,9 +5167,14 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
     }
     else
     {
+        if (_shadowWriter && !_shadowWriter->RewindToLastSegment(*_engine, error))
+        {
+            MLOGWARNING("TimeTravelController::TruncateTimelineAfter — the recording's files stop: %s", error.c_str());
+            _shadowWriter.reset();   // the folder keeps the files before the cut
+        }
         // The engine's cursors into the controller's journals, at their new ends
-        _shadowEvents.input = std::min(_shadowEvents.input, _inputJournal.Size());
-        _shadowEvents.external = std::min(_shadowEvents.external, _externalEvents.Size());
+        _shadowEvents.input = std::min(_shadowEvents.input, _line->inputJournal.Size());
+        _shadowEvents.external = std::min(_shadowEvents.external, _line->externalEvents.Size());
         for (auto it = _shadowFacts.begin(); it != _shadowFacts.end();)
         {
             if (cut < it->at)
@@ -4931,11 +5210,11 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
 
     if (dropCount == 0)
         return;
-    for (size_t i = static_cast<size_t>(keep) + 1; i < _timeline.size(); ++i)
+    for (size_t i = static_cast<size_t>(keep) + 1; i < _line->timeline.size(); ++i)
     {
-        _blobBytes -= BlobBytes(_timeline[i]);
+        _blobBytes -= BlobBytes(_line->timeline[i]);
     }
-    _timeline.resize(static_cast<size_t>(keep) + 1);
+    _line->timeline.resize(static_cast<size_t>(keep) + 1);
     NoteTimelineEnd();
 
     MLOGINFO("TimeTravelController::TruncateTimelineAfter — dropped %zu checkpoints "
@@ -4943,7 +5222,7 @@ void TimeTravelController::TruncateTimelineAfter(const TTDTimePoint& from, const
              dropCount,
              static_cast<unsigned long long>(from.frame),
              static_cast<unsigned>(from.tInFrame),
-             _timeline.size());
+             _line->timeline.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -4993,7 +5272,7 @@ TimeTravelController::SelfTestResult TimeTravelController::CaptureRestoreSelfTes
     }
     // The capture goes into the engine, the history's store: with a session
     // there it would land in the middle of it
-    if (!_timeline.empty())
+    if (!_line->timeline.empty())
     {
         result.notes = "a session holds history: the self-test runs without one";
         return result;
@@ -5067,7 +5346,7 @@ void TimeTravelController::SetEnableCoverageIndex(bool enable)
     _enableCoverageIndex = enable;
 
     if (!enable)
-        _coverageIndex.Clear();
+        _line->coverageIndex.Clear();
 
     // Only mirror into the hot-path flag while a session is live; StartRecording
     // sets it otherwise.
@@ -5081,15 +5360,16 @@ void TimeTravelController::SyncCoverageSink()
     if (!_context)
         return;
     if (_state == TTDSessionState::Recording && _enableCoverageIndex)
-        _context->ttdCoverage = &_coverageIndex;
-    else if (_context->ttdCoverage == &_coverageIndex)
+        _context->ttdCoverage = &_line->coverageIndex;
+    else if (_context->ttdCoverage == &_line->coverageIndex)
         _context->ttdCoverage = nullptr;
 }
 
 bool TimeTravelController::CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const
 {
+    const TTDCoverageIndex& coverage = CoverageOfFrame(frame);   // the lineage line holding the frame
     auto may = [&](uint16_t low, uint16_t high) {
-        return _coverageIndex.FrameMayContain(kind, frame, low, high, q.hasPhysPageFilter, q.physPage);
+        return coverage.FrameMayContain(kind, frame, low, high, q.hasPhysPageFilter, q.physPage);
     };
     const uint16_t low = static_cast<uint16_t>(q.addrFrom & 0x3FFF);
     const uint16_t high = static_cast<uint16_t>(q.addrTo & 0x3FFF);
@@ -5127,7 +5407,7 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     // worth replaying at all", and a user may want the second without paying
     // for the first.
     if (_enableCoverageIndex)
-        _coverageIndex.Record(TTDCoverageKind::Written, MakeCoverageKey(physPage, static_cast<uint16_t>(addr ^ (flip << 13))));
+        _line->coverageIndex.Record(TTDCoverageKind::Written, MakeCoverageKey(physPage, static_cast<uint16_t>(addr ^ (flip << 13))));
 
     if (!_enableWriteJournal)
         return;
@@ -5144,8 +5424,8 @@ void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint
     SetRecordPage(rec, physPage);
     (void)oldVal;  // Not stored in the compact 12-byte record (TDD §9.3)
 
-    if (_writeJournal)
-        _writeJournal->Append(rec);
+    if (_line->writeJournal)
+        _line->writeJournal->Append(rec);
 }
 
 void TimeTravelController::RecordIoWrite(uint16_t port, uint8_t value, uint16_t m1pc)
@@ -5167,10 +5447,10 @@ bool TimeTravelController::RegenerateFrameWrites(uint64_t frame, std::vector<TTD
     if (!_context || _state == TTDSessionState::Recording)
         return false;
     const int64_t index = TimelineIndexAtOrBefore(TTDTimePoint{frame, 0});
-    if (index < 0 || _timeline[static_cast<size_t>(index)].time.frame != frame ||
-        static_cast<size_t>(index) + 1 == _timeline.size())
+    if (index < 0 || _line->timeline[static_cast<size_t>(index)].time.frame != frame ||
+        static_cast<size_t>(index) + 1 == _line->timeline.size())
         return false;
-    const auto it = _timeline.begin() + static_cast<std::ptrdiff_t>(index);
+    const auto it = _line->timeline.begin() + static_cast<std::ptrdiff_t>(index);
     const uint32_t frameT = FrameSpan();
     if (FirstBarrierBetween(it->time, TTDTimePoint{frame, frameT}))
         return false;
@@ -5205,7 +5485,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
         r.error = "stop the recording first: the journal is built by replaying recorded history";
         return r;
     }
-    if (_timeline.size() < 2)
+    if (_line->timeline.size() < 2)
     {
         r.error = "the session has no complete frame to replay";
         return r;
@@ -5219,7 +5499,7 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
 
     // The spans covered now (the ring's evicted part already left out): the
     // journal is rebuilt below and must not claim them back
-    _journalSegments = JournalSegments();
+    _line->journalSegments = JournalSegments();
 
     // Progress and cancel for other threads (GetJournalBuildState, CancelJournalBuild)
     _journalBuildCancel.store(false);
@@ -5234,14 +5514,14 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
     // The frames to build: those overlapping (fromT, toT] that a segment does
     // not cover yet
     std::vector<size_t> frames;
-    for (size_t i = 0; i + 1 < _timeline.size(); ++i)
+    for (size_t i = 0; i + 1 < _line->timeline.size(); ++i)
     {
-        const uint64_t a = CheckpointStartT(_timeline[i]);
-        const uint64_t b = CheckpointStartT(_timeline[i + 1]);
+        const uint64_t a = CheckpointStartT(_line->timeline[i]);
+        const uint64_t b = CheckpointStartT(_line->timeline[i + 1]);
         if (b <= fromT || a >= toT)
             continue;
         bool inside = false;
-        for (const TTDJournalSegment& s : _journalSegments)
+        for (const TTDJournalSegment& s : _line->journalSegments)
             inside = inside || (s.from <= a && b <= s.to);
         if (inside)
             ++r.framesCovered;
@@ -5266,12 +5546,12 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
             break;
         }
         const size_t i = frames[k];
-        if (!RegenerateFrameWrites(_timeline[i].time.frame, hits))
+        if (!RegenerateFrameWrites(_line->timeline[i].time.frame, hits))
         {
             ++r.framesRefused;
             continue;
         }
-        BuiltFrame f{{CheckpointStartT(_timeline[i]), CheckpointStartT(_timeline[i + 1])}, {}};
+        BuiltFrame f{{CheckpointStartT(_line->timeline[i]), CheckpointStartT(_line->timeline[i + 1])}, {}};
         f.records.reserve(hits.size());
         for (const TTDSearchResult& h : hits)
         {
@@ -5324,18 +5604,18 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournal(uint64_t fromT, ui
 
         // The built frames join the segments; touching or overlapping spans merge
         for (const BuiltFrame& f : built)
-            _journalSegments.push_back(f.span);
-        std::sort(_journalSegments.begin(), _journalSegments.end(),
+            _line->journalSegments.push_back(f.span);
+        std::sort(_line->journalSegments.begin(), _line->journalSegments.end(),
                   [](const TTDJournalSegment& a, const TTDJournalSegment& b) { return a.from < b.from; });
         std::vector<TTDJournalSegment> joined;
-        for (const TTDJournalSegment& s : _journalSegments)
+        for (const TTDJournalSegment& s : _line->journalSegments)
         {
             if (!joined.empty() && s.from <= joined.back().to)
                 joined.back().to = std::max(joined.back().to, s.to);
             else
                 joined.push_back(s);
         }
-        _journalSegments = std::move(joined);
+        _line->journalSegments = std::move(joined);
         index.SetSegments(JournalSegments());
     }
 
@@ -5358,9 +5638,9 @@ TTDJournalBuildResult TimeTravelController::BuildWriteJournalFrames(uint64_t fro
         // The first checkpoint at or after `frame`
         const int64_t before = TimelineIndexAtOrBefore(TTDTimePoint{frame, 0});
         size_t i = before < 0 ? 0 : static_cast<size_t>(before);
-        if (i < _timeline.size() && _timeline[i].time.frame < frame)
+        if (i < _line->timeline.size() && _line->timeline[i].time.frame < frame)
             ++i;
-        return i >= _timeline.size() ? UINT64_MAX : CheckpointStartT(_timeline[i]);
+        return i >= _line->timeline.size() ? UINT64_MAX : CheckpointStartT(_line->timeline[i]);
     };
     const uint64_t fromT = startOf(fromFrame);
     const uint64_t toT = toFrame == UINT64_MAX ? UINT64_MAX : startOf(toFrame + 1);
@@ -5389,7 +5669,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::FindLastAccess — no recorded history");
         return std::nullopt;
@@ -5399,8 +5679,6 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         MLOGWARNING("TimeTravelController::FindLastAccess — null context or emulator");
         return std::nullopt;
     }
-
-    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
 
     // ------------------------------------------------------------------
     // Step 1: resolve beforeGlobalT → absolute t-state coordinate.
@@ -5413,10 +5691,36 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
         beforeGlobalT = GlobalT(now);
     }
 
+    if (_lines.size() <= 1)
+        return FindLastAccessOnLine(q, beforeGlobalT, outBlockingMarker, outWindow, nullptr);
+
+    // Branches (§4.4): the line that owns the moment first, then each parent before its child's history starts, up
+    // to the trunk's start. The window reports the whole span asked about
+    const TTDTimePoint askedTo = std::min(TimePointAt(beforeGlobalT), SessionEndPosition());
+    std::optional<TTDSearchResult> hit;
+    WalkLineageBack(beforeGlobalT, [&](uint64_t, uint64_t upTo) {
+        bool blocked = false;
+        hit = FindLastAccessOnLine(q, upTo, outBlockingMarker, outWindow, &blocked);
+        return !hit && !blocked;
+    });
+    if (outWindow && outWindow->searched)
+        outWindow->to = askedTo;
+    return hit;
+}
+
+/// FindLastAccess on the line being viewed: back from @p beforeGlobalT to that line's first checkpoint
+std::optional<TTDSearchResult> TimeTravelController::FindLastAccessOnLine(const TTDSearchQuery& q,
+                                                                          uint64_t beforeGlobalT,
+                                                                          TTDExternalEvent* outBlockingMarker,
+                                                                          TTDSearchWindow* outWindow,
+                                                                          bool* outBlocked)
+{
+    const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
+
     // TD-8: every answer below also says which part of history it covered -
     // the search walks back from `to` and ends at the match, at a barrier it
     // cannot replay across, or at the session start.
-    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint sessionStart = _line->timeline.front().time;
     auto reportWindow = [outWindow](const TTDTimePoint& from, const TTDTimePoint& to)
     {
         if (outWindow)
@@ -5475,7 +5779,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     targetTime = TimePointAt(beforeGlobalT);
 
     // Clamp target frame to session bounds.
-    const uint64_t sessionEndFrame = _timeline.back().time.frame;
+    const uint64_t sessionEndFrame = _line->timeline.back().time.frame;
     if (targetTime.frame > sessionEndFrame)
     {
         targetTime.frame    = sessionEndFrame;
@@ -5503,7 +5807,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     const TTDWriteIndex& writes = _engine->Writes();
     const std::vector<TTDJournalSegment> segments =
         q.access == TTDAccessType::Write ? writes.Segments() : std::vector<TTDJournalSegment>{};
-    auto startT = [&](size_t index) { return CheckpointStartT(_timeline[index]); };
+    auto startT = [&](size_t index) { return CheckpointStartT(_line->timeline[index]); };
     auto segmentOf = [&](uint64_t after, uint64_t upTo) -> int {
         for (size_t k = 0; k < segments.size(); ++k)
             if (segments[k].from <= after && upTo <= segments[k].to)
@@ -5523,7 +5827,7 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
     // Walk backward from the target checkpoint to the beginning.
     for (size_t i = targetCpIdx + 1; i-- > 0; )
     {
-        const TTDCheckpoint& cp = _timeline[i];
+        const TTDCheckpoint& cp = _line->timeline[i];
 
         // Inside a journal segment: the whole run of covered frames at once
         if (!segments.empty())
@@ -5633,6 +5937,8 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
 
     if (!found)
     {
+        if (outBlocked)
+            *outBlocked = blocked;
         if (!blocked)
             reportWindow(sessionStart, targetTime);  // examined everything back to the start
         return std::nullopt;
@@ -5655,6 +5961,64 @@ TimeTravelController::FindLastAccess(const TTDSearchQuery& q,
 
 TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const TTDFindOptions& options)
 {
+    if (_lines.size() <= 1)
+        return FindAccessesOnLine(q, options);
+
+    // Branches: the active lineage, newest line first. Each line's walk ends at its first checkpoint and settles the
+    // old bytes of changes_only candidates there, so the lines' hit lists join as they come
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    const size_t limit = options.all ? std::clamp(options.limit, size_t{1}, kReverseHitLimitMax) : 1;
+    const uint64_t beforeT = q.beforeGlobalT == UINT64_MAX ? GlobalT(CurrentPosition()) : q.beforeGlobalT;
+    const uint64_t floorT = options.fromFrame > 0 ? GlobalT(TTDTimePoint{options.fromFrame, 0}) : 0;
+    const TTDTimePoint windowTo = std::min(TimePointAt(beforeT), SessionEndPosition());
+    TTDFindResult result;
+    TTDTimePoint reached{};
+    bool walked = false;
+    WalkLineageBack(beforeT, [&](uint64_t lineStart, uint64_t upTo) {
+        TTDSearchQuery lineQuery = q;
+        lineQuery.beforeGlobalT = upTo;
+        TTDFindOptions lineOptions = options;
+        const size_t room = limit > result.hits.size() ? limit - result.hits.size() : 0;
+        lineOptions.limit = std::max<size_t>(room, 1);
+        TTDFindResult part = FindAccessesOnLine(lineQuery, lineOptions);
+        walked = walked || part.window.searched;
+        if (room == 0)
+        {
+            // The list is full: any older hit only says it was cut
+            result.truncated = !part.hits.empty();
+            return false;
+        }
+        for (TTDFoundAccess& h : part.hits)
+            result.hits.push_back(std::move(h));
+        reached = part.window.from;
+        if (part.blockingMarker.reason[0] != '\0')
+        {
+            result.blockingMarker = part.blockingMarker;
+            return false;
+        }
+        if (part.truncated)
+        {
+            result.truncated = true;
+            return false;
+        }
+        if (!options.all && !result.hits.empty())
+            return false;
+        return lineStart > floorT;
+    });
+    if (walked)
+    {
+        result.window.searched = true;
+        result.window.from = reached;
+        result.window.to = windowTo;
+    }
+    return result;
+}
+
+/// FindAccesses on the line being viewed: back from the query's time to that line's first checkpoint
+TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, const TTDFindOptions& options)
+{
     // Replays checkpoints and puts the machine back: an operation that changes it
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     TTDFindResult result;
@@ -5663,7 +6027,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty() || !_context || !_context->pEmulator)
+    if (_line->timeline.empty() || !_context || !_context->pEmulator)
     {
         MLOGWARNING("TimeTravelController::FindAccesses — no recorded history");
         return result;
@@ -5673,7 +6037,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     const bool changes = options.changesOnly && q.access == TTDAccessType::Write;
     const uint64_t beforeT = q.beforeGlobalT == UINT64_MAX ? GlobalT(CurrentPosition()) : q.beforeGlobalT;
     const uint64_t floorT = options.fromFrame > 0 ? GlobalT(TTDTimePoint{options.fromFrame, 0}) : 0;
-    const TTDTimePoint sessionStart = _timeline.front().time;
+    const TTDTimePoint sessionStart = _line->timeline.front().time;
     const TTDTimePoint windowTo = std::min(TimePointAt(beforeT), SessionEndPosition());
     auto reportWindow = [&](const TTDTimePoint& from) {
         result.window.searched = true;
@@ -5735,7 +6099,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     auto resolveAtCheckpoint = [&](size_t i) {
         if (pending.empty())
             return;
-        const int64_t engineIndex = _engine->CheckpointIndexOf({0, _timeline[i].time.frame, 0});
+        const int64_t engineIndex = _engine->CheckpointIndexOf({0, _line->timeline[i].time.frame, 0});
         std::map<std::string, std::vector<uint8_t>> regions;
         std::map<std::string, std::vector<uint8_t>> present;
         auto byteAt = [&](const std::string& name, uint64_t offset, uint8_t& out) {
@@ -5825,7 +6189,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
     else
     {
         TTDTimePoint targetTime = TimePointAt(beforeT);
-        const uint64_t sessionEndFrame = _timeline.back().time.frame;
+        const uint64_t sessionEndFrame = _line->timeline.back().time.frame;
         if (targetTime.frame > sessionEndFrame)
             targetTime = TTDTimePoint{sessionEndFrame, 0};
         const int64_t atOrBefore = TimelineIndexAtOrBefore(targetTime);
@@ -5835,7 +6199,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
         const TTDWriteIndex& writes = _engine->Writes();
         const std::vector<TTDJournalSegment> segments =
             q.access == TTDAccessType::Write ? writes.Segments() : std::vector<TTDJournalSegment>{};
-        auto startT = [&](size_t index) { return CheckpointStartT(_timeline[index]); };
+        auto startT = [&](size_t index) { return CheckpointStartT(_line->timeline[index]); };
         auto segmentOf = [&](uint64_t after, uint64_t upTo) -> int {
             for (size_t k = 0; k < segments.size(); ++k)
                 if (segments[k].from <= after && upTo <= segments[k].to)
@@ -5857,7 +6221,7 @@ TTDFindResult TimeTravelController::FindAccesses(const TTDSearchQuery& q, const 
 
         for (size_t i = targetCpIdx + 1; atOrBefore >= 0 && !stopped && i-- > 0;)
         {
-            const TTDCheckpoint& cp = _timeline[i];
+            const TTDCheckpoint& cp = _line->timeline[i];
             const uint64_t intervalEndT = i == targetCpIdx ? beforeT : startT(i + 1);
             if (intervalEndT < floorT)
             {
@@ -6005,14 +6369,18 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
         result.error = "probe-frames takes 1.." + std::to_string(controllers::HapticFrame::kMaxProbes) + " probes";
         return result;
     }
-    // A frame is complete when the next one's checkpoint ends it: the last checkpoint is the history's end
-    if (_timeline.size() < 2 || !_context || !_context->pEmulator || !breakpoints)
+    // A frame is complete when the next one's checkpoint ends it: the last checkpoint is the history's end. The
+    // checkpoints are the active lineage's (engine indices; one line without branches)
+    const LineageViewGuard lineageView{*this};
+    const size_t firstIndex = LineageFirstIndex();
+    const size_t endIndex = LineageEndIndex();
+    if (endIndex < firstIndex + 2 || !_context || !_context->pEmulator || !breakpoints)
     {
         result.error = breakpoints ? "no complete recorded frame" : "no debugger on this machine";
         return result;
     }
-    const uint64_t firstFrame = _timeline.front().time.frame;
-    const uint64_t lastFrame = _timeline[_timeline.size() - 2].time.frame;
+    const uint64_t firstFrame = ViewLineageCheckpoint(firstIndex)->time.frame;
+    const uint64_t lastFrame = ViewLineageCheckpoint(endIndex - 2)->time.frame;
     result.fromFrame = std::max(fromFrame, firstFrame);
     result.toFrame = std::min(toFrame, lastFrame);
     if (result.fromFrame > result.toFrame)
@@ -6076,12 +6444,12 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
     {
         breakpoints->SetReplayTapSink(sink.SinkId());
         _replayTaps = true;
-        size_t i = 0;
-        while (i + 1 < _timeline.size() && _timeline[i].time.frame < result.fromFrame)
+        size_t i = firstIndex;
+        while (i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame < result.fromFrame)
             ++i;
-        for (; i + 1 < _timeline.size() && _timeline[i].time.frame <= result.toFrame; ++i)
+        for (; i + 1 < endIndex && ViewLineageCheckpoint(i)->time.frame <= result.toFrame; ++i)
         {
-            const TTDCheckpoint& cp = _timeline[i];
+            const TTDCheckpoint& cp = *ViewLineageCheckpoint(i);
             const uint64_t frame = cp.time.frame;
             if (const std::optional<TTDExternalEvent> barrier =
                     FirstBarrierBetween(cp.time, TTDTimePoint{frame, FrameSpan()}))
@@ -6127,7 +6495,7 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
                 full = full && (!entry.error.empty() || entry.frames.size() >= limit);
             }
             // Every list is full: the rest of the window is the next call's
-            if (full && frame < result.toFrame && i + 2 < _timeline.size())
+            if (full && frame < result.toFrame && i + 2 < endIndex)
             {
                 result.truncated = true;
                 result.nextFromFrame = frame + 1;
@@ -6166,13 +6534,15 @@ TTDCpuView TimeTravelController::ReadCpuView(const TTDTimePoint& at, uint16_t of
     TTDCpuView view;
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
+    const LineageViewGuard lineageView{*this};   // with branches: the lineage line holding the moment
+    ViewOwnerOfFrame(at.frame);
     Memory* memory = _context ? _context->pMemory : nullptr;
-    if (_timeline.empty() || !memory || !_context->pEmulator)
+    if (_line->timeline.empty() || !memory || !_context->pEmulator)
     {
         view.error = "no recorded history";
         return view;
     }
-    if (at < _timeline.front().time || SessionEndPosition() < at)
+    if (at < _line->timeline.front().time || SessionEndPosition() < at)
     {
         view.error = "the point is outside the recorded history";
         return view;
@@ -6216,12 +6586,14 @@ bool TimeTravelController::ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t
                                                 TTDCpuView& view)
 {
     Memory* memory = _context ? _context->pMemory : nullptr;
-    if (_timeline.empty() || !memory || !_engine)
+    const LineageViewGuard lineageView{*this};   // with branches: the lineage line holding the moment
+    ViewOwnerOfFrame(at.frame);
+    if (_line->timeline.empty() || !memory || !_engine)
         return false;
     const int64_t i = TimelineIndexAtOrBefore(at);
-    if (i < 0 || at.frame > _timeline.back().time.frame)
+    if (i < 0 || at.frame > _line->timeline.back().time.frame)
         return false;
-    const TTDCheckpoint& cp = _timeline[size_t(i)];
+    const TTDCheckpoint& cp = _line->timeline[size_t(i)];
     const int64_t engineIndex = _engine->CheckpointIndexOf({0, cp.time.frame, 0});
     const TTDEngineCheckpoint* engineCp = engineIndex >= 0 ? _engine->Checkpoint(size_t(engineIndex)) : nullptr;
     // The seek lands on the checkpoint itself up to the CPU's overshoot past the frame boundary
@@ -6280,7 +6652,7 @@ bool TimeTravelController::StepBackInstruction()
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepBackInstruction — no recorded history");
         return false;
@@ -6321,7 +6693,7 @@ bool TimeTravelController::StepForwardInstruction()
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::StepForwardInstruction — no recorded history");
         return false;
@@ -6375,6 +6747,29 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
                                       std::vector<TTDM1Record>& outM1s,
                                       TTDExternalEvent* outBlockingMarkerStorage)
 {
+    if (_lines.size() <= 1)
+        return EnumerateM1InRangeOnLine(startGlobalT, endGlobalT, outM1s, outBlockingMarkerStorage);
+    // Branches (§4.4): each lineage line's part of the range, newest first, prepended to keep the order
+    EnumerateResult result;
+    outM1s.clear();
+    std::vector<TTDM1Record> part;
+    WalkLineageBack(endGlobalT, [&](uint64_t lineStart, uint64_t upTo) {
+        const EnumerateResult r =
+            EnumerateM1InRangeOnLine(std::max(startGlobalT, lineStart), upTo, part, outBlockingMarkerStorage);
+        outM1s.insert(outM1s.begin(), part.begin(), part.end());
+        if (!part.empty() || r.barrier)
+            result.earliestScannedGlobalT = r.earliestScannedGlobalT;
+        result.barrier = r.barrier;
+        return !r.barrier && lineStart > startGlobalT;
+    });
+    return result;
+}
+
+TimeTravelController::EnumerateResult
+TimeTravelController::EnumerateM1InRangeOnLine(uint64_t startGlobalT, uint64_t endGlobalT,
+                                               std::vector<TTDM1Record>& outM1s,
+                                               TTDExternalEvent* outBlockingMarkerStorage)
+{
     EnumerateResult result;
     const KnownMemoryScope knownMemory{*this};   // the frame loop restores checkpoints incrementally
     if (outBlockingMarkerStorage)
@@ -6387,7 +6782,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
         MLOGWARNING("TimeTravelController::EnumerateM1InRange — null _context or pEmulator");
         return result;
     }
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGINFO("TimeTravelController::EnumerateM1InRange — empty timeline");
         return result;
@@ -6403,7 +6798,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
 
     const uint32_t frameT = FrameSpan();  // TTD time units per frame (B4)
     const uint64_t sessionEndGlobalT =
-        GlobalT(_timeline.back().time);
+        GlobalT(_line->timeline.back().time);
     if (endGlobalT > sessionEndGlobalT)
         endGlobalT = sessionEndGlobalT;
     if (startGlobalT >= endGlobalT)
@@ -6433,7 +6828,7 @@ TimeTravelController::EnumerateM1InRange(uint64_t startGlobalT,
     bool hitBarrier = false;
     for (size_t i = endCpIdx + 1; i-- > 0; )
     {
-        const TTDCheckpoint& cp = _timeline[i];
+        const TTDCheckpoint& cp = _line->timeline[i];
 
         // Interval end for this checkpoint. For the endCpIdx we use
         // endTime.tInFrame; for earlier checkpoints the whole frame.
@@ -6551,7 +6946,7 @@ bool TimeTravelController::ReverseStepInstructions(uint32_t n)
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseStepInstructions — no recorded history");
         return false;
@@ -6652,7 +7047,7 @@ bool TimeTravelController::ReverseStepTStates(uint64_t n)
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseStepTStates — no recorded history");
         return false;
@@ -6735,7 +7130,7 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
-    if (_timeline.empty())
+    if (_line->timeline.empty())
     {
         MLOGWARNING("TimeTravelController::ReverseContinue — no recorded history");
         return result;
@@ -6772,7 +7167,10 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     const TTDTimePoint windowTo = query.beforeGlobalT == UINT64_MAX
                                       ? now
                                       : std::min(TimePointAt(query.beforeGlobalT), SessionEndPosition());
-    const TTDTimePoint windowFloor = std::max(_timeline.front().time, TTDTimePoint{query.fromFrame, 0});
+    // The walk covers the whole lineage: its floor is the trunk's start, not the viewed line's fork
+    const TTDTimePoint sessionStart = _lines.front()->timeline.empty() ? _line->timeline.front().time
+                                                                         : _lines.front()->timeline.front().time;
+    const TTDTimePoint windowFloor = std::max(sessionStart, TTDTimePoint{query.fromFrame, 0});
 
     // TD-8: the scan walks back from the bound and ends at the limit, at a barrier it cannot replay across, at
     // from_frame or at the session start
@@ -6860,9 +7258,10 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     uint64_t coverFirst = 0, coverLast = 0;
     const bool coverageUsable =
         _enableCoverageIndex &&
-        _coverageIndex.CoveredRange(TTDCoverageKind::Executed, coverFirst, coverLast);
+        LineageCoveredRange(TTDCoverageKind::Executed, coverFirst, coverLast);
     // Coverage may reach back before the history limit's start
-    coverFirst = std::max(coverFirst, _timeline.front().time.frame);
+    coverFirst = std::max(coverFirst, _lines.front()->timeline.empty() ? _line->timeline.front().time.frame
+                                                                         : _lines.front()->timeline.front().time.frame);
 
     if (coverageUsable && endT > 0)
     {
@@ -7097,7 +7496,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out, bool withMemory
 
     // Peripherals — the same registry the checkpoints are captured through
     _peripherals.SaveLive(out.deviceStates);
-    out.inputCursor = _inputCursor;
+    out.inputCursor = _line->inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
     out.engineEventCursor = _engineEventCursor;
     out.cardEditFrame = _cardEditFrame;
@@ -7214,7 +7613,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
         }
     }
 
-    _inputCursor = snap.inputCursor;
+    _line->inputCursor = snap.inputCursor;
     _inputPlaybackArmed = snap.inputPlaybackArmed;
     // The engine's events too: a replay in between (the picture of a seek) delivered the ones up to its end, which
     // the caller's position has still ahead (a fast tape load's edit right after the first keyframe)
@@ -7287,9 +7686,11 @@ const TTDFrameCache* TimeTravelController::GetFrameCache(uint64_t frame)
     {
         return nullptr;
     }
-    if (_timeline.empty())
+    const LineageViewGuard lineageView{*this};   // with branches: the lineage line holding the frame
+    ViewOwnerOfFrame(frame);
+    if (_line->timeline.empty())
         return nullptr;
-    if (frame > _timeline.back().time.frame)
+    if (frame > _line->timeline.back().time.frame)
         return nullptr;
 
     if (_frameCache && _frameCache->frame == frame)
@@ -7363,7 +7764,7 @@ TTDCoverageProbeResult TimeTravelController::QueryCoverageProbe(
     // "true" whenever it cannot prove absence), so an exact probe must first confirm the frame
     // is inside [firstCovered, lastCovered]. Frames outside the covered range report
     // indexAvailable=false instead of a false-positive "touched".
-    result.indexAvailable = _coverageIndex.CoversFrame(kind, frame);
+    result.indexAvailable = CoverageOfFrame(frame).CoversFrame(kind, frame);
     if (!result.indexAvailable)
     {
         return result;
@@ -7407,7 +7808,7 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
     result.addrTo = addrTo;
     result.physPage = physPage;
 
-    result.indexAvailable = (_coverageIndex.SealedFrameCount(kind) > 0);
+    result.indexAvailable = (LineageHasCoverage(kind));
     if (!result.indexAvailable)
     {
         return result;
@@ -7416,7 +7817,7 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
     limit = std::clamp(limit, size_t{1}, kCoverageScanLimitMax);
 
     uint64_t firstCovered = 0, lastCovered = 0;
-    if (!_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
+    if (!LineageCoveredRange(kind, firstCovered, lastCovered))
     {
         return result;
     }
@@ -7512,9 +7913,9 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
     result.kind = kind;
     result.maxFrames = maxFrames = std::clamp<uint32_t>(maxFrames, 1, kCoverageRareMaxFrames);
     limit = std::clamp(limit, size_t{1}, kCoverageScanLimitMax);
-    result.indexAvailable = _coverageIndex.SealedFrameCount(kind) > 0;
+    result.indexAvailable = LineageHasCoverage(kind);
     uint64_t firstCovered = 0, lastCovered = 0;
-    if (!result.indexAvailable || !_coverageIndex.CoveredRange(kind, firstCovered, lastCovered))
+    if (!result.indexAvailable || !LineageCoveredRange(kind, firstCovered, lastCovered))
         return result;
     result.coveredFrom = firstCovered;
     result.coveredTo = lastCovered;
@@ -7551,7 +7952,7 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
     for (uint64_t f = startFrame; f <= endFrame; ++f)
     {
         result.scannedFrames++;
-        if (!_coverageIndex.GetFrameKeys(kind, f, keys))
+        if (!CoverageOfFrame(f).GetFrameKeys(kind, f, keys))
         {
             result.unindexedFrames++;
             continue;
@@ -7615,10 +8016,10 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
     {
         if (!memory || block.frames.empty() || block.pageField > kCoverageNoPageField)
             continue;
-        const int64_t i = TimelineIndexAtOrBefore({block.frames.front(), 0});
-        if (i < 0 || _timeline[size_t(i)].time.frame != block.frames.front() || !_timeline[size_t(i)].cpuWindows.valid)
+        const TTDCheckpoint* cp = LineageCheckpointAtFrame(block.frames.front());
+        if (!cp || !cp->cpuWindows.valid)
             continue;
-        const TTDCpuWindows& windows = _timeline[size_t(i)].cpuWindows;
+        const TTDCpuWindows& windows = cp->cpuWindows;
         int found = -1;
         for (uint8_t w = 0; w < 4; ++w)
         {
@@ -7648,9 +8049,9 @@ TTDCoverageSummaryResult TimeTravelController::QueryCoverageSummary(
     result.fromFrame = fromFrame;
     result.toFrame = toFrame;
 
-    result.indexAvailable = (_coverageIndex.SealedFrameCount(TTDCoverageKind::Executed) > 0 ||
-                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Written) > 0 ||
-                             _coverageIndex.SealedFrameCount(TTDCoverageKind::Read) > 0);
+    result.indexAvailable = (LineageHasCoverage(TTDCoverageKind::Executed) ||
+                             LineageHasCoverage(TTDCoverageKind::Written) ||
+                             LineageHasCoverage(TTDCoverageKind::Read));
     if (!result.indexAvailable)
     {
         return result;
@@ -7662,7 +8063,7 @@ TTDCoverageSummaryResult TimeTravelController::QueryCoverageSummary(
     {
         const TTDCoverageKind coveredKind = static_cast<TTDCoverageKind>(k);
         uint64_t firstCovered = 0, lastCovered = 0;
-        if (_coverageIndex.CoveredRange(coveredKind, firstCovered, lastCovered))
+        if (LineageCoveredRange(coveredKind, firstCovered, lastCovered))
         {
             result.coveredFrom = (result.coveredFrom == 0) ? firstCovered : std::min(result.coveredFrom, firstCovered);
             result.coveredTo = std::max(result.coveredTo, lastCovered);
@@ -7712,7 +8113,7 @@ TTDCoverageSummaryResult TimeTravelController::QueryCoverageSummary(
             distinctExec.clear();
             for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
             {
-                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Executed, f, keysScratch))
+                if (CoverageOfFrame(f).GetFrameKeys(TTDCoverageKind::Executed, f, keysScratch))
                 {
                     distinctExec.insert(keysScratch.begin(), keysScratch.end());
                 }
@@ -7725,7 +8126,7 @@ TTDCoverageSummaryResult TimeTravelController::QueryCoverageSummary(
             distinctWrite.clear();
             for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
             {
-                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Written, f, keysScratch))
+                if (CoverageOfFrame(f).GetFrameKeys(TTDCoverageKind::Written, f, keysScratch))
                 {
                     distinctWrite.insert(keysScratch.begin(), keysScratch.end());
                 }
@@ -7738,7 +8139,7 @@ TTDCoverageSummaryResult TimeTravelController::QueryCoverageSummary(
             distinctRead.clear();
             for (uint64_t f = bucket.frameStart; f <= bucket.frameEnd; ++f)
             {
-                if (_coverageIndex.GetFrameKeys(TTDCoverageKind::Read, f, keysScratch))
+                if (CoverageOfFrame(f).GetFrameKeys(TTDCoverageKind::Read, f, keysScratch))
                 {
                     distinctRead.insert(keysScratch.begin(), keysScratch.end());
                 }

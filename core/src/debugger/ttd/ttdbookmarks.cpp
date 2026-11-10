@@ -137,6 +137,18 @@ bool TTDBookmarkJournal::Remove(const std::string& label)
     return true;
 }
 
+size_t TTDBookmarkJournal::RemoveOnBranches(const std::vector<uint32_t>& branches)
+{
+    std::lock_guard<std::mutex> lk(_mutex);
+    const size_t before = _bookmarks.size();
+    _bookmarks.erase(std::remove_if(_bookmarks.begin(), _bookmarks.end(),
+                                    [&](const TTDBookmark& b) {
+                                        return std::find(branches.begin(), branches.end(), b.branch) != branches.end();
+                                    }),
+                     _bookmarks.end());
+    return before - _bookmarks.size();
+}
+
 void TTDBookmarkJournal::DropBefore(const TTDTimePoint& t)
 {
     std::lock_guard<std::mutex> lk(_mutex);

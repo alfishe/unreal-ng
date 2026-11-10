@@ -87,6 +87,28 @@ inline bool IsHolderStream(uint16_t id)
 {
     return (id >= 8 && id <= 12) || (id >= kHolderFirstFree && id <= 0x00FF);
 }
+/// Branches (docs/inprogress/2026-11-08-ttd-branches/storage.md §3): the branch table, then each trunk stream's
+/// twin for a branch's records (0x0200 + id for ids 1..0x3F, 0x0240 + the engine id for frame streams). All
+/// ancillary: a reader without branches skips them and loads the trunk
+constexpr uint16_t kBranchTable = 0x0200;
+constexpr uint16_t kBranchFirst = 0x0201;
+constexpr uint16_t kBranchLast = 0x023F;
+constexpr uint16_t kBranchFrameFirst = 0x0240;
+constexpr uint16_t kBranchFrameLast = 0x027F;
+/// A trunk stream's id -> its branch twin (0 when it has none)
+inline uint16_t BranchTwin(uint16_t id)
+{
+    if (id >= kFrameStreamFirst && id <= kFrameStreamLast)
+        return static_cast<uint16_t>(kBranchFrameFirst + (id - kFrameStreamFirst));
+    return id >= 1 && id <= 0x3F ? static_cast<uint16_t>(kBranchTable + id) : 0;
+}
+/// A branch twin's id -> the trunk stream it mirrors (0 when @p id is not a twin)
+inline uint16_t TrunkOfTwin(uint16_t id)
+{
+    if (id >= kBranchFrameFirst && id <= kBranchFrameLast)
+        return static_cast<uint16_t>(kFrameStreamFirst + (id - kBranchFrameFirst));
+    return id >= kBranchFirst && id <= kBranchLast ? static_cast<uint16_t>(id - kBranchTable) : 0;
+}
 }  // namespace sessionstream
 
 /// Data the engine's holder keeps with a session (the controller's coverage
@@ -111,6 +133,19 @@ struct TTDSessionSaveParams
     /// Declared in the header; their bytes go with the session's last part
     /// (a writer recording as it goes takes them at Finish: SetHolderStreams)
     std::vector<TTDHolderStream> holderStreams;
+    /// Save: every live line (branches); false writes one lineage as a linear file (storage.md §5, "save
+    /// lineage"): the trunk up to the first fork, each branch up to the next, all on trunk streams
+    bool allLines = true;
+    /// allLines false: the line the lineage ends at (engine line id); UINT32_MAX the active line
+    uint32_t lineageOf = UINT32_MAX;
+    /// A recording folder's file of one line (storage.md §4): the active line's engine id, which is also its id in
+    /// the file. A branch's file declares the branch streams; its first file starts with the branch's creation and
+    /// the fork's copy whole (every piece), so the file needs no other. UINT32_MAX: not a folder file
+    uint32_t fileLine = UINT32_MAX;
+    /// Per branch line (engine line id): the holder's record of the branch (identity, metadata), kept with the
+    /// branch's creation in the branch table, and its own holder streams (ids <= 0x3F), with its last part
+    std::map<uint32_t, std::vector<uint8_t>> lineMeta;
+    std::map<uint32_t, std::vector<TTDHolderStream>> lineHolderStreams;
 };
 
 struct TTDSessionLoadReport
@@ -123,6 +158,11 @@ struct TTDSessionLoadReport
     std::string stoppedAt;       ///< why the load stopped early
     std::vector<std::string> notes;   ///< the container's notes (scan, skipped streams)
     std::map<uint16_t, std::vector<uint8_t>> holderStreams;   ///< by id, as saved (absent: none, or not reached)
+    /// Branches: the lines loaded (the trunk is line 0, branches in file order 1..), per line the holder's record
+    /// and its holder streams (by the trunk's ids)
+    size_t lines = 1;
+    std::map<uint32_t, std::vector<uint8_t>> lineMeta;
+    std::map<uint32_t, std::map<uint16_t, std::vector<uint8_t>>> lineHolderStreams;
 };
 
 /// How far the writer thread may fall behind (TTDSessionWriter)
@@ -144,6 +184,11 @@ struct TTDSessionWriterLimits
 /// part 0 (checkpoints 0-49); the writer thread appends its records and its
 /// part end and syncs. At stop, Finish() queues checkpoints 50-... with the
 /// write journal, then the index and the trailer, and waits for the thread.
+/// The branch table's create record (storage.md §3.1): {U8 1, local, parent local, fork frame, fork T, Varint size,
+/// the holder's record}
+std::vector<uint8_t> TTDBranchCreateRecord(uint32_t local, uint32_t parentLocal, uint64_t forkFrame, uint32_t forkT,
+                                           const std::vector<uint8_t>& meta);
+
 class TTDSessionWriter
 {
 public:
@@ -168,6 +213,11 @@ public:
     bool Finish(const TimeTravelEngine& engine, size_t end = SIZE_MAX);
     /// The holder streams' bytes for the last part (ids declared at Begin)
     void SetHolderStreams(std::vector<TTDHolderStream> streams) { _params.holderStreams = std::move(streams); }
+    /// Save with branches: every live line one after another (the trunk first, as a file without branches), each
+    /// branch in its streams' twins, then the index. Instead of Finish; the engine's active line is kept
+    bool WriteAllLines(TimeTravelEngine& e);
+    /// Write the lineage ending at line @p tip as one linear file (TTDSessionSaveParams::lineageOf), after Begin
+    bool WriteLineage(TimeTravelEngine& e, uint32_t tip);
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
@@ -185,7 +235,12 @@ private:
         uint64_t bytes = 0;
     };
     bool BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job);
+    /// The stream a record of the line being written goes to
+    uint16_t StreamOf(uint16_t trunkId) const { return _local == 0 ? trunkId : sessionstream::BranchTwin(trunkId); }
     bool CollectParts(const TimeTravelEngine& e);
+    /// The branch table's create record of @p line (engine id): {U8 1, local, parent local, fork frame, fork T, meta}
+    std::vector<uint8_t> CreateRecord(uint32_t local, uint32_t parentLocal, uint64_t forkFrame, uint32_t forkT,
+                                      uint32_t line) const;
     void Queue(PartJob&& job);
     void Write(PartJob& job);
     void Run();
@@ -210,6 +265,22 @@ private:
     std::string _buildError;   ///< the engine's thread only
     std::map<uint32_t, std::vector<uint8_t>> _streamPrevious;   ///< frame streams: the last copy written
     std::map<uint32_t, uint32_t> _streamSinceFull;
+    // Branches (WriteAllLines): the line being written, its number in the file, and each written line's layout
+    struct LineLayout
+    {
+        uint32_t local = 0;
+        uint32_t parent = 0xFFFFFFFFu;   ///< engine line id
+        std::unordered_map<uint32_t, uint32_t> itemOf;
+        std::vector<uint32_t> itemPart;
+        std::vector<std::pair<size_t, uint32_t>> parts;   ///< (first checkpoint, part index), in order
+    };
+    std::map<uint32_t, LineLayout> _layouts;   ///< by engine line id
+    uint32_t _lineId = 0;
+    uint32_t _local = 0;
+    uint32_t _linePart = 0;   ///< parts written for the line so far
+    bool _lineage = false;    ///< WriteLineage: every line on trunk streams, no write journal (derived, per line)
+    /// A version's number in the file: on the line being written, else on its nearest ancestor that has it
+    bool FindItem(uint32_t storeId, uint32_t& local, uint32_t& item, uint32_t& part) const;
 
     // The writer thread
     std::thread _thread;
@@ -237,6 +308,9 @@ public:
 
     /// The stream ids this version reads
     static bool KnownStream(uint16_t id);
+    /// Tests: Load as a reader without branch support would (the branch table and the twins unknown, every part
+    /// read as the trunk's), the old reader of storage.md §5; true again restores the normal reading
+    static void SetBranchReadingForTesting(bool on);
     /// The recorded machine's devices (the session's device table), without loading the session (file-info)
     static bool ReadDevices(const ITTDByteSource& source, std::vector<TTDDeviceDescriptor>& out, std::string& error);
 

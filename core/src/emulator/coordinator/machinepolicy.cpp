@@ -42,7 +42,9 @@ constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 // - media: while a recording the user started runs, a change is an event of the recording (M3, owner 2026-10-10:
 //   the history keeps the change and then ports and sectors only): it lands at the next frame boundary and the
 //   recording goes on; a caller that asks to end the recording ends it instead; everywhere else the TTD media rule
-//   (OnLoad(Media)): a background session ends, a kept history goes.
+//   (OnLoad(Media)): a background session ends, a kept history goes. In the recorded past (a replay, a point of a
+//   history being browsed) a media change is refused with a hint (TTD branches O-1, owner 2026-11-08): the history
+//   and its branches are never ended by it.
 // D43 cells (owner 2026-10-10, M2):
 // - network settings, an IDE unit's drive: refused while a recording the user started runs and in the recorded past
 //   (replay, detached); the black box ends its session as for a medium; live: nothing for TTD (a host-side setting,
@@ -61,8 +63,8 @@ constexpr Cell kRefuse{Action::Refuse, SessionEffect::None};
 // A tool's edit (any surface): nothing for the session at the commit point - while a recording runs the edit is
 // recorded as an event of it (BeginToolEdit / EndToolEdit around it; a paused recording the user started goes on
 // there, D9) and the machine is held for it; live, it is written as it comes (no hold: a script's pokes stay cheap).
-// In the recorded past (a replay, a point of a stopped history) it is refused (owner 2026-10-11, §4): nothing would
-// keep it - the next seek sets the point back, a replay goes off its recording; Rec From Here first.
+// In the recorded past (a replay, a point of a stopped history) it forks a branch there and is recorded as its
+// first event (TTD branches, architecture.md §4.5; it was refused before branches kept the old future), held.
 // TTD's own operations (start, stop, discard, a seek, a load, Rec From Here): TTD decides where they may go (its
 // replies refuse them), the rules add nothing; they run on TTD's own lock (IMachineOps::RunOwnLocked, M6).
 // A reset, an autostart's reset and a snapshot load take the machine off the path an RZX playback drives: the playback
@@ -77,14 +79,10 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::Reset, true, true, true, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
     {OpKind::Autostart, true, true, true, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
     {OpKind::SnapshotLoad, true, false, true, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
-    {OpKind::MediaInsert, false, false, false,
-     {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
-    {OpKind::MediaEject, false, false, false,
-     {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
-    {OpKind::MediaDiscard, false, false, false,
-     {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
-    {OpKind::DiskCreate, false, false, false,
-     {Allow(kMedia), kMediaRecording, Allow(kMedia), Allow(kMedia), Allow(kMedia)}},
+    {OpKind::MediaInsert, false, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), kRefuse, kRefuse}},
+    {OpKind::MediaEject, false, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), kRefuse, kRefuse}},
+    {OpKind::MediaDiscard, false, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), kRefuse, kRefuse}},
+    {OpKind::DiskCreate, false, false, false, {Allow(kMedia), kMediaRecording, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::NetworkChange, false, false, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::IdeDriveKind, true, false, false, {Allow(kNone), kRefuse, Allow(kMedia), kRefuse, kRefuse}},
     {OpKind::RzxRestore, true, false, false, {Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep), Allow(kKeep)}},
@@ -101,7 +99,7 @@ constexpr std::array<Row, static_cast<size_t>(OpKind::Count)> kTable{{
     {OpKind::SlotChange, false, false, false, {Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone)}},
     {OpKind::CdFrontPanel, false, false, false, {Allow(kNone), kRefuse, Allow(kNone), Allow(kNone), Allow(kNone)}},
     {OpKind::ToolEdit, false, false, false,
-     {Allow(kNone), AllowHeld(kNone), AllowHeld(kNone), kRefuse, kRefuse}},
+     {Allow(kNone), AllowHeld(kNone), AllowHeld(kNone), AllowHeld(kNone), AllowHeld(kNone)}},
     {OpKind::TtdStart, false, false, false,
      {Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone), Allow(kNone)}},
     {OpKind::TtdStop, false, false, false,
@@ -134,9 +132,10 @@ std::string RefusalText(const MachineOp& op, MachineMode mode)
         return past ? "the machine is in recorded history (a TTD replay or a point in the past): its hardware is fixed "
                       "until it is live again"
                     : "a TTD recording runs: the machine's hardware is fixed until it stops";
-    if (op.kind == OpKind::ToolEdit)
-        return "the machine is in recorded history (a TTD replay or a point in the past): an edit would not be kept. "
-               "Continue the recording from here (ttd resume) or go back to live first";
+    if (op.kind == OpKind::MediaInsert || op.kind == OpKind::MediaEject || op.kind == OpKind::MediaDiscard ||
+        op.kind == OpKind::DiskCreate)
+        return "the machine is in recorded history (a TTD replay or a point in the past): media stay as recorded. Go "
+               "back to the branch end, or resume recording here first (that forks a branch), then change the media";
     if (op.kind == OpKind::CdFrontPanel)
         return "Cannot play, pause, stop or change the volume of a CD drive from outside the guest while TTD is "
                "recording: a replay would not repeat it. Let the guest's CD player do it, or stop the recording first.";

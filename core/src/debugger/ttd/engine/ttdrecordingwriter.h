@@ -13,6 +13,7 @@
 /// JoinSessionFiles copies their records into one file without decoding them.
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +41,16 @@ public:
     bool Begin(const TimeTravelEngine& engine, std::string& error);
     /// After each capture: a new segment closes the current file and opens the next
     bool Collect(TimeTravelEngine& engine);
+    /// Before the engine is truncated: the writer thread stops (it reads the
+    /// engine's data) and the open file stays as it is, without an index, for
+    /// RewindToLastSegment to write again
+    void StopWriting();
+    /// A recording resumed from the past: after StopWriting the engine was
+    /// truncated after a checkpoint (TimeTravelEngine::TruncateAfter). The files of the segments
+    /// before the cut's segment stay as written; the cut's segment and every
+    /// later file are deleted and written again from the cut segment's baseline
+    /// (the open file too, when it starts earlier: it has no index yet)
+    bool RewindToLastSegment(const TimeTravelEngine& engine, std::string& error);
     /// At stop: the current file gets the rest and its index
     bool Finish(TimeTravelEngine& engine);
     /// The holder streams' bytes for the session's last part (the ids declared in the params at construction)
@@ -49,6 +60,9 @@ public:
         if (_writer)
             _writer->SetHolderStreams(std::move(streams));
     }
+
+    /// Called with each file's path once it is closed with its index (a recording folder's branches.tdx)
+    void SetOnFileClosed(std::function<void(const std::string&)> fn) { _onClosed = std::move(fn); }
 
     bool Failed() const { return !_error.empty() || (_writer && _writer->Failed()); }
     std::string Error() const;
@@ -62,7 +76,11 @@ private:
     TTDSessionSaveParams _params;
     bool _background;
     uint32_t _segment = 0;          ///< files closed
+    bool _stopped = false;          ///< StopWriting left the open file
+    std::vector<size_t> _fileFirsts;   ///< per file written (closed or open), its first checkpoint
     size_t _first = 0;              ///< the open file's first checkpoint
+    std::string _openPath;
+    std::function<void(const std::string&)> _onClosed;
     std::unique_ptr<TTDFileSink> _sink;
     std::unique_ptr<TTDSessionWriter> _writer;
     std::string _error;

@@ -84,6 +84,8 @@ TimeTravelEngine::TimeTravelEngine(std::shared_ptr<TTDPieceStore> store)
     : _store(store ? std::move(store) : std::make_shared<TTDPieceStore>()),
       _tables(std::make_unique<TTDRefTables>(*_store))
 {
+    _lines.push_back(std::make_unique<BranchLine>(_payloads));
+    _line = _lines.front().get();
 }
 
 TimeTravelEngine::~TimeTravelEngine()
@@ -167,10 +169,10 @@ bool TimeTravelEngine::BeginSession(const std::vector<TTDRegionDesc>& memoryRegi
     }
     _syncMissCount = 0;
     _syncMisses.clear();
-    _busReads.StartRecording();
-    _busWrites.StartRecording();
-    _busVectors.StartRecording();
-    _mediaReads.StartRecording();
+    _line->busReads.StartRecording();
+    _line->busWrites.StartRecording();
+    _line->busVectors.StartRecording();
+    _line->mediaReads.StartRecording();
     _open = true;
     return true;
 }
@@ -179,14 +181,14 @@ bool TimeTravelEngine::SetConfiguration(uint64_t frame, TTDConfigFingerprint fin
 {
     if (!_open)
         return false;
-    if (!_configs.empty() && _configs.back().fingerprint == fingerprint)
+    if (!_line->configs.empty() && _line->configs.back().fingerprint == fingerprint)
         return true;
-    _configs.push_back({frame, std::move(fingerprint)});
-    if (_configs.size() == 1)
+    _line->configs.push_back({frame, std::move(fingerprint)});
+    if (_line->configs.size() == 1)
         return true;
     TTDEvent cut;
     cut.kind = TTDEventKind::ConfigChange;
-    const uint32_t entry = static_cast<uint32_t>(_configs.size() - 1);
+    const uint32_t entry = static_cast<uint32_t>(_line->configs.size() - 1);
     std::memcpy(cut.args, &entry, sizeof(entry));
     return AppendEvent(frame, 0, cut);
 }
@@ -197,7 +199,7 @@ const TTDConfigFingerprint* TimeTravelEngine::ConfigurationAt(size_t index) cons
     if (!cp)
         return nullptr;
     const TTDConfigFingerprint* found = nullptr;
-    for (const TTDConfigEntry& e : _configs)
+    for (const TTDConfigEntry& e : _line->configs)
         if (e.frame <= cp->position.frame)
             found = &e.fingerprint;
     return found;
@@ -229,28 +231,28 @@ void TimeTravelEngine::NoteMediaVersion(const std::string& slot, const std::stri
     if (!_open)
         return;
     size_t i = 0;
-    while (i < _mediaSlots.size() && _mediaSlots[i].slot != slot)
+    while (i < _line->mediaSlots.size() && _line->mediaSlots[i].slot != slot)
         ++i;
-    if (i == _mediaSlots.size())
-        _mediaSlots.push_back({slot, format, hasVersions, {}});
-    TTDMediaSlot& s = _mediaSlots[i];
+    if (i == _line->mediaSlots.size())
+        _line->mediaSlots.push_back({slot, format, hasVersions, {}});
+    TTDMediaSlot& s = _line->mediaSlots[i];
     s.format = format;
     s.hasVersions = hasVersions;
-    for (auto& pending : _pendingMedia)
+    for (auto& pending : _line->pendingMedia)
         if (pending.first == i)
         {
             pending.second = version;
             return;
         }
     if (s.changes.empty() || s.changes.back().second != version)
-        _pendingMedia.emplace_back(static_cast<uint32_t>(i), version);
+        _line->pendingMedia.emplace_back(static_cast<uint32_t>(i), version);
 }
 
 bool TimeTravelEngine::MediaVersionAt(size_t index, size_t slot, TTDMediaVersion& out) const
 {
-    if (slot >= _mediaSlots.size())
+    if (slot >= _line->mediaSlots.size())
         return false;
-    const auto& changes = _mediaSlots[slot].changes;
+    const auto& changes = _line->mediaSlots[slot].changes;
     auto it = std::upper_bound(changes.begin(), changes.end(), static_cast<uint32_t>(index),
                                [](uint32_t i, const std::pair<uint32_t, TTDMediaVersion>& c) { return i < c.first; });
     if (it == changes.begin())
@@ -262,23 +264,23 @@ bool TimeTravelEngine::MediaVersionAt(size_t index, size_t slot, TTDMediaVersion
 bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent ev)
 {
     TTDMachineTime start = 0;
-    if (!_open || _frames.Empty())
+    if (!_open || _line->frames.Empty())
     {
         _payloads.Release(ev.payload);
         return false;
     }
-    if (!_frames.Start(frame, start))
+    if (!_line->frames.Start(frame, start))
     {
         // After the last recorded frame: placed by the last frame's length
-        const uint64_t last = _frames.LastFrame();
+        const uint64_t last = _line->frames.LastFrame();
         TTDMachineTime lastStart = 0, before = 0;
-        _frames.Start(last, lastStart);
-        if (frame < last || _frames.Count() < 2 || !_frames.Start(_frames.FirstFrame(), before))
+        _line->frames.Start(last, lastStart);
+        if (frame < last || _line->frames.Count() < 2 || !_line->frames.Start(_line->frames.FirstFrame(), before))
         {
             _payloads.Release(ev.payload);
             return false;
         }
-        const uint64_t frames = last - _frames.FirstFrame();
+        const uint64_t frames = last - _line->frames.FirstFrame();
         const TTDMachineTime length = frames ? (lastStart - before) / frames : 0;
         start = lastStart + (frame - last) * length;
     }
@@ -288,23 +290,23 @@ bool TimeTravelEngine::AppendEvent(uint64_t frame, uint64_t tInFrame, TTDEvent e
 
 bool TimeTravelEngine::AppendTimedEvent(const TTDEvent& ev)
 {
-    if (!_events.Append(ev))
+    if (!_line->events.Append(ev))
         return false;
     if (ev.kind == TTDEventKind::InterruptFrame)
     {
         uint64_t rzxFrame = 0;
         std::memcpy(&rzxFrame, ev.args, sizeof(rzxFrame));
-        _rzxFrames.emplace_back(rzxFrame, ev.machineTime);
+        _line->rzxFrames.emplace_back(rzxFrame, ev.machineTime);
     }
     return true;
 }
 
 bool TimeTravelEngine::RzxFrameTime(uint64_t rzxFrame, TTDMachineTime& at) const
 {
-    auto it = std::lower_bound(_rzxFrames.begin(), _rzxFrames.end(), rzxFrame,
+    auto it = std::lower_bound(_line->rzxFrames.begin(), _line->rzxFrames.end(), rzxFrame,
                                [](const std::pair<uint64_t, TTDMachineTime>& f, uint64_t n) { return f.first < n; });
     // Before the first fact only an exact frame: frames done before the session also lie below it
-    if (it == _rzxFrames.end() || (it == _rzxFrames.begin() && it->first != rzxFrame))
+    if (it == _line->rzxFrames.end() || (it == _line->rzxFrames.begin() && it->first != rzxFrame))
         return false;
     at = it->second;
     return true;
@@ -313,7 +315,7 @@ bool TimeTravelEngine::RzxFrameTime(uint64_t rzxFrame, TTDMachineTime& at) const
 TTDReplaySource TimeTravelEngine::ReplaySourceAt(TTDMachineTime t) const
 {
     TTDReplaySource source = TTDReplaySource::LiveInput;
-    for (const TTDEvent& ev : _events.Events())
+    for (const TTDEvent& ev : _line->events.Events())
     {
         if (ev.machineTime > t)
             break;
@@ -378,7 +380,7 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 {
     uint64_t frame = 0;
     TTDMachineTime start = 0;
-    if (!_frames.FrameAt(t, frame) || !_frames.Start(frame, start))
+    if (!_line->frames.FrameAt(t, frame) || !_line->frames.Start(frame, start))
         return false;
     out = TTDPosition{0, frame, t - start};
     return true;
@@ -387,20 +389,22 @@ bool TimeTravelEngine::PositionOf(TTDMachineTime t, TTDPosition& out) const
 void TimeTravelEngine::EndSession()
 {
     _readOnly = false;
-    _segments = {};
-    _streamCopies = {};
-    _configs = {};
-    _mediaSlots = {};
+    _line->segments = {};
+    _line->streamCopies = {};
+    _line->configs = {};
+    _line->mediaSlots = {};
     _screenLayouts = {};
-    _pendingMedia = {};
-    _events.Clear();
-    _rzxFrames = {};
+    _line->pendingMedia = {};
+    for (const std::unique_ptr<BranchLine>& line : _lines)
+        if (line)
+            line->events.Clear();
+    _line->rzxFrames = {};
     _payloads.Clear();
-    _busReads.Clear();
-    _busWrites.Clear();
-    _busVectors.Clear();
-    _mediaReads.Clear();
-    _writes.Clear();
+    _line->busReads.Clear();
+    _line->busWrites.Clear();
+    _line->busVectors.Clear();
+    _line->mediaReads.Clear();
+    _line->writes.Clear();
     _timeLines = {};
     _timeFields = {};
     _deviceRegion.clear();
@@ -411,18 +415,24 @@ void TimeTravelEngine::EndSession()
     _devices.Clear();
     // Change records and full tables each hold their references; releasing
     // them frees what no other session sharing the store needs
-    for (const PieceChange& c : _changes)
-        _store->Release(c.id);
-    for (TTDEngineCheckpoint& cp : _checkpoints)
-        for (const TTDEngineCheckpoint::RegionRefs& r : cp.regions)
-            if (r.snapshot)
-                _tables->Release(r.snapshot);
+    for (const std::unique_ptr<BranchLine>& line : _lines)
+        if (line)
+            ReleaseLineData(*line);
+    // The trunk alone again
+    if (_lines.size() > 1 || _lineId != 0)
+    {
+        _lines.clear();
+        _lines.push_back(std::make_unique<BranchLine>(_payloads));
+        _line = _lines.front().get();
+        _lineId = 0;
+    }
+    _headLine = 0;
 
     _open = false;
     _regions = {};
     _deltaBase.Reset(0);
-    _changes.clear();
-    _changes.shrink_to_fit();
+    _line->changes.clear();
+    _line->changes.shrink_to_fit();
     _live = {};
     _inMemory = {};
     _sinceSnapshot = {};
@@ -430,11 +440,11 @@ void TimeTravelEngine::EndSession()
     _lastSnapshot = {};
     _regionPayload = {};
     _regionVersions = {};
-    _frames.Clear();
-    _checkpoints.clear();
-    _checkpoints.shrink_to_fit();   // a deque returns its blocks
-    _cpBase = 0;
-    _changeBase = 0;
+    _line->frames.Clear();
+    _line->checkpoints.clear();
+    _line->checkpoints.shrink_to_fit();   // a deque returns its blocks
+    _line->cpBase = 0;
+    _line->changeBase = 0;
     // A store no other session shares, holding nothing now: its arena goes back too (without a session the
     // session's memory is zero)
     if (_store.use_count() == 1 && _store->LiveVersions() == 0)
@@ -469,7 +479,11 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                     std::to_string(c.piece) + ")";
             return false;
         }
-    if (!_frames.Append(input.position.frame, input.start))
+    // The head belongs to another line (the view moved): capture continues from this line's end
+    if (_headLine != _lineId && !_line->checkpoints.empty() &&
+        !RebuildHeadFrom(_line->cpBase + _line->checkpoints.size() - 1, error))
+        return false;
+    if (!_line->frames.Append(input.position.frame, input.start))
     {
         error = "frame " + std::to_string(input.position.frame) + " does not follow the last recorded frame";
         return false;
@@ -500,10 +514,10 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     TTDEngineCheckpoint cp;
     cp.position = input.position;
     cp.start = input.start;
-    cp.busReadCursor = _busReads.Size();
-    cp.busWriteCursor = _busWrites.Size();
-    cp.mediaReadCursor = _mediaReads.Size();
-    cp.busVectorCursor = _busVectors.Size();
+    cp.busReadCursor = _line->busReads.Size();
+    cp.busWriteCursor = _line->busWrites.Size();
+    cp.mediaReadCursor = _line->mediaReads.Size();
+    cp.busVectorCursor = _line->busVectors.Size();
     cp.haltedInterrupts = input.haltedInterrupts;
     cp.haltKnown = input.haltKnown;
     if (input.screen)
@@ -666,12 +680,13 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
                 sum += _regionPayload[r];
         return sum;
     }();
-    const size_t index = _cpBase + _checkpoints.size();
+    const size_t index = _line->cpBase + _line->checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
     // A segment starts here (D41): every piece is stored whole, so nothing in
     // it needs an earlier segment and a ring can drop that one whole
-    cp.baseline = _segments.empty() ||
-                  (_policy.segmentFrames > 0 && input.position.frame - _segments.back().firstFrame >= _policy.segmentFrames);
+    cp.baseline = _line->segments.empty() || _line->baselineNext ||
+                  (_policy.segmentFrames > 0 && input.position.frame - _line->segments.back().firstFrame >= _policy.segmentFrames);
+    _line->baselineNext = false;
     if (cp.baseline)
         BeginSegment(input.position.frame);
     const bool snapshot = cp.baseline || index % _snapshotInterval == 0;
@@ -681,7 +696,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     {
         TTDEngineCheckpoint::RegionRefs refs;
         refs.region = r;
-        refs.firstChange = static_cast<uint32_t>(_changeBase + _changes.size());
+        refs.firstChange = static_cast<uint32_t>(_line->changeBase + _line->changes.size());
         const std::vector<TTDChangedPiece>* pieces = IsDeviceStateRegion(r) ? &devicePieces : &input.changed;
         if (cp.baseline && index > 0)
         {
@@ -742,10 +757,10 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
     _lastWork.deviceBlobBytes -= devicePayloadBefore;
 
     const uint32_t cpIndex = static_cast<uint32_t>(index);
-    for (const auto& [slot, version] : _pendingMedia)
-        _mediaSlots[slot].changes.emplace_back(cpIndex, version);
-    _pendingMedia.clear();
-    _checkpoints.push_back(std::move(cp));
+    for (const auto& [slot, version] : _line->pendingMedia)
+        _line->mediaSlots[slot].changes.emplace_back(cpIndex, version);
+    _line->pendingMedia.clear();
+    _line->checkpoints.push_back(std::move(cp));
     _streams.CaptureEnabled(input.position);
     ReleaseHistory();
 
@@ -764,7 +779,7 @@ bool TimeTravelEngine::CaptureFrame(const TTDFrameInput& input, std::string& err
 
 void TimeTravelEngine::NoteChange(uint32_t r, uint32_t piece, TTDPieceId next)
 {
-    _changes.push_back({piece, next});
+    _line->changes.push_back({piece, next});
     _regionPayload[r] += _store->PayloadSize(next);
     ++_regionVersions[r];
     _live[r][piece] = next;
@@ -779,7 +794,7 @@ void TimeTravelEngine::CloseRegion(TTDEngineCheckpoint& cp, TTDEngineCheckpoint:
                                    bool fresh)
 {
     const uint32_t r = refs.region;
-    refs.changeCount = static_cast<uint32_t>(_changeBase + _changes.size() - refs.firstChange);
+    refs.changeCount = static_cast<uint32_t>(_line->changeBase + _line->changes.size() - refs.firstChange);
     if (snapshot)
     {
         // A full table: the previous one, with the pieces changed since
@@ -811,16 +826,16 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
         error = "no session";
         return false;
     }
-    if (!_frames.Append(cp.position.frame, cp.start))
+    if (!_line->frames.Append(cp.position.frame, cp.start))
     {
         error = "frame " + std::to_string(cp.position.frame) + " does not follow the last recorded frame";
         return false;
     }
     _readOnly = true;   // capture state (the delta base) is not in a file: a loaded session is not continued
-    const size_t index = _cpBase + _checkpoints.size();
+    const size_t index = _line->cpBase + _line->checkpoints.size();
     cp.parent = index == 0 ? TTDEngineCheckpoint::kNoParent : static_cast<uint32_t>(index - 1);
     cp.regions.clear();
-    if (_segments.empty())
+    if (_line->segments.empty())
         cp.baseline = true;
     if (cp.baseline)
         BeginSegment(cp.position.frame);
@@ -830,7 +845,7 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
     {
         TTDEngineCheckpoint::RegionRefs refs;
         refs.region = r;
-        refs.firstChange = static_cast<uint32_t>(_changeBase + _changes.size());
+        refs.firstChange = static_cast<uint32_t>(_line->changeBase + _line->changes.size());
         for (; next < changes.size() && changes[next].region == r; ++next)
         {
             const TTDImportedChange& c = changes[next];
@@ -849,7 +864,7 @@ bool TimeTravelEngine::ImportCheckpoint(TTDEngineCheckpoint cp, const std::vecto
         error = "changes are not sorted by region";
         return false;
     }
-    _checkpoints.push_back(std::move(cp));
+    _line->checkpoints.push_back(std::move(cp));
     return true;
 }
 
@@ -860,13 +875,13 @@ const TTDEngineCheckpoint* TimeTravelEngine::Checkpoint(size_t index) const
 
 void TimeTravelEngine::AddFrameStreamCopy(uint32_t stream, uint64_t frame, const uint8_t* data, size_t size)
 {
-    _streamCopies[stream].push_back({frame, std::vector<uint8_t>(data, data + size)});
+    _line->streamCopies[stream].push_back({frame, std::vector<uint8_t>(data, data + size)});
 }
 
 bool TimeTravelEngine::FrameStreamCopy(uint32_t stream, uint64_t frame, std::vector<uint8_t>& out) const
 {
-    const auto it = _streamCopies.find(stream);
-    if (it == _streamCopies.end())
+    const auto it = _line->streamCopies.find(stream);
+    if (it == _line->streamCopies.end())
         return false;
     for (const FrameStreamCopy_& c : it->second)
         if (c.frame == frame)
@@ -879,7 +894,7 @@ bool TimeTravelEngine::FrameStreamCopy(uint32_t stream, uint64_t frame, std::vec
 
 void TimeTravelEngine::DropFrameStreamCopiesBefore(uint64_t frame)
 {
-    for (auto& [stream, copies] : _streamCopies)
+    for (auto& [stream, copies] : _line->streamCopies)
         while (!copies.empty() && copies.front().frame < frame)
             copies.pop_front();
 }
@@ -887,53 +902,53 @@ void TimeTravelEngine::DropFrameStreamCopiesBefore(uint64_t frame)
 void TimeTravelEngine::BeginSegment(uint64_t frame)
 {
     TTDSegmentInfo s;
-    s.firstCheckpoint = _cpBase + _checkpoints.size();
-    s.firstChange = _changeBase + _changes.size();
+    s.firstCheckpoint = _line->cpBase + _line->checkpoints.size();
+    s.firstChange = _line->changeBase + _line->changes.size();
     s.firstFrame = frame;
-    _segments.push_back(s);
+    _line->segments.push_back(s);
 }
 
 void TimeTravelEngine::ReleaseHistory()
 {
-    if (_policy.mode != TTDHistoryMode::Ring || _frames.Empty())
+    if (_policy.mode != TTDHistoryMode::Ring || _line->frames.Empty())
         return;
-    const uint64_t last = _frames.LastFrame();
-    while (_segments.size() >= 2 && last - _segments[1].firstFrame >= _policy.windowFrames)
+    const uint64_t last = _line->frames.LastFrame();
+    while (_line->segments.size() >= 2 && last - _line->segments[1].firstFrame >= _policy.windowFrames)
         DropOldestSegment();
 }
 
 void TimeTravelEngine::DropOldestSegment()
 {
-    const TTDSegmentInfo next = _segments[1];
-    const size_t checkpoints = next.firstCheckpoint - _cpBase;
-    const size_t changes = next.firstChange - _changeBase;
+    const TTDSegmentInfo next = _line->segments[1];
+    const size_t checkpoints = next.firstCheckpoint - _line->cpBase;
+    const size_t changes = next.firstChange - _line->changeBase;
 
     // The versions its change records hold, its full tables
     for (size_t k = 0; k < changes; ++k)
-        _store->Release(_changes[k].id);
-    _changes.erase(_changes.begin(), _changes.begin() + static_cast<std::ptrdiff_t>(changes));
-    _changeBase += changes;
+        _store->Release(_line->changes[k].id);
+    _line->changes.erase(_line->changes.begin(), _line->changes.begin() + static_cast<std::ptrdiff_t>(changes));
+    _line->changeBase += changes;
     for (size_t i = 0; i < checkpoints; ++i)
-        for (const TTDEngineCheckpoint::RegionRefs& r : _checkpoints[i].regions)
+        for (const TTDEngineCheckpoint::RegionRefs& r : _line->checkpoints[i].regions)
             if (r.snapshot)
                 _tables->Release(r.snapshot);
-    _checkpoints.erase(_checkpoints.begin(), _checkpoints.begin() + static_cast<std::ptrdiff_t>(checkpoints));
-    _cpBase += checkpoints;
-    _frames.DropFront(checkpoints);
+    _line->checkpoints.erase(_line->checkpoints.begin(), _line->checkpoints.begin() + static_cast<std::ptrdiff_t>(checkpoints));
+    _line->cpBase += checkpoints;
+    _line->frames.DropFront(checkpoints);
 
     // Events, the RZX frame index and the bus journals before the new start
-    const TTDEngineCheckpoint& head = _checkpoints.front();
-    _events.DropBefore(head.start);
-    _rzxFrames.erase(_rzxFrames.begin(),
-                     std::lower_bound(_rzxFrames.begin(), _rzxFrames.end(), head.start,
+    const TTDEngineCheckpoint& head = _line->checkpoints.front();
+    _line->events.DropBefore(head.start);
+    _line->rzxFrames.erase(_line->rzxFrames.begin(),
+                     std::lower_bound(_line->rzxFrames.begin(), _line->rzxFrames.end(), head.start,
                                       [](const std::pair<uint64_t, TTDMachineTime>& f, TTDMachineTime t) {
                                           return f.second < t;
                                       }));
-    _busReads.DropBefore(head.busReadCursor);
-    _busWrites.DropBefore(head.busWriteCursor);
-    _busVectors.DropBefore(head.busVectorCursor);
+    _line->busReads.DropBefore(head.busReadCursor);
+    _line->busWrites.DropBefore(head.busWriteCursor);
+    _line->busVectors.DropBefore(head.busVectorCursor);
     DropFrameStreamCopiesBefore(head.position.frame);
-    _segments.pop_front();
+    _line->segments.pop_front();
 }
 
 int64_t TimeTravelEngine::CheckpointIndexOf(const TTDPosition& position) const
@@ -941,18 +956,18 @@ int64_t TimeTravelEngine::CheckpointIndexOf(const TTDPosition& position) const
     if (position.branch != 0 || position.tInFrame != 0)
         return -1;
     // Phase 1: one checkpoint per recorded frame, in frame-table order
-    return _frames.IndexOf(position.frame);
+    return _line->frames.IndexOf(position.frame);
 }
 
 int64_t TimeTravelEngine::CheckpointAtOrBefore(uint64_t frame) const
 {
     // Phase 1: one checkpoint per recorded frame, in frame-table order
-    return _frames.IndexAtOrBefore(frame);
+    return _line->frames.IndexAtOrBefore(frame);
 }
 
 bool TimeTravelEngine::DropOldestHeldSegment()
 {
-    if (_segments.size() < 2)
+    if (_line->segments.size() < 2)
         return false;
     DropOldestSegment();
     return true;
@@ -980,8 +995,8 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
 
     // The later checkpoints: their change records (the newest ones, in
     // checkpoint order), their full tables, their frames
-    const size_t count = _cpBase + _checkpoints.size();
-    size_t firstDropped = _changeBase + _changes.size();
+    const size_t count = _line->cpBase + _line->checkpoints.size();
+    size_t firstDropped = _line->changeBase + _line->changes.size();
     for (size_t i = index + 1; i < count; ++i)
         for (const TTDEngineCheckpoint::RegionRefs& r : CpAt(i).regions)
         {
@@ -990,35 +1005,41 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
             if (r.snapshot)
                 _tables->Release(r.snapshot);
         }
-    for (size_t k = firstDropped; k < _changeBase + _changes.size(); ++k)
+    for (size_t k = firstDropped; k < _line->changeBase + _line->changes.size(); ++k)
         _store->Release(ChangeAt(k).id);
-    _changes.resize(firstDropped - _changeBase);
-    _checkpoints.resize(index + 1 - _cpBase);
-    _frames.DropBack(count - index - 1);
-    while (_segments.back().firstCheckpoint > index)
-        _segments.pop_back();
+    _line->changes.resize(firstDropped - _line->changeBase);
+    _line->checkpoints.resize(index + 1 - _line->cpBase);
+    _line->frames.DropBack(count - index - 1);
+    while (_line->segments.back().firstCheckpoint > index)
+        _line->segments.pop_back();
 
     // What the later checkpoints carried
-    for (TTDMediaSlot& slot : _mediaSlots)
+    for (TTDMediaSlot& slot : _line->mediaSlots)
         while (!slot.changes.empty() && slot.changes.back().first > index)
             slot.changes.pop_back();
-    _pendingMedia.clear();
-    while (_configs.size() > 1 && _configs.back().frame > keep.position.frame)
-        _configs.pop_back();
-    for (auto& [stream, copies] : _streamCopies)
+    _line->pendingMedia.clear();
+    while (_line->configs.size() > 1 && _line->configs.back().frame > keep.position.frame)
+        _line->configs.pop_back();
+    for (auto& [stream, copies] : _line->streamCopies)
         while (!copies.empty() && copies.back().frame > keep.position.frame)
             copies.pop_back();
 
     // Records after the cut
-    _events.DropAfter(cutTime);
-    while (!_rzxFrames.empty() && _rzxFrames.back().second > cutTime)
-        _rzxFrames.pop_back();
+    _line->events.DropAfter(cutTime);
+    while (!_line->rzxFrames.empty() && _line->rzxFrames.back().second > cutTime)
+        _line->rzxFrames.pop_back();
     const TTDTimePoint after{cut.frame, static_cast<uint32_t>(cut.tInFrame + 1)};
-    _busReads.TruncateTo(_busReads.LowerBound(after));
-    _busWrites.TruncateTo(_busWrites.LowerBound(after));
-    _busVectors.TruncateTo(_busVectors.LowerBound(after));
-    _mediaReads.TruncateTo(_mediaReads.CountUpTo(cut.frame, static_cast<uint32_t>(cut.tInFrame)));
+    _line->busReads.TruncateTo(_line->busReads.LowerBound(after));
+    _line->busWrites.TruncateTo(_line->busWrites.LowerBound(after));
+    _line->busVectors.TruncateTo(_line->busVectors.LowerBound(after));
+    _line->mediaReads.TruncateTo(_line->mediaReads.CountUpTo(cut.frame, static_cast<uint32_t>(cut.tInFrame)));
 
+    return RebuildHeadFrom(index, error);
+}
+
+bool TimeTravelEngine::RebuildHeadFrom(size_t index, std::string& error)
+{
+    _headLine = _lineId;
     // Capture continues from the kept checkpoint: every piece's version and
     // content as it was there, the pieces changed since its region's last
     // full table, and that table
@@ -1068,6 +1089,380 @@ bool TimeTravelEngine::TruncateAfter(size_t index, const TTDPosition& cut, std::
     _readOnly = false;
     return true;
 }
+
+/// region <Branch lines>
+
+void TimeTravelEngine::ReleaseLineData(BranchLine& line)
+{
+    // Change records and full tables each hold their references; releasing them frees what no other line or
+    // session sharing the store needs
+    for (const PieceChange& c : line.changes)
+        _store->Release(c.id);
+    for (TTDEngineCheckpoint& cp : line.checkpoints)
+        for (const TTDEngineCheckpoint::RegionRefs& r : cp.regions)
+            if (r.snapshot)
+                _tables->Release(r.snapshot);
+    line.changes.clear();
+    line.checkpoints.clear();
+}
+
+void TimeTravelEngine::HandOverJournals(BranchLine& from, BranchLine& to)
+{
+    // Recording stays recording, on the new line's end; a replay does not cross lines
+    auto port = [](TTDPortJournal& a, TTDPortJournal& b) {
+        if (a.GetMode() == TTDPortJournal::Mode::Record)
+            b.StartRecording();
+        else
+            b.Stop();
+        a.Stop();
+    };
+    port(from.busReads, to.busReads);
+    port(from.busWrites, to.busWrites);
+    port(from.busVectors, to.busVectors);
+    if (from.mediaReads.GetMode() == TTDMediaJournal::Mode::Record)
+        to.mediaReads.StartRecording();
+    else
+        to.mediaReads.Stop();
+    from.mediaReads.Stop();
+}
+
+void TimeTravelEngine::ForkCheckpointTables(size_t index, BranchLine& line, TTDEngineCheckpoint& cp)
+{
+    // Every region's full table (the checkpoint's own, else the last one derived with the changes since: blocks
+    // and versions shared, nothing decoded) and the checkpoint's change records, read on the active line
+    cp.regions.clear();
+    cp.baseline = false;
+    for (uint32_t r = 0; r < _regions.size(); ++r)
+    {
+        TTDEngineCheckpoint::RegionRefs refs;
+        refs.region = r;
+        refs.firstChange = static_cast<uint32_t>(line.changes.size());
+        const TTDEngineCheckpoint::RegionRefs* own = RefsOf(index, r);
+        if (own)
+            for (uint32_t k = 0; k < own->changeCount; ++k)
+            {
+                const PieceChange& c = ChangeAt(own->firstChange + k);
+                _store->AddRef(c.id);
+                line.changes.push_back(c);
+            }
+        refs.changeCount = static_cast<uint32_t>(line.changes.size()) - refs.firstChange;
+        if (own && own->snapshot)
+        {
+            _tables->AddRef(own->snapshot);
+            refs.snapshot = own->snapshot;
+        }
+        else
+        {
+            size_t s = index;
+            while (!HasFullTable(s, r))
+                --s;
+            TTDRefTables::Table* table = _tables->Derive(RefsOf(s, r)->snapshot);
+            for (size_t i = s + 1; i <= index; ++i)
+                if (const TTDEngineCheckpoint::RegionRefs* step = RefsOf(i, r))
+                    for (uint32_t k = 0; k < step->changeCount; ++k)
+                    {
+                        const PieceChange& c = ChangeAt(step->firstChange + k);
+                        _store->AddRef(c.id);
+                        _tables->Set(table, c.piece, c.id);
+                    }
+            refs.snapshot = table;
+        }
+        cp.regions.push_back(refs);
+    }
+}
+
+bool TimeTravelEngine::ImportLineHead(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut, uint32_t wanted,
+                                      size_t& index, std::string& error)
+{
+    if (!_open || !HasLine(parent))
+    {
+        error = "the branch's parent line is not in the session";
+        return false;
+    }
+    if (wanted < _lines.size() || wanted >= 0xFFFF)
+    {
+        error = "the branch's line is numbered out of order";
+        return false;
+    }
+    // The parent's checkpoint of the fork frame (one checkpoint per frame)
+    const BranchLine& from = *_lines[parent];
+    const auto it = std::lower_bound(from.checkpoints.begin(), from.checkpoints.end(), forkFrame,
+                                     [](const TTDEngineCheckpoint& c, uint64_t f) { return c.position.frame < f; });
+    if (it == from.checkpoints.end() || it->position.frame != forkFrame || cut.frame != forkFrame)
+    {
+        error = "the branch forks at frame " + std::to_string(forkFrame) + ", which its parent does not hold";
+        return false;
+    }
+    index = from.cpBase + static_cast<size_t>(it - from.checkpoints.begin());
+    return true;
+}
+
+TimeTravelEngine::BranchLine& TimeTravelEngine::AddImportedLine(uint32_t parent, size_t index, const TTDPosition& cut,
+                                                                uint32_t wanted)
+{
+    auto line = std::make_unique<BranchLine>(_payloads);
+    line->parent = parent;
+    line->forkIndex = index;
+    line->fork = cut;
+    line->cpBase = index;
+    line->frames.StartAt(index);
+    // Media versions up to the fork; the fork checkpoint's own changes come with the branch's records
+    line->mediaSlots = _lines[parent]->mediaSlots;
+    for (TTDMediaSlot& slot : line->mediaSlots)
+        while (!slot.changes.empty() && slot.changes.back().first >= index)
+            slot.changes.pop_back();
+    while (_lines.size() < wanted)
+        _lines.push_back(nullptr);   // the file's branches left out (deleted, damaged)
+    _lines.push_back(std::move(line));
+    // The import goes on on the new line
+    _line = _lines.back().get();
+    _lineId = wanted;
+    _readOnly = true;
+    return *_line;
+}
+
+bool TimeTravelEngine::ImportForkLine(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut,
+                                      const TTDEngineCheckpoint& first, uint32_t& lineId, std::string& error)
+{
+    size_t index = 0;
+    if (!ImportLineHead(parent, forkFrame, cut, lineId, index, error))
+        return false;
+    BranchLine* const active = _line;
+    const uint32_t activeId = _lineId;
+    _line = _lines[parent].get();
+    _lineId = parent;
+    TTDEngineCheckpoint cp = CpAt(index);
+    auto fresh = std::make_unique<BranchLine>(_payloads);
+    ForkCheckpointTables(index, *fresh, cp);
+    _line = active;
+    _lineId = activeId;
+    BranchLine& line = AddImportedLine(parent, index, cut, lineId);
+    line.changes = std::move(fresh->changes);
+    line.frames.Append(cp.position.frame, cp.start);
+    line.segments.push_back({index, 0, cp.position.frame});
+    // The file's own copy of the fork checkpoint: the machine as it was (the same as the parent's), the journals
+    // counted from the line's start; the records the file gives next
+    cp.cpu = first.cpu;
+    cp.chipset = first.chipset;
+    cp.unclaimedDevices = first.unclaimedDevices;
+    cp.busReadCursor = cp.busWriteCursor = cp.busVectorCursor = cp.mediaReadCursor = 0;
+    line.checkpoints.push_back(std::move(cp));
+    return true;
+}
+
+bool TimeTravelEngine::ImportBranchLine(uint32_t parent, uint64_t forkFrame, const TTDPosition& cut, uint32_t& lineId,
+                                        std::string& error)
+{
+    size_t index = 0;
+    if (!ImportLineHead(parent, forkFrame, cut, lineId, index, error))
+        return false;
+    AddImportedLine(parent, index, cut, lineId);
+    return true;
+}
+
+bool TimeTravelEngine::ForkCopyMatchesParent(uint32_t lineId, std::string& error)
+{
+    if (!HasLine(lineId) || lineId == 0 || _lines[lineId]->checkpoints.empty())
+    {
+        error = "the branch has no fork copy";
+        return false;
+    }
+    const BranchLine& line = *_lines[lineId];
+    const TTDEngineCheckpoint& copy = line.checkpoints.front();
+    BranchLine* const active = _line;
+    const uint32_t activeId = _lineId;
+    _line = _lines[line.parent].get();
+    _lineId = line.parent;
+    const size_t index = line.forkIndex;
+    bool same = HasCheckpoint(index) && CpAt(index).position.frame == copy.position.frame;
+    // The parent's piece table at the fork (its last full table and the changes since), against the copy's
+    std::vector<TTDPieceId> ids;
+    for (uint32_t r = 0; same && r < _regions.size(); ++r)
+    {
+        size_t s = index;
+        while (!HasFullTable(s, r))
+            --s;
+        const TTDRefTables::Table* full = RefsOf(s, r)->snapshot;
+        ids.assign(_regions[r].pieces, TTDPieceStore::kNone);
+        for (uint32_t p = 0; p < _regions[r].pieces; ++p)
+            ids[p] = _tables->Get(full, p);
+        for (size_t i = s + 1; i <= index; ++i)
+            if (const TTDEngineCheckpoint::RegionRefs* step = RefsOf(i, r))
+                for (uint32_t k = 0; k < step->changeCount; ++k)
+                    ids[ChangeAt(step->firstChange + k).piece] = ChangeAt(step->firstChange + k).id;
+        const TTDRefTables::Table* own = nullptr;
+        for (const TTDEngineCheckpoint::RegionRefs& refs : copy.regions)
+            if (refs.region == r)
+                own = refs.snapshot;
+        for (uint32_t p = 0; same && p < _regions[r].pieces; ++p)
+        {
+            const TTDPieceId mine = own ? _tables->Get(own, p) : TTDPieceStore::kNone;
+            same = (mine == TTDPieceStore::kNone) == (ids[p] == TTDPieceStore::kNone) &&
+                   (mine == TTDPieceStore::kNone || _store->CrcOf(mine) == _store->CrcOf(ids[p]));
+        }
+    }
+    _line = active;
+    _lineId = activeId;
+    if (!same)
+        error = "its fork's copy is not its parent's checkpoint at the fork";
+    return same;
+}
+
+bool TimeTravelEngine::ForkAt(size_t index, const TTDPosition& cut, uint32_t& lineId, std::string& error)
+{
+    if (!_open)
+    {
+        error = "no session";
+        return false;
+    }
+    if (!HasCheckpoint(index))
+    {
+        error = "checkpoint " + std::to_string(index) + " is not held";
+        return false;
+    }
+    const TTDEngineCheckpoint& keep = CpAt(index);
+    if (cut.frame != keep.position.frame)
+    {
+        error = "the fork lies outside checkpoint " + std::to_string(index) + "'s frame";
+        return false;
+    }
+    if (_lines.size() >= 0xFFFF)
+    {
+        error = "the session holds the most lines it can";
+        return false;
+    }
+    const BranchLine& from = *_line;
+    const TTDMachineTime cutTime = keep.start + cut.tInFrame;
+    auto line = std::make_unique<BranchLine>(_payloads);
+    line->parent = _lineId;
+    line->forkIndex = index;
+    line->fork = cut;
+    line->cpBase = index;
+    line->frames.StartAt(index);
+    line->frames.Append(keep.position.frame, keep.start);
+    line->segments.push_back({index, 0, keep.position.frame});
+
+    // The fork checkpoint: every region's full table and its change records
+    TTDEngineCheckpoint cp = keep;
+    ForkCheckpointTables(index, *line, cp);
+
+    // The fork frame's records up to the cut (records at it stay, as TruncateAfter keeps them)
+    const TTDTimePoint after{cut.frame, static_cast<uint32_t>(cut.tInFrame + 1)};
+    auto copyPorts = [](const TTDPortJournal& src, uint64_t first, uint64_t last, TTDPortJournal& dst, bool reads) {
+        dst.StartRecording();
+        TTDPortRecord rec;
+        for (uint64_t k = first; k < last; ++k)
+            if (src.Get(k, rec))
+            {
+                if (reads)
+                    dst.OnRead(rec.port, rec.value, rec.frame, rec.tInFrame, rec.pc);
+                else
+                    dst.OnWrite(rec.port, rec.value, rec.frame, rec.tInFrame, rec.pc);
+            }
+        dst.Stop();
+    };
+    copyPorts(from.busReads, keep.busReadCursor, from.busReads.LowerBound(after), line->busReads, true);
+    copyPorts(from.busWrites, keep.busWriteCursor, from.busWrites.LowerBound(after), line->busWrites, false);
+    copyPorts(from.busVectors, keep.busVectorCursor, from.busVectors.LowerBound(after), line->busVectors, true);
+    const uint64_t mediaTo = from.mediaReads.CountUpTo(cut.frame, static_cast<uint32_t>(cut.tInFrame));
+    for (uint64_t k = keep.mediaReadCursor; k < mediaTo; ++k)
+    {
+        const TTDMediaJournal::Record& m = from.mediaReads.At(k);
+        line->mediaReads.Append(m.frame, m.tInFrame, from.mediaReads.SlotNames()[m.slot], m.lba,
+                                from.mediaReads.Bytes(m), m.size);
+    }
+    cp.busReadCursor = cp.busWriteCursor = cp.busVectorCursor = cp.mediaReadCursor = 0;
+    for (size_t k = from.events.CursorAt(keep.start); k < from.events.Count(); ++k)
+    {
+        TTDEvent ev = from.events.At(k);
+        if (ev.machineTime > cutTime)
+            break;
+        _payloads.AddRef(ev.payload);
+        line->events.Append(ev);
+    }
+    // RZX frames up to the cut (a lookup by RZX frame number reads the active line), the settings in force at the
+    // fork, the frame's stream copies
+    for (const auto& f : from.rzxFrames)
+        if (f.second <= cutTime)
+            line->rzxFrames.push_back(f);
+    for (const TTDConfigEntry& c : from.configs)
+        if (line->configs.empty() || c.frame <= keep.position.frame)
+            line->configs.assign(1, c);
+    line->mediaSlots = from.mediaSlots;
+    for (TTDMediaSlot& slot : line->mediaSlots)
+        while (!slot.changes.empty() && slot.changes.back().first > index)
+            slot.changes.pop_back();
+    for (const auto& [stream, copies] : from.streamCopies)
+        for (const FrameStreamCopy_& c : copies)
+            if (c.frame == keep.position.frame)
+                line->streamCopies[stream].push_back(c);
+    line->checkpoints.push_back(std::move(cp));
+
+    HandOverJournals(*_line, *line);
+    lineId = static_cast<uint32_t>(_lines.size());
+    _lines.push_back(std::move(line));
+    _line = _lines.back().get();
+    _lineId = lineId;
+    return RebuildHeadFrom(index, error);
+}
+
+bool TimeTravelEngine::SwitchLine(uint32_t lineId, size_t index, std::string& error)
+{
+    if (!HasLine(lineId))
+    {
+        error = "line " + std::to_string(lineId) + " does not exist";
+        return false;
+    }
+    BranchLine& target = *_lines[lineId];
+    if (index < target.cpBase || index - target.cpBase >= target.checkpoints.size())
+    {
+        error = "checkpoint " + std::to_string(index) + " is not on line " + std::to_string(lineId);
+        return false;
+    }
+    if (&target != _line)
+        HandOverJournals(*_line, target);
+    _line = &target;
+    _lineId = lineId;
+    return RebuildHeadFrom(index, error);
+}
+
+bool TimeTravelEngine::ViewLine(uint32_t lineId)
+{
+    if (!HasLine(lineId))
+        return false;
+    if (_lines[lineId].get() != _line)
+        HandOverJournals(*_line, *_lines[lineId]);
+    _line = _lines[lineId].get();
+    _lineId = lineId;
+    return true;
+}
+
+bool TimeTravelEngine::ReleaseLine(uint32_t lineId, std::string& error)
+{
+    if (!HasLine(lineId) || lineId == 0)
+    {
+        error = lineId == 0 ? "the trunk stays" : "line " + std::to_string(lineId) + " does not exist";
+        return false;
+    }
+    if (lineId == _lineId)
+    {
+        error = "the active line stays";
+        return false;
+    }
+    for (const std::unique_ptr<BranchLine>& other : _lines)
+        if (other && other->parent == lineId)
+        {
+            error = "line " + std::to_string(lineId) + " has lines forking from it";
+            return false;
+        }
+    BranchLine& line = *_lines[lineId];
+    ReleaseLineData(line);
+    line.events.Clear();
+    _lines[lineId].reset();
+    return true;
+}
+
+/// endregion </Branch lines>
 
 void TimeTravelEngine::BuildMap(size_t index, uint32_t region, std::vector<TTDPieceId>& map) const
 {
@@ -1206,9 +1601,9 @@ void TimeTravelEngine::ForgetMemory()
 size_t TimeTravelEngine::ReferenceBytes() const
 {
     size_t perCheckpoint = 0;
-    for (const TTDEngineCheckpoint& cp : _checkpoints)
+    for (const TTDEngineCheckpoint& cp : _line->checkpoints)
         perCheckpoint += cp.regions.size() * sizeof(TTDEngineCheckpoint::RegionRefs);
-    return _changes.size() * sizeof(PieceChange) + _tables->HeapBytes() + perCheckpoint;
+    return _line->changes.size() * sizeof(PieceChange) + _tables->HeapBytes() + perCheckpoint;
 }
 
 TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
@@ -1218,7 +1613,7 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     h.piecePayload = _store->PayloadBytes();
     h.arenaSlack = _store->ArenaBytes() - _store->PayloadBytes();
     h.deltaBase = _deltaBase.HeapBytes();
-    h.referenceTables = _tables->HeapBytes() + _changes.capacity() * sizeof(PieceChange);
+    h.referenceTables = _tables->HeapBytes() + _line->changes.capacity() * sizeof(PieceChange);
     for (size_t r = 0; r < _live.size(); ++r)
         h.referenceTables += _live[r].capacity() * sizeof(TTDPieceId) + _sinceSnapshot[r].capacity() * sizeof(uint32_t) +
                              _sinceSnapshotFlag[r].capacity();
@@ -1228,25 +1623,25 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
 #ifdef _LIBCPP_VERSION
     // libc++ keeps a deque of elements over 256 bytes in blocks of 16, one
     // block ahead of the last element
-    h.checkpoints = (_checkpoints.size() / 16 + 1) * 16 * sizeof(TTDEngineCheckpoint);
+    h.checkpoints = (_line->checkpoints.size() / 16 + 1) * 16 * sizeof(TTDEngineCheckpoint);
 #else
-    h.checkpoints = _checkpoints.size() * sizeof(TTDEngineCheckpoint);
+    h.checkpoints = _line->checkpoints.size() * sizeof(TTDEngineCheckpoint);
 #endif
-    for (const TTDEngineCheckpoint& cp : _checkpoints)
+    for (const TTDEngineCheckpoint& cp : _line->checkpoints)
     {
         h.checkpoints += block(cp.regions.capacity() * sizeof(cp.regions[0]));
         h.deviceBlobs += block(cp.unclaimedDevices.capacity());
     }
-    h.frameTable = _frames.HeapBytes();
-    h.eventLog = _events.Events().capacity() * sizeof(TTDEvent) + _payloads.HeapBytes() +
-                 _rzxFrames.capacity() * sizeof(_rzxFrames[0]);
-    h.portReads = _busReads.HeapBytes() - _busReads.CompressedSlackBytes();
-    h.portWrites = _busWrites.HeapBytes() - _busWrites.CompressedSlackBytes();
-    h.portJournalSlack = _busReads.CompressedSlackBytes() + _busWrites.CompressedSlackBytes();
-    h.mediaReads = _mediaReads.HeapBytes();
-    h.busVectors = _busVectors.HeapBytes();
-    h.writeJournal = _writes.HeapBytes();
-    for (const auto& [stream, copies] : _streamCopies)
+    h.frameTable = _line->frames.HeapBytes();
+    h.eventLog = _line->events.Events().capacity() * sizeof(TTDEvent) + _payloads.HeapBytes() +
+                 _line->rzxFrames.capacity() * sizeof(_line->rzxFrames[0]);
+    h.portReads = _line->busReads.HeapBytes() - _line->busReads.CompressedSlackBytes();
+    h.portWrites = _line->busWrites.HeapBytes() - _line->busWrites.CompressedSlackBytes();
+    h.portJournalSlack = _line->busReads.CompressedSlackBytes() + _line->busWrites.CompressedSlackBytes();
+    h.mediaReads = _line->mediaReads.HeapBytes();
+    h.busVectors = _line->busVectors.HeapBytes();
+    h.writeJournal = _line->writes.HeapBytes();
+    for (const auto& [stream, copies] : _line->streamCopies)
         for (const FrameStreamCopy_& c : copies)
             h.frameStreams += c.bytes.capacity() + sizeof(c);
 
@@ -1268,13 +1663,13 @@ TTDEngineHeapBreakdown TimeTravelEngine::HeapBreakdown() const
     b += _timeLines.capacity() * sizeof(_timeLines[0]) + _timeFields.capacity() * sizeof(_timeFields[0]);
     b += (_regionPayload.capacity() + _regionVersions.capacity()) * sizeof(uint64_t) +
          _lastSnapshot.capacity() * sizeof(void*) + _offeredByRegion.capacity() * sizeof(uint32_t);
-    for (const TTDConfigEntry& e : _configs)
+    for (const TTDConfigEntry& e : _line->configs)
         for (const TTDConfigField& f : e.fingerprint.fields)
             b += sizeof(f) + f.name.capacity();
-    b += _configs.capacity() * sizeof(TTDConfigEntry);
-    for (const TTDMediaSlot& m : _mediaSlots)
+    b += _line->configs.capacity() * sizeof(TTDConfigEntry);
+    for (const TTDMediaSlot& m : _line->mediaSlots)
         b += sizeof(m) + m.slot.capacity() + m.format.capacity() + m.changes.capacity() * sizeof(m.changes[0]);
-    b += _segments.size() * sizeof(TTDSegmentInfo) + _syncMisses.capacity() * sizeof(TTDSyncMiss);
+    b += _line->segments.size() * sizeof(TTDSegmentInfo) + _syncMisses.capacity() * sizeof(TTDSyncMiss);
     return h;
 }
 
@@ -1435,7 +1830,7 @@ TTDRestoreIssue TimeTravelEngine::DamageIssue(size_t index, uint32_t region, uin
     size_t first = index, last = index;
     uint32_t id = kAbsent;
     bool bad = false;
-    while (first > _cpBase && fails(first - 1, id, bad))
+    while (first > _line->cpBase && fails(first - 1, id, bad))
         --first;
     id = kAbsent;
     bad = false;
@@ -1473,9 +1868,9 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
             ++unlisted;
         }
     };
-    if (_checkpoints.empty())
+    if (_line->checkpoints.empty())
         return result;
-    const size_t count = _cpBase + _checkpoints.size();
+    const size_t count = _line->cpBase + _line->checkpoints.size();
     std::vector<uint8_t> scratch(kTTDPieceSize);
     std::unordered_map<TTDPieceId, bool> decodes;   // version -> decodes (each checked once)
     auto ok = [&](TTDPieceId id) {
@@ -1492,7 +1887,7 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
     {
         const TTDDeviceEntry* device = DeviceOfRegion(r);
         std::vector<TTDPieceId> map;
-        BuildMap(_cpBase, r, map);
+        BuildMap(_line->cpBase, r, map);
         std::vector<int64_t> damagedFrom(map.size(), -1);
         int64_t missingFrom = -1;   // a device region: checkpoints whose state length is 0
         auto close = [&](uint32_t p, size_t lastIndex) {
@@ -1522,10 +1917,10 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
         };
         for (uint32_t p = 0; p < map.size(); ++p)
             if (!ok(map[p]))
-                damagedFrom[p] = static_cast<int64_t>(_cpBase);
+                damagedFrom[p] = static_cast<int64_t>(_line->cpBase);
         if (device && lengthIsZero())
-            missingFrom = static_cast<int64_t>(_cpBase);
-        for (size_t i = _cpBase + 1; i < count; ++i)
+            missingFrom = static_cast<int64_t>(_line->cpBase);
+        for (size_t i = _line->cpBase + 1; i < count; ++i)
         {
             const TTDEngineCheckpoint::RegionRefs* refs = RefsOf(i, r);
             if (!refs || refs->changeCount == 0)
@@ -1558,7 +1953,7 @@ TTDRestoreResult TimeTravelEngine::CheckSession() const
 
     // State recorded for devices this machine lacks
     std::array<bool, 256> unclaimed{};
-    for (const TTDEngineCheckpoint& cp : _checkpoints)
+    for (const TTDEngineCheckpoint& cp : _line->checkpoints)
         for (uint8_t id : cp.unclaimedDevices)
             unclaimed[id] = true;
     for (uint32_t id = 0; id < 256; ++id)

@@ -221,10 +221,11 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
         PauseRecordingForBrowsing();
     Memory* memory = _context ? _context->pMemory : nullptr;
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
-    const TimeTravelEngine& engine = *_engine;
+    const LineageViewGuard lineageView{*this};   // with branches the walk views each lineage line it reads
+    const LineageEngine engine{*this};
     const size_t firstCp = engine.FirstCheckpoint();
     const size_t cpCount = engine.CheckpointCount();
-    if (_timeline.empty() || !memory || !z80 || cpCount < firstCp + 2)
+    if (_line->timeline.empty() || !memory || !z80 || cpCount < firstCp + 2)
     {
         result.error = "no recorded history";
         return finish();
@@ -304,10 +305,11 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
     // One frame replayed from its checkpoint with the instruction hook and (optionally) the bus hook
     auto replayFrame = [&](uint64_t frame, const std::function<void(uint16_t)>& m1,
                            const std::function<void(char, uint16_t, uint8_t)>& bus) -> bool {
-        const int64_t ci = TimelineIndexAtOrBefore({frame, 0});
-        if (ci < 0 || _timeline[static_cast<size_t>(ci)].time.frame != frame)
+        const int64_t ci = ViewLineageIndexAtOrBefore({frame, 0});
+        const TTDCheckpoint* at = ci < 0 ? nullptr : ViewLineageCheckpoint(static_cast<size_t>(ci));
+        if (!at || at->time.frame != frame)
             return false;
-        const TTDCheckpoint& cp = _timeline[static_cast<size_t>(ci)];
+        const TTDCheckpoint& cp = *at;
         const TTDTimePoint end = SessionEndPosition();
         uint32_t endT = frame == end.frame ? end.tInFrame : FrameSpan();
         if (const std::optional<TTDExternalEvent> b = FirstBarrierBetween(cp.time, TTDTimePoint{frame, endT}))
@@ -1012,7 +1014,7 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                     return finish();
                 }
             }
-            const std::vector<TTDInputEvent>& events = _inputJournal.Events();
+            const std::vector<TTDInputEvent> events = LineageInputEvents();
             result.framesScanned = result.toFrame - result.fromFrame + 1;
             auto matches = [&](const TTDInputEvent& e) {
                 return e.kind == TTDInputKind::Key && e.pressed == query.pressed && e.time.frame >= result.fromFrame &&

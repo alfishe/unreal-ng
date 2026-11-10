@@ -50,6 +50,9 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
             if (mode == MachineMode::Recording)
                 return endRecording ? Expected{false, SessionEffect::StopThenMediaChanged, true, false}
                                     : Expected{false, SessionEffect::None, false, false, true};
+            // TTD branches O-1 (owner 2026-11-08): refused in the recorded past, the history never ended by it
+            if (mode == MachineMode::Replaying || mode == MachineMode::Detached)
+                return {true, SessionEffect::None, false, false};
             return {false, SessionEffect::MediaChanged, !live, false};
         // D43 (owner 2026-10-10): fixed while a recording the user started runs and in the recorded past; the black
         // box ends its session as for a medium
@@ -93,10 +96,9 @@ Expected ExpectedCell(OpKind kind, MachineMode mode, bool endRecording)
         // M6: a replay would not repeat a CD front panel action from outside the guest
         case OpKind::CdFrontPanel:
             return {mode == MachineMode::Recording, SessionEffect::None, false, false};
-        // M6: held while a recording runs (the edit is its event); refused in the recorded past (owner 2026-10-11)
+        // M6: held while a recording runs (the edit is its event); in the recorded past it forks a branch and is
+        // recorded there (TTD branches §4.5), held too
         case OpKind::ToolEdit:
-            if (mode == MachineMode::Replaying || mode == MachineMode::Detached)
-                return {true, SessionEffect::None, false, false};
             return {false, SessionEffect::None, !live, false};
         case OpKind::Count:
             break;
