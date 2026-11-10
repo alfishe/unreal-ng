@@ -35,8 +35,8 @@ One implementation (the core `Screenshotter`) sits behind every surface
 [2026-10-03-screenshotter/design.md](../../docs/inprogress/2026-10-03-screenshotter/design.md).
 
 - It takes the **presented frame**: the finished, tear-free frame the Qt
-  window shows. It lags the machine by the present delay (2 frames by
-  default, more with ZX DLSS). It is not the half-drawn live buffer.
+  window shows. It lags the machine by the present delay (the frame whose
+  sound is heard now: about 2 frames, more with ZX DLSS). It is not the half-drawn live buffer.
 - `area=full` (**default**) is the whole frame including the border:
   352x288 on a Spectrum or Pentagon, 384x304 Pentagon overscan, 736x288
   Sprinter, 720x288 TS-Conf, 1024x768 for the FT812 picture of the

@@ -10,8 +10,8 @@ Use this instead of live pause/screenshot cycles whenever you need to be
 certain two inspections (or a screenshot you're comparing against a
 person's own screenshot) are of the *same* instant. A live `pause` +
 `capture/screen` round-trip is not that guarantee — a screenshot takes the
-presented frame, which lags the machine by the present delay (2 frames by
-default, more with ZX DLSS), so two calls a moment apart can land on
+presented frame, which lags the machine by the present delay (the frame
+whose sound is heard now: about 2 frames, the audio path's delay; more with ZX DLSS), so two calls a moment apart can land on
 different frames while the machine is running. (The GUI and the screenshot
 read that same presented frame; see
 [agent-screenshot-view.md](../media/agent-screenshot-view.md).) Seeking TTD to a recorded frame removes that

@@ -1,9 +1,10 @@
 # Frame presenter: video timed by the sound, with and without VRR
 
 **Date:** 2026-10-26
-**Status:** implemented on the `frame-presenter` branch: phases 1-8 of section 8 (the audio-timed frames, the GL,
-Metal and DXGI presenters, smooth motion on CPU and GPU, the automation planes, the display rate switch, Video
-Synchronization), plus the recovery from a GPU reset; not on master yet. Measured in
+**Status:** on master since 2026-11-08 (`29382cdde`, landed in one piece): phases 1-8 of section 8 (the
+audio-timed frames, the GL, Metal and DXGI presenters, b-vsync on a display link on macOS 14+, smooth motion on CPU
+and GPU, the automation planes, the display rate switch, Video Synchronization), plus the recovery from a GPU reset.
+What is left is in section 8 item 9 and section 9; the summary is in [DONE.md](DONE.md). Measured in
 [POC 037](../../../tools/poc/037-frame-presenter/README.md)
 ([results](../../../tools/poc/037-frame-presenter/results.md)): fixed 60 Hz (Mac), 144 Hz and G-Sync (Windows);
 ProMotion on macOS 12: the 120 Hz grid only (section 9).
@@ -13,7 +14,8 @@ ProMotion on macOS 12: the 120 Hz grid only (section 9).
 - On a fixed display the default is the frame repeat; frame blending is an option.
 - Smooth motion without judder (blending and motion-compensated interpolation) is built right after the VRR path is
   stable, not deferred. It is the presenter's own stage: ZX DLSS is for gigascreen and stays separate.
-- The work stays on the `frame-presenter` branch until all phases are done; master gets it in one piece.
+- The work stays on the `frame-presenter` branch until all phases are done; master gets it in one piece (done:
+  2026-11-08).
 - Smoothing never adds latency. A game's own picture cadence (a picture every 2nd-5th frame) comes from its game
   profile, with the profile tools of the controller manager (section 4.5), not from guessing at run time.
 - Every effect (blend, interpolation, the cadence modes) runs on the GPU and on the CPU, chosen by the mode, on every
@@ -27,7 +29,7 @@ and 8), [Steam Deck rendering](../2026-10-08-steamdeck-client/rendering.md) (sec
 ## Contents
 
 1. [The problem](#1-the-problem)
-2. [What reaches the screen today](#2-what-reaches-the-screen-today)
+2. [What reached the screen before the presenter](#2-what-reached-the-screen-before-the-presenter)
 3. [The model: every frame has the time its sound plays](#3-the-model-every-frame-has-the-time-its-sound-plays)
 4. [Two policies, chosen by the display](#4-two-policies-chosen-by-the-display)
 5. [What "exceptionally smooth" takes](#5-what-exceptionally-smooth-takes)
@@ -73,7 +75,7 @@ In both cases the presenter never makes it worse than the arithmetic:
 - no frame shown out of order;
 - every frame on screen at the time its sound plays.
 
-## 2. What reaches the screen today
+## 2. What reached the screen before the presenter
 
 The path, from the emulation thread to the display:
 
@@ -408,6 +410,10 @@ Pentagon shows each frame once, with one repeat every ~0.85 s (a 2.4 % beat), an
     too: not built.
   - XWayland on KDE has `GLX_OML_sync_control`: the `gl-timed` presenter gets screen times there (2455 of 2456
     shown, beat off 1 in 2451; error p50 11 ms, the compositor's frame). Native Wayland stays on EGL, no times.
+  - Game Mode on master (2026-11-08, the Steam Deck bundle of `29382cdde`, Vradark's Revenge on the Next, view
+    `content`, policy `vsync` on the 60 Hz panel): `gl-timed`, 5933 presented, 3 dropped, 277 late, beat off 8 of 5925,
+    error p50 10.1 ms, the emulation 12.9 ms per frame of 20.3 (49.36 fps). The same game on the master before the
+    merge: the same frame time within the run-to-run spread (12.9-17.4 ms between launches on both).
 - The picking (`FitDisplayRate`, `DisplayRatePick`) and the meter live in `core/src/emulator/video/displayrate.h`
   with unit tests; the switch in `unreal-qt/src/platform/displaymodeswitch.h`. The report's `present.display` says
   `keep`, `matched` (with the rate and the original rate) or `unchanged` with the reason.
@@ -826,7 +832,7 @@ Measured in POC 037 unless marked. The POC's frames are 384x288x4 bytes, a littl
 
 Each phase lands on its own with tests and docs.
 
-1. **Audio clock and frame times** (done on the branch). `AudioClock`, the ring's stream positions, slot times,
+1. **Audio clock and frame times** (done). `AudioClock`, the ring's stream positions, slot times,
    `FrameClock` (audio, emulated and latch clocks, the carry), `CopyFrameAt` / `CopyNextFrame`, the
    `[VIDEO] LipSyncOffsetMs` key. Unit tests on synthetic sequences: callback jitter, a crystal 100 ppm off, hours of
    audio, underruns and discards, the device stopping (stale) and resetting, the clock switch, steps, gaps, turbo.
@@ -835,11 +841,11 @@ Each phase lands on its own with tests and docs.
    first visible gain (Windows high refresh, A/V at every rate), and it is the fallback for everything after. The
    other readers of `CopyPresentedFramebuffer` (screenshots, recording, the video wall) move to time as well, and
    `AVSyncDelayFrames` goes. Measured on a real device: the audio clock's target interval error (section 9).
-3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`. On the
-   branch: `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2), and `b-vsync` on a
+3. **Metal presenter** (macOS): `b-vsync` and `c-vrr`, `presentedTime` stats, occlusion, `beginActivity`. Built:
+   `c-vrr` present-at-time from the GL draw, the stats, occlusion, the lead (section 6.2), and `b-vsync` on a
    display link (section 6.2, macOS 14+; the window's timer on macOS 12-13).
 4. **DXGI presenter** (Windows): `b-vsync` and `c-vrr`, the waitable object, the vblank watch, VRR verification and
-   fallback, `ES_DISPLAY_REQUIRED`. On the branch (`dxgipresenter.cpp`, behind the `NativePresenter` interface the
+   fallback, `ES_DISPLAY_REQUIRED`. Built (`dxgipresenter.cpp`, behind the `NativePresenter` interface the
    Metal presenter shares): the interop ring, a presenter thread (waitable object, the copy into the back buffer,
    `WaitUntilPrecise` to the frame's time, `Present(0, ALLOW_TEARING)`, on a fixed display `Present(0)` without
    tearing: a frame presented per emulated frame, so `Present(1)` would queue a refresh each and pile up), a vblank thread
@@ -883,7 +889,7 @@ Each phase lands on its own with tests and docs.
      test games (Darkwing Duck, Thundercats, Garfield).
    POC 049 measured the interpolation and the cadence modes (done).
 
-   On the branch:
+   Built:
    - `core/src/emulator/video/smoothmotion.{h,cpp}`: blend, the motion field (a nearest-first search per 8x8 block,
      then two refinement passes over the zero vector, the 4 most voted vectors and the 8 neighbours), the per-pixel
      composition (own, zero, the 4 and 4 diagonal neighbours' vectors, the 2 most common; the best 3x3 agreement
@@ -1004,15 +1010,15 @@ Each phase lands on its own with tests and docs.
       block's changes one shift explains both ways; each one either missed half of the zoom or caught 3-16 % of the
       games' blocks or most of the dot clouds. Owner 2026-11-03: left as a limit.
 6. **Automation planes.** Settings and `PresentStats` on CLI, Python, Lua, MCP, REST and WebSocket; docs chain per the
-   guidelines. On the branch: `smooth_motion`, `effects_device`, `present_policy`, `lip_sync_offset_ms`,
+   guidelines. Built: `smooth_motion`, `effects_device`, `present_policy`, `lip_sync_offset_ms`,
    `display_rate`, the `present` report with the clock in use, the frames off the beat pattern and the
    screen-to-sound offset (`ScreenBeat_Test`), and the `video.present` topic (section 6.4). Tools > Video
    Synchronization shows them in fixed cells (numbers right aligned at a fixed width, the reason three lines high,
    rates over a second), so nothing moves while they change.
-7. **Display rate switch** (section 4.7, on the branch): `[VIDEO] DisplayRate`, the mode picking and the frame-rate
+7. **Display rate switch** (section 4.7, done): `[VIDEO] DisplayRate`, the mode picking and the frame-rate
    meter with unit tests (`DisplayRate_Test`), the macOS and Windows switches, `display_rate` and `present.display`
    on every plane. Measured on a monitor by the owner: the agent's shell has no window server.
-8. **Video Synchronization** (section 6.4, on the branch): View > Video Synchronization (VRR, else a fitting display
+8. **Video Synchronization** (section 6.4, done): View > Video Synchronization (VRR, else a fitting display
    rate, else interpolation; `smooth_motion = auto`), `present.sync` on every plane, Tools > Video Synchronization
    live; `PickVideoSync` unit tests. To check by the owner: the window on a G-Sync monitor (.101) and on the Mac.
 9. Later:
@@ -1026,13 +1032,16 @@ Each phase lands on its own with tests and docs.
   event delivery or the panel. A time-critical measuring thread did not shrink it. An optical measurement (photodiode
   or a high-speed camera) would separate them. It does not change the design.
 - **G-Sync needs the windowed setting.** Most users have the driver default (full screen only). The app cannot change
-  it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. It then falls back to `b-vsync` and says so in
-  the stats, with a hint where to enable it.
+  it, but it can see it: in `c-vrr` the refresh stays on the fixed grid. Built: the DXGI presenter's check falls back
+  to `b-vsync` when the vblanks stay on the grid and goes back to VRR when they follow the presents again (section 8,
+  phase 4); the window status says "a fixed grid". Not built: a hint naming the driver setting (NVIDIA Control Panel,
+  "Enable G-SYNC for windowed and full screen mode"); `vrr_support` stays `unknown` on Windows until VRR is seen.
 - **ProMotion (MacBook Pro M1 Max, macOS 12.7, results section 2b): no free-running VRR.**
   `presentDrawable:atTime:` puts a frame on the 120 Hz grid: a 50 Hz frame gets 16.7 or 25 ms, never 20 ms, and
   7-12 % of the frames never reach the screen. So `c-vrr` there is `b-vsync` at 120 Hz, and smooth motion removes
   the 2/3 cadence. Low Power Mode caps the panel at 60 Hz. macOS 14+ (`CAMetalDisplayLink`,
-  `preferredFrameRateRange`) is not measured: the machine has macOS 12.
+  `preferredFrameRateRange`) is not measured: the machine has macOS 12. The display link `b-vsync` (section 6.2,
+  `[NSView displayLinkWithTarget:selector:]`, macOS 14+) is measured on a fixed 60 Hz display only.
 - **iOS / iPadOS.** The iOS host (ios-host-design.md, section 6.3) uses `CAMetalLayer` and `CADisplayLink`, the
   same APIs as the macOS presenter, so it shares that presenter. ProMotion iPhones and iPads (10-120 Hz) are adaptive,
   not free-running VRR: an app asks `CADisplayLink.preferredFrameRateRange`, and the system picks one of the panel's
@@ -1044,9 +1053,11 @@ Each phase lands on its own with tests and docs.
   D3D11 device (a compute shader that never ends), `gl:<s>` the screen's GL context. On NVIDIA (.101, driver
   32.0.16.1088) the `gl` hang crashes the driver's own thread after the reset, so the GL side's recovery is a test of
   the driver there, not of the window. A reset on macOS (Metal) is not exercised.
-- **The audio clock is designed, not measured.** The POC timed frames on a steady clock. Phase 1 has to show that the
-  fitted line of a real device (miniaudio on CoreAudio and WASAPI) is as smooth: target interval error under 0.1 ms
-  beyond the DRC trim.
+- **The audio clock is measured only through the presents.** The POC timed frames on a steady clock. On master the
+  targets come from the fitted line of the real device (`present.clock` = `audio`), so the present interval errors
+  of section 8 phase 4 (WASAPI, G-Sync: p50 0.25 / p99 0.9 ms) and the Steam Deck's (section 4.7) include its
+  error. The clock's own target interval error (the goal: under 0.1 ms beyond the DRC trim) is not isolated; a probe
+  in `AudioClock` reporting the fit's residuals would do it.
 - **Linux, level 1 limits.** No Vulkan presenter yet, so Wayland has no screen times (the beat counts stay 0) and no
   refresh grid for smooth motion on the timed swap; no client query for VRR there (`vrr_support` unknown); no mode
   switch on Wayland / XWayland (the compositor owns it). X11 VRR needs the window flipped, so it is fullscreen only.
