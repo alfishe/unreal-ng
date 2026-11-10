@@ -133,6 +133,16 @@ TEST_F(GuiControl_Test, StaleDiscoveryEntryIsSkipped)
     dead.pid = 0x7FFFFFF0;  // no such process
     dead.socket = QStringLiteral("unreal-gui-dead");
     ASSERT_TRUE(discovery::Write(_directory + "/dead.json", dead));
+    // A live pid that a dead host had: this process, which began an hour after that host wrote its entry
+    const qint64 began = discovery::ProcessStarted(QCoreApplication::applicationPid());
+    ASSERT_GT(began, 0) << "the system tells when a process began";
+    EXPECT_LE(began, QDateTime::currentMSecsSinceEpoch());
+    discovery::Entry reused;
+    reused.id = QStringLiteral("reused");
+    reused.pid = QCoreApplication::applicationPid();
+    reused.socket = QStringLiteral("unreal-gui-reused");
+    reused.started = began - 3600 * 1000;
+    ASSERT_TRUE(discovery::Write(_directory + "/reused.json", reused));
     QFile garbage(_directory + "/garbage.json");
     ASSERT_TRUE(garbage.open(QIODevice::WriteOnly));
     garbage.write("{not json");
@@ -145,6 +155,7 @@ TEST_F(GuiControl_Test, StaleDiscoveryEntryIsSkipped)
     EXPECT_EQ(entries.front().id, host->Id());
     // The next host removes the dead one's file, not the unreadable one
     EXPECT_FALSE(QFile::exists(_directory + "/dead.json"));
+    EXPECT_FALSE(QFile::exists(_directory + "/reused.json"));
     EXPECT_TRUE(QFile::exists(_directory + "/garbage.json"));
 }
 

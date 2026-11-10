@@ -73,6 +73,51 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def process_started(pid: int) -> int:
+    """When the process began, ms since the epoch; 0 when the system does not say (guicontrol's ProcessStarted)."""
+    if pid <= 0:
+        return 0
+    system = platform.system()
+    try:
+        if system == "Linux":
+            # The 22nd field of /proc/<pid>/stat: clock ticks after the boot; /proc/stat's btime: the boot in seconds
+            line = Path(f"/proc/{pid}/stat").read_text()
+            ticks = int(line[line.rindex(")") + 2:].split()[19])
+            boot = next(int(row.split()[1]) for row in Path("/proc/stat").read_text().splitlines()
+                        if row.startswith("btime "))
+            return boot * 1000 + ticks * 1000 // os.sysconf("SC_CLK_TCK")
+        import ctypes
+        if system == "Darwin":
+            info = ctypes.create_string_buffer(136)  # struct proc_bsdinfo; pbi_start_tvsec / _tvusec at 120 / 128
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+            if libproc.proc_pidinfo(pid, 3, ctypes.c_uint64(0), info, 136) != 136:  # 3: PROC_PIDTBSDINFO
+                return 0
+            seconds, micros = ctypes.c_uint64.from_buffer(info, 120).value, ctypes.c_uint64.from_buffer(info, 128).value
+            return seconds * 1000 + micros // 1000
+        if system == "Windows":
+            kernel = ctypes.windll.kernel32
+            kernel.OpenProcess.restype = ctypes.c_void_p
+            handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not handle:
+                return 0
+            times = [ctypes.c_uint64() for _ in range(4)]
+            ok = kernel.GetProcessTimes(ctypes.c_void_p(handle), *[ctypes.byref(t) for t in times])
+            kernel.CloseHandle(ctypes.c_void_p(handle))
+            return times[0].value // 10000 - 11644473600000 if ok else 0  # 100 ns ticks since 1601
+    except (OSError, ValueError, IndexError, StopIteration, AttributeError):
+        return 0
+    return 0
+
+
+def _host_alive(entry: dict) -> bool:
+    """The entry's process is alive and is the host that wrote it, not a later one given a dead host's pid."""
+    pid = int(entry.get("pid", 0))
+    if not _alive(pid):
+        return False
+    started, began = int(entry.get("started", 0)), process_started(pid)
+    return started <= 0 or began <= 0 or began <= started + 5000  # the margin: the clocks' grain
+
+
 def hosts(directory: Optional[Path] = None) -> list[dict]:
     """The running GUI programs, oldest first (the discovery entries of live processes)."""
     directory = directory or discovery_directory()
@@ -82,7 +127,7 @@ def hosts(directory: Optional[Path] = None) -> list[dict]:
             entry = json.loads(file.read_text())
         except (OSError, ValueError):
             continue
-        if entry.get("id") and entry.get("socket") and _alive(int(entry.get("pid", 0))):
+        if entry.get("id") and entry.get("socket") and _host_alive(entry):
             entries.append(entry)
     return sorted(entries, key=lambda e: e.get("started", 0))
 

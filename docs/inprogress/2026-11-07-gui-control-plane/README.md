@@ -458,6 +458,17 @@ Progress:
   `guicontrol::ScreenBinding` in `guicontrol-widgets`, bound on unreal-qt's main screen and on unreal-screen-viewer,
   which now hosts the plane (`main`, `main/screen`) and takes `--connect host:port`. Check:
   `tools/guicontrol/verify_programs.py` (all four programs in `unreal-gui list`).
+- **Stabilisation (2026-11-09), the gaps of §7 closed:**
+  - `verify_programs.py` runs the same `window` checks on every window of the four programs: unreal-qt `main` and
+    `debugger`, unreal-debugger, the screen viewer, the video wall. A size below a window's own minimum (the Qt
+    debugger's panes want 1064 x 599) answers the size taken.
+  - The discovery tells a reused pid from its host, in C++ and in the Python client: the process must have begun
+    before the entry's `started` (macOS `proc_pidinfo`, Linux `/proc`, Windows `GetProcessTimes`).
+  - `GuiActions_Test`: a binding naming a plane command runs on the host in process:
+    - the device is the caller, and the view showing the device's machine is the target;
+    - a release does nothing, a held repeating command repeats until released;
+    - an encoder turn calls once per step, at most 16;
+    - refusals and a missing host reach the status bar.
 
 Docs per phase:
 
