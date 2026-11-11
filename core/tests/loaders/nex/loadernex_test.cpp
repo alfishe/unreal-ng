@@ -223,6 +223,27 @@ TEST_F(LoaderNex_Test, ResetRegistersWriteNr06AndNr08LikeNexload)
     EXPECT_EQ(decoder->Board().Stored(0x08), 0xDE);
 }
 
+// A machine that has just powered on is in the config mode with the boot ROM on; NextZXOS has left it before it starts a program.
+// Kings Valley 2 (Layer 2 write window at #0000-#3FFF): the first 8K of each bank stayed empty while the boot ROM was on
+TEST_F(LoaderNex_Test, LoadingLeavesTheConfigModeAndTheBootRom)
+{
+    auto* memory = dynamic_cast<NextMemory*>(_context->pMemory);
+    auto* decoder = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(memory, nullptr);
+    ASSERT_NE(decoder, nullptr);
+    memory->SetConfigMode(true);
+    memory->SetBootRomEnabled(true);
+    auto image = MakeNex("V1.2", 0, 0, {{0, {0x18, 0xFE}}}, 0xC000, 0xBFF0, 0, 0);
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    EXPECT_FALSE(memory->InConfigMode());
+    decoder->DecodePortOut(0x123B, 0x01, 0);  // Layer 2 write mapping, segment 0: bank 9 at #0000-#3FFF
+    memory->DmaWrite(0x0100, 0x5A);
+    memory->DmaWrite(0x2100, 0xA5);
+    EXPECT_EQ(memory->RAMPageAddress(9)[0x0100], 0x5A) << "the first 8K of the bank";
+    EXPECT_EQ(memory->RAMPageAddress(9)[0x2100], 0xA5) << "the second 8K";
+}
+
 TEST_F(LoaderNex_Test, RefusesWhatIsNotNex)
 {
     LoaderNex loader(_context);
