@@ -3,6 +3,8 @@
 #include <QCursor>
 #include <QDebug>
 #include <QGuiApplication>
+#include <QInputDevice>
+#include <QPointingDevice>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -34,6 +36,9 @@ MouseCaptureController::MouseCaptureController(QObject* parent) : QObject(parent
     _elapsed.start();
     _reachTimer.setInterval(250);
     connect(&_reachTimer, &QTimer::timeout, this, &MouseCaptureController::checkReachable);
+    _leapTimer.setSingleShot(true);
+    _leapTimer.setInterval(PointerSourceClassifier::kDeferMs);
+    connect(&_leapTimer, &QTimer::timeout, this, [this] { applyTravel(_source.TakeDeferred()); });
 
     // Leaving the application (Cmd+Tab, another window) releases the mouse
     connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState state) {
@@ -161,6 +166,10 @@ void MouseCaptureController::capture()
     _motion.Reset();
     _wheel.Reset();
     _touch.Reset();
+    _source.Reset();
+    _loggedSource = PointerSourceClassifier::Source::Touch;
+    _warpPending = false;
+    _warpBroken = false;
     _buttonMask = 0xFF;
     _swallowKey = 0;
 
@@ -179,6 +188,7 @@ void MouseCaptureController::capture()
         _surface.setMouseTracking(true);
 
     const QPoint centerGlobal = _surface.centerGlobal();
+    _warpCenterGlobal = centerGlobal;
     _nativeCapture = _surface.allowNativeCapture
                          ? MouseCaptureMacOS::Begin(centerGlobal.x(), centerGlobal.y(),
                                                     [this](double dx, double dy) { applyHostMotion(dx, dy); })
@@ -203,7 +213,14 @@ void MouseCaptureController::capture()
     }
 
     const char* backend = _nativeCapture ? "macOS native"
-                          : (_windowsCapture ? "Windows native" : (_surface.pointerIsTouch ? "touch (relative, no warp)" : "Qt warp"));
+                          : (_windowsCapture ? "Windows native" : (_surface.pointerIsTouch ? "touch or mouse (by behaviour)" : "Qt warp"));
+    if (_surface.pointerIsTouch)
+    {
+        // What Qt knows about the pointers: the evidence for telling a mouse from the touchscreen on the device
+        for (const QInputDevice* device : QInputDevice::devices())
+            qDebug() << "MouseCaptureController: input device" << device->name() << "type" << device->type()
+                     << "id" << device->systemId();
+    }
     qDebug() << "MouseCaptureController: capture ON  (target" << QString::fromStdString(_targetId) << ", backend"
              << backend << ", release" << _releaseKey.toString() << ")";
     emit stateChanged();
@@ -243,6 +260,9 @@ void MouseCaptureController::release()
     _motion.Reset();
     _wheel.Reset();
     _touch.Reset();
+    _source.Reset();
+    _leapTimer.stop();
+    _warpPending = false;
 
     qDebug() << "MouseCaptureController: capture OFF";
     emit stateChanged();
@@ -290,6 +310,14 @@ bool MouseCaptureController::handleMousePress(QMouseEvent* event)
         return _captured;
     }
 
+    // A pointer that may be either: this press decides which one it is (a press after a leap is a finger)
+    if (_surface.pointerIsTouch && !isDefiniteTouch(event))
+    {
+        _source.Press(event->button() == Qt::LeftButton, event->globalPosition().x(), event->globalPosition().y());
+        _leapTimer.stop();
+        logSourceChange(event);
+    }
+
     if (isTouchEvent(event))
     {
         // The finger goes down: the contact's anchor. Nothing is pressed in the guest, a tap clicks when it lifts
@@ -322,9 +350,73 @@ uint8_t MouseCaptureController::buttonBit(Qt::MouseButton button) const
     }
 }
 
+bool MouseCaptureController::isDefiniteTouch(const QMouseEvent* event)
+{
+    if (event->source() != Qt::MouseEventNotSynthesized)
+        return true;
+    const QPointingDevice* device = event->pointingDevice();
+    return device && device->type() == QInputDevice::DeviceType::TouchScreen;
+}
+
 bool MouseCaptureController::isTouchEvent(const QMouseEvent* event) const
 {
-    return _surface.pointerIsTouch || event->source() != Qt::MouseEventNotSynthesized;
+    if (isDefiniteTouch(event))
+        return true;
+    return _surface.pointerIsTouch && _source.GetSource() == PointerSourceClassifier::Source::Touch;
+}
+
+void MouseCaptureController::logSourceChange(const QMouseEvent* event)
+{
+    if (_source.GetSource() == _loggedSource)
+        return;
+    _loggedSource = _source.GetSource();
+    const QPointingDevice* device = event->pointingDevice();
+    qDebug() << "MouseCaptureController: pointer is now"
+             << (_loggedSource == PointerSourceClassifier::Source::Mouse ? "a mouse" : "a touchscreen") << "(device"
+             << (device ? device->name() : QString()) << (device ? int(device->type()) : -1) << "source"
+             << int(event->source()) << ")";
+}
+
+void MouseCaptureController::applyTravel(const PointerSourceClassifier::Travel& travel)
+{
+    if (!travel.Empty())
+        applyHostMotion(travel.dx, travel.dy);
+}
+
+bool MouseCaptureController::swallowWarpEcho(QPointF global)
+{
+    if (!_warpPending)
+        return false;
+    const QPointF centre(_warpCenterGlobal);
+    if (std::hypot(global.x() - centre.x(), global.y() - centre.y()) <= kWarpEchoPx)
+    {
+        _warpPending = false;
+        _source.Rebase(global.x(), global.y());
+        return true;
+    }
+    if (now() - _warpSince >= kWarpTimeoutMs)
+    {
+        // No move ever came back to the centre: the warp is ignored here, the pointer is edge-limited
+        qDebug() << "MouseCaptureController: the pointer warp is not honoured, the mouse stays edge-limited";
+        _warpPending = false;
+        _warpBroken = true;
+        _source.Rebase(global.x(), global.y());
+        return true;
+    }
+    return true;  // a move queued before the warp: the pointer is not there any more
+}
+
+void MouseCaptureController::keepPointerCentral(QPointF global)
+{
+    if (_warpBroken || _warpPending || !_surface.logicalSize)
+        return;
+    const QSize size = _surface.logicalSize();
+    if (std::abs(global.x() - _warpCenterGlobal.x()) <= size.width() * 0.25 &&
+        std::abs(global.y() - _warpCenterGlobal.y()) <= size.height() * 0.25)
+        return;
+    _warpPending = true;
+    _warpSince = now();
+    recenterCursor();
 }
 
 bool MouseCaptureController::handleMouseRelease(QMouseEvent* event)
@@ -334,6 +426,8 @@ bool MouseCaptureController::handleMouseRelease(QMouseEvent* event)
 
     if (isTouchEvent(event))
     {
+        if (_surface.pointerIsTouch)
+            _source.Rebase(event->globalPosition().x(), event->globalPosition().y());
         if (event->button() == Qt::LeftButton && _touch.Up(now()))
         {
             // A tap: the left button down for a moment, so a program polling once a frame sees it
@@ -361,6 +455,55 @@ bool MouseCaptureController::handleMouseMove(QMouseEvent* event)
 {
     if (!_captured)
         return false;
+
+    // A pointer that may be a mouse or the touchscreen: tell them apart by what it does
+    if (_surface.pointerIsTouch && !isDefiniteTouch(event))
+    {
+        const QPointF global = event->globalPosition();
+        if (swallowWarpEcho(global))
+            return true;
+
+        if (event->buttons() == Qt::NoButton)
+        {
+            const PointerSourceClassifier::Travel travel = _source.Hover(global.x(), global.y());
+            logSourceChange(event);
+            applyTravel(travel);
+            if (_source.HasDeferred())
+                _leapTimer.start();
+            // A held-back leap may be a finger landing: the pointer stays where the finger put it
+            if (_source.GetSource() == PointerSourceClassifier::Source::Mouse && !_source.HasDeferred())
+                keepPointerCentral(global);
+            return true;
+        }
+
+        const bool wasMouse = _source.GetSource() == PointerSourceClassifier::Source::Mouse;
+        const PointerSourceClassifier::Travel drag = _source.Drag(global.x(), global.y());
+        if (drag.landed)
+        {
+            // The press came first and the pointer caught up with the finger afterwards: that press was a touch,
+            // not a button held in the guest. The contact starts at the finger
+            logSourceChange(event);
+            if (_buttonMask != 0xFF)
+            {
+                _buttonMask = 0xFF;
+                postButtons();
+            }
+            _touch.Down(event->position().x(), event->position().y(), now());
+            return true;
+        }
+        if (wasMouse)
+        {
+            applyTravel(drag);
+            keepPointerCentral(global);
+            return true;
+        }
+        // A finger's drag: below
+    }
+    else if (_surface.pointerIsTouch)
+    {
+        _source.ForceTouch();
+        _leapTimer.stop();
+    }
 
     // A touchscreen: the finger's own travel, never a warp (the finger stays where it is)
     if (isTouchEvent(event))
@@ -401,6 +544,7 @@ bool MouseCaptureController::handleWheel(QWheelEvent* event)
     if (!_captured)
         return false;
 
+    _source.Wheel();  // a touch has no wheel
     const int notches = _wheel.Feed(event->angleDelta().y());
     if (notches != 0 && !_targetId.empty())
     {
