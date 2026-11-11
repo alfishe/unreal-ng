@@ -1982,7 +1982,7 @@ namespace PythonBindings
                "(its registers in hit.regs); kind 'event' with event= a card event (int, nmi, reset, page, "
                "card_command, card_data, card_reply, dac_fetch, clock_change, dma_start, dma_done, gscfg0: cpu 'gs' "
                "by default) or a machine event (cpu_int, cpu_nmi, machine_reset, divmmc_map, zxndma_done, tsdma_done, "
-               "pld_write, fdc_command, fdc_done, host_command, ...: the main CPU's), hit['arg'] its detail; kind "
+               "pld_write, fdc_command, fdc_done, int_accept, int_return, host_command, ...: the main CPU's), hit['arg'] its detail; kind "
                "'chipreg' with chip= (ay, fm, saa, opl4, opl4wave, dac, cbl), address the register, to=, unit=: the "
                "main CPU's write of a sound chip's register (hit['arg'] the unit). value= / vmask= match an event's "
                "or a register's byte. A sync chunk on a card read or port_in may return a byte: the "
@@ -3714,7 +3714,7 @@ namespace PythonBindings
                 return id;
             }, "Add a General Sound / NeoGS protocol event breakpoint: the card's (int, nmi, reset, page, card_command, "
                "card_data, card_reply) stop the machine at the card's next instruction, the host's (host_command, "
-               "host_data, host_reply) after the main CPU's access, the machine's events (the ZX Next's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done; TS-Conf's cpu_int, tsdma_start, tsdma_done; the Sprinter's cpu_int, cpu_reti, pld_read, pld_write, pld_event; every WD1793's fdc_command, fdc_done) on "
+               "host_data, host_reply) after the main CPU's access, the machine's events (the ZX Next's cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done; TS-Conf's cpu_int, tsdma_start, tsdma_done; the Sprinter's cpu_int, cpu_reti, pld_read, pld_write, pld_event; every WD1793's fdc_command, fdc_done; every model's int_accept, int_return) on "
                "the main CPU; value / vmask filter the byte; cpu defaults to the kind's side. Returns the id; ValueError with the reason when refused",
                py::arg("kind"), py::arg("value") = -1, py::arg("vmask") = -1, py::arg("hits") = "", py::arg("cpu") = "")
             .def("bp_chipreg", [](Emulator& self, const std::string& chipName, int32_t reg, int32_t end, int32_t unit,
