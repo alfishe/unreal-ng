@@ -369,4 +369,38 @@ controllers' `cpu_int` / `cpu_reti` above (which name a source and exist where a
   engine (the ZX Next, the Sprinter) decodes the return after the engine ran it, as the profile analyzer does.
 
 Exact section timing with interrupts excluded needs both: the time between them is the handler's, contention and
-waits included.
+waits included. The section timer below uses them.
+
+## 10. Section timing
+
+`SectionTimerAnalyzer` (`core/src/debugger/analyzers/sectiontimer/`, analyzer id `section-timer`) measures how long
+code sections take while the machine runs at full speed: exec taps on the markers (an entry and one or more exits per
+section) and on `int_accept` / `int_return`, no stop per marker, no script. The commands on every plane are in
+[command-interface §5.5c](../control-interfaces/command-interface.md#55c-section-timer); a worked example with a
+demo is `data/examples/01-section-timing` (`profile_sections.py --native`).
+
+- **Time.** Global T-states: frame x frame length + T in the frame, read at the start of the marker's instruction, so
+  a pass may cross frames. Gross = exit minus entry; net = gross minus the interrupts accepted inside the pass, each
+  from the start of its acknowledge to the end of the return that pops its slot (the acknowledge, a `JP` in the
+  vector table, the handler, its `RETI`, contention and waits). An interrupt is charged to every pass open at its
+  acceptance that is still open at its return.
+- **Pairing.** An entry pushes a pass. An entry of a section still open drops the open pass and the passes above it
+  (it left without its exit); `recursive` nests instead. An exit closes the innermost open pass of its section and
+  drops the passes above it; an exit with no open pass is an orphan once the section was entered. An address that
+  is both an exit and an entry closes first.
+- **Results.** Per section count, min, max, average, net min / max / average, interrupted passes, the last pass and
+  where the longest started; the passes one by one up to `capacity` (100000 by default; the statistics count all);
+  marker hits, orphans, dropped and open passes. Read at any time, running or paused: the timer takes a lock per
+  marker hit, a reader copies under it.
+- **Stop on a slow pass.** A break condition `[net:]NAME<op>T` stops the machine at the exit of the pass that meets
+  it, before the exit's instruction: the tap asks the breakpoint manager for a stop (`StopAtThisTap`), the hit then
+  goes through `Emulator::OnBreakpointHit` as an execution breakpoint's would (a pause with the reason breakpoint on
+  the emulator's run, the end of a direct run). Going on from there does not count the exit again. Like any breakpoint
+  it stops the runs that honour breakpoints: the machine's own run, `steps`, `run_until` / `run_until_pc` with
+  `breakpoints: true`; `run_frames` and the other runs that skip breakpoints measure and never stop.
+- **Cost.** A marker hit is a tap: the instruction-start check the taps already need, a lock and a few stores. In
+  POC 050 (`tools/poc/050-section-timing-taps`) the timer was within noise of no taps at all on the demo and on a
+  marker hit 558 times a frame, 4.7x faster than the same timer in a Lua hook there; its passes matched the stepping
+  reference exactly on the 48K and the Pentagon.
+- **Limits.** The markers are CPU addresses (a paged-out copy of the code at the same address counts too); the main
+  Z80 only.

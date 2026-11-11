@@ -190,6 +190,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"cpuprofile", &CLIProcessor::HandleCpuProfile},      // CPU time profile: start/stop/report/frames/export
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
+                        {"sectiontimer", &CLIProcessor::HandleSectionTimer},  // Section timing (entry / exit markers)
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
                         {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
                         {"recent", &CLIProcessor::HandleRecent},              // Files opened lately (RecentFiles)
@@ -840,6 +841,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  markup [show] [range] | layers | mark <range> <kind> [title] | unmark <range> | comment <addr> [text] | clear [layer] | save [profile] [keep] - Memory markup" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
+    oss << "  sectiontimer start [SECTION..] [break-if NAME>T]|stop|clear|status|result - Section timing" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
     oss << "  recent [kind] | recent clear [kind]                     - Files opened lately (open: action run media.open_recent index=N)" << NEWLINE;
     oss << NEWLINE;

@@ -14,6 +14,7 @@
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/osaware/osaware_event.h>
+#include <debugger/analyzers/sectiontimer/sectiontimeranalyzer.h>
 #include <debugger/analyzers/trdos/trdosanalyzer.h>
 #include <emulator/sound/soundmanager.h>
 #include <json/json.h>
@@ -2314,6 +2315,152 @@ void EmulatorAPI::audioCaptureResult(const HttpRequestPtr& req,
 }
 
 /// endregion </Audio capture endpoints>
+
+/// region <Section timer endpoints>
+
+namespace
+{
+HttpResponsePtr SectionTimerError(HttpStatusCode code, const std::string& error, const std::string& message)
+{
+    Json::Value body;
+    body["error"] = error;
+    body["message"] = message;
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(code);
+    addCorsHeaders(resp);
+    return resp;
+}
+
+std::vector<std::string> SectionTimerStrings(const Json::Value& json, const char* key)
+{
+    std::vector<std::string> out;
+    if (!json.isMember(key))
+        return out;
+    const Json::Value& v = json[key];
+    if (v.isArray())
+    {
+        for (const Json::Value& one : v)
+            out.push_back(one.isString() ? one.asString() : one.isNumeric() ? std::to_string(one.asUInt()) : std::string());
+    }
+    else if (v.isString())
+        out.push_back(v.asString());
+    else if (v.isNumeric())
+        out.push_back(std::to_string(v.asUInt()));
+    return out;
+}
+
+Json::Value SectionTimerJson(SectionTimerAnalyzer* timer, size_t offset, size_t limit, bool text)
+{
+    const SectionTimerAnalyzer::Result result = timer->GetResult(offset, limit);
+    Json::Value ret;
+    Json::CharReaderBuilder builder;
+    std::string errors;
+    const std::string json = SectionTimerAnalyzer::ToJson(result);
+    std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+    reader->parse(json.data(), json.data() + json.size(), &ret, &errors);
+    if (text)
+        ret["text"] = SectionTimerAnalyzer::ToText(result);
+    return ret;
+}
+}  // namespace
+
+/// @brief POST /api/v1/emulator/{id}/section-timer - {"action": "start|stop|clear", "sections": [...], "extra": [...],
+/// "break_if": [...], "recursive": false, "frame_t": 0, "capacity": 100000}
+void EmulatorAPI::sectionTimer(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        callback(SectionTimerError(HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found"));
+        return;
+    }
+    SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(emulator->GetContext());
+    if (!timer)
+    {
+        callback(SectionTimerError(HttpStatusCode::k500InternalServerError, "Internal Error",
+                                   "Section timer not available"));
+        return;
+    }
+
+    auto json = req->getJsonObject();
+    const Json::Value body = json ? *json : Json::Value(Json::objectValue);
+    const std::string action = body.get("action", "start").asString();
+    if (action == "start")
+    {
+        SectionTimerAnalyzer::Spec spec;
+        spec.sections = SectionTimerStrings(body, "sections");
+        spec.extra = SectionTimerStrings(body, "extra");
+        spec.breakIf = SectionTimerStrings(body, "break_if");
+        spec.recursive = body.get("recursive", false).asBool();
+        spec.frameT = body.get("frame_t", 0).asUInt();
+        spec.capacity = static_cast<size_t>(
+            body.get("capacity", static_cast<Json::UInt64>(SectionTimerAnalyzer::kDefaultCapacity)).asUInt64());
+        std::string error;
+        if (!timer->Start(spec, error))
+        {
+            callback(SectionTimerError(HttpStatusCode::k400BadRequest, "Bad Request", error));
+            return;
+        }
+    }
+    else if (action == "stop")
+        timer->Stop();
+    else if (action == "clear")
+        timer->Clear();
+    else
+    {
+        callback(SectionTimerError(HttpStatusCode::k400BadRequest, "Bad Request",
+                                   "action is start, stop or clear: " + action));
+        return;
+    }
+
+    Json::Value ret = SectionTimerJson(timer, 0, 0, true);
+    ret["emulator_id"] = id;
+    ret["action"] = action;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/section-timer?offset=0&limit=1000&text=true
+void EmulatorAPI::getSectionTimer(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        callback(SectionTimerError(HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found"));
+        return;
+    }
+    SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(emulator->GetContext());
+    if (!timer)
+    {
+        callback(SectionTimerError(HttpStatusCode::k500InternalServerError, "Internal Error",
+                                   "Section timer not available"));
+        return;
+    }
+    auto number = [&](const char* name, size_t fallback) -> size_t {
+        const std::string text = req->getParameter(name);
+        if (text.empty())
+            return fallback;
+        try
+        {
+            return static_cast<size_t>(std::stoull(text));
+        }
+        catch (...)
+        {
+            return fallback;
+        }
+    };
+    const std::string text = req->getParameter("text");
+    Json::Value ret = SectionTimerJson(timer, number("offset", 0), number("limit", 1000), text == "true" || text == "1");
+    ret["emulator_id"] = id;
+    auto resp = HttpResponse::newHttpJsonResponse(ret);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// endregion </Section timer endpoints>
 
 }  // namespace v1
 }  // namespace api

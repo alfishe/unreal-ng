@@ -36,6 +36,9 @@
 //                                       → GET|POST|DELETE /profiler/memory/watches, DELETE /profiler/memory/watches/{name}
 //   cpuprofile {op, ...}                → POST /cpuprofile/{op} (the CPU time per routine, profilecontrol.h; the
 //                                        answer's text is the core's)
+//   section_timer {op, sections, break_if, extra, recursive, frame_t, capacity, offset, limit}
+//                                       → POST /section-timer {action, ...} (start / stop / clear),
+//                                        GET /section-timer?text=true&offset=&limit= (status)
 //
 // analysis actions (the analysis layers, core analysis::Execute behind the routes):
 //   start {level?, mode?, record?} → POST /analysis/start
@@ -644,7 +647,7 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     for (const char* action : {"coverage_start", "coverage_stop", "coverage_read", "coverage_gaps", "coverage_clear", "coverage_export", "frame_cost",
                                "profile_start", "profile_stop", "profile_status", "profile_report", "porttrace", "gs_porttrace",
                                "vdac2_line_budget", "vdac2_line_budget_set", "profiler", "gs_trace", "aylog", "pchist",
-                               "analyzers", "memory_counters", "memory_watch", "cpuprofile"})
+                               "analyzers", "memory_counters", "memory_watch", "cpuprofile", "section_timer"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -675,7 +678,14 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
         "ring_kib?, stream? = a JSONL file, reset?), stop, reset, mark (name: a baseline; drop?), status, report "
         "(since? = a mark, top?, sort? self | inclusive | calls, callers?, beam?: self / inclusive T-states, permille, "
         "callers, JP entries / dispatches / abandoned frames said per routine), frames (last?, top?: the per-frame "
-        "series), export (format kit | json | entries | sym | ann, path?, since?).";
+        "series), export (format kit | json | entries | sym | ann, path?, since?). "
+        "section_timer times code sections between marker addresses at full speed (exec taps, no stop per marker; "
+        "interrupts accounted exactly, net = gross minus the interrupts inside): op start (sections = NAME for the "
+        "labels NAME and NAME.End, or name=ENTRY:EXIT[,EXIT]; none = every label X with an X.End; break_if = "
+        "[net:]NAME<op>T pauses at the exit of the pass that meets it in a run that honours breakpoints - resume, "
+        "run_until with breakpoints true; run_frames skips them; extra?, recursive?, frame_t?, capacity?), then "
+        "run the machine; op status (default: the table per section - count, min, avg, max, net max, interrupted - "
+        "the stop; offset / limit add the passes), stop (results stay), clear.";
     schema["properties"]["profiler"]["type"] = "string";
     schema["properties"]["profiler"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* name : {"opcode", "memory", "calltrace", "porttrace", "all"})
@@ -714,7 +724,26 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
     schema["properties"]["depth"]["type"] = "integer";
     schema["properties"]["depth"]["description"] = "pchist read: entries, newest first (default 64)";
     schema["properties"]["capacity"]["type"] = "integer";
-    schema["properties"]["capacity"]["description"] = "aylog start: the ring's capacity in register writes";
+    schema["properties"]["capacity"]["description"] =
+        "aylog start: the ring's capacity in register writes; section_timer start: passes kept one by one (100000)";
+    for (const char* name : {"sections", "break_if", "extra"})
+    {
+        schema["properties"][name]["type"] = "array";
+        schema["properties"][name]["items"]["type"] = "string";
+    }
+    schema["properties"]["sections"]["description"] =
+        "section_timer start: NAME (labels NAME and NAME.End) or name=ENTRY:EXIT[,EXIT] (labels or #8000 / 0x8000 / "
+        "32768); none = every label X that has an X.End";
+    schema["properties"]["break_if"]["description"] =
+        "section_timer start: [net:]NAME<op>T (op > < >= <= == !=): pause at the exit of the pass that meets it";
+    schema["properties"]["extra"]["description"] = "section_timer start: taps with no action (addresses or labels)";
+    schema["properties"]["recursive"]["type"] = "boolean";
+    schema["properties"]["recursive"]["description"] =
+        "section_timer start: an entry of an open section nests a pass (recursive code) instead of dropping the open one";
+    schema["properties"]["frame_t"]["type"] = "integer";
+    schema["properties"]["frame_t"]["description"] = "section_timer start: T-states a frame for the clock (0: the machine's)";
+    schema["properties"]["offset"]["type"] = "integer";
+    schema["properties"]["offset"]["description"] = "section_timer status: the first pass to list (with limit)";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["clear"]["type"] = "boolean";
@@ -1292,6 +1321,37 @@ void RegisterAnalyzePerformanceImpl(ToolRegistry& registry)
                                           result.text += "\n" + result.structured["text"].asString();
                                       done(std::move(result));
                                   });
+                return;
+            }
+
+            if (action == "section_timer")
+            {
+                const std::string op = args.get("op", "status").asString();
+                auto withText = [done](ToolResult result) {
+                    if (!result.isError && result.structured.isObject() && result.structured.isMember("text"))
+                        result.text += "\n" + result.structured["text"].asString();
+                    done(std::move(result));
+                };
+                if (op == "status")
+                {
+                    // The passes only when asked for (a limit or an offset): the table is what an agent reads
+                    const bool passes = args.isMember("limit") || args.isMember("offset");
+                    const std::string query = "?text=true&offset=" + std::to_string(args.get("offset", 0).asUInt()) +
+                                              "&limit=" + std::to_string(passes ? args.get("limit", 100).asUInt() : 0u);
+                    ResolveAndForward(args, "GET", "/section-timer" + query, nullptr, caller, "Section timer", withText);
+                    return;
+                }
+                if (op != "start" && op != "stop" && op != "clear")
+                {
+                    done(ToolResult::Error("section_timer op: start, stop, clear or status"));
+                    return;
+                }
+                Json::Value body(Json::objectValue);
+                body["action"] = op;
+                for (const char* name : {"sections", "break_if", "extra", "recursive", "frame_t", "capacity"})
+                    if (args.isMember(name) && !args[name].isNull())
+                        body[name] = args[name];
+                ResolveAndForward(args, "POST", "/section-timer", &body, caller, "Section timer: " + op, withText);
                 return;
             }
 
