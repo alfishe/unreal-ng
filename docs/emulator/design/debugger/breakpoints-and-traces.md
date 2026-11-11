@@ -352,3 +352,21 @@ CPU:
   stops on its first sector read with the track and sector in the detail.
 - `fdc_done` when a command ends (BUSY cleared, INTRQ raised): the value is the status register, the detail the
   command byte. `--value 0x10 --vmask 0x10` stops on a Record Not Found.
+
+### The CPU's interrupts (every model)
+
+The CPU itself reports the interrupts it takes and the returns from them, on every model, apart from the interrupt
+controllers' `cpu_int` / `cpu_reti` above (which name a source and exist where a controller does):
+
+- `int_accept` after the acknowledge of an INT or an NMI: PC is the handler, SP the slot of the pushed return
+  address. The value is the kind: the INT's mode 0-2, 3 an NMI; the detail the acknowledge's T-states (13 for IM 0 / 1,
+  19 for IM 2, 11 for an NMI, plus any wait), so it began at the hit's T minus them.
+- `int_return` at the end of the RET, RETI or RETN that pops that slot: the hit's T is the start of the interrupted
+  instruction, the value the kind of the interrupt, the detail the return address. A return of a call inside the
+  handler pops a lower slot and is not one. Nested interrupts pair innermost first.
+- The CPU keeps the open interrupts (up to eight) only while an event breakpoint or tap is armed; a handler that leaves
+  without a return (a new stack, a jump out) is dropped when the stack passes its slot. A machine on its own CPU
+  engine (the ZX Next, the Sprinter) decodes the return after the engine ran it, as the profile analyzer does.
+
+Exact section timing with interrupts excluded needs both: the time between them is the handler's, contention and
+waits included.
