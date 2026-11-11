@@ -255,7 +255,7 @@ and glyph from the database.
 | Shoulders | `lb` `rb` (digital), `lt` `rt` (analog 0..1, with `lt.click` / `rt.click` at the threshold; a digital trigger such as Switch ZL / ZR sends `lt` / `rt` at 0 or 1, and a device that sends only `lt.click` is read as `lt` too) |
 | Sticks | `lstick.x` `lstick.y` `rstick.x` `rstick.y` (-1..1), `lstick.click` `rstick.click`; derived digital `lstick.up` ... |
 | System | `view` (Back / Select / Share on PS4), `menu` (Start / Options), `guide` (Xbox / PS / Home), `share` (Series X / Create), `profile` (Elite profile button, when visible) |
-| Extra | `paddle.p1` .. `paddle.p4` (Elite P1-P4, DualSense Edge back buttons, Steam Deck L4 L5 R4 R5), `misc.1` .. `misc.6`, `touchpad.click`, `touchpad.x` `touchpad.y` |
+| Extra | `paddle.p1` .. `paddle.p4` (Elite P1-P4, DualSense Edge back buttons, Steam Deck L4 L5 R4 R5), `misc.1` .. `misc.6`, `touchpad.click`, `touchpad.x` `touchpad.y` `touchpad.touch` (a PlayStation pad's single pad: the first finger, -1..1, y down, the centre and `touch` 0 when none; the Steam Deck's two are `ltouchpad.*` / `rtouchpad.*` with `.pressure`) |
 | Motion | `gyro.x` `gyro.y` `gyro.z`, `accel.x` `accel.y` `accel.z` |
 | Raw | `button.<n>` `axis.<n>` `hat.<n>.<dir>` for devices with no known layout (a DB9 adapter before the wizard) |
 | Keyboard | `key.<PcKey name>` (the existing 105-key `PcKey`, `core/src/emulator/io/keyboard/pckey.h`) |

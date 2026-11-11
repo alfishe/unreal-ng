@@ -1345,8 +1345,8 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
         "dma_start, dma_done, gscfg0 (cpu gs; the last five from the card's hardware, the DMA ones and gscfg0 NeoGS "
         "only), host_command, host_data, host_reply (cpu main: the host's access to #B3 / #BB), the ZX Next's machine "
-        "events cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event, fdc_command, fdc_done (cpu main); value / value_mask filter the byte (the DAC byte, GSCFG0, the DMA module "
-        "0 ZX / 1 SD / 2 MP3, the interrupt or NMI source, the esxDOS call)";
+        "events cpu_int, cpu_reti, cpu_nmi, cpu_retn, machine_reset, divmmc_map, divmmc_unmap, esxdos_call, zxndma_start, zxndma_done, tsdma_start, tsdma_done, pld_read, pld_write, pld_event, fdc_command, fdc_done, int_accept, int_return (every model: the CPU accepted an INT or NMI / returned from it; cpu main); value / value_mask filter the byte (the DAC byte, GSCFG0, the DMA module "
+        "0 ZX / 1 SD / 2 MP3, the interrupt or NMI source, the esxDOS call, the interrupt mode 0-2 or 3 an NMI)";
     schema["properties"]["hc"]["type"] = "integer";
     schema["properties"]["hc"]["description"] = "For bp_add of beam: the pixel clock in the row (0..511, default 0)";
     schema["properties"]["address_end"]["oneOf"][0]["type"] = "integer";

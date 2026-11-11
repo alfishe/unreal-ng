@@ -1120,9 +1120,39 @@ public:
     }
     void NoteFlow(FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret)
     {
-        if (flowHook) [[unlikely]]
-            flowHook(flowHookContext, this, event, target, slot, ret);
+        if (flowHook || _intFrameCount) [[unlikely]]
+            NoteFlowWatched(event, target, slot, ret);
     }
     void NoteEngineFlow(uint16_t spBefore);
     /// endregion </Control-flow events>
+
+    /// region <Interrupt events>
+    /// The int_accept / int_return machine events (every model, the CPU's own view): an accepted INT or NMI, told
+    /// after its acknowledge (the acknowledge's T-states as the detail), and the return that pops the address it
+    /// pushed, told at the return's end (the interrupted instruction's start). `kind`: the INT's mode (0-2), 3 an NMI
+    static constexpr uint8_t kIntKindNmi = 3;
+    /// The interrupts accepted while the machine's events are watched and not returned from yet: the stack slot of
+    /// the pushed return address, innermost last
+    struct IntFrame
+    {
+        uint16_t slot = 0;
+        uint8_t kind = 0;
+    };
+    static constexpr uint8_t kIntFrames = 8;
+    void NoteInterruptAccepted(uint8_t kind)
+    {
+        if (_context->machineEventWatch) [[unlikely]]
+            ReportInterruptAccepted(kind);
+    }
+    /// The open interrupt frames (tests)
+    uint8_t IntFrameCount() const { return _intFrameCount; }
+    /// A reset or a loaded state: no interrupt is open
+    void ClearIntFrames() { _intFrameCount = 0; }
+
+private:
+    IntFrame _intFrames[kIntFrames]{};
+    uint8_t _intFrameCount = 0;
+    void ReportInterruptAccepted(uint8_t kind);
+    void NoteFlowWatched(FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret);
+    /// endregion </Interrupt events>
 };

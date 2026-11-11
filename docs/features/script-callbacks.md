@@ -208,7 +208,7 @@ chip register breakpoints stop on ([breakpoints-and-traces](../emulator/design/d
 
 - **Machine events**: `cpu_int`, `cpu_reti`, `cpu_nmi`, `cpu_retn`, `machine_reset`, `divmmc_map`, `divmmc_unmap`,
   `esxdos_call`, `zxndma_start`, `zxndma_done`, `tsdma_start`, `tsdma_done`, `pld_read`, `pld_write`, `pld_event`,
-  `fdc_command`, `fdc_done`, and the host side of the General Sound mailbox (`host_command`, `host_data`,
+  `fdc_command`, `fdc_done`, `int_accept`, `int_return` (every model), and the host side of the General Sound mailbox (`host_command`, `host_data`,
   `host_reply`). An event name picks its side: these are the main CPU's, the card's events (`int`, `page`, ...) the
   card CPU's. `value` / `vmask` keep the hits whose byte matches. No condition.
 - **Chip registers**: `chip` (`ay`, `fm`, `saa`, `opl4`, `opl4wave`, `dac`, `cbl`), `reg` (Python: the address) and

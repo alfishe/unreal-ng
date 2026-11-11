@@ -29,6 +29,7 @@ constexpr FixedControl kFixed[] = {
     {"misc.1", ControlType::Button},       {"misc.2", ControlType::Button},       {"misc.3", ControlType::Button},
     {"misc.4", ControlType::Button},       {"misc.5", ControlType::Button},       {"misc.6", ControlType::Button},
     {"touchpad.click", ControlType::Button}, {"touchpad.x", ControlType::Axis},   {"touchpad.y", ControlType::Axis},
+    {"touchpad.touch", ControlType::Button},
     {"gyro.x", ControlType::Axis},         {"gyro.y", ControlType::Axis},         {"gyro.z", ControlType::Axis},
     {"accel.x", ControlType::Axis},        {"accel.y", ControlType::Axis},        {"accel.z", ControlType::Axis},
     {"mouse.dx", ControlType::Delta},      {"mouse.dy", ControlType::Delta},      {"mouse.wheel", ControlType::Delta},

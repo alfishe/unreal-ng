@@ -13,6 +13,7 @@
 /// poke and set_reg, of either role, go to the call's HookEdits for the card's next boundary (GSCardTarget); a sync
 /// call on a card read hands the card another byte by returning it (0..255).
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -37,6 +38,8 @@ public:
     HookCallResult Call(uint32_t id, const CallbackHit& hit, const std::string& event,
                         uint64_t instructionBudget, HookEdits* edits) override;
     void Forget(uint32_t id) override;
+    /// The hook state's heap in bytes (tests)
+    size_t HeapBytes();
 
     static std::unique_ptr<IScriptHookHost> Create(EmulatorContext* context);
 

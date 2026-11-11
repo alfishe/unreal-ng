@@ -530,10 +530,11 @@ bool InputRouter::Consumes(const HostDeviceId& id, const std::string& control) c
 
 namespace
 {
-/// "rtouchpad" for "rtouchpad.x" / "rtouchpad.y" (and the left pad's), else empty: the axes of a pad that point
+/// "rtouchpad" for "rtouchpad.x" / "rtouchpad.y" (and the left pad's, and a PlayStation pad's single "touchpad"), else
+/// empty: the axes of a pad that point
 std::string TouchpadOf(const std::string& control)
 {
-    for (const char* pad : {"ltouchpad", "rtouchpad"})
+    for (const char* pad : {"ltouchpad", "rtouchpad", "touchpad"})
     {
         const std::string prefix = std::string(pad) + ".";
         if (control == prefix + "x" || control == prefix + "y")

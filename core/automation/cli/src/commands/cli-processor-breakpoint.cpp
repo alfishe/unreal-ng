@@ -605,6 +605,8 @@ void CLIProcessor::HandleEventBreakpoint(const ClientSession& session, const std
            << "Machine (the main CPU, Sprinter): cpu_int / cpu_reti (0-3 CTC, 4-5 SIO, 6-7 PIO, 8 the PLD's /INT)," << NEWLINE
            << "  pld_read / pld_write (the PLD's internal code), pld_event (the journal's kind: 9 all_mode, ...)" << NEWLINE
            << "Machine (the main CPU, every WD1793): fdc_command (the command byte), fdc_done (the status)" << NEWLINE
+           << "Machine (the main CPU, every model): int_accept (after the acknowledge; the mode 0-2, 3 an NMI)," << NEWLINE
+           << "  int_return (the return that popped the address it pushed; the same kind)" << NEWLINE
            << "--value / --vmask filter the event's byte." << NEWLINE << "Examples:" << NEWLINE
            << "  bevent card_command --value 0x0F  - the card takes command #0F" << NEWLINE
            << "  bevent host_command               - the host writes any command" << NEWLINE
