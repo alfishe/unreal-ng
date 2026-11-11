@@ -11,6 +11,7 @@
 #include <string>
 
 #include "emulator/io/mouse/mousedeltaaccumulator.h"
+#include "emulator/io/mouse/pointersourceclassifier.h"
 #include "emulator/io/mouse/touchpointertracker.h"
 
 class QKeyEvent;
@@ -75,10 +76,11 @@ public:
         bool allowNativeCapture = true;
         std::function<void(QPoint global)> warpCursor;  ///< empty = QCursor::setPos
         std::function<QPoint()> cursorPosition;         ///< global logical; empty = QCursor::pos
-        /// The pointer is a touchscreen's (gamescope composes the Steam Deck's touchscreen as an absolute pointer:
-        /// motion and a press, no touch events). Captured, it is a relative pad (TouchPointerTracker): no warp, the
-        /// finger's travel moves the guest, a tap clicks. A mouse event Qt synthesized from a touch is handled so
-        /// on every platform
+        /// The pointer may be a touchscreen's (gamescope composes the Steam Deck's touchscreen as an absolute
+        /// pointer: motion and a press, no touch events, on the device a real mouse uses too). Captured, a touch is
+        /// a relative pad (TouchPointerTracker): no warp, the finger's travel moves the guest, a tap clicks; a real
+        /// mouse is told by its behaviour (PointerSourceClassifier: hover moves without a button) and moves the
+        /// guest as a mouse does. A mouse event Qt synthesized from a touch is a touch on every platform
         bool pointerIsTouch = false;
     };
 
@@ -134,6 +136,11 @@ public:
     /// frame sees the press
     static constexpr int kTapClickMs = 70;
 
+    /// A move this close (logical pixels) to the warp target is the echo of the warp; no echo within kWarpTimeoutMs
+    /// ms means the system ignores warps (gamescope may), and the mouse is left edge-limited
+    static constexpr double kWarpEchoPx = 3.0;
+    static constexpr qint64 kWarpTimeoutMs = 150;
+
     /// Unreachable this long (ms) while captured releases the capture
     static constexpr qint64 kUnreachableReleaseMs = 3000;
     /// Milliseconds clock for that rule (default: a monotonic timer). Tests replace it
@@ -177,8 +184,17 @@ signals:
 
 private:
     bool isReleaseKey(const QKeyEvent* event) const;
-    /// A touchscreen's pointer: the surface says so, or Qt synthesized the mouse event from a touch
+    /// Qt says it is a touch: the mouse event was synthesized from one, or the input device is a touchscreen
+    static bool isDefiniteTouch(const QMouseEvent* event);
+    /// The event is a touchscreen's: definite, or (a pointer that may be either) judged by PointerSourceClassifier
     bool isTouchEvent(const QMouseEvent* event) const;
+    /// A mouse source's hover or drag at `global`: warp the pointer back to the centre when it strays far, so the
+    /// travel is not stopped by the window's edge. Falls back to the edge-limited pointer if the warp is ignored
+    void keepPointerCentral(QPointF global);
+    /// The pointer jumped to the warp target: it is the echo of the warp (or the warp is not honoured)
+    bool swallowWarpEcho(QPointF global);
+    void applyTravel(const PointerSourceClassifier::Travel& travel);
+    void logSourceChange(const QMouseEvent* event);
     void postButtons();
     void recenterCursor();
     uint8_t buttonBit(Qt::MouseButton button) const;
@@ -208,6 +224,12 @@ private:
     MouseDeltaAccumulator _motion;
     MouseWheelAccumulator _wheel;
     TouchPointerTracker _touch;  ///< the finger's contact while captured
+    PointerSourceClassifier _source;  ///< mouse or touch, when the surface's pointer may be either
+    PointerSourceClassifier::Source _loggedSource = PointerSourceClassifier::Source::Touch;
+    QTimer _leapTimer;           ///< delivers a mouse's held-back leap when no press follows it
+    bool _warpPending = false;   ///< a warp to the centre is under way: events until its echo are not travel
+    bool _warpBroken = false;    ///< the warp was not honoured (no echo): the pointer stays edge-limited
+    qint64 _warpSince = 0;
 
     // The release key press is consumed together with its auto-repeats and its
     // release, whichever path delivers it (the screen's own key handler or the

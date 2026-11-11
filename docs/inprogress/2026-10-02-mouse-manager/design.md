@@ -176,8 +176,26 @@ Source for the AVR behavior:
   position moves the guest (no warp, so where it lands or rests means nothing; a position that jumps further than a
   finger can is a report catching up and only moves the anchor), the same speed matching and `MouseScale` apply, a
   tap (under 400 ms, within 14 px) is a left click held 70 ms for a program that polls once a frame. The tap that
-  captures is not a click. In Game Mode every pointer counts as a touch, so a USB mouse there moves the cursor only
-  with a button held.
+  captures is not a click.
+  **A real mouse in Game Mode:** gamescope's touchscreen and a USB / Bluetooth mouse reach Qt as one pointer (Xwayland
+  has one X11 device, so neither the event type, `QMouseEvent::source()`, nor the XInput device id tells them apart),
+  so the source is told by behaviour (`PointerSourceClassifier`, `core/src/emulator/io/mouse/pointersourceclassifier.h`),
+  event by event, so both work in one session. A touch never moves the pointer without a button: it leaps to the
+  finger once, then the press. A mouse hovers. Rules: two hover moves in a row (no press between, none a leap over
+  120 px) make the source a mouse (the first is held and delivered with the second: a finger's landing move never
+  reaches the guest); a press right after a leap is a finger; a leap with the button held (the press arrived first) is
+  a finger and lets go of the button the press put down; a right / middle button or the wheel is a mouse; an event Qt
+  synthesized from a touch, or one from a `TouchScreen` input device, is a finger. A mouse source moves the guest by
+  its position change without a button (a button press is a button down in the guest at once, drags hold it), and a
+  leap in a mouse's hover is held 60 ms: a press in that time says it was a finger landing (dropped), otherwise it was
+  a fast flick (delivered). The mouse is warped to the window centre only when it strays beyond a quarter of the
+  window from it (events until the move that arrives at the centre are the warp's echo: no travel); if no such move
+  comes within 150 ms the warp is not honoured here, and the mouse stays edge-limited but works. Known gaps: a
+  finger that lands within 120 px of the pointer's last place right after mouse use looks like a mouse until its
+  press (a tap is a click either way, a drag then holds the button), and a press-first landing that leaps under
+  250 px is read as a drag. Checked in `unreal-qt-tests` (`MouseCaptureControllerMouseOnTouchSurface_Test`); the
+  capture logs the input devices Qt sees and every source change (`MouseCaptureController: pointer is now ...`) for
+  the on-device check.
 - **Speed matching (on by default, switchable at any time):** the travel is the
   host pointer's own on every platform (macOS: NSEvent deltas of the dissociated
   pointer; Windows / Linux: the offset from the center the pointer is warped back
