@@ -39,6 +39,7 @@ enum Slot : size_t
     kRt,
     kTouchpadX,
     kTouchpadY,
+    kTouchpadTouch,  ///< a finger is on the pad (the router anchors a pointer on it)
     kMic,      ///< DualSense: the mute button
     kPaddleLeft,   ///< Edge: paddle.p3, the Elite's upper left (hostcontrols.cpp: P1 / P2 right, P3 / P4 left)
     kPaddleRight,  ///< Edge: paddle.p1, the Elite's upper right; an Elite profile works on the Edge
@@ -51,7 +52,7 @@ const char* const kSlotNames[kSlotCount] = {
     "south",        "east",         "west",     "north",          "dpad.up",   "dpad.down", "dpad.left",
     "dpad.right",   "lb",           "rb",       "lt.click",       "rt.click",  "view",      "menu",
     "lstick.click", "rstick.click", "guide",    "touchpad.click", "lstick.x",  "lstick.y",  "rstick.x",
-    "rstick.y",     "lt",           "rt",       "touchpad.x",     "touchpad.y", "misc.1",   "paddle.p3",
+    "rstick.y",     "lt",           "rt",       "touchpad.x",     "touchpad.y", "touchpad.touch", "misc.1",   "paddle.p3",
     "paddle.p1",    "misc.2",       "misc.3",
 };
 
@@ -61,7 +62,7 @@ size_t SlotCount(SonyModel model)
     {
         case SonyModel::DualSenseEdge: return kSlotCount;
         case SonyModel::DualSense: return kMic + 1;
-        case SonyModel::DualShock4: return kTouchpadY + 1;
+        case SonyModel::DualShock4: return kTouchpadTouch + 1;
     }
     return 0;
 }
@@ -266,11 +267,13 @@ void SonyPad::DecodeCommon(const uint8_t* common, size_t touchOffset, size_t tou
         const int y = (point[2] >> 4) | (point[3] << 4);
         Set(kTouchpadX, Centred(x, 1920), false, sink);
         Set(kTouchpadY, Centred(y, height), false, sink);
+        Set(kTouchpadTouch, 1.0f, true, sink);
     }
     else if (point != nullptr || !_values[kTouchpadX].seen)
     {
         Set(kTouchpadX, 0.0f, false, sink);
         Set(kTouchpadY, 0.0f, false, sink);
+        Set(kTouchpadTouch, 0.0f, true, sink);
     }
 
     if (dualSense)

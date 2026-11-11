@@ -29,8 +29,16 @@ public:
         /// At the start of a read or write cycle or a T without a strobe: the waits the video logic gives the address on the bus
         /// (`io`: no MREQ, a port cycle or an idle T)
         std::function<void(uint16_t, bool)> contend;
+        /// zxnDDMA physical mode: a byte of the 4 MB SRAM, the MMU bypassed (22-bit address)
+        std::function<uint8_t(uint32_t)> readPhysical;
+        std::function<void(uint32_t, uint8_t)> writePhysical;
+        /// zxnDDMA Layer 2 X,Y destination: the 16K bank (NR #12, or the shadow NR #13 when `hidden`) and the resolution (NR #70 bits 5:4)
+        std::function<void(bool hidden, uint8_t& bank, uint8_t& resolution)> layer2;
     };
 
+    /// The core has the zxnDDMA extension (the blitter commands #D7-#FB on port #6B). Off: those bytes fall through as on core 3.02.03
+    void SetExtended(bool on) { _extended = on; }
+    bool Extended() const { return _extended; }
     void SetBus(Bus bus) { _bus = std::move(bus); }
     /// Told at the end of every block, before an auto restart reloads the addresses (the block's history)
     void SetBlockListener(std::function<void(const NextDma&)> listener) { _onBlock = std::move(listener); }
@@ -61,8 +69,12 @@ public:
     unsigned Run(unsigned maxBytes, uint64_t now28);
 
     /// region <State, for tests and reports>
-    uint16_t Source() const { return _src; }
-    uint16_t Destination() const { return _dst; }
+    uint16_t Source() const { return static_cast<uint16_t>(_src); }
+    uint16_t Destination() const { return static_cast<uint16_t>(_dst); }
+    uint32_t Source24() const { return _src; }
+    uint32_t Destination24() const { return _dst; }
+    bool Physical() const { return _phys; }
+    bool TwoD() const { return _2d; }
     uint16_t Counter() const { return _counter; }
     uint16_t BlockLength() const { return _blockLength; }
     uint8_t Mode() const { return _mode; }
@@ -105,6 +117,11 @@ private:
         R3b0, R3b1,
         R4b0, R4b1,
         R6Mask,
+        ExtA, ExtB,                    ///< zxnDDMA: #D7 / #DB, address bits 23:16
+        DdmaMode, DdmaX0, DdmaX1, DdmaY,  ///< #DF: the flags, then (Layer 2 X,Y) X low, X high, Y
+        RowLen0, RowLen1, Rows0, Rows1,   ///< #E3 / #E7
+        StrideA0, StrideA1, StrideB0, StrideB1,  ///< #EB / #EF
+        Transparent, FillValue,           ///< #F3 / #F7
         Stuck  ///< dma.vhd R4_BYTE_2: WR4 with only bit 4 set waits for an interrupt control byte the case statement does not handle
     };
     // The bus hand-over in CPU clocks, from the RTL in GHDL (POC 036: a 256-byte block to port #FE holds the CPU 1536 + 5 T): the
@@ -120,6 +137,10 @@ private:
     void HoldBus(unsigned clocks);
     void Command(uint8_t value);
     void Load();
+    /// The working addresses from the programmed ones (the 24-bit zxnDDMA form, the Layer 2 X,Y destination), the 2D position at the start
+    void InitAddresses();
+    uint32_t Step(uint32_t address, uint8_t mode) const;
+    void ClearDdma();
     void FinishBlock();
     void AdvanceReadSequence(int after);
 
@@ -138,7 +159,18 @@ private:
     bool _transferring = false, _waiting = false, _z80Compat = false, _finishPending = false;
     bool _atLeastOne = false, _endOfBlock = false;
     bool _busHeld = false;  // between the CPU's BUSAK and the release of BUSRQ
-    uint16_t _src = 0, _dst = 0, _counter = 0;
+    uint32_t _src = 0, _dst = 0;  // 24 bits: {bits 23:16, address}
+    uint16_t _counter = 0;
+    // zxnDDMA (core 3.03.00)
+    bool _extended = false;
+    uint8_t _extA = 0, _extB = 0;
+    bool _phys = false, _2d = false, _transparent = false, _fill = false, _l2xy = false, _hidden = false;
+    uint16_t _l2x = 0;
+    uint8_t _l2y = 0;
+    uint16_t _rowLen = 0, _rows = 0, _strideA = 0, _strideB = 0;
+    uint8_t _transValue = 0, _fillValue = 0;
+    uint16_t _row = 0, _col = 0;
+    uint32_t _rowSrc = 0, _rowDst = 0;
     uint64_t _nextByteAt = 0;
     Seq _seq = Seq::Idle;
     uint8_t _readSeq = 0;

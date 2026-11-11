@@ -12,6 +12,9 @@
 
 #include "hid/drivers/dualsenseoutput.h"
 #include "hid/drivers/sonypad.h"
+#include "profiles/profilestore.h"
+#include "router/binding.h"
+#include "router/inputrouter.h"
 
 using namespace controllers;
 
@@ -81,6 +84,7 @@ TEST(SonyPad_Test, DualSenseUsbReport)
     EXPECT_FLOAT_EQ(events.at("lstick.x"), 0.0f);
     EXPECT_FLOAT_EQ(events.at("lt"), 0.0f);
     EXPECT_FLOAT_EQ(events.at("touchpad.x"), 0.0f);
+    EXPECT_EQ(events.count("touchpad.touch"), 0u) << "no finger: the first report says only a press";
     EXPECT_EQ(events.count("south"), 0u);
     EXPECT_EQ(pad.Battery().level, 85);
     EXPECT_FALSE(pad.Battery().charging);
@@ -109,6 +113,7 @@ TEST(SonyPad_Test, DualSenseUsbReport)
     EXPECT_FLOAT_EQ(events.at("misc.1"), 1.0f) << "the mute button";
     EXPECT_FLOAT_EQ(events.at("touchpad.x"), 1.0f) << "x 1920 clamps to the right edge";
     EXPECT_FLOAT_EQ(events.at("touchpad.y"), -1.0f) << "y 0, the top";
+    EXPECT_FLOAT_EQ(events.at("touchpad.touch"), 1.0f) << "the finger the router anchors the pointer on";
     EXPECT_EQ(events.count("dpad.up"), 0u) << "unchanged";
     EXPECT_TRUE(pad.Battery().charging);
     EXPECT_EQ(pad.Battery().level, 55);
@@ -118,7 +123,8 @@ TEST(SonyPad_Test, DualSenseUsbReport)
     ASSERT_TRUE(pad.Decode(report.data(), report.size(), Collect(events)));
     EXPECT_FLOAT_EQ(events.at("touchpad.x"), 0.0f);
     EXPECT_FLOAT_EQ(events.at("touchpad.y"), 0.0f);
-    EXPECT_EQ(events.size(), 2u);
+    EXPECT_FLOAT_EQ(events.at("touchpad.touch"), 0.0f);
+    EXPECT_EQ(events.size(), 3u);
 }
 
 TEST(SonyPad_Test, DualSenseBluetoothReportNeedsItsCrc)
@@ -178,6 +184,7 @@ TEST(SonyPad_Test, DualShock4UsbAndBluetooth)
     EXPECT_FLOAT_EQ(events.at("lt"), 128 / 255.0f);
     EXPECT_FLOAT_EQ(events.at("touchpad.x"), -1.0f);
     EXPECT_FLOAT_EQ(events.at("touchpad.y"), 6 / 470.0f);
+    EXPECT_FLOAT_EQ(events.at("touchpad.touch"), 1.0f);
     EXPECT_EQ(events.count("misc.1"), 0u) << "no mute button";
     EXPECT_TRUE(usbPad.Battery().wired);
     EXPECT_FALSE(usbPad.Battery().charging);
@@ -194,6 +201,7 @@ TEST(SonyPad_Test, DualShock4UsbAndBluetooth)
     ASSERT_TRUE(btPad.Decode(bt.data(), bt.size(), Collect(events)));
     EXPECT_FLOAT_EQ(events.at("north"), 1.0f);
     EXPECT_FLOAT_EQ(events.at("touchpad.x"), 0.0f) << "no touch reports: the centre";
+    EXPECT_EQ(events.count("touchpad.touch"), 0u) << "and no finger";
     EXPECT_EQ(btPad.Battery().level, 35);
     EXPECT_FALSE(btPad.Battery().wired);
 }
@@ -338,4 +346,104 @@ TEST(SonyPad_Test, ProtocolDualShock4BluetoothReadsFeature02Then05)
     ASSERT_TRUE(next.has_value());
     EXPECT_EQ(next->kind, PadOutReport::Kind::Output);
     EXPECT_EQ(next->bytes[0], 0x11) << "the light (player colour) goes out in the Bluetooth report";
+}
+
+namespace
+{
+/// The profile the store resolves for a Sony pad's family, and the router it feeds
+struct TouchpadRig
+{
+    HostDeviceInfo pad;
+    InputRouter router;
+    ResolvedProfiles resolved;
+    uint64_t frame = 1;
+
+    explicit TouchpadRig(const HostDeviceInfo& info) : pad(info)
+    {
+        ProfileStore store;
+        ProfileContext context;
+        context.machine = "pentagon";
+        context.devices = {pad};
+        resolved = store.Resolve(context);
+        router.OnDeviceAdded(pad);
+        for (const auto& [scope, bindings] : resolved.scopes)
+        {
+            std::string error;
+            EXPECT_TRUE(router.SetBindings(scope, bindings, error)) << scope << ": " << error;
+        }
+    }
+
+    const Binding* Find(const std::string& source) const
+    {
+        for (const auto& [scope, bindings] : resolved.scopes)
+            if (scope == "family:" + pad.family)
+                for (const Binding& binding : bindings)
+                    if (binding.layer.empty() && binding.sources.size() == 1 && binding.sources[0] == source)
+                        return &binding;
+        return nullptr;
+    }
+
+    void Set(const std::string& control, float value)
+    {
+        router.OnControl({pad.id, control, value, 0});
+    }
+
+    HostSample Sample()
+    {
+        HostSample out;
+        router.Sample("emu-1", frame++, out);
+        return out;
+    }
+};
+
+void ExpectTouchpadProfile(const std::string& family, float yScale)
+{
+    TouchpadRig rig({"usb:054c:09cc:0100:1", "Sony pad", family, "playstation", "hidraw"});
+    EXPECT_TRUE(rig.resolved.warnings.empty()) << rig.resolved.warnings.front();
+    const Binding* x = rig.Find("touchpad.x");
+    const Binding* y = rig.Find("touchpad.y");
+    const Binding* click = rig.Find("touchpad.click");
+    ASSERT_NE(x, nullptr);
+    ASSERT_NE(y, nullptr);
+    ASSERT_NE(click, nullptr);
+    EXPECT_EQ(x->target.kind, TargetKind::Mouse);
+    EXPECT_EQ(x->target.mouse, MouseControl::Dx);
+    EXPECT_FLOAT_EQ(x->target.scale, 72.0f) << "the pad's width moves the pointer as far as the Deck's trackpad";
+    EXPECT_EQ(y->target.mouse, MouseControl::Dy);
+    EXPECT_NEAR(y->target.scale, yScale, 0.05f) << "scaled by the pad's aspect: equal travel in every direction";
+    EXPECT_EQ(click->target.mouse, MouseControl::Left);
+    EXPECT_NE(rig.Find("south"), nullptr) << "pad-default under the family profile";
+    EXPECT_NE(rig.Find("rstick.x"), nullptr);
+
+    // The finger lands (anchors), then travels a quarter of the pad's width and height down and right
+    rig.Set("touchpad.touch", 1);
+    rig.Set("touchpad.x", 0.5f);
+    rig.Set("touchpad.y", 0.5f);
+    HostSample out = rig.Sample();
+    EXPECT_EQ(out.mouse.dx, 0) << "a landing only anchors";
+    EXPECT_EQ(out.mouse.dy, 0);
+    rig.Set("touchpad.x", 0.75f);
+    rig.Set("touchpad.y", 0.75f);
+    out = rig.Sample();
+    const float travel = 0.25f;
+    const float gain = 1.0f + 0.25f * 10.0f * travel;  // the default accel
+    EXPECT_NEAR(out.mouse.dx, travel * gain * 72.0f, 1.0f);
+    EXPECT_NEAR(-out.mouse.dy, travel * gain * yScale, 1.0f) << "the machine's y is up, the pad's down";
+    EXPECT_NEAR(static_cast<float>(out.mouse.dx) / -out.mouse.dy, 72.0f / yScale, 0.5f);
+
+    rig.Set("touchpad.click", 1);
+    out = rig.Sample();
+    EXPECT_NE(out.mouse.buttons & 1u, 0u) << "the click is the left button";
+}
+}  // namespace
+
+TEST(SonyPad_Test, DualShock4TouchpadIsTheMouse)
+{
+    ExpectTouchpadProfile("dualshock-4", 72.0f * 942 / 1920);
+}
+
+TEST(SonyPad_Test, DualSenseAndEdgeTouchpadIsTheMouse)
+{
+    ExpectTouchpadProfile("dualsense", 72.0f * 1080 / 1920);
+    ExpectTouchpadProfile("dualsense-edge", 72.0f * 1080 / 1920);
 }

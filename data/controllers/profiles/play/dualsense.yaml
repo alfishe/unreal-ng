@@ -1,0 +1,16 @@
+# The DualSense and the DualSense Edge: pad-default for what every pad has, and the touchpad as the mouse. The pad is
+# one surface of 1920 x 1080 units (two fingers, the first one is read), normalised to -1..1 on each axis, y down, like
+# the Deck's trackpads; the finger's travel moves the pointer (a laptop pad, see play/steam-deck.yaml), the click of
+# the whole pad is the left button. `scale` is counts per pad unit: x takes the Deck's 72, so the pad's width moves
+# the pointer as far as the Deck's trackpad does; the pad is 1080/1920 as tall as it is wide in the same units per
+# millimetre, so y takes 72 * 1080 / 1920 = 40.5 and a finger moves the pointer the same distance in every direction
+schema: 1
+kind: play
+id: builtin/play/dualsense
+label: DualSense
+applies_to: { families: [dualsense] }
+layers:
+  play:
+    touchpad.x:      { mouse: dx, scale: 72 }
+    touchpad.y:      { mouse: dy, scale: 40.5 }
+    touchpad.click:  { mouse: left }

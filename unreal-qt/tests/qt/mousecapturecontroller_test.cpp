@@ -424,3 +424,209 @@ TEST_F(MouseCaptureControllerTouch_Test, ReleasingTheCaptureForgetsTheContact)
 }
 
 /// endregion </Touchscreen>
+
+/// region <A real mouse on the same pointer: told from the touchscreen by its behaviour>
+
+class MouseCaptureControllerMouseOnTouchSurface_Test : public MouseCaptureControllerTouch_Test
+{
+protected:
+    void SetUp() override
+    {
+        MouseCaptureControllerTouch_Test::SetUp();
+        _controller->capture();
+        ASSERT_TRUE(_controller->isCaptured());
+        _now = 1000;
+        _controller->setClock([this] { return _now; });
+    }
+
+    void Hover(QPointF at) { Move(at, Qt::NoButton); }
+
+    /// A mouse moving over the screen: the first move only finds it, the second confirms a mouse
+    void MouseMoves()
+    {
+        Hover({100, 100});
+        Hover({110, 100});
+        ASSERT_EQ(_moves.size(), 1u);
+        _moves.clear();
+    }
+
+    bool WaitForMoves(size_t count)
+    {
+        QElapsedTimer timer;
+        timer.start();
+        while (_moves.size() < count && timer.elapsed() < 1000)
+            QCoreApplication::processEvents();
+        return _moves.size() >= count;
+    }
+
+    QPoint Centre() const { return _screen.mapToGlobal(_screen.rect().center()); }
+
+    qint64 _now = 0;
+};
+
+/// A mouse moves the guest without a button; a finger's single landing move before the press does not
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, HoverMovesWithoutAButtonOnceItIsAMouse)
+{
+    Hover({100, 100});
+    EXPECT_TRUE(_moves.empty()) << "the first hover is not yet known to be a mouse";
+    Hover({110, 100});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(10, 0));
+    Hover({110, 95});
+    ASSERT_EQ(_moves.size(), 2u);
+    EXPECT_EQ(_moves[1], std::make_pair(0, 5)) << "the mouse went up the screen";
+    EXPECT_TRUE(_masks.empty());
+}
+
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, ASingleHoverBeforeAPressIsAFingerLandingNotAMouse)
+{
+    Hover({120, 100});  // the pointer lands near the previous place: no leap to tell it by
+    Press({125, 100});
+    Move({135, 100});
+    Release({135, 100});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(10, 0)) << "the drag is the pad's, the landing moved nothing";
+}
+
+/// A mouse press is a button down at once and held until the release (drawing programs drag with it)
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, AMouseButtonIsHeldInTheGuestAndADragMovesIt)
+{
+    MouseMoves();
+    Press({110, 100});
+    ASSERT_EQ(_masks.size(), 1u);
+    EXPECT_EQ(_masks[0], 0xFE) << "left pressed on the press, not on the release";
+    Move({120, 100});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(10, 0));
+    Release({120, 100});
+    ASSERT_EQ(_masks.size(), 2u);
+    EXPECT_EQ(_masks[1], 0xFF);
+}
+
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, ARightOrMiddleButtonIsAMouseEvenBeforeItMoved)
+{
+    auto press = MouseEvent(QEvent::MouseButtonPress, {100, 100}, Qt::RightButton, Qt::RightButton);
+    _controller->handleMousePress(&press);
+    ASSERT_EQ(_masks.size(), 1u);
+    EXPECT_EQ(_masks[0], 0xFD) << "right pressed (active low)";
+    auto release = MouseEvent(QEvent::MouseButtonRelease, {100, 100}, Qt::RightButton, Qt::NoButton);
+    _controller->handleMouseRelease(&release);
+    ASSERT_EQ(_masks.size(), 2u);
+    EXPECT_EQ(_masks[1], 0xFF);
+}
+
+/// The two in one session: a finger after the mouse (the pointer leaps to it, then the press) is a pad contact
+/// again, and the mouse that moves after it is a mouse again
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, AFingerAfterTheMouseIsAPadAndTheMouseAfterTheFingerIsAMouse)
+{
+    MouseMoves();
+
+    Hover({10, 200});  // the leap to the finger
+    Press({10, 200});
+    Move({30, 200});
+    Release({30, 200});
+    ASSERT_EQ(_moves.size(), 1u) << "the leap moved nothing, the drag is the pad's";
+    EXPECT_EQ(_moves[0], std::make_pair(20, 0));
+    EXPECT_TRUE(_masks.empty()) << "a drag is no click";
+    _moves.clear();
+
+    Hover({32, 200});
+    Hover({34, 200});
+    ASSERT_EQ(_moves.size(), 1u) << "a mouse again after two hovers";
+    EXPECT_EQ(_moves[0], std::make_pair(4, 0));
+}
+
+/// The press delivered before the pointer catches up with the finger: the button is let go, the contact is a pad's
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, APressBeforeTheLeapOfAFingerIsNotAHeldButton)
+{
+    MouseMoves();
+    Press({110, 100});  // still where the mouse was
+    ASSERT_EQ(_masks.size(), 1u);
+    EXPECT_EQ(_masks[0], 0xFE);
+    Move({400, 40});  // the pointer reaches the finger
+    EXPECT_TRUE(_moves.empty()) << "a leap is not travel";
+    ASSERT_EQ(_masks.size(), 2u);
+    EXPECT_EQ(_masks[1], 0xFF) << "the mistaken press is let go";
+
+    Move({410, 40});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(10, 0));
+}
+
+/// A fast flick is a leap too; with no press after it, it is delivered
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, AFastFlickIsDeliveredWhenNoPressFollows)
+{
+    MouseMoves();
+    Hover({260, 100});  // 150 px in one event
+    EXPECT_TRUE(_moves.empty()) << "held back in case a finger landed";
+    ASSERT_TRUE(WaitForMoves(1));
+    EXPECT_EQ(_moves[0], std::make_pair(150, 0));
+}
+
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, AFastFlickIsDeliveredWithTheNextMove)
+{
+    MouseMoves();
+    Hover({260, 100});
+    Hover({262, 100});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(152, 0));
+}
+
+/// Moving a mouse far from the centre warps the pointer back, and the echo of the warp is no travel
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, TheMouseIsWarpedBackToTheCentreAndTheEchoIsNoTravel)
+{
+    MouseMoves();
+    Hover({150, 100});
+    EXPECT_EQ(_cursor, QPoint(-1, -1)) << "near the centre: no warp";
+    Hover({60, 100});  // beyond a quarter of the width from the centre (160)
+    EXPECT_EQ(_cursor, Centre()) << "warped back";
+    _moves.clear();
+
+    Hover({100, 100});  // a move queued before the warp: no longer where the pointer is
+    EXPECT_TRUE(_moves.empty());
+    Hover(Centre());  // the echo
+    EXPECT_TRUE(_moves.empty());
+    Hover(Centre() + QPoint(5, 0));
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(5, 0)) << "travel is measured from the centre again";
+}
+
+/// A system that ignores the warp leaves the mouse edge-limited but working: no leap, no more warps
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, AnIgnoredWarpLeavesTheMouseWorking)
+{
+    MouseMoves();
+    Hover({60, 100});
+    EXPECT_EQ(_cursor, Centre());
+    _cursor = QPoint(-1, -1);
+    _moves.clear();
+    _now += 200;  // no echo came
+    Hover({61, 100});
+    EXPECT_TRUE(_moves.empty()) << "the move that finds the warp ignored only re-anchors";
+    Hover({63, 100});
+    ASSERT_EQ(_moves.size(), 1u);
+    EXPECT_EQ(_moves[0], std::make_pair(2, 0));
+    Hover({40, 100});
+    EXPECT_EQ(_cursor, QPoint(-1, -1)) << "not warped again";
+}
+
+/// A mouse event Qt synthesized from a touch is a touch whatever the hover history says
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, ASynthesizedEventIsATouch)
+{
+    MouseMoves();
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(100, 100), QPointF(100, 100), QPointF(100, 100),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier, Qt::MouseEventSynthesizedBySystem);
+    _controller->handleMousePress(&press);
+    EXPECT_TRUE(_masks.empty()) << "a touch: nothing is pressed in the guest";
+}
+
+TEST_F(MouseCaptureControllerMouseOnTouchSurface_Test, TheWheelIsAMouse)
+{
+    QWheelEvent wheel(QPointF(100, 100), QPointF(100, 100), QPoint(), QPoint(0, 120), Qt::NoButton, Qt::NoModifier,
+                      Qt::NoScrollPhase, false);
+    _controller->handleWheel(&wheel);
+    Press({100, 100});
+    ASSERT_EQ(_masks.size(), 1u);
+    EXPECT_EQ(_masks[0], 0xFE) << "after the wheel the press is a mouse button";
+}
+
+/// endregion </A real mouse on the same pointer>
