@@ -405,8 +405,10 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
             _bus.contend(dstAddr, dstIo);
         if (_bus.advance)
             _bus.advance(Cycles(_aToB ? _portBTiming : _portATiming));
-        if (_transparent && !_fill && data == _transValue)
-            ;  // a source byte equal to the transparent value is not written; the addresses still advance
+        // a source byte equal to the transparent value is not written; the addresses still advance
+        const bool skipWrite = _transparent && !_fill && data == _transValue;
+        if (skipWrite) [[unlikely]]
+            _atLeastOne = true;
         else if (dstIo)
         {
             if (_bus.writeIo)

@@ -180,3 +180,29 @@ TEST_F(NextDdma_Test, PortBAndAnExtensionlessCoreTakeTheFollowBytesAsRegisters)
     Send({0xDF, 0x01});
     EXPECT_FALSE(_dma.Physical());
 }
+
+#include "emulator/emulator.h"
+#include "emulator/emulatorcontext.h"
+#include "emulator/machinevariants.h"
+#include "emulator/ports/models/portdecoder_next.h"
+#include "_helpers/emulatortesthelper.h"
+
+// The variant NEXT-DDMA ("ZX Next 2048 DDMA") has the blitter commands on its DMA, the plain NEXT does not (core 3.02.03)
+TEST(NextDdmaVariant_Test, OnlyTheDdmaVariantTakesTheCommands)
+{
+    for (const bool ddma : {true, false})
+    {
+        const MachineVariant* variant = ddma ? MachineVariants::Find("NEXT-DDMA") : nullptr;
+        ASSERT_EQ(variant != nullptr, ddma);
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero,
+                                                                        variant ? variant->apply : nullptr);
+        ASSERT_NE(emulator, nullptr);
+        auto* ports = dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder);
+        ASSERT_NE(ports, nullptr);
+        EXPECT_EQ(emulator->GetContext()->config.ramsize, 2048u);
+        ports->DecodePortOut(0x6B, 0xDF, 0);
+        ports->DecodePortOut(0x6B, 0x01, 0);
+        EXPECT_EQ(ports->Dma().Physical(), ddma) << (ddma ? "NEXT-DDMA" : "NEXT");
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
