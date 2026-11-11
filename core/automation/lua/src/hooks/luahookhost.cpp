@@ -87,6 +87,9 @@ LuaHookHost::LuaHookHost(EmulatorContext* context) : _context(context)
         seed(*value);
     };
     RegisterApi();
+    // The generational collector: a call's garbage (the hit table, a hook's temporaries) dies young and goes in a
+    // young collection that does not walk the state a hook keeps (a timer's passes, a counter's tables)
+    lua_gc(_lua->lua_state(), LUA_GCGEN, 0, 0);
 }
 
 LuaHookHost::~LuaHookHost()
@@ -293,9 +296,15 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
     lua_sethook(L, nullptr, 0, 0);
     _edits = nullptr;
     _card = false;
-    // A hook's garbage is the hook state's: a step per call keeps it small without a pause anywhere
-    lua_gc(L, LUA_GCSTEP, 0);
+    // No collection step of its own: a forced step per call walked the state a hook keeps, its cost growing with it
     return outcome;
+}
+
+size_t LuaHookHost::HeapBytes()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    lua_State* L = _lua->lua_state();
+    return static_cast<size_t>(lua_gc(L, LUA_GCCOUNT)) * 1024u + static_cast<size_t>(lua_gc(L, LUA_GCCOUNTB));
 }
 
 void LuaHookHost::Forget(uint32_t id)

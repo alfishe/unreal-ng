@@ -414,6 +414,32 @@ TEST_F(LuaHookHost_Test, AHookHasNoHostRandomness)
     EXPECT_FALSE(result.ok) << "a reseed names its seed";
 }
 
+// A hook that keeps state: with no collection step per call (it walked the kept state each call) the garbage of its
+// calls is still collected
+TEST_F(LuaHookHost_Test, AStatefulHookKeepsItsStateAndItsGarbageIsCollected)
+{
+    LuaHookHost host(_context);
+    std::string error;
+    ASSERT_TRUE(host.Compile(1, R"(
+        local kept = {}
+        return function()
+            kept[#kept + 1] = {1, 2}
+            local garbage = {}
+            for i = 1, 64 do garbage[i] = {i} end
+            shared_set("kept", #kept)
+        end)", error)) << error;
+    const size_t before = host.HeapBytes();
+    constexpr int kCalls = 5000;
+    for (int call = 0; call < kCalls; call++)
+    {
+        const HookCallResult result = host.Call(1, CallbackHit{}, "", 100000, nullptr);
+        ASSERT_TRUE(result.ok) << result.error;
+    }
+    EXPECT_EQ(_callbacks->SharedGet("kept").i, kCalls) << "one state for every call";
+    // 64 tables of garbage a call: about 20 MB over the run, kept: well under 1 MB
+    EXPECT_LT(host.HeapBytes() - before, size_t{4} << 20) << "the garbage was collected";
+}
+
 TEST_F(LuaHookHost_Test, OnTapTakesAChunkFromTheScript)
 {
     SetScriptHookHostFactory(nullptr);  // AutomationLua::start installs it
