@@ -162,7 +162,7 @@ private:
     uint32_t _src = 0, _dst = 0;  // 24 bits: {bits 23:16, address}
     uint16_t _counter = 0;
     // zxnDDMA (core 3.03.00)
-    bool _extended = true;
+    bool _extended = false;
     uint8_t _extA = 0, _extB = 0;
     bool _phys = false, _2d = false, _transparent = false, _fill = false, _l2xy = false, _hidden = false;
     uint16_t _l2x = 0;

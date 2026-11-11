@@ -21,6 +21,7 @@ protected:
     void SetUp() override
     {
         _dma.Reset();
+        _dma.SetExtended(true);
         NextDma::Bus bus;
         bus.readMemory = [this](uint16_t a) { return _z80[a]; };
         bus.writeMemory = [this](uint16_t a, uint8_t v) { _z80[a] = v; };

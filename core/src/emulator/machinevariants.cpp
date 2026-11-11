@@ -83,6 +83,17 @@ bool IsNextKs3(const CONFIG& config)
     return config.mem_model == MM_NEXT && config.next_board_issue == static_cast<uint8_t>(NextBoardIssue::Issue5);
 }
 
+/// The Next with the zxnDDMA core (3.03.00): the blitter commands of the DMA on port #6B, on the KS2 board (Issue 4)
+void ApplyNextDdma(CONFIG& config)
+{
+    config.next_zxnddma = 1;
+}
+
+bool IsNextDdma(const CONFIG& config)
+{
+    return config.mem_model == MM_NEXT && config.next_zxnddma != 0;
+}
+
 bool NextBoardSupported(std::string* reason)
 {
     (void)reason;
@@ -128,6 +139,9 @@ const std::vector<MachineVariant> kVariants = {
     {"NEXT-KS3", "ZX Spectrum Next KS3 (Issue 5)",
      "ZX Spectrum Next on the Kickstarter 3 board: Artix-7, NR #04 reaches SRAM A21 in config mode", "NEXT", 2048,
      ApplyNextKs3, IsNextKs3, NextBoardSupported},
+    {"NEXT-DDMA", "ZX Next 2048 DDMA",
+     "ZX Spectrum Next 2 MB with the zxnDDMA core (3.02.16+ / 3.03.00): the DMA blitter - physical 22-bit addresses, 2D copies, transparent, fill, Layer 2 X,Y",
+     "NEXT", 2048, ApplyNextDdma, IsNextDdma, NextBoardSupported},
 };
 
 /// Other names a create request may use for a variant
