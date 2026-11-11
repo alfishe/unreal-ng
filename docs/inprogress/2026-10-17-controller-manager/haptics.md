@@ -395,7 +395,7 @@ libsdl-org/SDL 3cffe56317b9 and dekuNukem's Nintendo_Switch_Reverse_Engineering 
   accepted, three tries), then 0x05: SDL's `HIDAPI_DriverPS4_LoadCalibrationData` does that over Bluetooth ("this
   report switches them into advanced report mode", the 0x11 report); hid-playstation reads 0x05 alone there. `SonyPad` then decodes the full reports (USB 0x01 64 bytes; Bluetooth 0x31 /
   0x11 78 bytes, CRC-32 seed 0xA1 checked, a bad one dropped and counted): buttons, sticks, triggers, the first touch
-  point (`touchpad.x` / `.y`, centred on lift), the mute button (`misc.1`), the Edge's paddles and Fn buttons, and the
+  point (`touchpad.x` / `.y`, centred on lift, and `touchpad.touch`), the mute button (`misc.1`), the Edge's paddles and Fn buttons, and the
   battery. Output: a DualSense report 2 (USB) or 0x31 (Bluetooth: sequence nibble, tag 0x10, CRC-32 seed 0xA2) with
   only the changed parts (motors with the trigger resistance, light bar, player LEDs), at most every 8 ms; the first
   colour releases the firmware's light bar. A DualShock 4 report (USB 0x05, Bluetooth 0x11 with hardware control 0xC0
