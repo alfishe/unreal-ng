@@ -384,10 +384,11 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
 
     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers. TTD coverage is no
     // observer of an idle stretch: its per-frame set already holds the HALT from the stretch's first real fetch
-    // (RunHaltedIdle learns the fetch length by one). Debug mode is none while no breakpoint or tap sees the HALT
-    if (execTapHold || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
+    // (RunHaltedIdle learns the fetch length by one). Debug mode and the exec taps (haptic probes, script callbacks,
+    // analyzers) are none while no breakpoint or tap sees the HALT
+    if (busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
         return false;
-    if (isDebugMode)
+    if (isDebugMode || execTapHold)
     {
         DebugManager* debug = _context->pDebugManager;
         if (debug && !debug->GetBreakpointsManager()->ExecIsInertAt(pc))
