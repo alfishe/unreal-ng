@@ -18,6 +18,19 @@ void NextDma::Reset()
     _readSeq = 0;
     _nextByteAt = 0;
     _z80Compat = false;
+    ClearDdma();
+}
+
+/// Reset (hard, soft or #C3) clears the zxnDDMA state; the programmed addresses, direction, port types, modes, block length stay
+void NextDma::ClearDdma()
+{
+    _extA = _extB = 0;
+    _phys = _2d = _transparent = _fill = _l2xy = _hidden = false;
+    _l2x = 0;
+    _l2y = 0;
+    _rowLen = _rows = _strideA = _strideB = 0;
+    _transValue = _fillValue = 0;
+    _row = _col = 0;
 }
 
 void NextDma::Write(uint8_t value, bool z80Compatible)
@@ -68,6 +81,32 @@ void NextDma::Write(uint8_t value, bool z80Compatible)
                 _portBAddress = static_cast<uint16_t>((_portBAddress & 0x00FF) | (value << 8));
                 _seq = Seq::Idle;
                 break;
+            case Seq::ExtA: _extA = value & 0x3F; _seq = Seq::Idle; break;
+            case Seq::ExtB: _extB = value & 0x3F; _seq = Seq::Idle; break;
+            case Seq::DdmaMode:
+                _phys = value & 0x01;
+                _2d = value & 0x02;
+                _transparent = value & 0x04;
+                _fill = value & 0x08;
+                _l2xy = (value & 0x10) && _phys;
+                _hidden = (value & 0x20) && _l2xy;
+                if (_l2xy)
+                    _strideB = 256;  // the Layer 2 destination moves a row (256 bytes) at a time, until #EF or #C3
+                _seq = (value & 0x10) ? Seq::DdmaX0 : Seq::Idle;
+                break;
+            case Seq::DdmaX0: _l2x = static_cast<uint16_t>((_l2x & 0xFF00) | value); _seq = Seq::DdmaX1; break;
+            case Seq::DdmaX1: _l2x = static_cast<uint16_t>((_l2x & 0x00FF) | (value << 8)); _seq = Seq::DdmaY; break;
+            case Seq::DdmaY: _l2y = value; _seq = Seq::Idle; break;
+            case Seq::RowLen0: _rowLen = static_cast<uint16_t>((_rowLen & 0xFF00) | value); _seq = Seq::RowLen1; break;
+            case Seq::RowLen1: _rowLen = static_cast<uint16_t>((_rowLen & 0x00FF) | (value << 8)); _seq = Seq::Idle; break;
+            case Seq::Rows0: _rows = static_cast<uint16_t>((_rows & 0xFF00) | value); _seq = Seq::Rows1; break;
+            case Seq::Rows1: _rows = static_cast<uint16_t>((_rows & 0x00FF) | (value << 8)); _seq = Seq::Idle; break;
+            case Seq::StrideA0: _strideA = static_cast<uint16_t>((_strideA & 0xFF00) | value); _seq = Seq::StrideA1; break;
+            case Seq::StrideA1: _strideA = static_cast<uint16_t>((_strideA & 0x00FF) | (value << 8)); _seq = Seq::Idle; break;
+            case Seq::StrideB0: _strideB = static_cast<uint16_t>((_strideB & 0xFF00) | value); _seq = Seq::StrideB1; break;
+            case Seq::StrideB1: _strideB = static_cast<uint16_t>((_strideB & 0x00FF) | (value << 8)); _seq = Seq::Idle; break;
+            case Seq::Transparent: _transValue = value; _seq = Seq::Idle; break;
+            case Seq::FillValue: _fillValue = value; _seq = Seq::Idle; break;
             case Seq::R6Mask:
                 _readMask = value;
                 AdvanceReadSequence(-1);
@@ -150,6 +189,7 @@ void NextDma::Command(uint8_t value)
             _prescaler = 0;
             _ceWait = false;
             _autoRestart = false;
+            ClearDdma();
             break;
         case 0xC7: _portATiming = 1; break;
         case 0xCB: _portBTiming = 1; break;
@@ -157,6 +197,9 @@ void NextDma::Command(uint8_t value)
         case 0xD3:  // continue: the counter restarts, the addresses go on
             _endOfBlock = false;
             _counter = _z80Compat ? 0xFFFF : 0;
+            _row = _col = 0;
+            _rowSrc = _src;
+            _rowDst = _dst;
             break;
         case 0xBF: _readSeq = 0; break;  // read the status byte
         case 0x8B:
@@ -174,7 +217,24 @@ void NextDma::Command(uint8_t value)
             _waiting = false;
             break;
         case 0xBB: _seq = Seq::R6Mask; break;
-        default: break;  // interrupt control, force ready: nothing here
+        default:
+            // zxnDDMA: port #6B only; a core without it (or port #0B) ignores the byte and takes its follow bytes as register writes
+            if (!_extended || _z80Compat)
+                break;
+            switch (value)
+            {
+                case 0xD7: _seq = Seq::ExtA; break;
+                case 0xDB: _seq = Seq::ExtB; break;
+                case 0xDF: _seq = Seq::DdmaMode; break;
+                case 0xE3: _seq = Seq::RowLen0; break;
+                case 0xE7: _seq = Seq::Rows0; break;
+                case 0xEB: _seq = Seq::StrideA0; break;
+                case 0xEF: _seq = Seq::StrideB0; break;
+                case 0xF3: _seq = Seq::Transparent; break;
+                case 0xF7: _seq = Seq::FillValue; break;
+                default: break;  // #FB (obsolete) and the rest: nothing
+            }
+            break;
     }
 }
 
@@ -187,16 +247,7 @@ void NextDma::FinishBlock()
     _endOfBlock = true;
     if (_autoRestart)
     {
-        if (_aToB)
-        {
-            _src = _portAAddress;
-            _dst = _portBAddress;
-        }
-        else
-        {
-            _src = _portBAddress;
-            _dst = _portAAddress;
-        }
+        InitAddresses();
         _counter = _z80Compat ? 0xFFFF : 0;
     }
     else
@@ -228,17 +279,41 @@ void NextDma::HoldBus(unsigned clocks)
 void NextDma::Load()
 {
     _endOfBlock = false;
-    if (_aToB)
-    {
-        _src = _portAAddress;
-        _dst = _portBAddress;
-    }
-    else
-    {
-        _src = _portBAddress;
-        _dst = _portAAddress;
-    }
+    InitAddresses();
     _counter = _z80Compat ? 0xFFFF : 0;
+}
+
+void NextDma::InitAddresses()
+{
+    uint32_t a = (static_cast<uint32_t>(_extA) << 16) | _portAAddress;
+    uint32_t b = (static_cast<uint32_t>(_extB) << 16) | _portBAddress;
+    if (_l2xy && _bus.layer2)
+    {
+        // Layer 2 destination (port B): the bank is NR #12 (the shadow NR #13 when hidden), 16K at SRAM #040000 + bank x #4000; 256x192 is
+        // row-major (Y x 256 + X, X one byte), the 320x256 and 640x256 modes are column-major (X x 256 + Y)
+        uint8_t bank = 0, resolution = 0;
+        _bus.layer2(_hidden, bank, resolution);
+        const uint32_t base = 0x40000u + static_cast<uint32_t>(bank & 0x7F) * 0x4000u;
+        const uint32_t where = (resolution & 3) == 0 ? (static_cast<uint32_t>(_l2y) << 8) + (_l2x & 0xFF)
+                                                      : (static_cast<uint32_t>(_l2x & 0x3FF) << 8) + _l2y;
+        b = (base + where) & 0x3FFFFF;
+    }
+    _src = _aToB ? a : b;
+    _dst = _aToB ? b : a;
+    _row = _col = 0;
+    _rowSrc = _src;
+    _rowDst = _dst;
+}
+
+/// One address step: physical mode carries and borrows through the extended byte, else the 16-bit address wraps in 64K
+uint32_t NextDma::Step(uint32_t address, uint8_t mode) const
+{
+    if (mode > 1)
+        return address;
+    const uint32_t delta = mode == 1 ? 1u : 0xFFFFFFFFu;
+    if (_phys)
+        return (address + delta) & 0x3FFFFF;
+    return (address & 0xFF0000u) | ((address + delta) & 0xFFFFu);
 }
 
 uint8_t NextDma::Read()
@@ -303,51 +378,84 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
             _busHeld = true;
             HoldBus(kGrantT);
         }
-        if (_bus.contend)
-            _bus.contend(_src, srcIo);
-        if (_bus.advance)
-            _bus.advance(Cycles(_aToB ? _portATiming : _portBTiming));
-        if (srcIo)
+        const bool srcPhys = _phys && !srcIo, dstPhys = _phys && !dstIo;
+        const uint16_t srcAddr = static_cast<uint16_t>(_src), dstAddr = static_cast<uint16_t>(_dst);
+        if (_fill)
+            data = _fillValue;  // no source read: the byte costs only the write cycle (twice as fast as a fixed source)
+        else
         {
-            if (_bus.readIo)
-                data = _bus.readIo(_src);
+            if (_bus.contend && !srcPhys)
+                _bus.contend(srcAddr, srcIo);
+            if (_bus.advance)
+                _bus.advance(Cycles(_aToB ? _portATiming : _portBTiming));
+            if (srcIo)
+            {
+                if (_bus.readIo)
+                    data = _bus.readIo(srcAddr);
+            }
+            else if (srcPhys)
+            {
+                if (_bus.readPhysical)
+                    data = _bus.readPhysical(_src & 0x3FFFFF);
+            }
+            else if (_bus.readMemory)
+                data = _bus.readMemory(srcAddr);
         }
-        else if (_bus.readMemory)
-            data = _bus.readMemory(_src);
-        if (_bus.contend)
-            _bus.contend(_dst, dstIo);
+        if (_bus.contend && !dstPhys)
+            _bus.contend(dstAddr, dstIo);
         if (_bus.advance)
             _bus.advance(Cycles(_aToB ? _portBTiming : _portATiming));
-        if (dstIo)
+        if (_transparent && !_fill && data == _transValue)
+            ;  // a source byte equal to the transparent value is not written; the addresses still advance
+        else if (dstIo)
         {
             if (_bus.writeIo)
-                _bus.writeIo(_dst, data);
+                _bus.writeIo(dstAddr, data);
+        }
+        else if (dstPhys)
+        {
+            if (_bus.writePhysical)
+                _bus.writePhysical(_dst & 0x3FFFFF, data);
         }
         else if (_bus.writeMemory)
-            _bus.writeMemory(_dst, data);
+            _bus.writeMemory(dstAddr, data);
         _counter++;
         moved++;
         _atLeastOne = true;
-        if (srcMode == 1)
-            _src++;
-        else if (srcMode == 0)
-            _src--;
-        if (dstMode == 1)
-            _dst++;
-        else if (dstMode == 0)
-            _dst--;
+        _src = Step(_src, srcMode);
+        _dst = Step(_dst, dstMode);
+        bool blockDone;
+        if (_2d)
+        {
+            // the block is rows x row length (the WR0 block length is ignored); a row ends at its length, the next starts one stride on
+            const uint16_t rowLen = _rowLen ? _rowLen : 1, rows = _rows ? _rows : 1;
+            if (++_col >= rowLen)
+            {
+                _col = 0;
+                _row++;
+                const uint16_t srcStride = _aToB ? _strideA : _strideB, dstStride = _aToB ? _strideB : _strideA;
+                const uint32_t mask = _phys ? 0x3FFFFFu : 0xFFFFu;
+                _rowSrc = (_rowSrc & ~mask) | ((_rowSrc + srcStride) & mask);
+                _rowDst = (_rowDst & ~mask) | ((_rowDst + dstStride) & mask);
+                _src = _rowSrc;
+                _dst = _rowDst;
+            }
+            blockDone = _row >= rows;
+        }
+        else
+            blockDone = _counter >= _blockLength;
         if (_prescaler)
         {
             // the wait after a byte: prescaler * 32 clocks of 28 MHz (875 kHz steps), also after the LAST byte of a block - the
             // end-of-block flag, the stop and the auto-restart come after it
             _waiting = true;
             _nextByteAt = now28 + static_cast<uint64_t>(_prescaler) * 32;
-            _finishPending = _counter >= _blockLength;
+            _finishPending = blockDone;
             if (_mode == 2)
                 ReleaseBus(kBurstReleaseT);  // WAITING_CYCLES gives the bus back one state before FINISH_DMA / IDLE would
             break;
         }
-        if (_counter >= _blockLength)
+        if (blockDone)
         {
             FinishBlock();
             break;

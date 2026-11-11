@@ -1180,6 +1180,13 @@ void PortDecoder_Next::BindDma()
         if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
             ReportDmaAccess(true, address, value);
     };
+    // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
+    bus.readPhysical = [this](uint32_t address) { return Mem().PhysicalRead(address); };
+    bus.writePhysical = [this](uint32_t address, uint8_t value) { Mem().PhysicalWrite(address, value); };
+    bus.layer2 = [this](bool hidden, uint8_t& bank, uint8_t& resolution) {
+        bank = _board->Stored(hidden ? 0x13 : 0x12);
+        resolution = static_cast<uint8_t>((_board->Stored(0x70) >> 4) & 3);
+    };
     // the DMA's own cycles do not reach its ports ("allow dma to program itself? no", zxnext.vhd port_dma_rd / port_dma_wr)
     // dma_wait_n includes spi_wait_n (zxnext.vhd 1844): a byte to or from the SD card's data port waits until the card's 16 clocks passed
     auto waitSpi = [this](uint8_t low) {
@@ -1432,16 +1439,41 @@ void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
         FireBreakpoint(found, 0, BreakpointHitKind::Beam);
 }
 
+/// True for an opcode (the first byte) whose instruction reads a data byte from memory or the stack, or is a prefix
+static bool NextInstructionReadsMemory(uint8_t op)
+{
+    switch (op)
+    {
+        case 0x0A: case 0x1A: case 0x2A: case 0x3A:                                  // LD A,(BC) (DE) / LD HL,(nn) / LD A,(nn)
+        case 0x34: case 0x35:                                                        // INC / DEC (HL)
+        case 0x46: case 0x4E: case 0x56: case 0x5E: case 0x66: case 0x6E: case 0x7E:  // LD r,(HL)
+        case 0x86: case 0x8E: case 0x96: case 0x9E: case 0xA6: case 0xAE: case 0xB6: case 0xBE:  // ALU (HL)
+        case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:  // RET
+        case 0xC1: case 0xD1: case 0xE1: case 0xF1: case 0xE3:                       // POP, EX (SP),HL
+        case 0xCB: case 0xDD: case 0xED: case 0xFD:                                  // prefixes
+            return true;
+        default:
+            return false;
+    }
+}
+
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
         return;
     if (_dmaRequestLate)
     {
-        // the enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end
-        // of the next cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first)
+        // The enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end of the next
+        // cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first). The transfer is then done before that
+        // instruction's own data cycles, which an instruction that reads memory sees (zxnddma_compare probes the target with the very next
+        // instruction): ours cannot split an instruction, so such an instruction waits for the transfer, the others keep the measured order
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+        {
+            _dmaRequestLate = false;
+            return;
+        }
         _dmaRequestLate = false;
-        return;
     }
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
     if (_interrupts->DmaDelay(_divMmc->NmiHold() || _multiface->NmiHold()))
