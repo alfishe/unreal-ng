@@ -105,6 +105,7 @@
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
+#include <debugger/analyzers/sectiontimer/sectiontimeranalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/osaware/osaware_event.h>
@@ -7756,6 +7757,139 @@ public:
             result["gaps"] = gaps;
             result["count"] = index;
             return result;
+        });
+
+        // Section timing (SectionTimerAnalyzer): section_timer_start{sections = {"Plasma", "spark=#8000:#8010"},
+        // break_if = {"Frame>69888"}, extra = {...}, recursive = false, frame_t = 0, capacity = N} -> the results
+        // without the passes, or nil and the reason; section_timer_stop(), section_timer_clear(),
+        // section_timer_result([offset [, limit]]) -> a table, section_timer_text() -> a table as text
+        auto sectionTimer = [this]() -> SectionTimerAnalyzer* {
+            Emulator* emulator = effectiveEmulator();
+            return SectionTimerAnalyzer::Find(emulator ? emulator->GetContext() : nullptr);
+        };
+        auto sectionTimerTable = [](sol::state_view view, const SectionTimerAnalyzer::Result& r) -> sol::table {
+            sol::table t = view.create_table();
+            t["active"] = r.active;
+            t["frame_t"] = r.frameT;
+            sol::table sections = view.create_table();
+            for (size_t i = 0; i < r.sections.size(); i++)
+            {
+                const auto& section = r.sections[i];
+                const auto x = i < r.stats.size() ? r.stats[i] : SectionTimerAnalyzer::Stats{};
+                sol::table one = view.create_table();
+                one["name"] = section.name;
+                one["entry"] = section.entry;
+                sol::table exits = view.create_table();
+                for (size_t e = 0; e < section.exits.size(); e++)
+                    exits[e + 1] = section.exits[e];
+                one["exits"] = exits;
+                one["count"] = x.count;
+                one["min"] = x.min;
+                one["max"] = x.max;
+                one["avg"] = x.count ? x.sum / x.count : 0;
+                one["net_min"] = x.netMin;
+                one["net_max"] = x.netMax;
+                one["net_avg"] = x.count ? x.netSum / x.count : 0;
+                one["interrupted"] = x.interrupted;
+                one["last"] = x.last;
+                one["max_frame"] = x.maxFrame;
+                one["max_t"] = x.maxT;
+                sections[i + 1] = one;
+            }
+            t["sections"] = sections;
+            auto name = [&](uint16_t section) {
+                return section < r.sections.size() ? r.sections[section].name : std::string();
+            };
+            sol::table passes = view.create_table();
+            for (size_t i = 0; i < r.passes.size(); i++)
+            {
+                const auto& p = r.passes[i];
+                passes[i + 1] = view.create_table_with("name", name(p.section), "frame", p.frame, "t", p.t, "elapsed",
+                                                       p.elapsed, "net", p.net, "interrupts", p.interrupts);
+            }
+            t["passes"] = passes;
+            t["passes_total"] = r.passesTotal;
+            t["passes_kept"] = r.passesKept;
+            t["hits"] = r.hits;
+            t["orphan"] = r.orphans;
+            t["dropped"] = r.dropped;
+            t["open"] = r.open;
+            if (r.stop.hit)
+            {
+                const auto& p = r.stop.pass;
+                t["stopped"] = view.create_table_with("condition", r.stop.condition, "section", name(p.section), "frame",
+                                                      p.frame, "t", p.t, "elapsed", p.elapsed, "net", p.net,
+                                                      "interrupts", p.interrupts);
+            }
+            return t;
+        };
+        auto strings = [](const sol::table& spec, const char* key) {
+            std::vector<std::string> out;
+            sol::object value = spec[key];
+            if (value.is<std::string>())
+                out.push_back(value.as<std::string>());
+            else if (value.get_type() == sol::type::number)
+                out.push_back(std::to_string(value.as<uint32_t>()));
+            else if (value.is<sol::table>())
+            {
+                sol::table list = value.as<sol::table>();
+                for (size_t i = 1; i <= list.size(); i++)
+                {
+                    sol::object one = list[i];
+                    out.push_back(one.get_type() == sol::type::number ? std::to_string(one.as<uint32_t>())
+                                                                       : one.as<std::string>());
+                }
+            }
+            return out;
+        };
+        lua.set_function("section_timer_start", [sectionTimer, sectionTimerTable, strings](
+                                                     sol::optional<sol::table> specOpt, sol::this_state ts)
+                                                     -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(ts);
+            SectionTimerAnalyzer* timer = sectionTimer();
+            if (!timer)
+                return {sol::lua_nil, sol::make_object(view, std::string("section timer not available"))};
+            SectionTimerAnalyzer::Spec spec;
+            if (specOpt)
+            {
+                const sol::table& t = *specOpt;
+                spec.sections = strings(t, "sections");
+                spec.breakIf = strings(t, "break_if");
+                spec.extra = strings(t, "extra");
+                spec.recursive = t.get_or("recursive", false);
+                spec.frameT = t.get_or("frame_t", 0u);
+                spec.capacity = t.get_or("capacity", SectionTimerAnalyzer::kDefaultCapacity);
+            }
+            std::string error;
+            if (!timer->Start(spec, error))
+                return {sol::lua_nil, sol::make_object(view, error)};
+            return {sectionTimerTable(view, timer->GetResult(0, 0)), sol::lua_nil};
+        });
+        lua.set_function("section_timer_stop", [sectionTimer]() -> bool {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer && timer->Stop();
+        });
+        lua.set_function("section_timer_clear", [sectionTimer]() {
+            if (SectionTimerAnalyzer* timer = sectionTimer())
+                timer->Clear();
+        });
+        lua.set_function("section_timer_result", [sectionTimer, sectionTimerTable](sol::optional<size_t> offset,
+                                                                                   sol::optional<size_t> limit,
+                                                                                   sol::this_state ts) -> sol::object {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            if (!timer)
+                return sol::lua_nil;
+            return sectionTimerTable(sol::state_view(ts), timer->GetResult(offset.value_or(0), limit.value_or(1000)));
+        });
+        lua.set_function("section_timer_text", [sectionTimer]() -> std::string {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer ? SectionTimerAnalyzer::ToText(timer->GetResult(0, 0)) : std::string();
+        });
+        lua.set_function("section_timer_json", [sectionTimer](sol::optional<size_t> offset,
+                                                              sol::optional<size_t> limit) -> std::string {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer ? SectionTimerAnalyzer::ToJson(timer->GetResult(offset.value_or(0), limit.value_or(SIZE_MAX)))
+                         : std::string();
         });
 
         // AY register-write logging

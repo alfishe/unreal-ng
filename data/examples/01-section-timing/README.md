@@ -10,7 +10,7 @@ included to try them on.
 | `demo.asm` | The demo: an attribute plasma, 2..33 XOR sparkles (the count follows a sine) and an IM2 interrupt with a stand-in music player, profiling itself on the border (a colour per routine). Runs on a 48K and a Pentagon. |
 | `demo.sna`, `demo.sym` | `demo.asm` built by sjasmplus: the snapshot and its labels (`build.sh` rebuilds them). |
 | `minimal.py` | The smallest form: one pair of markers, 100 passes, pause on a condition (`">20000"`, `"!=354"`, ...) or at an ordinary breakpoint, IY at the entry kept for every pass. About 80 lines. |
-| `profile_sections.py` | The full tool: many sections, nesting, exact interrupt accounting (net time), `--break-if`, `--stop-at`, `--expect`, a live panel in the terminal while it runs, a Markdown report and JSON data. |
+| `profile_sections.py` | The full tool: many sections, nesting, exact interrupt accounting (net time), `--break-if`, `--stop-at`, `--expect`, a live panel in the terminal while it runs, a Markdown report and JSON data. `--native` lets the emulator's section timer measure at full speed. |
 | `prompt.md` | The same through MCP: what to ask an AI agent connected to the emulator. |
 | `sample-report-48k.md` | What `profile_sections.py` writes, from a 200-frame run on a 48K. |
 | `border-48k.png` | The border profile of one frame on a 48K. |
@@ -29,6 +29,7 @@ python3 profile_sections.py --model PENTAGON --frames 200
 python3 profile_sections.py --break-if "Frame>69888"     # pause on the first frame that does not fit
 python3 profile_sections.py --stop-at Sparkles.inside    # pause at an ordinary breakpoint
 python3 profile_sections.py --attach                     # the program already running in the emulator window
+python3 profile_sections.py --native --frames 1000       # the emulator's own timer: full speed, the same report
 ```
 
 Python 3.8+ and nothing else: the client (`../lib/unreal_webapi.py`, `../lib/unreal_tui.py`) uses only the standard
@@ -151,10 +152,31 @@ More recipes are in the repository's `.recipe/` directory. Each one covers WebAP
 `.recipe/analysis/breakpoints-and-events.md` and `.recipe/analysis/waiting-and-watching.md`. The full API is served
 at `GET /api/v1/openapi.json`.
 
+## The emulator's own timer: `--native`
+
+The emulator has the same measurement built in (the section timer, `sectiontimer` on the CLI, `POST /section-timer`
+on the WebAPI, `section_timer` in MCP, Lua and Python). The markers are taps the CPU checks as it runs, so the machine
+never stops for them; the CPU itself reports where an interrupt was accepted and where its return ends, so the net
+time needs no landing address and also covers an `RST #38` correctly. With `--native` the script starts the timer,
+runs the frames in steps of ten (`run_until` with `breakpoints: true`, so a stop ends the step) and reads the new
+passes after each step, then writes the same report. A
+`--break-if` pauses at the exit of the slow pass as before (the timer stops the machine there), and so does
+`--break-on-mismatch`. `--group-by`, `--show-regs`, `--log` and `--interrupt` need the stepping mode, and so does the
+list of the interrupts that came in during a section (the native report counts them per pass). On the demo both modes
+give the same passes, every frame, T and net time, on the 48K and on the Pentagon.
+
+Straight from the CLI of the emulator:
+
+```
+sectiontimer start Plasma Sparkles Frame break-if "Frame>69888"
+sectiontimer status
+```
+
 ## Limits
 
-- **Speed.** Every marker hit costs two HTTP requests, a few milliseconds. The demo hits about 8 markers per frame,
+- **Speed.** In the stepping mode every marker hit costs two HTTP requests, a few milliseconds (`--native` has no
+  such cost). The demo hits about 8 markers per frame,
   and 100 frames take 2 to 8 s depending on the host. A marker inside a loop that runs thousands of times per frame
   works, but slowly.
-- **What is reported.** An interrupt is seen where it lands, so code that jumps there on its own (an `RST #38`) looks
-  like one. NMI is not followed.
+- **What is reported.** In the stepping mode an interrupt is seen where it lands, so code that jumps there on its own
+  (an `RST #38`) looks like one, and NMI is not followed. `--native` takes both from the CPU.

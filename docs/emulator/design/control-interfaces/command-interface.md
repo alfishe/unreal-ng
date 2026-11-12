@@ -1285,6 +1285,7 @@ through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, 
 | Analysis layers: start (optionally recording), stop, status, the L1 build and cancel, explain an address (L0 byte facts or the L1 routine fact sheet), query the L2 structure, export the L2 draft (ctl, skool, fields, geometry, layout, symbols, map), the gallery of the L2 graphics (one as a PNG); L3 review: the findings register, the review queue and its decisions, experiments on muted clones, directed coverage; the CPU access trace of a window | `analysis start [facts\|counters] [z80\|physical] [record]`, `analysis stop\|status\|cancel`, `analysis build [frames] [from_frame=] [from_tinframe=] [to_frame=] [path=] [wait=]`, `analysis explain <addr> [page] [routine\|byte]`, `analysis query [kind] [range] [limit=]`, `analysis export <format> [path] [ranges=] [width=]`, `analysis gallery [kind] [addr [path]] [scale=]`, `analysis findings [list\|add]`, `analysis review [next\|list\|show\|resolve] [id]`, `analysis experiment <spec>`, `analysis cover [budget]`, `analysis trace <path>` | `analysis(action, opts)` | `analysis(action, **opts)` | `analysis` {action: start, stop, status, build, cancel, explain, query, export, gallery, findings, review, experiment, cover, trace} | `POST /analysis/start`, `POST /analysis/stop`, `GET /analysis/status`, `POST /analysis/build`, `POST /analysis/cancel`, `GET /analysis/explain?address=&page=&what=`, `GET /analysis/query?kind=&range=&limit=`, `POST /analysis/export`, `POST /analysis/gallery`, `GET\|POST /analysis/findings`, `GET\|POST /analysis/review`, `POST /analysis/experiment`, `POST /analysis/cover`, `POST /analysis/trace` | topics `analysis.progress`, `analysis.ready` |
 | Memory markup ([layers](../../../inprogress/2026-11-05-software-metadata-profile/README.md)): what a range holds by layer (spans, instruction starts, comments), the layers and the runtime feed, the user layer's marks and comments, clear a layer, save to the software profile | `markup [show] [range]`, `markup layers`, `markup mark <range> <kind> [title] [cpu]`, `markup unmark <range>`, `markup comment <addr> [text]`, `markup clear [layer]`, `markup save [profile] [analysis=] [keep]` | `markup(action, opts)` | `markup(action, **opts)` | `debug_code` {action: markup, markup_layers, mark, unmark, markup_comment, markup_clear, save_profile} | `GET /markup?range=&from=&to=&layer=&limit=`, `PUT /markup`, `DELETE /markup?range=`, `GET /markup/layers`, `DELETE /markup/layers?layer=`, `PUT /markup/comment`, `POST /markup/save-profile` | topic `debug.markup` |
 | CPU time profile: start (cells, call stack, beam, per-frame series, stream), stop, reset, marks, status, the report per routine (self / inclusive, callers, attribution notes), the per-frame series, exports (kit L1 subset, json, entries, sym, ann) | `cpuprofile start [nostack] [beam] [noframes] [reset] [stream=] [ring_kib=]`, `cpuprofile stop\|reset\|status`, `cpuprofile mark <name> [drop]`, `cpuprofile report [top] [since=] [sort=]`, `cpuprofile frames [last] [top=]`, `cpuprofile export <format> [path] [since=]` | `cpuprofile(op, opts)` | `cpuprofile(op, **opts)` | `analyze_performance` `cpuprofile` {op, ...} | `POST /cpuprofile/{start,stop,reset,mark,export}`, `GET\|POST /cpuprofile/{status,report,frames}` | topic `debug.cpuprofile` |
+| Section timer: the T-states of code sections between entry and exit markers at full speed, net of the interrupts inside, a pause at the exit of a slow pass ([§5.5c](#55c-section-timer)) | `sectiontimer start\|stop\|clear\|status\|result` | `section_timer_start{...}`, `section_timer_stop/clear/result/text/json` | `emu.section_timer_start(...)`, `emu.section_timer_stop/clear/result` | `analyze_performance` `section_timer` {op, sections, break_if, ...} | `POST /section-timer {action, ...}`, `GET /section-timer` | - |
 | Set a register | `registers <name> <value>` | `set_register` | `set_register` | `control_execution` `set_register` | `PUT /registers/{name}` | `dbg.register_set` |
 | The sound card CPU's registers, memory, disassembly, windows ([§8](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)) | `--cpu gs\|ms` on `registers`, `memory`, `memory info`, `disasm` | `cpu` last on `get_registers`, `get_register`, `set_register`, `mem_read`, `mem_write`, `disasm`; `memory_map("gs")` | `cpu=` on the same; `memory_map("gs")` | `inspect_state` `cpu`, `control_execution` `set_register` `cpu`, `memory_access` space `gs` / `ms` | `?cpu=gs` on `/registers`, `/registers/{name}`, `/memory/{addr}`, `/memory/read/{address}`, `/disasm`, `/memory/map`, `/memory/info`; body `cpu` on `/memory/write` | - |
 | The sound card CPU's step in / over / out ([§8](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)) | `--cpu gs\|ms` on `step`, `steps`, `stepover`, `stepout` | `cpu` last on `step`, `steps`, `stepover`, `step_out` | `cpu=` on the same | `control_execution` `step` / `step_n` / `step_over` / `step_out` `cpu` | `?cpu=gs` on `/step`, `/steps`, `/stepover`, `/stepout` | - |
@@ -1735,6 +1736,46 @@ All commands take `--json` for the fields. REST / WebSocket `call`: `POST /api/v
 POST with a body; every answer has `text`, the CLI's lines). WebSocket topic `debug.cpuprofile` (the totals). MCP:
 `analyze_performance` action `cpuprofile` {op, stack, beam, series (= frames), ring_kib, stream, reset, name, drop,
 since, top, sort, callers, last, format, path}. Lua `cpuprofile(op, opts)`, Python `emu.cpuprofile(op, **opts)`.
+
+#### 5.5c Section Timer
+
+How long a piece of code takes, every pass, while the machine runs at full speed: an entry marker and one or more
+exit markers per section, exec taps on them (the machine never stops for a marker), the CPU's `int_accept` /
+`int_return` events for the interrupts. A pass's gross time is exit minus entry in global T-states (frame x frame
+length + T in the frame, so a pass may cross frames, contention and waits included); net is the gross minus the
+interrupts that ran inside it (from the acknowledge to the end of the return). One core class
+(`SectionTimerAnalyzer`, `core/src/debugger/analyzers/sectiontimer/sectiontimeranalyzer.h`) serves every plane;
+the module doc is [Section timing](../debugger/breakpoints-and-traces.md#10-section-timing).
+
+| Command | Arguments | Description |
+| :--- | :--- | :--- |
+| `sectiontimer start` | `[SECTION ...] [break-if [net:]NAME<op>T] [extra A,B] [recursive] [frame-t T] [capacity N]` | Arm the markers; a timer already running is replaced and the results start afresh. `SECTION` = `NAME` (the labels `NAME` and `NAME.End`) or `name=ENTRY:EXIT[,EXIT]` (labels or numbers `#8000`, `$8000`, `0x8000`, `32768`); none = every label `X` that has an `X.End`. `break-if` (repeatable) pauses at the exit of a pass that meets it (op `>` `<` `>=` `<=` `==` `!=`, `net:` compares the net time). `extra` = taps with no action; `recursive` nests an entry of an open section instead of dropping the open pass; `frame-t` = T-states a frame for the clock (default the machine's); `capacity` = passes kept one by one (default 100000; the statistics count them all). A spec that does not resolve leaves a running timer as it was. |
+| `sectiontimer stop` | | Disarm the markers; the results stay. |
+| `sectiontimer clear` | | Drop the results; a running timer goes on measuring. |
+| `sectiontimer status` | | A line per section: entry..exit, count, min, avg, max, net max, interrupted passes; the unpaired markers (exits with no entry, passes left without their exit, open now) and the pass a break condition stopped at. Any time, running or paused. |
+| `sectiontimer result` | `[offset] [limit]` | The same as JSON with the kept passes `[name, frame, t, elapsed, net, interrupts]` from `offset` (at most `limit`, default 1000). |
+
+The state machine: an entry pushes a pass; an entry of a section that is still open means the open pass left
+without its exit (a jump out): it and the passes above it are dropped (`recursive` nests instead); an exit closes the
+innermost open pass of its section and drops the passes above it; an exit with no open pass is an orphan once the
+section was entered. A break condition stops the machine before the exit's instruction, with the registers of the
+slow pass; going on from there does not count the exit again. Like a breakpoint, it stops the machine's own run,
+`steps` and `run_until` / `run_until_pc` with `breakpoints: true`; `run_frames` skips breakpoints, so it measures
+and runs on.
+
+REST / WebSocket `call`: `POST /api/v1/emulator/{id}/section-timer` `{action: start|stop|clear, sections?, break_if?,
+extra?, recursive?, frame_t?, capacity?}` (400 with the reason when the spec does not resolve; answers the results
+without the passes and `text`), `GET .../section-timer?offset=&limit=&text=` (`active`, `frame_t`, `sections[]`
+{name, entry, exits, count, min, max, avg, net_min, net_max, net_avg, interrupted, last, max_frame, max_t},
+`passes[]`, `passes_total`, `passes_kept`, `hits`, `orphan`, `dropped`, `open`, `stopped` {condition, section,
+frame, t, elapsed, net, interrupts} or null). MCP: `analyze_performance` action `section_timer` {op: start / stop /
+clear / status, sections, break_if, extra, recursive, frame_t, capacity, offset, limit}; status answers the table,
+offset / limit add the passes. Lua `section_timer_start{sections = {...}, break_if = {...}, ...}` (the results, or
+nil and the reason), `section_timer_stop()`, `section_timer_clear()`, `section_timer_result([offset [, limit]])`,
+`section_timer_text()`, `section_timer_json([offset [, limit]])`. Python `emu.section_timer_start(sections=[...],
+break_if=[...], extra=[...], recursive=False, frame_t=0, capacity=100000)` (ValueError with the reason),
+`emu.section_timer_stop()`, `emu.section_timer_clear()`, `emu.section_timer_result(offset=0, limit=1000,
+text=False)`.
 
 #### 5.6 AY Register Log
 

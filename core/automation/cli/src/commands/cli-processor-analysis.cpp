@@ -17,7 +17,9 @@
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/profile/profilecontrol.h>
+#include <debugger/analyzers/sectiontimer/sectiontimeranalyzer.h>
 #include <debugger/debugmanager.h>
+#include <debugger/memory/memoryread.h>
 #include <debugger/markup/markupcontrol.h>
 #include <emulator/config.h>
 #include <emulator/cpu/z80.h>
@@ -1309,6 +1311,123 @@ void CLIProcessor::HandleAudioCapture(const ClientSession& session, const std::v
            << NEWLINE;
 
     session.SendResponse(ss.str());
+}
+
+// HandleSectionTimer - section timing via SectionTimerAnalyzer (the machine never stops, interrupts accounted).
+// Mirrors POST /analyzers/section-timer and GET /analyzers/section-timer/result.
+void CLIProcessor::HandleSectionTimer(const ClientSession& session, const std::vector<std::string>& args)
+{
+    static const char* usage =
+        "Usage: sectiontimer start [SECTION ...] [extra A,B] [break-if [net:]NAME<op>T] [recursive] [frame-t T] "
+        "[capacity N] | stop | clear | status | result [offset] [limit]\n"
+        "  SECTION = NAME (labels NAME and NAME.End) or name=ENTRY:EXIT[,EXIT]; none = every label X with an X.End";
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected.");
+        return;
+    }
+    SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(emulator->GetContext());
+    if (!timer)
+    {
+        session.SendResponse("Section timer not available.");
+        return;
+    }
+
+    const std::string subcommand = args.empty() ? "status" : args[0];
+    if (subcommand == "start")
+    {
+        SectionTimerAnalyzer::Spec spec;
+        for (size_t i = 1; i < args.size(); i++)
+        {
+            const std::string& a = args[i];
+            const bool hasValue = i + 1 < args.size();
+            if (a == "recursive")
+                spec.recursive = true;
+            else if ((a == "extra" || a == "break-if" || a == "frame-t" || a == "capacity") && !hasValue)
+            {
+                session.SendResponse(usage);
+                return;
+            }
+            else if (a == "extra")
+            {
+                std::stringstream list(args[++i]);
+                std::string one;
+                while (std::getline(list, one, ','))
+                    spec.extra.push_back(one);
+            }
+            else if (a == "break-if")
+                spec.breakIf.push_back(args[++i]);
+            else if (a == "frame-t" || a == "capacity")
+            {
+                uint32_t value = 0;
+                if (!MemoryRead::ParseNumber(args[++i], value))
+                {
+                    session.SendResponse(usage);
+                    return;
+                }
+                if (a == "frame-t")
+                    spec.frameT = value;
+                else
+                    spec.capacity = value;
+            }
+            else
+                spec.sections.push_back(a);
+        }
+        std::string error;
+        if (!timer->Start(spec, error))
+        {
+            session.SendResponse("Error: " + error);
+            return;
+        }
+        const SectionTimerAnalyzer::Result r = timer->GetResult(0, 0);
+        std::string names;
+        for (const auto& section : r.sections)
+            names += (names.empty() ? "" : ", ") + section.name;
+        session.SendResponse("Section timer on: " + std::to_string(r.sections.size()) + " sections (" + names + ")" +
+                             (spec.breakIf.empty() ? "" : ", pauses on a break condition") + ".");
+        return;
+    }
+    if (subcommand == "stop")
+    {
+        session.SendResponse(timer->Stop() ? "Section timer off; 'sectiontimer status' shows the results."
+                                           : "Section timer was not running.");
+        return;
+    }
+    if (subcommand == "clear")
+    {
+        timer->Clear();
+        session.SendResponse("Section timer results cleared.");
+        return;
+    }
+    if (subcommand == "status")
+    {
+        std::string text = SectionTimerAnalyzer::ToText(timer->GetResult(0, 0));
+        while (!text.empty() && text.back() == '\n')
+            text.pop_back();
+        size_t at = 0;
+        while ((at = text.find('\n', at)) != std::string::npos)
+        {
+            text.replace(at, 1, NEWLINE);
+            at += std::string(NEWLINE).size();
+        }
+        session.SendResponse(text);
+        return;
+    }
+    if (subcommand == "result")
+    {
+        uint32_t offset = 0;
+        uint32_t limit = 1000;
+        if ((args.size() > 1 && !MemoryRead::ParseNumber(args[1], offset)) ||
+            (args.size() > 2 && !MemoryRead::ParseNumber(args[2], limit)))
+        {
+            session.SendResponse(usage);
+            return;
+        }
+        session.SendResponse(SectionTimerAnalyzer::ToJson(timer->GetResult(offset, limit)));
+        return;
+    }
+    session.SendResponse(usage);
 }
 
 // HandleVideoRecord — video recording via RecordingManager. Mirrors

@@ -31,8 +31,18 @@ The agent gets there with these tools:
 | the time there | `inspect_state {"aspects":["snapshot"]}`: `frame 109 t 55803 of 69888 (global t 7673595)`; a pass = the difference of two global times |
 | clean up | `control_execution {"action":"bp_clear"}`, `emulator_manage {"action":"destroy"}` |
 
-Each marker hit costs the agent two tool calls. That suits a few dozen passes. For hundreds of frames, ask the agent
-to run `profile_sections.py` (it uses the WebAPI directly) and to read the report it writes:
+Each marker hit costs the agent two tool calls. That suits a few dozen passes. For hundreds of frames the emulator's
+section timer measures on its own, at full speed, with the interrupts left out exactly:
 
-> Run `python3 data/examples/01-section-timing/profile_sections.py --frames 200` for 48K and for PENTAGON and compare
+| Step | Tool call |
+|:--|:--|
+| start it | `analyze_performance {"action":"section_timer","op":"start","sections":["Plasma","Sparkles","Frame"],"break_if":["Frame>69888"]}` (no `sections`: every label with an `.End`) |
+| run | `control_execution {"action":"run_until","condition":"FRAME < 0","max_frames":200,"breakpoints":true}` (ends early at a pass over the limit; `run_frames` skips breakpoints and runs on) |
+| the table | `analyze_performance {"action":"section_timer"}`: count, min, avg, max, net max, interrupted per section, and the pass it stopped at; `"limit":100` adds the passes |
+| clean up | `analyze_performance {"action":"section_timer","op":"stop"}` |
+
+Or ask the agent to run `profile_sections.py --native` (the same timer through the WebAPI) and to read the report it
+writes:
+
+> Run `python3 data/examples/01-section-timing/profile_sections.py --native --frames 200` for 48K and for PENTAGON and compare
 > the two reports.

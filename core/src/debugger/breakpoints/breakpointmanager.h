@@ -424,6 +424,7 @@ protected:
     uint8_t _replaySink = BRK_NO_TAP;  // SetReplayTapSink
     bool _replayWalk = false;          // the resolve under way is a TTD replay's: only _replaySink's taps are told
     bool _tapsOnlyWalk = false;        // the resolve under way is HandlePCTaps': taps only, no breakpoint counted
+    bool _tapStop = false;             // StopAtThisTap: the sink being told asked for a stop
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -691,6 +692,10 @@ public:
     uint8_t RegisterTapSink(IBreakpointTapSink* sink);
     /// Removes the sink and every tap that reports to it
     void UnregisterTapSink(uint8_t sinkId);
+    /// Called by a sink inside OnTap: the hit stops the machine as the tap's breakpoint would (an execution tap's
+    /// at its instruction start, a memory or port tap's after the access). A walk that only tells the taps (a run
+    /// that skips breakpoints) and a TTD replay's never stop
+    void StopAtThisTap() { _tapStop = true; }
     /// What the armed taps need of the machine now
     BreakpointTapDemand GetTapDemand() const { return _tapDemand; }
     /// The TTD replay's own sink (a replay query such as TimeTravelController::ProbeFrames): while set, a TTD replay
