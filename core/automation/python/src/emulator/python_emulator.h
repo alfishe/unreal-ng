@@ -6599,11 +6599,87 @@ namespace PythonBindings
             }, "Seek to an agent bookmark by label", py::arg("label"))
 
             // -------------------------------------------------------------
+            // TTD branches: a resume in the past keeps the old future as a
+            // branch. A branch is named by its id (0 = the trunk), its GUID
+            // or its name.
+            // -------------------------------------------------------------
+
+            .def("ttd_branches", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "branches", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "The branches of the history: {branches, total, count, active, viewed, lineage, text}. Keywords: "
+               "scope='all' | 'lineage', created_by, tag, name_prefix, pinned=True | False, limit, offset")
+
+            .def("ttd_branch_switch", [](Emulator& self, py::object branch, py::object frameObj,
+                                          uint32_t tInFrame) -> py::object {
+                std::map<std::string, std::string> options{{"branch", TtdOptionTextPy(branch)}};
+                if (!frameObj.is_none())
+                {
+                    options["frame"] = std::to_string(frameObj.cast<uint64_t>());
+                    options["tinframe"] = std::to_string(tInFrame);
+                }
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-switch", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["switched"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Continue on a branch (an id, a GUID or a name) at frame / tinframe on it (default: its end): "
+               "{switched, branch, arrived_at, state, check, text}",
+               py::arg("branch"), py::arg("frame") = py::none(), py::arg("tinframe") = 0)
+
+            .def("ttd_branch_update", [](Emulator& self, py::object branch, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"branch", TtdOptionTextPy(branch)}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-update", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["updated"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Edit a branch: name='...', note='...', tags=[...], add_tags=[...], remove_tags=[...], pinned=True",
+               py::arg("branch"))
+
+            .def("ttd_branch_delete", [](Emulator& self, py::object branch, bool force) -> py::object {
+                std::map<std::string, std::string> options{{"branch", TtdOptionTextPy(branch)}};
+                if (force)
+                    options["force"] = "true";
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-delete", options);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["deleted"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Delete a branch and its descendants (force=True: pinned ones too): {deleted, removed, removed_names, "
+               "text}", py::arg("branch"), py::arg("force") = false)
+
+            // -------------------------------------------------------------
             // Phase 4 — Reverse search + dump + instruction step
             // -------------------------------------------------------------
-            .def("ttd_dump", [](Emulator& self, const std::string& path) -> bool {
-                return TtdRunPy(self, "dump", {{"path", path}}).Ok();
-            }, "Dump TTD session to .ttd file", py::arg("path"))
+            .def("ttd_dump", [](Emulator& self, const std::string& path, bool lineage) -> bool {
+                std::map<std::string, std::string> options{{"path", path}};
+                if (lineage)
+                    options["lineage"] = "true";
+                return TtdRunPy(self, "dump", options).Ok();
+            }, "Dump TTD session to .ttd file: every branch, or lineage=True only the active branch's lineage as one "
+               "linear history", py::arg("path"), py::arg("lineage") = false)
 
             // Loading refuses a session recorded on a different machine model:
             // a checkpoint is raw RAM pages plus a chipset snapshot, so it only

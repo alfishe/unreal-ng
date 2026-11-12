@@ -8,11 +8,15 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testwaithelper.h"
+#include "debugger/analyzers/sectiontimer/sectiontimeranalyzer.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -273,6 +277,72 @@ TEST_F(DebugEventHub_Test, FrameWatchEventsCarryTheHit)
     EXPECT_TRUE(events[1]["removed"].asBool()) << "a once watch goes with its hit";
     EXPECT_FALSE(events[1]["paused"].asBool()) << "a direct run is not paused by a watch";
     EXPECT_GE(events[1]["frame"].asUInt64(), frame + 2);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// NC_SECTION_TIMER: section_timer_started, section_timer_break with the pass that stopped the machine, then
+/// section_timer_cleared and section_timer_stopped; a run that skips breakpoints sends no break
+TEST_F(DebugEventHub_Test, SectionTimerEventsCarryTheStop)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    // EI; Work: LD B,#40; DJNZ $; Work.End: NOP; JR Work - 834 T; IM 2 to EI : RETI at #A0A0 (37 T an interrupt)
+    const uint8_t loop[] = {0xFB, 0x06, 0x40, 0x10, 0xFE, 0x00, 0x18, 0xF9};
+    for (size_t i = 0; i < sizeof(loop); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), loop[i]);
+    const uint8_t handler[] = {0xFB, 0xED, 0x4D};
+    for (size_t i = 0; i < sizeof(handler); i++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xA0A0 + i), handler[i]);
+    for (uint32_t a = 0x9000; a <= 0x9100; a++)
+        context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(a), 0xA0);
+    Z80* z80 = context->pCore->GetZ80();
+    z80->pc = 0x8000;
+    z80->sp = 0xBF00;
+    z80->i = 0x90;
+    z80->im = 2;
+    z80->iff1 = z80->iff2 = 0;
+    z80->halted = 0;
+
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","emulator":")" + emulator->GetId() + R"(","topics":["debug"]})",
+                       inbox.Sender());
+    auto timerEvents = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString().rfind("section_timer_", 0) == 0)
+                found.push_back(event);
+        return found;
+    };
+    SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(context);
+    ASSERT_NE(timer, nullptr);
+    SectionTimerAnalyzer::Spec spec;
+    spec.sections = {"Work=#8001:#8005"};
+    spec.breakIf = {"Work>834"};
+    std::string error;
+    ASSERT_TRUE(timer->Start(spec, error)) << error;
+    emulator->RunNFrames(2);  // skips breakpoints: no stop, no break
+    const uint64_t frameT = context->GetFrameTStates();
+    const uint64_t skippedUntil = context->emulatorState.frame_counter * frameT + z80->t;
+    emulator->RunNFrames(3, /*skipBreakpoints=*/false);
+    ASSERT_TRUE(emulator->LastDirectStop().hit);
+    timer->Clear();
+    EXPECT_TRUE(timer->Stop());
+    ASSERT_TRUE(TestWait::For([&] { return timerEvents().size() == 4; }, std::chrono::seconds(2)))
+        << timerEvents().size();
+    const std::vector<Json::Value> events = timerEvents();
+    EXPECT_EQ(events[0]["event"].asString(), "section_timer_started");
+    EXPECT_EQ(events[1]["event"].asString(), "section_timer_break");
+    EXPECT_EQ(events[1]["condition"].asString(), "Work>834");
+    EXPECT_EQ(events[1]["section"].asString(), "Work");
+    EXPECT_EQ(events[1]["elapsed"].asUInt64(), 834u + 37u);
+    EXPECT_EQ(events[1]["net"].asUInt64(), 834u);
+    EXPECT_EQ(events[1]["interrupts"].asUInt(), 1u);
+    const uint64_t exitAt =
+        events[1]["frame"].asUInt64() * frameT + events[1]["t"].asUInt64() + events[1]["elapsed"].asUInt64();
+    EXPECT_GE(exitAt, skippedUntil) << "the slow passes of the run that skips breakpoints sent no break";
+    EXPECT_EQ(events[2]["event"].asString(), "section_timer_cleared");
+    EXPECT_EQ(events[3]["event"].asString(), "section_timer_stopped");
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

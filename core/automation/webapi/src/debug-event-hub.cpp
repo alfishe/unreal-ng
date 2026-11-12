@@ -76,6 +76,9 @@ void DebugEventHub::Start()
                             }));
     _observers.emplace_back(NC_FRAME_WATCH,
                             messageCenter.AddObserver(NC_FRAME_WATCH, [this](int, Message* message) { OnFrameWatch(message); }));
+    _observers.emplace_back(NC_SECTION_TIMER, messageCenter.AddObserver(NC_SECTION_TIMER, [this](int, Message* message) {
+                                OnSectionTimer(message);
+                            }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -331,6 +334,27 @@ void DebugEventHub::OnFrameWatch(Message* message)
     }
     if (!payload->error.empty())
         event["error"] = payload->error;
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnSectionTimer(Message* message)
+{
+    auto* payload = message ? dynamic_cast<SectionTimerPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // section_timer_started / _stopped / _cleared; section_timer_break: the pass a condition stopped the machine at
+    Json::Value event;
+    event["event"] = "section_timer_" + payload->event;
+    if (payload->event == "break")
+    {
+        event["condition"] = payload->condition;
+        event["section"] = payload->section;
+        event["frame"] = static_cast<Json::UInt64>(payload->frame);
+        event["t"] = payload->t;
+        event["elapsed"] = static_cast<Json::UInt64>(payload->elapsed);
+        event["net"] = static_cast<Json::UInt64>(payload->net);
+        event["interrupts"] = payload->interrupts;
+    }
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 

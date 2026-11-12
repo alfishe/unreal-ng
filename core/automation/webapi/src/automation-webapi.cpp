@@ -199,7 +199,7 @@ drogon::HttpResponsePtr PassRequestGates(const drogon::HttpRequestPtr& req)
         resp->addHeader("Access-Control-Allow-Origin", "*");
 
         // Set Access-Control-Allow-Methods
-        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 
         // Set Access-Control-Allow-Headers - include what the client requests plus our defaults
         const auto& requestHeaders = req->getHeader("Access-Control-Request-Headers");
@@ -532,7 +532,7 @@ void AutomationWebAPI::threadFunc(AutomationWebAPI* webApi)
     // Add CORS headers to all responses
     app.registerPostHandlingAdvice([](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) -> void {
         resp->addHeader("Access-Control-Allow-Origin", "*");
-        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
         resp->addHeader("Access-Control-Allow-Headers",
                         "Content-Type, Authorization, X-Requested-With, X-Unreal-Session, X-Unreal-Source");
         resp->addHeader("Access-Control-Expose-Headers",

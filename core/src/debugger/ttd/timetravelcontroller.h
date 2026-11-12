@@ -1093,6 +1093,8 @@ public:
     /// Delete @p branch and its descendants (TTDBranchTable::Delete: never the trunk or the active lineage, pinned
     /// ones only with @p force); their history leaves memory. @p removed: the ids deleted
     bool DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed, std::string& error);
+    /// Edit @p branch's name, note, tags or pin (the table's rules: a name stays unique among the live branches)
+    bool UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error);
     /// Who asks for the next fork and why (createdBy, run, tags, note, name; reason when empty: resume): taken by
     /// the next fork only
     void SetNextBranchMeta(TTDBranchMeta meta)
@@ -1852,6 +1854,9 @@ private:
     /// does not park the machine (GetBookmarks); empty = the trunk alone
     mutable std::mutex _lineageViewLock;
     std::vector<TTDLineageSpan> _lineageView;
+    /// GetSessionInfo's branch list: rebuilt when the table's revision or the active branch moved
+    mutable std::shared_ptr<const TTDBranchesView> _branchesView;
+    mutable uint32_t _branchesViewTip = kTTDTrunk;
     /// The trunk alone (a new session, a load, an invalidation): the active line's state stays the trunk's
     void ResetBranches();
     /// A resume at @p from (cut @p cut) on the viewed line, which has recorded history after it: a new branch

@@ -2346,6 +2346,17 @@ std::string FormatTtdStatus(const Json::Value& status)
     {
         out << ", " << status["bookmark_count"].asUInt64() << " bookmark(s)";
     }
+    if (status.isMember("branch_count") && status["branch"].isObject())
+    {
+        // Only a session with branches carries them
+        out << ", on branch '" << status["branch"]["name"].asString() << "' (" << status["branch_count"].asUInt64()
+            << " branches";
+        if (status["viewed_branch"].isObject() && status["viewed_branch"]["id"] != status["branch"]["id"])
+        {
+            out << ", the current moment on '" << status["viewed_branch"]["name"].asString() << "'";
+        }
+        out << ")";
+    }
     if (status["input_event_count"].asUInt64() > 0 || status["external_event_count"].asUInt64() > 0)
     {
         out << ", " << status["input_event_count"].asUInt64() << " input event(s), "
@@ -5431,6 +5442,98 @@ std::string FormatMarker(const Json::Value& marker)
            FormatTimePoint(marker["frame"], marker["tinframe"]);
 }
 
+/// One branch as a line: "* '+00:00:02.160' (id 1) - 12 frames, forked at frame 108, ends at frame 120 [a, b] pinned: note"
+std::string FormatTtdBranchLine(const Json::Value& b)
+{
+    std::string line = std::string(b["active"].asBool() ? "* " : "  ") + "'" + b["name"].asString() + "' (id " +
+                       std::to_string(b["id"].asUInt64()) + ") - " + std::to_string(b["length"].asUInt64()) + " frames";
+    if (b["fork"].isObject())
+    {
+        line += ", forked at " + FormatTimePoint(b["fork"]["frame"], b["fork"]["tinframe"]);
+    }
+    if (b["end"].isObject())
+    {
+        line += ", ends at " + FormatTimePoint(b["end"]["frame"], b["end"]["tinframe"]);
+    }
+    if (b["tags"].isArray() && b["tags"].size() > 0)
+    {
+        std::string tags;
+        for (const Json::Value& t : b["tags"])
+        {
+            tags += (tags.empty() ? "" : ", ") + t.asString();
+        }
+        line += " [" + tags + "]";
+    }
+    if (b["pinned"].asBool())
+    {
+        line += " pinned";
+    }
+    if (!b["created_by"].asString().empty())
+    {
+        line += ", by " + b["created_by"].asString();
+    }
+    const std::string note = b["note"].asString();
+    if (!note.empty())
+    {
+        const size_t eol = note.find('\n');
+        line += ": " + (eol == std::string::npos ? note : note.substr(0, eol) + " ...");
+    }
+    return line;
+}
+
+/// The branch list as text: a heading naming the active branch, at most 20 rows (the rest summarised), the lineage
+std::string FormatTtdBranches(const Json::Value& b, const std::string& id)
+{
+    const Json::Value& list = b["branches"];
+    if (list.size() == 0 && b["count"].asUInt64() <= 1)
+    {
+        return "No branches on " + id + ": the history is one line (the trunk). A resume in the past keeps the old "
+               "future as a branch.";
+    }
+    std::map<uint64_t, std::string> names;
+    for (const Json::Value& row : list)
+    {
+        names[row["id"].asUInt64()] = row["name"].asString();
+    }
+    auto nameOf = [&names](uint64_t branch) {
+        const auto it = names.find(branch);
+        return it != names.end() ? "'" + it->second + "'" : "branch " + std::to_string(branch);
+    };
+    std::ostringstream out;
+    out << b["count"].asUInt64() << " branch(es) on " << id << ", active " << nameOf(b["active"].asUInt64());
+    if (b["viewed"].asUInt64() != b["active"].asUInt64())
+    {
+        out << ", the current moment on " << nameOf(b["viewed"].asUInt64());
+    }
+    out << "; " << b["total"].asUInt64() << " match:";
+    constexpr Json::ArrayIndex kShown = 20;
+    for (Json::ArrayIndex i = 0; i < list.size() && i < kShown; ++i)
+    {
+        out << "\n" << FormatTtdBranchLine(list[i]);
+    }
+    const uint64_t total = b["total"].asUInt64();
+    if (total > std::min<uint64_t>(list.size(), kShown))
+    {
+        out << "\n  ... " << (total - std::min<uint64_t>(list.size(), kShown)) << " more"
+            << (list.size() > kShown ? " in the structured result" : "")
+            << " (narrow with tag / created_by / name_prefix / pinned, or page with offset / limit)";
+    }
+    if (b["lineage"].isArray() && b["lineage"].size() > 0)
+    {
+        out << "\nLineage:";
+        for (Json::ArrayIndex i = 0; i < b["lineage"].size(); ++i)
+        {
+            const Json::Value& span = b["lineage"][i];
+            out << (i ? " ->" : "") << " " << nameOf(span["branch"].asUInt64());
+            if (i > 0)
+            {
+                out << " from " << FormatTimePoint(span["from"]["frame"], span["from"]["tinframe"]);
+            }
+        }
+    }
+    return out.str();
+}
+
 /// " Not exact (status): message." from a moving verb's check, or "" when the position came back exactly.
 std::string FormatCheck(const Json::Value& b)
 {
@@ -5584,7 +5687,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
-                               "bookmark_delete", "seek_bookmark", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
+                               "bookmark_delete", "seek_bookmark", "branch_list", "branch_switch", "branch_update",
+                               "branch_delete", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
@@ -5621,8 +5725,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "carries the registers at its IN / OUT instruction and the word at SP (stack_top: the caller's return address "
         "when the routine pushed nothing), replayed with the machine put back - on by default, except on a running "
         "recording (context=true pauses it) and for a file. "
-        "'resume' continues recording from the current (or given) point and DISCARDS the history after it; it needs the "
-        "machine positioned in history (seek or step first - it fails right after 'stop'). "
+        "'resume' continues recording from the current (or given) point; the history after it is kept as a branch "
+        "(see branch_list); it needs the machine positioned in history (seek or step first - it fails right after "
+        "'stop'). "
         "Files: 'dump' / 'load' a .ttd session (path on the emulator's machine; load needs the same machine model, ROM "
         "set and General Sound / TurboSound card), 'file_info' describes a .ttd file without loading it and without an "
         "emulator: frame range, sections and the recorded machine (model, ROM signature, devices, general_sound card to "
@@ -5635,6 +5740,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "'bookmark_export' writes them all up in one call (format markdown = a WALKTHROUGH section, profile = a game "
         "profile's header comment, json; tag filters; path also writes a file) - instead of a seek + registers + "
         "disassembly + memory read per bookmark. "
+        "Branches (a resume in the past keeps the old future as a branch named 'resume N'; the trunk is id 0; "
+        "'branch' names one by id, GUID or name): 'branch_list' (the tree, '*' the active one, and the active "
+        "lineage; scope lineage, created_by, tag, name_prefix, pinned filter; limit / offset page), 'branch_switch' "
+        "(continue on a branch at frame / tinframe on it, default its end; not while recording), 'branch_update' "
+        "(rename, note, tags / add_tags / remove_tags, pinned), 'branch_delete' (the branch and its descendants; not "
+        "the trunk or the active lineage; force=true deletes pinned ones). 'dump' saves every branch; lineage=true "
+        "saves only the active lineage as one linear history. "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
         "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
@@ -5730,28 +5842,54 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] =
         "bookmark_add / bookmark_note: what the agent learned at this moment (at most 4096 characters); bookmark_note "
-        "replaces it, or appends it as a new line with append=true";
+        "replaces it, or appends it as a new line with append=true. branch_update: the branch's note (replaces it)";
     schema["properties"]["append"]["type"] = "boolean";
     schema["properties"]["append"]["description"] = "bookmark_note: add 'note' as a new line instead of replacing it";
     schema["properties"]["tags"]["type"] = "array";
     schema["properties"]["tags"]["items"]["type"] = "string";
     schema["properties"]["tags"]["description"] =
-        "bookmark_add / bookmark_note: tags (at most 8, each 1..31 of A-Z a-z 0-9 _ . -); bookmark_note replaces them";
+        "bookmark_add / bookmark_note / branch_update: tags (at most 8, each 1..31 of A-Z a-z 0-9 _ . -); "
+        "bookmark_note and branch_update replace them";
     schema["properties"]["add_tags"]["type"] = "array";
     schema["properties"]["add_tags"]["items"]["type"] = "string";
-    schema["properties"]["add_tags"]["description"] = "bookmark_note: tags to add";
+    schema["properties"]["add_tags"]["description"] = "bookmark_note / branch_update: tags to add";
     schema["properties"]["remove_tags"]["type"] = "array";
     schema["properties"]["remove_tags"]["items"]["type"] = "string";
-    schema["properties"]["remove_tags"]["description"] = "bookmark_note: tags to remove";
+    schema["properties"]["remove_tags"]["description"] = "bookmark_note / branch_update: tags to remove";
     schema["properties"]["rename"]["type"] = "string";
-    schema["properties"]["rename"]["description"] = "bookmark_note: the bookmark's new label";
+    schema["properties"]["rename"]["description"] =
+        "bookmark_note: the bookmark's new label; branch_update: the branch's new name";
+    schema["properties"]["branch"]["type"] = "string";
+    schema["properties"]["branch"]["description"] =
+        "branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or its name";
+    schema["properties"]["scope"]["type"] = "string";
+    schema["properties"]["scope"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["scope"]["enum"].append("all");
+    schema["properties"]["scope"]["enum"].append("lineage");
+    schema["properties"]["scope"]["description"] =
+        "branch_list: all branches (default) or only the active branch's lineage";
+    schema["properties"]["created_by"]["type"] = "string";
+    schema["properties"]["created_by"]["description"] =
+        "branch_list: only the branches whose creator starts with it (user, agent, analyzer)";
+    schema["properties"]["name_prefix"]["type"] = "string";
+    schema["properties"]["name_prefix"]["description"] = "branch_list: only the branches whose name starts with it";
+    schema["properties"]["pinned"]["type"] = "boolean";
+    schema["properties"]["pinned"]["description"] =
+        "branch_list: only the pinned (true) or unpinned (false) branches; branch_update: pin or unpin (a pinned "
+        "branch survives a delete without force)";
+    schema["properties"]["force"]["type"] = "boolean";
+    schema["properties"]["force"]["description"] = "branch_delete: pinned branches go too";
+    schema["properties"]["lineage"]["type"] = "boolean";
+    schema["properties"]["lineage"]["description"] =
+        "dump: only the active branch's lineage, as one linear history (default false: every branch)";
     schema["properties"]["watch"]["type"] = "array";
     schema["properties"]["watch"]["items"]["type"] = "string";
     schema["properties"]["watch"]["description"] =
         "bookmark_add: addresses whose bytes are kept with the bookmark, 'address[:length]' ('#A130', '0xA140:4'; "
         "at most 8, length 1..16)";
     schema["properties"]["tag"]["type"] = "string";
-    schema["properties"]["tag"]["description"] = "bookmark_list / bookmark_export: only the bookmarks with this tag";
+    schema["properties"]["tag"]["description"] =
+        "bookmark_list / bookmark_export: only the bookmarks with this tag; branch_list: only the branches with it";
     schema["properties"]["title"]["type"] = "string";
     schema["properties"]["title"]["description"] = "bookmark_export: the heading (the game or the task)";
     schema["properties"]["format"]["type"] = "string";
@@ -5768,10 +5906,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
         "current position), the frame for explain_frame (default: the current one), the moment for backtrace (default: "
-        "the current position)";
+        "the current position), the moment on the branch for branch_switch (default: its end)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
-        "T-states within 'frame' for seek / resume / bookmark_add (default 0). A seek without it lands at the frame's end "
+        "T-states within 'frame' for seek / resume / bookmark_add / branch_switch (default 0). A seek without it lands at the frame's end "
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
@@ -5878,7 +6016,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "the machine's own frame past the history) the machine as it stands now - no recording needed";
     schema["properties"]["offset"]["type"] = "string";
     schema["properties"]["offset"]["description"] =
-        "memory_at: byte offset in the space (number, '0x..', '#..'), default 0; space cpu: the Z80 address";
+        "memory_at: byte offset in the space (number, '0x..', '#..'), default 0; space cpu: the Z80 address. "
+        "branch_list: rows to skip";
     schema["properties"]["length"]["type"] = "integer";
     schema["properties"]["length"]["description"] = "memory_at: bytes, default 256, at most 65536";
     schema["properties"]["access"]["type"] = "string";
@@ -5965,7 +6104,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Max results for coverage_scan and blocks for coverage_rare (default 200, at most 10000), port_events (default 100), find_last / "
         "reverse_continue with all (default 100, at most 10000), frames per probe for probe_frames (default 1000, at most "
         "10000), or max buckets for coverage_summary (default 100), entries per list for explain_frame (default 8, at "
-        "most 100) and diff (default 16, at most 200), diverged frames for replay_check (default 8, at most 200)";
+        "most 100) and diff (default 16, at most 200), diverged frames for replay_check (default 8, at most 200), "
+        "rows for branch_list (default 1000; the answer text shows the first 20)";
     schema["properties"]["stride"]["type"] = "integer";
     schema["properties"]["stride"]["description"] = "replay_check: check every n-th frame of the range (default 1)";
     schema["properties"]["max_frames"]["type"] = "integer";
@@ -6028,6 +6168,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 CallAndSummarize("GET", "/api/v1/ttd/file-info?path=" + UrlEncodeSegment(path), nullptr, caller,
                                  [](const Json::Value& b) { return FormatTtdFileInfo(b); }, done);
                 return;
+            }
+
+            if (action == "branch_switch" || action == "branch_update" || action == "branch_delete")
+            {
+                const Json::Value& branch = args["branch"];
+                if (!(branch.isIntegral() && !branch.isBool()) && !(branch.isString() && !branch.asString().empty()))
+                {
+                    done(ToolResult::Error("Action '" + action +
+                                           "' requires 'branch' (an id, a GUID or a name; branch_list lists them)"));
+                    return;
+                }
             }
 
             if (action == "bookmark_add" || action == "bookmark_note" || action == "bookmark_delete" ||
@@ -6284,6 +6435,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     return;
                 }
                 (*body)["path"] = args["path"].asString();
+                if (action == "dump" && args.isMember("lineage"))
+                {
+                    if (!args["lineage"].isBool())
+                    {
+                        done(ToolResult::Error("'lineage' must be true or false"));
+                        return;
+                    }
+                    (*body)["lineage"] = args["lineage"].asBool();
+                }
             }
 
             auto forward = [&caller, &args, action, body, done](const std::string& id) {
@@ -6729,7 +6889,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/resume"), body.get(), caller, [id](const Json::Value& b) {
                         return b["resumed"].asBool()
                                    ? "Recording resumed on " + id + " from " + FormatTimePoint(b["frame"], b["tinframe"]) +
-                                         "; history after that point was discarded and the emulator is running"
+                                         "; the history after that point is kept as a branch (branch_list) and the "
+                                         "emulator is running"
                                    : "Could not resume from " + FormatTimePoint(b["frame"], b["tinframe"]) + " (state " +
                                          b["state"].asString() + "); resume needs the machine positioned in history - " +
                                          "seek or step there first";
@@ -6737,8 +6898,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
                 else if (action == "dump")
                 {
-                    CallAndSummarize("POST", Endpoint(id, "/ttd/dump"), body.get(), caller, [](const Json::Value& b) {
-                        return "Session written to " + b["path"].asString() + " (" + std::to_string(b["bytes"].asInt64()) + " bytes)";
+                    const bool lineage = (*body)["lineage"].asBool();
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/dump"), body.get(), caller, [lineage](const Json::Value& b) {
+                        return "Session written to " + b["path"].asString() + " (" + std::to_string(b["bytes"].asInt64()) +
+                               " bytes" + (lineage ? ", the active lineage only" : "") + ")";
                     }, done);
                 }
                 else if (action == "load")
@@ -6819,6 +6982,80 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     body["bookmark"] = args["label"].asString();
                     ForwardCall("POST", Endpoint(id, "/ttd/seek"), &body, caller,
                                 "Seek to bookmark '" + args["label"].asString() + "' on " + id, done);
+                }
+                else if (action == "branch_list")
+                {
+                    std::string query;
+                    for (const char* key : {"scope", "created_by", "tag", "name_prefix", "pinned", "limit", "offset"})
+                    {
+                        if (args.isMember(key) && !args[key].isNull())
+                        {
+                            const std::string value = args[key].isBool() ? (args[key].asBool() ? "true" : "false")
+                                                                          : args[key].asString();
+                            query += (query.empty() ? "?" : "&") + std::string(key) + "=" + UrlEncodeSegment(value);
+                        }
+                    }
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/branches" + query), nullptr, caller,
+                                     [id](const Json::Value& b) { return FormatTtdBranches(b, id); }, done);
+                }
+                else if (action == "branch_switch")
+                {
+                    Json::Value body(Json::objectValue);
+                    for (const char* key : {"frame", "tinframe"})
+                    {
+                        if (args.isMember(key))
+                        {
+                            body[key] = args[key];
+                        }
+                    }
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString()) +
+                                                              "/switch"),
+                                     &body, caller, [id](const Json::Value& b) {
+                                         std::string text = b["text"].asString();
+                                         while (!text.empty() && text.back() == '\n')
+                                         {
+                                             text.pop_back();
+                                         }
+                                         return text + " on " + id + " (state " + b["state"].asString() + ")." +
+                                                FormatCheck(b);
+                                     }, done);
+                }
+                else if (action == "branch_update")
+                {
+                    Json::Value body(Json::objectValue);
+                    for (const char* key : {"note", "tags", "add_tags", "remove_tags", "pinned"})
+                    {
+                        if (args.isMember(key))
+                        {
+                            body[key] = args[key];
+                        }
+                    }
+                    if (args.isMember("rename"))
+                    {
+                        body["name"] = args["rename"];
+                    }
+                    CallAndSummarize("PATCH", Endpoint(id, "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString())),
+                                     &body, caller, [](const Json::Value& b) {
+                                         return FormatTtdBranchLine(b["branch"]) + " (updated)";
+                                     }, done);
+                }
+                else if (action == "branch_delete")
+                {
+                    std::string path = "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString());
+                    if (args["force"].asBool())
+                    {
+                        path += "?force=true";
+                    }
+                    CallAndSummarize("DELETE", Endpoint(id, path), nullptr, caller, [id](const Json::Value& b) {
+                        std::string text = b["text"].asString();
+                        while (!text.empty() && text.back() == '\n')
+                        {
+                            text.pop_back();
+                        }
+                        const Json::ArrayIndex n = b["removed"].size();
+                        return text + " on " + id + " (" + std::to_string(n) + " branch" + (n == 1 ? "" : "es") +
+                               " removed)";
+                    }, done);
                 }
                 else if (action == "coverage_probe")
                 {

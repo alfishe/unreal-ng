@@ -768,6 +768,12 @@ public:
     ADD_METHOD_TO(EmulatorAPI::exportTTDBookmarks, "/api/v1/emulator/{id}/ttd/export-bookmarks", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::deleteTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::putTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Put);
+    // TTD branches: a resume in the past keeps the old future as a branch; {branch} is an id, a GUID or a name
+    ADD_METHOD_TO(EmulatorAPI::getTTDBranches, "/api/v1/emulator/{id}/ttd/branches", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::patchTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Patch);
+    ADD_METHOD_TO(EmulatorAPI::deleteTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::switchTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}/switch", drogon::Post);
     // TD-7 — coverage index queries
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageProbe, "/api/v1/emulator/{id}/ttd/coverage/probe", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
@@ -2419,6 +2425,21 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void deleteTTDBookmark(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                            const std::string& label) const;
+    // TTD branches (a resume in the past keeps the old future as a branch)
+    void getTTDBranches(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void getTTDBranch(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                      const std::string& branch) const;
+    void patchTTDBranch(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                        const std::string& branch) const;
+    void deleteTTDBranch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                         const std::string& branch) const;
+    void switchTTDBranch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                         const std::string& branch) const;
     // TD-7 — coverage index queries
     void getTTDCoverageProbe(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

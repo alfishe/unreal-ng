@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -12,16 +14,25 @@
 #include <QPushButton>
 #include <QSlider>
 
+#include "widgets/branchlanes.h"
 #include "widgets/journalspanslider.h"
+#include <QScrollArea>
+#include <set>
 #include <utility>
 #include <vector>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <map>
 #include <memory>
+#include <string>
 
 class Emulator;
+namespace ttd
+{
+struct TTDSessionInfo;
+}
 
 
 /**
@@ -53,6 +64,10 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
+    /// Asks the user before a branch is deleted (title, question; true = go ahead). A message box by default; the
+    /// tests answer without one
+    std::function<bool(const QString&, const QString&)> confirm;
+
 signals:
     void visibilityChanged(bool visible);
     void heightChanged();
@@ -76,6 +91,16 @@ public slots:
     void onJournalToggled(bool on);
     /// Show or hide the Advanced row (remembered)
     void onAdvancedToggled(bool open);
+    /// Show or hide the Branches row (remembered; the button shows only once the session has branches)
+    void onBranchesToggled(bool open);
+    /// The Branches row's actions on the selected branch (the lanes' selection, else the active one)
+    void onSwitchBranch();
+    void onRenameBranch();
+    void onTagBranch();
+    void onNoteBranch();
+    void onPinBranch();
+    void onDeleteBranch();
+    void onSaveLineage();
 
 
 private:
@@ -86,7 +111,13 @@ private:
     /// already under way keeps what it records with)
     void applyJournalPreference();
     /// Height of the visible rows and the spacing between them
-    int rowsHeight(bool advanced, bool scrubber) const;
+    int rowsHeight(bool advanced, bool scrubber, bool branches = false) const;
+    /// The Branches row, the button, the slider's branch tints and fork marks from the published branch list
+    void updateBranches(const ttd::TTDSessionInfo& info, uint64_t current);
+    /// The branch the row's actions act on: the lanes' selection, else the active branch
+    uint32_t chosenBranch() const;
+    /// A branch verb on the active emulator; a refusal is shown. Returns the reply's success
+    bool runBranchVerb(const std::string& verb, std::map<std::string, std::string> options);
     void performSeekToFrame(uint64_t targetFrame, bool frameStart = false);
     /// Build the write journal for frames from..to by replay on a worker thread,
     /// with a progress dialog that can cancel it
@@ -108,12 +139,29 @@ private:
     QPushButton* _clearBtn = nullptr;
     QLabel* _statusLabel = nullptr;
     QToolButton* _advancedBtn = nullptr;   // shows the Advanced row
+    QToolButton* _branchesBtn = nullptr;   // shows the Branches row; there only once the session has branches
     QToolButton* _closeBtn = nullptr;
 
     // Advanced Row (hidden by default; its settings and whether it is open are saved)
     QWidget* _advancedContainer = nullptr;
     QCheckBox* _journalCheck = nullptr;   // write journal on / off (D40); on by default in the panel
     QComboBox* _historyCombo = nullptr;   // history limit (bytes, 0 = all)
+
+    // Branches Row (TTD branches, surfaces.md §1): the lanes and the actions on the chosen branch
+    QWidget* _branchesContainer = nullptr;
+    QScrollArea* _branchesScroll = nullptr;
+    BranchLanes* _branchLanes = nullptr;
+    QPushButton* _branchSwitchBtn = nullptr;
+    QPushButton* _branchRenameBtn = nullptr;
+    QPushButton* _branchTagsBtn = nullptr;
+    QPushButton* _branchNoteBtn = nullptr;
+    QPushButton* _branchPinBtn = nullptr;
+    QPushButton* _branchDeleteBtn = nullptr;
+    QPushButton* _branchSaveBtn = nullptr;
+    int _branchButtonsHeight = 26;
+    std::set<uint32_t> _knownBranches;    ///< the ids seen: a new one is a fork the status line names
+    QString _forkNotice;                  ///< "previous future kept as ...", for a few seconds
+    qint64 _forkNoticeUntil = 0;          ///< ms since epoch
 
     // Scrubber Row Container (Bottom)
     QWidget* _scrubberContainer = nullptr;

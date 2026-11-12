@@ -97,9 +97,14 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
     if (command == "snapshot")
         return any({"load"});
     if (command == "ttd")
+    {
+        // `ttd branch switch <b>` moves the machine onto another branch, as a seek does
+        if (any({"branch", "branches", "br"}) && args.size() >= 2)
+            return args[1] == "switch" || args[1] == "sw" || args[1] == "checkout";
         return any({"back", "forward", "goto", "seek", "sb", "sf", "si-back", "si-forward", "step-back",
                     "step-forward", "step-instruction", "reverse-step", "rs", "reverse-continue", "rc", "resume",
                     "load", "open"});
+    }
     if (command == "disk")
         return any({"create", "eject", "insert", "write"});
     if (command == "basic")

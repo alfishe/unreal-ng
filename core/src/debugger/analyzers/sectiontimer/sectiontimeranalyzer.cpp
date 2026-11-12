@@ -5,13 +5,17 @@
 #include <cstdio>
 #include <string>
 
+#include "3rdparty/message-center/messagecenter.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/debugmanager.h"
 #include "debugger/labels/labelmanager.h"
 #include "debugger/memory/memoryread.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/sound/chips/gs/gsdebughooks.h"
 
 namespace
@@ -97,8 +101,30 @@ bool SectionTimerAnalyzer::Stop()
 
 void SectionTimerAnalyzer::Clear()
 {
-    std::lock_guard<std::mutex> lock(_lock);
-    Reset();
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        Reset();
+    }
+    Publish("cleared");
+}
+
+void SectionTimerAnalyzer::Publish(const char* event, const BreakStop* stop) const
+{
+    if (_context == nullptr || _context->pEmulator == nullptr)
+        return;
+    auto* payload = new SectionTimerPayload(_context->pEmulator->GetId(), event);
+    if (stop != nullptr)
+    {
+        payload->condition = stop->condition;
+        if (stop->pass.section < _config.sections.size())
+            payload->section = _config.sections[stop->pass.section].name;
+        payload->frame = stop->pass.frame;
+        payload->t = stop->pass.t;
+        payload->elapsed = stop->pass.elapsed;
+        payload->net = stop->pass.net;
+        payload->interrupts = stop->pass.interrupts;
+    }
+    MessageCenter::DefaultMessageCenter().Post(NC_SECTION_TIMER, payload, true);
 }
 
 bool SectionTimerAnalyzer::IsActive() const
@@ -313,6 +339,7 @@ void SectionTimerAnalyzer::Reset()
     _orphans = 0;
     _dropped = 0;
     _stop = BreakStop{};
+    _stopPending = false;
 }
 
 void SectionTimerAnalyzer::onActivate(AnalyzerManager* manager)
@@ -329,7 +356,11 @@ void SectionTimerAnalyzer::onActivate(AnalyzerManager* manager)
     }
     _sink = _breakpoints->RegisterTapSink(this);
     if (_sink == BRK_NO_TAP)
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        _active = false;
         return;
+    }
     std::string error;
     for (size_t i = 0; i < _markers.size(); i++)
     {
@@ -357,6 +388,7 @@ void SectionTimerAnalyzer::onActivate(AnalyzerManager* manager)
         spec.owner = kId;
         _breakpoints->AddBreakpoint(spec, error);
     }
+    Publish("started");
 }
 
 void SectionTimerAnalyzer::onDeactivate()
@@ -369,8 +401,14 @@ void SectionTimerAnalyzer::onDeactivate()
     }
     _breakpoints = nullptr;
     _manager = nullptr;
-    std::lock_guard<std::mutex> lock(_lock);
-    _active = false;
+    bool wasActive = false;
+    {
+        std::lock_guard<std::mutex> lock(_lock);
+        wasActive = _active;
+        _active = false;
+    }
+    if (wasActive)
+        Publish("stopped");
 }
 
 uint64_t SectionTimerAnalyzer::Now() const
@@ -381,27 +419,35 @@ uint64_t SectionTimerAnalyzer::Now() const
 
 void SectionTimerAnalyzer::OnTap(const BreakpointTapHit& hit)
 {
-    std::lock_guard<std::mutex> lock(_lock);
-    if (hit.cookie == kCookieAccept)
+    BreakStop stopped;
     {
-        Accept(hit.arg > 0 ? static_cast<uint32_t>(hit.arg) : 0);
-        return;
+        std::lock_guard<std::mutex> lock(_lock);
+        if (hit.cookie == kCookieAccept)
+        {
+            Accept(hit.arg > 0 ? static_cast<uint32_t>(hit.arg) : 0);
+            return;
+        }
+        if (hit.cookie == kCookieReturn)
+        {
+            Return();
+            return;
+        }
+        if (hit.cookie >= _markers.size())
+            return;
+        _hits++;
+        for (const int32_t action : _markers[hit.cookie].actions)
+        {
+            if (action > 0)
+                Entry(static_cast<uint16_t>(action - 1));
+            else
+                Exit(static_cast<uint16_t>(-action - 1));
+        }
+        if (!_stopPending) [[likely]]
+            return;
+        _stopPending = false;
+        stopped = _stop;
     }
-    if (hit.cookie == kCookieReturn)
-    {
-        Return();
-        return;
-    }
-    if (hit.cookie >= _markers.size())
-        return;
-    _hits++;
-    for (const int32_t action : _markers[hit.cookie].actions)
-    {
-        if (action > 0)
-            Entry(static_cast<uint16_t>(action - 1));
-        else
-            Exit(static_cast<uint16_t>(-action - 1));
-    }
+    Publish("break", &stopped);
 }
 
 void SectionTimerAnalyzer::Entry(uint16_t section)
@@ -484,11 +530,12 @@ void SectionTimerAnalyzer::Exit(uint16_t section)
                 case Op::Equal: meets = v == condition.value; break;
                 case Op::NotEqual: meets = v != condition.value; break;
             }
-            if (meets)
+            // Recorded and told only where the machine stops (not in a run that skips breakpoints)
+            if (meets && _breakpoints && _breakpoints->TapStopsHere())
             {
                 _stop = BreakStop{true, pass, condition.text};
-                if (_breakpoints)
-                    _breakpoints->StopAtThisTap();
+                _stopPending = true;
+                _breakpoints->StopAtThisTap();
                 break;
             }
         }
