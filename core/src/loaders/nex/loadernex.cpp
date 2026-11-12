@@ -182,6 +182,12 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     // NEXLOAD leaves its last esxDOS call through the DivMMC's #1FF8 off-area: the program starts with the DivMMC out and CONMEM clear
     decoder->DivMmc().ReleaseForProgramStart();
 
+    // NextZXOS has left the config mode (and switched the boot ROM off) by the time it starts a program; a machine that has just
+    // powered on is still in it, and the boot ROM then hides the Layer 2 write window from slot 0 (Kings Valley 2: the first 8K of
+    // every Layer 2 bank stayed empty). A NR #03 write with machine type 3 leaves it, as the OS does
+    if (memory->InConfigMode())
+        decoder->Board().Write(0x03, 0x03);
+
     // The loader's register reset (nexload.asm "Reset All registers"), unless the file asks to keep them
     if (!_header.keepRegisters)
         ResetRegisters(decoder->Board());

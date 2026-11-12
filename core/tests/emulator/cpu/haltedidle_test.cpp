@@ -51,6 +51,18 @@ uint64_t Fnv(const void* data, size_t size, uint64_t h = 1469598103934665603ull)
     return h;
 }
 
+/// The exec taps' hits: the frame and the T-state of each
+class TapTimes : public IBreakpointTapSink
+{
+public:
+    const EmulatorContext* context = nullptr;
+    std::vector<uint64_t> hits;
+    void OnTap(const BreakpointTapHit&) override
+    {
+        hits.push_back((uint64_t{context->emulatorState.frame_counter} << 32) | context->pCore->GetZ80()->t);
+    }
+};
+
 /// EI : HALT, then a frame counter in #9000 written to the border and the beeper (bit 4) - relocatable (JR back)
 const std::vector<uint8_t> kHaltLoop = {
     0xFB,              // +0  EI
@@ -246,6 +258,8 @@ protected:
     Run _inOneGo;
     int _profiWaitPhase = -1;  ///< >= 0: the Profi's [PROFI] WaitPhase for both machines
     std::function<void(Run&)> _setup;  ///< the machine's settings once the program is in
+    TapTimes _perStepTaps;  ///< the exec taps' sinks: they outlive the machines (TearDown)
+    TapTimes _inOneGoTaps;
 
     /// TS-Conf register `reg` through its port (#rrAF)
     static void TsConfWrite(Run& run, uint8_t reg, uint8_t value)
@@ -527,4 +541,45 @@ TEST_F(HaltedIdle_Test, HaltLoopDebugModeWatchedRunsPerStep)
         EmulatorTestHelper::CleanupEmulator(_inOneGo.emulator);
         _inOneGo = Run{};
     }
+}
+
+// Exec taps (haptic probes, script callbacks, analyzers) away from the HALT keep the idle and are told the same
+// instruction starts at the same T-states; a tap on the HALT sees every idle fetch, one per step
+namespace
+{
+template <class Run>  // HaltedIdle_Test::Run
+uint8_t ExecTap(Run& run, TapTimes& sink, uint16_t address)
+{
+    BreakpointManager* brk = run.context->pDebugManager->GetBreakpointsManager();
+    sink.context = run.context;
+    const uint8_t id = brk->RegisterTapSink(&sink);
+    auto* descriptor = new BreakpointDescriptor();
+    descriptor->type = BRK_MEMORY;
+    descriptor->memoryType = BRK_MEM_EXECUTE;
+    descriptor->z80address = address;
+    descriptor->hidden = true;
+    descriptor->owner = "haltedidle-test";
+    descriptor->tapSink = id;
+    EXPECT_NE(brk->AddBreakpoint(descriptor), BRK_INVALID);
+    return id;
+}
+}  // namespace
+
+TEST_F(HaltedIdle_Test, HaltLoopPentagonExecTapElsewhere)
+{
+    _setup = [this](Run& run) { ExecTap(run, &run == &_perStep ? _perStepTaps : _inOneGoTaps, 0x8002); };
+    Compare("PENTAGON", nullptr, 0x8000, true);
+    EXPECT_GT(_perStepTaps.hits.size(), 100u) << "the tap after the HALT is told once a frame";
+    EXPECT_EQ(_inOneGoTaps.hits, _perStepTaps.hits) << "the same instruction starts at the same T-states";
+}
+
+TEST_F(HaltedIdle_Test, HaltLoopExecTapOnHaltRunsPerStep)
+{
+    Start(_inOneGo, "PENTAGON", true, nullptr, 0x8000);
+    ASSERT_FALSE(HasFatalFailure());
+    ExecTap(_inOneGo, _inOneGoTaps, 0x8001);
+    const uint64_t before = _inOneGo.z80->haltedIdleFetchesInOneGo;
+    _inOneGo.emulator->RunNFrames(20, /*skipBreakpoints=*/true);
+    EXPECT_EQ(_inOneGo.z80->haltedIdleFetchesInOneGo, before) << "a tap on the HALT sees every idle fetch";
+    EXPECT_GT(_inOneGoTaps.hits.size(), 20u * 1000u);
 }

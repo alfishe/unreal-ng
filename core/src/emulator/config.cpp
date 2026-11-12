@@ -627,6 +627,11 @@ bool Config::ParseConfig(IniFile& inimanager)
             MLOGWARNING("Config: [NEXT] LayerCapture=%s is not on or off - on used", word);
     }
     {
+        // [NEXT] ZxnDdma = on|off: the core has the zxnDDMA blitter commands on port #6B (the variant NEXT-DDMA sets it); default off
+        const std::string word = inimanager.GetValue("NEXT", "ZxnDdma", "off");
+        config.next_zxnddma = (word == "on" || word == "1" || word == "true" || word == "yes") ? 1 : 0;
+    }
+    {
         // [NEXT] Board = issue2|issue4|issue5 (also ks1|ks2|ks3): the PCB the core is built for (research-variants.md); default the KS2
         const char* word = inimanager.GetValue("NEXT", "Board", "issue4");
         NextBoardIssue issue = NextBoardIssue::Issue4;

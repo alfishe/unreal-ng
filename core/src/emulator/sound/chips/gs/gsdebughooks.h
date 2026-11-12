@@ -66,6 +66,12 @@ enum class GSCardEvent : uint8_t
                        ///< portdecoder_sprinter.cpp kJournalKinds), `port` its value or -1
     FdcCommand,        ///< a WD1793 accepted a command: `value` the command byte, `port` track << 8 | sector register
     FdcDone,           ///< a WD1793 command ended (INTRQ): `value` the status register, `port` the command byte
+    // The CPU's own interrupt view, every model (Z80::NoteInterruptAccepted; appended). `value` the kind: the INT's
+    // mode 0-2, 3 an NMI
+    IntAccept,         ///< an INT or NMI accepted, told after the acknowledge (PC the handler, SP the pushed return
+                       ///< address): `port` the acknowledge's T-states (it began at the hit's T minus them)
+    IntReturn,         ///< the RET / RETI / RETN that popped the return address an accepted interrupt pushed, told at
+                       ///< its end (the interrupted instruction's start): `port` the return address
     Count
 };
 
@@ -113,6 +119,8 @@ inline const char* GSCardEventName(GSCardEvent kind)
         case GSCardEvent::PldEvent: return "pld_event";
         case GSCardEvent::FdcCommand: return "fdc_command";
         case GSCardEvent::FdcDone: return "fdc_done";
+        case GSCardEvent::IntAccept: return "int_accept";
+        case GSCardEvent::IntReturn: return "int_return";
         case GSCardEvent::Count: break;
     }
     return "unknown";

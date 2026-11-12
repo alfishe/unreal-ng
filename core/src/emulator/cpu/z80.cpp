@@ -9,6 +9,7 @@
 #include "common/stringhelper.h"
 #include "common/timehelper.h"
 #include "debugger/pchistory/pchistory.h"
+#include "debugger/targets/gscardtarget.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
@@ -146,6 +147,7 @@ void Z80::Reset()
     last_branch = 0x0000;  // Address of last branch (in Z80 address space)
     int_pending = false;   // No interrupts pending
     int_acked_in_pulse = 0;
+    ClearIntFrames();
     int_gate = true;       // Allow external interrupts
     nmi_in_progress = false;  // Clear NMI flag
     _nmi_pending_count = 0;   // No NMI requested
@@ -384,10 +386,11 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
 
     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers. TTD coverage is no
     // observer of an idle stretch: its per-frame set already holds the HALT from the stretch's first real fetch
-    // (RunHaltedIdle learns the fetch length by one). Debug mode is none while no breakpoint or tap sees the HALT
-    if (execTapHold || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
+    // (RunHaltedIdle learns the fetch length by one). Debug mode and the exec taps (haptic probes, script callbacks,
+    // analyzers) are none while no breakpoint or tap sees the HALT
+    if (busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
         return false;
-    if (isDebugMode)
+    if (isDebugMode || execTapHold)
     {
         DebugManager* debug = _context->pDebugManager;
         if (debug && !debug->GetBreakpointsManager()->ExecIsInertAt(pc))
@@ -896,7 +899,7 @@ void Z80::EngineStep(bool skipBreakpoints)
             tracker.GetCallTraceBuffer()->LogIfControlFlow(_context, _memory, m1_pc, _context->emulatorState.frame_counter);
     }
 
-    if (flowHook) [[unlikely]]
+    if (flowHook || _intFrameCount) [[unlikely]]
     {
         // The engines' libraries have no flow hook: the instruction is decoded after it ran (FlowEvent)
         const uint16_t spBefore = sp;
@@ -2015,6 +2018,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
             _engine->AcknowledgeNmi();
             cpu.int_pending = false;
             NoteAcknowledge(ackStart);
+            NoteInterruptAccepted(kIntKindNmi);
             return true;
         }
         cpu.nmi_in_progress = true;
@@ -2071,6 +2075,7 @@ bool Z80::ProcessInterruptsImpl(bool int_occurred, unsigned int_start, unsigned 
         }
 
         NoteAcknowledge(ackStart);
+        NoteInterruptAccepted(kIntKindNmi);
         return true;  // NMI accepted: skip Z80Step this iteration
     }
 
@@ -2211,6 +2216,7 @@ void Z80::HandleINT(uint8_t vector)
         if (IntClearedByAcknowledge())
             cpu.int_acked_in_pulse = 1;
         NoteAcknowledge(ackStart);
+        NoteInterruptAccepted(cpu.im);
         return;
     }
 
@@ -2330,6 +2336,44 @@ void Z80::HandleINT(uint8_t vector)
     if (IntClearedByAcknowledge())
         cpu.int_acked_in_pulse = 1;
     NoteAcknowledge(ackStart);
+    NoteInterruptAccepted(cpu.im);
+}
+
+/// An accepted interrupt while the machine's events are watched: its frame (the slot of the pushed return address),
+/// then int_accept. A frame at or below the new slot is one the program left without a return (a new stack, a jump
+/// out of the handler): it is dropped
+void Z80::ReportInterruptAccepted(uint8_t kind)
+{
+    while (_intFrameCount > 0 && _intFrames[_intFrameCount - 1].slot <= sp)
+        _intFrameCount--;
+    if (_intFrameCount == kIntFrames)
+    {
+        std::copy(_intFrames + 1, _intFrames + kIntFrames, _intFrames);  // the outermost goes
+        _intFrameCount--;
+    }
+    _intFrames[_intFrameCount++] = IntFrame{sp, kind};
+    GSReportHostEvent(_context, GSCardEvent::IntAccept, kind, static_cast<int>(lastAcknowledgeT));
+}
+
+/// A control-flow event with a listener or an open interrupt frame: a return that pops an open frame's slot is
+/// int_return; frames below the popped slot were left without a return and are dropped
+void Z80::NoteFlowWatched(FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret)
+{
+    if (flowHook)
+        flowHook(flowHookContext, this, event, target, slot, ret);
+    if (event != FlowEvent::Ret || _intFrameCount == 0)
+        return;
+    if (!_context->machineEventWatch)
+    {
+        _intFrameCount = 0;  // nobody watches any more
+        return;
+    }
+    while (_intFrameCount > 0 && _intFrames[_intFrameCount - 1].slot < slot)
+        _intFrameCount--;
+    if (_intFrameCount == 0 || _intFrames[_intFrameCount - 1].slot != slot)
+        return;
+    const uint8_t kind = _intFrames[--_intFrameCount].kind;
+    GSReportHostEvent(_context, GSCardEvent::IntReturn, kind, ret);
 }
 
 void Z80::OnCPUStep()
