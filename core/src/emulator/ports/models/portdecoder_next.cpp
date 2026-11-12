@@ -1168,13 +1168,18 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 /// The DMA reads and writes through the Z80's view of memory and the port decoder
 void PortDecoder_Next::BindDma()
 {
+    // The SRAM read wait for the DMA's own reads at 28 MHz (zxnext.vhd 3.02.03 3171-3181, 1830, 1844) is OFF for now. With it, the
+    // zxnDDMA compare example (`zxnddma_compare`, 32 balls of 16x16) takes 2.5 ms where the 3.03.00 guide says 2.1 ms (+0.3 ms: one clock
+    // for each of the 8192 bytes at 28 MHz); without it 2.2 ms. The RTL of 3.03.00 is not public, so which is right is open: set this
+    // to true to follow 3.02.03 again (docs/inprogress/2026-10-07-zx-next/design-zxnddma.md section 8, TODO.md "zxnDDMA")
+    constexpr bool kDmaSramWait = false;
     NextDma::Bus bus;
     // In debug mode the accesses go through the main CPU's watchpoints (the DMA drives the CPU's address bus)
     bus.readMemory = [this](uint16_t address) {
         const uint8_t value = _context->pMemory->DirectReadFromZ80Memory(address);
         // zxnext.vhd 3171-3181: at 28 MHz a read that reaches the SRAM waits a clock; cpu_rd_n is the DMA's own read while it holds the bus
         // and dma_wait_n includes sram_wait_n (1830, 1844)
-        if (Mem().SramWait28() && Mem().SlotWaitsAt28(address >> 13))
+        if (kDmaSramWait && Mem().SramWait28() && Mem().SlotWaitsAt28(address >> 13))
             _context->pCore->GetZ80()->InsertWaitStates(1);
         if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
             ReportDmaAccess(false, address, value);
@@ -1188,7 +1193,7 @@ void PortDecoder_Next::BindDma()
     // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
     bus.readPhysical = [this](uint32_t address) {
         // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
-        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+        if (kDmaSramWait && Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
             _context->pCore->GetZ80()->InsertWaitStates(1);
         return Mem().PhysicalRead(address);
     };
