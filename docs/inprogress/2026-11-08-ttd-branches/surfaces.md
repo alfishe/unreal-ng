@@ -20,6 +20,45 @@ branch count; the tree is on demand (Q-5).
 | Edit in the past (memory viewer, registers) | refused / stops the recording | allowed; the toast names the branch the edit started |
 | Black-box menu (`menumanager.cpp:1287-1313`) | | + "Branches..." (opens the tree), "Previous branch" |
 
+**Done in the TTD panel (2026-11-10).** The owner's rule: extend the panel's existing expanding rows instead of new
+popups or docks. So the chip, the tree and the fork popup became:
+
+- **Branches (N)** pill next to Advanced, hidden while the trunk is alone. It opens a **Branches row** below the
+  scrubber, which works like the Advanced row: it expands, the window grows by its height, and its open state is
+  kept in `ttd/branchesOpen`.
+  - The row holds the lanes (`branchlanes.cpp`): one row per branch in tree order, frames horizontal, connectors to
+    the parent and the current-moment line. The active branch is bold and pinned branches end in " *". Five lanes
+    are in sight; more scroll.
+  - Below the lanes are the buttons Switch, Rename..., Tags..., Note..., Pin / Unpin, Delete and Save Lineage...
+    (`dump lineage=true`); a right click on a lane offers the same.
+  - Switch is off for the active branch, and Delete is off for any branch on the active lineage. Delete asks first
+    only when the branch has children or is pinned.
+- **Slider** (`journalspanslider.cpp`):
+  - The lineage's parts off the trunk are tinted along the top.
+  - A fork mark appears where another future goes on: a branch leaving the line, or the parent's own future at the
+    point where the line left it (after a resume, that is the trunk's old future). Several branches leaving at one
+    point make the mark taller.
+  - Hovering a mark lists each branch with its length; a double click on a mark selects the branch and opens the row.
+- **After a fork** the status line reads "New branch '+00:00:25.150', previous future kept on 'trunk'" for 8 s. There is
+  no Back button: Switch in the row does it.
+- **Status line**: " | Branch: <name> (N)".
+- **Rec From Here** is gone. Where a recorded future follows the position the button reads **Branch Here**: it
+  records a new branch from there (the owner's choice, 2026-11-10: the fork must be visible on the button, not only
+  in its tooltip). At the end of the recording it reads **Continue Rec**: the same session goes on, while Start Rec
+  begins a new one. Both names fit the button, so the slider keeps its length.
+- **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard relocks
+  every 250 ms: the two made the panel flicker).
+
+Not done yet:
+
+- the main window's status bar;
+- the menu items and keys below;
+- the lane filters (creator / tags / run);
+- edits in the past.
+
+A rename, note, tag or pin changes the session in memory; for a folder session it is not yet written to
+`branches.tdx`, which has no update record.
+
 Keyboard: `Ctrl+Alt+B` previous branch (the one left last), `Ctrl+Alt+Shift+B` the tree. Assigned through the action
 catalogue like the other TTD actions.
 

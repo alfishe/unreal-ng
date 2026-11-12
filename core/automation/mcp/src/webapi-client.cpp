@@ -104,6 +104,10 @@ void WebApiClient::Call(const std::string& method, const std::string& path, cons
     {
         httpMethod = drogon::Delete;
     }
+    else if (method == "PATCH")
+    {
+        httpMethod = drogon::Patch;
+    }
     else
     {
         std::cerr << "MCP WebApiClient: unsupported method '" << method << "'" << std::endl;

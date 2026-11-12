@@ -6307,11 +6307,88 @@ public:
         });
 
         // -----------------------------------------------------------------
+        // TTD branches: a resume in the past keeps the old future as a branch.
+        // A branch is named by its id (0 = the trunk), its GUID or its name.
+        // -----------------------------------------------------------------
+
+        // ttd_branches([{scope = "all" | "lineage", created_by = "...", tag = "...", name_prefix = "...",
+        // pinned = true, limit = N, offset = N}]): {branches = {...}, total, count, active, viewed, lineage, text}
+        lua.set_function("ttd_branches", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                             -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("branches", options)));
+        });
+
+        // ttd_branch_switch(branch [, frame [, tinframe]]): continue on the branch, at the moment on it (default: its
+        // end); {switched, branch, arrived_at, state, check, text} or {switched = false, error = ...}
+        lua.set_function("ttd_branch_switch", [this](sol::this_state ts, sol::object branch,
+                                                      sol::optional<uint64_t> frame,
+                                                      sol::optional<uint32_t> tinframe) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            if (frame)
+            {
+                options["frame"] = std::to_string(*frame);
+                options["tinframe"] = std::to_string(tinframe.value_or(0));
+            }
+            const ttd::TTDReply reply = TtdRun("branch-switch", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["switched"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_update(branch, {name = "...", note = "...", tags = {...}, add_tags = {...}, remove_tags = {...},
+        // pinned = true}): the branch as it is now, or {updated = false, error = ...}
+        lua.set_function("ttd_branch_update", [this](sol::this_state ts, sol::object branch,
+                                                      sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-update", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["updated"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_delete(branch [, force]): the branch and its descendants (force: pinned ones too);
+        // {deleted, removed = {ids}, removed_names = {...}, text} or {deleted = false, error = ...}
+        lua.set_function("ttd_branch_delete", [this](sol::this_state ts, sol::object branch,
+                                                      sol::optional<bool> force) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            if (force && *force)
+                options["force"] = "true";
+            const ttd::TTDReply reply = TtdRun("branch-delete", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["deleted"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // -----------------------------------------------------------------
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            return TtdRun("dump", {{"path", path}}).Ok();
+        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history
+        lua.set_function("ttd_dump", [this](const std::string& path, sol::optional<bool> lineage) -> bool {
+            std::map<std::string, std::string> options{{"path", path}};
+            if (lineage && *lineage)
+                options["lineage"] = "true";
+            return TtdRun("dump", options).Ok();
         });
 
         // Loading refuses a session recorded on a different machine model: a

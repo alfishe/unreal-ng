@@ -705,6 +705,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingplan_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
+        # The TTD panel's Branches row: the lanes, the actions, the slider's fork marks (TTD branches surfaces.md §1)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_branches_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/branchlanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/branchlanes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
         # The window as a view of TargetState, the surface icon and the surfaces table (Stream Deck targeting.md)

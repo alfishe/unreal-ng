@@ -310,9 +310,9 @@ A typical chain: memory-diff narrows "what changed between two frames" to a few 
 3. `find-last` the corrupted address → writer PC.
 4. `reverse-continue {"pcs":[writer]}` → the call site that set it up.
 5. `coverage/scan` the routine's range → which frames to replay.
-6. `seek` to the earliest hit, `resume` (this discards the recorded
-   future and records again from there), watch it happen again with a
-   breakpoint armed.
+6. `seek` to the earliest hit, `resume` (this records on a new branch
+   from there; the recorded future is kept on the old one, see
+   `branches`), watch it happen again with a breakpoint armed.
 
 Full worked example: [articles/bug-hunt-ttd.md](../articles/bug-hunt-ttd.md).
 

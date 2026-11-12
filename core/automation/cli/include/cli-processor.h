@@ -485,6 +485,8 @@ private:
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
     void HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDBranch(const ClientSession& session, EmulatorContext* context,
+                         const std::vector<std::string>& args);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,

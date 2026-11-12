@@ -15,6 +15,13 @@
 ///   GET  /ttd/position      — current TTDTimePoint
 ///   GET  /ttd/markers       — list external-event markers (replay barriers)
 ///
+/// TTD branches (a resume in the past keeps the old future as a branch):
+///   GET    /ttd/branches                   — the branch tree, filtered and paged
+///   GET    /ttd/branches/{branch}          — one branch ({branch}: an id, a GUID or a name)
+///   PATCH  /ttd/branches/{branch}          — rename, note, tags, pin
+///   DELETE /ttd/branches/{branch}          — delete it and its descendants (?force=true: pinned ones too)
+///   POST   /ttd/branches/{branch}/switch   — continue on it (at frame / tinframe, default its end)
+///
 /// Phase 4 (reverse search):
 ///   POST /ttd/dump          — serialize session to .ttd file
 ///   POST /ttd/find-last     — reverse search: find last access at address
@@ -59,7 +66,8 @@ extern void addCorsHeaders(HttpResponsePtr& resp);
 // turns its JSON body into string options and sends the reply back as JSON
 // ---------------------------------------------------------------------------
 static void RespondTTD(const std::string& id, const std::string& verb, std::map<std::string, std::string> options,
-                       std::function<void(const HttpResponsePtr&)>& callback)
+                       std::function<void(const HttpResponsePtr&)>& callback,
+                       const std::function<void(ttd::TTDReply&)>& reshape = {})
 {
     auto emulator = getEmulatorByIdOrIndex(id);
     if (!emulator)
@@ -84,7 +92,9 @@ static void RespondTTD(const std::string& id, const std::string& verb, std::map<
         callback(resp);
         return;
     }
-    const ttd::TTDReply reply = ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    ttd::TTDReply reply = ttd::TTDControl(emulator->GetContext()).Execute({verb, std::move(options)});
+    if (reshape)
+        reshape(reply);
     auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(reply.ToValue()));
     resp->setStatusCode(static_cast<HttpStatusCode>(reply.HttpStatus()));
     addCorsHeaders(resp);
@@ -415,6 +425,115 @@ void EmulatorAPI::deleteTTDBookmark(const HttpRequestPtr& req,
 {
     (void)req;
     RespondTTD(id, "bookmark-delete", {{"label", label}}, callback);
+}
+
+// -------------------------------------------------------------------------
+// TTD branches: a resume in the past keeps the old future as a branch. {branch} names one by its id, its GUID or its
+// name; the trunk is id 0. Every route is a WebSocket `call` as well.
+// -------------------------------------------------------------------------
+
+/// @brief GET /api/v1/emulator/{id}/ttd/branches
+///
+/// Query: scope = all (default) | lineage, created_by (prefix), tag, name_prefix, pinned = true | false, limit, offset.
+/// Response: { "branches": [ { "id", "guid", "name", "parent", "fork", "end", "length", "created_by", "reason", "run",
+/// "tags", "note", "pinned", "children", "active", "on_lineage", ... } ], "total", "count", "active", "viewed",
+/// "lineage": [ { "branch", "from" } ], "text" }. A published copy: the machine never parks for it.
+void EmulatorAPI::getTTDBranches(const HttpRequestPtr& req,
+                                 std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    RespondTTD(id, "branches", OptionsFromQuery(req, "branches"), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/ttd/branches/{branch}
+///
+/// One branch of the `branches` list: { "branch": {...}, "active", "viewed", "lineage", "text" }. 404 for an unknown
+/// branch. The name is matched as the verbs match it: an id or a GUID first, then a name.
+void EmulatorAPI::getTTDBranch(const HttpRequestPtr& req,
+                               std::function<void(const HttpResponsePtr&)>&& callback,
+                               const std::string& id, const std::string& branch) const
+{
+    (void)req;
+    RespondTTD(id, "branches", {{"limit", "4294967295"}}, callback, [&branch](ttd::TTDReply& reply) {
+        if (!reply.Ok())
+            return;
+        const StateNode* list = reply.body.find("branches");
+        const StateNode* found = nullptr;
+        if (list)
+        {
+            for (const StateNode& b : list->items)
+                if (const StateNode* bid = b.find("id"); (bid && std::to_string(bid->i) == branch) ||
+                                                         (b.find("guid") && b.find("guid")->s == branch))
+                    found = found ? found : &b;
+            for (const StateNode& b : list->items)
+                if (!found && b.find("name") && b.find("name")->s == branch)
+                    found = &b;
+        }
+        if (!found)
+        {
+            reply.error = ttd::TTDControlError::NotFound;
+            reply.message = "Unknown branch: " + branch +
+                            (list && list->items.empty() ? " (the session has the trunk alone)" : "");
+            reply.body = StateNode::Object();
+            return;
+        }
+        StateNode body = StateNode::Object();
+        body["branch"] = *found;
+        for (const char* key : {"active", "viewed", "lineage"})
+            if (const StateNode* v = reply.body.find(key))
+                body[key] = *v;
+        const StateNode* name = found->find("name");
+        const StateNode* length = found->find("length");
+        body["text"] = "Branch '" + (name ? name->s : branch) + "', " +
+                       std::to_string(length ? length->i : 0) + " frames" +
+                       (found->find("active") && found->find("active")->b ? " (active)" : "") + "\n";
+        reply.body = std::move(body);
+    });
+}
+
+/// @brief PATCH /api/v1/emulator/{id}/ttd/branches/{branch} (only the fields given change)
+///
+/// Body: { "name": "...", "note": "...", "tags": [...] or "a,b" (replace), "add_tags": [...], "remove_tags": [...],
+/// "pinned": true | false }. 200 with { "updated", "branch", "text" }, 400 for nothing to change or a broken bound,
+/// 404 for an unknown branch, 409 for a name another branch has.
+void EmulatorAPI::patchTTDBranch(const HttpRequestPtr& req,
+                                 std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id, const std::string& branch) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    options["branch"] = branch;
+    RespondTTD(id, "branch-update", std::move(options), callback);
+}
+
+/// @brief DELETE /api/v1/emulator/{id}/ttd/branches/{branch}[?force=true]
+///
+/// Deletes the branch and its descendants: { "deleted", "removed": [ids], "removed_names": [...], "text" }. 404 for
+/// an unknown branch; 409 when it is the trunk, on the active lineage, or pinned (force=true deletes pinned ones).
+void EmulatorAPI::deleteTTDBranch(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id, const std::string& branch) const
+{
+    std::map<std::string, std::string> options = OptionsFromQuery(req, "branch-delete");
+    options["branch"] = branch;
+    RespondTTD(id, "branch-delete", std::move(options), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/branches/{branch}/switch
+///
+/// Body (optional): { "frame": F, "tinframe": T } - the moment on the branch to arrive at (default: its end).
+/// Response: { "switched", "branch", "arrived_at", "state", "check", "text" }. 404 for an unknown branch, 409 when
+/// the switch is refused (recording, a moment off the branch).
+void EmulatorAPI::switchTTDBranch(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id, const std::string& branch) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    options["branch"] = branch;
+    RespondTTD(id, "branch-switch", std::move(options), callback);
 }
 
 // -------------------------------------------------------------------------

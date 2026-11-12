@@ -344,6 +344,82 @@ def run_contract(c: Contract) -> None:
     lua = c.lua("print(#ttd_markers())")
     c.check(lua == str(web.get("count")), f"Lua and WebAPI count the same markers ({lua!r}, {web.get('count')})")
 
+    print("[branches: list, update, switch, delete and the lineage dump on every surface]")
+    # A resume in the past records on a new branch, named by the fork's time ("+00:00:00.163")
+    c.web("POST", "/ttd/start")
+    run_frames(c.api, c.base, 20)
+    c.web("POST", "/ttd/stop")
+    _, pos = c.web("GET", "/ttd/position")
+    fork = pos["session_end"]["frame"] - 12
+    c.web("POST", "/ttd/seek", {"frame": fork, "tinframe": 0})
+    c.web("POST", "/ttd/resume", {"frame": fork, "tinframe": 0})
+    run_frames(c.api, c.base, 6)
+    c.web("POST", "/ttd/stop")
+    _, web = c.web("GET", "/ttd/branches")
+    names = [b["name"] for b in web.get("branches", [])]
+    forked = names[1] if len(names) > 1 else ""
+    c.check(names[:1] == ["trunk"] and forked.startswith("+00:"), f"WebAPI lists the trunk and the new branch ({names})")
+    lua = c.lua("local r = ttd_branches(); print(#r.branches .. '|' .. r.active .. '|' .. r.total)")
+    c.check(lua == f"{len(names)}|{web.get('active')}|{web.get('total')}", f"Lua lists the same ({lua!r})")
+    py = c.py_json("emu.ttd_branches(scope='lineage')")
+    lineage = [b["name"] for b in web.get("branches", []) if b.get("on_lineage")]
+    c.check(isinstance(py, dict) and [b["name"] for b in py.get("branches", [])] == lineage,
+            f"Python scope=lineage lists the lineage ({py if not isinstance(py, dict) else py.get('branches')})")
+    cli = c.cli.run("ttd branches")
+    c.check(f"{forked} (1)" in cli and "* " in cli, f"CLI lists them, the active one marked ({cli.strip()[:120]!r})")
+    _, status_web = c.web("GET", "/ttd/status")
+    c.check(status_web.get("branch_count") == len(names) and "name" in status_web.get("branch", {}),
+            f"status names the branch ({status_web.get('branch')}, {status_web.get('branch_count')})")
+
+    lua = c.lua(f"local r = ttd_branch_update('{forked}', {{name = 'contract-old', tags = {{'contract'}}}}); "
+                "print(tostring(r.updated) .. '|' .. r.branch.name)")
+    c.check(lua == "true|contract-old", f"Lua renames and tags it ({lua!r})")
+    status, web = c.web("PATCH", "/ttd/branches/contract-old", {"pinned": True})
+    c.check(status == 200 and web.get("branch", {}).get("pinned") is True, f"WebAPI PATCH pins it ({status})")
+    status, web = c.web("GET", "/ttd/branches/contract-old")
+    c.check(status == 200 and web.get("branch", {}).get("tags") == ["contract"], f"WebAPI GET one branch ({status})")
+    status, web = c.web("PATCH", "/ttd/branches/contract-old", {})
+    lua = c.lua("local r = ttd_branch_update('contract-old', {}); print(tostring(r.updated) .. '|' .. tostring(r.error))")
+    c.check(status == 400 and lua == "false|" + web.get("message", ""),
+            f"nothing to change: 400 and the same message in Lua ({status}, {lua!r})")
+
+    full = Path(__file__).resolve().parents[3] / "scratch" / f"ttd-surface-contract-{os.getpid()}-all.ttd"
+    part = Path(__file__).resolve().parents[3] / "scratch" / f"ttd-surface-contract-{os.getpid()}-lineage.ttd"
+    full.parent.mkdir(exist_ok=True)
+    status, _ = c.web("POST", "/ttd/dump", {"path": str(full)})
+    lua = c.lua(f"print(tostring(ttd_dump('{part}', true)))")
+    c.check(status == 200 and lua == "true" and full.exists() and part.exists() and
+            part.stat().st_size <= full.stat().st_size,
+            f"the lineage dump holds no more than every branch ({lua!r}, "
+            f"{part.stat().st_size if part.exists() else None} <= {full.stat().st_size if full.exists() else None})")
+    full.unlink(missing_ok=True)
+    part.unlink(missing_ok=True)
+
+    cli = c.cli.run("ttd branch switch contract-old")
+    _, status_web = c.web("GET", "/ttd/status")
+    c.check("Switched to branch 'contract-old'" in cli and status_web.get("branch", {}).get("name") == "contract-old",
+            f"CLI switches, WebAPI status follows ({cli.strip()!r}, {status_web.get('branch')})")
+    status, web = c.web("POST", "/ttd/branches/0/switch", {})
+    c.check(status == 200 and web.get("branch", {}).get("name") == "trunk", f"WebAPI switches back to the trunk ({status})")
+
+    status, web = c.web("DELETE", "/ttd/branches/contract-old")
+    message = web.get("message", "")
+    c.check(status == 409 and "pinned" in message, f"WebAPI refuses a pinned branch with 409 ({status}, {message!r})")
+    lua = c.lua("local r = ttd_branch_delete('contract-old'); print(tostring(r.deleted) .. '|' .. tostring(r.error))")
+    c.check(lua == "false|" + message, f"Lua refuses with the same message ({lua!r})")
+    cli = c.cli.run("ttd branch del contract-old")
+    c.check(("Error: " + message) in cli, f"CLI refuses with the same message ({cli.strip()!r})")
+    if c.python:
+        py = c.py_json("emu.ttd_branch_delete('contract-old', force=True)")
+        c.check(isinstance(py, dict) and py.get("deleted") is True and py.get("removed_names") == ["contract-old"],
+                f"Python force deletes it ({py})")
+    else:
+        lua = c.lua("local r = ttd_branch_delete('contract-old', true); "
+                    "print(tostring(r.deleted) .. '|' .. tostring(r.removed_names[1]))")
+        c.check(lua == "true|contract-old", f"Lua force deletes it ({lua!r})")
+    status, _ = c.web("GET", "/ttd/branches/contract-old")
+    c.check(status == 404, f"WebAPI then answers 404 ({status})")
+
     print("[reverse queries and port events]")
     c.web("POST", "/ttd/start", {"journal": True})
     run_frames(c.api, c.base, 6)
@@ -488,6 +564,7 @@ def main() -> int:
     emu_id = api.create_instance("PENTAGON")
     cli = Cli(args.cli_port)
     try:
+        api._request("PUT", f"/emulator/{emu_id}/audio/mixer/master", {"muted": True})
         cli.run("select " + emu_id)
         c = Contract(api, cli, emu_id)
         c.python = "not available" not in cli.run("python exec print(1)")

@@ -65,6 +65,22 @@ struct TTDBranchMeta
     bool pinned = false;
 };
 
+/// An edit of a branch's metadata: only the fields set change
+struct TTDBranchUpdate
+{
+    std::optional<std::string> name;
+    std::optional<std::string> note;
+    std::optional<std::vector<std::string>> tags;   ///< replaces them
+    std::vector<std::string> addTags;
+    std::vector<std::string> removeTags;
+    std::optional<bool> pinned;
+
+    bool Empty() const
+    {
+        return !name && !note && !tags && addTags.empty() && removeTags.empty() && !pinned;
+    }
+};
+
 struct TTDBranchInfo
 {
     uint32_t id = kTTDTrunk;
@@ -115,6 +131,9 @@ public:
     /// Every id ever given (deleted ones too): ids run 0..Ids()-1
     size_t Ids() const { return _branches.size(); }
     bool Indexed() const { return _indexed; }
+    /// Changes with every change of the table (a branch added, edited, ended, deleted): readers that keep a copy
+    /// rebuild it when this moved
+    uint64_t Revision() const { return _revision; }
 
     /// A live branch; nullptr for a deleted or unknown id
     const TTDBranchInfo* Get(uint32_t id) const;
@@ -184,6 +203,7 @@ private:
     std::unordered_map<TTDGuid, uint32_t, GuidHash> _byGuid;
     std::unordered_map<std::string, uint32_t> _byName;
     std::unordered_map<std::string, uint32_t> _counters;
+    uint64_t _revision = 0;
 };
 
 }  // namespace ttd

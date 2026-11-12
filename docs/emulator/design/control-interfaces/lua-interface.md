@@ -1306,10 +1306,29 @@ ttd_seek_bookmark("umt entry")
 
 Bookmarks are advisory and never stop a seek; markers do.
 
+**Branches** (a resume in the past records on a new branch, named by its time from the trunk start such as
+`+00:01:25.150`, and the old future stays on the parent; the first history is the
+`trunk`, id 0; a branch is named by its id, its GUID or its name):
+
+```lua
+local b = ttd_branches()                    -- or ttd_branches{scope = "lineage", tag = "boss", pinned = true, limit = 20, offset = 0}
+-- --> { branches = { {id, guid, name, parent, fork = {frame, tinframe} | nil, ["end"] = {...}, length, created_by,
+--       reason, tags, note, pinned, children, active, on_lineage}, ... }, total, count, active, viewed,
+--       lineage = { {branch, from = {frame, tinframe}}, ... }, text }   (no branches: an empty list)
+for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
+ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
+-- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
+-- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
+ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
+-- --> { deleted = true, removed = {ids}, removed_names = {...}, text }  or  { deleted = false, error = "..." }
+```
+
 **Sessions on disk:**
 
 ```lua
-ttd_dump("/tmp/session.ttd")               --> bool
+ttd_dump("/tmp/session.ttd")               --> bool; every branch
+ttd_dump("/tmp/line.ttd", true)            --> bool; only the active branch's lineage, one linear history
 ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)

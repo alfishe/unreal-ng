@@ -839,6 +839,17 @@
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
 
+    // TTD branches: present only when the session has branches
+    schemas["TTDStatusResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDStatusResponse"]["properties"]["branch"]["description"] =
+        "Only with branches: the active branch (recording continues on it).";
+    schemas["TTDStatusResponse"]["properties"]["viewed_branch"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDStatusResponse"]["properties"]["viewed_branch"]["description"] =
+        "Only with branches: the branch the current moment belongs to (on the active lineage).";
+    schemas["TTDStatusResponse"]["properties"]["branch_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["branch_count"]["description"] =
+        "Only with branches: how many there are, the trunk included (GET /ttd/branches lists them).";
+
     schemas["TTDStatusResponse"]["properties"]["input_event_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["input_event_count"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["input_event_count"]["description"] =
@@ -1343,6 +1354,107 @@
     schemas["TTDDumpRequest"]["properties"]["path"]["description"] =
         "Filesystem path where the .ttd file will be written.";
     schemas["TTDDumpRequest"]["required"].append("path");
+    schemas["TTDDumpRequest"]["properties"]["lineage"]["type"] = "boolean";
+    schemas["TTDDumpRequest"]["properties"]["lineage"]["description"] =
+        "true: only the active branch's lineage, as one linear history; default false: every branch.";
+
+    // TTD branches
+    schemas["TTDBranchRef"]["type"] = "object";
+    schemas["TTDBranchRef"]["description"] = "A branch named in a reply.";
+    schemas["TTDBranchRef"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchRef"]["properties"]["id"]["description"] = "Local id in this session (0 = the trunk).";
+    schemas["TTDBranchRef"]["properties"]["guid"]["type"] = "string";
+    schemas["TTDBranchRef"]["properties"]["guid"]["description"] = "Stable across files and sessions.";
+    schemas["TTDBranchRef"]["properties"]["name"]["type"] = "string";
+
+    schemas["TTDBranch"]["type"] = "object";
+    schemas["TTDBranch"]["description"] = "A branch with its place in the tree and its metadata.";
+    schemas["TTDBranch"]["allOf"].append(Json::Value());
+    schemas["TTDBranch"]["allOf"][0]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDBranch"]["properties"]["parent"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["parent"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["parent"]["description"] = "The branch it forked from; null for the trunk.";
+    schemas["TTDBranch"]["properties"]["fork"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranch"]["properties"]["fork"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["fork"]["description"] = "The moment it forked at; null for the trunk.";
+    schemas["TTDBranch"]["properties"]["end"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranch"]["properties"]["length"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["length"]["description"] = "Frames from its fork to its end.";
+    schemas["TTDBranch"]["properties"]["created_by"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["created_host_micros"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["reason"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["run"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["run"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDBranch"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["pinned"]["type"] = "boolean";
+    schemas["TTDBranch"]["properties"]["children"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["active"]["type"] = "boolean";
+    schemas["TTDBranch"]["properties"]["on_lineage"]["type"] = "boolean";
+
+    schemas["TTDBranchLineageSpan"]["type"] = "object";
+    schemas["TTDBranchLineageSpan"]["properties"]["branch"]["type"] = "integer";
+    schemas["TTDBranchLineageSpan"]["properties"]["from"]["$ref"] = "#/components/schemas/TTDTimePoint";
+
+    schemas["TTDBranchesResponse"]["type"] = "object";
+    schemas["TTDBranchesResponse"]["description"] =
+        "Response from GET /ttd/branches: the rows of this page, total matching rows, count of all branches (1 "
+        "without branches: the trunk), the active and the viewed branch ids, the active lineage, and one line per "
+        "row in text ('*' marks the active one).";
+    schemas["TTDBranchesResponse"]["properties"]["branches"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["branches"]["items"]["$ref"] = "#/components/schemas/TTDBranch";
+    for (const char* name : {"total", "count", "active", "viewed"})
+        schemas["TTDBranchesResponse"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
+        "#/components/schemas/TTDBranchLineageSpan";
+    schemas["TTDBranchesResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchResponse"]["type"] = "object";
+    schemas["TTDBranchResponse"]["description"] =
+        "One branch: GET /ttd/branches/{branch} (with active, viewed, lineage) and PATCH (with updated).";
+    schemas["TTDBranchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchResponse"]["properties"]["updated"]["type"] = "boolean";
+    schemas["TTDBranchResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchUpdateRequest"]["type"] = "object";
+    schemas["TTDBranchUpdateRequest"]["description"] =
+        "Request body for PATCH /ttd/branches/{branch}: only the fields given change.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchUpdateRequest"]["properties"]["name"]["description"] = "The new name (unique in the session).";
+    schemas["TTDBranchUpdateRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBranchUpdateRequest"]["properties"]["tags"]["description"] = "Replace the tags (a list or a, b).";
+    schemas["TTDBranchUpdateRequest"]["properties"]["add_tags"]["description"] = "Tags to add.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["remove_tags"]["description"] = "Tags to remove.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["pinned"]["type"] = "boolean";
+    schemas["TTDBranchUpdateRequest"]["properties"]["pinned"]["description"] =
+        "A pinned branch survives a prune and a delete without force.";
+
+    schemas["TTDBranchSwitchRequest"]["type"] = "object";
+    schemas["TTDBranchSwitchRequest"]["description"] =
+        "Request body for POST /ttd/branches/{branch}/switch (optional): the moment on the branch, default its end.";
+    schemas["TTDBranchSwitchRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBranchSwitchRequest"]["properties"]["tinframe"]["type"] = "integer";
+
+    schemas["TTDBranchSwitchResponse"]["type"] = "object";
+    schemas["TTDBranchSwitchResponse"]["description"] = "Response from POST /ttd/branches/{branch}/switch.";
+    schemas["TTDBranchSwitchResponse"]["properties"]["switched"]["type"] = "boolean";
+    schemas["TTDBranchSwitchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchSwitchResponse"]["properties"]["arrived_at"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchSwitchResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDBranchSwitchResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
+    schemas["TTDBranchSwitchResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchDeletedResponse"]["type"] = "object";
+    schemas["TTDBranchDeletedResponse"]["description"] =
+        "Response from DELETE /ttd/branches/{branch}: the branch and its descendants that went.";
+    schemas["TTDBranchDeletedResponse"]["properties"]["deleted"]["type"] = "boolean";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed"]["type"] = "array";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed"]["items"]["type"] = "integer";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed_names"]["type"] = "array";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed_names"]["items"]["type"] = "string";
+    schemas["TTDBranchDeletedResponse"]["properties"]["text"]["type"] = "string";
 
     schemas["TTDDumpResponse"]["type"] = "object";
     schemas["TTDDumpResponse"]["description"] =

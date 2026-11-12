@@ -1764,10 +1764,30 @@ emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_ma
 
 Bookmarks are advisory and never stop a seek; markers do.
 
+**Branches** (a resume in the past records on a new branch, named by its time from the trunk start such as
+`+00:01:25.150`, and the old future stays on the parent; the first history is the
+`trunk`, id 0; a branch is named by its id, its GUID or its name):
+
+```python
+b = emu.ttd_branches()                      # also scope='lineage', created_by=, tag=, name_prefix=, pinned=, limit=, offset=
+# -> {'branches': [{'id', 'guid', 'name', 'parent', 'fork': {'frame', 'tinframe'} or None, 'end', 'length',
+#     'created_by', 'reason', 'tags', 'note', 'pinned', 'children', 'active', 'on_lineage'}, ...], 'total', 'count',
+#     'active', 'viewed', 'lineage': [{'branch', 'from'}], 'text'}   (no branches: an empty list); ValueError for a bad filter
+emu.ttd_branch_switch('+00:00:25.150')           # at its end; emu.ttd_branch_switch(1, frame=4830, tinframe=0)
+# -> {'switched': True, 'branch': {...}, 'arrived_at': {...}, 'state': ..., 'check': {...}, 'text': ...}
+#    or {'switched': False, 'error': '...'}
+emu.ttd_branch_update('+00:00:25.150', name='boss fight', note='...', add_tags=['boss'], pinned=True)
+# also tags=[...] (replace), remove_tags=[...]; -> {'updated': True, 'branch': {...}, 'text': ...};
+# ValueError for nothing to change or a bound broken, {'updated': False, 'error': ...} otherwise
+emu.ttd_branch_delete('boss fight', force=True)   # force: pinned ones too; its descendants go with it
+# -> {'deleted': True, 'removed': [ids], 'removed_names': [...], 'text': ...} or {'deleted': False, 'error': ...}
+```
+
 **Sessions on disk:**
 
 ```python
-emu.ttd_dump('/tmp/session.ttd')            # -> bool
+emu.ttd_dump('/tmp/session.ttd')            # -> bool; every branch
+emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> bool; only the active branch's lineage, one linear history
 emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)

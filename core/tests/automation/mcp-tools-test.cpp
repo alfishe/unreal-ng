@@ -3379,6 +3379,239 @@ TEST_F(McpTools_Test, TimeTravel_SeekBookmark_PostsBookmarkField)
 }
 
 // ===========================================================================
+// time_travel (TTD branches)
+// ===========================================================================
+
+namespace
+{
+Json::Value BranchRow(uint64_t id, const std::string& name, bool active)
+{
+    Json::Value b;
+    b["id"] = static_cast<Json::UInt64>(id);
+    b["guid"] = "00000000-0000-0000-0000-00000000000" + std::to_string(id % 10);
+    b["name"] = name;
+    b["parent"] = id == 0 ? Json::Value() : Json::Value(0);
+    if (id != 0)
+    {
+        b["fork"]["frame"] = 108;
+        b["fork"]["tinframe"] = 0;
+    }
+    else
+    {
+        b["fork"] = Json::Value();
+    }
+    b["end"]["frame"] = 120;
+    b["end"]["tinframe"] = 0;
+    b["length"] = 12;
+    b["created_by"] = "user";
+    b["tags"] = Json::Value(Json::arrayValue);
+    b["note"] = "";
+    b["pinned"] = false;
+    b["active"] = active;
+    return b;
+}
+}  // namespace
+
+TEST_F(McpTools_Test, TimeTravel_BranchList_NamesTheActiveBranchAndTheLineage)
+{
+    Json::Value body;
+    body["branches"].append(BranchRow(0, "trunk", true));
+    body["branches"].append(BranchRow(1, "resume 1", false));
+    body["branches"][1]["tags"].append("boss");
+    body["branches"][1]["pinned"] = true;
+    body["total"] = 2;
+    body["count"] = 2;
+    body["active"] = 0;
+    body["viewed"] = 0;
+    body["lineage"][0]["branch"] = 0;
+    body["lineage"][0]["from"]["frame"] = 100;
+    body["lineage"][0]["from"]["tinframe"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/branches?tag=boss"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "branch_list";
+    args["tag"] = "boss";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("2 branch(es) on emu-1, active 'trunk'"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("* 'trunk' (id 0)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("'resume 1' (id 1) - 12 frames, forked at frame 108"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[boss] pinned"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("Lineage: 'trunk'"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["branches"].size(), 2u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchList_SummarisesPastTwentyRows)
+{
+    // An agent may see only the text: 30 rows become 20 lines and a count of the rest
+    Json::Value body;
+    for (uint64_t i = 0; i < 30; i++)
+        body["branches"].append(BranchRow(i, i == 0 ? "trunk" : "resume " + std::to_string(i), i == 0));
+    body["total"] = 30;
+    body["count"] = 30;
+    body["active"] = 0;
+    body["viewed"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/branches"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "branch_list";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("'resume 19' (id 19)"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("'resume 20' (id 20)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("... 10 more in the structured result"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["branches"].size(), 30u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchList_WithoutBranchesSaysTheHistoryIsOneLine)
+{
+    Json::Value body;
+    body["branches"] = Json::Value(Json::arrayValue);
+    body["total"] = 0;
+    body["count"] = 1;
+    body["active"] = 0;
+    body["viewed"] = 0;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/branches"] = {200, body};
+
+    Json::Value args;
+    args["action"] = "branch_list";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("No branches on emu-1"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchSwitch_PostsTheMomentAndNamesTheBranch)
+{
+    Json::Value reply;
+    reply["switched"] = true;
+    reply["branch"] = BranchRow(1, "resume 1", true);
+    reply["state"] = "detached";
+    reply["text"] = "Switched to branch 'resume 1' at frame 115\n";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/branches/resume%201/switch"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "branch_switch";
+    args["branch"] = "resume 1";
+    args["frame"] = 115;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Switched to branch 'resume 1' at frame 115 on emu-1"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call =
+        _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/branches/resume%201/switch");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asUInt(), 115u);
+    EXPECT_FALSE(call->body.isMember("branch")) << "the branch is in the path";
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchUpdate_PatchesNameTagsAndPin)
+{
+    Json::Value reply;
+    reply["updated"] = true;
+    reply["branch"] = BranchRow(1, "boss fight", false);
+    reply["branch"]["pinned"] = true;
+    _caller->routes["PATCH /api/v1/emulator/emu-1/ttd/branches/1"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "branch_update";
+    args["branch"] = 1;
+    args["rename"] = "boss fight";
+    args["pinned"] = true;
+    args["add_tags"].append("boss");
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("'boss fight' (id 1)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("pinned"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("PATCH", "/api/v1/emulator/emu-1/ttd/branches/1");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["name"].asString(), "boss fight") << "rename is the branch's name";
+    EXPECT_TRUE(call->body["pinned"].asBool());
+    EXPECT_EQ(call->body["add_tags"][0].asString(), "boss");
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchDelete_ForceInTheQueryAndNamesWhatWent)
+{
+    Json::Value reply;
+    reply["deleted"] = true;
+    reply["removed"].append(1);
+    reply["removed"].append(2);
+    reply["removed_names"].append("resume 1");
+    reply["removed_names"].append("resume 2");
+    reply["text"] = "Deleted 'resume 1', 'resume 2'\n";
+    _caller->routes["DELETE /api/v1/emulator/emu-1/ttd/branches/resume%201?force=true"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "branch_delete";
+    args["branch"] = "resume 1";
+    args["force"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Deleted 'resume 1', 'resume 2' on emu-1 (2 branches removed)"), std::string::npos)
+        << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchActions_WithoutBranchRejectBeforeAnyCall)
+{
+    for (const char* action : {"branch_switch", "branch_update", "branch_delete"})
+    {
+        Json::Value args;
+        args["action"] = action;
+        mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+        EXPECT_TRUE(result.isError) << action;
+        EXPECT_NE(result.text.find("requires 'branch'"), std::string::npos) << result.text;
+    }
+    EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_DumpLineage_PostsTheFlag)
+{
+    Json::Value dumped;
+    dumped["ok"] = true;
+    dumped["path"] = "/tmp/s.ttd";
+    dumped["bytes"] = 4096;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {200, dumped};
+
+    Json::Value args;
+    args["action"] = "dump";
+    args["path"] = "/tmp/s.ttd";
+    args["lineage"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("the active lineage only"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/dump");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["lineage"].asBool());
+}
+
+TEST_F(McpTools_Test, TimeTravel_Status_NamesTheActiveBranch)
+{
+    Json::Value status;
+    status["ttd_available"] = true;
+    status["state"] = "detached";
+    status["checkpoint_count"] = 3;
+    status["branch"]["id"] = 1;
+    status["branch"]["name"] = "resume 1";
+    status["viewed_branch"]["id"] = 0;
+    status["viewed_branch"]["name"] = "trunk";
+    status["branch_count"] = 2;
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/status"] = {200, status};
+
+    Json::Value args;
+    args["action"] = "status";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("on branch 'resume 1' (2 branches, the current moment on 'trunk')"), std::string::npos)
+        << result.text;
+}
+
+// ===========================================================================
 // time_travel (TD-1 — full TTD surface)
 // ===========================================================================
 

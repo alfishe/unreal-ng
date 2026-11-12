@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
@@ -315,8 +316,25 @@ bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimeP
         meta.reason = "resume";
     if (meta.createdBy.empty())
         meta.createdBy = "user";
+    // The default name says where the branch leaves: the time from the trunk's start, "+00:01:25.150" (the
+    // owner's choice 2026-11-10; a counter like "resume 3" told nothing). Two forks in one millisecond get " (2)"
     if (meta.name.empty())
-        meta.name = meta.reason + " " + std::to_string(_branches.NextCounter(meta.reason));
+    {
+        const std::vector<TTDCheckpoint>& trunk = _lines.front()->timeline;
+        const uint64_t start = trunk.empty() ? forkAt.frame : trunk.front().time.frame;
+        const uint64_t frames = forkAt.frame >= start ? forkAt.frame - start : 0;
+        const EmulatorState* state = _context ? &_context->emulatorState : nullptr;
+        const uint64_t hz = state && state->base_z80_frequency ? state->base_z80_frequency : 3'500'000u;
+        const uint64_t frameT = _context ? _context->config.frame : 71'680u;
+        const uint64_t inFrame = state ? state->CpuToBaseT(forkAt.tInFrame) : forkAt.tInFrame;
+        const uint64_t ms = (frames * frameT + inFrame) * 1000u / hz;   // integers: one name on every platform
+        char text[32];
+        std::snprintf(text, sizeof(text), "+%02llu:%02llu:%02llu.%03llu",
+                      static_cast<unsigned long long>(ms / 3'600'000u),
+                      static_cast<unsigned long long>(ms / 60'000u % 60u),
+                      static_cast<unsigned long long>(ms / 1000u % 60u), static_cast<unsigned long long>(ms % 1000u));
+        meta.name = text;
+    }
     meta.createdHostMicros = HostMicrosNow();
 
     // The table first: it refuses a fork it cannot hold (the limit) before the engine is touched
@@ -511,6 +529,34 @@ bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector
     if (!_branches.Delete(branch, protect, force, removed, error))
         return false;
     ReleaseBranchLines(removed);
+    error.clear();
+    return true;
+}
+
+bool TimeTravelController::UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    if (!_branches.Get(branch))
+    {
+        error = "branch " + std::to_string(branch) + " does not exist";
+        return false;
+    }
+    if (update.name)
+    {
+        if (update.name->empty())
+        {
+            error = "a branch name cannot be empty";
+            return false;
+        }
+        if (!_branches.Rename(branch, *update.name, error))
+            return false;
+    }
+    if (update.note)
+        _branches.SetNote(branch, *update.note);
+    if (update.tags || !update.addTags.empty() || !update.removeTags.empty())
+        _branches.UpdateTags(branch, update.tags ? &*update.tags : nullptr, update.addTags, update.removeTags);
+    if (update.pinned)
+        _branches.SetPinned(branch, *update.pinned);
     error.clear();
     return true;
 }
