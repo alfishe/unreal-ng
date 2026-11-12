@@ -216,6 +216,7 @@ private:
     void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSectionTimer(const ClientSession& session, const std::vector<std::string>& args);  // section timing (sectiontimeranalyzer.h)
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);

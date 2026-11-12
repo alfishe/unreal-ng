@@ -218,6 +218,8 @@ audiocapture stop / clear         # Stop early / drop the buffer
 audiocapture status               # Captured/target sample counts
 audiocapture result               # Peak/RMS stats per channel
 audiocapture save <path.wav>      # Export captured audio to WAV
+sectiontimer start Plasma break-if "Frame>69888"   # Section timing at full speed
+sectiontimer status               # Count, min, avg, max, net per section
 videorecord status                # Recording state + stats (default)
 videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N,
                                   #   --audio aac for a sound track, --video-bitrate / --audio-bitrate KBPS,
@@ -537,7 +539,7 @@ end
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_in`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte, a sprite attribute word or a palette cell feeds)
 - `video_temporal`, `video_temporal_set` - ZX DLSS de-flicker status and switch (the picture and sound are delayed by the algorithm's look-ahead while it is on)
 - `operations(since, limit)` - the operation log: reset, autostart, snapshot load, media changes and refusals, with frame, machine mode, result and TTD effect
-- `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
+- `coverage_*`, `ay_log_*`, `audio_capture_*`, `section_timer_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load, file info before loading)
 

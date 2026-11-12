@@ -370,6 +370,11 @@ class Emulator:
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
     # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
     # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
+    # section_timer_start(sections=[], break_if=[], extra=[], recursive=False, frame_t=0, capacity=100000):
+    # section timing at full speed (command-interface 5.5c); sections "NAME" (labels NAME, NAME.End) or
+    # "name=ENTRY:EXIT[,EXIT]", none = every X with an X.End; break_if "[net:]NAME<op>T" pauses at that pass's exit;
+    # ValueError with the reason. section_timer_result(offset=0, limit=1000, text=False) -> dict (or the table),
+    # section_timer_stop() (results stay), section_timer_clear()
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
@@ -2077,6 +2082,13 @@ emu.audio_capture_start(2.5)         # capture 2.5 s of stereo audio (default 1.
 emu.audio_capture_status()
 emu.audio_capture_result()           # sample stats + per-channel peak/RMS
 emu.audio_capture_result("out.wav")  # additionally export a 16-bit WAV file
+
+# Section timing (command-interface 5.5c): the machine at full speed, interrupts accounted
+emu.section_timer_start(sections=["Plasma", "Sparkles"], break_if=["Frame>69888"])
+emu.resume()                         # break_if stops a run that honours breakpoints (run_frames skips them)
+r = emu.section_timer_result()       # sections (count, min, avg, max, net_*), passes, stopped
+print(emu.section_timer_result(text=True))
+emu.section_timer_stop()
 
 # Core audio rate (same switch as CLI 'setting audio_rate' and WebAPI
 # PUT settings/audio_rate): pin 44100..192000 for this run - never persisted.

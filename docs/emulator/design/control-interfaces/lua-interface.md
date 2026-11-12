@@ -618,6 +618,15 @@ lv = audio_levels()                           -- every row's and channel's peak,
 -- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 r = audio_capture_start(600, "", "out.wav")       -- a WAV file written while the samples come (up to 86400 s; closes at the target; status: file_closed)
+r, err = section_timer_start{sections = {"Plasma", "spark=#8000:#8010,#8020"}, break_if = {"net:Plasma>53400"}}
+                                                  -- section timing at full speed (command-interface 5.5c): the results
+                                                  -- without the passes, or nil and the reason; extra, recursive,
+                                                  -- frame_t, capacity too; no sections = every X with an X.End
+r = section_timer_result()                        -- active, sections {name, entry, exits, count, min, max, avg, net_*,
+                                                  -- interrupted, last, max_frame, max_t}, passes {name, frame, t,
+                                                  -- elapsed, net, interrupts}, hits, orphan, dropped, open, stopped
+print(section_timer_text())                       -- the table; section_timer_json([offset [, limit]]) the JSON
+section_timer_stop()                              -- results stay; section_timer_clear() drops them
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
 take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place

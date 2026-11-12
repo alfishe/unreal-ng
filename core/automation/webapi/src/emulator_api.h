@@ -299,6 +299,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::audioCapture, "/api/v1/emulator/{id}/audio/capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureStatus, "/api/v1/emulator/{id}/audio/capture/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureResult, "/api/v1/emulator/{id}/audio/capture/result", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::sectionTimer, "/api/v1/emulator/{id}/section-timer", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSectionTimer, "/api/v1/emulator/{id}/section-timer", drogon::Get);
     // Per-device mixer (implementation: api/state_audio_api.cpp; core AudioMixer, DeviceState::AudioMixer)
     ADD_METHOD_TO(EmulatorAPI::getAudioMixer, "/api/v1/emulator/{id}/audio/mixer", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setAudioMixer, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Put, drogon::Post);
@@ -1323,6 +1325,14 @@ public:
     /// @brief GET /api/v1/emulator/{id}/audio/capture/result?wav=true
     void audioCaptureResult(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief POST /api/v1/emulator/{id}/section-timer - start (sections, extra, break_if, recursive, frame_t,
+    /// capacity), stop or clear the section timer (SectionTimerAnalyzer); answers the results without the passes
+    void sectionTimer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/section-timer?offset&limit&text - the statistics, the kept passes, the stop
+    void getSectionTimer(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Analyzer Management Methods
 
     // region Video Recording Methods (implementation: api/recording_api.cpp)

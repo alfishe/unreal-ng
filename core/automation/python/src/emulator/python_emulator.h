@@ -92,6 +92,7 @@
 #include <debugger/ttd/ttdfileinfo.h>
 #include <debugger/ttd/ttdprobe.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
+#include <debugger/analyzers/sectiontimer/sectiontimeranalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
@@ -8311,6 +8312,49 @@ namespace PythonBindings
             return d;
         }, "Capture stats (peak/RMS per channel) with optional WAV export",
            py::arg("path") = py::none())
+
+        // Section timing (SectionTimerAnalyzer): the machine runs at full speed, interrupts accounted
+        .def("section_timer_start", [](Emulator& self, const std::vector<std::string>& sections,
+                                       const std::vector<std::string>& breakIf, const std::vector<std::string>& extra,
+                                       bool recursive, uint32_t frameT, size_t capacity) -> py::object {
+            SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(self.GetContext());
+            if (!timer)
+                throw std::runtime_error("section timer not available");
+            SectionTimerAnalyzer::Spec spec;
+            spec.sections = sections;
+            spec.breakIf = breakIf;
+            spec.extra = extra;
+            spec.recursive = recursive;
+            spec.frameT = frameT;
+            spec.capacity = capacity;
+            std::string error;
+            if (!timer->Start(spec, error))
+                throw py::value_error(error);
+            return py::module_::import("json").attr("loads")(SectionTimerAnalyzer::ToJson(timer->GetResult(0, 0)));
+        }, "Start the section timer: sections = NAME (labels NAME, NAME.End) or 'name=ENTRY:EXIT[,EXIT]' (none: every "
+           "X with an X.End); break_if = '[net:]NAME<op>T' pauses at that pass's exit. Returns the results without passes",
+           py::arg("sections") = std::vector<std::string>{}, py::arg("break_if") = std::vector<std::string>{},
+           py::arg("extra") = std::vector<std::string>{}, py::arg("recursive") = false, py::arg("frame_t") = 0u,
+           py::arg("capacity") = SectionTimerAnalyzer::kDefaultCapacity)
+        .def("section_timer_stop", [](Emulator& self) -> bool {
+            SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(self.GetContext());
+            return timer && timer->Stop();
+        }, "Disarm the section timer; the results stay. False when it was not running")
+        .def("section_timer_clear", [](Emulator& self) {
+            if (SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(self.GetContext()))
+                timer->Clear();
+        }, "Drop the section timer's results")
+        .def("section_timer_result", [](Emulator& self, size_t offset, size_t limit, bool text) -> py::object {
+            SectionTimerAnalyzer* timer = SectionTimerAnalyzer::Find(self.GetContext());
+            if (!timer)
+                throw std::runtime_error("section timer not available");
+            const SectionTimerAnalyzer::Result r = timer->GetResult(offset, limit);
+            if (text)
+                return py::str(SectionTimerAnalyzer::ToText(r));
+            return py::module_::import("json").attr("loads")(SectionTimerAnalyzer::ToJson(r));
+        }, "The section timer's results (running or paused): sections with count / min / max / avg / net, passes "
+           "[name, frame, t, elapsed, net, interrupts] from offset, the counters, stopped; text=True: a table",
+           py::arg("offset") = 0, py::arg("limit") = 1000, py::arg("text") = false)
 
         .def("video_record", [](Emulator& self, const std::string& action, py::object optsValue) -> py::dict {
             // capture::RecordingControl: the presets, modes and option rules every plane shares

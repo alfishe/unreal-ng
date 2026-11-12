@@ -16,6 +16,7 @@
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/analyzers/dss/dssanalyzer.h"
+#include "debugger/analyzers/sectiontimer/sectiontimeranalyzer.h"
 #include "debugger/analyzers/nedoos/nedoosanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
 #include "debugger/joystick/debugjoystickmanager.h"
@@ -70,6 +71,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("nedoos", std::make_unique<NedoOsAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("dss", std::make_unique<DssAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer(SectionTimerAnalyzer::kId, std::make_unique<SectionTimerAnalyzer>(_context));
 
     // Editor control points for verified command input (input-verification.md)
     auto editorMonitor = std::make_unique<EditorMonitor>(_context);
