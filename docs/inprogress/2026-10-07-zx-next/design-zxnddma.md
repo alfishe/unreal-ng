@@ -117,8 +117,8 @@ tested before the timing phase.
 |:--|:--|:--|:--|
 | 1 CPU, LDIR | 8.3 ms | 7.2 ms | CPU part, +15% |
 | 2 CPU, skip `$E3` | 18.9 ms | 15.6 ms | CPU part, +21% |
-| 3 zxnDMA, per column | 9.3 ms | 8.2 ms | mostly CPU code (OTIR set-up), +1.1 ms like way 1 |
-| 4/5 zxnDDMA, opaque / transparent | 2.2 ms | 2.1 ms | the new engine, +5% |
+| 3 zxnDMA, per column | 9.7 ms | 8.2 ms | mostly CPU code (OTIR set-up) plus the DMA's SRAM read waits, +18% |
+| 4/5 zxnDDMA, opaque / transparent | 2.5 ms | 2.1 ms | the new engine with the SRAM read wait, +19% (2.2 ms, +5%, before the wait) |
 
 - The new engine's own timing is inside the 64 us measuring step. The CPU ways are slower than the board: our LDIR costs 24.0 clocks
   a byte at 28 MHz (21 + one SRAM read wait for each of its three reads: two opcode bytes and `(HL)`; measured on 2026-11-11), while the
@@ -128,9 +128,11 @@ tested before the timing phase.
   (`cpu_rd_n` is the DMA's own read while it holds the bus, `dma_wait_n` includes `sram_wait_n`, lines 1830 and 1844). The commented-out
   line above it limits the wait to M1 and DMA reads. Core 3.03.00 may have changed it: its RTL is not public (phase 0). Pinned by
   `NextSkeleton_Test.At28MHzSramReadsWaitOneClockAndBank7DoesNot` and the RTL timing cases, so it stays as it is.
-- **Open, not done:** our DMA does not add the SRAM read wait for its own reads (`Bus` has `advance` and `contend` only); by 3.02.03's
-  RTL it should. Adding it makes way 4/5 slower than the guide's 2.1 ms (about 0.4 ms for the copied bytes), so it is held back until
-  the 3.03.00 RTL or a board measurement says which is right. Physical-mode accesses skip `contend` (the video logic decodes contention
-  from the CPU address, which a physical access does not carry); the SRAM wait is a different signal and would apply to them.
+- **Done (2026-11-11, measured on the final build):** our DMA now adds the SRAM read wait for its own reads at 28 MHz (memory and physical
+  accesses, not the bank 7 BRAM), as `zxnext.vhd` 3.02.03 does. Way 4/5 went from 2.2 ms to 2.5 ms, 0.4 ms over the guide's 2.1 ms, ways 1/2
+  unchanged (8.3 / 18.9 ms), way 3 from 9.3 to 9.7 ms. The guide's numbers fit a core without the wait for DMA reads (or with a cheaper
+  one); which is right stays open until the 3.03.00 RTL or a board measurement. The wait is one line in `BindDma()`
+  (`portdecoder_next.cpp`) if it has to go. Physical-mode accesses still skip `contend` (the video logic decodes contention from the CPU
+  address, which a physical access does not carry); the SRAM wait is a different signal and applies to them.
 - Fill mode costs one write cycle set a byte (the guide: twice as fast as a fixed source); not measured against a number.
 - Not checked: the IM2 + DI hold, 2D with auto restart, the burst/prescaler interplay with 2D.
