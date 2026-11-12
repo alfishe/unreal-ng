@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <string>
@@ -22,6 +23,7 @@
 #include "ttdphyspage.h"
 #include "ttdprobe.h"
 #include "ttdwritejournal.h"
+#include "engine/ttdbranchtable.h"
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
 
@@ -130,6 +132,23 @@ struct TTDJournalBuildResult
 /// Called after each frame of a build: (frames done, frames to build). Return
 /// false to stop; what is built so far is kept
 using TTDJournalBuildProgress = std::function<bool(uint64_t done, uint64_t total)>;
+
+/// The session's branches as an observer sees them (TTD branches, surfaces.md §1): the live branches by id, the
+/// active branch's lineage. Published with the session info and shared by its copies until the table changes
+struct TTDBranchesView
+{
+    std::vector<TTDBranchInfo> branches;   ///< live ones, the trunk first, by id
+    std::vector<TTDLineageSpan> lineage;   ///< the active branch's, trunk first
+    uint64_t revision = 0;                 ///< TTDBranchTable::Revision() it was taken at
+
+    const TTDBranchInfo* Find(uint32_t id) const
+    {
+        for (const TTDBranchInfo& b : branches)
+            if (b.id == id)
+                return &b;
+        return nullptr;
+    }
+};
 
 struct TTDSessionInfo
 {
@@ -285,6 +304,15 @@ struct TTDSessionInfo
     uint64_t seekChecks = 0;            ///< seeks whose frame was checked
     uint64_t seekCheckDivergences = 0;  ///< ... and diverged
     std::string lastSeekDivergence;     ///< the last diverged check's text; empty when none diverged
+
+    // --- Branches (TTD branches) -------------------------------------------
+
+    /// Null while the session has the trunk alone: nothing about branches shows then (surfaces.md, the rule).
+    /// The active branch's end in it is where its recording stood at the last change of the table; it goes on
+    /// to currentEndFrame
+    std::shared_ptr<const TTDBranchesView> branches;
+    uint32_t activeBranch = kTTDTrunk;   ///< continued at its end; the lineage shown ends with it
+    uint32_t viewedBranch = kTTDTrunk;   ///< the one the current moment belongs to (on the active lineage)
 };
 
 /// @brief String conversion for TTDCoverageKind.

@@ -964,6 +964,26 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.writeJournalSpans.emplace_back(TimePointAt(s.from), TimePointAt(s.to));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
 
+    info.activeBranch = _tip;
+    info.viewedBranch = _viewId;
+    if (!_branches.HasBranches())
+        _branchesView.reset();
+    else
+    {
+        if (!_branchesView || _branchesView->revision != _branches.Revision() || _branchesViewTip != _tip)
+        {
+            auto view = std::make_shared<TTDBranchesView>();
+            view->revision = _branches.Revision();
+            for (uint32_t id = 0; id < _branches.Ids(); ++id)
+                if (const TTDBranchInfo* b = _branches.Get(id))
+                    view->branches.push_back(*b);
+            view->lineage = _branches.Lineage(_tip);
+            _branchesView = std::move(view);
+            _branchesViewTip = _tip;
+        }
+        info.branches = _branchesView;
+    }
+
     PublishCursor();
     PublishSessionInfo(info);
     return info;
@@ -4149,8 +4169,11 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
         return false;
     }
 
-    // A paused recording reaches to where it paused, inside the last frame
-    const TTDTimePoint sessionEnd = _recordingPaused ? _pausedEnd : _line->timeline.back().time;
+    // A paused recording reaches to where it paused, inside the last frame; a stopped one to where it stopped
+    // (TimelineEnd: the history goes on past the last checkpoint, and a seek to the end lands there)
+    const TTDTimePoint sessionEnd = _recordingPaused              ? _pausedEnd
+                                    : _line == _lines[_tip].get() ? TimelineEnd()
+                                                                  : _line->timeline.back().time;
     if (sessionEnd < from)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingFrom — target "

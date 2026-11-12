@@ -272,8 +272,9 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd resume [frame [tinframe]] [media=ask\|empty\|keep]` | — | Truncate future at the current (detached) position, or the given one, and record again; the machine runs. Every medium goes back there when it can; one that cannot (another medium in the slot, a write beyond its undo log): `empty` (default) takes it out, `keep` leaves it, `ask` lists them and resumes nothing. | ✅ Implemented |
 | `ttd position` | `ttd pos` | Current time point (frame/tstate), session bounds, the history's first frame, state, paused, frame rate. Never parks the machine (the TTD's published cursor). | ✅ Implemented |
 | `ttd bookmark list [--tag T]`, `add <label> [frame] [tinframe] [--note TEXT] [--tags a,b] [--watch A[:N],...] [--no-context]`, `note <label> [--note TEXT \| --append TEXT] [--tags ..] [--add-tags ..] [--remove-tags ..] [--rename NEW]`, `export [--format markdown\|profile\|json] [--tag T] [--title TEXT] [--path FILE]`, `del <label>` | `ttd bm` | Agent bookmarks with notes, tags and the moment's context (PC, instruction, registers, watched bytes, taken once at `add`); `export` writes them up as a WALKTHROUGH section, a game profile's header comment or JSON in one call. | ✅ Implemented |
+| `ttd branches [--scope all\|lineage] [--created-by P] [--tag T] [--name-prefix P] [--pinned true\|false] [--limit N] [--offset N]`, `ttd branch switch <branch> [frame] [tinframe]`, `ttd branch update <branch> [--name N] [--note TEXT] [--tags a,b] [--add-tags ..] [--remove-tags ..] [--pin \| --unpin]`, `ttd branch del <branch> [--force]` | `ttd br` | The branches of the history (a resume in the past keeps the old future as `resume N`; the trunk is id 0; `<branch>` is an id, a GUID or a name): list them (`*` the active one; a page says how many are left), continue on one, rename / note / tag / pin it, delete it with its descendants (pinned ones with `--force`). `ttd status` names the active branch when there are branches. | ✅ Implemented |
 | `ttd markers` | `ttd barriers` | List external-event markers in the timeline. | ✅ Implemented |
-| `ttd dump <path>` | `ttd save` | Serialize the session to a `.ttd` file. | ✅ Implemented |
+| `ttd dump <path> [--lineage]` | `ttd save` | Serialize the session to a `.ttd` file: every branch, or with `--lineage` only the active branch's lineage as one linear history. | ✅ Implemented |
 | `ttd load <path>` | `ttd open` | Restore a dumped session (model must match the recording). | ✅ Implemented |
 | `ttd info <path>` | `ttd file-info` | Describe a `.ttd` file without loading it (no emulator needed): frames, sections, recorded machine - model, ROM signature, General Sound card, TurboSound slot device, devices. `ttd info` without a path is `ttd status`. | ✅ Implemented |
 | `ttd export-clip <from> <to> <dir> [--chunk N]` | `ttd clip` | Write frames from..to as a lossless clip into dir (final picture, plane B with `zxdlss`, frame meta); not while recording. See command-interface.md → Exporting a clip. | ✅ Implemented |
@@ -309,7 +310,7 @@ frame=4823  tstate=14982  pc=0x4A21  value=0x07  physpage=5
 ```
 
 **Notes**:
-- All run-affecting `ttd` verbs require the emulator to be paused and the CLI session to hold the run-control claim. Read-only verbs (`status`, `timeline`, `bookmark list`) work regardless.
+- All run-affecting `ttd` verbs require the emulator to be paused and the CLI session to hold the run-control claim. Read-only verbs (`status`, `timeline`, `bookmark list`, `branches`) work regardless.
 - The `timetravel` feature flag must be ON for recording/seek/replay. `status` works regardless and returns `{recording: false}` when TTD is off.
 - Seek latency depends on tier density — typically 1–20 ms in the dense (recent) tier; see the [implementation plan](../debugger/time-travel-debug/implementation-plan.md) for targets.
 

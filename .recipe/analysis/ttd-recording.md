@@ -411,7 +411,7 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   (`media_version_differs`) only for another medium in the slot or a version
   past the slot's undo log (64 MB per slot). A write after a seek back drops
   the old future of that medium, as the recording's own.
-- **Rec From Here / `POST /ttd/resume`** sets every medium back too. One
+- **Branch Here / Continue Rec (formerly Rec From Here) / `POST /ttd/resume`** sets every medium back too. One
   that cannot go back (another disk in the drive, past the undo log) is
   decided by `media`: `empty` (default) ejects it (an event of the
   recording), `keep` leaves it, `ask` resumes nothing and answers

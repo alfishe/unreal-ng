@@ -360,6 +360,12 @@ private:
     TTDReply Bookmarks(const TTDRequest& request);
     TTDReply BookmarkAdd(const TTDRequest& request);
     TTDReply BookmarkNote(const TTDRequest& request);
+    TTDReply Branches(const TTDRequest& request);
+    TTDReply BranchSwitch(const TTDRequest& request);
+    TTDReply BranchUpdate(const TTDRequest& request);
+    TTDReply BranchDelete(const TTDRequest& request);
+    /// The branch `branch` names (an id, a GUID or a name); empty: all good, otherwise the reply to send
+    std::optional<TTDReply> ResolveBranch(const TTDRequest& request, uint32_t& id) const;
     TTDReply BookmarkExport(const TTDRequest& request);
     TTDReply BookmarkDelete(const TTDRequest& request);
     TTDReply PortEvents(const TTDRequest& request);
@@ -450,7 +456,8 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip"};
+        "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip",
+        "branches", "branch-switch", "branch-update", "branch-delete"};
     return verbs;
 }
 
@@ -498,7 +505,11 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"replay-check", {"from_frame", "to_frame", "stride", "limit", "text"}},
         {"seek-check", {"enabled"}},
         {"file-info", {"path"}},
-        {"dump", {"path"}},
+        {"dump", {"path", "lineage"}},
+        {"branches", {"scope", "created_by", "tag", "name_prefix", "pinned", "limit", "offset"}},
+        {"branch-switch", {"branch", "frame", "tinframe"}},
+        {"branch-update", {"branch", "name", "note", "tags", "add_tags", "remove_tags", "pinned"}},
+        {"branch-delete", {"branch", "force"}},
         {"load", {"path"}},
         {"export-clip", {"from", "to", "path", "chunk", "codec", "scale"}},
     };
@@ -638,6 +649,14 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return MemoryAt(request);
     if (verb == "memory-diff")
         return MemoryDiff(request);
+    if (verb == "branches")
+        return Branches(request);
+    if (verb == "branch-switch")
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(BranchSwitch(request)); });
+    if (verb == "branch-update")
+        return BranchUpdate(request);
+    if (verb == "branch-delete")
+        return BranchDelete(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -670,6 +689,50 @@ TTDReply TTDControlBackend::WithCheck(TTDReply reply) const
     if (reply.Ok())
         reply.body["check"] = CheckNode(_manager->LastEngineCheck());
     return reply;
+}
+
+/// A branch named in a reply: {id, guid, name}
+StateNode BranchRefNode(const TTDBranchInfo& b)
+{
+    StateNode node = StateNode::Object();
+    node["id"] = static_cast<uint64_t>(b.id);
+    node["guid"] = TTDGuidToString(b.guid);
+    node["name"] = b.meta.name;
+    return node;
+}
+
+/// A branch with its place in the tree and its metadata (the branches verb)
+StateNode BranchNode(const TTDBranchInfo& b, const TTDSessionInfo& info)
+{
+    StateNode node = BranchRefNode(b);
+    node["parent"] = b.parent == kTTDNoBranch ? StateNode() : StateNode(static_cast<uint64_t>(b.parent));
+    if (b.parent != kTTDNoBranch)
+        node["fork"] = TimePointNode({b.fork.frame, static_cast<uint32_t>(b.fork.tInFrame)});
+    else
+        node["fork"] = StateNode();
+    // The active branch records on: its end is the session's
+    TTDTimePoint end{b.end.frame, static_cast<uint32_t>(b.end.tInFrame)};
+    if (b.id == info.activeBranch && info.currentEndFrame > end.frame)
+        end = {info.currentEndFrame, 0};
+    node["end"] = TimePointNode(end);
+    node["length"] = end.frame >= b.fork.frame ? end.frame - b.fork.frame : 0;
+    node["created_by"] = b.meta.createdBy;
+    node["created_host_micros"] = b.meta.createdHostMicros;
+    node["reason"] = b.meta.reason;
+    node["run"] = StringOrNull(b.meta.run);
+    StateNode tags = StateNode::Array();
+    for (const std::string& t : b.meta.tags)
+        tags.push(t);
+    node["tags"] = tags;
+    node["note"] = b.meta.note;
+    node["pinned"] = b.meta.pinned;
+    node["children"] = static_cast<uint64_t>(b.children.size());
+    node["active"] = b.id == info.activeBranch;
+    bool onLineage = false;
+    for (const TTDLineageSpan& span : info.branches->lineage)
+        onLineage = onLineage || span.branch == b.id;
+    node["on_lineage"] = onLineage;
+    return node;
 }
 
 StateNode StatusBodyOf(const TimeTravelController* manager)
@@ -775,6 +838,15 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
         ret["earliest"] = StateNode();
     // Why time travel is not available for this machine at all (null when it is)
     ret["unavailable_reason"] = StringOrNull(info.unavailableReason);
+    // Branches (TTD branches): only once the session has more than the trunk
+    if (info.branches)
+    {
+        if (const TTDBranchInfo* active = info.branches->Find(info.activeBranch))
+            ret["branch"] = BranchRefNode(*active);
+        if (const TTDBranchInfo* viewed = info.branches->Find(info.viewedBranch))
+            ret["viewed_branch"] = BranchRefNode(*viewed);
+        ret["branch_count"] = static_cast<uint64_t>(info.branches->branches.size());
+    }
     AddWriteJournalOf(ret, *manager);
     return ret;
 }
@@ -1192,6 +1264,7 @@ TTDReply TTDControlBackend::Resume(const TTDRequest& request)
     // One operation of the coordinator, logged with the decisions (TTD's own lock: RunOwnLocked)
     bool ok = false;
     StateNode decided = StateNode::Array();
+    const std::shared_ptr<const TTDBranchesView> branchesBefore = _manager->ReadSessionInfo().branches;
     auto cut = [&](coordinator::OpStage& stage) {
         ok = _manager->ResumeRecordingFrom(from);
         if (!ok)
@@ -1244,6 +1317,25 @@ TTDReply TTDControlBackend::Resume(const TTDRequest& request)
     reply.body["resumed"] = ok;
     if (ok && !unproven.empty())
         reply.body["media"] = decided;
+    // A resume in the past records on a new branch; its parent keeps the old future (surfaces.md §5.1)
+    std::string text = ok ? "Recording from frame " + std::to_string(from.frame) : std::string();
+    if (ok)
+    {
+        const TTDSessionInfo info = _manager->ReadSessionInfo();
+        if (const TTDBranchInfo* active = info.branches ? info.branches->Find(info.activeBranch) : nullptr)
+        {
+            reply.body["branch"] = BranchRefNode(*active);
+            text += " on branch '" + active->meta.name + "'";
+            // The branch is new when the list before the cut did not have it: the fork kept the parent's future
+            const bool forked = !branchesBefore || branchesBefore->Find(active->id) == nullptr;
+            if (const TTDBranchInfo* kept = info.branches->Find(active->parent); kept && forked)
+            {
+                reply.body["kept"] = BranchRefNode(*kept);
+                text += "; the previous future is kept on '" + kept->meta.name + "'";
+            }
+        }
+        reply.body["text"] = text;
+    }
     AddPosition(reply.body, from);
     reply.body["state"] = TTDSessionStateToString(_manager->GetState());
     return reply;
@@ -1594,6 +1686,232 @@ TTDReply TTDControlBackend::BookmarkNote(const TTDRequest& request)
     reply.body["updated"] = true;
     reply.body["bookmark"] = BookmarkNode(edited);
     reply.body["text"] = "Bookmark " + BookmarkLine(edited);
+    return reply;
+}
+
+std::optional<TTDReply> TTDControlBackend::ResolveBranch(const TTDRequest& request, uint32_t& id) const
+{
+    const std::string* text = Option(request, "branch");
+    if (!text || text->empty())
+        return Fail(TTDControlError::BadRequest, "Missing required field: branch (an id, a GUID or a name)");
+    // The published copy: the live table is the machine's
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    if (!info.branches)
+    {
+        if (*text == "0" || *text == "trunk")
+        {
+            id = kTTDTrunk;
+            return std::nullopt;
+        }
+        return Fail(TTDControlError::NotFound, "Unknown branch: " + *text + " (the session has the trunk alone)");
+    }
+    const std::vector<TTDBranchInfo>& list = info.branches->branches;
+    uint64_t number = 0;
+    TTDGuid guid{};
+    const bool isNumber = ParseU64(*text, number) && number <= UINT32_MAX;
+    const bool isGuid = TTDGuidFromString(*text, guid);
+    for (const TTDBranchInfo& b : list)
+        if ((isNumber && b.id == number) || (isGuid && b.guid == guid))
+        {
+            id = b.id;
+            return std::nullopt;
+        }
+    for (const TTDBranchInfo& b : list)
+        if (b.meta.name == *text)
+        {
+            id = b.id;
+            return std::nullopt;
+        }
+    return Fail(TTDControlError::NotFound, "Unknown branch: " + *text);
+}
+
+TTDReply TTDControlBackend::Branches(const TTDRequest& request)
+{
+    // The published copy: a list never parks the machine
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    bool lineageOnly = false;
+    if (const std::string* scope = Option(request, "scope"))
+    {
+        if (*scope != "all" && *scope != "lineage")
+            return Fail(TTDControlError::BadRequest, "scope must be all or lineage");
+        lineageOnly = *scope == "lineage";
+    }
+    std::optional<bool> pinned;
+    if (const std::string* p = Option(request, "pinned"))
+    {
+        bool value = false;
+        if (!ParseBool(*p, value))
+            return Fail(TTDControlError::BadRequest, "pinned must be true or false");
+        pinned = value;
+    }
+    uint64_t limit = 1000;
+    uint64_t offset = 0;
+    if (const std::string* l = Option(request, "limit"); l && (!ParseU64(*l, limit) || limit == 0))
+        return Fail(TTDControlError::BadRequest, "limit must be a positive integer");
+    if (const std::string* o = Option(request, "offset"); o && !ParseU64(*o, offset))
+        return Fail(TTDControlError::BadRequest, "offset must be a non-negative integer");
+    const std::string* createdBy = Option(request, "created_by");
+    const std::string* tag = Option(request, "tag");
+    const std::string* namePrefix = Option(request, "name_prefix");
+
+    TTDReply reply;
+    StateNode list = StateNode::Array();
+    uint64_t matched = 0;
+    std::string text;
+    if (info.branches)
+        for (const TTDBranchInfo& b : info.branches->branches)
+        {
+            if (lineageOnly && std::none_of(info.branches->lineage.begin(), info.branches->lineage.end(),
+                                            [&](const TTDLineageSpan& s) { return s.branch == b.id; }))
+                continue;
+            if (createdBy && b.meta.createdBy.rfind(*createdBy, 0) != 0)
+                continue;
+            if (tag && !std::binary_search(b.meta.tags.begin(), b.meta.tags.end(), *tag))
+                continue;
+            if (namePrefix && b.meta.name.rfind(*namePrefix, 0) != 0)
+                continue;
+            if (pinned && b.meta.pinned != *pinned)
+                continue;
+            if (matched++ < offset || list.size() >= limit)
+                continue;
+            StateNode node = BranchNode(b, info);
+            text += (b.id == info.activeBranch ? "* " : "  ") + b.meta.name + " (" + std::to_string(b.id) + "), " +
+                    std::to_string(node["length"].i) + " frames" +
+                    (b.parent == kTTDNoBranch ? std::string()
+                                              : ", from frame " + std::to_string(b.fork.frame)) +
+                    "\n";
+            list.push(std::move(node));
+        }
+    reply.body["branches"] = list;
+    reply.body["total"] = matched;
+    reply.body["count"] = static_cast<uint64_t>(info.branches ? info.branches->branches.size() : 1);
+    reply.body["active"] = static_cast<uint64_t>(info.activeBranch);
+    reply.body["viewed"] = static_cast<uint64_t>(info.viewedBranch);
+    StateNode lineage = StateNode::Array();
+    if (info.branches)
+        for (const TTDLineageSpan& span : info.branches->lineage)
+        {
+            StateNode node = StateNode::Object();
+            node["branch"] = static_cast<uint64_t>(span.branch);
+            node["from"] = TimePointNode({span.from.frame, static_cast<uint32_t>(span.from.tInFrame)});
+            lineage.push(std::move(node));
+        }
+    reply.body["lineage"] = lineage;
+    reply.body["text"] = info.branches ? text : std::string("No branches: the history is one line (the trunk)\n");
+    return reply;
+}
+
+TTDReply TTDControlBackend::BranchSwitch(const TTDRequest& request)
+{
+    uint32_t id = 0;
+    if (auto refusal = ResolveBranch(request, id))
+        return *refusal;
+    std::optional<TTDTimePoint> at;
+    if (const std::string* frameText = Option(request, "frame"))
+    {
+        uint64_t frame = 0;
+        uint64_t t = 0;
+        const std::string* tText = Option(request, "tinframe");
+        if (!ParseU64(*frameText, frame) || (tText && (!ParseU64(*tText, t) || t > UINT32_MAX)))
+            return Fail(TTDControlError::BadRequest, "frame and tinframe must be non-negative integers");
+        at = TTDTimePoint{frame, static_cast<uint32_t>(t)};
+    }
+    else if (Option(request, "tinframe"))
+        return Fail(TTDControlError::BadRequest, "tinframe needs frame");
+    PauseAndConfirm();
+    std::string error;
+    const bool ok = _manager->SwitchBranch(id, at, error);
+    NotifyFrameRefresh();
+    if (!ok)
+        return Fail(TTDControlError::Conflict, error);
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    reply.body["switched"] = true;
+    if (info.branches)
+        if (const TTDBranchInfo* b = info.branches->Find(id))
+            reply.body["branch"] = BranchNode(*b, info);
+    reply.body["arrived_at"] = TimePointNode(_manager->CurrentPosition());
+    reply.body["state"] = TTDSessionStateToString(info.state);
+    const TTDBranchInfo* b = info.branches ? info.branches->Find(id) : nullptr;
+    reply.body["text"] = "Switched to branch '" + (b ? b->meta.name : std::string("trunk")) + "' at frame " +
+                         std::to_string(_manager->CurrentPosition().frame) + "\n";
+    return reply;
+}
+
+TTDReply TTDControlBackend::BranchUpdate(const TTDRequest& request)
+{
+    uint32_t id = 0;
+    if (auto refusal = ResolveBranch(request, id))
+        return *refusal;
+    TTDBranchUpdate update;
+    if (const std::string* name = Option(request, "name"))
+        update.name = *name;
+    if (const std::string* note = Option(request, "note"))
+        update.note = *note;
+    if (const std::string* tags = Option(request, "tags"))
+        update.tags = SplitList(*tags);
+    if (const std::string* add = Option(request, "add_tags"))
+        update.addTags = SplitList(*add);
+    if (const std::string* remove = Option(request, "remove_tags"))
+        update.removeTags = SplitList(*remove);
+    if (const std::string* p = Option(request, "pinned"))
+    {
+        bool value = false;
+        if (!ParseBool(*p, value))
+            return Fail(TTDControlError::BadRequest, "pinned must be true or false");
+        update.pinned = value;
+    }
+    if (update.Empty())
+        return Fail(TTDControlError::BadRequest, "branch-update needs name, note, tags, add_tags, remove_tags or pinned");
+    std::string error;
+    if (!_manager->UpdateBranch(id, update, error))
+        return Fail(error.find("already named") != std::string::npos ? TTDControlError::Conflict
+                                                                      : TTDControlError::BadRequest,
+                    error);
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    reply.body["updated"] = true;
+    if (info.branches)
+        if (const TTDBranchInfo* b = info.branches->Find(id))
+        {
+            reply.body["branch"] = BranchNode(*b, info);
+            reply.body["text"] = "Branch '" + b->meta.name + "' updated\n";
+        }
+    return reply;
+}
+
+TTDReply TTDControlBackend::BranchDelete(const TTDRequest& request)
+{
+    uint32_t id = 0;
+    if (auto refusal = ResolveBranch(request, id))
+        return *refusal;
+    bool force = false;
+    if (const std::string* f = Option(request, "force"); f && !ParseBool(*f, force))
+        return Fail(TTDControlError::BadRequest, "force must be true or false");
+    const TTDSessionInfo before = _manager->ReadSessionInfo();
+    std::vector<uint32_t> removed;
+    std::string error;
+    if (!_manager->DeleteBranch(id, force, removed, error))
+        return Fail(TTDControlError::Conflict, error);
+    std::vector<std::string> names;
+    for (uint32_t b : removed)
+        if (const TTDBranchInfo* info = before.branches ? before.branches->Find(b) : nullptr)
+            names.push_back(info->meta.name);
+    TTDReply reply;
+    reply.body["deleted"] = true;
+    StateNode ids = StateNode::Array();
+    for (uint32_t b : removed)
+        ids.push(static_cast<uint64_t>(b));
+    reply.body["removed"] = ids;
+    StateNode list = StateNode::Array();
+    std::string joined;
+    for (const std::string& n : names)
+    {
+        list.push(n);
+        joined += (joined.empty() ? "'" : ", '") + n + "'";
+    }
+    reply.body["removed_names"] = list;
+    reply.body["text"] = "Deleted " + joined + "\n";
     return reply;
 }
 
@@ -3876,6 +4194,9 @@ TTDReply TTDControlBackend::Dump(const TTDRequest& request)
     const std::string* path = Option(request, "path");
     if (!path || path->empty())
         return Fail(TTDControlError::BadRequest, "Missing 'path'");
+    bool lineage = false;
+    if (const std::string* l = Option(request, "lineage"); l && !ParseBool(*l, lineage))
+        return Fail(TTDControlError::BadRequest, "lineage must be true or false");
     // UTF-8 path: FileHelper turns it into the host's form (non-ASCII names on Windows)
     std::ofstream out(FileHelper::ToFsPath(*path), std::ios::binary);
     if (!out.is_open())
@@ -3885,7 +4206,8 @@ TTDReply TTDControlBackend::Dump(const TTDRequest& request)
         return Fail(TTDControlError::Conflict, "Cannot open file: " + *path, body);
     }
     std::string err;
-    const bool ok = _manager->SerializeSession(out, err);
+    // lineage: the active branch's lineage as one linear history; otherwise every branch (Q-9)
+    const bool ok = _manager->SerializeSession(out, err, lineage);
     const auto bytes = out.tellp();
     StateNode body = StateNode::Object();
     body["ok"] = ok;

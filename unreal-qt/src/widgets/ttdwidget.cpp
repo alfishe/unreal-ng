@@ -9,7 +9,9 @@
 
 #include "widgets/ttdwidget.h"
 
+#include <QDateTime>
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QMenu>
 #include <QProgressDialog>
 #include <QSignalBlocker>
@@ -30,9 +32,17 @@
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/remotecontrolguard.h"
 #include "widgets/tintedsvgicon.h"
 
 namespace {
+
+/// The panel's controls follow the session every 100 ms; under remote control the guard keeps them off (it relocks
+/// every 250 ms), so the panel turns none on while it holds: two timers toggling a button make the panel flicker
+void SetControlEnabled(QWidget* control, bool enabled)
+{
+    control->setEnabled(enabled && !RemoteControlGuard::Locked());
+}
 
 class TtdStatusLabel : public QLabel
 {
@@ -95,6 +105,9 @@ TtdWidget::TtdWidget(QWidget* parent)
 {
     setObjectName(QStringLiteral("ttdWidget"));
     setAutoFillBackground(true);
+    confirm = [this](const QString& title, const QString& question) {
+        return QMessageBox::question(this, title, question) == QMessageBox::Yes;
+    };
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(6, 4, 6, 4);
@@ -207,6 +220,20 @@ TtdWidget::TtdWidget(QWidget* parent)
     _advancedBtn->setToolTip(tr("Recording options: the write journal, how much history to keep"));
     connect(_advancedBtn, &QToolButton::toggled, this, &TtdWidget::onAdvancedToggled);
 
+    // Branches: the same pill as Advanced, there only once the session has more than the trunk
+    _branchesBtn = new QToolButton(this);
+    _branchesBtn->setCheckable(true);
+    _branchesBtn->setAutoRaise(true);
+    _branchesBtn->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    _branchesBtn->setFont(_recordBtn->font());
+    _branchesBtn->setCursor(Qt::PointingHandCursor);
+    _branchesBtn->setText(tr("Branches"));
+    _branchesBtn->setStyleSheet(_advancedBtn->styleSheet());
+    _branchesBtn->setToolTip(tr("The session's branches: every future left by Branch Here or an edit in the past "
+                                "is kept as a branch"));
+    _branchesBtn->setVisible(false);
+    connect(_branchesBtn, &QToolButton::toggled, this, &TtdWidget::onBranchesToggled);
+
     _closeBtn = new QToolButton(this);
     _closeBtn->setIcon(tintedSvgIcon(QStringLiteral("close")));
     _closeBtn->setIconSize(toolbarIconSize);
@@ -241,6 +268,7 @@ TtdWidget::TtdWidget(QWidget* parent)
     _clearBtn->setFixedHeight(row1Height);
     _historyCombo->setFixedHeight(row1Height);
     _advancedBtn->setFixedHeight(closeBtnDim);   // the same pill as the close button beside it
+    _branchesBtn->setFixedHeight(closeBtnDim);
     _advancedContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     _advancedContainer->setFixedHeight(row1Height);
 
@@ -258,6 +286,7 @@ TtdWidget::TtdWidget(QWidget* parent)
     controlLayout->addWidget(_exportBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_clearBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_statusLabel, 1, Qt::AlignVCenter);
+    controlLayout->addWidget(_branchesBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_advancedBtn, 0, Qt::AlignVCenter);
     controlLayout->addWidget(_closeBtn, 0, Qt::AlignVCenter);
 
@@ -291,7 +320,7 @@ TtdWidget::TtdWidget(QWidget* parent)
 
     _timelineSlider = new JournalSpanSlider(Qt::Horizontal, _scrubberContainer);
     _timelineSlider->setRange(0, 0);
-    _timelineSlider->setEnabled(false);
+    SetControlEnabled(_timelineSlider, false);
     _timelineSlider->setToolTip(tr("TTD Timeline Scrubber (drag to seek within recorded range)"));
     connect(_timelineSlider, &QSlider::valueChanged, this, &TtdWidget::onSliderValueChanged);
     connect(_timelineSlider, &QSlider::sliderMoved, this, &TtdWidget::onSliderMoved);
@@ -320,8 +349,8 @@ TtdWidget::TtdWidget(QWidget* parent)
         _buildJournalBtn->setMenu(menu);
     }
 
-    _resumeFromHereBtn = new QPushButton(tr("Rec From Here"), _scrubberContainer);
-    _resumeFromHereBtn->setToolTip(tr("Truncate future history and resume live recording from current position"));
+    _resumeFromHereBtn = new QPushButton(tr("Continue Rec"), _scrubberContainer);
+    _resumeFromHereBtn->setToolTip(tr("Continue recording from here. The current future is kept as a branch."));
     connect(_resumeFromHereBtn, &QPushButton::clicked, this, &TtdWidget::onResumeFromHere);
 
     const int row2Height = std::max({_jumpStartBtn->sizeHint().height(), _timelineSlider->sizeHint().height(), 26});
@@ -331,6 +360,13 @@ TtdWidget::TtdWidget(QWidget* parent)
     _stepForwardBtn->setFixedHeight(row2Height);
     _jumpEndBtn->setFixedHeight(row2Height);
     _resumeFromHereBtn->setFixedHeight(row2Height);
+    // Wide enough for both of its names (Branch Here / Continue Rec): the slider keeps its length when it changes
+    {
+        const QFontMetrics metrics(_resumeFromHereBtn->font());
+        const int extra = _resumeFromHereBtn->sizeHint().width() - metrics.horizontalAdvance(_resumeFromHereBtn->text());
+        _resumeFromHereBtn->setMinimumWidth(
+            extra + std::max(metrics.horizontalAdvance(tr("Branch Here")), metrics.horizontalAdvance(tr("Continue Rec"))));
+    }
     _buildJournalBtn->setFixedHeight(row2Height);
 
     _scrubberContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -344,9 +380,93 @@ TtdWidget::TtdWidget(QWidget* parent)
     scrubberLayout->addWidget(_buildJournalBtn, 0, Qt::AlignVCenter);
     scrubberLayout->addWidget(_resumeFromHereBtn, 0, Qt::AlignVCenter);
 
+    // =========================================================================
+    // Branches Row: one lane per branch, the actions on the chosen one (the lanes' selection, else the active
+    // branch). Opened with the Branches button; hidden while the session has the trunk alone
+    // =========================================================================
+    _branchesContainer = new QWidget(this);
+    auto* branchesLayout = new QVBoxLayout(_branchesContainer);
+    branchesLayout->setContentsMargins(0, 0, 0, 0);
+    branchesLayout->setSpacing(2);
+    _branchLanes = new BranchLanes();
+    _branchLanes->onActivated = [this](uint32_t) { onSwitchBranch(); };
+    // The cross at a lane's right end: the same delete as the button, on that lane
+    _branchLanes->onDeleteRequested = [this](uint32_t id) {
+        _branchLanes->setSelected(id);
+        onDeleteBranch();
+    };
+    _branchLanes->onSelected = [this](uint32_t) { updateTelemetry(); };
+    _branchesScroll = new QScrollArea(_branchesContainer);
+    _branchesScroll->setWidget(_branchLanes);
+    _branchesScroll->setWidgetResizable(true);
+    _branchesScroll->setFrameShape(QFrame::NoFrame);
+    _branchesScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    branchesLayout->addWidget(_branchesScroll);
+    auto* branchButtons = new QHBoxLayout();
+    branchButtons->setContentsMargins(0, 0, 0, 0);
+    branchButtons->setSpacing(4);
+    auto addBranchButton = [&](const QString& text, const QString& tip, void (TtdWidget::*slot)()) {
+        auto* b = new QPushButton(text, _branchesContainer);
+        b->setToolTip(tip);
+        b->setFixedHeight(row1Height);
+        connect(b, &QPushButton::clicked, this, slot);
+        branchButtons->addWidget(b, 0, Qt::AlignVCenter);
+        return b;
+    };
+    _branchSwitchBtn = addBranchButton(tr("Switch"), tr("Go to the chosen branch, where you left it (double click a lane)"),
+                                       &TtdWidget::onSwitchBranch);
+    _branchRenameBtn = addBranchButton(tr("Rename..."), tr("Rename the chosen branch"), &TtdWidget::onRenameBranch);
+    _branchTagsBtn = addBranchButton(tr("Tags..."), tr("The chosen branch's tags, comma separated"),
+                                     &TtdWidget::onTagBranch);
+    _branchNoteBtn = addBranchButton(tr("Note..."), tr("A note on the chosen branch"), &TtdWidget::onNoteBranch);
+    _branchPinBtn = addBranchButton(tr("Pin"), tr("A pinned branch is not deleted without asking"),
+                                    &TtdWidget::onPinBranch);
+    _branchDeleteBtn = addBranchButton(tr("Delete"), tr("Delete the chosen branch and the branches leaving it (never "
+                                                        "one of the history shown)"),
+                                       &TtdWidget::onDeleteBranch);
+    branchButtons->addStretch(1);
+    _branchSaveBtn = addBranchButton(tr("Save Lineage..."), tr("Save the history shown on the timeline alone, as one "
+                                                               "line without the other branches ('Export .ttd' "
+                                                               "saves them all)"),
+                                     &TtdWidget::onSaveLineage);
+    branchesLayout->addLayout(branchButtons);
+    _branchButtonsHeight = row1Height;
+    _branchesContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    _branchesContainer->setVisible(false);
+    connect(_branchLanes, &QWidget::customContextMenuRequested, this, [this](const QPoint& at) {
+        const int row = _branchLanes->laneAt(at.y());
+        if (row < 0)
+            return;
+        _branchLanes->setSelected(_branchLanes->lanes()[static_cast<size_t>(row)].id);
+        updateTelemetry();
+        QMenu menu(this);
+        menu.addAction(tr("Switch"), this, &TtdWidget::onSwitchBranch);
+        menu.addSeparator();
+        menu.addAction(tr("Rename..."), this, &TtdWidget::onRenameBranch);
+        menu.addAction(tr("Tags..."), this, &TtdWidget::onTagBranch);
+        menu.addAction(tr("Note..."), this, &TtdWidget::onNoteBranch);
+        menu.addAction(_branchPinBtn->text(), this, &TtdWidget::onPinBranch);
+        menu.addSeparator();
+        QAction* del = menu.addAction(tr("Delete"), this, &TtdWidget::onDeleteBranch);
+        del->setEnabled(_branchDeleteBtn->isEnabled());
+        menu.exec(_branchLanes->mapToGlobal(at));
+    });
+    // A double click on a fork mark opens the row on the branches leaving there
+    _timelineSlider->onMarkActivated = [this](int index) {
+        const auto& marks = _timelineSlider->forkMarks();
+        if (index < 0 || static_cast<size_t>(index) >= marks.size() || marks[static_cast<size_t>(index)].branches.empty())
+            return;
+        _branchLanes->setSelected(marks[static_cast<size_t>(index)].branches.front());
+        if (!_branchesBtn->isChecked())
+            _branchesBtn->setChecked(true);
+        else
+            updateTelemetry();
+    };
+
     mainLayout->addWidget(_controlContainer);
     mainLayout->addWidget(_advancedContainer);
     mainLayout->addWidget(_scrubberContainer);
+    mainLayout->addWidget(_branchesContainer);
 
     _scrubberContainer->setVisible(false);
     {
@@ -354,6 +474,10 @@ TtdWidget::TtdWidget(QWidget* parent)
         _advancedContainer->setVisible(open);
         const QSignalBlocker block(_advancedBtn);
         _advancedBtn->setChecked(open);
+    }
+    {
+        const QSignalBlocker block(_branchesBtn);
+        _branchesBtn->setChecked(settings.value(QStringLiteral("ttd/branchesOpen"), false).toBool());
     }
     setFixedHeight(rowsHeight(_advancedContainer->isVisible(), false));
 
@@ -363,7 +487,7 @@ TtdWidget::TtdWidget(QWidget* parent)
     connect(_telemetryTimer, &QTimer::timeout, this, &TtdWidget::updateTelemetry);
 }
 
-int TtdWidget::rowsHeight(bool advanced, bool scrubber) const
+int TtdWidget::rowsHeight(bool advanced, bool scrubber, bool branches) const
 {
     const int topMargin = layout() ? layout()->contentsMargins().top() : 4;
     const int botMargin = layout() ? layout()->contentsMargins().bottom() : 4;
@@ -373,6 +497,8 @@ int TtdWidget::rowsHeight(bool advanced, bool scrubber) const
         height += spacing + (_advancedContainer ? _advancedContainer->height() : 26);
     if (scrubber)
         height += spacing + (_scrubberContainer ? _scrubberContainer->height() : 26);
+    if (branches && _branchesContainer)
+        height += spacing + _branchesContainer->height();
     return height;
 }
 
@@ -391,7 +517,8 @@ int TtdWidget::desiredHeight() const
     if (!_visibleByUser)
         return 0;
     return rowsHeight(_advancedContainer && _advancedContainer->isVisible(),
-                      _scrubberContainer && _scrubberContainer->isVisible());
+                      _scrubberContainer && _scrubberContainer->isVisible(),
+                      _branchesContainer && _branchesContainer->isVisible());
 }
 
 QSize TtdWidget::sizeHint() const
@@ -489,13 +616,15 @@ void TtdWidget::updateTelemetry()
         return;   // a worker thread replays the session: the progress dialog reports
     if (!_activeEmulator)
     {
-        _recordBtn->setEnabled(false);
+        SetControlEnabled(_recordBtn, false);
         _recordBtn->setText(tr("Start Rec"));
-        _loadBtn->setEnabled(false);
-        _exportBtn->setEnabled(false);
-        _clearBtn->setEnabled(false);
+        SetControlEnabled(_loadBtn, false);
+        SetControlEnabled(_exportBtn, false);
+        SetControlEnabled(_clearBtn, false);
         _statusLabel->setText(tr("TTD: No Active Emulator"));
         _scrubberContainer->setVisible(false);
+        _branchesContainer->setVisible(false);
+        _branchesBtn->setVisible(false);
         return;
     }
 
@@ -506,6 +635,8 @@ void TtdWidget::updateTelemetry()
     {
         _statusLabel->setText(tr("TTD: Unavailable"));
         _scrubberContainer->setVisible(false);
+        _branchesContainer->setVisible(false);
+        _branchesBtn->setVisible(false);
         return;
     }
 
@@ -519,19 +650,21 @@ void TtdWidget::updateTelemetry()
     // Not available for this machine at all (a ZX-Poly member): say why
     if (!info.unavailableReason.empty())
     {
-        _recordBtn->setEnabled(false);
+        SetControlEnabled(_recordBtn, false);
         _recordBtn->setText(tr("Start Rec"));
-        _loadBtn->setEnabled(false);
-        _exportBtn->setEnabled(false);
-        _clearBtn->setEnabled(false);
+        SetControlEnabled(_loadBtn, false);
+        SetControlEnabled(_exportBtn, false);
+        SetControlEnabled(_clearBtn, false);
         _statusLabel->setText(tr("TTD: not available"));
         _statusLabel->setToolTip(QString::fromStdString(info.unavailableReason));
         _scrubberContainer->setVisible(false);
+        _branchesContainer->setVisible(false);
+        _branchesBtn->setVisible(false);
         return;
     }
     _statusLabel->setToolTip(QString());
 
-    _loadBtn->setEnabled(true);
+    SetControlEnabled(_loadBtn, true);
 
     const bool isRecording = (info.state == ttd::TTDSessionState::Recording);
     if (_lastIsRecording != isRecording)
@@ -549,10 +682,10 @@ void TtdWidget::updateTelemetry()
     EmulatorContext* activeContext = _activeEmulator ? _activeEmulator->GetContext() : nullptr;
     const bool browsesWhileRecording = isRecording && activeContext && activeContext->pTimeTravelController;
 
-    _recordBtn->setEnabled(true);
+    SetControlEnabled(_recordBtn, true);
     _recordBtn->setText(isRecording || info.recordingPaused ? tr("Stop Rec") : tr("Start Rec"));
-    _exportBtn->setEnabled(hasHistory);
-    _clearBtn->setEnabled(hasHistory);
+    SetControlEnabled(_exportBtn, hasHistory);
+    SetControlEnabled(_clearBtn, hasHistory);
 
     const double memMb = static_cast<double>(info.sessionHeapBytes) / (1024.0 * 1024.0);
     QString provenanceStr = info.loadedFromFile
@@ -567,6 +700,42 @@ void TtdWidget::updateTelemetry()
             provenanceStr += tr(" | No journal");
         if (const qulonglong limit = _historyCombo->currentData().toULongLong())
             provenanceStr += tr(" | Last %1 GB").arg(limit >> 30);
+    }
+
+    // Branches: the branch the timeline ends with, and for a few seconds the future a fork kept
+    if (info.branches)
+    {
+        if (const ttd::TTDBranchInfo* active = info.branches->Find(info.activeBranch))
+            provenanceStr += tr(" | Branch: %1 (%2)")
+                                 .arg(QString::fromStdString(active->meta.name))
+                                 .arg(info.branches->branches.size());
+        std::set<uint32_t> ids;
+        for (const ttd::TTDBranchInfo& b : info.branches->branches)
+        {
+            ids.insert(b.id);
+            // A branch the panel did not see before: a resume in the past records on a new branch and its parent
+            // keeps the old future; a branch made aside (branch-create) is named as it is
+            if (!_knownBranches.empty() && !_knownBranches.count(b.id))
+            {
+                const ttd::TTDBranchInfo* parent = info.branches->Find(b.parent);
+                if (b.id == info.activeBranch && parent)
+                    _forkNotice = tr("New branch '%1', previous future kept on '%2'")
+                                      .arg(QString::fromStdString(b.meta.name), QString::fromStdString(parent->meta.name));
+                else
+                    _forkNotice = tr("New branch '%1'").arg(QString::fromStdString(b.meta.name));
+                _forkNoticeUntil = QDateTime::currentMSecsSinceEpoch() + 8000;
+            }
+        }
+        _knownBranches = std::move(ids);
+    }
+    else
+        _knownBranches = {ttd::kTTDTrunk};
+    if (!_forkNotice.isEmpty())
+    {
+        if (QDateTime::currentMSecsSinceEpoch() < _forkNoticeUntil)
+            provenanceStr += QStringLiteral(" | ") + _forkNotice;
+        else
+            _forkNotice.clear();
     }
 
     // What the write journal covers (D40): searches for "who wrote this last"
@@ -607,6 +776,8 @@ void TtdWidget::updateTelemetry()
     _statusLabel->setToolTip(tooltip);
 
     const bool scrubberWasVisible = _scrubberContainer->isVisible();
+    const bool branchesWasVisible = _branchesContainer->isVisible();
+    const int branchesHeightBefore = _branchesContainer->height();
 
     if (isRecording && !browsesWhileRecording)
     {
@@ -675,11 +846,24 @@ void TtdWidget::updateTelemetry()
             }
 
             const uint64_t activeFrame = isDetached ? currentPos.frame : endFrame;
-            _jumpStartBtn->setEnabled(activeFrame > startFrame);
-            _stepBackBtn->setEnabled(activeFrame > startFrame);
-            _stepForwardBtn->setEnabled(activeFrame < endFrame);
-            _jumpEndBtn->setEnabled(activeFrame < endFrame);
-            _resumeFromHereBtn->setEnabled(true);
+            SetControlEnabled(_jumpStartBtn, activeFrame > startFrame);
+            SetControlEnabled(_stepBackBtn, activeFrame > startFrame);
+            SetControlEnabled(_stepForwardBtn, activeFrame < endFrame);
+            SetControlEnabled(_jumpEndBtn, activeFrame < endFrame);
+            // Only once the recording is stopped (Stop Rec): a running or paused recording has nothing to continue
+            SetControlEnabled(_resumeFromHereBtn, !isRecording && !info.recordingPaused);
+            // With a recorded future after the position the button forks; at the end it only goes on recording
+            const bool forks = activeFrame < endFrame;
+            const QString resumeText = forks ? tr("Branch Here") : tr("Continue Rec");
+            if (_resumeFromHereBtn->text() != resumeText)
+            {
+                _resumeFromHereBtn->setText(resumeText);
+                _resumeFromHereBtn->setToolTip(
+                    forks ? tr("Record a new branch from this frame. The current future is kept on the branch it "
+                               "belongs to (see Branches).")
+                          : tr("Continue this session's recording from its end (Start Rec begins a new session). A "
+                               "machine that ran on after the stop goes back to the end first."));
+            }
             // Only where the journal is missing: a session recorded without it (or not all the way)
             _buildJournalBtn->setVisible(!info.writeJournalComplete);
 
@@ -693,7 +877,7 @@ void TtdWidget::updateTelemetry()
 
             // Update Slider Range to exact recorded frame bounds [sessionStartFrame, currentEndFrame]
             _isInternalSliderUpdate = true;
-            _timelineSlider->setEnabled(true);
+            SetControlEnabled(_timelineSlider, true);
             _timelineSlider->setRange(static_cast<int>(startFrame), static_cast<int>(endFrame));
             _timelineSlider->setValue(static_cast<int>(activeFrame));
             _isInternalSliderUpdate = false;
@@ -703,24 +887,26 @@ void TtdWidget::updateTelemetry()
             _statusLabel->setText(tr("Ready | Memory: %1 MB%2")
                                       .arg(memMb, 0, 'f', 1)
                                       .arg(provenanceStr));
-            _timelineSlider->setEnabled(false);
+            SetControlEnabled(_timelineSlider, false);
             // The range change moves the value to 0 and fires valueChanged: without the flag the panel would seek
             // an emptied history to frame 0, and that seek parks a machine that is running (a resume after a
             // dropped session was followed by a pause)
             _isInternalSliderUpdate = true;
             _timelineSlider->setRange(0, 0);
             _isInternalSliderUpdate = false;
-            _jumpStartBtn->setEnabled(false);
-            _stepBackBtn->setEnabled(false);
-            _stepForwardBtn->setEnabled(false);
-            _jumpEndBtn->setEnabled(false);
-            _resumeFromHereBtn->setEnabled(false);
+            SetControlEnabled(_jumpStartBtn, false);
+            SetControlEnabled(_stepBackBtn, false);
+            SetControlEnabled(_stepForwardBtn, false);
+            SetControlEnabled(_jumpEndBtn, false);
+            SetControlEnabled(_resumeFromHereBtn, false);
             _buildJournalBtn->setVisible(false);
             _timelineSlider->setJournalSpans({});
         }
     }
 
-    if (scrubberWasVisible != _scrubberContainer->isVisible())
+    updateBranches(info, isDetached ? currentPos.frame : info.currentEndFrame);
+    if (scrubberWasVisible != _scrubberContainer->isVisible() || branchesWasVisible != _branchesContainer->isVisible() ||
+        branchesHeightBefore != _branchesContainer->height())
     {
         if (_visibleByUser)
         {
@@ -729,6 +915,338 @@ void TtdWidget::updateTelemetry()
         updateGeometry();
         emit heightChanged();
     }
+}
+
+void TtdWidget::updateBranches(const ttd::TTDSessionInfo& info, uint64_t current)
+{
+    const bool has = info.branches != nullptr && info.checkpointCount > 0;
+    _branchesBtn->setVisible(has);
+    if (!has)
+    {
+        _branchesContainer->setVisible(false);
+        _timelineSlider->setBranchSpans({});
+        _timelineSlider->setForkMarks({});
+        return;
+    }
+    const ttd::TTDBranchesView& view = *info.branches;
+    _branchesBtn->setText(tr("Branches (%1)").arg(view.branches.size()));
+
+    // The slider: the lineage's parts by branch (the trunk's part untinted) and the marks where other branches
+    // leave it
+    const uint64_t start = info.sessionStartFrame;
+    const uint64_t end = std::max(info.currentEndFrame, start + 1);
+    const double range = static_cast<double>(end - start);
+    auto fraction = [&](uint64_t frame) {
+        return std::clamp((static_cast<double>(frame) - static_cast<double>(start)) / range, 0.0, 1.0);
+    };
+    std::vector<JournalSpanSlider::BranchSpan> spans;
+    std::set<uint32_t> onLineage;
+    for (size_t i = 0; i < view.lineage.size(); ++i)
+    {
+        const ttd::TTDLineageSpan& span = view.lineage[i];
+        onLineage.insert(span.branch);
+        if (span.branch == ttd::kTTDTrunk)
+            continue;
+        const uint64_t to = i + 1 < view.lineage.size() ? view.lineage[i + 1].from.frame : end;
+        spans.push_back({fraction(span.from.frame), fraction(to), BranchLanes::ColorOf(span.branch)});
+    }
+    _timelineSlider->setBranchSpans(std::move(spans));
+    // The marks: every frame of the line where another future goes on. Either a branch off the line forks from
+    // the part its parent holds (the part's last frame included: siblings forking where the line's branch forks),
+    // or the line leaves a parent that has frames past the fork (the future a resume kept on the parent)
+    std::map<uint64_t, JournalSpanSlider::ForkMark> marks;
+    auto addMark = [&](uint64_t frame, const ttd::TTDBranchInfo& other, uint64_t frames) {
+        JournalSpanSlider::ForkMark& m = marks[frame];
+        m.at = fraction(frame);
+        m.branches.push_back(other.id);
+        m.count = static_cast<int>(m.branches.size());
+        m.tip += (m.tip.isEmpty() ? tr("Frame %1:").arg(frame) : QString()) +
+                 tr("\n%1 - %2 frames").arg(QString::fromStdString(other.meta.name)).arg(frames);
+    };
+    for (size_t i = 0; i < view.lineage.size(); ++i)
+    {
+        const uint64_t from = view.lineage[i].from.frame;
+        const uint64_t to = i + 1 < view.lineage.size() ? view.lineage[i + 1].from.frame : end;
+        for (const ttd::TTDBranchInfo& b : view.branches)
+            if (!onLineage.count(b.id) && b.parent == view.lineage[i].branch && b.fork.frame >= from &&
+                b.fork.frame <= to)
+                addMark(b.fork.frame, b, b.Length());
+        if (i + 1 < view.lineage.size())
+            if (const ttd::TTDBranchInfo* parent = view.Find(view.lineage[i].branch); parent && parent->end.frame > to)
+                addMark(to, *parent, parent->end.frame - to);
+    }
+    std::vector<JournalSpanSlider::ForkMark> markList;
+    for (auto& [frame, m] : marks)
+    {
+        m.tip += tr("\n(double click: the branches)");
+        markList.push_back(std::move(m));
+    }
+    _timelineSlider->setForkMarks(std::move(markList));
+
+    // The row: the lanes over the frames of the whole tree
+    const bool open = _branchesBtn->isChecked();
+    _branchesContainer->setVisible(open);
+    if (!open)
+        return;
+    std::vector<BranchLanes::Lane> lanes;
+    uint64_t axisTo = end;
+    for (const ttd::TTDBranchInfo& b : view.branches)
+    {
+        BranchLanes::Lane l;
+        l.id = b.id;
+        l.parent = b.parent;
+        l.name = QString::fromStdString(b.meta.name);
+        l.fork = b.parent == ttd::kTTDNoBranch ? start : b.fork.frame;
+        l.end = b.id == info.activeBranch ? std::max(b.end.frame, info.currentEndFrame) : b.end.frame;
+        l.active = b.id == info.activeBranch;
+        l.onLineage = onLineage.count(b.id) != 0;
+        l.pinned = b.meta.pinned;
+        QStringList tip;
+        tip << QString::fromStdString(b.meta.name);
+        if (b.parent != ttd::kTTDNoBranch)
+            tip << tr("From frame %1, %2 frames").arg(b.fork.frame).arg(l.end - b.fork.frame);
+        if (!b.meta.reason.empty() || !b.meta.createdBy.empty())
+            tip << tr("Made by %1: %2").arg(QString::fromStdString(b.meta.createdBy.empty() ? "user" : b.meta.createdBy),
+                                           QString::fromStdString(b.meta.reason));
+        if (b.meta.createdHostMicros != 0)
+            tip << tr("Created %1").arg(QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(b.meta.createdHostMicros / 1000))
+                                            .toString(QStringLiteral("yyyy-MM-dd hh:mm:ss")));
+        if (!b.meta.tags.empty())
+        {
+            QStringList tags;
+            for (const std::string& t : b.meta.tags)
+                tags << QString::fromStdString(t);
+            tip << tr("Tags: %1").arg(tags.join(QStringLiteral(", ")));
+        }
+        if (!b.meta.note.empty())
+            tip << QString::fromStdString(b.meta.note);
+        if (b.meta.pinned)
+            tip << tr("Pinned");
+        l.tip = tip.join(QStringLiteral("\n"));
+        axisTo = std::max(axisTo, l.end);
+        lanes.push_back(std::move(l));
+    }
+    _branchLanes->setLanes(std::move(lanes), start, axisTo, current);
+    // At most five lanes in sight, the rest by scrolling
+    const int shown = std::min<int>(static_cast<int>(view.branches.size()), 5);
+    _branchesScroll->setFixedHeight(shown * BranchLanes::kRowHeight + 2);
+    _branchesContainer->setFixedHeight(_branchesScroll->height() + 2 + _branchButtonsHeight);
+
+    // The actions on the chosen branch
+    const uint32_t chosen = chosenBranch();
+    const ttd::TTDBranchInfo* b = view.Find(chosen);
+    const bool chosenOnLineage = onLineage.count(chosen) != 0;
+    SetControlEnabled(_branchSwitchBtn, b != nullptr && chosen != info.activeBranch);
+    SetControlEnabled(_branchRenameBtn, b != nullptr);
+    SetControlEnabled(_branchTagsBtn, b != nullptr);
+    SetControlEnabled(_branchNoteBtn, b != nullptr);
+    SetControlEnabled(_branchPinBtn, b != nullptr);
+    _branchPinBtn->setText(b != nullptr && b->meta.pinned ? tr("Unpin") : tr("Pin"));
+    SetControlEnabled(_branchDeleteBtn, b != nullptr && chosen != ttd::kTTDTrunk);
+    _branchDeleteBtn->setToolTip(chosen == ttd::kTTDTrunk
+                                     ? tr("The trunk goes only with the whole history (Clear)")
+                                 : chosenOnLineage
+                                     ? tr("Delete the chosen branch and the branches leaving it (the timeline runs on "
+                                          "it: the panel switches to its parent first)")
+                                     : tr("Delete the chosen branch and the branches leaving it"));
+}
+
+uint32_t TtdWidget::chosenBranch() const
+{
+    if (_branchLanes && _branchLanes->selected() != BranchLanes::kNone)
+        return _branchLanes->selected();
+    if (!_activeEmulator)
+        return ttd::kTTDTrunk;
+    const Emulator::ContextLease lease = _activeEmulator->LeaseContext();
+    EmulatorContext* context = lease.get();
+    if (!context || !ttd::HasTimeTravelSession(context))
+        return ttd::kTTDTrunk;
+    return ttd::TTDSessionRef(context)->GetPublishedSessionInfo().activeBranch;
+}
+
+bool TtdWidget::runBranchVerb(const std::string& verb, std::map<std::string, std::string> options)
+{
+    if (!_activeEmulator)
+        return false;
+    ttd::TTDReply reply;
+    {
+        // The lease ends before any message box: a modal question must not hold the instance
+        const Emulator::ContextLease lease = _activeEmulator->LeaseContext();
+        EmulatorContext* context = lease.get();
+        if (!context || !ttd::HasTimeTravelSession(context))
+            return false;
+        reply = ttd::TTDControl(context).Execute({verb, std::move(options)});
+    }
+    if (!reply.Ok())
+        QMessageBox::warning(this, tr("Branches"), QString::fromStdString(reply.message));
+    updateTelemetry();
+    return reply.Ok();
+}
+
+void TtdWidget::onBranchesToggled(bool open)
+{
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    settings.setValue(QStringLiteral("ttd/branchesOpen"), open);
+    updateTelemetry();
+    if (_visibleByUser)
+        setFixedHeight(desiredHeight());
+    updateGeometry();
+    emit heightChanged();
+}
+
+void TtdWidget::onSwitchBranch()
+{
+    // The verb parks the machine and leaves it paused there, as a seek does
+    if (runBranchVerb("branch-switch", {{"branch", std::to_string(chosenBranch())}}))
+    {
+        if (_branchLanes)
+            _branchLanes->setSelected(BranchLanes::kNone);
+        emit viewportRefreshRequested();
+        updateTelemetry();
+    }
+}
+
+namespace
+{
+const ttd::TTDBranchInfo* PublishedBranch(const std::shared_ptr<Emulator>& emulator, uint32_t id,
+                                          std::shared_ptr<const ttd::TTDBranchesView>& keep)
+{
+    if (!emulator)
+        return nullptr;
+    const Emulator::ContextLease lease = emulator->LeaseContext();
+    EmulatorContext* context = lease.get();
+    if (!context || !ttd::HasTimeTravelSession(context))
+        return nullptr;
+    keep = ttd::TTDSessionRef(context)->GetPublishedSessionInfo().branches;
+    return keep ? keep->Find(id) : nullptr;
+}
+}  // namespace
+
+void TtdWidget::onRenameBranch()
+{
+    const uint32_t id = chosenBranch();
+    std::shared_ptr<const ttd::TTDBranchesView> keep;
+    const ttd::TTDBranchInfo* b = PublishedBranch(_activeEmulator, id, keep);
+    if (!b)
+        return;
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Rename Branch"), tr("Name:"), QLineEdit::Normal,
+                                               QString::fromStdString(b->meta.name), &ok);
+    if (ok && !name.trimmed().isEmpty())
+        runBranchVerb("branch-update", {{"branch", std::to_string(id)}, {"name", name.trimmed().toStdString()}});
+}
+
+void TtdWidget::onTagBranch()
+{
+    const uint32_t id = chosenBranch();
+    std::shared_ptr<const ttd::TTDBranchesView> keep;
+    const ttd::TTDBranchInfo* b = PublishedBranch(_activeEmulator, id, keep);
+    if (!b)
+        return;
+    QStringList tags;
+    for (const std::string& t : b->meta.tags)
+        tags << QString::fromStdString(t);
+    bool ok = false;
+    const QString text = QInputDialog::getText(this, tr("Branch Tags"), tr("Tags (comma separated):"),
+                                               QLineEdit::Normal, tags.join(QStringLiteral(", ")), &ok);
+    if (ok)
+        runBranchVerb("branch-update", {{"branch", std::to_string(id)}, {"tags", text.toStdString()}});
+}
+
+void TtdWidget::onNoteBranch()
+{
+    const uint32_t id = chosenBranch();
+    std::shared_ptr<const ttd::TTDBranchesView> keep;
+    const ttd::TTDBranchInfo* b = PublishedBranch(_activeEmulator, id, keep);
+    if (!b)
+        return;
+    bool ok = false;
+    const QString note = QInputDialog::getMultiLineText(this, tr("Branch Note"), tr("Note:"),
+                                                        QString::fromStdString(b->meta.note), &ok);
+    if (ok)
+        runBranchVerb("branch-update", {{"branch", std::to_string(id)}, {"note", note.toStdString()}});
+}
+
+void TtdWidget::onPinBranch()
+{
+    const uint32_t id = chosenBranch();
+    std::shared_ptr<const ttd::TTDBranchesView> keep;
+    const ttd::TTDBranchInfo* b = PublishedBranch(_activeEmulator, id, keep);
+    if (!b)
+        return;
+    runBranchVerb("branch-update", {{"branch", std::to_string(id)}, {"pinned", b->meta.pinned ? "false" : "true"}});
+}
+
+void TtdWidget::onDeleteBranch()
+{
+    const uint32_t id = chosenBranch();
+    std::shared_ptr<const ttd::TTDBranchesView> keep;
+    const ttd::TTDBranchInfo* b = PublishedBranch(_activeEmulator, id, keep);
+    if (!b)
+        return;
+    // The trunk goes only with the whole history (Clear)
+    if (b->id == ttd::kTTDTrunk || RemoteControlGuard::Refuse(this))
+        return;
+    // Always asked: the question names what goes with it (the branches leaving it, a pin)
+    size_t descendants = 0;
+    bool pinned = b->meta.pinned;
+    std::vector<uint32_t> stack(b->children.begin(), b->children.end());
+    while (!stack.empty())
+    {
+        const uint32_t c = stack.back();
+        stack.pop_back();
+        if (const ttd::TTDBranchInfo* child = keep->Find(c))
+        {
+            ++descendants;
+            pinned = pinned || child->meta.pinned;
+            stack.insert(stack.end(), child->children.begin(), child->children.end());
+        }
+    }
+    const QString name = QString::fromStdString(b->meta.name);
+    QString what = tr("Delete branch '%1'?").arg(name);
+    if (descendants != 0)
+        what = tr("Delete branch '%1' and the %2 branch(es) leaving it?").arg(name).arg(descendants);
+    else if (b->meta.pinned)
+        what = tr("Delete the pinned branch '%1'?").arg(name);
+    if (pinned && !b->meta.pinned)
+        what += tr(" A branch leaving it is pinned.");
+    // A branch the timeline runs on (the active one or one of its ancestors) goes after a switch to its parent:
+    // the history shown then ends where the branch left it
+    bool onLineage = false;
+    for (const ttd::TTDLineageSpan& span : keep->lineage)
+        onLineage = onLineage || span.branch == b->id;
+    const ttd::TTDBranchInfo* parent = keep->Find(b->parent);
+    if (onLineage && parent)
+        what += tr("\n\nThe timeline runs on it: the panel switches to '%1' first.")
+                    .arg(QString::fromStdString(parent->meta.name));
+    if (!confirm(tr("Delete Branch"), what))
+        return;
+    if (onLineage && parent)
+    {
+        if (!runBranchVerb("branch-switch", {{"branch", std::to_string(parent->id)}}))
+            return;
+        emit viewportRefreshRequested();
+    }
+    if (runBranchVerb("branch-delete", {{"branch", std::to_string(id)}, {"force", pinned ? "true" : "false"}}) &&
+        _branchLanes)
+        _branchLanes->setSelected(BranchLanes::kNone);
+}
+
+void TtdWidget::onSaveLineage()
+{
+    if (!_activeEmulator)
+        return;
+    const std::string recordings = ttd::RecordingsRoot();
+    if (!recordings.empty())
+        FileHelper::CreateFolders(recordings);
+    const QString fileName = QFileDialog::getSaveFileName(this, tr("Save Lineage"), QString::fromStdString(recordings),
+                                                          tr("Time Travel Session (*.ttd)"));
+    if (fileName.isEmpty())
+        return;
+    if (_activeEmulator->IsRunning() && !_activeEmulator->IsPaused())
+        _activeEmulator->Pause(execution::Requester{execution::Origin::Gui, {}}, "ttd widget");
+    if (runBranchVerb("dump", {{"path", fileName.toUtf8().toStdString()}, {"lineage", "true"}}))
+        QMessageBox::information(this, tr("Save Lineage"), tr("The history shown saved to %1").arg(fileName));
 }
 
 void TtdWidget::onRecordToggled()
@@ -931,12 +1449,35 @@ void TtdWidget::onJumpEnd()
 
 void TtdWidget::onResumeFromHere()
 {
-    if (!_activeEmulator) return;
+    // A removed instance has nothing to continue: no question, no warning box
+    if (!_activeEmulator || _activeEmulator->IsRetired()) return;
     EmulatorContext* context = _activeEmulator->GetContext();
     if (!context || !ttd::HasTimeTravelSession(context)) return;
     // From exactly where the machine stands; the verb runs it again. A medium that cannot go back there (another
     // medium in the slot, a write beyond its undo log) needs the user's decision (M5, F11)
-    ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", {{"media", "ask"}}});
+    // From where the machine stands inside the history; a machine that ran on past the end of a stopped recording
+    // goes back to that end (a session goes on without a gap: what ran after the stop was not recorded)
+    // (the seek parks the machine first, as the slider's does: the resume itself never waits for a running machine)
+    std::map<std::string, std::string> options{{"media", "ask"}};
+    {
+        const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
+        if (info.state != ttd::TTDSessionState::Detached)
+        {
+            const ttd::TTDReply seek =
+                ttd::TTDControl(context).Execute({"seek", {{"frame", std::to_string(info.currentEndFrame)}}});
+            const StateNode* reached = seek.body.find("reached");
+            if (!seek.Ok() || !reached || !reached->b)
+            {
+                QMessageBox::warning(this, _resumeFromHereBtn->text(),
+                                     tr("Could not go back to the end of the recording: %1")
+                                         .arg(QString::fromStdString(seek.message)));
+                updateTelemetry();
+                return;
+            }
+            emit viewportRefreshRequested();
+        }
+    }
+    ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", options});
     if (const StateNode* needs = reply.body.find("needs_decision"); needs && needs->b)
     {
         QString list;
@@ -944,7 +1485,7 @@ void TtdWidget::onResumeFromHere()
             for (const StateNode& item : media->items)
                 list += QString("\n- %1: %2").arg(QString::fromStdString(item.find("slot")->s),
                                                    QString::fromStdString(item.find("reason")->s));
-        QMessageBox box(QMessageBox::Question, tr("Rec From Here"),
+        QMessageBox box(QMessageBox::Question, _resumeFromHereBtn->text(),
                         tr("These media cannot go back to this point:%1\n\nThe recording goes on from here either "
                            "way. What should happen to them?")
                             .arg(list),
@@ -957,9 +1498,22 @@ void TtdWidget::onResumeFromHere()
         const QAbstractButton* clicked = box.clickedButton();
         if (clicked != empty && clicked != keep)
             return;   // cancelled: the machine stays where it is, nothing changed
-        reply = ttd::TTDControl(context).Execute({"resume", {{"media", clicked == empty ? "empty" : "keep"}}});
+        options["media"] = clicked == empty ? "empty" : "keep";
+        reply = ttd::TTDControl(context).Execute({"resume", options});
     }
-    _activeEmulator->Start();
+    // The machine runs on its own thread: a paused one is resumed. Never Start(): it runs the main loop on the
+    // calling thread, and on the GUI thread that froze the window
+    const StateNode* resumed = reply.body.find("resumed");
+    if (!reply.Ok() || !resumed || !resumed->b)
+    {
+        QMessageBox::warning(this, _resumeFromHereBtn->text(),
+                             reply.Ok() ? tr("The recording could not go on from here.")
+                                        : QString::fromStdString(reply.message));
+        updateTelemetry();
+        return;
+    }
+    if (_activeEmulator->IsPaused())
+        _activeEmulator->Resume(execution::Requester{execution::Origin::Gui, {}});
     updateTelemetry();
 }
 

@@ -64,6 +64,17 @@ Example, a host action ([command-interface.md §16](./command-interface.md#16-ho
 ← {"op":"result","t":"call","rid":1,"status":200,"body":{"ok":true,"action":"run.pause_toggle","message":"Emulator paused","result":{…}}}
 ```
 
+The TTD branch routes are calls like any other (`PATCH` included), for example a switch to another branch of the
+history ([webapi-interface.md](./webapi-interface.md), TTD branches):
+
+```json
+→ {"op":"call","rid":5,"method":"POST","path":"/api/v1/emulator/0f3a…/ttd/branches/resume%201/switch","body":{}}
+← {"op":"result","t":"call","rid":5,"status":200,"body":{"switched":true,"branch":{"id":1,"name":"+00:00:37.040",…},"arrived_at":{"frame":1852,"tinframe":0},"state":"detached",…}}
+```
+
+The `ttd.position` topic does not carry the branch yet, and the `ttd.branches` topic of the branches design is not
+there yet: a client reads `GET …/ttd/status` (`branch`, `branch_count`) after a `ttd.position` change.
+
 A dial's seek and the surface context (control surfaces S2) are calls too; their pushes (`ctx`, the `ttd.position`
 readout) come with the `surface` topic (S4):
 
