@@ -107,6 +107,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /run_to_scanline",
     "POST /run_tstates",
     "POST /run_until",
+    "POST /section-timer",
     "POST /skip_until",
     "POST /step",
     "POST /stepout",
