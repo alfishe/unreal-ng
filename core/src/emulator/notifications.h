@@ -582,6 +582,29 @@ public:
     virtual ~FrameWatchPayload() = default;
 };
 
+/// Payload of NC_SECTION_TIMER (debugger/analyzers/sectiontimer): the emulator's section timer "started", "stopped",
+/// was "cleared", or a break condition stopped the machine ("break": `condition` met by the pass of `section` that
+/// started at `frame` / `t` and took `elapsed` T-states, `net` without the `interrupts` that ran inside it)
+class SectionTimerPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    std::string condition;
+    std::string section;
+    uint64_t frame = 0;
+    uint32_t t = 0;
+    uint64_t elapsed = 0;
+    uint64_t net = 0;
+    uint32_t interrupts = 0;
+
+    SectionTimerPayload(const std::string& emulator, std::string what)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), event(std::move(what))
+    {
+    }
+    virtual ~SectionTimerPayload() = default;
+};
+
 /// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)
 class AsmSyncPayload : public MessagePayload
 {

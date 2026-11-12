@@ -696,6 +696,8 @@ public:
     /// at its instruction start, a memory or port tap's after the access). A walk that only tells the taps (a run
     /// that skips breakpoints) and a TTD replay's never stop
     void StopAtThisTap() { _tapStop = true; }
+    /// Inside OnTap: whether StopAtThisTap would stop the machine here (false in a taps-only walk or a TTD replay's)
+    bool TapStopsHere() const { return !_replayWalk && !_tapsOnlyWalk; }
     /// What the armed taps need of the machine now
     BreakpointTapDemand GetTapDemand() const { return _tapDemand; }
     /// The TTD replay's own sink (a replay query such as TimeTravelController::ProbeFrames): while set, a TTD replay

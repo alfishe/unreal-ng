@@ -151,6 +151,24 @@ TEST_F(SectionTimerAnalyzer_Test, BreakIfStopsAtTheExitOfTheSlowPass)
     EXPECT_EQ(r.orphans, 0u);
 }
 
+// A run that skips breakpoints (run_frames) is not stopped by a break condition, and records no stop it did not make
+TEST_F(SectionTimerAnalyzer_Test, BreakIfNeitherStopsNorRecordsInARunThatSkipsBreakpoints)
+{
+    Start("PENTAGON");
+    ASSERT_FALSE(HasFatalFailure());
+    SectionTimerAnalyzer::Spec spec;
+    spec.sections = {"Work=#8001:#8005"};
+    spec.breakIf = {"Work>" + std::to_string(kWorkT)};
+    std::string error;
+    ASSERT_TRUE(_timer->Start(spec, error)) << error;
+    _emulator->RunNFrames(3);
+
+    const SectionTimerAnalyzer::Result r = _timer->GetResult();
+    EXPECT_GE(r.stats[0].interrupted, 2u) << "passes met the condition";
+    EXPECT_FALSE(r.stop.hit);
+    EXPECT_FALSE(_emulator->LastDirectStop().hit);
+}
+
 // The text specs: labels (NAME and NAME.End, or every X with an X.End), numbers, several exits, the errors
 TEST_F(SectionTimerAnalyzer_Test, SpecsResolveLabelsAndNumbers)
 {

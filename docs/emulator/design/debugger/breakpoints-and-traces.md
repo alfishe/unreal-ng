@@ -397,7 +397,10 @@ demo is `data/examples/01-section-timing` (`profile_sections.py --native`).
   goes through `Emulator::OnBreakpointHit` as an execution breakpoint's would (a pause with the reason breakpoint on
   the emulator's run, the end of a direct run). Going on from there does not count the exit again. Like any breakpoint
   it stops the runs that honour breakpoints: the machine's own run, `steps`, `run_until` / `run_until_pc` with
-  `breakpoints: true`; `run_frames` and the other runs that skip breakpoints measure and never stop.
+  `breakpoints: true`; `run_frames` and the other runs that skip breakpoints measure and never stop, and record no
+  stop (the tap asks `TapStopsHere` first).
+- **Events.** `NC_SECTION_TIMER` (`SectionTimerPayload`): started, stopped, cleared, and break with the pass at a
+  stop, posted out of the timer's lock; the WebSocket sends them as `section_timer_*` on `debug.events`.
 - **Cost.** A marker hit is a tap: the instruction-start check the taps already need, a lock and a few stores. In
   POC 050 (`tools/poc/050-section-timing-taps`) the timer was within noise of no taps at all on the demo and on a
   marker hit 558 times a frame, 4.7x faster than the same timer in a Lua hook there; its passes matched the stepping

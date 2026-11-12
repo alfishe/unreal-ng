@@ -131,7 +131,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error`, `section_timer_started` / `_stopped` / `_cleared` / `_break` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `video.present` | the process: the GUI window's way to the screen, `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl / software), `present_policy`, `fixed_display`, `vrr`, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}; a message when the presenter turns to VRR or back, the display rate switch acts or a setting changes, never per frame (`GET /api/v1/monitor/video.present`) | none | implemented |
@@ -271,6 +271,16 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   a [frame watch](command-interface.md) armed with `POST /watches` held at a frame end. A hit moves `seq` too
   (`debug/wait` wakes); with `then: pause` the machine is paused at that frame end and a `paused` event with
   `reason: "watch"` follows.
+
+- `section_timer_started`, `section_timer_stopped`, `section_timer_cleared` (no fields) and `section_timer_break`
+  (`{condition, section, frame, t, elapsed, net, interrupts}`): the [section timer](command-interface.md#55c-section-timer)
+  was armed, disarmed or its results dropped, or a break condition stopped the machine at the exit of a slow pass
+  (the pass that met it; the `paused` with `reason: "breakpoint"` follows). Only a stop that took place is sent: a
+  run that skips breakpoints (`run_frames`) sends none.
+
+```json
+← {"t":"debug.events","op":"event","event":"section_timer_break","condition":"Work>834","section":"Work","frame":19,"t":52998,"elapsed":871,"net":834,"interrupts":1,"seq":52,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
 
 ```json
 ← {"t":"debug.events","op":"event","event":"watch_hit","id":1,"label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER","paused":true,"removed":true,"seq":51,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}

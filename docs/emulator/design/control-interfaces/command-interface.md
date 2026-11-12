@@ -1761,7 +1761,9 @@ innermost open pass of its section and drops the passes above it; an exit with n
 section was entered. A break condition stops the machine before the exit's instruction, with the registers of the
 slow pass; going on from there does not count the exit again. Like a breakpoint, it stops the machine's own run,
 `steps` and `run_until` / `run_until_pc` with `breakpoints: true`; `run_frames` skips breakpoints, so it measures
-and runs on.
+and runs on (and `stopped` stays as it was: only a stop that took place is recorded). Every change is a WebSocket
+event on `debug.events`: `section_timer_started`, `section_timer_stopped`, `section_timer_cleared`, and
+`section_timer_break` {condition, section, frame, t, elapsed, net, interrupts} at a stop, before its `paused`.
 
 REST / WebSocket `call`: `POST /api/v1/emulator/{id}/section-timer` `{action: start|stop|clear, sections?, break_if?,
 extra?, recursive?, frame_t?, capacity?}` (400 with the reason when the spec does not resolve; answers the results

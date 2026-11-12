@@ -19,7 +19,9 @@ class EmulatorContext;
 /// The state machine: an entry pushes a pass; an entry of an open section drops it and the passes above it (it left
 /// without its exit), unless the sections are recursive; an exit closes the innermost open pass of its section and
 /// drops the passes above it; an exit with no open pass is an orphan once the section was entered. A break condition
-/// stops the machine at the exit of the pass that meets it. The results are read at any time (a lock per marker hit)
+/// stops the machine at the exit of the pass that meets it, in a run that honours breakpoints (run_frames does not:
+/// nothing is stopped or recorded there). The results are read at any time (a lock per marker hit). Every change goes
+/// out as NC_SECTION_TIMER: started, stopped, cleared, and break at a stop
 class SectionTimerAnalyzer : public IAnalyzer, public IBreakpointTapSink
 {
 public:
@@ -96,7 +98,7 @@ public:
         uint64_t maxFrame = 0;     ///< where the longest pass started
         uint32_t maxT = 0;
     };
-    /// The pass a break condition stopped the machine at
+    /// The pass a break condition stopped the machine at (only a stop that took place)
     struct BreakStop
     {
         bool hit = false;
@@ -193,6 +195,8 @@ private:
     void Accept(uint32_t acknowledgeT);
     void Return();
     void Reset();
+    /// Posts NC_SECTION_TIMER (`stop` for "break"); never under _lock
+    void Publish(const char* event, const BreakStop* stop = nullptr) const;
 
     EmulatorContext* _context = nullptr;
     BreakpointManager* _breakpoints = nullptr;
@@ -216,4 +220,5 @@ private:
     uint64_t _orphans = 0;
     uint64_t _dropped = 0;
     BreakStop _stop;
+    bool _stopPending = false;  ///< Exit stopped the machine: OnTap publishes _stop once out of the lock
 };
