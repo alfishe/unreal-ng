@@ -3393,7 +3393,7 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 | :--- | :--- |
 | `idle` | Not recording. There may be retained history (after `stop`, `load`, or a reset); seek/step/find-last work on it. |
 | `recording` | Capturing one checkpoint per frame. |
-| `detached` | The machine sits at a point in history (after a seek or step) and the emulator is paused. `resume` truncates the future and records again from here. |
+| `detached` | The machine sits at a point in history (after a seek or step) and the emulator is paused. `resume` records again from here: before the end of the active branch a new branch forks here and the old future stays on its parent. |
 
 **Time.** A position is `frame` + `tinframe`. `tinframe` counts T-states at the machine's **top** CPU clock, so it names one instant even when a hardware turbo switches in the middle of a frame:
 
@@ -3405,7 +3405,7 @@ These rules live in the core, so every surface (CLI, WebAPI/MCP, Lua, Python, GD
 
 Example: on a ZX-Evo a frame is 69888 T-states at 3.5 MHz, so `tinframe` runs 0..279551 whatever clock the program selects; a write 1000 T-states into the frame at 3.5 MHz reports `tinframe` 4000. The same unit applies to every position the TTD API returns or takes (seek, find-last, markers, bookmarks, `before_tin`, reverse-step `tstates`). A `.ttd` recorded before this rule on a turbo machine is refused on load (its positions repeat after a switch down); record it again.
 
-**Browsing while recording pauses the recording** (D8). Seek, step, find-last, step-instruction, reverse-step, reverse-step-over and reverse-continue run while the session records: the recording pauses first - everything up to that instant is kept - and the state becomes `detached` with `recording_paused: true`. The history then reaches to where it paused, inside its last frame. `resume` at that point (or `resume` with no position while still there) continues the same recording; running the machine forward from an earlier point continues it by itself when execution reaches the paused point; `stop` ends it, and the history stays. `resume` anywhere else drops what was recorded after that point, as before (branches that keep it come with Phase 5, Step 2). Journal build and clip export are still refused while recording.
+**Browsing while recording pauses the recording** (D8). Seek, step, find-last, step-instruction, reverse-step, reverse-step-over and reverse-continue run while the session records: the recording pauses first - everything up to that instant is kept - and the state becomes `detached` with `recording_paused: true`. The history then reaches to where it paused, inside its last frame. `resume` at that point (or `resume` with no position while still there) continues the same recording; running the machine forward from an earlier point continues it by itself when execution reaches the paused point; `stop` ends it, and the history stays. `resume` anywhere else forks a new branch there; what was recorded after that point stays on its parent branch ([TTD branches](../../../inprogress/2026-11-08-ttd-branches/architecture.md)). Journal build and clip export are still refused while recording.
 
 Worked example (CLI): `ttd start`, run 300 frames, `ttd seek 100` - the recording pauses at frame ~300 and the machine shows frame 100; `ttd status` prints `Recording paused: yes`; `ttd seek` to the paused point and `ttd resume` - recording goes on as if never paused.
 

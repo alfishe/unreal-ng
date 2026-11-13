@@ -46,7 +46,7 @@ time_travel        {"action":"backtrace","frame":11782,"tinframe":2941}   # who 
 time_travel        {"action":"seek","frame":11781}
 invoke_api         {"method":"POST","path":"/api/v1/emulator/{id}/breakpoints",
                    "body":{"type":"write","address":16384}}
-time_travel        {"action":"resume"}      # truncates the future, records again, resumes the emulator
+time_travel        {"action":"resume"}      # a new branch forks here (the old future stays), records again, resumes the emulator
 ```
 
 The full narrative with sample responses and the bash reverse-continue loop
@@ -157,7 +157,7 @@ curl -s -X PUT "$BASE/emulator/$EMU_ID/feature/breakpoints" -H 'Content-Type: ap
 curl -s -X POST "$BASE/emulator/$EMU_ID/breakpoints" \
      -H 'Content-Type: application/json' \
      -d '{"type":"write","address":16384}' | jq .
-# ttd/resume truncates the recorded future at this point, records again
+# ttd/resume forks a new branch at this point (the recorded future stays on its parent), records again
 # and resumes the emulator itself (the extra /resume is a harmless no-op)
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/resume" | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/resume" >/dev/null

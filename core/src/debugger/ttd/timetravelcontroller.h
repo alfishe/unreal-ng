@@ -1064,16 +1064,16 @@ public:
     // the emulator (existing pause discipline — same as RestoreCheckpoint-
     // ForTesting / SeekTo).
 
-    /// @brief Resume recording from a historical position, truncating future.
+    /// @brief Resume recording from a historical position; the old future is kept.
     ///
-    /// Algorithm (parent TDD §8.3):
+    /// Algorithm (parent TDD §8.3, TTD branches architecture.md §4.5):
     ///   1. Validate preconditions (state, bounds).
     ///   2. SeekTo(from) — ensures the emulator is positioned at `from`.
     ///      No-op-equivalent if already there (re-restore is deterministic).
-    ///   3. Release page refs for every checkpoint cp where cp.time > from.
-    ///   4. Erase those checkpoints from _line->timeline.
-    ///   5. _line->inputJournal.DropAfter(from).
-    ///   6. _state = Recording.
+    ///   3. History after `from`: a new branch forks there (ForkBranchAt), the old future stays on its parent.
+    ///      At the active branch's end: the line is cut at the resume point (its partial last frame) and goes on.
+    ///   4. The new line's journals, markers, bookmarks and coverage after the resume point are dropped.
+    ///   5. _state = Recording.
     ///
     /// @param from  Position to resume from. Must be within the current
     ///              recorded timeline bounds (<= SessionEndPosition()).

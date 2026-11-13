@@ -52,7 +52,7 @@ Slots (UI emits these — connected with Qt.QueuedConnection):
 
 NOTE: there is deliberately NO slot here for /ttd/resume
 (ResumeRecordingFrom). That endpoint is a recording-flow operation
-(truncates the future timeline, flips state Detached→Recording) and
+(forks a branch, flips state Detached→Recording) and
 has no place in a tool whose playback surface must be fully
 disconnected from recording. If a future need arises, add a separate
 verb explicitly named 'request_branch_from_here' so callers can't

@@ -1,6 +1,6 @@
 # TTD branches: user surfaces and automation planes
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Model: [architecture.md](architecture.md).
+Part of [TTD branches](README.md). Status: **partly built**: §1 Qt panel (`66f6811ae`), the debuggers ([debuggers.md](debuggers.md), `0744664bb`), the verbs `branches` / `branch-switch` / `branch-update` / `branch-delete` on every plane (`e0ac62a53`). Open: §2 actions and readouts, §3 Stream Deck, §4 controllers, §5 `branch-info` / `branch-create` / `branch-prune` and the `ttd.branches` topic, §5.3 the analyzer ([README](README.md#phases) P5, P6). Design 2026-11-08. Model: [architecture.md](architecture.md).
 
 Rule for every surface: without branches nothing changes (no new widget, key face or reply field appears until the
 session has a second branch). With branches, the default view is the active lineage with fork marks and the
