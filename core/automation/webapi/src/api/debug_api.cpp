@@ -2276,7 +2276,8 @@ void EmulatorAPI::putMemory(const HttpRequestPtr& req, std::function<void(const 
     size_t written = bytes.size();
     const std::string refused = IsCardCpu(cpu)
                                     ? CpuView::Write(emulator.get(), cpu, "webapi memory", addr, bytes, &written)
-                                    : emulator->EditMemoryFromTool("webapi memory", [&]() {
+                                    : emulator->EditMemoryFromTool(
+                                          Emulator::ToolEdit::Of("webapi memory", "memory", addr, bytes.size()), [&]() {
                                           for (size_t i = 0; i < bytes.size(); i++)
                                               mem->DirectWriteToZ80Memory((addr + i) & 0xFFFF, bytes[i]);
                                       });

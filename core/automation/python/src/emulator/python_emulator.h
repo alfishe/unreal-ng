@@ -2302,7 +2302,8 @@ namespace PythonBindings
                 }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 1),
+                                              [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
@@ -2312,7 +2313,7 @@ namespace PythonBindings
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 2), [&] {
                     mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
@@ -2602,7 +2603,7 @@ namespace PythonBindings
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 std::string bytes = data;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, bytes.size()), [&] {
                     for (size_t i = 0; i < bytes.size(); i++)
                         mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
                 });
@@ -2637,7 +2638,9 @@ namespace PythonBindings
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
                 else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                self.EditMemoryFromToolOrThrow("Python page write", [&] {
+                Emulator::ToolEdit what = Emulator::ToolEdit::Of("Python page write", "page", offset, 1);
+                what.page = type + std::to_string(page);
+                self.EditMemoryFromToolOrThrow(what, [&] {
                     pagePtr[offset] = value;
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -2679,7 +2682,9 @@ namespace PythonBindings
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
-                self.EditMemoryFromToolOrThrow("Python page write", [&] {
+                Emulator::ToolEdit what = Emulator::ToolEdit::Of("Python page write", "page", offset, writeLen);
+                what.page = type + std::to_string(page);
+                self.EditMemoryFromToolOrThrow(what, [&] {
                     std::memcpy(pagePtr + offset, bytes.data(), writeLen);
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));

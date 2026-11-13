@@ -54,6 +54,8 @@ constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";               
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
 constexpr char const* NC_FRAME_WATCH = "FRAME_WATCH";   // An armed frame watch was added, removed, hit or failed - payload: FrameWatchPayload (debugger/watch/framewatch.h)
+constexpr char const* NC_DEBUG_EDITED = "DEBUG_EDITED";       // A tool edited the machine (registers, memory, a port, other state: Emulator::EditMemoryFromTool) - payload: DebugEditedPayload
+constexpr char const* NC_DEBUG_TARGETS_CHANGED = "DEBUG_TARGETS_CHANGED";   // The CPUs a debugger can stop on changed (a sound card with a CPU fitted, switched or removed) - payload: DebugTargetsChangedPayload
 constexpr char const* NC_SECTION_TIMER = "SECTION_TIMER";   // The section timer started, stopped, was cleared or stopped the machine at a slow pass - payload: SectionTimerPayload (debugger/analyzers/sectiontimer)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
@@ -96,7 +98,7 @@ constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
-constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified - payload: LabelsChangedPayload (the instance; none from a label manager without one)
 constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload

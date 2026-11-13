@@ -1264,7 +1264,10 @@ The verbs of breakpoints, profilers and traces, machine state and symbols on eac
 user's breakpoints, never the ones the analyzers, debugger adapters and step traps own. Profilers and traces go
 through core `tracecontrol` (names `opcode`, `memory`, `calltrace`, `coverage`, `porttrace`, `gsporttrace`, `pchist`,
 `aylog`, `audio`, `all`). Every REST route is also a WebSocket `call`; breakpoint changes are pushed as
-`breakpoints_changed` on `debug.events`, script callback changes as `callbacks_changed`.
+`breakpoints_changed` on `debug.events`, script callback changes as `callbacks_changed`, label changes as
+`labels_changed`; every tool edit of registers, memory, a page or a port, from any surface, as `edited`; run-control
+changes as `run_control`; a card CPU that comes or goes as `targets_changed`
+([websocket-interface.md §3.3](websocket-interface.md#33-the-debug-topics)).
 
 | Verb | CLI | Lua | Python | MCP | REST | Catalogue action |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |

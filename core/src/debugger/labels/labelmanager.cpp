@@ -14,7 +14,9 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include "common/modulelogger.h"
 #include "common/filehelper.h"
+#include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/notifications.h"
 #include "emulator/memory/memory.h"
 #include "stdafx.h"
 #include "unrealasm/symbols/bundles.h"
@@ -214,8 +216,7 @@ void LabelManager::ClearAllLabels()
     // Notify about clearing all labels if there were any
     if (hadLabels)
     {
-        MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-        messageCenter.Post(NC_LABEL_CHANGED);
+        Notify();
     }
 }
 
@@ -664,10 +665,11 @@ void LabelManager::Flush() const
     _store->PutSets({std::move(user)});
 }
 
-void LabelManager::Notify()
+void LabelManager::Notify() const
 {
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    messageCenter.Post(NC_LABEL_CHANGED, nullptr, true);
+    // The instance, for the debuggers' labels_changed (none: a label manager of no emulator)
+    const std::string id = _context && _context->pEmulator ? _context->pEmulator->GetId() : std::string();
+    MessageCenter::DefaultMessageCenter().Post(NC_LABEL_CHANGED, new LabelsChangedPayload(id), true);
 }
 
 /// endregion </Symbol sets>

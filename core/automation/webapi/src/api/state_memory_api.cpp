@@ -766,7 +766,9 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
         refused = CpuView::Write(emulator.get(), cpu, "WebAPI memory write", address, bytes, &bytesWritten);
     }
     else
-        refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+        refused = emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("WebAPI memory write", "memory", address,
+                                                                      data.size()),
+                                               [&]() {
             for (Json::ArrayIndex i = 0; i < data.size(); i++)
             {
                 memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
@@ -1387,7 +1389,10 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
     // A page edit behind the CPU's back: TTD must see it like any other tool write
-    const std::string refused = emulator->EditMemoryFromTool("WebAPI page write", [&] {
+    Emulator::ToolEdit what = Emulator::ToolEdit::Of("WebAPI page write", "page", static_cast<int32_t>(offset),
+                                                     data.size());
+    what.page = std::string(isCache ? "CACHE" : isRAM ? "RAM" : "ROM") + std::to_string(page);
+    const std::string refused = emulator->EditMemoryFromTool(what, [&] {
         for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
         {
             pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
