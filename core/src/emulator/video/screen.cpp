@@ -833,6 +833,11 @@ void Screen::UpdateFeatureCache()
     {
         _feature_screenhq_enabled = _context->pFeatureManager->isEnabled(Features::kScreenHQ);
         _feature_hud_enabled = _context->pFeatureManager->isEnabled(Features::kHud);
+        // Low-latency video: the targets move by the audio path's delay, so the frame clock starts again (a cut, not
+        // seconds of slewing towards the new time)
+        const bool lowLatency = _context->pFeatureManager->isEnabled(Features::kLowLatency);
+        if (_lowLatency.exchange(lowLatency, std::memory_order_acq_rel) != lowLatency)
+            _frameClockResetPending.store(true, std::memory_order_release);
         // Called on the thread that changed the feature: record the wish only.
         // Resizing the buffer or swapping the renderer here raced the emulation
         // thread drawing into plane B (freed or reallocated under the writer).
@@ -1462,7 +1467,9 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
     const int64_t emulatedBegin = prevEmulated ? _lastStampEmulatedEnd : in.emulatedEndNs - period;
 
     // The video delay without the audio clock: one frame, or the temporal effect's look-ahead. A run not paced to
-    // real time (turbo, stepping) has no sound to wait for: the look-ahead only
+    // real time (turbo, stepping) has no sound to wait for: the look-ahead only. Low-latency video waits for neither
+    // clock: a frame is due at its latch (plus the look-ahead)
+    const bool lowLatency = _lowLatency.load(std::memory_order_acquire);
     const int64_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
     const int64_t emulatedDelay = (temporal > 1 ? temporal : 1) * period;
     const int64_t latchDelay = temporal * period;
@@ -1488,7 +1495,7 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
         input.emulatedDelayNs = emulatedDelay;
         input.latchDelayNs = latchDelay;
         input.maxDelayNs = static_cast<int64_t>(kMaxVideoDelayFrames) * input.periodNs;
-        if (in.haveAudio && device)
+        if (in.haveAudio && device && !lowLatency)
         {
             const uint64_t streamFrame =
                 audioBegin + static_cast<uint64_t>(f * static_cast<double>(in.audioEndStreamFrame - audioBegin));
@@ -1499,7 +1506,7 @@ void Screen::StampPresentTiming(const FrameStampInput& in)
                 input.audioNs = heard;
             }
         }
-        if (in.haveEmulated)
+        if (in.haveEmulated && !lowLatency)
         {
             input.haveEmulated = true;
             input.emulatedNs = emulatedBegin + static_cast<int64_t>(f * static_cast<double>(in.emulatedEndNs - emulatedBegin));
@@ -1666,6 +1673,7 @@ bool Screen::CopyFrameAt(int64_t hostNs, uint8_t* dst, size_t dstSize, PresentFr
             info->periodNs = _presentSlotTiming[chosen].periodNs;
             info->geometry = _presentSlotGeometry[chosen];
             info->early = early;
+            info->atOnce = _lowLatency.load(std::memory_order_acquire);
             if (next != PRESENT_SLOTS)
             {
                 info->nextSerial = _presentSlotSerial[next];
@@ -1734,6 +1742,7 @@ bool Screen::CopyNextFrame(uint64_t afterSerial, uint8_t* dst, size_t dstSize, P
             info->source = _presentSlotTiming[found].source;
             info->periodNs = _presentSlotTiming[found].periodNs;
             info->geometry = _presentSlotGeometry[found];
+            info->atOnce = _lowLatency.load(std::memory_order_acquire);
         }
         _presentSlotPins[found]++;  // copied outside the lock (CopyFrameAt)
         source = _presentSlots[found];

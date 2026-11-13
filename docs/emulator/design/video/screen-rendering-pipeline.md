@@ -397,6 +397,11 @@ latch time and the time its sound plays. Which frame reaches the display, and wh
 (`Screen::CopyFrameAt`, the Metal / DXGI / GL presenters, smooth motion):
 [frame presenter design](../../../inprogress/2026-10-26-frame-presenter/README.md).
 
+By default a frame is due when its sound is heard, about 2.6 frames after its latch (the audio ring's 40 ms and the
+device buffer), so picture and sound stay in step. The `lowlatency` feature (off by default, on in Steam Deck Game
+Mode) makes a frame due at its latch: the newest finished frame is shown at once, and the sound follows by the audio
+path's delay. A temporal effect (ZX DLSS) still delays the picture by its look-ahead, and the sound by the same.
+
 ---
 
 ## Related Files

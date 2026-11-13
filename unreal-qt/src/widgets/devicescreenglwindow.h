@@ -311,6 +311,7 @@ private:
     int64_t _linkRefreshNs = 0;                   ///< native way: the display link's refresh being drawn (0: none)
     int64_t _linkPeriodNs = 0;                    ///< ... and the refresh period it gave
     int64_t _lastPacedRefreshNs = 0;              ///< native way: the refresh the last link tick drew for
+    bool _latchWake = false;  ///< low-latency video under a display link: the timer's wake draws the latched frame
     int64_t _lastLinkTickNs = 0;                  ///< native way: when the display link last ticked
 
     QOpenGLTexture* _texture = nullptr;

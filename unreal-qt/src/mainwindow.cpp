@@ -63,6 +63,9 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
 #include "controllers/controllersdialog.h"
+#ifdef __linux__
+#include "platform/linux/steamdeckgamemode.h"
+#endif
 #include "controllers/controllersmenu.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
@@ -5970,6 +5973,12 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
+
+#ifdef __linux__
+    // Steam Deck Game Mode: the picture as soon as it is made (platform/linux/steamdeckgamemode.h)
+    if (_emulator->GetContext())
+        steamdeck::ApplyGameModeFeatures(_emulator->GetContext()->pFeatureManager);
+#endif
 
     // The published copy follows the new binding
     schedulePublishWindowDisplay();

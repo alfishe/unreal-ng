@@ -25,6 +25,10 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   | `display_rate` | `keep`, `match` | switch the display to a rate fitting the machine (50 / 100 Hz) while the window shows it |
   | `lip_sync_offset_ms` | -200..200 | moves the frames' target times against the sound |
 
+- **Low latency** is a machine feature, not a window setting: `feature lowlatency on` (CLI; WebAPI / MCP features)
+  makes each frame due at its latch, so the newest finished frame is shown at once and the sound follows ~50 ms
+  later. Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock` `latch`.
+
 - **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl-timed` on Linux / `gl` / `software`),
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
