@@ -715,6 +715,9 @@ public:
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
+    /// Border colour bits above the FE colour Default_Port_FE_Out hands the screen: the bright bit (8) of a machine
+    /// with a 16 colour border, set by its FE handler before the call (Pentagon 2.666 LE: NOT A3)
+    uint8_t _borderHighBits = 0;
 
     /// Standard Kempston Mouse address decode (A5-A0 = 011111, A9 = 1; A8/A10 select the register)
     static bool Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
@@ -1086,6 +1089,7 @@ public:
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
             Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
             NextUart,    ///< ZX Next: the two UARTs at #133B-#163B (ESP = UART 0 = attachSerialPeer, Pi = UART 1 = attachSecondSerialPeer)
+            P2666Uart,   ///< Pentagon 2.666 LE: the FPGA's own 16550-like UART on #F8EF..#FFEF (attachSerialPeer)
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -1416,6 +1420,16 @@ public:
     /// model has no clock select (0, nothing to restore)
     virtual uint16_t GetClockSelect() const { return 0; }
     virtual void RestoreClockSelect(uint16_t select) { (void)select; }
+
+    /// The frame INT window in CPU clocks at the clock now in use, for a board whose INT pulse is not a fixed number
+    /// of base T (the Pentagon 2.666 LE: 32 CPU clock edges at any speed). INT is taken when start < t < end. False
+    /// (default): the window comes from config.intstart / intlen
+    virtual bool FrameIntWindow(uint32_t& start, uint32_t& end)
+    {
+        (void)start;
+        (void)end;
+        return false;
+    }
 
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked

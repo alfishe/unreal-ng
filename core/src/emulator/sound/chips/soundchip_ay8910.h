@@ -517,6 +517,18 @@ public:
         }
         return _filterDCLeft.restsAt(0.0) && _filterDCRight.restsAt(0.0);
     }
+    /// The 5-bit amplitude of channel `channel` (0-2) now, 0..31: the tone / noise gate times the volume
+    /// (volume x 2 + 1) or the envelope, the index updateMixer gives its DAC table; the user's channel mute and
+    /// volume are not applied. For boards that mix the chip's levels themselves (the Pentagon 2.666's linear DAC)
+    uint8_t channelAmplitude(uint8_t channel)
+    {
+        ToneGenerator& tone = _toneGenerators[channel % 3];
+        const bool gate = (tone.out() || !tone.toneEnabled()) && (_noiseGenerator.out() || !tone.noiseEnabled());
+        if (!gate)
+            return 0;
+        const int volume = tone.envelopeEnabled() ? _envelopeGenerator.out() : tone.volume() * 2 + 1;
+        return static_cast<uint8_t>(volume & 0x1F);
+    }
     /// `ticks` x updateState(true) of a chip that is silentAtRest (the mixer would change nothing): the generators
     /// advance, each in one step (the tones and the noise count their turns, the envelope its steps) - the generators do
     /// not depend on each other, so the order within a tick is no matter

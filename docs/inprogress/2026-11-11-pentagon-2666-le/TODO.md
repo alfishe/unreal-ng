@@ -1,21 +1,28 @@
 # TODO: Pentagon 2.666 LE
 
-Status 2026-11-11: design written from the upstream sources (`e808402`); no code. See [README.md](README.md).
+Status 2026-11-12: P0..P2 built and tested; P3 and P4 written, tests in `core/tests/emulator/machines/p2666/`.
+See [README.md](README.md).
 
 ## Phases
 
 - [x] Owner decisions Q-1...Q-6 (below, 2026-11-11)
-- [ ] P0: ROM set `data/rom/p2666/`, `data/configs/p2666/unreal.ini`, `MM_P2666` row, factory case, Pentagon-mode
-      decoder with Gluk mapping, power-on upload, read-only ROM pages; T-M1, T-M2, T-M9, T-M10, T-F1, T-F3
-- [ ] P1: full decoder (DOS machine, `xx77`, two maps, `xFF7`, `x7F7`, `xxBE`, `xxBF`, `7FFD` / `EFF7` rules and
-      quirks, FE flag), turbo 1 / 4 / 8 with the I/O slowdown overlay, INT; Beta Disk path A; T-P*, T-M*, T-D*,
-      T-C1..C5, T-B1
-- [ ] POC: VHDL oracle in `ghdl` (`tools/poc/NNN-p2666-vhdl-oracle/`, charter first); decides T-V3, T-C3, T-B5
-- [ ] P2: video detection, geometry, palette, border, text font; T-V*
-- [ ] P3: CMOS / RTC, SD, IDE, mouse, joystick, TurboSound clock / stereo, Covox; T-S*, T-I*, T-F4..F8
-      (fetch the NedoOS P2.666 build `osp26sd.$c` into `testdata/machines/p2666/nedoos/`)
-- [ ] P4: Beta Disk path B (RAM disk), UART; T-B2..B5, T-C6
-- [ ] P5: TTD (`PeripheralId` >= 66), snapshot rules, slots refdata, automation planes, Qt menu,
+- [x] P0: ROM set `data/rom/p2666/`, `data/configs/p2666/unreal.ini`, `MM_P2666` row, factory case, decoder with
+      Gluk mapping, power-on upload, read-only ROM pages
+- [x] P1: full decoder (DOS machine, `xx77`, two maps, `xFF7`, `x7F7`, `xxBE`, `xxBF`, `7FFD` / `EFF7` rules and
+      quirks, FE flag), turbo 1 / 4 / 8 with the I/O slowdown, INT; Beta Disk path A
+- [x] POC 051: the board's VHDL in `ghdl` as the timing oracle (CPU clock, I/O stretch, INT, video fetch)
+- [x] P2: video modes, geometry, palette, border, text font (FLASH: dropped by the owner 2026-11-12, "not worth
+      it"; the shared ZX renderer has none)
+- [ ] P3: CMOS / RTC (64 MCU cells, `[P2666] CmosFile`), SD (Z-Controller, `sd.zc`), IDE (even registers read FE),
+      mouse, joystick, sound (two YM2149 cores, Covox, beeper in one wrapping 8-bit DAC sum, `P2666Audio`): written,
+      tests `P2666Devices_Test`; to verify with the test software
+- [ ] P4: Beta Disk on the RAM disk (`P2666BetaDisk`, default; `[P2666] BetaDisk=wd1793` = path A), UART
+      (`P2666Uart`, machine serial port `p2666-uart`): written, tests `P2666BetaDisk_Test`, `P2666Uart_Test`
+- [ ] Test software, headless (`P2666SoftwareProbe_Test.DISABLED_Run`): Gluk + TR-DOS from the RAM disk, Pentagon
+      timing tests (`tests.trd`, `stime.scl`), AY / TurboSound tests, FATALL on SD, NedoOS `osp26sd.$C`
+- [ ] P5: TTD (`PeripheralId` >= 66: sound, Beta Disk, UART, CMOS; the AY state blob left the slot list with the
+      socket), slots refdata (writes reach the ZX-BUS only with A2 = A1 = 0, `ebl`: a Covox `#FB` card is dead, a TS
+      card loses to the board), snapshot rules, automation planes, Qt menu,
       `.recipe/machines/pentagon-2666.md`, docs rows, Linux / Windows checks; MCP live block
 
 ## Decisions (owner, 2026-11-11)

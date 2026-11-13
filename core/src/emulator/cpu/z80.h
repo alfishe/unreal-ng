@@ -916,6 +916,7 @@ public:
         /// The IM 2 daisy chain (Im2DaisyChain): not a level - set while a chain device is armed, the chain says at
         /// each boundary whether it pulls /INT, and its device drives the vector in the acknowledge
         kDeviceIntIm2Chain = 1u << 2,
+        kDeviceIntP2666Uart = 1u << 3,  ///< Pentagon 2.666 LE UART (INT = vsync_int AND uart_int)
     };
 
     /// The Z80-family peripherals on the bus that drive their own IM 2 vector and decode RETI (a slot card's PIO)

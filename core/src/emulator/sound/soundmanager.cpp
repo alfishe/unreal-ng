@@ -661,6 +661,9 @@ int ModelPartFor(const IModelAudioSource* model, AudioSourceType source)
 {
     if (model == nullptr)
         return -1;
+    for (size_t part = 0; part < model->AudioPartCount(); part++)
+        if (model->AudioPartType(part) == source)
+            return static_cast<int>(part);  // a part on a standard row (the Pentagon 2.666's AYs, Covox, beeper)
     AudioSourceType wanted = source;
     if (source == AudioSourceType::COVOX)
         wanted = AudioSourceType::NextDac;
@@ -1762,6 +1765,7 @@ void SoundManager::handleFrameEnd()
         // A part of the model audio source (the Next's AYs and DAC): its mute / solo / volume are in the device's own
         // mix already (applyModelAudioParts), its meter is the device's. The device's one buffer is mixed with the
         // first part, at unity, where the COVOX row of a device without parts mixes it
+        const int16_t* srcBuffer = nullptr;
         if (const int part = _modelAudio ? modelAudioPart(d.type) : -1; part >= 0)
         {
             d.peak = _modelAudio->AudioPartPeak(static_cast<size_t>(part));
@@ -1769,10 +1773,11 @@ void SoundManager::handleFrameEnd()
             if (part != 0)
                 continue;
             audible = true;
+            srcBuffer = _modelAudio->AudioBuffer();  // the lead part, whatever its row (the Next's AY 1, P2.666's AY 1)
         }
 
         // Get the device's buffer
-        const int16_t* srcBuffer = nullptr;
+        if (!srcBuffer)
         switch (d.type)
         {
             case AudioSourceType::Beeper:
@@ -1792,9 +1797,6 @@ void SoundManager::handleFrameEnd()
                 break;
             case AudioSourceType::COVOX:
                 srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : _covox ? _covox->getBuffer() : nullptr;
-                break;
-            case AudioSourceType::NextAy1:  // the lead part (the others continued above)
-                srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : nullptr;
                 break;
             case AudioSourceType::GeneralSound:
                 srcBuffer = _gs ? _gs->getBuffer() : nullptr;
@@ -2712,8 +2714,16 @@ void SoundManager::attachModelAudioSource(IModelAudioSource* source)
     // mixed with the first part (handleFrameEnd)
     if (const size_t parts = source->AudioPartCount(); parts > 0)
     {
+        // A part on a row the machine has already (the beeper) takes that row over: no second row of the type
+        _modelAudioAddedRows.clear();
         for (size_t p = 0; p < parts; p++)
-            _devices.push_back({source->AudioPartType(p), source->AudioPartName(p), false, false, 1.0f, 0.0f, false});
+        {
+            const AudioSourceType type = source->AudioPartType(p);
+            if (device(type) != nullptr)
+                continue;
+            _devices.push_back({type, source->AudioPartName(p), false, false, 1.0f, 0.0f, false});
+            _modelAudioAddedRows.push_back(type);
+        }
         return;
     }
 
@@ -2739,11 +2749,9 @@ void SoundManager::detachModelAudioSource(IModelAudioSource* source)
     _modelAudio = nullptr;
     if (const size_t parts = source->AudioPartCount(); parts > 0)
     {
-        for (size_t p = 0; p < parts; p++)
-        {
-            const AudioSourceType type = source->AudioPartType(p);
+        for (const AudioSourceType type : _modelAudioAddedRows)
             std::erase_if(_devices, [type](const AudioDeviceInfo& d) { return d.type == type; });
-        }
+        _modelAudioAddedRows.clear();
         return;
     }
     for (auto it = _devices.begin(); it != _devices.end(); ++it)

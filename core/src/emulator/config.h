@@ -64,6 +64,7 @@ private:
 		{ "ATM-Turbo v4.50", "ATM450",           MM_ATM450, 512,  RAM_512 | RAM_1024 },
 		{ "Profi v5", "PROFI",                   MM_PROFI, 1024, RAM_512 | RAM_1024 },
 		{ "Profi v3", "PROFI3",                  MM_PROFI3, 512, RAM_512 | RAM_1024 },
+		{ "Pentagon 2.666 LE", "P2666",          MM_P2666, 2048, RAM_2048 },  // short names match by prefix: "P2666LE" works too
 		{ "ZS Scorpion", "SCORPION",             MM_SCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + PROF ROM", "PROFSCORP", MM_PROFSCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + GMX", "GMX",			 MM_GMX, 2048,  RAM_2048 },

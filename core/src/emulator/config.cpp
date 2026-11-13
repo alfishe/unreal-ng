@@ -339,6 +339,17 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 	}
 
+	// P2666 section: the CMOS cells #00..#3F the board's MCU keeps in its own memory (PaE.vhd:871-910, 943)
+	config.p2666_cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("P2666", "CmosFile", nullptr), config.p2666_cmos_path, sizeof config.p2666_cmos_path);
+	// The Beta Disk: the board's emulator on the RAM disk (default) or path A, the WD1793 on real drives
+	{
+		const std::string beta = inimanager.GetValue("P2666", "BetaDisk", "ramdisk");
+		config.p2666_betadisk_wd1793 = (beta == "wd1793" || beta == "WD1793");
+		if (!config.p2666_betadisk_wd1793 && beta != "ramdisk" && beta != "RAMDISK")
+			MLOGWARNING("Config: unknown [P2666] BetaDisk='%s' - using ramdisk (ramdisk | wd1793)", beta.c_str());
+	}
+
 	// PROFI section: battery-backed RTC cells
 	config.profi_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("PROFI", "NvramFile", nullptr), config.profi_nvram_path, sizeof config.profi_nvram_path);
@@ -607,6 +618,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI3", nullptr), config.profi3_rom_path, sizeof config.profi3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "P2666", nullptr), config.p2666_rom_path, sizeof config.p2666_rom_path);
     config.profi_xt_rom_path[0] = '\0';  // empty = the reconstructed image rom/profixt/profi-xt-v1.27.rom
     CopyStringValue(inimanager.GetValue(rom, "PROFIXT", nullptr), config.profi_xt_rom_path, sizeof config.profi_xt_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
@@ -1694,6 +1706,7 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
 		case MM_NEXT:        return "next";
+		case MM_P2666:       return "p2666";
 		default:
 			break;
 	}
@@ -1856,6 +1869,13 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     //   Scorpion: 14336T (Xpeccy ULA.Scorpion, ZXMAK2 UlaScorpion; UnrealSpeccy 14344) -> 1815
     switch (config.mem_model)
     {
+        case MM_P2666:
+            // The Pentagon raster (HR §1); the decoder replaces the INT window by the board's exact one in CPU clocks
+            // at every speed (PortDecoder::FrameIntWindow): these are its 3.5 MHz values
+            config.intstart = 71635;
+            config.intlen   = 32;
+            break;
+
         case MM_PENTAGON:
             // INT fires at intstart+1 due to strict `>` check. Paper starts at T=17944.
             // Calculation: (71680 - (71635+1)) + 17944 = 17988T (demo-verified)
@@ -1982,6 +2002,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PENTAGON:
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
+                break;
+            case MM_P2666:
+                config.frame = 71680;   // 896 x 640 VGA pixels x 4 mainclk / 32 (HR §1)
+                config.t_line = 224;
+                config.intstart = 71635;
+                config.intlen = 32;
                 break;
             case MM_SCORP:
             case MM_PROFSCORP:

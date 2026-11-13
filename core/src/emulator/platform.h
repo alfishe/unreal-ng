@@ -10,6 +10,7 @@
 #include "emulator/slots/slotconfig.h"
 #include "emulator/platforms/atm/atmstate.h"
 #include "emulator/platforms/gmx/gmxstate.h"
+#include "emulator/platforms/p2666/p2666state.h"
 #include "emulator/platforms/profi/profistate.h"
 #include "emulator/platforms/scorpion/scorpionstate.h"
 #include "emulator/platforms/zxevo/evostate.h"
@@ -357,6 +358,7 @@ enum MEM_MODEL : uint8_t
 	MM_PLUS2A,              // ZX Spectrum +2A (black): +3 hardware without the floppy controller
 	MM_SPRINTER,            // Peters Plus Sprinter Sp2000 (PLD port table, Z84C15, 21 MHz turbo)
 	MM_PROFI3,              // Profi v3 (Kramis / TOO "Profi" 3.x boards): monochrome hi-res, no extended ports; 512K
+	MM_P2666,               // Pentagon 2.666 LE (koe, 2025): Pentagon-1024 + ATM2 / BaseConf shadow ports, 2 MB, 3.5/14/28 MHz
 	N_MM_MODELS             // <End of enumeration>
 };
 
@@ -994,6 +996,9 @@ struct CONFIG
 	char gmx_rom_path[FILENAME_MAX];
 	char profi_rom_path[FILENAME_MAX];
 	char profi3_rom_path[FILENAME_MAX];   // [ROM] PROFI3: the Profi v3 system ROM
+	char p2666_rom_path[FILENAME_MAX];    // [ROM] P2666: Gluk, TR-DOS, BASIC 128, BASIC 48, FATALL, logo (6 pages)
+	char p2666_cmos_path[FILENAME_MAX];   // [P2666] CmosFile: the 64 CMOS cells the MCU keeps (empty: this session only)
+	bool p2666_betadisk_wd1793;           // [P2666] BetaDisk=wd1793: the WD1793 on drives A..D instead of the RAM disk
 	uint8_t profi_sync_prom;              // [PROFI] SyncProm: a ProfiSyncProm (ports/models/profiboard.h), 0 = the board's own
 	uint8_t profi_wait_phase;             // [PROFI] WaitPhase: v5 power-on phase 0..3 of the video WAIT (1 = none)
 	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
@@ -1405,6 +1410,7 @@ struct EmulatorState
 	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
 	GmxState gmx;             // Scorpion GMX card register file (#00, #78FD, scroller, Magic latch)
 	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
+	P2666State p2666;         // Pentagon 2.666 LE (#xx77, dispatcher windows, DOS latch, palette words, INT pulse)
 	/// endregion </Hardware-family state>
 };
 

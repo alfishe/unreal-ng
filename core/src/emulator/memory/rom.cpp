@@ -156,6 +156,9 @@ std::string ROM::GetROMFilename()
         case MM_GMX:
             result = config.gmx_rom_path;
             break;
+        case MM_P2666:
+            result = config.p2666_rom_path;
+            break;
         default:
             break;
     };
@@ -250,6 +253,15 @@ bool ROM::LoadROM()
 			memory.base_sys_rom = memory.ROMPageHostAddress(3);
 			romname = config.kay_rom_path;
 			break;
+		case MM_P2666:
+			// The MCU's upload set (HR §2.1): image page n is the board's write-protected RAM page #48 + n, page 5 the
+			// boot logo the decoder copies into RAM page 5 at power-on
+			memory.base_sys_rom = memory.ROMPageHostAddress(0); // Gluk Reset Service
+			memory.base_dos_rom = memory.ROMPageHostAddress(1); // TR-DOS 6.11E
+			memory.base_128_rom = memory.ROMPageHostAddress(2); // BASIC 128
+			memory.base_sos_rom = memory.ROMPageHostAddress(3); // BASIC 48
+			romname = config.p2666_rom_path;
+			break;
 		case MM_ATM3:
 			memory.base_sos_rom = memory.ROMPageHostAddress(0);
 			memory.base_dos_rom = memory.ROMPageHostAddress(1);
@@ -332,7 +344,17 @@ bool ROM::LoadROM()
 
 	};
 
-	if (config.use_romset)
+	// The P2666 decoder maps image pages #48..#4D (Gluk, TR-DOS, BASIC 128, BASIC 48, FATALL, logo): a 64K ROM set
+	// would put a Pentagon service ROM where Gluk belongs and boot into garbage
+	bool useRomSet = config.use_romset;
+	if (useRomSet && config.mem_model == MM_P2666)
+	{
+		MLOGWARNING("ROMSET '%s' ignored: Pentagon 2.666 LE boots only its own 96K image ([ROM] P2666)",
+		            config.romSetName.c_str());
+		useRomSet = false;
+	}
+
+	if (useRomSet)
 	{
 		// Use separate files for each ROM bank
 		result = LoadROMSet();
@@ -406,6 +428,15 @@ bool ROM::LoadROM()
 					memory.base_dos_rom = lastPage + 1 * PAGE_SIZE;
 					memory.base_128_rom = lastPage + 2 * PAGE_SIZE;
 					memory.base_sys_rom = lastPage + 3 * PAGE_SIZE;
+				}
+			}
+			else if (config.mem_model == MM_P2666)
+			{
+				// Gluk, TR-DOS, BASIC 128, BASIC 48, FATALL, logo (data/rom/p2666/p2666.rom)
+				if (loadedBanks != 6)
+				{
+					MLOGERROR("Incorrect ROM size for Pentagon 2.666 LE. Should be 96 KB. Found %d", loadedBanks * PAGE_SIZE);
+					result = false;
 				}
 			}
 			else if (config.mem_model == MM_GMX)
@@ -827,6 +858,13 @@ std::string ROM::GetROMPageRole(uint8_t page) const
         case MM_ATM450:
             return (page < 4) ? ATM450_ROLES[page]
                               : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        case MM_P2666:
+        {
+            static const char* const P2666_ROLES[6] = {"Gluk Reset Service (page #48)", "TR-DOS 6.11E (page #49)",
+                                                       "BASIC 128 (page #4A)", "BASIC 48 (page #4B)",
+                                                       "FATALL (page #4C)", "Boot logo (copied to RAM page 5)"};
+            return (page < 6) ? P2666_ROLES[page] : StringHelper::Format("ROM Page %d", static_cast<int>(page));
+        }
         case MM_PROFI:
         case MM_PROFI3:
             return (page < 4) ? PROFI_ROLES[page]

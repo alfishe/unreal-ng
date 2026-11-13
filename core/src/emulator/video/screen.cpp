@@ -7,6 +7,7 @@
 #include <cassert>
 #include <climits>
 #include <cstring>
+#include <iterator>
 #include <fstream>
 #include <iostream>
 
@@ -19,6 +20,7 @@
 #include "emulator/video/atm/atmgeometry.h"
 #include "emulator/video/atm/screenatm.h"
 #include "emulator/video/gmx/gmxgeometry.h"
+#include "emulator/video/p2666/p2666geometry.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -49,6 +51,10 @@ Screen::Screen(EmulatorContext* context)
     _cpu = _system ? _system->GetZ80() : nullptr;
     _memory = _context->pMemory;
     _logger = _context->pModuleLogger;
+
+    // The model's raster rows (the generic ones, or the model's own)
+    std::copy(std::begin(kGenericRasterDescriptors), std::end(kGenericRasterDescriptors), std::begin(rasterDescriptors));
+    ApplyModelGeometry(_context->config.mem_model);
 
     // Initialize video control structure
     memset(&_vid, 0, sizeof(_vid));
@@ -214,6 +220,8 @@ void Screen::DetectRaster()
 
     /// region <Set current video mode>
 
+    ApplyModelGeometry(_context->config.mem_model);
+
     // Per-model detection: port/config state -> (mode, raster)
     ModeSelection selection = DetectVideoMode(_context->config.mem_model);
 
@@ -237,8 +245,9 @@ void Screen::DetectRaster()
     // (_mode/_vid.mode) can disagree with the model's base mode, and comparing
     // detection-to-detection left 48K/128K machines running with the Pentagon
     // raster and contention disabled.
-    if (video.mode != _mode)
+    if (video.mode != _mode || selection.paperHidden != _paperHidden)
     {
+        _paperHidden = selection.paperHidden;
         SetVideoMode(video.mode);
 
         /// region <Sanity checks>
@@ -281,7 +290,8 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_NEXT:
             return { M_NEXT, R_256_192 };
         case MM_PENTAGON:
-            return DetectModePentagon(state);
+        case MM_P2666:
+            return DetectModeP2666(state);
         case MM_ATM450:
             return DetectModeATM1(state);
         case MM_ATM710:
@@ -478,6 +488,59 @@ Screen::ModeSelection Screen::DetectModeGMX(const EmulatorState& state) const
         return { M_PENTAGON128K, R_256_192 };
 
     return DetectModeScorpion(state);
+}
+
+// Pentagon 2.666 LE: gfx_mode = xx77[2:0] & 00 & EFF7.0 (PaE.vhd:1450, zx_main.vhd:250-409, hardware-reference.md
+// §6.1). The ZX and Pentagon 16 colour modes keep the Pentagon raster; the board's visible window is the model's
+// rows (ApplyModelGeometry). Any other gfx_mode has no case in zx_main: the colour register and the border flags keep
+// their last values, the border logic keeps running - the frame shows the border colour (D-8: copied, not improved)
+Screen::ModeSelection Screen::DetectModeP2666(const EmulatorState& state) const
+{
+    const uint8_t atm = state.p2666.pxx77 & 0x07;
+    const bool z0 = (state.pEFF7 & 0x01) != 0;
+    switch (atm)
+    {
+        case 0x03: return {z0 ? M_P16 : M_PENTAGON128K, R_256_192};
+        case 0x00: if (!z0) return {M_ATM16, R_320_200}; break;
+        case 0x02: if (!z0) return {M_ATMHR, R_320_200}; break;
+        case 0x06: if (!z0) return {M_ATMTX, R_320_200}; break;
+        default: break;
+    }
+    return {M_PENTAGON128K, R_256_192, true};
+}
+
+void Screen::ApplyModelGeometry(MEM_MODEL model)
+{
+    if (_geometryApplied && _geometryModel == model)
+        return;
+    _geometryApplied = true;
+    _geometryModel = model;
+
+    // Every model starts from the generic rows (a Screen whose model changed drops the previous model's)
+    std::copy(std::begin(kGenericRasterDescriptors), std::end(kGenericRasterDescriptors), std::begin(rasterDescriptors));
+    _borderMask = 0x07;
+    _paperHidden = false;
+
+    if (model == MM_P2666)
+    {
+        // The board's visible window around the Pentagon raster's paper (p2666geometry.h): the paper keeps the
+        // Pentagon 128's line 80 / T 30 + 4 c fetch slot of the decoder's frame origin
+        using namespace P2666Geometry;
+        const RasterDescriptor zx = {kVisibleWidth, kVisibleHeight, 256, 192, kBorderLeft, kBorderTop, 448, 64, 32,
+                                     kVSyncLines, kVBlankLines};
+        rasterDescriptors[M_PENTAGON128K] = zx;
+        rasterDescriptors[M_P16] = zx;
+        // ATM: the window 16 T left of the ZX paper, side borders at the window's dot clock (2 / 4 px per T)
+        rasterDescriptors[M_ATM16] = {static_cast<uint16_t>(2 * (kAtmWindowStartT + kAtmWindowT + kAtmBorderRightT)),
+                                      kVisibleHeight, 320, kAtmLines, static_cast<uint16_t>(2 * kAtmWindowStartT),
+                                      kBorderTop, 448, 64, 32, kVSyncLines, kVBlankLines};
+        const RasterDescriptor hires = {static_cast<uint16_t>(4 * (kAtmWindowStartT + kAtmWindowT + kAtmBorderRightT)),
+                                        kVisibleHeight, 640, kAtmLines, static_cast<uint16_t>(4 * kAtmWindowStartT),
+                                        kBorderTop, 448, 64, 32, kVSyncLines, kVBlankLines};
+        rasterDescriptors[M_ATMHR] = hires;
+        rasterDescriptors[M_ATMTX] = hires;
+        _borderMask = 0x0F;
+    }
 }
 
 // Unknown/legacy models: keep the current mode, standard ZX raster
@@ -721,8 +784,8 @@ void Screen::SetBorderColor(uint8_t color)
     // This fixes pixel-perfect multicolor effects (raster bars) across all models.
     UpdateScreen();
 
-    // Only bits [0:2] contain border color
-    _borderColor = color & 0b0000'0111;
+    // Bits [0:2] carry the border color (bit 3 the bright bit on machines with a 16 colour border)
+    _borderColor = color & _borderMask;
     NoteVideoWrite();
 }
 
@@ -2214,6 +2277,13 @@ LineGeometry Screen::GetLineGeometry(VideoModeEnum mode, const RasterDescriptor&
         case M_ATMHR:
         case M_ATMTX:
         case M_ATMTL:
+            // Rows with side borders (Pentagon 2.666 LE): the window after screenOffsetLeft dots at its own clock
+            if (timing.screenOffsetLeft != 0)
+            {
+                const uint16_t dots = mode == M_ATM16 ? 2 : 4;
+                return {static_cast<uint16_t>(timing.screenOffsetLeft / dots), static_cast<uint16_t>(timing.screenWidth / dots),
+                        static_cast<uint16_t>(timing.fullFrameWidth / dots), static_cast<uint8_t>(dots)};
+            }
             return {static_cast<uint16_t>(ScreenAtm::SCREEN_START_T),
                     static_cast<uint16_t>(ScreenAtm::SCREEN_END_T - ScreenAtm::SCREEN_START_T),
                     static_cast<uint16_t>(ScreenAtm::SCREEN_END_T + ScreenAtm::SCREEN_START_T),
@@ -2587,14 +2657,15 @@ void Screen::DrawPeriod(uint32_t fromTstate, uint32_t toTstate)
     // Next frame started during current CPU command processing. Adjust to Tstate
     if (fromTstate > toTstate)
     {
-        // One-t-state backward step: ScreenZX::SetBorderColor's Pentagon +1T
+        // One-t-state backward step (two on the Pentagon 2.666 LE, which holds the
+        // border 2 T): ScreenZX::SetBorderColor's Pentagon +1T
         // border compensation advances _prevTstate ahead of the beam, and under
         // CPU frequency multipliers > 1 the unscaled t-state (cpu->t / multiplier)
         // advances by less than 1 per CPU command - so the next UpdateScreen
         // lands exactly one t-state behind. No forward period to render: skip
         // quietly. (Genuine frame-boundary wraps are a full frame wide and fall
         // through to the wrap handling below; anything else is a real error.)
-        if (fromTstate - toTstate <= 1)
+        if (fromTstate - toTstate <= P2666Geometry::kBorderHoldT)
         {
             return;
         }

@@ -573,7 +573,8 @@ public:
     /// vertical blank), rebuilt on every call
     mutable RasterDescriptor _atm450Timing{};
 
-    const RasterDescriptor rasterDescriptors[M_MAX] = {
+    /// The generic rows of every mode; rasterDescriptors starts as a copy
+    static constexpr RasterDescriptor kGenericRasterDescriptors[M_MAX] = {
         {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                  // M_NUL
         {352, 288, 256, 192, 48, 48, 448, 64, 32, 8, 16},   // M_ZX48k
         {352, 288, 256, 192, 48, 48, 456, 64, 32, 8, 15},   // M_ZX128 (311 lines: 228*311=70908)
@@ -647,6 +648,10 @@ public:
         {640, 512, 512, 384, 64, 64, 448, 64, 32, 8, 16},  // M_NEXT
     };
 
+    /// The rows of the model's modes: the generic rows, except for the models with a raster of their own, which
+    /// ApplyModelGeometry writes over them (Pentagon 2.666 LE: the board's visible window)
+    RasterDescriptor rasterDescriptors[M_MAX];
+
     // Default color table: 0RRrrrGG gggBBbbb
     uint16_t spec_colors[16] = {0x0000, 0x0010, 0x4000, 0x4010, 0x0200, 0x0210, 0x4200, 0x4210,
                                 0x0000, 0x0018, 0x6000, 0x6018, 0x0300, 0x0318, 0x6300, 0x6318};
@@ -671,6 +676,14 @@ protected:
     videomap::VideoWriteLog _videoWriteLog;
     uint8_t* _activeScreenMemoryOffset;
     uint8_t _borderColor;
+    /// Bits of the border colour the machine keeps: 3 (8 colours), 4 on machines whose border goes through a 16-entry
+    /// palette with a bright bit (Pentagon 2.666 LE: FE colour + NOT A3, hardware-reference.md §6.3)
+    uint8_t _borderMask = 0x07;
+    /// The paper is not drawn: the border colour over the whole frame (Pentagon 2.666 LE undefined video modes, D-8)
+    bool _paperHidden = false;
+    /// The model whose geometry rasterDescriptors holds (ApplyModelGeometry)
+    MEM_MODEL _geometryModel = MM_SPECTRUM48;
+    bool _geometryApplied = false;
 
     // Frame-level screen switch tracking (zero overhead when HUD disabled)
     bool _feature_hud_enabled = false;
@@ -779,7 +792,11 @@ protected:
     {
         VideoModeEnum mode;
         RasterModeEnum raster;
+        bool paperHidden = false;  ///< the border colour over the whole frame (undefined modes of some machines)
     };
+
+    /// Writes the model's own raster rows over the generic ones (once per model; Pentagon 2.666 LE)
+    void ApplyModelGeometry(MEM_MODEL model);
 
     /// Single routing point: maps the machine model to its per-family
     /// detector. InitRaster calls only this; adding a model family means
@@ -797,6 +814,7 @@ protected:
     ModeSelection DetectModeProfi(const EmulatorState& state) const;
     ModeSelection DetectModeScorpion(const EmulatorState& state) const;
     ModeSelection DetectModeGMX(const EmulatorState& state) const;
+    ModeSelection DetectModeP2666(const EmulatorState& state) const;
     ModeSelection DetectModeLegacy(const EmulatorState& state) const;
     /// endregion </Video mode detection>
 
@@ -811,7 +829,10 @@ public:
     virtual void SetActiveScreen(SpectrumScreenEnum screen);
     virtual void SetBorderColor(uint8_t color);
     /// The border color at a reset: taken over without drawing anything (no beam position to flush to)
-    void ResetBorderColor(uint8_t color) { _borderColor = color & 0b0000'0111; }
+    void ResetBorderColor(uint8_t color) { _borderColor = color & _borderMask; }
+    /// The machine's programmable palette (EmulatorState::atm.palette) changed: renderers that keep colour tables
+    /// built from it rebuild them. The caller flushes the picture up to the write first (UpdateScreen)
+    virtual void RefreshProgrammablePalette() {}
 
     virtual VideoModeEnum GetVideoMode();
     virtual uint8_t GetActiveScreen();

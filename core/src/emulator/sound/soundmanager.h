@@ -148,6 +148,7 @@ protected:
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
     IModelAudioSource* _modelAudio = nullptr;
+    std::vector<AudioSourceType> _modelAudioAddedRows;  ///< the rows its parts added (not the ones they took over)
     std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
     // Not under UNREALNG_HAVE_OPL4: the class must have one layout in every translation unit. Targets that read these
