@@ -23,6 +23,8 @@
 #include "base/featuremanager.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/z80n/nextboard.h"
+#include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
@@ -207,6 +209,33 @@ TEST_F(LoaderNex_Test, LoadingDropsAHeldAutomapAndConmem)
     EXPECT_EQ(div.ReadPort() & 0x80, 0) << "CONMEM is clear";
     EXPECT_EQ(div.Bank(), 1) << "the bank the OS selected stays";
     EXPECT_EQ(decoder->Board().Stored(0x0A) & 0x10, 0x10) << "NEXLOAD does not touch the automap enable (NR #06 bit 4 is the DRIVE button)";
+}
+
+// NextZXOS starts a program only after a reset: a file opened over a running program does not inherit its interrupt controller (game.nex
+// opened over rts_test halted forever in hardware IM2, the line interrupt pending and in service), its CTC or its DMA
+TEST_F(LoaderNex_Test, LoadingOverAProgramStartsFromTheResetInterruptController)
+{
+    auto* decoder = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    NextBoard& board = decoder->Board();
+    board.Write(0xC0, 0x01);  // hardware IM2
+    board.Write(0x22, 0x06);  // the line interrupt on, the ULA one off
+    decoder->Interrupts().Raise(NextInterruptSource::kLine);
+    ASSERT_NE(decoder->Interrupts().PendingMask(), 0);
+    auto image = MakeNex("V1.2", 0, 0, {{0, {0x18, 0xFE}}}, 0xC000, 0xBFF0, 0, 0);
+    LoaderNex loader(_context);
+    ASSERT_TRUE(loader.Load(image)) << loader.Error();
+    EXPECT_EQ(decoder->Interrupts().PendingMask(), 0);
+    EXPECT_EQ(decoder->Interrupts().InServiceMask(), 0);
+    uint8_t value = 0xFF;
+    ASSERT_TRUE(decoder->Interrupts().ReadNr(0xC0, value));
+    EXPECT_EQ(value & 0x01, 0) << "back in the Z80's own interrupt modes";
+    ASSERT_TRUE(decoder->Interrupts().ReadNr(0xC4, value));
+    EXPECT_EQ(value, 0x81) << "the reset enables: the expansion bus and the ULA";
+    // the machine now runs a program: the next NEX is started from NextZXOS again (Emulator::LoadSnapshot soft-resets first)
+    EXPECT_TRUE(decoder->ProgramStarted());
+    _emulator->Reset();
+    EXPECT_FALSE(decoder->ProgramStarted());
 }
 
 // nexload.asm 323-349: PERIPHERAL_2 (NR #06) res 4 / set 3, PERIPHERAL_3 (NR #08) set 7 6 3 2 1, res 5 0; bit 4 of NR #08 is a user setting

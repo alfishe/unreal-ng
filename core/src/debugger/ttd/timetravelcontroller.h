@@ -1440,6 +1440,13 @@ public:
     /// end (no further history).
     bool StepForwardInstruction();
 
+    /// @brief Step back over (the debuggers' Shift+F8): one instruction back, but when that instruction is a return
+    /// (RET, RET cc taken, RETI, RETN) that brought the stack up to where it is now, back past the whole routine to
+    /// the instruction at this stack level before it: the CALL / RST that entered it, or the instruction an interrupt
+    /// came after. The routine is found by the stack level of each instruction's start (SP), so nested calls,
+    /// interrupts inside it and recursion are passed over too. There is no reverse step out (owner 2026-11-12).
+    ttd::TTDReverseStepOverResult ReverseStepOver();
+
     // -----------------------------------------------------------------------
     // Phase 4 reverse execution (extends single-opcode step helpers with
     // multi-step / reverse-continue primitives).

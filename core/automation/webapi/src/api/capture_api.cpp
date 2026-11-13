@@ -269,7 +269,7 @@ std::vector<uint8_t> LayerBytes(const NextLayer::Image& image, bool rgba)
 
 /// @brief GET /api/v1/emulator/:id/capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=png|rgba][&alpha=false][&size=screen|grid|pixel][&path=]
 /// One layer of the last completed Next frame (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw
-/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's (640 x 512) unless size=grid (640 x 256) or size=pixel (320 x 256).
+/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's grid (640 x 512, at (32, 32) of its 720 x 576 frame) unless size=grid (640 x 256) or size=pixel (320 x 256).
 /// 409: not a Next, the capture is off (POST next/layer-capture), or no frame completed yet
 static void ReplyLayerScreen(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>& callback, const std::shared_ptr<Emulator>& emulator,
                              NextLayer::Kind kind)

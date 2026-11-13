@@ -322,8 +322,19 @@ PortDecoder_Next::~PortDecoder_Next()
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
+void PortDecoder_Next::PowerCycle()
+{
+    _poweredOn = false;
+    reset();
+}
+
 void PortDecoder_Next::reset()
 {
+    // zxnext.vhd 4619-4628: only reset_hard clears nr_03 / nr_04 and turns the boot ROM on again (outside config mode); the board's
+    // soft reset (the button, F4, NR #02 bit 0) keeps them, so after the firmware it restarts NextZXOS without the logo
+    const bool powerOn = !_poweredOn;
+    _poweredOn = true;
+    _programStarted = false;
     EmulatorState& state = _context->emulatorState;
     state.p7FFD = 0x00;
     state.p1FFD = 0x00;
@@ -336,9 +347,11 @@ void PortDecoder_Next::reset()
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
     InsertConfiguredCard();
-    _board->Reset(true);
+    _board->Reset(powerOn);
+    if (!powerOn)
+        _board->NoteSoftReset();
     _ctc.Reset();
-    _uart.Reset(true);
+    _uart.Reset(powerOn);
     _audio->Reset();
     AudioConfigChanged();
     _dma.Reset();
@@ -1047,6 +1060,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             if (_context->pScreen)
                 _context->pScreen->UpdateScreen();
             _board->Video().WritePortFf(value);
+            _interrupts->SetUlaInterruptDisabled((value & 0x40) != 0);  // bit 6: the ULA interrupt off (zxnext.vhd 3616, 3635)
         }
     }  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
@@ -1168,18 +1182,13 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
 /// The DMA reads and writes through the Z80's view of memory and the port decoder
 void PortDecoder_Next::BindDma()
 {
-    // The SRAM read wait for the DMA's own reads at 28 MHz (zxnext.vhd 3.02.03 3171-3181, 1830, 1844) is OFF for now. With it, the
-    // zxnDDMA compare example (`zxnddma_compare`, 32 balls of 16x16) takes 2.5 ms where the 3.03.00 guide says 2.1 ms (+0.3 ms: one clock
-    // for each of the 8192 bytes at 28 MHz); without it 2.2 ms. The RTL of 3.03.00 is not public, so which is right is open: set this
-    // to true to follow 3.02.03 again (docs/inprogress/2026-10-07-zx-next/design-zxnddma.md section 8, TODO.md "zxnDDMA")
-    constexpr bool kDmaSramWait = false;
     NextDma::Bus bus;
     // In debug mode the accesses go through the main CPU's watchpoints (the DMA drives the CPU's address bus)
     bus.readMemory = [this](uint16_t address) {
         const uint8_t value = _context->pMemory->DirectReadFromZ80Memory(address);
-        // zxnext.vhd 3171-3181: at 28 MHz a read that reaches the SRAM waits a clock; cpu_rd_n is the DMA's own read while it holds the bus
-        // and dma_wait_n includes sram_wait_n (1830, 1844)
-        if (kDmaSramWait && Mem().SramWait28() && Mem().SlotWaitsAt28(address >> 13))
+        // zxnext.vhd 3.02.03 3171-3181: at 28 MHz a read that reaches the SRAM waits a clock; cpu_rd_n is the DMA's own read while it holds
+        // the bus and dma_wait_n includes sram_wait_n (1830, 1844). Core 3.03 has no such wait (UpdateContention: SramWait28 is off there)
+        if (Mem().SramWait28() && Mem().SlotWaitsAt28(address >> 13))
             _context->pCore->GetZ80()->InsertWaitStates(1);
         if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
             ReportDmaAccess(false, address, value);
@@ -1193,7 +1202,7 @@ void PortDecoder_Next::BindDma()
     // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
     bus.readPhysical = [this](uint32_t address) {
         // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
-        if (kDmaSramWait && Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
             _context->pCore->GetZ80()->InsertWaitStates(1);
         return Mem().PhysicalRead(address);
     };
@@ -2005,7 +2014,10 @@ void PortDecoder_Next::UpdateContention()
     const bool off = _ratio > 1 || _nr08NoContention;
     _state->hw_contention_disabled = off ? 1 : 0;
     Mem().SetContentionRule(timing);
-    Mem().SetSramWait28(_ratio == 8);
+    // The SRAM read wait at 28 MHz (zxnext.vhd 3.02.03 3171-3181: a clock for each CPU and DMA read of the SRAM) is gone in core 3.03:
+    // measured on a board (2026-11-12, owner), the Z80 at 28 MHz reads without it and the DMA reads in its cycle length (2 + 1 on 3.02.03,
+    // 2 on 3.03); the zxnDDMA guide's times (design-zxnddma.md section 8) fit too. The zxnDDMA variant is the 3.03 core
+    Mem().SetSramWait28(_ratio == 8 && _context->config.next_zxnddma == 0);
     if (UlaContention* ula = _context->pUlaContention)
     {
         ula->SetContentionEnabled(family && !off);

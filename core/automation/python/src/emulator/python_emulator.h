@@ -2123,7 +2123,9 @@ namespace PythonBindings
                py::arg("client") = "python")
             .def("release_control", [](Emulator& self) { execution::script::ReleaseControl(self, execution::Origin::Python); },
                  "End the automation session")
-            .def("reset", &Emulator::Reset, "Reset emulator")
+            .def("reset", [](Emulator& self, bool hard) { self.Reset(hard); }, py::arg("hard") = false,
+                 "Reset emulator: soft (the reset button) by default; hard=True is a power cycle (the ZX Next runs its "
+                 "boot ROM and firmware again)")
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,
                  "Scorpion magic button: page the Shadow Monitor, then NMI (plain NMI on other models)")
@@ -4653,7 +4655,7 @@ namespace PythonBindings
                "ONE LAYER of the last completed frame of a ZX Spectrum Next (design-layer-capture.md): 'ula' (with the border and LoRes), "
                "'layer2', 'tilemap', 'sprites' - a PNG with alpha 0 where the layer does not paint (format='rgba': the raw bytes; "
                "alpha=False: flattened onto the fallback colour) - or 'ids' (each pixel coloured by the layer that won it, legend in "
-               "the answer). 640 x 512, the geometry of capture_screen(). Returns a dict like capture_screen (base64 'data' or 'file'); "
+               "the answer). 640 x 512, the grid of capture_screen()'s 720 x 576 frame at (32, 32). Returns a dict like capture_screen (base64 'data' or 'file'); "
                "success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter' otherwise")
             .def("next_layer_capture_control", [](Emulator& self, py::object enabled) -> py::object {
                 return StateNodeToPy(DeviceState::NextLayerCaptureControl(self.GetContext(), enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0)));
@@ -6828,6 +6830,11 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
                py::arg("scanlines") = 1)
+
+            .def("ttd_reverse_step_over", [](Emulator& self) -> bool {
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step-over", {});
+                return reply.Ok() && reply.body.find("stepped")->b;
+            }, "Step back over a routine whose return comes before, else one instruction back")
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs, const py::kwargs& kwargs) -> py::object {
                 std::string list;

@@ -28,6 +28,7 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QSettings>
+#include <QStringList>
 #include <QTcpSocket>
 #include <QThread>
 #include <QUrl>
@@ -713,6 +714,56 @@ public:
     QString endpoint() const { return QString("http://%1:%2").arg(m_host).arg(m_port); }
 
     bool debug_online() const override { return m_online.load(); }
+    // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
+    // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
+    bool ttd_supported() const override { return true; }
+    TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options) override
+    {
+        if (!m_online.load()) return {false, R"({"error":"Service Unavailable","message":"The emulator is not connected"})"};
+        std::map<std::string, std::string> rest = options;
+        auto take = [&rest](const char * key) {
+            const auto it = rest.find(key);
+            if (it == rest.end()) return QString();
+            const QString value = QString::fromStdString(it->second);
+            rest.erase(it);
+            return value;
+        };
+        const char * method = "POST";
+        QString path = m_base + "/ttd/";
+        if (verb == "status" || verb == "position" || verb == "branches") {
+            method = "GET";
+            path += QString::fromStdString(verb);
+        } else if (verb == "branch-switch") {
+            path += "branches/" + take("branch") + "/switch";
+        } else if (verb == "branch-update") {
+            method = "PATCH";
+            path += "branches/" + take("branch");
+        } else if (verb == "branch-delete") {
+            method = "DELETE";
+            path += "branches/" + take("branch");
+        } else {
+            path += QString::fromStdString(verb);
+        }
+        QJsonObject body;
+        QStringList query;
+        const bool in_query = strcmp(method, "GET") == 0 || strcmp(method, "DELETE") == 0;
+        for (const auto &[key, value] : rest) {
+            if (in_query)
+                query << QString::fromStdString(key) + "=" +
+                             QString::fromUtf8(QUrl::toPercentEncoding(QString::fromStdString(value)));
+            else
+                body.insert(QString::fromStdString(key), QString::fromStdString(value));
+        }
+        if (!query.isEmpty()) path += "?" + query.join('&');
+        int status = 0;
+        // A move in time replays up to a frame and a reverse-continue searches the history: as long as a step over
+        const QJsonObject answer = m_http.json(method, path, body, &status, in_query ? 5000 : 15000);
+        if (!in_query) changed();
+        const bool ok = status >= 200 && status < 300;
+        if (status == 0)
+            return {false, R"({"error":"Service Unavailable","message":"The emulator did not answer"})"};
+        return {ok, QJsonDocument(answer).toJson(QJsonDocument::Compact).toStdString()};
+    }
     std::string debug_offline_text() const override
     {
         return QString("Waiting for %1 at %2:%3")

@@ -128,11 +128,12 @@ tested before the timing phase.
   (`cpu_rd_n` is the DMA's own read while it holds the bus, `dma_wait_n` includes `sram_wait_n`, lines 1830 and 1844). The commented-out
   line above it limits the wait to M1 and DMA reads. Core 3.03.00 may have changed it: its RTL is not public (phase 0). Pinned by
   `NextSkeleton_Test.At28MHzSramReadsWaitOneClockAndBank7DoesNot` and the RTL timing cases, so it stays as it is.
-- **Switched OFF (2026-11-11, owner decision):** the DMA's SRAM read wait at 28 MHz (memory and physical accesses, not the bank 7 BRAM;
-  `zxnext.vhd` 3.02.03) was implemented and measured, then disabled: `kDmaSramWait = false` in `BindDma()` (`portdecoder_next.cpp`),
-  one constant to set back. With it way 4/5 took 2.5 ms (+0.3 ms: one clock for each of the 8192 bytes), way 3 9.7 ms, against the
-  guide's 2.1 / 8.2 ms; without it 2.2 / 9.3 ms (way 1/2 are CPU and do not change: 8.3 / 18.9 ms). The guide's numbers fit a core where
-  the DMA does not pay that clock. Open until the 3.03.00 RTL or a board measurement says which is right. Physical-mode accesses skip
-  `contend` (the video logic decodes contention from the CPU address, which a physical access does not carry).
+- **Settled per core (2026-11-12, measured on a board by the owner):** core 3.02.03 waits a clock on each CPU and DMA read of the SRAM
+  at 28 MHz (a DMA read with cycle length 2 takes 2 + 1 clocks, a write 2); core 3.03 has no such wait for either (a DMA read takes its
+  cycle length, the Z80 no +1). The emulator follows the core: `SetSramWait28` in `PortDecoder_Next::UpdateContention` is on only for the
+  plain `NEXT` (3.02.03), off for `NEXT-DDMA` (3.03), and the DMA's reads in `BindDma()` take it from there (the 2026-11-11 constant
+  `kDmaSramWait` is gone). The guide's numbers fit: without the waits way 4/5 takes 2.2 ms (guide 2.1), way 3 9.3 ms (8.2), and the CPU
+  ways should lose most of their +15-21% (the LDIR's three read waits; not re-measured yet). Pinned by `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Physical-mode
+  accesses skip `contend` (the video logic decodes contention from the CPU address, which a physical access does not carry).
 - Fill mode costs one write cycle set a byte (the guide: twice as fast as a fixed source); not measured against a number.
 - Not checked: the IM2 + DI hold, 2D with auto restart, the burst/prescaler interplay with 2D.

@@ -75,6 +75,7 @@
 #include "dialogs/debugger/debuggerwindow.h"
 #include "dialogs/debugger/debugstyle.h"
 #include "dialogs/debugger/disasmview.h"
+#include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
 #include "dialogs/debugger/pagedmemory.h"
 #include "dialogs/debugger/sideviews.h"
@@ -856,6 +857,69 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
                   QFontMetrics(window->font()).height() == ui1,
               "zoom: a step down, 100 % gives the sizes back");
         w->set_zoom(z0);
+    }
+
+    // Time travel (not in ecat): a short recording asked for here, then the toolbar's back steps and a branch
+    auto * dw = dynamic_cast<DebuggerWindow *>(window);
+    TtdControls * ttd = dw ? dw->ttd() : nullptr;
+    // The machine runs on first: a card's breakpoint above parked it inside a frame end, where a recording cannot
+    // start cleanly (docs/inprogress/2026-11-08-ttd-branches/debuggers.md §7)
+    if (ttd != nullptr) {
+        const uint64_t from = machine_frames(m);
+        m->debug_run(true);
+        wait_for([m, from]() { return machine_frames(m) >= from + 2; }, 5000);
+        m->debug_pause();
+        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+    }
+    if (ttd != nullptr && ttd->call("start", {}, nullptr)) {
+        auto record = [m](uint64_t frames) {
+            const uint64_t from = machine_frames(m);
+            m->debug_run(true);
+            wait_for([m, from, frames]() { return machine_frames(m) >= from + frames; }, 5000);
+            m->debug_pause();
+            wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
+        };
+        auto frame = [ttd]() {
+            QJsonObject p;
+            ttd->call("position", {}, &p);
+            return (uint64_t)p.value("current").toObject().value("frame").toInteger();
+        };
+        record(20);
+        ttd->call("stop", {}, nullptr);
+        ttd->poll(true);
+        check(ttd->shown() && ttd->moment() == "Live, not recorded", "ttd: the group shows, live past the end");
+        ttd->frame_back();
+        const uint64_t past = frame();
+        check(ttd->moment().startsWith("History: frame"), "ttd: frame back replays the history");
+        const unsigned int r1 = reg(cpu, "R");
+        ttd->step_back();
+        check(reg(cpu, "R") != r1 && ttd->moment().startsWith("History: frame"), "ttd: step back (R moved)");
+        ttd->frame_back();
+        ttd->frame_back();
+        check(frame() < past, "ttd: frame back twice goes earlier");
+        check(ttd->branch_here_action()->text() == "Branch Here", "ttd: Branch Here in the past");
+        ttd->branch_here();
+        record(5);
+        ttd->call("stop", {}, nullptr);
+        ttd->poll(true);
+        QJsonObject list;
+        ttd->call("branches", {}, &list);
+        const QJsonArray branches = list.value("branches").toArray();
+        check(branches.size() == 2 && ttd->moment().contains("(2 branches)"), "ttd: Branch Here made a second branch");
+        ttd->build_branch_menu();
+        check(!ttd->branch_menu()->actions().isEmpty(), "ttd: the branch drop-down lists them");
+        unsigned int made = 0;
+        for (const QJsonValue &b : branches)
+            if (b.toObject().value("id").toInteger() != 0) made = (unsigned int)b.toObject().value("id").toInteger();
+        ttd->confirm = [](const QString &, const QString &) { return true; };
+        check(made != 0 && ttd->delete_branch(made), "ttd: delete the branch (switches to the trunk first)");
+        ttd->call("branches", {}, &list);
+        check(list.value("branches").toArray().size() < 2, "ttd: one line of history again");
+        ttd->call("invalidate", {}, nullptr);
+        ttd->poll(true);
+        check(!ttd->shown(), "ttd: without a history nothing shows");
+    } else {
+        printf("  %-52s %s\n", "ttd", "skipped (no time travel on this machine)");
     }
 
     m->debug_run(true);

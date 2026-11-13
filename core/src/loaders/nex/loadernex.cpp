@@ -12,6 +12,8 @@
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/z80n/nextboard.h"
+#include "emulator/io/z80n/nextctc.h"
+#include "emulator/io/z80n/nextinterrupts.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/video/screen.h"
@@ -182,6 +184,14 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     // NEXLOAD leaves its last esxDOS call through the DivMMC's #1FF8 off-area: the program starts with the DivMMC out and CONMEM clear
     decoder->DivMmc().ReleaseForProgramStart();
 
+    // NextZXOS runs a program only after a reset: the interrupt controller, the CTC and the DMA are as the reset left them (the OS runs
+    // in IM 1 and uses none of them). A file opened over a running program would otherwise inherit its hardware IM2 mode, its enables
+    // and the interrupt it was serving: game.nex opened over rts_test halted forever, the line interrupt still in service with no RETI
+    // to come
+    decoder->Interrupts().Reset();
+    decoder->Ctc().Reset();
+    decoder->Dma().Reset();
+
     // NextZXOS has left the config mode (and switched the boot ROM off) by the time it starts a program; a machine that has just
     // powered on is still in it, and the boot ROM then hides the Layer 2 write window from slot 0 (Kings Valley 2: the first 8K of
     // every Layer 2 bank stayed empty). A NR #03 write with machine type 3 leaves it, as the OS does
@@ -332,6 +342,7 @@ bool LoaderNex::Load(const std::vector<uint8_t>& image)
     z80->pc = _header.pc;
     z80->iff1 = z80->iff2 = 0;
     z80->halted = 0;  // a CPU waiting in HALT (NextZXOS idles there) leaves it
+    decoder->NoteProgramStarted();
     return true;
 }
 

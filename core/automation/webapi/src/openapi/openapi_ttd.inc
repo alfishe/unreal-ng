@@ -963,6 +963,28 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // POST /ttd/reverse-step-over — back over a routine (the debuggers' Shift+F8)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["summary"] = "Step back over a routine whose return comes before, else one instruction";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["description"] =
+        "One instruction back; when that instruction is the return (RET, RET cc, RETI, RETN) that lifted the stack to "
+        "where it is now, back past the whole routine to the instruction at this stack level before it: the CALL / RST "
+        "that entered it, or the instruction an interrupt came after. Nested calls and interrupts inside are passed "
+        "over. call_out_of_reach: the routine started before the history (or behind a barrier), the machine stays on "
+        "the return.";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["200"]["description"] = "Step attempted (check stepped / over_call)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDReverseStepOverResponse";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["404"]["description"] = "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["409"]["description"] = "No time travel session to step in";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["501"]["description"] = "TTD engine not available in this build";
+
+    // =====================================================================
     // POST /ttd/reverse-continue — run backward until PC matches (Phase 4)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["summary"] =

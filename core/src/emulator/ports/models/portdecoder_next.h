@@ -45,7 +45,10 @@ public:
     explicit PortDecoder_Next(EmulatorContext* context);
     ~PortDecoder_Next() override;
 
+    /// The host's reset (Emulator::Reset): a soft reset like the board's button - the machine type, config mode and the boot ROM's
+    /// state stay, so NextZXOS restarts at once; the first one after creation and PowerCycle() are the power-on (hard) reset
     void reset() override;
+    void PowerCycle() override;
     uint8_t DecodePortIn(uint16_t port, uint16_t pc) override;
     void DecodePortOut(uint16_t port, uint8_t value, uint16_t pc) override;
     void UpdateModelMemoryBanks() override;
@@ -164,6 +167,10 @@ public:
     NextBoard& Board() { return *_board; }
     NextInterruptSource& Interrupts() { return *_interrupts; }
     NextCtc& Ctc() { return _ctc; }
+    /// A program file (NEX) has been started since the last reset (LoaderNex notes it): another one is started from NextZXOS again
+    /// (Emulator::LoadSnapshot soft-resets the board first), as on the board, where only the OS starts a program
+    bool ProgramStarted() const { return _programStarted; }
+    void NoteProgramStarted() { _programStarted = true; }
     /// The level on pin 7 of the joystick connector in its I/O mode (NR #0B bits 7:4, zxnext.vhd 3507-3534): bit 0 in mode 00, toggled
     /// by CTC channel 3's ZC/TO in mode 01, the UART's TX (idle high; the waveform is not modelled) in modes 1x
     bool JoystickPin7() const { return _joyPin7; }
@@ -231,6 +238,8 @@ private:
     bool OnCopperStep(const NextCopper::Step& step);
     void WatchMagic(BreakpointManager& manager);
     bool _breakpointActive = false;  // a stop is being served: nothing nests in it
+    bool _poweredOn = false;         // reset() after the first one is the soft reset (PowerCycle clears it)
+    bool _programStarted = false;    // a program file (NEX) was started since the last reset: the machine is no longer NextZXOS's
     bool _watchValid = false;
     uint64_t _watchClock = 0;  // the copper clock up to which the copper was watched
     NextMemory& Mem() const { return *static_cast<NextMemory*>(_context->pMemory); }

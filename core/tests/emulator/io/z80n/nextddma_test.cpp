@@ -184,6 +184,9 @@ TEST_F(NextDdma_Test, PortBAndAnExtensionlessCoreTakeTheFollowBytesAsRegisters)
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/machinevariants.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
+#include "emulator/memory/memory.h"
 #include "emulator/ports/models/portdecoder_next.h"
 #include "_helpers/emulatortesthelper.h"
 
@@ -203,6 +206,53 @@ TEST(NextDdmaVariant_Test, OnlyTheDdmaVariantTakesTheCommands)
         ports->DecodePortOut(0x6B, 0xDF, 0);
         ports->DecodePortOut(0x6B, 0x01, 0);
         EXPECT_EQ(ports->Dma().Physical(), ddma) << (ddma ? "NEXT-DDMA" : "NEXT");
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
+}
+
+// The SRAM read wait at 28 MHz is the 3.02.03 core's (zxnext.vhd 3171-3181), core 3.03 (the variant NEXT-DDMA) dropped it - measured on
+// a board (2026-11-12): a NOP from the SRAM takes 5 clocks on 3.02.03 and 4 on 3.03, and a memory-to-memory DMA byte with both cycle
+// lengths 2 takes 2 + 1 + 2 clocks on 3.02.03 and 2 + 2 on 3.03
+TEST(NextDdmaVariant_Test, OnlyCore30203WaitsForTheSramAt28MHz)
+{
+    for (const bool ddma : {false, true})
+    {
+        const MachineVariant* variant = ddma ? MachineVariants::Find("NEXT-DDMA") : nullptr;
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("NEXT", LoggerLevel::LogError, RamPowerOn::Zero,
+                                                                        variant ? variant->apply : nullptr);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        auto* ports = dynamic_cast<PortDecoder_Next*>(context->pPortDecoder);
+        ASSERT_NE(ports, nullptr);
+        Z80* z80 = context->pCore->GetZ80();
+        auto out = [&](uint16_t port, uint8_t value) { ports->DecodePortOut(port, value, 0); };
+        out(0x243B, 0x07);
+        out(0x253B, 0x03);  // 28 MHz
+        out(0x243B, 0x56);
+        out(0x253B, 0x00);  // slot 6: bank 0 (SRAM)
+        emulator->RunFrame(true);  // the speed applies at a frame start
+        for (uint16_t i = 0; i < 64; i++)
+            context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0xC000 + i), 0x00);
+        z80->pc = 0xC000;
+        uint32_t t0 = z80->t;
+        for (unsigned i = 0; i < 32; i++)
+            z80->EngineStep();
+        EXPECT_EQ(z80->t - t0, 32u * (ddma ? 4u : 5u)) << (ddma ? "3.03" : "3.02.03") << ": NOPs from the SRAM";
+
+        // bank 0 #C000 -> bank 0 #C800, both ports memory counting up with cycle length 2, continuous; the NOPs at #C000 enable it
+        auto copyTime = [&](uint16_t length) {
+            for (uint8_t b : {uint8_t(0x83), uint8_t(0x7D), uint8_t(0x00), uint8_t(0xC0), uint8_t(length & 0xFF), uint8_t(length >> 8),
+                              uint8_t(0x54), uint8_t(0x02), uint8_t(0x50), uint8_t(0x02), uint8_t(0xAD), uint8_t(0x00), uint8_t(0xC8),
+                              uint8_t(0xCF), uint8_t(0x87)})
+                out(0x6B, b);
+            z80->pc = 0xC000;
+            const uint32_t start = z80->t;
+            z80->EngineStep();
+            z80->EngineStep();
+            return z80->t - start;
+        };
+        const uint32_t perByte = (copyTime(128) - copyTime(64)) / 64;
+        EXPECT_EQ(perByte, ddma ? 4u : 5u) << (ddma ? "3.03" : "3.02.03") << ": a DMA byte, memory to memory, cycle length 2";
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }

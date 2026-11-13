@@ -682,7 +682,8 @@ emu = Emulator.new("symbolic_id")
 success = emu:init()
 
 -- Control
-emu:reset()
+emu:reset()                -- soft: the reset button (the ZX Next restarts NextZXOS at once)
+emu:reset{hard = true}     -- hard: a power cycle (the ZX Next runs its boot ROM and firmware); emu:reset(true) too
 emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
@@ -1210,6 +1211,8 @@ ttd_reverse_step()               --> bool  -- one instruction back
 ttd_reverse_step(10)             --> bool  -- ten instructions back
 ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
 ttd_reverse_step_scanlines(2)    --> bool  -- back 2 scanlines of the machine (t_line each)
+ttd_reverse_step_over()          --> bool  -- back over a routine when the instruction before is its return,
+                                          --    otherwise one instruction back (the debuggers' Shift+F8)
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
