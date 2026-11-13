@@ -577,6 +577,16 @@ TTDReply TTDControlBackend::Execute(const std::string& verb, const TTDRequest& r
 TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& request)
 {
     using coordinator::OpKind;
+    // A move in time restores a checkpoint under the machine: not while its thread stands inside another CPU's run
+    // (a General Sound breakpoint), where the rest of that run and of the frame end would go on over the restored
+    // machine (debuggers.md §7). A start there waits for the next frame boundary (StartRecording)
+    static const std::set<std::string> moves = {"seek", "step-back", "step-forward", "step-instruction",
+                                                "reverse-step-over", "reverse-step", "reverse-continue", "resume",
+                                                "branch-switch", "load"};
+    if (_context && _context->pEmulator && _context->pEmulator->IsParkedInsideCardRun() && moves.count(verb))
+        return Fail(TTDControlError::Conflict,
+                    "the machine is stopped inside the sound card's run (a General Sound breakpoint or step): "
+                    "run or step the machine out of it first, then move in time");
     if (verb == "start")
         return AsOperation(OpKind::TtdStart, verb, request, [&]() { return Start(request); });
     if (verb == "stop")
@@ -763,6 +773,7 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
         ret["ttd_available"] = false;
         ret["backend"] = StateNode();
         ret["recording_paused"] = false;
+        ret["start_pending"] = false;
         ret["earliest"] = StateNode();
         ret["black_box"] = false;
         ret["recording_folder"] = StateNode();
@@ -828,6 +839,8 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
     // switched off); null otherwise
     ret["last_stop_reason"] = StringOrNull(info.lastStopReason);
     ret["recording_paused"] = info.recordingPaused;
+    // A start asked while the machine stood inside a card's run: the recording begins at the next frame boundary
+    ret["start_pending"] = info.startPending;
     // D12: the earliest position kept - where "jump to start" goes (branch 0: the trunk)
     if (info.checkpointCount)
     {
@@ -942,6 +955,9 @@ TTDReply TTDControlBackend::Start(const TTDRequest& request)
     reply.body["history_limit_frames"] = info.historyLimitFrames;
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["black_box"] = BlackBoxOf(_manager);
+    // Asked inside a card's run (a General Sound breakpoint): started, it begins at the next frame boundary (state
+    // idle until then)
+    reply.body["start_pending"] = _manager->IsStartPending();
     if (!ok)
     {
         // A refusal says why (a device table that does not build, a machine not ready): 409 with the reason

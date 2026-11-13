@@ -942,6 +942,10 @@
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
         "D8: a seek, step or reverse query while recording paused the recording; state is detached. "
         "Resuming at its end (resume, or running into it) continues the same recording; stop ends it";
+    schemas["TTDStatusResponse"]["properties"]["start_pending"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["start_pending"]["description"] =
+        "A start was asked while the machine stood inside the sound card's run (a General Sound breakpoint): the "
+        "recording begins at the next frame boundary; state stays idle until then, stop cancels it";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
         "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
@@ -1027,6 +1031,10 @@
     schemas["TTDStartResponse"]["properties"]["already_active"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDStartResponse"]["properties"]["black_box"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["start_pending"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["start_pending"]["description"] =
+        "Started inside the sound card's run (a General Sound breakpoint): the recording begins at the next frame "
+        "boundary, state idle until then";
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");

@@ -103,21 +103,25 @@ The branch part of the state text is a drop-down (a `QToolButton` menu on the to
   next Run / Step goes on live and the state text says "Live, not recorded"; recording again is Continue Rec (it goes
   back to the end first).
 
-## 7. Known issue: a recording started inside a frame end
+## 7. Fixed: a recording started inside a frame end
 
-Found by `unreal-debugger --self-check` (2026-11-13), not fixed here (core, outside this page's scope).
+Found by `unreal-debugger --self-check` (2026-11-13), fixed the same day.
 
 A breakpoint of a card's CPU (General Sound) that fires in the card's catch-up at the frame end parks the machine's
 thread inside `MainLoop::CompleteFrame`: `Core::AdjustFrameCounters` has already moved `frame_counter` (N, the CPU at
-its overshoot), the TTD hook `OnFrameBoundary` for N has not run yet. A recording started there takes its first
+its overshoot), the TTD hook `OnFrameBoundary` for N has not run yet. A recording started there took its first
 checkpoint as (N, overshoot) before the frame's boundary work (`OnFrameEnd`, `OnFrameStart`, `BeginFrame`, media,
-port decoder); when the machine runs on, the boundary hook captures N again and the engine refuses it ("frame N does
-not follow the last recorded frame"): the recording stops at once with `last_stop_reason: capture-failed`.
+port decoder); when the machine ran on, the boundary hook captured N again and the engine refused it ("frame N does
+not follow the last recorded frame"): the recording stopped at once with `last_stop_reason: capture-failed`.
 
-Reproduce: PENTAGON with General Sound, a GS breakpoint stops the machine, then `ttd start`, run 20 frames:
-`checkpoint_count` stays 1. A run of a frame or two before `start` avoids it (the self-check does this).
+The fix: `Emulator::IsParkedInsideCardRun` marks the machine's thread parked inside another CPU's run (a breakpoint or
+a step of the card; at the frame end or in a host port access, neither a moment a checkpoint can hold).
 
-Fix direction: the main loop marks the open boundary (from the counter's move to the end of the TTD hook);
-`StartRecording` inside it defers the baseline to that boundary's `OnFrameBoundary` (the checkpoint then holds the
-state after frame N's start, as every other one). A seek or restore while parked there has the same exposure (the rest
-of the stale `CompleteFrame` runs on the restored machine) and needs the same guard.
+- `StartRecording` there does not capture: the start is pending (`start_pending` in `status` and in the `start`
+  reply, `state` idle) and `OnFrameBoundary` starts the recording at the next frame boundary, its baseline the frame's
+  start as every other checkpoint. `stop`, `invalidate` and a session end cancel it.
+- The moves (`seek`, the steps, `reverse-*`, `resume`, `branch-switch`, `load`) are refused there (409): the rest of
+  the card's run and of the frame end would go on over the restored machine.
+
+Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp`. The eCat self-check no longer runs frames before its
+`start`.
