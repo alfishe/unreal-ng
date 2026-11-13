@@ -12,6 +12,8 @@
 #include "emulator/io/controllers/controllerconfig.h"
 #include <loaders/snapshot/loader_z80.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <functional>
 #include <iomanip>
@@ -44,6 +46,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
@@ -915,6 +918,14 @@ std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const
 
 std::string Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
+    ToolEdit what;
+    what.source = source;
+    return EditMemoryFromTool(what, edit);
+}
+
+std::string Emulator::EditMemoryFromTool(const ToolEdit& what, const std::function<void()>& edit)
+{
+    const char* source = what.source;
     NoteDebugChange();
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     coordinator::MachineOp op;
@@ -939,12 +950,91 @@ std::string Emulator::EditMemoryFromTool(const char* source, const std::function
             ttd->EndToolEdit(source);
         return true;
     });
-    return result.Ok() ? std::string() : result.reason;
+    if (!result.Ok())
+        return result.reason;
+    // The debuggers refresh on it (WebSocket `edited`)
+    NoteToolEdit(what);
+    return std::string();
+}
+
+void Emulator::NoteToolEdit(const ToolEdit& what)
+{
+    std::string page = what.page;  // one spelling for every surface: RAM5, ROM2, CACHE0 (scripts name the kind "ram")
+    for (char& c : page)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::string kind = what.what ? what.what : "state";
+    const std::string cpu = what.cpu ? what.cpu : "main";
+    bool post = false;
+    {
+        std::lock_guard<std::mutex> lock(_toolEditsMutex);
+        ToolEditSummary& edits = _toolEdits;
+        if (edits.count == 0)
+        {
+            edits.cpu = cpu;
+            edits.what = kind;
+            edits.page = page;
+            edits.address = what.address;
+            edits.length = what.length;
+        }
+        else
+        {
+            // One range only for memory or page edits of one CPU and page; anything else has no address
+            const bool spannable = edits.cpu == cpu && edits.what == kind && edits.page == page &&
+                                   (kind == "memory" || kind == "page") && edits.address >= 0 && what.address >= 0;
+            if (spannable)
+            {
+                const int64_t begin = std::min<int64_t>(edits.address, what.address);
+                const int64_t end = std::max<int64_t>(int64_t(edits.address) + std::max<uint32_t>(edits.length, 1),
+                                                      int64_t(what.address) + std::max<uint32_t>(what.length, 1));
+                edits.address = static_cast<int32_t>(begin);
+                edits.length = static_cast<uint32_t>(end - begin);
+            }
+            else
+            {
+                edits.address = -1;
+                edits.length = 0;
+            }
+            if (edits.cpu != cpu)
+                edits.cpu = "mixed";
+            if (edits.what != kind)
+                edits.what = "mixed";
+            if (edits.page != page)
+                edits.page.clear();
+        }
+        edits.source = what.source ? what.source : "";
+        edits.count++;
+        constexpr auto kToolEditsRepost = std::chrono::milliseconds(100);
+        const auto now = std::chrono::steady_clock::now();
+        if (!_toolEditsPosted || now - _toolEditsPostedAt >= kToolEditsRepost)
+        {
+            _toolEditsPosted = true;
+            _toolEditsPostedAt = now;
+            post = true;
+        }
+    }
+    if (post)
+        MessageCenter::DefaultMessageCenter().Post(NC_DEBUG_EDITED, new DebugEditedPayload(GetId()), true);
+}
+
+ToolEditSummary Emulator::TakeToolEdits()
+{
+    std::lock_guard<std::mutex> lock(_toolEditsMutex);
+    ToolEditSummary taken = std::move(_toolEdits);
+    _toolEdits = ToolEditSummary();
+    _toolEditsPosted = false;
+    return taken;
 }
 
 void Emulator::EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit)
 {
     const std::string refused = EditMemoryFromTool(source, edit);
+    if (!refused.empty())
+        throw std::runtime_error(refused);
+}
+
+void Emulator::EditMemoryFromToolOrThrow(const ToolEdit& what, const std::function<void()>& edit)
+{
+    const std::string refused = EditMemoryFromTool(what, edit);
     if (!refused.empty())
         throw std::runtime_error(refused);
 }
@@ -956,7 +1046,10 @@ bool Emulator::SetRegisterFromTool(const char* source, const std::string& name, 
     if (!info || !z80 || (info->maxValue && value > info->maxValue))
         return false;
     bool set = false;
-    const std::string refused = EditMemoryFromTool(source, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
+    ToolEdit what;
+    what.source = source;
+    what.what = "registers";
+    const std::string refused = EditMemoryFromTool(what, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
     if (refusal)
         *refusal = refused;
     if (set)
@@ -2031,6 +2124,22 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         }
         return false;
     }
+
+    // A NEX program is started by NextZXOS, and on the board the OS runs only after a reset. A Next already running a program the loader
+    // started (rts_test, then game.nex opened over it) is soft-reset first and runs until NextZXOS is up - its welcome shows within 2 s of
+    // the reset, 150 frames are 3 s - so the new program finds the machine the OS leaves, not the old one's interrupt modes, MMU, devices
+    // and the OS's RAM it overwrote. A paused machine stays paused
+    if (ext == "nex" && _context)
+        if (auto* next = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder); next && next->ProgramStarted())
+        {
+            constexpr unsigned kNextOsStartFrames = 150;
+            const bool resume = !IsPaused();
+            MLOGINFO("NEX over a running program: soft reset, %u frames for NextZXOS to start", kNextOsStartFrames);
+            Reset(false);
+            RunNFrames(kNextOsStartFrames);
+            if (resume)
+                Resume();
+        }
 
     // The file the user opened: a temporary image is reported as the file it came from
     const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;

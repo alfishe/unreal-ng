@@ -48,6 +48,10 @@ def test_reverse_step_by_scanlines_and_the_build_cancel(s):
     expect(r.is_error, 'one unit only', r.text)
     r = s.call('time_travel', {'action': 'journal_build_cancel'})
     expect(not r.is_error and 'journal' in r.text, 'nothing to cancel, said so', r.text)
+    # Reverse step over: one instruction back (or back over a routine); the text says which and where
+    r = s.call('time_travel', {'action': 'reverse_step_over'})
+    expect(not r.is_error and 'Stepped back' in r.text and 'frame' in r.text, 'stepped back over', r.text)
+    expect(r.structured.get('stepped') is True and 'over_call' in r.structured, 'the result fields', r.structured)
 
 
 def test_coverage_rare_lists_blocks_in_the_text(s):

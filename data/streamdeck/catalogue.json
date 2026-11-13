@@ -115,6 +115,13 @@
    "held": false
   },
   {
+   "id": "ttd.reverse_step_over",
+   "label": "Reverse step over",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
    "id": "ttd.reverse_continue",
    "label": "Reverse continue",
    "group": "Time travel",

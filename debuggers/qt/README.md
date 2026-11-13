@@ -21,6 +21,26 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Time travel
+
+While the machine has a recorded history (TTD), the toolbar shows a time group after the forward steps, the same as
+unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md)):
+
+| Button | Key | Verb |
+|--------|-----|------|
+| Step Back | Shift+F7 | `step-instruction {dir: back}` |
+| Step Over Back | Shift+F8 | `reverse-step-over` |
+| Run Back | Shift+F9 | `reverse-continue {pcs}`: the main CPU's breakpoints |
+| Frame Back | - | `step-back` |
+| Branch Here / Continue Rec | - | `seek` to the end when needed, then `resume` |
+
+The state label adds the moment (`Recording`, `History: frame 120 of 400, replaying`, `Live, not recorded`, the
+branch and `fork here: N other futures`); with branches a drop-down lists them (the active lineage first) with Switch,
+Rename, Tags, Note, Pin, Delete and Save Lineage. Nothing records unless asked: only Branch Here / Continue Rec.
+Every action is a TTDControl verb through `Emulator::ttd_call` (`ecat/dialogs/debugger/ttdcontrols.cpp`): in process
+directly, over the WebAPI as the `/ttd/...` routes (`GET` for `status` / `position` / `branches`, the branch routes
+for switch / update / delete, `POST /ttd/<verb>` for the rest).
+
 ## Run
 
 ```text

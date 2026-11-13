@@ -541,6 +541,8 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
     add("ttd.step_forward_instruction", "Forward one instruction", ttdGroup, ValueKind::Press,
         verb("step-instruction", {{"dir", "forward"}}), historyRules(ScopeDebug, true));
     add("ttd.reverse_step", "Reverse step", ttdGroup, ValueKind::Press, verb("reverse-step"), historyRules(ScopeDebug));
+    add("ttd.reverse_step_over", "Reverse step over", ttdGroup, ValueKind::Press, verb("reverse-step-over"),
+        historyRules(ScopeDebug, true));
     add("ttd.reverse_continue", "Reverse continue", ttdGroup, ValueKind::Press, verb("reverse-continue"),
         historyRules(ScopeDebug));
     add("ttd.bookmark_add", "Add a bookmark", ttdGroup, ValueKind::Press, verb("bookmark-add"), historyRules(ScopeDebug));

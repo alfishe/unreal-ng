@@ -774,3 +774,22 @@ TEST_F(NextSkeleton_Test, ClipWindowsAndPalettesReadBackAsWritten)
     // NR #08 bit 7: port #7FFD not locked
     EXPECT_EQ(read(0x08) & 0x80, 0x80);
 }
+
+// The host's reset (the GUI button, the WebAPI / CLI verbs) is the board's soft reset: the machine type the firmware set stays, so
+// NextZXOS restarts at once without the boot ROM's logo (zxnext.vhd 4619-4628: only reset_hard clears nr_03 and enables the boot ROM).
+// Emulator::Reset(true) is the power-on one. NR #02 reads the reset type as after an NR #02 soft reset
+TEST_F(NextSkeleton_Test, HostResetIsSoftAndKeepsTheMachineType)
+{
+    _ports->Board().SetMachineType(3);  // the firmware's choice: +3
+    ASSERT_EQ(_ports->Board().MachineType(), 3);
+    const uint8_t powerOnBits = _ports->Board().ResetBits();
+    _emulator->Reset();
+    EXPECT_EQ(_ports->Board().MachineType(), 3) << "a soft reset keeps the machine type";
+    EXPECT_FALSE(_memory->InConfigMode());
+    EXPECT_EQ(_z80->pc, 0x0000);
+    EXPECT_NE(_ports->Board().ResetBits(), powerOnBits) << "NR #02 reads a soft reset";
+
+    _emulator->Reset(true);
+    EXPECT_NE(_ports->Board().MachineType(), 3) << "a hard reset is the power-on state";
+    EXPECT_EQ(_ports->Board().ResetBits(), powerOnBits);
+}

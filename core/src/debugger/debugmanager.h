@@ -9,7 +9,10 @@
 #include "debugger/targets/debugcpuid.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "emulator/emulatorcontext.h"
+#include <atomic>
 #include <map>
+#include <utility>
+#include <vector>
 
 namespace framewatch { class Manager; }
 namespace markup { class MemoryMarkup; }
@@ -54,6 +57,10 @@ protected:
     std::unique_ptr<class GSCardTarget> _gsTarget;
     // The General Sound of a MultiSound slot card (the `ms` CPU)
     std::unique_ptr<class GSCardTarget> _msTarget;
+    std::atomic<int> _targetsMask{0};  ///< the card CPUs there at creation or the last NC_DEBUG_TARGETS_CHANGED
+    /// Posts NC_DEBUG_TARGETS_CHANGED when the card CPUs there differ from the last post
+    int TargetsMask() const;  ///< bit 0: gs, bit 1: ms
+    void PublishTargetsIfChanged();
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -101,6 +108,8 @@ public:
     void OnGeneralSoundCardCreated();
     /// The slot cards were built or released (SlotManager): the MultiSound GS's hooks follow its card
     void OnSlotCardsChanged();
+    /// Every CPU a debugger can name (main, gs, ms) and whether it is there now
+    std::vector<std::pair<std::string, bool>> DebugTargets() const;
 
     /// endregion </Properties>
 

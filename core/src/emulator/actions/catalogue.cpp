@@ -46,6 +46,7 @@ const Descriptions& DescriptionTable()
         {"ttd.step_back_instruction", "Go back one instruction in the history."},
         {"ttd.step_forward_instruction", "Go forward one instruction in the history."},
         {"ttd.reverse_step", "Step back over the last instruction, as a debugger's reverse step."},
+        {"ttd.reverse_step_over", "Step back over a routine whose return comes before, else one instruction back."},
         {"ttd.reverse_continue", "Run backwards to the previous breakpoint in the history."},
         {"ttd.bookmark_add", "Bookmark the current position of the history."},
         {"ttd.resume_live", "Leave the history and continue the live machine."},

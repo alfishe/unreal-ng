@@ -211,6 +211,8 @@ public:
     void SetStoredBits(uint8_t reg, uint8_t mask, uint8_t value) { _regs[reg] = static_cast<uint8_t>((_regs[reg] & ~mask) | (value & mask)); }
     /// NR #02 bits 1:0 as a read returns them: how the last reset happened (the VHDL's nr_02_reset_type: 0 power on, then 2, then 1)
     uint8_t ResetBits() const { return static_cast<uint8_t>(_resetType & 3); }
+    /// A soft reset happened (NR #02 bit 0 or the host's reset button): nr_02_reset_type folds as the VHDL does
+    void NoteSoftReset();
 
     /// The `next_regs` report: one line per register of the table with its value and reset
     std::string DescribeRegisters() const;

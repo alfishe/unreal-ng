@@ -705,6 +705,8 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingplan_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdbranchcommands.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdbranchcommands.h"
         # The TTD panel's Branches row: the lanes, the actions, the slider's fork marks (TTD branches surfaces.md §1)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_branches_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/branchlanes.cpp"
@@ -805,6 +807,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
+        # The Embedded debugger's time controls and branch drop-down (TTD branches debuggers.md §4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggertimetravel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"

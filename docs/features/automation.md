@@ -72,7 +72,7 @@ Supported models (see [Profi 1024](../hardware/profi-1024.md) for that machine):
 ```
 pause                   # Pause emulation
 resume                  # Resume emulation
-reset                   # Hardware reset
+reset [hard]            # Soft reset (the reset button); hard = power cycle
 ops [n|all]             # Operation log: reset, snapshot, media changes, refusals (ops since <seq> polls)
 switch [turbo|cpm [on|off]] # Front-panel switches (Profi TURBO, v5 CP/M); recorded by TTD
 step / stepin           # Execute one instruction
@@ -88,6 +88,26 @@ run_to_interrupt        # Run until next interrupt
 stepout                 # Run until the current subroutine returns
 skip_until <pc> [max_tstates]  # Fast-forward until PC reaches target
 ```
+
+#### Reset: soft and hard
+
+A soft reset is the reset button (`Emulator::Reset()`); a hard reset is a power cycle (`Emulator::Reset(true)`: the
+same reset, then `PortDecoder::PowerCycle()` puts the board in its power-on state and held host keys are released).
+On most machines the two look alike; on the ZX Next the soft one restarts NextZXOS at once and the hard one runs the
+boot ROM, the logo and the firmware again ([command-interface.md](../emulator/design/control-interfaces/command-interface.md)).
+
+| Plane | Soft | Hard |
+|:--|:--|:--|
+| CLI | `reset` | `reset hard` (`--hard`) |
+| Python | `emu.reset()` | `emu.reset(hard=True)` |
+| Lua | `emu:reset()` | `emu:reset{hard = true}` (`emu:reset(true)`) |
+| MCP | `emulator_manage {action: reset}` | `emulator_manage {action: reset, hard: true}` |
+| REST | `POST /api/v1/emulator/{id}/reset` | the same with `{"hard": true}` or `?hard=true` |
+| WebSocket | `{"op":"call","method":"POST","path":"/api/v1/emulator/{id}/reset"}` | the same with `"body":{"hard":true}` |
+| Qt | Run > Reset | Run > Hard Reset (Power Cycle) |
+
+The answer names the kind (`"reset": "soft" | "hard"`; CLI `Emulator reset (soft)` / `(hard)`), and the operation
+log records it (`reset soft` / `reset hard`). No topic: a reset changes no state a client polls beyond `run.state`.
 
 #### State Inspection
 ```
@@ -273,7 +293,7 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/stop` | Stop |
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
-| POST | `/api/v1/emulator/{id}/reset` | Reset |
+| POST | `/api/v1/emulator/{id}/reset` | Reset: soft (the reset button); `{"hard": true}` or `?hard=true` = power cycle; the answer's `reset` says `soft` / `hard` |
 | GET | `/api/v1/emulator/{id}/operations` | Operation log (`?since=<seq>&limit=<n>`): reset, autostart, snapshot load, media changes, refusals - frame, mode, result, TTD effect |
 | GET | `/api/v1/emulator/{id}/switches` | Front-panel switches (Profi TURBO, v5 CP/M) |
 | POST | `/api/v1/emulator/{id}/switches` | Flip one: `{"name": "turbo", "on": true}` |
@@ -709,7 +729,7 @@ emu.save_state(slot) / emu.load_state(slot)
 ```python
 emu.run_frames(n) / emu.run_tstates(n)
 emu.pause() / emu.resume()
-emu.reset()
+emu.reset() / emu.reset(hard=True)   # soft (the reset button) / power cycle
 emu.get_switch("turbo") / emu.set_switch("turbo", True)   # Profi front-panel switch; None without it
 emu.step_out() / emu.skip_until(pc)
 ```

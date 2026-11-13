@@ -159,6 +159,41 @@ unsigned NextVideoRenderer::Layer2WideColumn(unsigned hc, unsigned scrollX)
     return (((((xPre >> 6) & 7) + 3) & 7) << 6) | (xPre & 0x3F);
 }
 
+/// The ULA's border pixel of the moment; false when the ULA layer has no border pixel (the ULA off, or ULANext's full-ink format, whose
+/// paper and border come from the fallback colour)
+bool NextVideoRenderer::UlaBorderPixel(const NextVideoInputs& in, Pixel& p)
+{
+    const NextVideoRegs& regs = *in.regs;
+    if (in.nr[0x68] & 0x80)
+        return false;
+    const unsigned palette = (regs.PaletteControl() & 0x02) ? 4 : 0;  // NR #43 bit 1: the second ULA palette
+    const bool ulaNext = (regs.PaletteControl() & 0x01) != 0;
+    if (ulaNext && regs.UlaNextFormat() == 0xFF)
+        return false;
+    // ULA+ (NR #68 bit 3 / port #FF3B): the 64-entry CLUT sits in entries 192-255 of the ULA palette; ULANext wins over it
+    const bool ulaPlus = (in.nr[0x68] & 0x08) != 0 && !ulaNext;
+    const unsigned timexMode = in.shadowScreen ? 0 : (in.portFf & 7);  // zxula.vhd: no Timex modes on the shadow screen
+    const bool hiRes = (timexMode & 4) != 0;
+    // Timex hi-res: the attribute of the border is 01 PPP III of port #FF (zxula.vhd border_clr_tmx): paper = 7 - ink and the bright
+    // bit set, so the standard palette's bright paper entry; ULANext takes 128 + paper
+    const unsigned colour = hiRes ? 7 - ((in.portFf >> 3) & 7) : in.border;
+    // ULA+: the border is the paper half of the CLUT's row of the attribute (zxula.vhd: 11 & attr(7:6) & 1 & attr(5:3); the border
+    // attribute is 00 BBB BBB, the hi-res one 01 PPP III)
+    const unsigned c = regs.PaletteEntry(palette, ulaPlus ? (hiRes ? 0xD8 : 0xC8) + colour : (ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour)) & 0x1FF;
+    p = NextLayer::MakePixel(c, !GlobalTransparent(c, in.nr[0x14]), true);
+    return true;
+}
+
+uint32_t NextVideoRenderer::OuterBorderRgba(const NextVideoInputs& in)
+{
+    // Outside the 320 x 256 grid only the ULA's border is drawn (Layer 2, the tilemap and the sprites live in the grid): its colour,
+    // or the fallback NR #4A where it is transparent
+    Pixel p;
+    if (UlaBorderPixel(in, p) && p.opaque)
+        return kRgba.value[p.colour & 0x1FF];
+    return kRgba.value[Nine(in.nr[0x4A]) & 0x1FF];
+}
+
 /// The ULA layer of line y: the border colour around the 256 x 192 paper, the paper in the Timex mode of port #FF
 void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line)
 {
@@ -175,23 +210,12 @@ void NextVideoRenderer::UlaLine(const NextVideoInputs& in, unsigned y, Pixel* li
     const unsigned timexMode = in.shadowScreen ? 0 : (in.portFf & 7);  // zxula.vhd: no Timex modes on the shadow screen
     const bool hiRes = (timexMode & 4) != 0;
 
-    auto border = [&](Pixel& p) {
-        if (fullInk)
-            return;  // paper and border come from the fallback colour: transparent here
-        // Timex hi-res: the attribute of the border is 01 PPP III of port #FF (zxula.vhd border_clr_tmx): paper = 7 - ink and the bright
-        // bit set, so the standard palette's bright paper entry; ULANext takes 128 + paper
-        const unsigned colour = hiRes ? 7 - ((in.portFf >> 3) & 7) : in.border;
-        // ULA+: the border is the paper half of the CLUT's row of the attribute (zxula.vhd: 11 & attr(7:6) & 1 & attr(5:3); the border
-        // attribute is 00 BBB BBB, the hi-res one 01 PPP III)
-        const unsigned c = regs.PaletteEntry(palette, ulaPlus ? (hiRes ? 0xD8 : 0xC8) + colour : (ulaNext ? 128 + colour : 16 + (hiRes ? 8 : 0) + colour)) & 0x1FF;
-        p = NextLayer::MakePixel(c, !GlobalTransparent(c, transparent), true);
-    };
     // The border pixel is the same along the line: worked out once (with ULANext's full-ink format the row stays as it came)
     const bool inPaperRows = y >= kPaperTop && y < kPaperTop + 192;
     if (!fullInk)
     {
         Pixel borderPixel;
-        border(borderPixel);
+        UlaBorderPixel(in, borderPixel);
         if (!inPaperRows)
         {
             std::fill(line, line + kW, borderPixel);

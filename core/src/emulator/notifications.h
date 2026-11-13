@@ -582,6 +582,48 @@ public:
     virtual ~FrameWatchPayload() = default;
 };
 
+/// Payload of NC_DEBUG_EDITED (Emulator::EditMemoryFromTool): tool edits of the instance went through. The edits
+/// themselves are taken from the instance (Emulator::TakeToolEdits, merged): one of these waits in the queue per
+/// instance at a time, whatever the edit rate
+class DebugEditedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit DebugEditedPayload(const std::string& emulator)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    {
+    }
+    virtual ~DebugEditedPayload() = default;
+};
+
+/// Payload of NC_LABEL_CHANGED: the instance whose labels changed
+class LabelsChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit LabelsChangedPayload(const std::string& emulator)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    {
+    }
+    virtual ~LabelsChangedPayload() = default;
+};
+
+/// Payload of NC_DEBUG_TARGETS_CHANGED: every CPU of the instance a debugger can name and whether it is there now
+class DebugTargetsChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::vector<std::pair<std::string, bool>> targets;  ///< {cpu, available}
+
+    explicit DebugTargetsChangedPayload(const std::string& emulator)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    {
+    }
+    virtual ~DebugTargetsChangedPayload() = default;
+};
+
 /// Payload of NC_SECTION_TIMER (debugger/analyzers/sectiontimer): the emulator's section timer "started", "stopped",
 /// was "cleared", or a break condition stopped the machine ("break": `condition` met by the pass of `section` that
 /// started at `frame` / `t` and took `elapsed` T-states, `net` without the `interrupts` that ran inside it)

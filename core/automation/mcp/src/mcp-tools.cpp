@@ -164,7 +164,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
+        "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
         "and models_creatable; 'status' reports one instance's details; 'operations' its operation log (who reset, "
@@ -345,6 +345,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["switch"]["description"] = "switch: the front-panel switch (turbo: Profi v3 / v5, cpm: Profi v5)";
     schema["properties"]["on"]["type"] = "boolean";
     schema["properties"]["on"]["description"] = "switch: the position (true = on)";
+    schema["properties"]["hard"]["type"] = "boolean";
+    schema["properties"]["hard"]["default"] = false;
+    schema["properties"]["hard"]["description"] =
+        "reset: false = soft reset, the reset button (the ZX Next restarts NextZXOS at once); true = hard reset, a "
+        "power cycle (the ZX Next runs its boot ROM, the logo and the firmware again)";
     schema["properties"]["slots"]["type"] = "object";
     schema["properties"]["slots"]["description"] =
         "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
@@ -560,7 +565,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 }
                 else if (action == "reset")
                 {
-                    ForwardCall("POST", Endpoint(id, "/reset"), nullptr, caller, "Reset " + id, done);
+                    // Soft by default (the reset button); 'hard': true is a power cycle
+                    const bool hard = args.isMember("hard") && args["hard"].isBool() && args["hard"].asBool();
+                    Json::Value body;
+                    body["hard"] = hard;
+                    ForwardCall("POST", Endpoint(id, "/reset"), &body, caller,
+                                std::string(hard ? "Hard reset " : "Soft reset ") + id, done);
                 }
                 else if (action == "destroy")
                 {
@@ -5689,7 +5699,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
-                               "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
+                               "reverse_step_over", "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
                                "bookmark_delete", "seek_bookmark", "branch_list", "branch_switch", "branch_update",
                                "branch_delete", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
@@ -5709,7 +5719,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
-        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs; "
+        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_step_over' (one instruction back, "
+        "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
         "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
         "did not run), "
@@ -6654,6 +6665,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step"), body.get(), caller, [](const Json::Value& b) {
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
                                FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
+                    }, done);
+                }
+                else if (action == "reverse_step_over")
+                {
+                    Json::Value overBody(Json::objectValue);
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step-over"), &overBody, caller, [](const Json::Value& b) {
+                        return b["text"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_continue")

@@ -727,6 +727,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
     connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::hardResetRequested, this, &MainWindow::hardResetEmulator);
     connect(_menuManager, &MenuManager::mniRequested, this, &MainWindow::requestMni);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
@@ -922,6 +923,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
                 act->setChecked(visible);
             }
         }
+    });
+    // The debugger's branch drop-down: "Show in the TTD panel" opens the panel with its Branches row
+    connect(debuggerWindow, &DebuggerWindow::showInTtdPanelRequested, this, [this]() {
+        handleTtdToggled(true);
+        _ttdWidget->showBranches();
+        raise();
+        activateWindow();
     });
     // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
     _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
@@ -1308,7 +1316,19 @@ QSize MainWindow::pictureNativeSize() const
 
     const DisplayGeometry::Size frame = DisplayGeometry::DisplayFrame(static_cast<uint16_t>(source.width()),
                                                                       static_cast<uint16_t>(source.height()));
-    return QSize(frame.width, frame.height);
+    // A framebuffer with two dots per ZX pixel on both axes (the Next's 720x576: its 360x288 HDMI picture doubled) is shown at 1x the
+    // size of a ZX raster, so View > Scale steps as on a 128K (1x 360x295, 2x the framebuffer 1:1). Otherwise its 1x is already 720x590
+    // and the larger scales do not fit a 1080p display: fitWindowToScreen drops them back to 1x and the window does not change
+    int dots = 1;
+    if (_emulator)
+        if (EmulatorContext* context = _emulator->GetContext(); context && context->pScreen)
+        {
+            const FramebufferDescriptor& fb = context->pScreen->GetNativeFramebufferDescriptor();
+            const int byWidth = (fb.width + DisplayGeometry::kReferenceWidth / 2) / DisplayGeometry::kReferenceWidth;
+            const int byHeight = (fb.height + DisplayGeometry::kReferenceHeight / 2) / DisplayGeometry::kReferenceHeight;
+            dots = std::max(1, std::min(byWidth, byHeight));
+        }
+    return QSize(frame.width / dots, frame.height / dots);
 }
 
 void MainWindow::updateScreenMinimumSize()
@@ -3922,10 +3942,20 @@ void MainWindow::saveDiskAsSCLDialog()
 
 void MainWindow::resetEmulator()
 {
+    doReset(false);
+}
+
+void MainWindow::hardResetEmulator()
+{
+    doReset(true);
+}
+
+void MainWindow::doReset(bool hard)
+{
     if (_emulator)
     {
-        // Reset handles pause/resume internally to avoid race conditions
-        _emulator->Reset();
+        // Reset handles pause/resume internally to avoid race conditions; hard adds the power cycle
+        _emulator->Reset(hard);
         _lastFrameCount = 0;
         if (_statusBarManager)
             _statusBarManager->resetFpsMeasurement();  // Frame counter restarts from 0

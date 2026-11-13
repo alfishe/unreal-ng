@@ -216,6 +216,19 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step" \
 `tstates` lands on the nearest instruction boundary ≤ target. Specifying
 both `count` and `tstates` (or neither) is a 400.
 
+### reverse-step-over — back over a routine
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/reverse-step-over" -H 'Content-Type: application/json' -d '{}' | jq .
+#   → {"stepped": true, "over_call": true, "skipped": 214, "pc": 32772, "frame": 11770, "tinframe": 12000,
+#      "text": "Stepped back over a routine (214 instructions) to #8004"}
+```
+
+When the instruction before is a routine's return, the machine goes back to the CALL / RST that entered it (or to
+the instruction an interrupt came after) in one call; otherwise it is one instruction back. MCP:
+`time_travel {"action":"reverse_step_over"}`. `call_out_of_reach: true`: the routine started before the history
+(or behind a barrier), the machine stays on the return.
+
 ### reverse-continue — run backward to a breakpoint
 
 ```bash

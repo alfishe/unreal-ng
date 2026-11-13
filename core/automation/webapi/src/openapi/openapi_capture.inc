@@ -35,7 +35,7 @@
             "the frame is 500 with the sizes. The frame lags the machine by the present delay (the frame whose sound "
             "is heard now: about 2 frames, more with ZX DLSS); GIF has 256 colors and loses colors on true-colour pictures. "
             "Raw pixels without encoding: /capture/framebuffer. On a ZX Spectrum Next `layer` returns ONE LAYER of the last completed frame "
-            "instead (ula, layer2, tilemap, sprites - a PNG with alpha 0 where the layer does not paint, same 640x512 geometry; or ids - every pixel "
+            "instead (ula, layer2, tilemap, sprites - a PNG with alpha 0 where the layer does not paint, 640x512, the grid of the 720x576 screenshot at (32, 32); or ids - every pixel "
             "coloured by the layer that won it, legend in the answer), exactly as it was drawn, copper effects included; `format=rgba` gives the raw "
             "bytes, `alpha=false` flattens what the layer does not paint onto the fallback colour. All layers of one frame: /capture/next-layers; "
             "the record is switched with POST /next/layer-capture.";
@@ -62,7 +62,7 @@
             {"alpha", "query", false, "with layer: false flattens the pixels the layer does not paint onto the fallback colour (default true: alpha 0)",
              {"true", "false"}},
             {"size", "query", false,
-             "with layer: screen (default) 640x512, the screenshot's geometry; grid 640x256, every line once; pixel 320x256, one sample per Next pixel "
+             "with layer: screen (default) 640x512, the grid of the 720x576 screenshot; grid 640x256, every line once; pixel 320x256, one sample per Next pixel "
              "(loses the second sub-pixel of Layer 2 640 and Timex hi-res)",
              {"screen", "grid", "pixel"}},
             {"source", "query", false,
@@ -475,7 +475,7 @@
         op["description"] =
             "Every layer (ula, layer2, tilemap, sprites) and the winner map (ids) of the SAME last completed frame of a ZX Spectrum Next in one "
             "answer, each a base64 PNG with alpha 0 where the layer does not paint (format=rgba: raw R G B A bytes; alpha=false flattens onto the "
-            "fallback colour), 640x512 like /capture/screen. Recorded while the frame was drawn, so copper bars, split screens and palette tricks "
+            "fallback colour), 640x512, the grid of /capture/screen's 720x576 frame. Recorded while the frame was drawn, so copper bars, split screens and palette tricks "
             "are exact; one frame of buffers, a paused machine answers from its last frame. 409 when the machine is not a Next, the record is off "
             "(POST /next/layer-capture) or no frame was completed yet. CLI `capture screen --layer=...`, Lua capture_screen_layer(), Python "
             "capture_screen_layer(), MCP capture_media layer=.";

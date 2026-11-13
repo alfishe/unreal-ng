@@ -79,6 +79,17 @@ void DebugEventHub::Start()
     _observers.emplace_back(NC_SECTION_TIMER, messageCenter.AddObserver(NC_SECTION_TIMER, [this](int, Message* message) {
                                 OnSectionTimer(message);
                             }));
+    _observers.emplace_back(NC_DEBUG_EDITED,
+                            messageCenter.AddObserver(NC_DEBUG_EDITED, [this](int, Message* message) { OnEdited(message); }));
+    _observers.emplace_back(NC_RUN_CONTROL_CHANGED,
+                            messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED,
+                                                      [this](int, Message* message) { OnRunControl(message); }));
+    _observers.emplace_back(NC_LABEL_CHANGED,
+                            messageCenter.AddObserver(NC_LABEL_CHANGED,
+                                                      [this](int, Message* message) { OnLabelsChanged(message); }));
+    _observers.emplace_back(NC_DEBUG_TARGETS_CHANGED,
+                            messageCenter.AddObserver(NC_DEBUG_TARGETS_CHANGED,
+                                                      [this](int, Message* message) { OnTargetsChanged(message); }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -385,6 +396,84 @@ void DebugEventHub::OnScriptCallbacksChanged(Message* message)
     else if (callbacks)
         event["removed"] = true;
     Publish(emulatorId, kTopicDebug, event);
+}
+
+void DebugEventHub::OnEdited(Message* message)
+{
+    auto* payload = message ? dynamic_cast<DebugEditedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // A tool changed the machine (registers, memory, a page, a port, other state): views re-read what they show.
+    // The edits since the last event come merged: a script writing byte by byte is a few events with counts
+    const std::string emulatorId = payload->emulatorId.toString();
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(emulatorId) : nullptr;
+    if (!emulator)
+        return;
+    const ToolEditSummary edits = emulator->TakeToolEdits();
+    if (edits.count == 0)
+        return;  // an earlier event took them
+    Json::Value event;
+    event["event"] = "edited";
+    event["source"] = edits.source;
+    event["cpu"] = edits.cpu.empty() ? std::string("main") : edits.cpu;
+    event["what"] = edits.what;
+    event["count"] = edits.count;
+    if (!edits.page.empty())
+        event["page"] = edits.page;
+    if (edits.address >= 0)
+        event["address"] = edits.address;
+    if (edits.length > 0)
+        event["length"] = edits.length;
+    Publish(emulatorId, kTopicDebug, event);
+}
+
+void DebugEventHub::OnRunControl(Message* message)
+{
+    auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // The run-control claim changed: taken, released, revoked, expired, retake_refused, superseded
+    Json::Value event;
+    event["event"] = "run_control";
+    event["change"] = payload->event;
+    event["surface"] = payload->surfaceLabel;
+    if (!payload->client.empty())
+        event["client"] = payload->client;
+    if (!payload->ownerUuid.empty())
+        event["owner"] = payload->ownerUuid;
+    if (!payload->by.empty())
+        event["by"] = payload->by;
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnLabelsChanged(Message* message)
+{
+    // A label manager without an instance (a standalone one in a tool) has nothing to name
+    auto* payload = message ? dynamic_cast<LabelsChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->emulatorId.isNil())
+        return;
+    Json::Value event;
+    event["event"] = "labels_changed";
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnTargetsChanged(Message* message)
+{
+    auto* payload = message ? dynamic_cast<DebugTargetsChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    Json::Value event;
+    event["event"] = "targets_changed";
+    event["targets"] = Json::Value(Json::arrayValue);
+    for (const auto& [cpu, available] : payload->targets)
+    {
+        Json::Value target;
+        target["cpu"] = cpu;
+        target["available"] = available;
+        event["targets"].append(target);
+    }
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 
 void DebugEventHub::OnAsmSync(Message* message)

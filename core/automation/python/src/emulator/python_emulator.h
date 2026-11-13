@@ -2125,7 +2125,9 @@ namespace PythonBindings
                py::arg("client") = "python")
             .def("release_control", [](Emulator& self) { execution::script::ReleaseControl(self, execution::Origin::Python); },
                  "End the automation session")
-            .def("reset", &Emulator::Reset, "Reset emulator")
+            .def("reset", [](Emulator& self, bool hard) { self.Reset(hard); }, py::arg("hard") = false,
+                 "Reset emulator: soft (the reset button) by default; hard=True is a power cycle (the ZX Next runs its "
+                 "boot ROM and firmware again)")
             .def("request_nmi", &Emulator::RequestNMI, "Pulse the Z80 NMI line (vector #0066)")
             .def("request_mni", &Emulator::RequestMNI,
                  "Scorpion magic button: page the Shadow Monitor, then NMI (plain NMI on other models)")
@@ -2304,7 +2306,8 @@ namespace PythonBindings
                 }
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 1),
+                                              [&] { mem->ToolWriteToZ80Memory(addr, value); });
             }, "Write byte to memory", py::arg("addr"), py::arg("value"), py::arg("cpu") = "")
             .def("mem_read_word", [](Emulator& self, uint16_t addr) -> uint16_t {
                 Memory* mem = self.GetMemory();
@@ -2314,7 +2317,7 @@ namespace PythonBindings
             .def("mem_write_word", [](Emulator& self, uint16_t addr, uint16_t value) {
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, 2), [&] {
                     mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                     mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
                 });
@@ -2604,7 +2607,7 @@ namespace PythonBindings
                 Memory* mem = self.GetMemory();
                 if (!mem) return;
                 std::string bytes = data;
-                self.EditMemoryFromToolOrThrow("Python memory write", [&] {
+                self.EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Python memory write", "memory", addr, bytes.size()), [&] {
                     for (size_t i = 0; i < bytes.size(); i++)
                         mem->ToolWriteToZ80Memory(static_cast<uint16_t>((addr + i) & 0xFFFF), static_cast<uint8_t>(bytes[i]));
                 });
@@ -2639,7 +2642,9 @@ namespace PythonBindings
                     pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
                 else
                     pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-                self.EditMemoryFromToolOrThrow("Python page write", [&] {
+                Emulator::ToolEdit what = Emulator::ToolEdit::Of("Python page write", "page", offset, 1);
+                what.page = type + std::to_string(page);
+                self.EditMemoryFromToolOrThrow(what, [&] {
                     pagePtr[offset] = value;
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -2681,7 +2686,9 @@ namespace PythonBindings
                 // Clamp to page boundary
                 size_t maxLen = PAGE_SIZE - offset;
                 size_t writeLen = std::min(bytes.size(), maxLen);
-                self.EditMemoryFromToolOrThrow("Python page write", [&] {
+                Emulator::ToolEdit what = Emulator::ToolEdit::Of("Python page write", "page", offset, writeLen);
+                what.page = type + std::to_string(page);
+                self.EditMemoryFromToolOrThrow(what, [&] {
                     std::memcpy(pagePtr + offset, bytes.data(), writeLen);
                     if (type == "ram")
                         mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -4650,7 +4657,7 @@ namespace PythonBindings
                "ONE LAYER of the last completed frame of a ZX Spectrum Next (design-layer-capture.md): 'ula' (with the border and LoRes), "
                "'layer2', 'tilemap', 'sprites' - a PNG with alpha 0 where the layer does not paint (format='rgba': the raw bytes; "
                "alpha=False: flattened onto the fallback colour) - or 'ids' (each pixel coloured by the layer that won it, legend in "
-               "the answer). 640 x 512, the geometry of capture_screen(). Returns a dict like capture_screen (base64 'data' or 'file'); "
+               "the answer). 640 x 512, the grid of capture_screen()'s 720 x 576 frame at (32, 32). Returns a dict like capture_screen (base64 'data' or 'file'); "
                "success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter' otherwise")
             .def("next_layer_capture_control", [](Emulator& self, py::object enabled) -> py::object {
                 return StateNodeToPy(DeviceState::NextLayerCaptureControl(self.GetContext(), enabled.is_none() ? -1 : (enabled.cast<bool>() ? 1 : 0)));
@@ -6825,6 +6832,11 @@ namespace PythonBindings
                 return reply.Ok() && reply.body.find("reached")->b;
             }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
                py::arg("scanlines") = 1)
+
+            .def("ttd_reverse_step_over", [](Emulator& self) -> bool {
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step-over", {});
+                return reply.Ok() && reply.body.find("stepped")->b;
+            }, "Step back over a routine whose return comes before, else one instruction back")
 
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs, const py::kwargs& kwargs) -> py::object {
                 std::string list;

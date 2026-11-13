@@ -142,7 +142,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error`, `section_timer_started` / `_stopped` / `_cleared` / `_break` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error`, `section_timer_started` / `_stopped` / `_cleared` / `_break`, `edited`, `run_control`, `labels_changed`, `targets_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `video.present` | the process: the GUI window's way to the screen, `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl / software), `present_policy`, `fixed_display`, `vrr`, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}; a message when the presenter turns to VRR or back, the display rate switch acts or a setting changes, never per frame (`GET /api/v1/monitor/video.present`) | none | implemented |
@@ -295,6 +295,32 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
 
 ```json
 ← {"t":"debug.events","op":"event","event":"watch_hit","id":1,"label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER","paused":true,"removed":true,"seq":51,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
+- `edited` (`{source, cpu, what, count, page?, address?, length?}`): tool edits of the machine went through (any
+  surface: WebAPI, CLI, MCP, Lua, Python, the debugger views). `what`: `registers`, `memory` (the CPU's view:
+  `address`, `length`), `page` (a physical page: `page` as `RAM5` / `ROM2` / `CACHE0`, `address` the offset in it),
+  `port` (`address` the port; a tool's port read is an access too), `state` (anything else: media, a clock, a
+  device). A refused edit (the recorded past) sends none. Views that show the machine re-read on it.
+  - Merged under load: one notification per instance waits in the core's message queue at a time, and the event
+    carries every edit since the last one (`count`; `source` the last edit's). Memory or page edits of one CPU and
+    page give one range (`address`, `length` spanning them all); edits of different kinds give `what: "mixed"` (and
+    `cpu: "mixed"` across CPUs) without an address. A script writing 20 000 bytes one at a time is a handful of
+    events. With no WebAPI the core posts at most ten notifications a second.
+- `run_control` (`{change, surface, client?, owner?, by?}`): the run-control claim changed. `change`: `taken`,
+  `released`, `revoked` (the user took control back: `by`), `expired` (an HTTP session's lease ran out),
+  `retake_refused`, `superseded` (an explicit take took over an implicit session: `by`). `surface`: `gdb`, `webapi`,
+  `mcp`, `cli`, `lua`, `python`.
+- `labels_changed` (no fields): the instance's labels were added, removed, changed, loaded or cleared; re-read
+  `GET /labels`.
+- `targets_changed` (`{targets: [{cpu, available}]}`): a card CPU came or went (a General Sound card fitted or
+  switched, a MultiSound inserted or removed); every CPU a debugger can name (`main`, `gs`, `ms`) with whether it
+  is there now. Sent only when the set changes while the machine runs (not for the cards it was built with).
+
+```json
+← {"t":"debug.events","op":"event","event":"edited","source":"WebAPI memory write","cpu":"main","what":"memory","count":1,"address":32768,"length":16,"seq":61,"instance":"0f3a…","emulator":"0f3a…"}
+← {"t":"debug.events","op":"event","event":"run_control","change":"revoked","surface":"mcp","client":"agent","by":"gui","seq":62,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+← {"t":"debug.events","op":"event","event":"targets_changed","targets":[{"cpu":"main","available":true},{"cpu":"gs","available":false},{"cpu":"ms","available":true}],"seq":63,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
 ```
 
 ## 4. Delivery and threads

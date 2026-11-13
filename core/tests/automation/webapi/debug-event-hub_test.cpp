@@ -7,10 +7,13 @@
 
 #include "3rdparty/message-center/messagecenter.h"
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/gsslot.h"
+#include "_helpers/soundcardscope.h"
 #include "_helpers/testwaithelper.h"
 #include "debugger/analyzers/sectiontimer/sectiontimeranalyzer.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
+#include "debugger/labels/labelmanager.h"
 #include "debugger/watch/framewatch.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
@@ -19,10 +22,13 @@
 #include "emulator/memory/memory.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
+#include "emulator/sound/soundmanager.h"
 
 #include <json/json.h>
 
+#include <atomic>
 #include <chrono>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -381,4 +387,201 @@ TEST_F(DebugEventHub_Test, ASinkGetsEveryEventNumberedWithTheSubscribersAndWitho
     PostPause(kFirst, false);
     ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 2; }, std::chrono::seconds(2)));
     EXPECT_EQ(count(), 2u) << "a removed sink is not called again";
+}
+
+/// NC_DEBUG_EDITED: a tool's edit that went through is `edited` with what it changed; a register is `registers`
+TEST_F(DebugEventHub_Test, EditedNamesWhatAToolChanged)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","emulator":")" + emulator->GetId() + R"(","topics":["debug"]})",
+                       inbox.Sender());
+    auto edits = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString() == "edited")
+                found.push_back(event);
+        return found;
+    };
+
+    Memory* memory = emulator->GetContext()->pMemory;
+    EXPECT_TRUE(emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("test memory", "memory", 0x8000, 2), [&] {
+        memory->DirectWriteToZ80Memory(0x8000, 0x12);
+        memory->DirectWriteToZ80Memory(0x8001, 0x34);
+    }).empty());
+    ASSERT_TRUE(TestWait::For([&] { return edits().size() == 1; }, std::chrono::seconds(2)));
+    std::string refusal;
+    ASSERT_TRUE(emulator->SetRegisterFromTool("test register", "HL", 0x1234, &refusal)) << refusal;
+    ASSERT_TRUE(TestWait::For([&] { return edits().size() == 2; }, std::chrono::seconds(2)));
+    const std::vector<Json::Value> events = edits();
+    EXPECT_EQ(events[0]["count"].asUInt(), 1u);
+    EXPECT_EQ(events[0]["source"].asString(), "test memory");
+    EXPECT_EQ(events[0]["cpu"].asString(), "main");
+    EXPECT_EQ(events[0]["what"].asString(), "memory");
+    EXPECT_EQ(events[0]["address"].asInt(), 0x8000);
+    EXPECT_EQ(events[0]["length"].asUInt(), 2u);
+    EXPECT_FALSE(events[0].isMember("page"));
+    EXPECT_EQ(events[1]["what"].asString(), "registers");
+    EXPECT_FALSE(events[1].isMember("address")) << "a register edit has no address";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// A script writing memory byte by byte: one NC_DEBUG_EDITED waits in the message queue at a time, the edits come
+/// merged (their count, one range); with nobody taking them (no hub) the queue sees at most ten a second
+TEST_F(DebugEventHub_Test, EditsUnderLoadAreMergedAndTheQueueStaysShort)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    std::atomic<int> posted{0};
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    const uint64_t observer =
+        messageCenter.AddObserver(NC_DEBUG_EDITED, [&posted](int, Message*) { posted.fetch_add(1); });
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","emulator":")" + emulator->GetId() + R"(","topics":["debug"]})",
+                       inbox.Sender());
+    auto edits = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString() == "edited")
+                found.push_back(event);
+        return found;
+    };
+    auto counted = [&] {
+        uint64_t total = 0;
+        for (const Json::Value& event : edits())
+            total += event["count"].asUInt();
+        return total;
+    };
+
+    constexpr int kEdits = 20000;
+    Memory* memory = emulator->GetContext()->pMemory;
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < kEdits; i++)
+    {
+        const uint16_t address = static_cast<uint16_t>(0x8000 + (i % 0x4000));
+        ASSERT_TRUE(emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("load", "memory", address, 1), [&] {
+            memory->DirectWriteToZ80Memory(address, static_cast<uint8_t>(i));
+        }).empty());
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
+    ASSERT_TRUE(TestWait::For([&] { return counted() == kEdits; }, std::chrono::seconds(2)));
+    const std::vector<Json::Value> events = edits();
+    std::cout << "        " << kEdits << " edits in " << elapsed.count() << " us: " << events.size() << " events, "
+              << posted.load() << " notifications" << std::endl;
+    EXPECT_LT(events.size(), static_cast<size_t>(kEdits / 10)) << "merged, not one event an edit";
+    EXPECT_LE(static_cast<int>(events.size()), posted.load()) << "an event per notification at most";
+    for (const Json::Value& event : events)
+    {
+        EXPECT_EQ(event["what"].asString(), "memory");
+        EXPECT_GE(event["address"].asInt(), 0x8000);
+        EXPECT_LE(event["address"].asInt() + event["length"].asInt(), 0xC000);
+    }
+
+    // Nobody takes them: a notification on the first edit, then at most one each 100 ms
+    _hub.Stop();
+    const int before = posted.load();
+    const auto unheardStart = std::chrono::steady_clock::now();
+    for (int i = 0; i < kEdits; i++)
+        ASSERT_TRUE(emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("load", "memory", 0x8000, 1), [] {}).empty());
+    const auto unheard =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - unheardStart);
+    ASSERT_TRUE(TestWait::For([&] { return posted.load() > before; }, std::chrono::seconds(2)));
+    EXPECT_LE(posted.load() - before, 1 + static_cast<int>(unheard.count() / 100) + 1);
+    messageCenter.RemoveObserverById(NC_DEBUG_EDITED, observer);
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// NC_RUN_CONTROL_CHANGED: run_control with the change, the surface, the client and who took control back
+TEST_F(DebugEventHub_Test, RunControlCarriesTheChange)
+{
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s"})", inbox.Sender());
+    MessageCenter::DefaultMessageCenter().Post(
+        NC_RUN_CONTROL_CHANGED,
+        new RunControlChangedPayload(unreal::UUID(std::string(kFirst)), "revoked", "mcp", "agent", "owner-1", "gui"),
+        true);
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 1; }, std::chrono::seconds(2)));
+    const Json::Value event = inbox.Events()[0];
+    EXPECT_EQ(event["event"].asString(), "run_control");
+    EXPECT_EQ(event["emulator"].asString(), kFirst);
+    EXPECT_EQ(event["change"].asString(), "revoked");
+    EXPECT_EQ(event["surface"].asString(), "mcp");
+    EXPECT_EQ(event["client"].asString(), "agent");
+    EXPECT_EQ(event["owner"].asString(), "owner-1");
+    EXPECT_EQ(event["by"].asString(), "gui");
+}
+
+/// NC_LABEL_CHANGED: labels_changed for the instance whose labels changed; a label manager without one sends none
+TEST_F(DebugEventHub_Test, LabelsChangedNamesTheInstance)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("48K", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","topics":["debug"]})", inbox.Sender());
+    MessageCenter::DefaultMessageCenter().Post(NC_LABEL_CHANGED, new LabelsChangedPayload(std::string()), true);
+    LabelManager* labels = emulator->GetContext()->pDebugManager->GetLabelManager();
+    ASSERT_TRUE(labels->AddLabel("Start", 0x8000, 0, 0));
+    auto changes = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString() == "labels_changed")
+                found.push_back(event);
+        return found;
+    };
+    ASSERT_TRUE(TestWait::For([&] { return !changes().empty(); }, std::chrono::seconds(2)));
+    for (const Json::Value& event : changes())
+        EXPECT_EQ(event["emulator"].asString(), emulator->GetId()) << "no event without an instance";
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// NC_DEBUG_TARGETS_CHANGED: targets_changed when a card CPU goes (the General Sound switched to the lightweight
+/// player, which has none) and comes back; not for the cards the machine was built with, nor while the set stays
+TEST_F(DebugEventHub_Test, TargetsChangedListsTheCpusOnAChange)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    SoundManager* soundManager = emulator->GetContext()->pSoundManager;
+    ASSERT_TRUE(FitGeneralSoundCard(soundManager, GSTypeKind::NGS));
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"s","emulator":")" + emulator->GetId() + R"(","topics":["debug"]})",
+                       inbox.Sender());
+    auto targets = [&inbox] {
+        std::vector<Json::Value> found;
+        for (const Json::Value& event : inbox.Events())
+            if (event["event"].asString() == "targets_changed")
+                found.push_back(event);
+        return found;
+    };
+    auto available = [](const Json::Value& event, const std::string& cpu) {
+        for (const Json::Value& target : event["targets"])
+            if (target["cpu"].asString() == cpu)
+                return target["available"].asBool();
+        return false;
+    };
+
+    ASSERT_TRUE(soundManager->switchGeneralSoundCard(GSTypeKind::LW));
+    ASSERT_TRUE(TestWait::For([&] { return targets().size() == 1; }, std::chrono::seconds(2)));
+    EXPECT_TRUE(available(targets()[0], "main"));
+    EXPECT_FALSE(available(targets()[0], "gs")) << "the lightweight player has no CPU";
+    EXPECT_FALSE(available(targets()[0], "ms"));
+
+    ASSERT_TRUE(soundManager->switchGeneralSoundCard(GSTypeKind::NGS));
+    ASSERT_TRUE(TestWait::For([&] { return targets().size() == 2; }, std::chrono::seconds(2)));
+    EXPECT_TRUE(available(targets()[1], "gs"));
+
+    // The same set again: nothing; an edit after it shows the queue went past
+    emulator->GetContext()->pDebugManager->OnGeneralSoundCardCreated();
+    ASSERT_TRUE(emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("test", "memory", 0x8000, 1), [] {}).empty());
+    ASSERT_TRUE(TestWait::For(
+        [&] {
+            for (const Json::Value& event : inbox.Events())
+                if (event["event"].asString() == "edited")
+                    return true;
+            return false;
+        },
+        std::chrono::seconds(2)));
+    EXPECT_EQ(targets().size(), 2u);
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }

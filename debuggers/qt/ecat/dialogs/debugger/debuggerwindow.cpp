@@ -41,6 +41,7 @@
 #include "memoryview.h"
 #include "registersview.h"
 #include "sideviews.h"
+#include "ttdcontrols.h"
 #include "dialogs/numfmt.h"
 
 DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
@@ -238,6 +239,7 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     m_serial = e->debug_serial();
     refresh_all(true);
     mark_all();
+    if (e->loaded) m_ttd->poll(true);
     show_state();
     update_cursor();
 }
@@ -359,6 +361,18 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_to_cursor->setToolTip(tr("Run to the cursor") + " (F4)");
     addAction(m_to_cursor);
     connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
+
+    //Back in time (not in ecat): shown only while the machine has a recorded history
+    m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); });
+    connect(m_ttd, &TtdControls::moved, this, [this]() {
+        //A move in time is a stop of its own: every view read again, PC in sight
+        m_serial = e->debug_serial();
+        m_paused = e->debug_paused() && !e->debug_stepping();
+        mark_all();
+        refresh_all(true);
+        show_state();
+    });
+    connect(m_ttd, &TtdControls::moment_changed, this, [this]() { show_state(); });
     tb->addSeparator();
 
     //An address of the listing: it follows the cursor, and Enter goes there
@@ -627,6 +641,7 @@ void DebuggerWindow::update_actions()
     m_bp_remove->setEnabled(on);
     m_bp_toggle->setEnabled(live);
     m_bp_clear->setEnabled(live && !p->cpu->get_breakpoints().empty());
+    if (m_ttd != nullptr) m_ttd->set_live(live);
 }
 
 void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
@@ -709,6 +724,8 @@ void DebuggerWindow::show_state()
     } else {
         text = tr("Running");
     }
+    //Where the machine is in time: "History: frame 12 of 40, replaying" (forward actions replay)
+    if (m_ttd != nullptr && !m_ttd->moment().isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_ttd->moment();
     m_state->setText(text);
     //Read whole: the label as wide as its text
     m_state->setMinimumWidth(std::max((int)std::lround(200 * dbg::zoom(dbg::Zoom::Frame, m_zoom)), m_state->sizeHint().width()));
@@ -742,6 +759,8 @@ void DebuggerWindow::on_timer()
         return;
     }
     if (follow_online()) return;
+    //The time travel session: once a second
+    m_ttd->poll();
     const bool paused = e->debug_paused() && !e->debug_stepping();
     if (paused != m_paused) {
         m_paused = paused;

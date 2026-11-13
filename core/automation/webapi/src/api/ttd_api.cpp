@@ -29,6 +29,7 @@
 ///
 /// Phase 4 (reverse execution):
 ///   POST /ttd/reverse-step       — step back N instructions or T t-states
+///   POST /ttd/reverse-step-over  — step back over a routine whose return comes before, else one instruction
 ///   POST /ttd/reverse-continue   — run backward until any PC matches
 ///
 /// Every route turns its request into a TTDControl verb (Phase 5, Step 1): the
@@ -669,6 +670,21 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
     std::map<std::string, std::string> options;
     if (OptionsFromJson(req, options, callback))
         RespondTTD(id, "reverse-step", std::move(options), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/reverse-step-over
+///
+/// Body: {} (none). One instruction back, or back past a whole routine when that instruction is its return.
+///
+/// Response: { "stepped", "over_call", "skipped"?, "call_out_of_reach"?, "blocking_marker"?, "pc"?, "frame",
+///             "tinframe", "text" }
+void EmulatorAPI::reverseStepOverTTD(const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback,
+                                     const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (OptionsFromJson(req, options, callback))
+        RespondTTD(id, "reverse-step-over", std::move(options), callback);
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/probe-frames

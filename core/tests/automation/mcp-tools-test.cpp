@@ -4,7 +4,7 @@
 /// Each tool is driven through a synchronous FakeApiCaller that records every
 /// HTTP call, so the tests assert exactly which WebAPI endpoint each action
 /// hits and with which body. Covered:
-///   - emulator_manage action routing (list/status/start/destroy/create)
+///   - emulator_manage action routing (list/status/start/destroy/create/reset soft and hard)
 ///   - load_software extension detection (.sna/.tap+.play/.trd+drive) and rejects
 ///   - control_execution step/run_frames/breakpoint mapping and body fields
 ///   - inspect_state aspect fan-out (machine+registers hit two endpoints)
@@ -194,6 +194,28 @@ TEST_F(McpTools_Test, EmulatorManage_StartStopDestroy_VerbAndPath)
     _caller->routes["DELETE /api/v1/emulator/emu-1"] = {200, Json::Value(Json::objectValue)};
     RunTool(*_registry, "emulator_manage", args, *_caller);
     EXPECT_TRUE(_caller->Saw("DELETE", "/api/v1/emulator/emu-1"));
+}
+
+TEST_F(McpTools_Test, EmulatorManage_Reset_SoftByDefault_HardOnRequest)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/reset"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "reset";
+    mcp::ToolResult soft = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(soft.isError);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/reset");
+    ASSERT_NE(call, nullptr);
+    EXPECT_FALSE(call->body["hard"].asBool());   // the reset button
+    EXPECT_NE(soft.text.find("Soft reset"), std::string::npos) << soft.text;
+
+    args["hard"] = true;
+    mcp::ToolResult hard = RunTool(*_registry, "emulator_manage", args, *_caller);
+    ASSERT_FALSE(hard.isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/reset");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["hard"].asBool());    // a power cycle
+    EXPECT_NE(hard.text.find("Hard reset"), std::string::npos) << hard.text;
 }
 
 TEST_F(McpTools_Test, EmulatorManage_CreateZXPoly_PostsTheWebApiZXPolyRequest)
@@ -3959,6 +3981,28 @@ TEST_F(McpTools_Test, TimeTravel_ReverseStep_NeedsExactlyOneUnit)
     ASSERT_NE(call, nullptr);
     EXPECT_EQ(call->body["count"].asUInt(), 3u);
     EXPECT_FALSE(call->body.isMember("tstates"));
+}
+
+TEST_F(McpTools_Test, TimeTravel_ReverseStepOver_PostsTheVerbAndSaysWhatItDid)
+{
+    Json::Value reply;
+    reply["stepped"] = true;
+    reply["over_call"] = true;
+    reply["skipped"] = 6;
+    reply["pc"] = 0x8004;
+    reply["frame"] = 12;
+    reply["tinframe"] = 500;
+    reply["text"] = "Stepped back over a routine (6 instructions) to #8004";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-step-over"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "reverse_step_over";
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step-over"), nullptr);
+    // An agent may read only the text: what happened and where
+    EXPECT_NE(result.text.find("over a routine (6 instructions) to #8004"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)
