@@ -1409,6 +1409,14 @@
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
         "#/components/schemas/TTDBranchLineageSpan";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["description"] =
+        "The branches leaving the shown timeline at the current moment's frame (a debugger's 'fork here'): a branch "
+        "forking there, or the parent's future the lineage left there; frames: its length past the fork.";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["type"] = "object";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["frames"]["type"] = "integer";
     schemas["TTDBranchesResponse"]["properties"]["text"]["type"] = "string";
 
     schemas["TTDBranchResponse"]["type"] = "object";
@@ -1792,6 +1800,29 @@
     schemas["TTDReverseStepResponse"]["properties"]["frame"]["format"] = "uint64";
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
+
+    // POST /ttd/reverse-step-over
+    schemas["TTDReverseStepOverResponse"]["type"] = "object";
+    schemas["TTDReverseStepOverResponse"]["description"] = "Response from POST /ttd/reverse-step-over.";
+    schemas["TTDReverseStepOverResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
+    schemas["TTDReverseStepOverResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["stepped"]["description"] = "The machine went back (false: no earlier instruction)";
+    schemas["TTDReverseStepOverResponse"]["properties"]["over_call"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["over_call"]["description"] =
+        "The instruction before was a routine's return: the machine went back past the routine";
+    schemas["TTDReverseStepOverResponse"]["properties"]["skipped"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["skipped"]["description"] = "over_call: the routine's instructions passed over";
+    schemas["TTDReverseStepOverResponse"]["properties"]["call_out_of_reach"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["call_out_of_reach"]["description"] =
+        "The routine started before the history or behind a barrier: the machine stays on the return";
+    schemas["TTDReverseStepOverResponse"]["properties"]["blocking_marker"]["type"] = "object";
+    schemas["TTDReverseStepOverResponse"]["properties"]["blocking_marker"]["description"] = "The barrier that kept the routine's start out of reach";
+    schemas["TTDReverseStepOverResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseStepOverResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDReverseStepOverResponse"]["properties"]["text"]["type"] = "string";
 
     // POST /ttd/reverse-continue
     schemas["TTDReverseContinueRequest"]["type"] = "object";

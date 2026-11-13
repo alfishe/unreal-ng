@@ -6535,6 +6535,12 @@ public:
             return reply.Ok() && reply.body.find("reached")->b;
         });
 
+        // ttd_reverse_step_over(): back over a routine when the instruction before is its return, else one instruction
+        lua.set_function("ttd_reverse_step_over", [this]() -> bool {
+            const ttd::TTDReply reply = TtdRun("reverse-step-over", {});
+            return reply.Ok() && reply.body.find("stepped")->b;
+        });
+
         // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
         lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
                                                         sol::optional<sol::table> optionsTable) -> sol::object {

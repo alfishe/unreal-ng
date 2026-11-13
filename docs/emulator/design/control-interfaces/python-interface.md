@@ -1651,6 +1651,8 @@ emu.ttd_reverse_step()                      # -> bool; one instruction back
 emu.ttd_reverse_step(count=10)              # ten instructions back
 emu.ttd_reverse_step_tstates(tstates=5000)  # back 5000 t-states (nearest instruction start)
 emu.ttd_reverse_step_scanlines(scanlines=2) # back 2 scanlines of the machine (t_line each)
+emu.ttd_reverse_step_over()                 # -> bool; back over a routine when the instruction before is its
+                                            # return, otherwise one instruction back (debuggers' Shift+F8)
 
 hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 # -> {'matched': True, 'pc': 0x8000, 'frame': 4700, 'tinframe': 812}

@@ -500,6 +500,7 @@ private:
                              const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,

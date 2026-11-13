@@ -16,6 +16,7 @@
 
 #include "widgets/branchlanes.h"
 #include "widgets/journalspanslider.h"
+#include "widgets/ttdbranchcommands.h"
 #include <QScrollArea>
 #include <set>
 #include <utility>
@@ -55,6 +56,8 @@ public:
     /// User preference / action toggle for widget visibility
     void setVisibleByUser(bool visible);
     bool isVisibleByUser() const { return _visibleByUser; }
+    /// Opens the Branches row (the debugger's "Show in the TTD panel"); it shows once the session has branches
+    void showBranches();
 
     /// Exact height requested by the widget depending on user visibility and scrubber row state.
     int desiredHeight() const;
@@ -124,6 +127,8 @@ private:
     void buildJournal(uint64_t fromFrame, uint64_t toFrame);
 
     std::shared_ptr<Emulator> _activeEmulator = nullptr;
+    /// Branch management, Branch Here / Continue Rec (shared with the Embedded debugger)
+    std::unique_ptr<ttdgui::BranchCommands> _branchCommands;
     QTimer* _telemetryTimer = nullptr;
 
     bool _visibleByUser = false;

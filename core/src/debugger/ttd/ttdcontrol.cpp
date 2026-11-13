@@ -348,6 +348,7 @@ private:
     TTDReply Resume(const TTDRequest& request);
     TTDReply StepInstruction(const TTDRequest& request);
     TTDReply ReverseStep(const TTDRequest& request);
+    TTDReply ReverseStepOver();
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
     TTDReply CauseChain(const TTDRequest& request);
@@ -453,7 +454,7 @@ const std::vector<std::string>& TTDControl::Verbs()
 {
     static const std::vector<std::string> verbs = {
         "status", "start", "stop", "invalidate", "history-limit", "journal", "journal-build", "journal-build-cancel",
-        "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step",
+        "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step", "reverse-step-over",
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip",
@@ -601,6 +602,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return Resume(request);
     if (verb == "step-instruction")
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(StepInstruction(request)); });
+    if (verb == "reverse-step-over")
+        return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStepOver()); });
     if (verb == "reverse-step")
         return AsOperation(OpKind::TimelineSeek, verb, request, [&]() { return WithCheck(ReverseStep(request)); });
     if (verb == "timeline")
@@ -1401,6 +1404,48 @@ TTDReply TTDControlBackend::ReverseStep(const TTDRequest& request)
     return reply;
 }
 
+TTDReply TTDControlBackend::ReverseStepOver()
+{
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDReverseStepOverResult result = _manager->ReverseStepOver();
+    NotifyFrameRefresh();
+    TTDReply reply;
+    reply.body["stepped"] = result.moved;
+    reply.body["over_call"] = result.overCall && !result.callOutOfReach;
+    if (result.overCall && !result.callOutOfReach)
+        reply.body["skipped"] = static_cast<uint64_t>(result.skipped);
+    if (result.callOutOfReach)
+        reply.body["call_out_of_reach"] = true;
+    if (result.blockingMarker.reason[0] != '\0')
+    {
+        StateNode marker = TimePointNode(result.blockingMarker.time);
+        marker["kind"] = TTDExternalEventKindToString(result.blockingMarker.kind);
+        marker["reason"] = std::string(result.blockingMarker.reason);
+        reply.body["blocking_marker"] = marker;
+    }
+    if (result.moved)
+        reply.body["pc"] = static_cast<uint64_t>(result.pc);
+    AddPosition(reply.body, _manager->CurrentPosition());
+    char pc[8];
+    std::snprintf(pc, sizeof(pc), "#%04X", static_cast<unsigned>(result.pc));
+    std::string text;
+    if (!result.moved)
+        text = "No earlier instruction: nothing changed";
+    else if (result.overCall && !result.callOutOfReach)
+        text = std::string("Stepped back over a routine (") + std::to_string(result.skipped) +
+               " instructions) to " + pc;
+    else if (result.callOutOfReach)
+        text = std::string("Stepped back one instruction to the return at ") + pc +
+               ": the routine's start is out of reach" +
+               (result.blockingMarker.reason[0] != '\0' ? " (a barrier)" : " (older than the history)");
+    else
+        text = std::string("Stepped back one instruction to ") + pc;
+    reply.body["text"] = text;
+    return reply;
+}
+
 TTDReply TTDControlBackend::Markers()
 {
     const auto events = _manager->GetExternalEvents().SnapshotEvents();
@@ -1797,6 +1842,25 @@ TTDReply TTDControlBackend::Branches(const TTDRequest& request)
             lineage.push(std::move(node));
         }
     reply.body["lineage"] = lineage;
+    // The branches leaving the timeline at the moment's frame (the debuggers' "fork here"): a live read, no park
+    StateNode forks = StateNode::Array();
+    if (info.branches && info.branches->branches.size() > 1)
+    {
+        const std::map<uint64_t, std::vector<TTDForkLeave>> points =
+            TTDForkPoints(*info.branches, std::max(info.currentEndFrame, info.sessionStartFrame + 1));
+        if (const auto it = points.find(_manager->CurrentPosition().frame); it != points.end())
+            for (const TTDForkLeave& leave : it->second)
+            {
+                StateNode node = StateNode::Object();
+                node["id"] = static_cast<uint64_t>(leave.branch);
+                node["name"] = leave.name;
+                node["frames"] = leave.frames;
+                forks.push(std::move(node));
+                text += "Fork here: " + leave.name + " (" + std::to_string(leave.branch) + "), " +
+                        std::to_string(leave.frames) + " frames\n";
+            }
+    }
+    reply.body["forks_here"] = forks;
     reply.body["text"] = info.branches ? text : std::string("No branches: the history is one line (the trunk)\n");
     return reply;
 }

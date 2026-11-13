@@ -325,3 +325,27 @@ TEST_F(TTDControl_Branches_Test, ContinueAtTheEndWhileTheMachineRunsAnswers)
     EXPECT_TRUE(_ttd->IsRecording());
     _emulator->Pause();
 }
+
+TEST_F(TTDControl_Branches_Test, TheListNamesTheBranchesLeavingTheMomentsFrame)
+{
+    RecordTrunkAndBranch();
+
+    // At the fork, on the branch: the trunk's old future leaves here (20 frames past the fork)
+    ASSERT_TRUE(_ttd->SeekTo({_start + 10, 0}));
+    ttd::TTDReply list = Run("branches");
+    ASSERT_TRUE(list.Ok()) << list.message;
+    const StateNode* forks = list.body.find("forks_here");
+    ASSERT_NE(forks, nullptr);
+    ASSERT_EQ(forks->size(), 1u);
+    EXPECT_EQ(forks->items[0].find("id")->i, 0);
+    EXPECT_EQ(forks->items[0].find("name")->s, "trunk");
+    EXPECT_EQ(forks->items[0].find("frames")->i, 20);
+    EXPECT_NE(list.body.find("text")->s.find("Fork here: trunk (0), 20 frames"), std::string::npos)
+        << list.body.find("text")->s;
+
+    // Elsewhere nothing leaves
+    ASSERT_TRUE(_ttd->SeekTo({_start + 5, 0}));
+    list = Run("branches");
+    ASSERT_TRUE(list.Ok()) << list.message;
+    EXPECT_EQ(list.body.find("forks_here")->size(), 0u);
+}
