@@ -448,10 +448,11 @@ TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
     for (int i = 0; i < 2; i++)
         _emulator->RunFrame(true);
 
-    // ScreenNext drew it: a 640 x 512 frame (the 320 x 256 grid, lines doubled) with the highlighted "Browser" bar in cyan
+    // ScreenNext drew it: the HDMI frame, 720 x 576 (360 x 288 doubled, the 320 x 256 grid inside the outer border) with the
+    // highlighted "Browser" bar in cyan
     const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 640u);
-    ASSERT_EQ(fb.height, 512u);
+    ASSERT_EQ(fb.width, 720u);
+    ASSERT_EQ(fb.height, 576u);
     const NextVideoRegs& video = _ports->Board().Video();
     const uint32_t cyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 5));
     const uint32_t brightCyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 13));

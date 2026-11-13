@@ -111,7 +111,9 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     if (emulator->GetContext()->pSoundManager)
         emulator->GetContext()->pSoundManager->unmute();
     emulator->GetContext()->config.reset_rom = RM_SOS;
-    emulator->Reset();
+    // A power cycle, not the reset button: the machine starts as created (the ZX Next's soft reset keeps the machine type and
+    // NR #02 reads it as a soft reset)
+    emulator->Reset(true);
 
     // The CMOS clock in its test mode: emulated time from one fixed instant instead of the host's live clock, so two
     // runs read the same time to the microsecond (an ATM3 boot polls it) however fast the host runs them
