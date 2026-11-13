@@ -370,7 +370,8 @@
         "Resume recording from a past point (parent TDD §10.4)";
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["tags"].append("Time-Travel Debug");
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["description"] =
-        "Truncates the timeline at the resume point and resumes recording. "
+        "Resumes recording at the resume point: before the end of the active branch a new branch forks there and "
+        "the old future stays on its parent (the reply names both); at the end the recording goes on. "
         "If the request body is omitted, resumes from the current position. "
         "On success the session transitions to state=\"recording\". Used "
         "to continue past an external-event marker that blocked a seek. Every medium "

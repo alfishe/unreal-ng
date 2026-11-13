@@ -1,6 +1,6 @@
 # TTD branches: maintenance tools
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Format: [storage.md](storage.md).
+Part of [TTD branches](README.md). Status: **design** (2026-11-08), not built (P7). Format: [storage.md](storage.md).
 
 Python tools to inspect, extract and clean branched sessions and recording folders without an emulator. They build
 on the existing reader `tools/verification/ttd-analyzer/src/ttdcontainer.py` (headers, parts, CRCs, every piece

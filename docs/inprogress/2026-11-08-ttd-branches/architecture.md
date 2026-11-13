@@ -1,6 +1,6 @@
 # TTD branches: architecture
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08), from the owner's decisions in
+Part of [TTD branches](README.md). Status: **built** except the disk tier (P3) and media (P4): P1 landed 2026-11-10 (`e0ac62a53`); [README](README.md#phases) tracks the phases. Design 2026-11-08, from the owner's decisions in
 [use-cases.md](use-cases.md) §5. Storage: [storage.md](storage.md). Surfaces: [surfaces.md](surfaces.md). Tests and
 benchmarks: [test-strategy.md](test-strategy.md). Maintenance tools: [tools.md](tools.md).
 

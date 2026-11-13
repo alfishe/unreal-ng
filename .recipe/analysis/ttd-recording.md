@@ -35,7 +35,7 @@ time_travel {"action":"step_forward_frame"}
 time_travel {"action":"step_back_instruction"}
 time_travel {"action":"step_forward_instruction"}
 time_travel {"action":"markers"}                               # replay barriers
-time_travel {"action":"resume"}                                # needs detached (seek/step first); truncates the future
+time_travel {"action":"resume"}                                # needs detached (seek/step first); before the end a new branch forks there, the old future stays
 
 # bookmarks
 time_travel {"action":"bookmark_add","label":"before-crash"}   # at the current position

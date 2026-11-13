@@ -1198,7 +1198,7 @@ ttd_step_instruction_back()      --> bool
 ttd_step_instruction_forward()   --> bool
 
 ttd_resume()                     --> bool  -- record again from the exact current position (frame and tinframe)
-ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
+ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); a new branch forks there, the old future stays
                                             -- fails from idle: seek first
 
 ttd_position()   -- current, session_end, first_frame, history, state, paused, fps; never parks the machine

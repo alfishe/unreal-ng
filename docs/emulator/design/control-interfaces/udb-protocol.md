@@ -542,7 +542,7 @@ For each entry:
 Bookmark management. `ADD` carries `frame(uint64) + tstate(uint32) + label_len(uint16) + label(bytes)`; `REMOVE` carries `id(uint32)`; `LIST` returns a streamed array of `{id, frame, tstate, label_len, label}`.
 
 #### TTD_RESUME_FROM_HERE (0x0940)
-Truncate future at the current (detached) position and resume live recording.
+Resume live recording at the current (detached) position: before the end of the active branch a new branch forks there and the old future stays on its parent (the `resume` verb).
 
 **Request**:
 ```

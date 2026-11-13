@@ -4245,9 +4245,9 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     const size_t preMarkerCount   = _line->externalEvents.Size();
 
     // ------------------------------------------------------------------
-    // Step 2: truncate timeline + page refs after `from`. Page refs held
-    // by dropped checkpoints are released back to the page store; the
-    // slots become eligible for reuse by future Intern calls (TDD §6.3).
+    // Step 2: history after `from` forks a branch (below), the old future stays; at the active branch's end the
+    // line is cut at the resume point. Page refs held by checkpoints a cut drops are released back to the page store
+    // (TDD §6.3).
     // ------------------------------------------------------------------
     // The resume point is where the machine actually stands: a frame-aligned
     // `from` restores the checkpoint's CPU at its overshoot past the frame

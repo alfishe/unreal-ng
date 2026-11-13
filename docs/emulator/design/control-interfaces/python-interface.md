@@ -1638,7 +1638,7 @@ emu.ttd_step_instruction_back()             # -> bool
 emu.ttd_step_instruction_forward()          # -> bool
 
 emu.ttd_resume()                            # -> bool; record again from the exact current position (frame and tinframe)
-emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; the future is discarded
+emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; a new branch forks there, the old future stays
                                             # fails from idle: seek first
 
 emu.ttd_position()   # current, session_end, first_frame, history, state, paused, fps; never parks the machine

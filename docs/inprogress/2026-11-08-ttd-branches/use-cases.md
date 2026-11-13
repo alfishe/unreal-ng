@@ -1,6 +1,6 @@
 # TTD branches: use cases and scenarios
 
-Part of [TTD branches](README.md). Status: **draft for the owner's choice** (2026-11-08).
+Part of [TTD branches](README.md). Status: **decided** by the owner (2026-11-08): Q-1...Q-11 below.
 
 Every later decision (when a branch starts, how long it lives, what a file keeps, what the UI and the deck show)
 follows from which of these cases are served first and how. Each case lists the actor, the trigger, the scenario

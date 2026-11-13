@@ -1,6 +1,6 @@
 # TTD branches: test strategy, cases, fuzzing, benchmarks
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Covers [architecture.md](architecture.md),
+Part of [TTD branches](README.md). Status: P1-P2 cases and benchmarks built with them (`e0ac62a53`); the rest come with their phases. Design 2026-11-08. Covers [architecture.md](architecture.md),
 [storage.md](storage.md), [surfaces.md](surfaces.md), [tools.md](tools.md).
 
 The bar: branching unused costs nothing measurable; branching used is exact (every recorded position of every

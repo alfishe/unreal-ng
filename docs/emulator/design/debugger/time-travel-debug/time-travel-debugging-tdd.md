@@ -63,8 +63,13 @@ the same machine's history stays browsable. A recording the user started refuses
 speed at 1x; a background recording (the black box, a debugger's history) refuses nothing, and a change ends its
 session (4.2).
 
+**Branches (built 2026-11-10, D7 / D9).** A resume or an edit in the past keeps the future: a new branch forks at
+that moment and the old future stays on its parent. Branches are switched, renamed, tagged, pinned and deleted on
+every plane and in the Qt TTD panel and the debuggers; session files and recording folders keep them. Design and
+what is still open: [TTD branches](../../../../inprogress/2026-11-08-ttd-branches/README.md). Passages below that say a resume "truncates" or "discards" the
+future describe the engine before branches.
+
 **Deferred** (owner decisions; open items in [PLAN](../../../../inprogress/PLAN.md)):
-- branches: keeping the future when resuming or editing in the past (migration Phase 5, Step 2b; PLAN #76);
 - positions on a card CPU (seek and reverse step in General Sound / NeoGS instructions), with the CPU table and
   clock map (Phase 3, Step 3; with the GS debugger, PLAN #45);
 - offering to open a crashed recording at the next start (Phase 5, Step 3c);
@@ -335,7 +340,7 @@ A recording session is the unit of history validity:
 - Starts when TTD recording is enabled (or at emulator reset while enabled).
 - **Invalidated** (history cleared, new session started) by any event that breaks determinism or teleports state:
   - Snapshot/tape/disk load, `Emulator::Reset()`, ROM reload
-  - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T truncate history *after* T instead — the past is still valid)
+  - Manual memory/register edits from the debugger UI *while running* (edits while paused at time T start a branch at T instead — the past is still valid and the old future stays on its parent; [TTD branches](../../../../inprogress/2026-11-08-ttd-branches/README.md))
   - Speed multiplier change (`next_z80_frequency_multiplier`) on a retained (stopped) session — simpler to invalidate than to model. While recording the change is refused instead (see the acceleration lock below)
   - Media write-back to mounted disk images (see 12.2 for the staged handling)
 - **A running recording refuses the host-side invalidators (B9).** *History: the rule as v1 built it; the engine's rule follows this item.* While `Recording`, snapshot/tape/disk load, disk create, ROM load, `InvalidateSession` from a surface, switching `timetravel`/`debugmode` off and changing the write-journal mode are refused; the invalidation list above applies to a stopped (retained) session. `RecordingGuard(TTDGuardedAction)` returns the user-facing reason (empty when allowed); the core entry points (`Emulator::LoadSnapshot/LoadTape/LoadDisk/CreateBlankDisk/LoadROM`, `FeatureManager::setFeature`, `SetEnableWriteJournal`) enforce it, and every surface pre-checks it to report the reason (CLI `Error:`, WebAPI 409, Lua `false, reason`, Python `RuntimeError`, Qt dialog). A reset stays allowed: it stops the recording and keeps the history. Guest-driven invalidators (ZX-Evo SD card) cannot be refused; `TTDSessionInfo::lastDropReason` (`last_drop_reason`) records what dropped the last history. Only a `Session` recording is protected: a `DebuggerLive` history (DeZog) is a rolling debugger history that any outside change drops and the debugger restarts on the next resume/step, as before B9.
@@ -367,7 +372,7 @@ stateDiagram-v2
     Detached --> Idle : InvalidateSession()
 ```
 
-"Detached" corresponds to the emulator being **paused** at a historical point. Resuming execution from a historical point discards the future beyond it (like `git reset --hard` + new commits). A "branch and keep both" model was considered and rejected for v1 — it complicates the UI and index for a rare use case; a user who wants to preserve the future can save an emulator snapshot first. On the engine, branches are deferred (migration Phase 5, Step 2b; PLAN #76). On the engine the recording also leaves `Recording` for a seek: it is paused for browsing (D8), not stopped.
+"Detached" corresponds to the emulator being **paused** at a historical point. Resuming execution from a historical point starts a branch there: the future beyond it stays on the parent branch (like `git checkout -b` + new commits). v1 discarded the future instead (a "branch and keep both" model was rejected for v1); on the engine branches are built ([TTD branches](../../../../inprogress/2026-11-08-ttd-branches/README.md)). On the engine the recording also leaves `Recording` for a seek: it is paused for browsing (D8), not stopped.
 
 ---
 
@@ -1162,6 +1167,10 @@ Replay must be *observationally silent* and *fast*. `TTDManager::ReplayRun` (bui
 
 ### 8.3 Resume-from-Past (History Truncation)
 
+> **Superseded by branches (2026-11-10):** with history after T a new branch forks at T and the old future stays on
+> its parent ([TTD branches architecture.md §4.5](../../../../inprogress/2026-11-08-ttd-branches/architecture.md)). The steps below are what the new
+> branch's own line does (it starts as a copy of the frame up to T) and what a resume at the active branch's end does.
+
 When the user resumes execution while positioned at T < end:
 
 ```
@@ -1172,7 +1181,8 @@ When the user resumes execution while positioned at T < end:
 
 This is atomic with respect to the UI (done under pause, before Resume()).
 
-On the engine the segment files written so far are discarded at a resume from the past, and a new recording folder starts. Keeping both futures (branches) is deferred (§0).
+On the engine with branches the recording folder keeps every branch: one file per line plus `branches.tdx`
+([TTD branches storage.md](../../../../inprogress/2026-11-08-ttd-branches/storage.md)).
 
 ---
 
@@ -1330,7 +1340,7 @@ public:
     bool StepForwardInstruction();              // Replay-based when detached
     bool StepBackFrame();
     bool StepForwardFrame();
-    void ResumeFromCurrent();                   // Truncates future, re-enters Recording
+    void ResumeFromCurrent();                   // v1: truncated the future; the engine forks a branch (§8.3)
 
     // --- Reverse search ---
     std::optional<TTDSearchResult> FindLastAccess(const TTDSearchQuery& q);
@@ -1608,7 +1618,7 @@ Phase 1 carries the dominant risk (peripheral state completeness). The divergenc
 
 1. **Session persistence to disk** — worth the serializer-versioning cost? **Resolved:** built, with versioned device layouts (§0).
 2. **Tape-driven workloads** — v1 checkpoints tape position but invalidates on tape control commands; is that acceptable for tape-loader debugging, or does Phase 2 need tape-command journaling? **Resolved on the engine:** tape control is input the replay applies, and the tape trap is a recorded edit (4.2).
-3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead? **Deferred** on the engine (migration Phase 5, Step 2b; PLAN #76).
+3. **Branching history** (keep the future when resuming from the past) — rejected for v1 (4.2); is a single "auto-save emulator snapshot before truncation" safety net wanted instead? **Resolved:** branches are built on the engine (2026-11-10, [TTD branches](../../../../inprogress/2026-11-08-ttd-branches/README.md)); nothing is truncated.
 4. **Third memory interface** (fast reads + TTD-hooked writes, 7.3) — measure first; implement only if debug-read overhead is noticeable in recording sessions.
 5. **Multi-instance** — TTDManager is per-`EmulatorContext` and therefore per-instance by construction; is per-instance memory budgeting needed when many instances run (videowall scenario), or a global pool?
 6. **CMOS contents** — resolved 2026-09-28 (PLAN #60(c)): the clock chip of every machine is the shared `Ds12887` (`core/src/emulator/io/rtc/ds12887.h`), captured whole as `PeripheralId::Ds12887` (id 18, `core/src/debugger/ttd/ttdds12887.h`): 256 cells, the address latch, the C flags and the time base, 336 bytes per checkpoint before compression. While a session records the chip runs on emulated time (`TTDSerializable::TTDRecordingStarted`, called before the baseline capture), so the blob carries no host-clock dependence. The ZX-Evo AVR's 4 KiB EEPROM and the Scorpion SMUC's 2 KiB LC16 serial EEPROM are captured by the engine as regions 15 and 16, compared at each capture (v1 did not capture them).

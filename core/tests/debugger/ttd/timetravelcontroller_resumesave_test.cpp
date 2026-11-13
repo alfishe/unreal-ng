@@ -167,9 +167,8 @@ TEST_F(TimeTravelController_ResumeSave_Test, NeoGSSessionWithIncompressibleRamLo
     EXPECT_TRUE(Load(file, err)) << "a NeoGS session saves but does not load: " << err;
 }
 
-/// A resume from the past truncates the timeline and the journals
-/// but not the coverage index, so the index keeps describing the discarded
-/// future. A reverse search prunes frames by the index; a stale "this frame
+/// A resume from the past forks a branch: the new line's coverage index must not
+/// keep describing the old future (which stays on the parent branch). A reverse search prunes frames by the index; a stale "this frame
 /// never read X" hides a read the new history made in that frame.
 /// The program reads #9500 only while a key is held. The first history holds
 /// no key; after the resume a key is pressed, and the read must be found.
