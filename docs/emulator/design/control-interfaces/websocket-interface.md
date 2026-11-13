@@ -72,8 +72,13 @@ history ([webapi-interface.md](./webapi-interface.md), TTD branches):
 ← {"op":"result","t":"call","rid":5,"status":200,"body":{"switched":true,"branch":{"id":1,"name":"+00:00:37.040",…},"arrived_at":{"frame":1852,"tinframe":0},"state":"detached",…}}
 ```
 
-The `ttd.position` topic does not carry the branch yet, and the `ttd.branches` topic of the branches design is not
-there yet: a client reads `GET …/ttd/status` (`branch`, `branch_count`) after a `ttd.position` change.
+Once the session has more than the trunk, `ttd.position` names the branch the cursor is on (`branch {id, guid, name}`,
+`branch_count`); the `ttd.branches` topic pushes the table's summary and its last change when a branch is created,
+switched to, updated or deleted (never per frame; the list itself is `GET …/ttd/branches`):
+
+```json
+← {"op":"state","t":"ttd.branches","instance":"0f3a…","value":{"available":true,"count":3,"revision":7,"active":{"id":2,"guid":"…","name":"probe"},"viewed":{"id":2,"guid":"…","name":"probe"},"last":{"seq":4,"event":"created","branch":{"id":2,"guid":"…","name":"probe"},"removed":0}}}
+```
 
 A dial's seek and the surface context (control surfaces S2) are calls too; their pushes (`ctx`, the `ttd.position`
 readout) come with the `surface` topic (S4):
@@ -129,7 +134,8 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | Topic | Pushes | Scope | Status |
 |:--|:--|:--|:--|
 | `run.state` | per instance `{state: running \| paused \| stopped, speed, turbo, pace: {preset, label, unit, count, interval_ms, effective_ms, running, stop_reason}}` (`speed`: the host setting 1..16, as the `run.state` readout; the composed clock with the machine's own turbo is `emulator.stats` cpu.multiplier; `pace`: the paced run, `GET /run_pace` without its tick count) | none (a read) | implemented (`pace` 2026-10-21) |
-| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps, unit, unit_count}` (the `ttd position` verb's bounds; `unit`: the scrub unit of `ttd.seek_by`, `ttd.scrub_unit`) | none | implemented (`unit` 2026-10-21) |
+| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps, unit, unit_count}` (the `ttd position` verb's bounds; `unit`: the scrub unit of `ttd.seek_by`, `ttd.scrub_unit`); with more than the trunk also `branch {id, guid, name}` (the branch the cursor is on) and `branch_count` | none | implemented (`unit` 2026-10-21, `branch` 2026-11-13) |
+| `ttd.branches` | per instance the branch table's summary: `{available, count, revision, active {id, guid, name}, viewed {id, guid, name}, last: {seq, event: created \| switched \| updated \| deleted, branch {id, guid, name}, removed} \| null}` (`removed`: how many branches a delete took; the rows are `GET /ttd/branches`, [TTD branches](../../../inprogress/2026-11-08-ttd-branches/surfaces.md)) | none | implemented (2026-11-13) |
 | `surfaces.context` | per instance the surface context `{context, set, by, default}` (`GET /api/v1/surfaces/context`) | none | implemented |
 | `streamdeck.status` | the Stream Deck daemon as unreal-qt supervises it, once for the process (no `instance`): `{attached, state, mode, activity, own, pid, deck_attached, restarts, error, version, decks, viewers, surface, pairing: {state, code, paired, companion_id, error}, pack: {serial: a pack or scenario}}` (the fields of `GET /api/v1/streamdeck` that change with events, [command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)) | none | implemented (SD7) |
 | `audio.mixer` | per instance the mixer's levels and mute / solo: `{master: {muted}, solo, devices: [{source, muted, solo, audible, volume, peak, active, channels?: [{key, muted, solo, audible, volume?, peak?}]}]}` (`GET /audio/levels`, the readout `audio.mixer`; [mixer channels](../audio/mixer-channels-and-settings.md)); a meter that moves sends at `max_hz` | none | implemented |
@@ -363,7 +369,7 @@ stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cp
 
 | Cadence | Read when | Names |
 |---------|-----------|-------|
-| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `controllers.devices` (`NC_CONTROLLER_DEVICES_CHANGED`), `toggle.*` |
+| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `controllers.devices` (`NC_CONTROLLER_DEVICES_CHANGED`), `ttd.branches` (`NC_READOUTS_CHANGED` `ttd.branches`), `toggle.*` |
 | Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`, and `NC_READOUTS_CHANGED` `frame` once the TTD cursor of the frame is written: the frame refresh is posted before it) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
 | Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
 

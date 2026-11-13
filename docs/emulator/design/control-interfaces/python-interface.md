@@ -1777,7 +1777,8 @@ Bookmarks are advisory and never stop a seek; markers do.
 `trunk`, id 0; a branch is named by its id, its GUID or its name):
 
 ```python
-b = emu.ttd_branches()                      # also scope='lineage', created_by=, tag=, name_prefix=, pinned=, limit=, offset=
+b = emu.ttd_branches()                      # also scope='lineage', created_by=, tag=, name_prefix=, pinned=, limit=, offset=,
+                                            # run=, min_length=, max_length=, created_after=, created_before=
 # -> {'branches': [{'id', 'guid', 'name', 'parent', 'fork': {'frame', 'tinframe'} or None, 'end', 'length',
 #     'created_by', 'reason', 'tags', 'note', 'pinned', 'children', 'active', 'on_lineage'}, ...], 'total', 'count',
 #     'active', 'viewed', 'lineage': [{'branch', 'from'}], 'text'}   (no branches: an empty list); ValueError for a bad filter
@@ -1789,6 +1790,15 @@ emu.ttd_branch_update('+00:00:25.150', name='boss fight', note='...', add_tags=[
 # ValueError for nothing to change or a bound broken, {'updated': False, 'error': ...} otherwise
 emu.ttd_branch_delete('boss fight', force=True)   # force: pinned ones too; its descendants go with it
 # -> {'deleted': True, 'removed': [ids], 'removed_names': [...], 'text': ...} or {'deleted': False, 'error': ...}
+emu.ttd_branch_info('probe')                # -> {'branch', 'children', 'ancestors', 'files', 'file_bytes', 'folder', 'active', 'text'}
+# An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by 'python'):
+p = emu.ttd_branch_create(name='probe', frame=4823, run='r1', run_frames=50,
+                          input=['0:a', '10:caps+5:4'], read=['#5C00:16'], go_back=True)
+# input: 'frame:key[+key][:hold|:down|:up]' from the branch start (hold default 2 frames, 1..1000); read: 'addr[:len]'
+# -> {'created', 'branch', 'parent', 'at', 'ran_frames', 'aborted', 'end', 'reads': [{'address', 'length', 'bytes',
+#    'hex'}], 'returned_to', 'media', 'state', 'text'}; ValueError for a bad option, {'created': False, 'error'} otherwise
+emu.ttd_branch_prune(run='r1')              # a dry run: {'dry_run', 'would_delete', 'kept', 'frames', 'file_bytes', 'text'}
+emu.ttd_branch_prune(run='r1', dry_run=False)   # deletes; the active lineage and pinned ones stay ('kept', with why)
 ```
 
 **Sessions on disk:**

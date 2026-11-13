@@ -6624,7 +6624,51 @@ namespace PythonBindings
                     value["error"] = reply.message;
                 return StateNodeToPy(value);
             }, "The branches of the history: {branches, total, count, active, viewed, lineage, text}. Keywords: "
-               "scope='all' | 'lineage', created_by, tag, name_prefix, pinned=True | False, limit, offset")
+               "scope='all' | 'lineage', created_by, run, tag (one or a list: every one), name_prefix, "
+               "pinned=True | False, min_length, max_length (frames), created_after, created_before (host "
+               "microseconds), limit, offset")
+
+            .def("ttd_branch_info", [](Emulator& self, py::object branch) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-info", {{"branch", TtdOptionTextPy(branch)}});
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "One branch (an id, a GUID or a name): {branch, children, ancestors, files, file_bytes, folder, text}",
+               py::arg("branch"))
+
+            .def("ttd_branch_create", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-create", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["created"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "A branch at a moment (default: here; frame, tinframe, branch=<lineage>): name, reason, tags, note, "
+               "pinned, run (a run id), created_by, media='ask' | 'empty' | 'keep'. run_frames=N runs it headless N "
+               "frames fed by input=['0:a', '10:caps+5:4'] (frame:key[+key][:hold|:down|:up]) and records it; "
+               "read=['#5C00:16'] reads memory where it ended; go_back=True returns where you stood. {created, branch, "
+               "parent, at, ran_frames, aborted, end, reads, returned_to, state, text}")
+
+            .def("ttd_branch_prune", [](Emulator& self, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-prune", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Delete the branches a filter picks (the ttd_branches keywords); a dry run unless dry_run=False. The "
+               "active lineage and pinned branches stay: {dry_run, would_delete | deleted, kept, frames, file_bytes, "
+               "text}")
 
             .def("ttd_branch_switch", [](Emulator& self, py::object branch, py::object frameObj,
                                           uint32_t tInFrame) -> py::object {

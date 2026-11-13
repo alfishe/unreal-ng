@@ -40,6 +40,7 @@ void TimeTravelController::ResetBranches()
     _viewId = 0;
     _lastVisited.assign(1, std::nullopt);
     _nextBranchMetaSet = false;
+    _forceFork = false;
     PublishLineage();
 }
 
@@ -414,6 +415,8 @@ bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimeP
     _viewId = line;
     _tip = line;
     PublishLineage();
+    if (const TTDBranchInfo* created = _branches.Get(line))
+        NoteBranchEvent("created", *created);
 
     // The engine's cursors into the controller's journals, at the new line's ends
     _shadowEvents.input = _line->inputJournal.Size();
@@ -516,6 +519,8 @@ bool TimeTravelController::SwitchBranch(uint32_t branch, const std::optional<TTD
     }
     _lastVisited.resize(_lines.size());
     _lastVisited[branch] = target;
+    if (const TTDBranchInfo* switched = _branches.Get(branch))
+        NoteBranchEvent("switched", *switched);
     return true;
 }
 
@@ -526,9 +531,12 @@ bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector
     std::vector<uint32_t> protect;
     for (const TTDLineageSpan& s : _branches.Lineage(_tip))
         protect.push_back(s.branch);
+    const TTDBranchInfo* asked = _branches.Get(branch);
+    const TTDBranchInfo before = asked ? *asked : TTDBranchInfo{};
     if (!_branches.Delete(branch, protect, force, removed, error))
         return false;
     ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", before, static_cast<uint32_t>(removed.size()));
     error.clear();
     return true;
 }
@@ -557,6 +565,8 @@ bool TimeTravelController::UpdateBranch(uint32_t branch, const TTDBranchUpdate& 
         _branches.UpdateTags(branch, update.tags ? &*update.tags : nullptr, update.addTags, update.removeTags);
     if (update.pinned)
         _branches.SetPinned(branch, *update.pinned);
+    if (const TTDBranchInfo* updated = _branches.Get(branch))
+        NoteBranchEvent("updated", *updated);
     error.clear();
     return true;
 }
@@ -601,6 +611,9 @@ bool TimeTravelController::TipIsEmpty() const
         return false;
     const TTDBranchInfo* info = _branches.Get(_tip);
     const ControllerLine& line = *_lines[_tip];
+    // A branch asked for by name (branch-create) or pinned stays: somebody wants it, recorded or not
+    if (info && (info->meta.reason == "create" || info->meta.reason.rfind("create:", 0) == 0 || info->meta.pinned))
+        return false;
     if (!info || !info->children.empty() || line.timeline.size() != 1 || line.inputJournal.Size() != line.forkInputs ||
         line.externalEvents.Size() != line.forkMarkers)
         return false;
@@ -628,6 +641,7 @@ bool TimeTravelController::DropEmptyTip(const TTDTimePoint& leavingTo)
     std::vector<uint32_t> protect;
     for (const TTDLineageSpan& s : _branches.Lineage(parent))
         protect.push_back(s.branch);
+    const TTDBranchInfo before = *info;
     std::vector<uint32_t> removed;
     std::string error;
     if (!_branches.Delete(empty, protect, /*force=*/true, removed, error))
@@ -643,8 +657,30 @@ bool TimeTravelController::DropEmptyTip(const TTDTimePoint& leavingTo)
     _stoppedEnd = parentEnd;
     _stoppedEndValid = true;
     ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", before, static_cast<uint32_t>(removed.size()));
     MLOGINFO("TimeTravelController — the empty branch %u went (nothing recorded after its fork)", empty);
     return true;
+}
+
+void TimeTravelController::NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed)
+{
+    ++_branchEvent.seq;
+    _branchEvent.event = event;
+    _branchEvent.branch = branch.id;
+    _branchEvent.guid = branch.guid;
+    _branchEvent.name = branch.meta.name;
+    _branchEvent.removed = removed;
+}
+
+TTDBranchesPublished TimeTravelController::PublishedBranches() const
+{
+    TTDBranchesPublished out;
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    out.view = _published.branches;
+    out.active = _published.activeBranch;
+    out.viewed = _published.viewedBranch;
+    out.event = _published.branchEvent;
+    return out;
 }
 
 }  // namespace ttd

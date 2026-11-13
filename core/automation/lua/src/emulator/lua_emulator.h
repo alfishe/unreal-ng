@@ -6330,8 +6330,9 @@ public:
         // A branch is named by its id (0 = the trunk), its GUID or its name.
         // -----------------------------------------------------------------
 
-        // ttd_branches([{scope = "all" | "lineage", created_by = "...", tag = "...", name_prefix = "...",
-        // pinned = true, limit = N, offset = N}]): {branches = {...}, total, count, active, viewed, lineage, text}
+        // ttd_branches([{scope = "all" | "lineage", created_by = "...", run = "...", tag = "..." or {...},
+        // name_prefix = "...", pinned = true, min_length = F, max_length = F, created_after = US, created_before = US,
+        // limit = N, offset = N}]): {branches = {...}, total, count, active, viewed, lineage, text}
         lua.set_function("ttd_branches", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
                                              -> sol::object {
             std::map<std::string, std::string> options;
@@ -6378,6 +6379,54 @@ public:
                 value["updated"] = false;
                 value["error"] = reply.message;
             }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_info(branch): {branch, children = {...}, ancestors = {...}, files = {...}, file_bytes, folder,
+        // text} or {error = ...}
+        lua.set_function("ttd_branch_info", [this](sol::this_state ts, sol::object branch) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("branch-info", {{"branch", TtdOptionText(branch)}});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+                value["error"] = reply.message;
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_create([{name = "...", frame = F, tinframe = T, branch = <b>, reason = "...", tags = {...},
+        // note = "...", pinned = true, run = "<run id>", created_by = "...", media = "ask"|"empty"|"keep",
+        // run_frames = N, input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}]): a branch at the
+        // moment (default: here); with run_frames the machine runs it headless N frames fed by the input and records
+        // it. {created, branch, parent, at, ran_frames, aborted, end, reads, returned_to, state, text} or
+        // {created = false, error = ...}
+        lua.set_function("ttd_branch_create", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                                   -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-create", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["created"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_prune({run = "...", created_by = "...", tag = ..., ... [, dry_run = false]}): the branches the
+        // filter picks, deleted with dry_run = false (default: a dry run). {dry_run, would_delete | deleted = {...},
+        // kept = {...}, frames, file_bytes, text} or {error = ...}
+        lua.set_function("ttd_branch_prune", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-prune", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+                value["error"] = reply.message;
             return StateNodeToLua(ts, value);
         });
 

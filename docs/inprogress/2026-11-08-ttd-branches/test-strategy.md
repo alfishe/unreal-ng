@@ -1,6 +1,6 @@
 # TTD branches: test strategy, cases, fuzzing, benchmarks
 
-Part of [TTD branches](README.md). Status: P1-P2 cases and benchmarks built with them (`e0ac62a53`); the rest come with their phases. Design 2026-11-08. Covers [architecture.md](architecture.md),
+Part of [TTD branches](README.md). Status: P1-P2 cases and benchmarks built with them (`e0ac62a53`); P5's T-C12, T-C13, T-A3, T-A4 built 2026-11-13 (`TTDControl_BranchCreate_Test`, `WsHub_Test.TtdBranches*`, `McpTools_Test.TimeTravel_Branch*`, the MCP live block `test_branch_create_info_prune`); the rest come with their phases. Design 2026-11-08. Covers [architecture.md](architecture.md),
 [storage.md](storage.md), [surfaces.md](surfaces.md), [tools.md](tools.md).
 
 The bar: branching unused costs nothing measurable; branching used is exact (every recorded position of every

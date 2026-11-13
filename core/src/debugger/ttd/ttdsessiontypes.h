@@ -186,6 +186,28 @@ inline std::map<uint64_t, std::vector<TTDForkLeave>> TTDForkPoints(const TTDBran
     return points;
 }
 
+/// The last change of the branch table (TTD branches surfaces.md §5.2: the `ttd.branches` topic). `seq` grows with
+/// every change of the session (0: none yet), so a reader that saw a gap lists the branches again
+struct TTDBranchEvent
+{
+    uint64_t seq = 0;
+    std::string event;                 ///< created, updated, deleted, switched
+    uint32_t branch = kTTDTrunk;       ///< the branch it concerns (a delete: the one asked for; its descendants went too)
+    TTDGuid guid{};
+    std::string name;
+    uint32_t removed = 0;              ///< deleted: the branches removed with it (itself included)
+};
+
+/// The branches as last published (ITimeTravelHooks::PublishedBranches): what the `ttd.position` and
+/// `ttd.branches` topics read, without asking the machine for a fresh publish
+struct TTDBranchesPublished
+{
+    std::shared_ptr<const TTDBranchesView> view;   ///< null: the trunk alone
+    uint32_t active = kTTDTrunk;
+    uint32_t viewed = kTTDTrunk;
+    TTDBranchEvent event;
+};
+
 struct TTDSessionInfo
 {
     TTDSessionState state = TTDSessionState::Idle;
@@ -353,6 +375,7 @@ struct TTDSessionInfo
     std::shared_ptr<const TTDBranchesView> branches;
     uint32_t activeBranch = kTTDTrunk;   ///< continued at its end; the lineage shown ends with it
     uint32_t viewedBranch = kTTDTrunk;   ///< the one the current moment belongs to (on the active lineage)
+    TTDBranchEvent branchEvent;          ///< the table's last change
 };
 
 /// @brief String conversion for TTDCoverageKind.

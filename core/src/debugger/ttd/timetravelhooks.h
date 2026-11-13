@@ -25,6 +25,7 @@ namespace ttd
 struct TTDInputEvent;
 class TTDInputJournal;
 struct TTDSessionInfo;
+struct TTDBranchesPublished;
 struct TTDNetInput;
 struct TTDPortQuery;
 struct TTDPortSearchResult;
@@ -252,6 +253,9 @@ public:
     /// The position and the history's bounds as last published (TTDCursor): lock-free, never waits for the machine
     /// and never parks it, so a companion may poll it at 50 Hz (a seqlock, ttdcursorcell.h)
     virtual TTDCursor PublishedCursor() const = 0;
+    /// The branches as last published (TTDBranchesPublished): a copy under the publish lock, never a request for a
+    /// fresh publish, so a topic read on every frame costs the machine nothing
+    virtual TTDBranchesPublished PublishedBranches() const = 0;
     /// Empty when @p action may run now; otherwise one sentence saying why not
     virtual std::string RecordingGuard(TTDGuardedAction action) const = 0;
     /// Time travel is not available for this instance (a ZX-Poly member); empty: available

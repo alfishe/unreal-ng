@@ -29,6 +29,7 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "ttdcheckpoint.h"
 #include "ttdinputapply.h"
@@ -1003,6 +1004,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         }
         info.branches = _branchesView;
     }
+    info.branchEvent = _branchEvent;
 
     PublishCursor();
     PublishSessionInfo(info);
@@ -1156,12 +1158,18 @@ TTDSessionInfo TimeTravelController::GetPublishedSessionInfo() const
 
 void TimeTravelController::PublishSessionInfo(const TTDSessionInfo& info) const
 {
+    bool branchesChanged = false;
     {
         std::lock_guard<std::mutex> lock(_publishedMutex);
+        // The branch topics (ttd.branches, ttd.position's branch) read the published copy: told once it changed
+        branchesChanged = _published.branches != info.branches || _published.activeBranch != info.activeBranch ||
+                          _published.branchEvent.seq != info.branchEvent.seq;
         _published = info;
         _publishedAt = std::chrono::steady_clock::now();
     }
     _publishedCv.notify_all();
+    if (branchesChanged)
+        NotifyReadoutsChanged(_context, "ttd.branches");
 }
 
 TTDSessionInfo TimeTravelController::FreshPublishedSessionInfo() const
@@ -4258,7 +4266,9 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
 
     // History after the resume point (the active branch's own past, or an ancestor's part of the lineage) stays:
     // a new branch forks there and records (§4.5). At the active branch's end the recording just goes on
-    if (HasHistoryAfter(cut) && ForkBranchAt(from, cut))
+    // branch-create forks at the end too (PrepareBranchCreate)
+    const bool forceFork = std::exchange(_forceFork, false);
+    if ((forceFork || HasHistoryAfter(cut)) && ForkBranchAt(from, cut))
     {
         EngageCaptureFeatures();
         SetState(TTDSessionState::Recording);
