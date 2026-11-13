@@ -682,7 +682,8 @@ emu = Emulator.new("symbolic_id")
 success = emu:init()
 
 -- Control
-emu:reset()
+emu:reset()                -- soft: the reset button (the ZX Next restarts NextZXOS at once)
+emu:reset{hard = true}     -- hard: a power cycle (the ZX Next runs its boot ROM and firmware); emu:reset(true) too
 emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)

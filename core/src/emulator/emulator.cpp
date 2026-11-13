@@ -44,6 +44,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
@@ -2031,6 +2032,22 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         }
         return false;
     }
+
+    // A NEX program is started by NextZXOS, and on the board the OS runs only after a reset. A Next already running a program the loader
+    // started (rts_test, then game.nex opened over it) is soft-reset first and runs until NextZXOS is up - its welcome shows within 2 s of
+    // the reset, 150 frames are 3 s - so the new program finds the machine the OS leaves, not the old one's interrupt modes, MMU, devices
+    // and the OS's RAM it overwrote. A paused machine stays paused
+    if (ext == "nex" && _context)
+        if (auto* next = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder); next && next->ProgramStarted())
+        {
+            constexpr unsigned kNextOsStartFrames = 150;
+            const bool resume = !IsPaused();
+            MLOGINFO("NEX over a running program: soft reset, %u frames for NextZXOS to start", kNextOsStartFrames);
+            Reset(false);
+            RunNFrames(kNextOsStartFrames);
+            if (resume)
+                Resume();
+        }
 
     // The file the user opened: a temporary image is reported as the file it came from
     const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;

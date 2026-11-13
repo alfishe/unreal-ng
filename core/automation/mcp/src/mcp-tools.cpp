@@ -164,7 +164,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Lifecycle operation. 'create' makes a new running instance (fails with a reason on models this build "
+        "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
         "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
         "and models_creatable; 'status' reports one instance's details; 'operations' its operation log (who reset, "
@@ -344,6 +344,11 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["switch"]["description"] = "switch: the front-panel switch (turbo: Profi v3 / v5, cpm: Profi v5)";
     schema["properties"]["on"]["type"] = "boolean";
     schema["properties"]["on"]["description"] = "switch: the position (true = on)";
+    schema["properties"]["hard"]["type"] = "boolean";
+    schema["properties"]["hard"]["default"] = false;
+    schema["properties"]["hard"]["description"] =
+        "reset: false = soft reset, the reset button (the ZX Next restarts NextZXOS at once); true = hard reset, a "
+        "power cycle (the ZX Next runs its boot ROM, the logo and the firmware again)";
     schema["properties"]["slots"]["type"] = "object";
     schema["properties"]["slots"]["description"] =
         "'create': the new machine's slot set in the [SLOTS] key form, replacing its INI's: {\"zxbus.1\": "
@@ -559,7 +564,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 }
                 else if (action == "reset")
                 {
-                    ForwardCall("POST", Endpoint(id, "/reset"), nullptr, caller, "Reset " + id, done);
+                    // Soft by default (the reset button); 'hard': true is a power cycle
+                    const bool hard = args.isMember("hard") && args["hard"].isBool() && args["hard"].asBool();
+                    Json::Value body;
+                    body["hard"] = hard;
+                    ForwardCall("POST", Endpoint(id, "/reset"), &body, caller,
+                                std::string(hard ? "Hard reset " : "Soft reset ") + id, done);
                 }
                 else if (action == "destroy")
                 {

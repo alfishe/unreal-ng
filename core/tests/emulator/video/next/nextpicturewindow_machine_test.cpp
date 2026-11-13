@@ -1,6 +1,6 @@
 // ScreenNext on a machine: the working window and the content window latched with the presented frame follow the layers'
 // registers (nextpicturewindow.h has the rules, nextpicturewindow_test.cpp the arithmetic). The case that started it: Layer 2
-// at 256x192 with every window at x 8..247, y 8..183 shows 480x352 in the 640x512 frame.
+// at 256x192 with every window at x 8..247, y 8..183 shows 480x352 in the 640x512 grid, which sits at (32, 32) of the 720x576 HDMI frame.
 
 #include "stdafx.h"
 #include "pch.h"
@@ -64,7 +64,7 @@ protected:
         for (int i = 0; i < 4; i++)
             _emulator->RunFrame(true);
         Screen* screen = _context->pScreen;
-        std::vector<uint8_t> pixels(640u * 512u * 4u);
+        std::vector<uint8_t> pixels(720u * 576u * 4u);
         PictureGeometry geometry;
         EXPECT_TRUE(screen->CopyPresentedFramebuffer(pixels.data(), pixels.size(), &geometry));
         return geometry;
@@ -81,10 +81,10 @@ protected:
 TEST_F(NextPictureWindowMachine_Test, ASpectrumPictureIsThePaperWhole)
 {
     const PictureGeometry g = Presented();
-    EXPECT_EQ(g.width, 640);
-    EXPECT_EQ(g.height, 512);
-    ExpectRect(g.screenWindow, 64, 64, 512, 384, "screen window");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 64, 64, 512, 384, "content of an unclipped ULA");
+    EXPECT_EQ(g.width, 720);
+    EXPECT_EQ(g.height, 576);
+    ExpectRect(g.screenWindow, 96, 96, 512, 384, "screen window");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 96, 96, 512, 384, "content of an unclipped ULA");
 }
 
 TEST_F(NextPictureWindowMachine_Test, AGameThatClipsItsLayersHasAContentWindowInsideThePaper)
@@ -94,11 +94,11 @@ TEST_F(NextPictureWindowMachine_Test, AGameThatClipsItsLayersHasAContentWindowIn
     Clip(0x18, 8, 247, 8, 183);
     Clip(0x1A, 8, 247, 8, 183);
     const PictureGeometry g = Presented();
-    ExpectRect(g.screenWindow, 64, 64, 512, 384, "the paper stays the screen");
-    ExpectRect(g.contentWindow, 80, 80, 480, 352, "240x176 inside it");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 80, 80, 480, 352, "what content shows");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Screen), 64, 64, 512, 384, "what screen shows");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Full), 0, 0, 640, 512, "what full shows");
+    ExpectRect(g.screenWindow, 96, 96, 512, 384, "the paper stays the screen");
+    ExpectRect(g.contentWindow, 112, 112, 480, 352, "240x176 inside it");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 112, 112, 480, 352, "what content shows");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Screen), 96, 96, 512, 384, "what screen shows");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Full), 0, 0, 720, 576, "what full shows");
 }
 
 TEST_F(NextPictureWindowMachine_Test, Layer2In320x256HasNoBorderSoTheWholeFrameIsTheScreen)
@@ -107,7 +107,7 @@ TEST_F(NextPictureWindowMachine_Test, Layer2In320x256HasNoBorderSoTheWholeFrameI
     Nr(0x70, 0x10);  // 320x256
     Clip(0x18, 0, 159, 0, 255);
     const PictureGeometry g = Presented();
-    ExpectRect(g.screenWindow, 0, 0, 640, 512, "no border: the whole frame");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Screen), 0, 0, 640, 512, "screen is the frame");
-    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 0, 0, 640, 512, "content is the frame");
+    ExpectRect(g.screenWindow, 32, 32, 640, 512, "no border: the whole grid");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Screen), 32, 32, 640, 512, "screen is the grid");
+    ExpectRect(PictureView::Source(g, PictureView::Mode::Content), 32, 32, 640, 512, "content is the grid");
 }

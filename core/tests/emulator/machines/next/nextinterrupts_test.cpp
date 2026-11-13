@@ -135,6 +135,28 @@ TEST_F(NextInterrupts_Test, DisabledSourceDoesNotRequest)
     EXPECT_FALSE(_int->IsIntAsserted(12));
 }
 
+// NR #22 and NR #C4 share their enables (zxnext.vhd 5297, 5610, 3616-3622, 6239): the line interrupt enable is one flop, the ULA one
+// is port_ff_reg(6) inverted, which port #FF bit 6 writes too. A program that enables the line interrupt in NR #22 only and then
+// switches the hardware IM2 mode on gets its line interrupts (game.nex, 2026-11-12: HALT waited forever)
+TEST_F(NextInterrupts_Test, Nr22AndNrC4ShareTheLineAndUlaEnables)
+{
+    EXPECT_EQ(ReadReg(0xC4), 0x81) << "reset: expansion bus and the ULA";
+    NextReg(0x23, 100);
+    NextReg(0x22, 0x06);  // line on, ULA off
+    EXPECT_EQ(ReadReg(0xC4), 0x82);
+    NextReg(0xC0, 0x01);  // hardware IM2
+    _int->Raise(NextInterruptSource::kLine);
+    EXPECT_TRUE(_int->IsIntAsserted(10)) << "the line interrupt NR #22 enabled requests in the hardware mode";
+    EXPECT_EQ(_int->AcknowledgeInterrupt(10), NextInterruptSource::kLine << 1);
+    _int->OnReti();
+
+    NextReg(0xC4, 0x81);  // line off, ULA on
+    EXPECT_EQ(ReadReg(0x22) & 0x06, 0x00);
+    _ports->DecodePortOut(0x00FF, 0x40, 0);  // port #FF bit 6: the ULA interrupt off
+    EXPECT_EQ(ReadReg(0x22) & 0x04, 0x04);
+    EXPECT_EQ(ReadReg(0xC4), 0x80);
+}
+
 // The whole path: IM 2, EI, HALT; the service routine counts the interrupts; the table is read through I and the
 // vector of the ULA source; RETI is seen by the controller
 TEST_F(NextInterrupts_Test, Im2ThroughTheCpu)

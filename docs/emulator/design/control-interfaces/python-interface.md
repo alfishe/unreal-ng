@@ -111,8 +111,8 @@ class Emulator:
     def release(self):
         """Cleanup and release resources"""
         
-    def reset(self):
-        """Hardware reset (equivalent to pressing reset button)"""
+    def reset(self, hard: bool = False):
+        """Soft reset (the reset button); hard=True is a power cycle (the ZX Next runs its boot ROM and firmware)"""
 
     # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
     # return (command-interface.md section 3.3); dicts/lists/scalars
@@ -324,7 +324,7 @@ class Emulator:
 
     def capture_screen_layer(self, layer, format="png", alpha=None, path="") -> dict:
         """ONE LAYER of the last completed frame of a Next: 'ula' 'layer2' 'tilemap' 'sprites' (alpha 0 where the layer does not paint,
-        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512; format 'png' or 'rgba';
+        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512, the 640x512 grid of the screenshot (at (32, 32) of its 720x576 frame; (40, 48) on the Pentagon timing); format 'png' or 'rgba';
         a dict like capture_screen (base64 'data' or 'file'), success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter'"""
 
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:

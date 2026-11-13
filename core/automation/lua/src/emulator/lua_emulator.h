@@ -1075,7 +1075,19 @@ public:
                 execution::script::Check(self, execution::Origin::Lua);
                 self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
             },
-            "reset", &Emulator::Reset,
+            // emu:reset() is soft (the reset button); emu:reset(true) or emu:reset{hard = true} is a power cycle
+            "reset", [](Emulator& self, sol::variadic_args va) {
+                bool hard = false;
+                if (va.size() > 0)
+                {
+                    const sol::object arg = va.get<sol::object>(0);
+                    if (arg.get_type() == sol::type::boolean)
+                        hard = arg.as<bool>();
+                    else if (arg.get_type() == sol::type::table)
+                        hard = arg.as<sol::table>().get_or("hard", false);
+                }
+                self.Reset(hard);
+            },
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
             // Front-panel switches (Profi "turbo"): get -> true/false, nil when absent; set -> true when done
@@ -1923,7 +1935,7 @@ public:
         });
         // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
         // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
-        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the grid of screenshot()'s 720 x 576 frame at (32, 32). Returns
         // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
         // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
         // (next_layer_capture_control{enabled = true}) or no frame was completed yet

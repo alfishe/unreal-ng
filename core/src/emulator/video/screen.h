@@ -640,11 +640,11 @@ public:
         // vSync + vBlank only make maxFrameTiming 320 x 224; ScreenSprinter sets the zones
         // and the 312-line frame itself
         {736, 288, 640, 256, 48, 16, 448, 64, 16, 16, 16},  // M_SPRINTER
-        // M_NEXT (ScreenNext): the 320x256 visible grid of the 7 MHz pixel clock at two sub-pixels each (the 512-pixel Timex
-        // hi-res and Layer 2's 640x256 get one each) with every line twice (the 4:3 picture of the 320x256 grid): the
-        // 512x384 paper at (64, 64). The beam timing is the ZX family's (GetTimingDescriptor); the fields after the
-        // sizes are not used for the drawing
-        {640, 512, 512, 384, 64, 64, 448, 64, 32, 8, 16},  // M_NEXT
+        // M_NEXT (ScreenNext): the 360x288 HDMI picture (zxula_timing.vhd) of the 7 MHz pixel clock at two sub-pixels each
+        // (the 512-pixel Timex hi-res and Layer 2's 640x256 get one each) with every line twice: the 320x256 grid at
+        // (32, 32) in the 48K / 128K families (NextPictureWindow::Origin), the 512x384 paper at (96, 96). The beam timing
+        // is the ZX family's (GetTimingDescriptor); the fields after the sizes are not used for the drawing
+        {720, 576, 512, 384, 96, 96, 448, 64, 32, 8, 16},  // M_NEXT
     };
 
     // Default color table: 0RRrrrGG gggBBbbb

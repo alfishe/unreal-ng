@@ -449,7 +449,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["layer"]["enum"].append(layer);
     schema["properties"]["layer"]["description"] =
         "screenshot of a ZX Spectrum Next: ONE LAYER of the last completed frame instead of the composed picture - ula (with the border and "
-        "LoRes), layer2, tilemap, sprites (PNG with alpha 0 where the layer does not paint, same 640x512 geometry as the screenshot), or ids "
+        "LoRes), layer2, tilemap, sprites (PNG with alpha 0 where the layer does not paint, 640x512, the grid of the 720x576 screenshot at (32, 32)), or ids "
         "(each pixel coloured by the layer that won it; the legend is in the answer). Exactly as drawn, copper effects included. format=rgba "
         "gives the raw bytes; alpha=false flattens transparent pixels onto the fallback colour. 409 when the machine is not a Next, the "
         "capture is off (invoke_api POST /api/v1/emulator/{id}/next/layer-capture {enabled:true}) or no frame was completed yet; all layers of one frame at once: "

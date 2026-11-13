@@ -187,7 +187,8 @@ private slots:
     void saveDiskAsTRDDialog();
     void saveDiskAsSCLDialog();
     void saveDiskAsUDIDialog();
-    void resetEmulator();
+    void resetEmulator();      // Soft: the reset button
+    void hardResetEmulator();  // Hard: a power cycle (the ZX Next boots its firmware again)
     void requestMni();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
     void handleFullScreenShortcut();
 
@@ -391,6 +392,8 @@ private:
     QRect dropArea() const;
     /// File > Insert Medium...: a file, then the slot chooser with every slot that takes it
     void insertMediumDialog();
+    /// Run > Reset / Hard Reset: the reset button (soft) or a power cycle (hard)
+    void doReset(bool hard);
 
     /// The slot chooser / drop zones / refusal over the screen
     class DropTargetOverlay* _dropOverlay = nullptr;

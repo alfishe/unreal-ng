@@ -8,10 +8,21 @@ remains of the rest is here.
 
 Planned, in this order:
 
-- [ ] zxnDDMA: the DMA's SRAM read wait at 28 MHz is OFF (`kDmaSramWait = false`, `PortDecoder_Next::BindDma`, 2026-11-11). The 3.02.03
-  RTL has it (`zxnext.vhd` 3171-3181); the 3.03.00 guide's numbers (`zxnddma_compare` way 4/5: 2.1 ms, ours 2.2 off / 2.5 on) fit without
-  it. Decide with the 3.03.00 RTL or a board measurement, then set the constant or remove the dead branch; also open: the issue-dependent
-  SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state. Plan: `design-zxnddma.md` section 8
+- [x] zxnDDMA: the SRAM read wait at 28 MHz follows the core (2026-11-12, measured on a board by the owner): core 3.02.03 (the plain `NEXT`)
+  waits a clock on every CPU and DMA read of the SRAM (a DMA read with cycle length 2 takes 2 + 1), core 3.03 (`NEXT-DDMA`) on none (the
+  Z80 at 28 MHz without the +1, a DMA read in its cycle length). `PortDecoder_Next::UpdateContention`, pinned by
+  `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Plan: `design-zxnddma.md` section 8
+- [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
+- [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
+  CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket
+  `POST /reset {"hard": true}`, Qt Run > Hard Reset (Power Cycle); gdb stays soft. `design-boot-and-firmware.md` section 3
+- [x] Soft reset keeps NextZXOS (2026-11-12, owner's board): the host `Reset()` keeps nr_03 and the boot ROM off (zxnext.vhd 4619-4628),
+  NR #02 folds as the RTL's; `NextSkeleton_Test.HostResetIsSoftAndKeepsTheMachineType`
+- [x] NR #22 / NR #C4 share the line and ULA interrupt enables (zxnext.vhd: one flop each; port #FF bit 6 is the ULA one): game.nex
+  (hardware IM2 + line interrupt via NR #22) no longer halts forever. `NextInterrupts_Test.Nr22AndNrC4ShareTheLineAndUlaEnables`
+- [x] The frame is the HDMI picture (2026-11-12): 360 x 288 doubled to 720 x 576, the 320 x 256 grid inside the outer border of
+  zxula_timing.vhd (48K / 128K at (16, 16), Pentagon (20, 24); 60 Hz 240 lines, black above and below), the outer border the ULA's
+  border or NR #4A. Layer images stay the 640 x 512 grid. Qt View > Scale: 1x = 360 x 295
 - [x] NEXTREG writes in the port trace: the `NEXTREG` instruction (`ED 91` / `ED 92`) and the copper's MOVEs are no port cycles, so the
   generic port trace (`TraceControl`) shows nothing and a port breakpoint on #253B does not fire for them. The NextREG journal, `bnextreg`
   and the TTD journal have them already (done 2026-10-25: `PortDecoder::OnPortWriteWithoutBusCycle` gives the port breakpoints, the port
