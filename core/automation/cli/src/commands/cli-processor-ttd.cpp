@@ -602,6 +602,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
     if (!info.lastStopReason.empty())
         ss << "  Recording stopped by:   " << info.lastStopReason << NEWLINE;
+    if (info.startPending)
+        ss << "  Recording starts:       at the next frame boundary (asked inside the sound card's run)" << NEWLINE;
     if (info.recordingPaused)
         ss << "  Recording paused:       yes (browsing; resume at its end goes on, stop ends it)" << NEWLINE;
     if (!info.unavailableReason.empty())
@@ -644,6 +646,8 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     {
         std::string text = options["journal"] == "true" ? "TTD: Recording started (with the write journal)"
                                                         : "TTD: Recording started";
+        if (reply.body.find("start_pending")->b)
+            text += " at the next frame boundary (the machine is stopped inside the sound card's run)";
         if (options.count("black_box"))
             text += std::string(" as the black box: the last ") +
                     (options.count("minutes") ? options["minutes"] : std::string("5")) +

@@ -6472,6 +6472,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/start"), body.get(), caller, [id](const Json::Value& b) {
                         std::string text = b["already_active"].asBool() ? "TTD was already recording on " + id
                                                                         : "TTD recording started on " + id;
+                        if (b["start_pending"].asBool())
+                            text += " from the next frame boundary (the machine is stopped inside the sound card's "
+                                    "run; state stays idle until it runs on)";
                         text += " (write journal ";
                         text += b["write_journal_enabled"].asBool() ? "on" : "off";
                         if (b["black_box"].asBool())

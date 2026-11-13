@@ -862,15 +862,8 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     // Time travel (not in ecat): a short recording asked for here, then the toolbar's back steps and a branch
     auto * dw = dynamic_cast<DebuggerWindow *>(window);
     TtdControls * ttd = dw ? dw->ttd() : nullptr;
-    // The machine runs on first: a card's breakpoint above parked it inside a frame end, where a recording cannot
-    // start cleanly (docs/inprogress/2026-11-08-ttd-branches/debuggers.md §7)
-    if (ttd != nullptr) {
-        const uint64_t from = machine_frames(m);
-        m->debug_run(true);
-        wait_for([m, from]() { return machine_frames(m) >= from + 2; }, 5000);
-        m->debug_pause();
-        wait_for([m]() { return m->debug_paused() && !m->debug_stepping(); }, 2000);
-    }
+    // A card's breakpoint above may have left the machine inside the card's run at a frame end: the recording then
+    // begins at the next frame boundary (docs/inprogress/2026-11-08-ttd-branches/debuggers.md §7)
     if (ttd != nullptr && ttd->call("start", {}, nullptr)) {
         auto record = [m](uint64_t frames) {
             const uint64_t from = machine_frames(m);

@@ -253,19 +253,32 @@ bool BranchCommands::ResumeRecordingHere(const QString& title, bool runAfter)
     const std::shared_ptr<Emulator> emulator = _emulator ? _emulator() : nullptr;
     if (!emulator || emulator->IsRetired())
         return false;
-    EmulatorContext* context = emulator->GetContext();
-    if (!context || !ttd::HasTimeTravelSession(context))
-        return false;
+    // Every verb leases the instance for its own call only: the context is never held across a question below
+    bool present = true;
+    auto execute = [&emulator, &present](const std::string& verb, std::map<std::string, std::string> verbOptions) {
+        const Emulator::ContextLease lease = emulator->LeaseContext();
+        EmulatorContext* context = lease.get();
+        present = context && ttd::HasTimeTravelSession(context);
+        return present ? ttd::TTDControl(context).Execute({verb, std::move(verbOptions)}) : ttd::TTDReply{};
+    };
+    ttd::TTDSessionInfo info;
+    {
+        const Emulator::ContextLease lease = emulator->LeaseContext();
+        EmulatorContext* context = lease.get();
+        if (!context || !ttd::HasTimeTravelSession(context))
+            return false;
+        info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
+    }
     // From where the machine stands inside the history; a machine that ran on past the end of a stopped recording
     // goes back to that end (a session goes on without a gap: what ran after the stop was not recorded). The seek
     // parks the machine first, as the slider's does: the resume itself never waits for a running machine
     std::map<std::string, std::string> options{{"media", "ask"}};
     {
-        const ttd::TTDSessionInfo info = ttd::TTDSessionRef(context)->GetPublishedSessionInfo();
         if (info.state != ttd::TTDSessionState::Detached)
         {
-            const ttd::TTDReply seek =
-                ttd::TTDControl(context).Execute({"seek", {{"frame", std::to_string(info.currentEndFrame)}}});
+            const ttd::TTDReply seek = execute("seek", {{"frame", std::to_string(info.currentEndFrame)}});
+            if (!present)
+                return false;
             const StateNode* reached = seek.body.find("reached");
             if (!seek.Ok() || !reached || !reached->b)
             {
@@ -281,7 +294,9 @@ bool BranchCommands::ResumeRecordingHere(const QString& title, bool runAfter)
     }
     // A medium that cannot go back there (another medium in the slot, a write beyond its undo log) needs the user's
     // decision (M5, F11)
-    ttd::TTDReply reply = ttd::TTDControl(context).Execute({"resume", options});
+    ttd::TTDReply reply = execute("resume", options);
+    if (!present)
+        return false;
     if (const StateNode* needs = reply.body.find("needs_decision"); needs && needs->b)
     {
         QString list;
@@ -303,7 +318,9 @@ bool BranchCommands::ResumeRecordingHere(const QString& title, bool runAfter)
         if (clicked != empty && clicked != keep)
             return false;   // cancelled: the machine stays where it is, nothing changed
         options["media"] = clicked == empty ? "empty" : "keep";
-        reply = ttd::TTDControl(context).Execute({"resume", options});
+        reply = execute("resume", options);
+        if (!present)
+            return false;   // the instance went away while the question was open
     }
     const StateNode* resumed = reply.body.find("resumed");
     if (!reply.Ok() || !resumed || !resumed->b)

@@ -3169,7 +3169,7 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     _pendingPauseCause = BreakpointStop{};
     _pendingPauseOwner.clear();
     post();
-    WaitWhilePaused();
+    ParkInsideCardRun();
 }
 
 void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
@@ -3182,7 +3182,15 @@ void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
     _pendingPauseCause = stop;
     Pause();
     _pendingPauseCause = BreakpointStop{};
+    ParkInsideCardRun();
+}
+
+void Emulator::ParkInsideCardRun()
+{
+    // Nested parks do not happen (the card's run is one), the flag is only this thread's
+    _parkedInsideCardRun.store(true, std::memory_order_release);
     WaitWhilePaused();
+    _parkedInsideCardRun.store(false, std::memory_order_release);
 }
 
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)

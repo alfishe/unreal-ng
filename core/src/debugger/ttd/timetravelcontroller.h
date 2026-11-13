@@ -246,6 +246,9 @@ public:
     TTDCursor PublishedCursor() const override;
     /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
     bool IsRecordingPaused() const { return _recordingPaused; }
+    /// A start asked while the machine stood inside another CPU's run (Emulator::IsParkedInsideCardRun): the
+    /// recording begins at the next frame boundary, its baseline the frame's start (debuggers.md §7)
+    bool IsStartPending() const { return _startPending.load(std::memory_order_acquire); }
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
@@ -2646,6 +2649,7 @@ private:
     void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
+    std::atomic<bool> _startPending{false};  // StartRecording inside a card's run: the machine starts it at the next boundary
     bool _restartPending = false;           // the session ended (reset, snapshot load, machine change): a new one at the next frame boundary
     /// The one rule (D42): the recording session ends, @p keepHistory = the machine is still the one the history belongs to.
     /// A new session starts at the next frame boundary for a black box, or when the `ttdrestart` feature is on

@@ -202,6 +202,21 @@ bool TimeTravelController::StartRecording()
         return false;
     }
 
+    // The machine stands inside another CPU's run (a General Sound breakpoint at the frame end or in a host port
+    // access): the main CPU is not at a moment a checkpoint can hold (at the frame end its counter has moved, the
+    // frame's boundary work is not done; a baseline there is refused again by the first boundary). The recording
+    // begins at the next frame boundary, on the machine's thread
+    if (emu && emu->IsParkedInsideCardRun() && !OnMachineThread())
+    {
+        _startPending.store(true, std::memory_order_release);
+        _lastStopReason.clear();
+        PublishSessionInfo();
+        MLOGINFO("TimeTravelController::StartRecording — the machine is inside a card's run: "
+                 "the recording starts at the next frame boundary");
+        return true;
+    }
+    _startPending.store(false, std::memory_order_release);
+
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
     _lastStopReason.clear();
@@ -429,6 +444,9 @@ bool TimeTravelController::StartRecording()
 void TimeTravelController::StopRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // A start still waiting for its frame boundary is cancelled
+    if (_startPending.exchange(false, std::memory_order_acq_rel))
+        PublishSessionInfo();
     if (_state != TTDSessionState::Recording)
     {
         // Compress whatever coverage is still accumulating, so size reporting
@@ -545,6 +563,7 @@ void TimeTravelController::ReleaseBackgroundRecording()
 void TimeTravelController::InvalidateSession(const char* reason)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _startPending.store(false, std::memory_order_release);
     _stoppedEndValid = false;
     ClearFrameCache();
 
@@ -933,6 +952,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.lastDropReason = _lastDropReason;
     info.lastStopReason = _lastStopReason;
     info.recordingPaused = _recordingPaused;
+    info.startPending = _startPending.load(std::memory_order_acquire);
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -1346,6 +1366,17 @@ void TimeTravelController::OnFrameBoundary()
         }
     }
 
+    // A start asked inside a card's run (StartRecording): the frame's start is the baseline. Not a throwaway replay's
+    // boundary (a query while the machine still stands there)
+    if (!_inReplayMode && _startPending.load(std::memory_order_acquire))
+    {
+        _startPending.store(false, std::memory_order_release);
+        if (_state != TTDSessionState::Recording && !StartRecording())
+            MLOGWARNING("TimeTravelController: the recording asked inside a card's run did not start: %s",
+                        _lastStartError.c_str());
+        return;
+    }
+
     // The session ended (a reset, a snapshot load, a machine change) and a new one is due (a black box, or the
     // `ttdrestart` feature): it starts here, on the machine as it now is
     if (_restartPending && _state == TTDSessionState::Idle)
@@ -1606,6 +1637,7 @@ void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
         InvalidateSession(reason);
     _lastStopReason = keepHistory ? reason : "machine-change";
     _blackBoxSuspended = false;
+    _startPending.store(false, std::memory_order_release);   // the start asked before the end ends with it (D42)
     // A second end before the restart (a disk autostart: the disk load, then its reset) keeps it due
     _restartPending = _restartPending || (blackBoxRecorded && BackgroundWanted()) || (wasRecording && RestartFeatureOn());
     if (_restartPending)

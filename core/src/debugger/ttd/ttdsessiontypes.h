@@ -326,6 +326,10 @@ struct TTDSessionInfo
     /// into it, continues the same recording
     bool recordingPaused = false;
 
+    /// A start was asked while the machine stood inside another CPU's run (a General Sound breakpoint): the
+    /// recording begins at the next frame boundary; state stays idle until then
+    bool startPending = false;
+
     /// Why time travel is not available for this instance at all (for example
     /// a member of a ZX-Poly machine); empty when it is available.
     std::string unavailableReason;
