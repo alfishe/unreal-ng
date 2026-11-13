@@ -1088,7 +1088,7 @@ void EmulatorAPI::resumeEmulator(const HttpRequestPtr& req, std::function<void(c
 }
 
 /// @brief POST /api/v1/emulator/{id}/reset
-/// @brief Reset an emulator
+/// @brief Reset an emulator: soft (the reset button) by default; {"hard": true} or ?hard=true is a power cycle
 void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                 const std::string& id) const
 {
@@ -1109,11 +1109,22 @@ void EmulatorAPI::resetEmulator(const HttpRequestPtr& req, std::function<void(co
 
     try
     {
-        bool success = manager->ResetEmulator(id);
+        // Soft by default (the reset button: the ZX Next restarts NextZXOS at once); hard = power-on (the ZX Next runs
+        // its boot ROM and firmware again), from the body {"hard": true} or the query ?hard=true
+        bool hard = false;
+        const std::string hardParam = req->getParameter("hard");
+        if (hardParam == "true" || hardParam == "1")
+            hard = true;
+        auto json = req->getJsonObject();
+        if (json && json->isMember("hard") && (*json)["hard"].isBool())
+            hard = (*json)["hard"].asBool();
+
+        bool success = manager->ResetEmulator(id, hard);
 
         Json::Value ret;
         ret["status"] = success ? "success" : "error";
-        ret["message"] = success ? "Emulator reset" : "Failed to reset emulator";
+        ret["message"] = success ? (hard ? "Emulator reset (hard)" : "Emulator reset (soft)") : "Failed to reset emulator";
+        ret["reset"] = hard ? "hard" : "soft";
         ret["emulator_id"] = id;
 
         auto emulator = manager->GetEmulator(id);

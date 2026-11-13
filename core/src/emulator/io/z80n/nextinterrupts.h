@@ -77,6 +77,9 @@ public:
     bool WriteNr(uint8_t reg, uint8_t value);
     bool ReadNr(uint8_t reg, uint8_t& value) const;
     /// endregion
+    /// Port #FF bit 6 (zxnext.vhd port_ff_reg(6), port_ff_interrupt_disable): the ULA interrupt off - the flop NR #22 bit 2 and NR #C4
+    /// bit 0 (inverted) write too
+    void SetUlaInterruptDisabled(bool disabled);
 
     /// A device (CTC channel, UART) requests an interrupt. Ignored while its enable bit is clear
     void Raise(Source source);

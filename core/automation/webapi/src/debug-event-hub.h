@@ -73,6 +73,10 @@ private:
     void OnScriptCallbacksChanged(Message* message);  // NC_SCRIPT_CALLBACKS_CHANGED: callbacks_changed on debug
     void OnFrameWatch(Message* message);              // NC_FRAME_WATCH: watch_hit / _added / _removed / _error on debug
     void OnSectionTimer(Message* message);  // NC_SECTION_TIMER: section_timer_started / _stopped / _cleared / _break
+    void OnEdited(Message* message);          // NC_DEBUG_EDITED: edited (a tool's edit of the machine went through)
+    void OnRunControl(Message* message);      // NC_RUN_CONTROL_CHANGED: run_control (a session took / lost control)
+    void OnLabelsChanged(Message* message);   // NC_LABEL_CHANGED: labels_changed
+    void OnTargetsChanged(Message* message);  // NC_DEBUG_TARGETS_CHANGED: targets_changed (a card CPU came or went)
     void OnAsmSync(Message* message);   // NC_ASM_SYNC: topic asm_sync
 
     /// Numbers the event (per emulator), then sends it to every matching subscription

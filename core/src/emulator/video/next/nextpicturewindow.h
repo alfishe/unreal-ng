@@ -5,8 +5,8 @@
 /// frame pixels. Pure arithmetic on register values (ScreenNext feeds it the machine's), so the rules are tested
 /// without a machine.
 ///
-/// The frame is the 320 x 256 grid doubled (640 x 512): 32 grid pixels of border around the 256 x 192 paper. What
-/// the window of a mode is:
+/// The frame is the HDMI picture of zxula_timing.vhd, 360 x 288 grid pixels doubled (720 x 576): the 320 x 256 grid (32 grid
+/// pixels of border around the 256 x 192 paper) with the outer border around it (Origin). What the window of a mode is:
 ///   - Layer 2 in 320 x 256 or 640 x 256 (NR #70 bits 5:4 = 1 or 2) covers the whole grid, border included: the mode
 ///     has no border and the whole frame is the picture;
 ///   - every other mode is a Spectrum picture: the 256 x 192 paper inside its border.
@@ -27,6 +27,39 @@ inline constexpr int kPaperTop = 32;
 inline constexpr int kPaperWidth = 256;
 inline constexpr int kPaperHeight = 192;
 inline constexpr int kScale = 2;       ///< frame pixels per grid pixel, both axes
+inline constexpr int kFrameWidth = 360;   ///< the HDMI picture in grid pixels (zxula_timing.vhd c_hdmi_xmin..xmax)
+inline constexpr int kFrameHeight = 288;  ///< its lines (c_hdmi_ymin..ymax); the 60 Hz picture is 240 of them
+
+/// Where the grid sits in the frame and which of its lines the frame shows, by the frame family (zxula_timing.vhd, the HDMI window
+/// against the grid's first pixel and line): 48K and 128K 16 pixels left (24 right), 16 lines above (16 below); Pentagon 20 left
+/// (20 right), 24 above (8 below). The 60 Hz picture is 360 x 240 from grid line 8 to 247: its lines stay where the 50 Hz ones are
+/// (the paper at the same height), the frame's lines above and below it are black
+struct FrameOrigin
+{
+    int left = 16;       ///< grid pixels of outer border left of the grid
+    int top = 16;        ///< frame lines above the grid's line 0
+    int firstLine = 0;   ///< the first grid line the frame shows
+    int lastLine = kGridHeight - 1;
+    bool blackOutside = false;  ///< 60 Hz: the frame's lines outside [top + firstLine, top + lastLine] are black, not border
+};
+
+/// `timingClass`: EmulatorState::ula_timing_class (1 48K, 4 Pentagon, else 128K); `sixtyHz`: the 60 Hz frame (not on the Pentagon)
+inline FrameOrigin Origin(unsigned timingClass, bool sixtyHz)
+{
+    FrameOrigin origin;
+    if (timingClass == 4)
+    {
+        origin.left = 20;
+        origin.top = 24;
+    }
+    else if (sixtyHz)
+    {
+        origin.firstLine = 8;
+        origin.lastLine = kGridHeight - 9;
+        origin.blackOutside = true;
+    }
+    return origin;
+}
 
 /// What the layers' registers say (NextVideoRegs::Clip(window, coordinate), NR #15 / #68 / #6B / #70)
 struct Inputs
@@ -38,6 +71,7 @@ struct Inputs
     uint8_t nr70 = 0;          ///< Layer 2 control: bits 5:4 resolution
     bool layer2Enabled = false;
     bool spritesVisible = false;  ///< the sprite engine holds a sprite that shows
+    FrameOrigin origin;           ///< where the grid is in the frame
 };
 
 /// A rectangle of the grid, both ends included; empty when x1 < x0 or y1 < y0
@@ -69,13 +103,14 @@ struct FrameBox
     bool Empty() const { return width == 0 || height == 0; }
 };
 
-inline FrameBox ToFrame(const GridBox& box)
+/// The grid box in frame pixels, cut to the grid lines the frame shows
+inline FrameBox ToFrame(const GridBox& box, const FrameOrigin& origin)
 {
-    if (box.Empty())
+    const int y0 = std::max(box.y0, origin.firstLine), y1 = std::min(box.y1, origin.lastLine);
+    if (box.Empty() || y1 < y0)
         return FrameBox{};
-    return FrameBox{static_cast<uint16_t>(box.x0 * kScale), static_cast<uint16_t>(box.y0 * kScale),
-                    static_cast<uint16_t>((box.x1 - box.x0 + 1) * kScale),
-                    static_cast<uint16_t>((box.y1 - box.y0 + 1) * kScale)};
+    return FrameBox{static_cast<uint16_t>((origin.left + box.x0) * kScale), static_cast<uint16_t>((origin.top + y0) * kScale),
+                    static_cast<uint16_t>((box.x1 - box.x0 + 1) * kScale), static_cast<uint16_t>((y1 - y0 + 1) * kScale)};
 }
 
 inline bool Layer2CoversGrid(const Inputs& in)
@@ -91,7 +126,7 @@ inline FrameBox Screen(const Inputs& in)
         box.Add(0, 0, kGridWidth - 1, kGridHeight - 1);
     else
         box.Add(kPaperLeft, kPaperTop, kPaperLeft + kPaperWidth - 1, kPaperTop + kPaperHeight - 1);
-    return ToFrame(box);
+    return ToFrame(box, in.origin);
 }
 
 /// The bounding box of the layers that are on, cut by their clip windows; empty when none is
@@ -138,7 +173,7 @@ inline FrameBox Content(const Inputs& in)
                     std::min(shifted(in.clip[1][3]), 223));
         }
     }
-    return ToFrame(box);
+    return ToFrame(box, in.origin);
 }
 
 }  // namespace NextPictureWindow

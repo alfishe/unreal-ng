@@ -1075,7 +1075,19 @@ public:
                 execution::script::Check(self, execution::Origin::Lua);
                 self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
             },
-            "reset", &Emulator::Reset,
+            // emu:reset() is soft (the reset button); emu:reset(true) or emu:reset{hard = true} is a power cycle
+            "reset", [](Emulator& self, sol::variadic_args va) {
+                bool hard = false;
+                if (va.size() > 0)
+                {
+                    const sol::object arg = va.get<sol::object>(0);
+                    if (arg.get_type() == sol::type::boolean)
+                        hard = arg.as<bool>();
+                    else if (arg.get_type() == sol::type::table)
+                        hard = arg.as<sol::table>().get_or("hard", false);
+                }
+                self.Reset(hard);
+            },
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
             // Front-panel switches (Profi "turbo"): get -> true/false, nil when absent; set -> true when done
@@ -1375,7 +1387,8 @@ public:
             }
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, 1),
+                                                           [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -1389,7 +1402,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, 2), [&] {
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
@@ -1713,7 +1726,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, data.size()), [&] {
                 for (auto& pair : data) {
                     int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
                     uint8_t val = pair.second.as<uint8_t>();
@@ -1754,7 +1767,9 @@ public:
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
+            Emulator::ToolEdit what = Emulator::ToolEdit::Of("Lua page write", "page", static_cast<int32_t>(offset), 1);
+            what.page = type + std::to_string(page);
+            effectiveEmulator()->EditMemoryFromToolOrThrow(what, [&] {
                 pagePtr[offset] = value;
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1801,7 +1816,9 @@ public:
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             int maxLen = PAGE_SIZE - offset;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
+            Emulator::ToolEdit what = Emulator::ToolEdit::Of("Lua page write", "page", static_cast<int32_t>(offset), data.size());
+            what.page = type + std::to_string(page);
+            effectiveEmulator()->EditMemoryFromToolOrThrow(what, [&] {
                 int idx = 0;
                 for (auto& pair : data) {
                     if (idx >= maxLen) break;
@@ -1923,7 +1940,7 @@ public:
         });
         // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
         // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
-        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the grid of screenshot()'s 720 x 576 frame at (32, 32). Returns
         // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
         // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
         // (next_layer_capture_control{enabled = true}) or no frame was completed yet

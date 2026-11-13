@@ -294,8 +294,9 @@ public:
 
     /// @brief Reset an emulator
     /// @param emulatorId ID of the emulator to reset
+    /// @param hard false: the reset button (soft); true: a power cycle (hard, PortDecoder::PowerCycle after the reset)
     /// @return True if reset successfully, false if emulator not found
-    bool ResetEmulator(const std::string& emulatorId);
+    bool ResetEmulator(const std::string& emulatorId, bool hard = false);
 
     /// @brief Get status of all emulators
     /// @return Map of emulator UUIDs to their states

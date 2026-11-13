@@ -147,7 +147,11 @@ std::string SetRegister(Emulator* emulator, DebugCpuId cpu, const char* source, 
     if (!GSCardTarget::SetRegister(probe, name, value))
         return "unknown register or value out of range: " + name + " = " + std::to_string(value);
     // The registers as they are when the edit runs (the machine may have moved since the probe)
-    std::string refused = emulator->EditMemoryFromTool(source, [&]() {
+    Emulator::ToolEdit what;
+    what.source = source;
+    what.cpu = DebugCpuName(cpu);
+    what.what = "registers";
+    std::string refused = emulator->EditMemoryFromTool(what, [&]() {
         Z80CpuRegisters regs{};
         if (GeneralSoundCard* now = Card(context, cpu); now && now->cardRegisters(regs) &&
                                                          GSCardTarget::SetRegister(regs, name, value))
@@ -205,7 +209,13 @@ std::string Write(Emulator* emulator, DebugCpuId cpu, const char* source, uint16
         *written = 0;
     if (!Card(context, cpu))
         return std::string("cpu ") + DebugCpuName(cpu) + " not available: no card with a CPU in its slot";
-    const std::string refused = emulator->EditMemoryFromTool(source, [&]() {
+    Emulator::ToolEdit what;
+    what.source = source;
+    what.cpu = DebugCpuName(cpu);
+    what.what = "memory";
+    what.address = address;
+    what.length = static_cast<uint32_t>(bytes.size());
+    const std::string refused = emulator->EditMemoryFromTool(what, [&]() {
         if (GeneralSoundCard* card = Card(context, cpu))
             for (size_t i = 0; i < bytes.size(); i++)
                 landed += card->pokeCardMemory(static_cast<uint16_t>(address + i), bytes[i]) ? 1 : 0;

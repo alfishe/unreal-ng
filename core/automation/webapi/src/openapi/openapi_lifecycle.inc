@@ -242,7 +242,23 @@
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["required"] = true;
     paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][0]["schema"]["type"] = "string";
-    paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] = "Emulator reset";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["description"] =
+        "Soft reset by default: the reset button (the ZX Next restarts NextZXOS at once). With {\"hard\": true} "
+        "(or ?hard=true) a power cycle: the core reset plus the board's power-on state (the ZX Next runs its boot "
+        "ROM, the logo and the firmware again). The answer's \"reset\" says \"soft\" or \"hard\".";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][1]["name"] = "hard";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][1]["schema"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["parameters"][1]["description"] = "true = hard reset (power cycle)";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["requestBody"]["required"] = false;
+    paths["/api/v1/emulator/{id}/reset"]["post"]["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["hard"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
+         ["hard"]["description"] = "true = hard reset (power cycle); default false (soft, the reset button)";
+    paths["/api/v1/emulator/{id}/reset"]["post"]["responses"]["200"]["description"] =
+        "Emulator reset: {\"status\", \"message\", \"reset\": \"soft\" | \"hard\", \"emulator_id\", \"state\"}";
 
     // POST /api/v1/emulator/{id}/nmi - NMI pulse / Scorpion MNI magic button
     paths["/api/v1/emulator/{id}/nmi"]["post"]["summary"] = "Pulse the NMI line";

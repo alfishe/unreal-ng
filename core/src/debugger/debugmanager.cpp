@@ -2,7 +2,11 @@
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/callbacks/scriptcallbacks.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "debugger/targets/gscardtarget.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 
@@ -52,6 +56,8 @@ DebugManager::DebugManager(EmulatorContext* context)
                 return gs;
         return nullptr;
     });
+    // The cards built with the machine are its first state, not a change: the slot cards come before this manager
+    _targetsMask = TargetsMask();
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -122,12 +128,36 @@ void DebugManager::OnGeneralSoundCardCreated()
 {
     if (_gsTarget)
         _gsTarget->OnCardCreated();
+    PublishTargetsIfChanged();
 }
 
 void DebugManager::OnSlotCardsChanged()
 {
     if (_msTarget)
         _msTarget->OnCardCreated();
+    PublishTargetsIfChanged();
+}
+
+std::vector<std::pair<std::string, bool>> DebugManager::DebugTargets() const
+{
+    return {{DebugCpuName(DebugCpuId::Main), true},
+            {DebugCpuName(DebugCpuId::GS), _gsTarget && _gsTarget->Available()},
+            {DebugCpuName(DebugCpuId::MultiSoundGS), _msTarget && _msTarget->Available()}};
+}
+
+int DebugManager::TargetsMask() const
+{
+    return (_gsTarget && _gsTarget->Available() ? 1 : 0) | (_msTarget && _msTarget->Available() ? 2 : 0);
+}
+
+void DebugManager::PublishTargetsIfChanged()
+{
+    const int mask = TargetsMask();
+    if (_targetsMask.exchange(mask) == mask || !_context || !_context->pEmulator)
+        return;
+    auto* payload = new DebugTargetsChangedPayload(_context->pEmulator->GetId());
+    payload->targets = DebugTargets();
+    MessageCenter::DefaultMessageCenter().Post(NC_DEBUG_TARGETS_CHANGED, payload, true);
 }
 
 DebugManager::~DebugManager()

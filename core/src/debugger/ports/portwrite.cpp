@@ -14,7 +14,8 @@ namespace PortWrite
 namespace
 {
 /// Runs `access` on the decoder as a tool edit at a coherent moment (the shared half of Write and Read)
-Result ToolPortAccess(Emulator* emulator, const char* source, const std::function<void(EmulatorContext&)>& access)
+Result ToolPortAccess(Emulator* emulator, const char* source, uint16_t port,
+                      const std::function<void(EmulatorContext&)>& access)
 {
     Result result;
     EmulatorContext* context = emulator ? emulator->GetContext() : nullptr;
@@ -27,7 +28,7 @@ Result ToolPortAccess(Emulator* emulator, const char* source, const std::functio
     std::string refused;
     const Emulator::CoherentMoment where = emulator->RunAtCoherentMoment(
         [&]() {
-            refused = emulator->EditMemoryFromTool(source, [&]() {
+            refused = emulator->EditMemoryFromTool(Emulator::ToolEdit::Of(source, "port", port), [&]() {
                 Z80::OutOfTimeScope outOfTime(*context->pCore->GetZ80());
                 context->toolAccessActive = true;
                 access(*context);
@@ -54,7 +55,7 @@ Result ToolPortAccess(Emulator* emulator, const char* source, const std::functio
 
 Result Write(Emulator* emulator, uint16_t port, uint8_t value, const char* source)
 {
-    return ToolPortAccess(emulator, source, [&](EmulatorContext& context) {
+    return ToolPortAccess(emulator, source, port, [&](EmulatorContext& context) {
         context.pPortDecoder->DecodePortOut(port, value, context.pCore->GetZ80()->m1_pc);
     });
 }
@@ -62,7 +63,7 @@ Result Write(Emulator* emulator, uint16_t port, uint8_t value, const char* sourc
 Result Read(Emulator* emulator, uint16_t port, uint8_t& value, const char* source)
 {
     uint8_t read = 0xFF;
-    Result result = ToolPortAccess(emulator, source, [&](EmulatorContext& context) {
+    Result result = ToolPortAccess(emulator, source, port, [&](EmulatorContext& context) {
         read = context.pPortDecoder->DecodePortIn(port, context.pCore->GetZ80()->m1_pc);
     });
     if (result.ok)

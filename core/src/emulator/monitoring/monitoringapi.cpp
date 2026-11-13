@@ -93,7 +93,7 @@ Cache& TheCache()
     return *cache;
 }
 
-/// NC_LABEL_CHANGED carries no instance: any label change makes every instance's `debug.labels` stale
+/// NC_LABEL_CHANGED: any label change makes every instance's `debug.labels` stale (the count is not kept per instance)
 void EnsureObservers()
 {
     static std::once_flag once;

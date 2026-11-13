@@ -78,7 +78,8 @@ void CLIProcessor::HandleMemory(const ClientSession& session, const std::vector<
         // A tool edit (Emulator::EditMemoryFromTool): one event per command with
         // the bytes it wrote, so a TTD replay reproduces it (D9)
         const std::string refused =
-            emulator->EditMemoryFromTool("CLI memory write", [&]() { HandleMemoryWrite(session, memory, args); });
+            emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("CLI memory write", "memory"),
+                                         [&]() { HandleMemoryWrite(session, memory, args); });
         if (!refused.empty())
             session.SendResponse("Error: " + refused + NEWLINE);
     }

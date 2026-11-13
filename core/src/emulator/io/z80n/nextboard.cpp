@@ -686,13 +686,16 @@ void NextBoard::AfterInstruction()
         return;
     }
     if (!_resetHard)
-        {
-        // zxnext.vhd: '0' & t(2) & (t(1) or t(0))
-        const unsigned t2 = (_resetType >> 2) & 1, t1 = (_resetType >> 1) & 1, t0 = _resetType & 1;
-        _resetType = static_cast<uint8_t>((t2 << 1) | (t1 | t0));
-    }
+        NoteSoftReset();
     if (_machine)
         _machine->PerformReset(_resetHard);
+}
+
+void NextBoard::NoteSoftReset()
+{
+    // zxnext.vhd: '0' & t(2) & (t(1) or t(0))
+    const unsigned t2 = (_resetType >> 2) & 1, t1 = (_resetType >> 1) & 1, t0 = _resetType & 1;
+    _resetType = static_cast<uint8_t>((t2 << 1) | (t1 | t0));
 }
 
 std::string NextBoard::DescribeRegisters() const

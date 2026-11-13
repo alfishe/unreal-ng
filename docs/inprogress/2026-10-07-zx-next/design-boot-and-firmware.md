@@ -47,7 +47,7 @@ first boot trace (port writes in order, with the TTD port trace feature) is comp
 | Speed-up | the boot is CPU-bound at 28 MHz (the firmware sets 28 MHz itself) and SD-bound at SPI speed (instant in our model); `EnableTurboMode()` in tests |
 | Config files | the firmware reads them from the card; we never emulate `config.ini`. The first boot writes `config.ini` (and the video test, `timing=8`): the card is `Session` access, changes in the change layer |
 | Updates | `TBBLUE.TBU` flashing: out of scope; the flash blob answers reads so the updater screens show |
-| Reset buttons | F1/F4 and the NR `#02` writes call `Reset(Hard/Soft)`; the DRIVE and M1 buttons are NMI requests ([design-cpu.md](design-cpu.md) section 4) |
+| Reset buttons | F1/F4 and the NR `#02` writes call `Reset(Hard/Soft)`; the DRIVE and M1 buttons are NMI requests ([design-cpu.md](design-cpu.md) section 4). The host reset: `Emulator::Reset()` is the board's soft reset (NextZXOS restarts at once), `Emulator::Reset(true)` the power-on (`PortDecoder::PowerCycle()`: boot ROM, logo, firmware). Every plane offers both: CLI `reset` / `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage reset` with `hard`, REST / WebSocket `POST /reset {"hard": true}`, Qt Run > Reset / Hard Reset (Power Cycle) |
 | Firmware versions | the set is pinned in [roms.md](roms.md): boot ROM 3.02.04 first, 3.01.00 second; the matching `TBBLUE.FW` comes with the `sn-complete` distribution. The register map of a newer firmware than the core we model is detected by the trace (unknown NR writes are logged once) |
 
 ## 4. How a "Next card" gets built for tests

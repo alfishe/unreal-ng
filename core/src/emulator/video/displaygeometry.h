@@ -27,7 +27,7 @@ struct Size
 
 /// Square-pixel picture of a stored picture of `width` x `height` pixels (the framebuffer after the viewport's crop).
 /// Each stored line is shown once or twice, whichever puts the aspect closer to the reference 352:288:
-/// 352x288 and the Next's 640x512 stay as they are, 720x288 / 736x288 / 640x288 / 608x288 double their lines
+/// 352x288 and the Next's 720x576 stay as they are, 720x288 / 736x288 / 640x288 / 608x288 double their lines
 inline Size Compute(uint16_t width, uint16_t height)
 {
     Size size;
