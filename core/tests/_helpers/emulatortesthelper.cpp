@@ -8,6 +8,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/memory/memory.h"
@@ -111,9 +112,10 @@ Emulator* EmulatorTestHelper::CreateStandardEmulator(const std::string& modelNam
     if (emulator->GetContext()->pSoundManager)
         emulator->GetContext()->pSoundManager->unmute();
     emulator->GetContext()->config.reset_rom = RM_SOS;
-    // A power cycle, not the reset button: the machine starts as created (the ZX Next's soft reset keeps the machine type and
-    // NR #02 reads it as a soft reset)
-    emulator->Reset(true);
+    // The ZX Next gets a power cycle, not the reset button: its soft reset keeps the machine type and NR #02 reads it as a soft
+    // reset, so the tests would start after one. The other models keep the reset their recorded goldens were made with
+    // (a TS-Conf power cycle changes its state)
+    emulator->Reset(dynamic_cast<PortDecoder_Next*>(emulator->GetContext()->pPortDecoder) != nullptr);
 
     // The CMOS clock in its test mode: emulated time from one fixed instant instead of the host's live clock, so two
     // runs read the same time to the microsecond (an ATM3 boot polls it) however fast the host runs them
