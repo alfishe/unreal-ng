@@ -1320,14 +1320,13 @@ QSize MainWindow::pictureNativeSize() const
     // size of a ZX raster, so View > Scale steps as on a 128K (1x 360x295, 2x the framebuffer 1:1). Otherwise its 1x is already 720x590
     // and the larger scales do not fit a 1080p display: fitWindowToScreen drops them back to 1x and the window does not change
     int dots = 1;
-    if (_emulator)
-        if (EmulatorContext* context = _emulator->GetContext(); context && context->pScreen)
-        {
-            const FramebufferDescriptor& fb = context->pScreen->GetNativeFramebufferDescriptor();
-            const int byWidth = (fb.width + DisplayGeometry::kReferenceWidth / 2) / DisplayGeometry::kReferenceWidth;
-            const int byHeight = (fb.height + DisplayGeometry::kReferenceHeight / 2) / DisplayGeometry::kReferenceHeight;
-            dots = std::max(1, std::min(byWidth, byHeight));
-        }
+    if (EmulatorContext* context = m_binding ? m_binding->context() : nullptr; context && context->pScreen)
+    {
+        const FramebufferDescriptor& fb = context->pScreen->GetNativeFramebufferDescriptor();
+        const int byWidth = (fb.width + DisplayGeometry::kReferenceWidth / 2) / DisplayGeometry::kReferenceWidth;
+        const int byHeight = (fb.height + DisplayGeometry::kReferenceHeight / 2) / DisplayGeometry::kReferenceHeight;
+        dots = std::max(1, std::min(byWidth, byHeight));
+    }
     return QSize(frame.width / dots, frame.height / dots);
 }
 
