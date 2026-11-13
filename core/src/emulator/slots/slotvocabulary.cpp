@@ -191,4 +191,18 @@ EnumInfo Describe(Opt value) { return Lookup(kOpts, value); }
 EnumInfo Describe(OptionKind value) { return Lookup(kOptionKinds, value); }
 EnumInfo Describe(Outcome value) { return Lookup(kOutcomes, value); }
 
+std::string PlainLabel(std::string_view name)
+{
+    std::string out;
+    out.reserve(name.size());
+    for (const char ch : name)
+    {
+        if (ch != '`')
+        {
+            out += ch;
+        }
+    }
+    return out;
+}
+
 } // namespace slots

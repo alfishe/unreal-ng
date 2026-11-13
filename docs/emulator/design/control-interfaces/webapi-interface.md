@@ -1858,7 +1858,7 @@ PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a
 
 ```
 GET  /api/v1/emulator/{id}/slots                         the slot report: buses, slots, fitted cards, built-ins, plan log
-GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine
+GET  /api/v1/emulator/{id}/slots/catalog                 every card, its options, how it fits this machine (label: the name as plain text); ?slot=zxbus.1: each card planned into that slot (another bus refused, inSlot: the card there now)
 GET  /api/v1/emulator/{id}/slots/matrix[?table=cards]    the compatibility tables (markdown)
 POST /api/v1/emulator/{id}/slots/{slot}/plug             {card, options, adapter, replaceIfIncompatible, dryRun, mediaDisposition}
 POST /api/v1/emulator/{id}/slots/{slot}/remove           {replaceIfIncompatible, dryRun, mediaDisposition}

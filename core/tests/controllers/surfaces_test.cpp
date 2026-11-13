@@ -468,6 +468,31 @@ TEST(Surfaces_Test, Service_NotTheOwnerWritesNothingAndTakesTheFeelBack)
     EXPECT_EQ(rig.devices->Lights(kDial.id).back(), (LightColor{4, 5, 6}));
 }
 
+/// The app's own screens (the handheld menu, the on-screen keyboard) read the pads only while this client owns them:
+/// not the owner (another client, the system's overlay over the window: Steam's menus in gamescope), they see nothing
+TEST(Surfaces_Test, Service_UiTapSeesNothingWhenNotTheOwner)
+{
+    ServiceRig rig;
+    std::atomic<int> taken{0};
+    rig.service.SetUiTap([&taken](const ControlEvent&) {
+        ++taken;
+        return true;
+    });
+    ASSERT_TRUE(rig.devices->Press(kDial.id, "button"));
+    const int owned = taken.load();
+    EXPECT_GE(owned, 1) << "the owner's screen takes the press";
+
+    rig.service.SetOwner(false);
+    rig.devices->Release(kDial.id, "button");
+    rig.devices->Press(kDial.id, "button");
+    EXPECT_EQ(taken.load(), owned) << "not the owner: the screen sees nothing";
+
+    rig.service.SetOwner(true);
+    rig.devices->Release(kDial.id, "button");
+    EXPECT_GT(taken.load(), owned) << "the owner again: the screen reads the pads";
+    rig.service.SetUiTap({});
+}
+
 /// endregion </Service outputs and marks>
 
 /// region <The Dial's reports and writer>

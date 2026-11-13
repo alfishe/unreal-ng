@@ -116,6 +116,14 @@ public:
     bool EndLearn(const HostDeviceId& device);
     /// endregion </Unknown devices>
 
+    /// region <UI grab>
+    /// The app's own screens (the handheld menu, the on-screen keyboard) read the pads themselves: every canonical
+    /// event goes first to @p tap (on the backend's thread); one it returns true for reaches no machine. An empty
+    /// @p tap: everything goes to the router again. Not the owner (SetOwner): the tap sees nothing. A screen taking
+    /// the pads whole calls InputRouter::ReleaseHeld
+    void SetUiTap(std::function<bool(const ControlEvent&)> tap);
+    /// endregion </UI grab>
+
     /// region <Haptics (haptics.md §3; host output only, H-4)>
     /// The device has motors its backend can drive
     bool HasRumble(const HostDeviceId& device) const;
@@ -236,6 +244,7 @@ private:
     mutable std::mutex _mapMutex;
     std::map<HostDeviceId, std::vector<MappedControl>> _maps;          ///< under _mapMutex
     std::map<HostDeviceId, LearnSession> _learn;                       ///< under _mapMutex
+    std::function<bool(const ControlEvent&)> _uiTap;                   ///< under _mapMutex
     std::map<HostDeviceId, HostDeviceInfo> _connected;                 ///< under _mapMutex: for the user maps
     std::map<HostDeviceId, LightColor> _lights;                        ///< under _mutex: the colour each light has
     /// under _tickMutex: the lights Identify blinked, back to their colour at the steady time (ns)

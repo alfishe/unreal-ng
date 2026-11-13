@@ -168,7 +168,8 @@
    "label": "Reset (hold 1 s)",
    "group": "Capture and machine",
    "kind": "press",
-   "held": true
+   "held": true,
+   "params": "now? (false: hold the control 1 s)"
   },
   {
    "id": "mach.nmi",
@@ -441,7 +442,7 @@
    "group": "Media",
    "kind": "press",
    "held": false,
-   "params": "op (save|load), slot? (1..9, 1), dir?"
+   "params": "op (save|load|list|delete), slot? (1..9, 1), dir?"
   },
   {
    "id": "snapshot.save",

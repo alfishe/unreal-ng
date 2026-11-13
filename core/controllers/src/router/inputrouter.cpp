@@ -1277,6 +1277,21 @@ void InputRouter::SetSuspended(bool suspended)
     Dispatch(actions);
 }
 
+void InputRouter::ReleaseHeld()
+{
+    std::vector<ActionEvent> actions;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const uint64_t now = Now();
+        for (auto& [id, device] : _devices)
+        {
+            device.values.clear();
+            EvaluateLocked(device, now, actions);
+        }
+    }
+    Dispatch(actions);
+}
+
 bool InputRouter::Suspended() const
 {
     std::lock_guard<std::mutex> lock(_mutex);

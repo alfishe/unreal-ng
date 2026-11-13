@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -64,6 +65,8 @@ class GuiActions;
 class SlotChangeController;
 class SlotsWindow;
 class NextLayersWindow;
+class HandheldMenu;
+class HandheldPad;
 class OsdKeyboardWindow;
 class HudOverlayWrapper;
 class HudModel;
@@ -253,6 +256,12 @@ private slots:
     void handleSlotsWindowToggled(bool visible);
     void handleNextLayersToggled(bool visible);
     void handleOsdKeyboardToggled(bool visible);
+    /// Handheld mode: a pad's UI verb (HandheldPad::Verb) to the menu or the on-screen keyboard
+    void handleHandheldVerb(int verb);
+    /// Handheld mode: the UI takes the pads while the menu or the keyboard is up
+    void updateHandheldGrab();
+    /// Handheld mode: the on-screen keyboard drawn over the game by the screen (again after the screen is remade)
+    void installHandheldOverlay();
     void handleMidiActivityToggled(bool visible);
     void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
@@ -517,6 +526,9 @@ private:
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     class WindowRecorder* _windowRecorder = nullptr;      // the window recording (WindowView), made on first use
+    HandheldPad* _handheldPad = nullptr;                   // handheld mode only: the pads as the UI reads them
+    std::shared_ptr<std::atomic<bool>> _handheldPadAlive;  // the input tap's posts find the window gone
+    HandheldMenu* _handheldMenu = nullptr;                 // handheld mode only: the controller menu (handheld.menu)
     OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, unrealqt.osd_keyboard
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity

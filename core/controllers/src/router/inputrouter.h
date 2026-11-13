@@ -168,6 +168,9 @@ public:
     /// feel is followed but not sent. Back to false: each device's feel goes to it again (the other client set its own)
     void SetSuspended(bool suspended);
     bool Suspended() const;
+    /// Let go of every control now (its held actions released, a raised layer down): the app's own screen took the
+    /// pads (HostInputService::SetUiTap) and the router will not see their releases
+    void ReleaseHeld();
     /// The context of the instance a device acts on (its pinned one, else the focused one); "" when none was pushed
     std::string Context(const HostDeviceId& device) const;
     /// What a scope's devices feel per layer (a debug profile's `haptics`); set and cleared with the bindings

@@ -230,6 +230,7 @@ user guide [docs/features/slots.md](../../../features/slots.md)).
 ```lua
 r = slots_state()          -- buses, slots (card, options, adapter, fit, state), built-ins, plan log
 c = slots_catalog()        -- every card: options, functions, ports, media, thisMachine {slot, fit, outcome, removes}
+c = slots_catalog("zxbus.1")  -- the same, each card planned into that slot (thisMachine.inSlot: the card there now)
 m = slots_matrix("cards")  -- the compatibility tables as markdown (all without an argument)
 
 r = slots_plug("zxbus.next", "multisound", {dry_run = true})                -- the plan only

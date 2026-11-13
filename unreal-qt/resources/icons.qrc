@@ -24,5 +24,52 @@
         <file>icons/media/hdd.svg</file>
         <file>icons/media/cdrom.svg</file>
         <file>icons/media/sdcard.svg</file>
+        <file>icons/handheld/bookmark.svg</file>
+        <file>icons/handheld/branch.svg</file>
+        <file>icons/handheld/check.svg</file>
+        <file>icons/handheld/chevron-down.svg</file>
+        <file>icons/handheld/chevron-right.svg</file>
+        <file>icons/handheld/controls.svg</file>
+        <file>icons/handheld/crt.svg</file>
+        <file>icons/handheld/delete.svg</file>
+        <file>icons/handheld/disk.svg</file>
+        <file>icons/handheld/display.svg</file>
+        <file>icons/handheld/eject.svg</file>
+        <file>icons/handheld/favourite.svg</file>
+        <file>icons/handheld/file.svg</file>
+        <file>icons/handheld/folder-up.svg</file>
+        <file>icons/handheld/folder.svg</file>
+        <file>icons/handheld/hud.svg</file>
+        <file>icons/handheld/info.svg</file>
+        <file>icons/handheld/keyboard.svg</file>
+        <file>icons/handheld/load.svg</file>
+        <file>icons/handheld/machine.svg</file>
+        <file>icons/handheld/media.svg</file>
+        <file>icons/handheld/network.svg</file>
+        <file>icons/handheld/card.svg</file>
+        <file>icons/handheld/memory.svg</file>
+        <file>icons/handheld/menu-button.svg</file>
+        <file>icons/handheld/nmi.svg</file>
+        <file>icons/handheld/pause.svg</file>
+        <file>icons/handheld/play.svg</file>
+        <file>icons/handheld/power.svg</file>
+        <file>icons/handheld/quit.svg</file>
+        <file>icons/handheld/recent.svg</file>
+        <file>icons/handheld/reset.svg</file>
+        <file>icons/handheld/resume.svg</file>
+        <file>icons/handheld/rewind.svg</file>
+        <file>icons/handheld/save.svg</file>
+        <file>icons/handheld/settings.svg</file>
+        <file>icons/handheld/slots.svg</file>
+        <file>icons/handheld/snapshot.svg</file>
+        <file>icons/handheld/sound.svg</file>
+        <file>icons/handheld/speed.svg</file>
+        <file>icons/handheld/stop.svg</file>
+        <file>icons/handheld/swap.svg</file>
+        <file>icons/handheld/tape.svg</file>
+        <file>icons/handheld/timetravel.svg</file>
+        <file>icons/handheld/turbo.svg</file>
+        <file>icons/handheld/volume-off.svg</file>
+        <file>icons/handheld/warning.svg</file>
     </qresource>
 </RCC>

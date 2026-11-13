@@ -32,6 +32,9 @@
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
 #include "platform/windowlesssession.h"
+#ifdef __linux__
+#include "platform/linux/steamoverlay.h"
+#endif
 #include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -259,6 +262,15 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             claimControllers();
         else
             updateOwner();
+#ifdef __linux__
+        if (auto overlay = std::make_shared<gamescope::SteamOverlay>(); overlay->Available())
+        {
+            _steamOverlay = overlay;
+            _steamOverlayTimer = new QTimer(this);
+            connect(_steamOverlayTimer, &QTimer::timeout, this, &HostControllers::checkSteamOverlay);
+            _steamOverlayTimer->start(50);
+        }
+#endif
     }
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);
@@ -804,13 +816,26 @@ void HostControllers::updateOwner()
         if (again.open(QIODevice::ReadOnly))
             owner = ClientQueue::Owner(ClientQueue::Parse(again.readAll().toStdString()), ClientAlive);
     }
-    const bool owns = owner == self;
+    const bool owns = owner == self && !_steamOverlayUp;
     if (owns == _service->Owner())
         return;
-    qInfo("controllers: %s", owns ? "this window owns the controllers again"
-                                  : qPrintable(QString("another unreal-ng (pid %1) owns the controllers").arg(owner)));
+    qInfo("controllers: %s",
+          owns              ? "this window owns the controllers again"
+          : _steamOverlayUp ? "Steam's menu is over the window, the controllers are Steam's"
+                            : qPrintable(QString("another unreal-ng (pid %1) owns the controllers").arg(owner)));
     _service->SetOwner(owns);
     emit changed();
+}
+
+void HostControllers::checkSteamOverlay()
+{
+#ifdef __linux__
+    const bool up = _steamOverlay != nullptr && _steamOverlay->Up();
+    if (up == _steamOverlayUp)
+        return;
+    _steamOverlayUp = up;
+    updateOwner();
+#endif
 }
 #endif
 

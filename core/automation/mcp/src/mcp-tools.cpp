@@ -311,7 +311,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["slot"]["type"] = "string";
     schema["properties"]["slot"]["description"] =
         "slots_plug / slots_remove / slots_set: the slot - ay-socket, <bus>.<n> (zxbus.1, edge.1), <bus>.next, or auto "
-        "(plug: where the planner puts the card)";
+        "(plug: where the planner puts the card); slots_catalog: plan every card into this slot (what a picker for "
+        "one slot offers)";
     schema["properties"]["card"]["type"] = "string";
     schema["properties"]["card"]["description"] = "slots_plug: the card id (slots_catalog): multisound, neogs, gs, tsfm, ...";
     schema["properties"]["options"]["description"] =
@@ -637,6 +638,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "slots_catalog" || action == "slots_matrix")
                 {
                     std::string path = action == "slots_catalog" ? "/slots/catalog" : "/slots/matrix";
+                    if (action == "slots_catalog" && args.isMember("slot") && args["slot"].isString() &&
+                        !args["slot"].asString().empty())
+                        path += "?slot=" + args["slot"].asString();
                     if (action == "slots_matrix" && args.isMember("table") && args["table"].isString())
                         path += "?table=" + args["table"].asString();
                     caller.Call("GET", Endpoint(id, path), nullptr, [action, done](int status, Json::Value response) {
