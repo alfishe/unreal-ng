@@ -1,7 +1,10 @@
 # TTD branches: time and branches in the debuggers
 
-Part of [TTD branches](README.md). Status: **UX decided** (2026-11-12, D-1..D-3). The TTD panel part is done
-([surfaces.md §1](surfaces.md)); this page is the next surface.
+Part of [TTD branches](README.md). Status: **done** (2026-11-12). §4 is in both debuggers: Embedded
+(`unreal-qt/src/debugger/debuggertimetravel.cpp`, the branch commands shared with the TTD panel in
+`unreal-qt/src/widgets/ttdbranchcommands.cpp`; tests `DebuggerTimeTravel_Test`) and eCat
+(`debuggers/qt/ecat/dialogs/debugger/ttdcontrols.cpp` over `Emulator::ttd_call`; `unreal-debugger --self-check`).
+§5 is in the core: `reverse-step-over` on every plane, and `forks_here` in the `branches` answer.
 
 ## 1. Scope
 
@@ -99,3 +102,22 @@ The branch part of the state text is a drop-down (a `QToolButton` menu on the to
   **Decided 2026-11-12 (owner): (a), live and unrecorded as today.** The machine pauses itself at the end once; the
   next Run / Step goes on live and the state text says "Live, not recorded"; recording again is Continue Rec (it goes
   back to the end first).
+
+## 7. Known issue: a recording started inside a frame end
+
+Found by `unreal-debugger --self-check` (2026-11-13), not fixed here (core, outside this page's scope).
+
+A breakpoint of a card's CPU (General Sound) that fires in the card's catch-up at the frame end parks the machine's
+thread inside `MainLoop::CompleteFrame`: `Core::AdjustFrameCounters` has already moved `frame_counter` (N, the CPU at
+its overshoot), the TTD hook `OnFrameBoundary` for N has not run yet. A recording started there takes its first
+checkpoint as (N, overshoot) before the frame's boundary work (`OnFrameEnd`, `OnFrameStart`, `BeginFrame`, media,
+port decoder); when the machine runs on, the boundary hook captures N again and the engine refuses it ("frame N does
+not follow the last recorded frame"): the recording stops at once with `last_stop_reason: capture-failed`.
+
+Reproduce: PENTAGON with General Sound, a GS breakpoint stops the machine, then `ttd start`, run 20 frames:
+`checkpoint_count` stays 1. A run of a frame or two before `start` avoids it (the self-check does this).
+
+Fix direction: the main loop marks the open boundary (from the counter's move to the end of the TTD hook);
+`StartRecording` inside it defers the baseline to that boundary's `OnFrameBoundary` (the checkpoint then holds the
+state after frame N's start, as every other one). A seek or restore while parked there has the same exposure (the rest
+of the stale `CompleteFrame` runs on the restored machine) and needs the same guard.

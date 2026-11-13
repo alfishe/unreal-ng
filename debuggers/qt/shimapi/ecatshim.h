@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -256,6 +257,20 @@ public:
     // The machine's character set: a ZX Spectrum shows ASCII, 7F the copyright sign
     virtual std::string translate_char(unsigned int code) = 0;
     virtual int char_code(const std::string &text) = 0;
+
+    // The machine's time travel (not in ecat; TTD branches debuggers.md §4): a TTDControl verb with its options as
+    // text, the answer as JSON text (the verb's body, or {error, message}); ok false on a refusal
+    struct TtdAnswer {
+        bool ok = false;
+        std::string json;
+    };
+    virtual bool ttd_supported() const { return false; }
+    virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
+    {
+        (void)verb;
+        (void)options;
+        return {false, R"({"error":"Not Implemented","message":"This machine has no time travel"})"};
+    }
 };
 
 } // namespace ecatshim

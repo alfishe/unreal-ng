@@ -803,6 +803,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             }
         }
     });
+    // The debugger's branch drop-down: "Show in the TTD panel" opens the panel with its Branches row
+    connect(debuggerWindow, &DebuggerWindow::showInTtdPanelRequested, this, [this]() {
+        handleTtdToggled(true);
+        _ttdWidget->showBranches();
+        raise();
+        activateWindow();
+    });
     // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
     _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
     connect(_ttdWidget, &TtdWidget::visibilityChanged, _hostControllers, &HostControllers::OnTtdPanelVisible);

@@ -1842,6 +1842,25 @@ TTDReply TTDControlBackend::Branches(const TTDRequest& request)
             lineage.push(std::move(node));
         }
     reply.body["lineage"] = lineage;
+    // The branches leaving the timeline at the moment's frame (the debuggers' "fork here"): a live read, no park
+    StateNode forks = StateNode::Array();
+    if (info.branches && info.branches->branches.size() > 1)
+    {
+        const std::map<uint64_t, std::vector<TTDForkLeave>> points =
+            TTDForkPoints(*info.branches, std::max(info.currentEndFrame, info.sessionStartFrame + 1));
+        if (const auto it = points.find(_manager->CurrentPosition().frame); it != points.end())
+            for (const TTDForkLeave& leave : it->second)
+            {
+                StateNode node = StateNode::Object();
+                node["id"] = static_cast<uint64_t>(leave.branch);
+                node["name"] = leave.name;
+                node["frames"] = leave.frames;
+                forks.push(std::move(node));
+                text += "Fork here: " + leave.name + " (" + std::to_string(leave.branch) + "), " +
+                        std::to_string(leave.frames) + " frames\n";
+            }
+    }
+    reply.body["forks_here"] = forks;
     reply.body["text"] = info.branches ? text : std::string("No branches: the history is one line (the trunk)\n");
     return reply;
 }

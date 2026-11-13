@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -149,6 +150,41 @@ struct TTDBranchesView
         return nullptr;
     }
 };
+
+/// A branch that leaves the shown timeline at a frame (TTDForkPoints)
+struct TTDForkLeave
+{
+    uint32_t branch = kTTDTrunk;
+    std::string name;
+    uint64_t frames = 0;   ///< its length past the fork
+};
+
+/// Every frame of the lineage where another future goes on (the TTD panel's slider marks, the debuggers' "fork here",
+/// TTD branches debuggers.md §4.2): a branch off the lineage forks from the part its parent holds (the part's last
+/// frame included: siblings forking where the lineage's branch forks), or the lineage leaves a parent that has frames
+/// past the fork (the future a resume kept on the parent). end: the timeline's last frame
+inline std::map<uint64_t, std::vector<TTDForkLeave>> TTDForkPoints(const TTDBranchesView& view, uint64_t end)
+{
+    std::map<uint64_t, std::vector<TTDForkLeave>> points;
+    auto onLineage = [&view](uint32_t id) {
+        for (const TTDLineageSpan& span : view.lineage)
+            if (span.branch == id)
+                return true;
+        return false;
+    };
+    for (size_t i = 0; i < view.lineage.size(); ++i)
+    {
+        const uint64_t from = view.lineage[i].from.frame;
+        const uint64_t to = i + 1 < view.lineage.size() ? view.lineage[i + 1].from.frame : end;
+        for (const TTDBranchInfo& b : view.branches)
+            if (!onLineage(b.id) && b.parent == view.lineage[i].branch && b.fork.frame >= from && b.fork.frame <= to)
+                points[b.fork.frame].push_back({b.id, b.meta.name, b.Length()});
+        if (i + 1 < view.lineage.size())
+            if (const TTDBranchInfo* parent = view.Find(view.lineage[i].branch); parent && parent->end.frame > to)
+                points[to].push_back({parent->id, parent->meta.name, parent->end.frame - to});
+    }
+    return points;
+}
 
 struct TTDSessionInfo
 {

@@ -186,6 +186,9 @@ signals:
     /// to DeviceScreen::refresh().
     void screenRefreshRequested();
 
+    /// The time travel group's "Show in the TTD panel": MainWindow opens the panel with its Branches row
+    void showInTtdPanelRequested();
+
     /// The memory view shows another page or its follow mode changed (its cursor: QHexView::positionChanged)
     void memoryViewChanged();
 
@@ -258,7 +261,8 @@ private:
     // Visualization window
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
-    class PcHistoryPane* _pcHistoryPane = nullptr;  // in the splitter, right of the disassembly
+    class PcHistoryPane* _pcHistoryPane = nullptr;
+    class DebuggerTimeTravel* _timeTravel = nullptr;   // the toolbar's time controls (debuggers.md §4)  // in the splitter, right of the disassembly
     QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 
     // Speed control widget

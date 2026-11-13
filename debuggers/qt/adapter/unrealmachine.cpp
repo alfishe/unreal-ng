@@ -34,6 +34,8 @@
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -1140,6 +1142,22 @@ private:
         const execution::RunReply r = execution::RunControl(m_emu).CardStep(kGui, card->id(), kind, std::max(1u, count));
         if (!r.Ok()) fprintf(stderr, "ecat-debugger: card step refused: %s\n", r.message.c_str());
         return true;
+    }
+
+    // Time travel in process: the verb on the machine's context (the views follow through the window, which reads
+    // them again after a move)
+    bool ttd_supported() const override { return true; }
+    TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options) override
+    {
+        ttd::TTDReply reply;
+        {
+            const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+            EmulatorContext * context = lease.get();
+            if (context == nullptr || !ttd::HasTimeTravelSession(context))
+                return {false, R"({"error":"Not Implemented","message":"This machine has no time travel"})"};
+            reply = ttd::TTDControl(context).Execute({verb, options});
+        }
+        return {reply.Ok(), StateNodeToJsonText(reply.ToValue())};
     }
 
     void on_core_event()

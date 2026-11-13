@@ -1409,6 +1409,14 @@
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
         "#/components/schemas/TTDBranchLineageSpan";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["description"] =
+        "The branches leaving the shown timeline at the current moment's frame (a debugger's 'fork here'): a branch "
+        "forking there, or the parent's future the lineage left there; frames: its length past the fork.";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["type"] = "object";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["frames"]["type"] = "integer";
     schemas["TTDBranchesResponse"]["properties"]["text"]["type"] = "string";
 
     schemas["TTDBranchResponse"]["type"] = "object";
