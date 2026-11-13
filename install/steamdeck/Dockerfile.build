@@ -1,0 +1,10 @@
+# The Steam Deck bundle's build image: the CI image with the X11 / Wayland headers SDL3's configure needs, so a build
+# does not install them on every run (.recipe/testing/steamdeck.md#build-the-bundle).
+#
+#   docker build -t unreal-ng-deck-build -f install/steamdeck/Dockerfile.build install/steamdeck
+FROM ghcr.io/alfishe/unreal-ng:qt6.9.3-ubuntu24.04
+RUN apt-get update -qq && \
+    apt-get install -y -qq --no-install-recommends libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+        libxfixes-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev rsync && \
+    rm -rf /var/lib/apt/lists/* && \
+    git config --system --add safe.directory '*'

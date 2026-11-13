@@ -725,6 +725,7 @@ void HostInputService::OnControl(const ControlEvent& event)
 {
     bool learning = false;
     std::vector<ControlEvent> mapped;
+    std::function<bool(const ControlEvent&)> tap;
     {
         std::lock_guard<std::mutex> lock(_mapMutex);
         if (auto it = _learn.find(event.device); it != _learn.end())
@@ -735,12 +736,18 @@ void HostInputService::OnControl(const ControlEvent& event)
         }
         else if (auto map = _maps.find(event.device); map != _maps.end())
             mapped = TranslateControl(map->second, event);
+        if (!learning && _owner.load())
+            tap = _uiTap;  // not the owner (another client, the system's overlay over the window): the app's screen sees nothing either
     }
     if (!learning)
     {
-        _router->OnControl(event);
+        // The app's own screen sees each canonical event first: what it takes reaches no machine
+        const auto taken = [&tap](const ControlEvent& item) { return tap && tap(item); };
+        if (!(mapped.empty() && taken(event)))
+            _router->OnControl(event);
         for (const ControlEvent& canonical : mapped)
-            _router->OnControl(canonical);
+            if (!taken(canonical))
+                _router->OnControl(canonical);
     }
     // An encoder's event is its steps since the last one: the live view shows where it has turned to since connect
     ControlInfo info;
@@ -752,6 +759,12 @@ void HostInputService::OnControl(const ControlEvent& event)
     if (!learning)
         for (const ControlEvent& canonical : mapped)
             live[canonical.control] = canonical.value;
+}
+
+void HostInputService::SetUiTap(std::function<bool(const ControlEvent&)> tap)
+{
+    std::lock_guard<std::mutex> lock(_mapMutex);
+    _uiTap = std::move(tap);
 }
 
 std::map<std::string, float> HostInputService::Live(const HostDeviceId& device) const

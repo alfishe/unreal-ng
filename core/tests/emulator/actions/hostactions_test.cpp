@@ -367,6 +367,26 @@ TEST_F(HostActions_Test, SnapshotsSaveRefuseAnOverwriteAndTheQuickSlotsRoundTrip
     EXPECT_EQ(Run("snapshot.quick", Press({{"op", "load"}, {"slot", 3}, {"dir", folder}})).error, "Conflict")
         << "an empty slot";
     EXPECT_EQ(Run("snapshot.quick", Press({{"op", "save"}, {"slot", 10}, {"dir", folder}})).error, "Bad Request");
+
+    // The slot list (the handheld menu's grid): slot 2 used, with its time and the picture the save kept
+    const ActionResult list = Run("snapshot.quick", Press({{"op", "list"}, {"dir", folder}}));
+    ASSERT_TRUE(list.ok) << list.message;
+    const StateNode* slots = list.body.find("slots");
+    ASSERT_NE(slots, nullptr);
+    ASSERT_EQ(slots->items.size(), 9u);
+    const StateNode& second = slots->items[1];
+    EXPECT_TRUE(second.find("used")->b);
+    EXPECT_GT(second.find("time")->i, 0);
+    EXPECT_EQ(second.find("picture")->s, quick.body.find("picture")->s);
+    EXPECT_FALSE(slots->items[2].find("used")->b);
+    EXPECT_EQ(slots->items[2].find("picture")->s, "");
+
+    const ActionResult removed = Run("snapshot.quick", Press({{"op", "delete"}, {"slot", 2}, {"dir", folder}}));
+    ASSERT_TRUE(removed.ok) << removed.message;
+    EXPECT_TRUE(removed.body.find("removed")->b);
+    EXPECT_FALSE(FileHelper::FileExists(FileHelper::PathCombine(folder, "quick-2.szx")));
+    EXPECT_FALSE(FileHelper::FileExists(FileHelper::PathCombine(folder, "quick-2.png")));
+    EXPECT_FALSE(Run("snapshot.quick", Press({{"op", "delete"}, {"slot", 2}, {"dir", folder}})).body.find("removed")->b);
 }
 
 /// endregion </Media and snapshots>

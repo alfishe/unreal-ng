@@ -2151,7 +2151,7 @@ public:
         });
 
         // region <ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9)>
-        // slots_state(), slots_catalog(), slots_matrix([table]),
+        // slots_state(), slots_catalog([slot]), slots_matrix([table]),
         // slots_plug(slot, card [, opts]), slots_remove(slot [, opts]), slots_set(slot, opts), slots_gs(card [, opts]).
         // slot: zxbus.1, zxbus.next, ay-socket ("" or "auto" for plug: the planner's choice).
         // opts: {options = "dip=ym,saa" | {dip = "ym,saa"}, replace = true, dry_run = true, media = "save" | "discard",
@@ -2164,9 +2164,10 @@ public:
             request.verb = "list";
             return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
         });
-        lua.set_function("slots_catalog", [this](sol::this_state s) {
+        lua.set_function("slots_catalog", [this](sol::this_state s, sol::optional<std::string> slot) {
             SlotControlRequest request;
             request.verb = "catalog";
+            request.slot = slot.value_or("");  // every card planned into that slot
             return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
         });
         lua.set_function("slots_matrix", [this](sol::this_state s, sol::optional<std::string> table) {

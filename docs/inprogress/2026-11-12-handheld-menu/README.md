@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | Design, mock-ups for review (2026-11-12). No code. |
-| **Branch** | `deck-menu-design` (worktree `scratch/wt-deck-menu`) |
+| **Status** | Design approved (2026-11-12). Sections built: Save & Load, Media, Machine, Expansion, Display, Sound, Network, Controls, Quit (§3.1); the pad on the on-screen keyboard. Time Travel not started. |
+| **Branch** | `handheld-menu` (worktree `scratch/wt-handheld-menu`) |
 | **Scope** | Handheld mode of `unreal-qt` only: Steam Deck in Game Mode now, Windows handhelds (ROG Ally, Legion Go, ...) later. The desktop UI is unchanged. |
 | **Related** | [2026-10-08-steamdeck-client](../2026-10-08-steamdeck-client/README.md) (the full `unreal-deck` front-end design; its quick menu, `ux.md` §5 and FR-22, is what this document builds first, inside `unreal-qt`) |
 
@@ -29,7 +29,7 @@ dropdowns, buttons and toggles on the right, button hints in the footer.*
 |---|---|---|
 | C-1 | Where | A part of `unreal-qt`, active only in handheld mode. Not a separate application. |
 | C-2 | Activation | Handheld mode = gamescope session (`XDG_CURRENT_DESKTOP=gamescope`, `steamdeck::IsGameMode()`) now; a Windows handheld check later, behind one `handheld::IsHandheldMode()` predicate. A command-line switch forces it on for testing on a desktop. |
-| C-3 | Button | **Menu (☰)** opens and closes the menu. The Steam button and Quick Access (…) belong to Steam: an app can see their bits on hidraw, but cannot stop Steam from opening its own overlay, so nothing is bound to them. Menu exists on the Deck, on every Xbox-layout pad and on Windows handhelds. Today `play/pad-default.yaml` binds `menu` to ENTER; ENTER moves to another control (proposal: View + A, or the OSK). |
+| C-3 | Button | **Menu (☰)** opens and closes the menu, **View** shows the on-screen keyboard. The Steam button and Quick Access (…) belong to Steam: an app can see their bits on hidraw, but cannot stop Steam from opening its own overlay, so nothing is bound to them. On the Deck (`play/steam-deck.yaml`) Menu is `handheld.menu`; other pads keep Menu = ENTER. ENTER on the Deck: the on-screen keyboard (Y, L4). |
 | C-4 | One window | gamescope shows one window of the app (see `reference-steamdeck-gamemode-testing`): the menu is a child widget of `MainWindow` drawn over the picture, never a top-level or `Qt::Tool` window. |
 | C-5 | Actions | Every menu entry calls an existing catalogue action (`core/src/emulator/actions/`) or a readout; the menu adds no new emulator behaviour of its own. What the menu needs and the catalogue lacks is added to the catalogue first, so it is on every automation plane too. |
 | C-6 | Pause | The emulation pauses while the menu is open (default), with a setting to keep it running. |
@@ -42,29 +42,55 @@ flowchart LR
     Game["In game"] -->|"☰"| Menu
     subgraph Menu["Handheld menu"]
         direction TB
-        R["Resume"] --- S["Save &amp; Load"] --- M["Media"] --- Ma["Machine"] --- C["Controls"]
-        C --- D["Display"] --- So["Sound"] --- T["Time Travel"] --- Se["Settings"] --- Q["Quit"]
+        S["Save &amp; Load"] --- M["Media"] --- Ma["Machine"] --- E["Expansion"] --- D["Display"]
+        D --- So["Sound"] --- N["Network"] --- C["Controls"] --- Q["Quit"]
     end
-    Menu -->|"☰ / B on the section list / Resume"| Game
-    M -->|"X: Open file"| F["File browser"]
+    Menu -->|"☰ / B on the section list"| Game
+    M -->|"A: Open file / Insert"| F["File browser"]
     F -->|"A: Run"| Game
     Ma -->|"A on a dropdown"| P["Picker (modal)"]
 ```
 
 | Button | Section list (left) | Page (right) | Picker / browser |
 |---|---|---|---|
-| D-pad / left stick | move | move between rows and buttons | move |
+| D-pad / left stick | move | move between rows; left / right change a value row (◀▶) | move |
 | A | open the page | activate | choose |
 | B | close the menu | back to the section list | cancel / folder up |
 | X, Y | — | page-specific (shown in the footer) | page-specific |
 | L1 / R1 | previous / next section | previous / next section | page up / down |
 | ☰ | close the menu | close the menu | close the menu |
 
+Closing the menu always resumes a machine the menu paused (a refused `run.resume` is retried once); a machine paused
+before the menu opened stays paused.
+
+### 3.1 Sections (as built)
+
+The desktop menus were sorted by what a player on the couch needs. Left out on the Deck: the debugger and tool
+windows, toolbar / status bar, full screen and window scale, video sync, Help, recording, screenshots.
+
+| Section | Rows | Backed by |
+|---|---|---|
+| Save & Load | nine quick slots with pictures: A load, X save, Y delete | `snapshot.quick` |
+| Media | Open file… (browser), Save snapshot to a file (Library/Saves), then one row per medium slot of the machine (`MediaManager::List()`: tape with ▶/■ and block, drives, IDE / SD / CD) with an action picker (play / pause, rewind, go to block, insert or replace through the browser, save the changes, write protect, eject); fast tape / turbo tape / fast disk switches | `media.open`, `media.insert`, `media.tape`, `media.eject`, `media.save`, `media.protect`, `snapshot.save`, `set.toggle` |
+| Machine | model and speed pickers, turbo, reset, hard reset, NMI, front-panel switches | `mach.start`, `set.speed`, `mach.turbo_toggle`, `mach.reset`, `mach.cold_reset`, `mach.nmi`, `mach.switch` |
+| Expansion | the slot report (configured slots with their card, the machine's own slots, built-in devices); per slot Remove or a card from the catalogue planned into that slot (`catalog` with `slot`: refused cards hidden, plain `label`, "(here now)", "(replaces …)"), Add a card… (the planner's slot); a change restarts the machine, the window follows | `DeviceState::Slots`, `SlotControl` `catalog` / `plug` / `remove` (no desktop dialogs) |
+| Display | CRT effect (a popup: Off, the models by name, the shaders); Temporal effect (a popup: Off, frame blending, ZX DLSS de-flicker), with blending its frames ◀▶ and weights (a popup); Overscan on / off and its border crop (a popup), Pentagon only; HUD, GPU. A choice among several is a popup, on / off a switch; no shader parameters (their names and numbers mean nothing on a handheld) | `video.crt_toggle`, `video.crt_profile`, `video.temporal_*`, `video.blending`, `video.overscan_toggle`, `video.viewport`, `hud.toggle`, `video.gpu_toggle` |
+| Sound | a mixer drawn as SteamOS sliders: the master and each source (its name from the mixer) with the level on a track and the live peak under it; ◀▶ volume, A mutes | `audio.mixer`, `audio.mute_toggle`, `audio.volume_by`, `audio.source_mute` |
+| Network | a monitor, not a list, nothing to focus (500 ms): the card with the settings as chips and Active / Idle; tiles for the traffic (rate, a graph of the last half minute, total), the virtual network, the COM port, other fitted ports, the expansion cards | `DeviceState::Network` |
+| Controls | show the keyboard, keyboard picker, the pad's legend on the keyboard | `unrealqt.osd_keyboard_force` |
+| Quit | quick save and quit, quit without saving | `snapshot.quick` |
+
+Value rows (◀▶) take left / right; group captions are never focused; a long page scrolls with the focus. The file
+browser offers by slot kind: tapes, disks, or every file (hard disk, CF / SD and CD images).
+
 ## 4. Screens
 
-### 4.1 Resume
+The mock-ups below are the first design; §3.1 is what was built. The Resume page was dropped (owner, 2026-11-12):
+closing the menu resumes, quick save / load live in Save & Load, recent files in the browser.
 
-The start page: the paused picture, the most used actions one press away, recent files.
+### 4.1 Resume (dropped)
+
+The start page of the first design: the paused picture, the most used actions one press away, recent files.
 
 ![Resume](img/01-resume.png)
 
@@ -145,10 +171,8 @@ thumbnails at given positions (a readout, not a seek per thumbnail).
 
 | Section | Content |
 |---|---|
-| Controls | the active profile summary (what each Deck control does), switch profile, learn a key (`unrealqt.controllers_learn`), the on-screen keyboard |
-| Sound | master volume, per-device volume / mute / solo (`audio.source_volume`, `audio.source_mute`, `audio.source_solo`), stereo mode |
-| Settings | pause while the menu is open, instant tape loading, snapshot folder, menu language |
-| Quit | quick save and quit / quit without saving |
+| Controls | the active profile summary (what each Deck control does), switch profile, learn a key (`unrealqt.controllers_learn`) |
+| Sound | solo, stereo mode |
 
 ## 5. Implementation outline
 
@@ -156,7 +180,7 @@ thumbnails at given positions (a readout, not a seek per thumbnail).
 flowchart LR
     Pad["Deck controls<br/>(controller manager)"] -->|"☰ → unrealqt.handheld_menu"| HM
     subgraph Qt["unreal-qt (handheld mode only)"]
-        HM["HandheldMenu<br/>child QWidget of MainWindow"] --> Pages["pages: Resume, Slots, Media,<br/>Machine, Display, Time Travel, ..."]
+        HM["HandheldMenu<br/>child QWidget of MainWindow"] --> Pages["pages: Save &amp; Load, Media, Machine,<br/>Expansion, Display, Sound, Network, ..."]
         Pages --> Nav["focus + navigation model<br/>(menu layer of the profile)"]
     end
     Pages -->|"catalogue actions / readouts"| Core["core ActionRegistry"]
@@ -165,14 +189,57 @@ flowchart LR
 1. **Shell**: `unreal-qt/src/handheld/` with `HandheldMenu` (a child widget over the display), the section list,
    the page frame, footer hints, the palette; a `unrealqt.handheld_menu` action bound to `menu` in the Deck
    profile; a `menu` controller layer while it is open (the pad drives the menu, not the machine).
-2. **Basics**: Resume, Save & Load (slot readout + thumbnails in the catalogue), Machine with pickers, Quit.
-3. **Media**: tape and drives, the controller file browser with previews.
-4. **Display, Sound, Controls, Settings**.
+2. **Basics**: Save & Load (slot readout + thumbnails in the catalogue), Machine with pickers, Quit. Done.
+3. **Media**: every medium slot, the controller file browser. Done (previews not yet).
+4. **Expansion, Display, Sound, Network, Controls**. Done.
 5. **Time Travel**: filmstrip readout, scrubber, bookmarks, branches.
 6. **Windows handhelds**: the `IsHandheldMode()` check for Windows, the same menu.
 
 Each step is verified on the Deck through the WebAPI (screenshots with `gamescopectl screenshot`, menu state
 readouts), not by hand.
+
+## 5a. Pads in the menu and on the keyboard: UI input
+
+The menu and the on-screen keyboard are the app's UI, not the machine's input: the pads reach them as UI events
+before the emulator's router, with no profile, layer or context in between (a user profile that rebinds the D-pad
+for a game cannot break the menu, and a paused machine, whose frames drive the router, does not stop it).
+`HostInputService::SetUiTap` shows the UI every canonical pad event first; `HandheldPad` takes **Menu** and
+**View** always (system buttons, as SteamOS does) and, while the menu or the keyboard is up, every pad event, so
+nothing reaches the machine; what the router held is let go (`InputRouter::ReleaseHeld`). Keyboards are never
+taken. While Steam's own menus are over the window (the Steam menu, Quick Access: gamescope's focused app is Steam,
+769, `platform/linux/steamoverlay.h`) the app is not the controllers' owner: the router is suspended and the tap sees
+nothing, so a D-pad press moves Steam's menu only.
+
+| Control | Menu | On-screen keyboard |
+|---|---|---|
+| D-pad, left stick, left trackpad (Deck) | move (held: repeats after 300 ms, every 70 ms) | the nearest key in the direction |
+| A / left trackpad click | select | tap the key (a modifier latches for the next key) |
+| B | back; on the sections: close | hide the keyboard |
+| X / Y | page buttons (save / delete a slot) | SPACE / ENTER |
+| LB / RB | previous / next section | — |
+| Menu | close | open the menu |
+| View | — | hide the keyboard (shows it in the game) |
+| R4 / R5 / L4 (Deck) | — | `basic.run` `LOAD ""` / `RUN "boot"` / ENTER |
+
+The keyboard in handheld mode is an overlay the screen draws over the game (`DeviceScreenWrapper::setOverlayPainter`,
+`OsdKeyboardWindow::paintOverlay`): the picture fitted by its ratio at the bottom, the whole width of the screen (keys
+big enough for a finger), translucent, no switches and no background; no key is highlighted until the first move.
+A touch goes to the keyboard first (`DeviceScreenWrapper::setOverlayPointer`, `OsdKeyboardWindow::overlayPointer`):
+a key under the finger is pressed and held at least one tap (80 ms); while the keyboard shows, the machine's mouse
+gets no pointer events and no cursor is drawn.
+
+The GUI control plane has the same verbs (`handheld.menu`, `.nav`, `.accept`, `.back`, `.option`, `.section`, state
+`handheld_menu`; `unrealqt.osd_keyboard_nav`, `_tap`, `_force`, state `osd_keyboard_state`), so an agent drives the
+menu with the pad's verbs (`tools/guicontrol/verify_unrealqt.py` checks them in handheld mode, `UNREAL_HANDHELD=1`).
+
+**Which keyboard** (Controls > Keyboard, `unrealqt.osd_keyboard_force`): the machine's own (default), minimal (plain
+vector keys: rounded rectangles with their labels, drawn from the key geometry of the machine's matrix, no picture),
+any picture whose matrix matches one of the machine's keyboards, or Steam's system keyboard
+(`steam steam://open/keyboard`: it types into the window, the host keyboard reaches the machine).
+
+**Catalogue additions** (C-5): `snapshot.quick` got `op: list` (nine slots: used, time, picture) and `op: delete`, and
+a save writes the slot's picture (`quick-<n>.png`); `mach.reset {now: true}` resets on the press (the pad's 1 s hold
+stays the default).
 
 ## 6. Visual tokens
 
@@ -195,9 +262,9 @@ Sampled from the reference screenshot.
 
 | # | Question |
 |---|---|
-| Q-1 | Where ENTER goes once ☰ opens the menu (View + A, or only through the on-screen keyboard). |
-| Q-2 | Save slots per game (by image name / signature) or global. The mock-ups show per game. |
-| Q-3 | Does the existing on-screen keyboard (`OsdKeyboardWindow`, a `Qt::Tool` top-level) show in gamescope? If not, it moves into the same child-widget layer. |
+| Q-1 | Resolved: ENTER is on the on-screen keyboard (Y, L4 there). |
+| Q-2 | Save slots per game (by image name / signature) or global. The first version uses the global quick slots; per game is `snapshot.quick {dir}` keyed by the running image. |
+| Q-3 | Resolved: the keyboard window shows in gamescope. Its "no keyboard for the model" on the Deck was packaging: the Linux / Windows suites did not ship `data/controllers` (fixed in the root `CMakeLists.txt`, checked in `release.yml`). |
 
 ## 8. Mock-up sources
 

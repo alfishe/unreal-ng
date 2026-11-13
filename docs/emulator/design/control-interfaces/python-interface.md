@@ -724,6 +724,7 @@ and return the reply dict) - the same verbs, options and replies as the CLI `slo
 import unreal_emulator as unreal
 unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
 unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
+unreal.slots_catalog(slot="zxbus.1")      # each card planned into that slot (thisMachine.inSlot: the card there now)
 unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
 
 r = unreal.slots_plug("zxbus.next", "multisound", dry_run=True)          # the plan only

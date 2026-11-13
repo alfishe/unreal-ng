@@ -69,11 +69,33 @@ scp deck@<host>:/tmp/deck.png scratch/
 ```
 
 - `steam://nav/games/details/<appid>` opens the entry's library page (check the artwork).
-- `GAMESCOPE_FOCUSED_APP` 769 is Steam's own UI: the game runs but the user is in the Steam menu.
+- `GAMESCOPE_FOCUSED_APP` 769 is Steam's own UI: the game runs but the user is in the Steam menu or the Quick
+  Access menu ("…"). Read it on Steam's X display `:0`; the game runs on `:1`, whose root has no such property.
+  unreal-qt checks it every 50 ms (`platform/linux/steamoverlay.h`): while it is 769 the app is not the controllers'
+  owner, so neither the machine nor the handheld menu / on-screen keyboard read the pads (they reach every reader
+  of the device, Steam's menu included). The log says "Steam's menu is over the window, the controllers are Steam's".
+- Watch the focus while someone opens the menus: `DISPLAY=:0 xprop -root -spy GAMESCOPE_FOCUSED_APP`.
 - Mute what you start: `PUT /api/v1/emulator/<id>/audio/mixer/master {"muted":true}`.
 - Processes started over SSH die with the session (`KillUserProcesses`): start through Steam as above, or with
   `systemd-run --user`.
 - In Game Mode the window has no menu: everything goes through the WebAPI / MCP (or the Stream Deck).
+
+## Load a game, show the border
+
+```bash
+ssh deck@<host> '
+  I=$(curl -s 127.0.0.1:8090/api/v1/emulator | python3 -c "import sys,json; print(json.load(sys.stdin)[\"emulators\"][0][\"id\"])")
+  # a disk / tape / snapshot with autostart (the reply carries automation_session.id: send it as X-Unreal-Session)
+  curl -s -X POST 127.0.0.1:8090/api/v1/controllers/actions/media.open -H "Content-Type: application/json" \
+    -d "{\"instance\":\"$I\",\"params\":{\"path\":\"/home/deck/Documents/UnrealNG/Games/<game>.trd\",\"autostart\":true}}"
+  # the border: the WINDOW view, full / screen / content (the Deck starts in content: the picture, no border)
+  curl -s -X PUT 127.0.0.1:8090/api/v1/emulator/$I/video/window -H "Content-Type: application/json" -d "{\"view\":\"full\"}"
+  # end the implicit session the action opened
+  curl -s -X DELETE 127.0.0.1:8090/api/v1/emulator/$I/control/session -H "X-Unreal-Session: <session>"'
+```
+
+- The border is the window view, not `video.viewport`: [media/window-view-border.md](../media/window-view-border.md).
+- Games go in `~/Documents/UnrealNG/Games/<name>/` (the handheld menu's Library root); copy them with `scp`.
 
 ## Check the Stream Deck
 

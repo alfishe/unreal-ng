@@ -562,6 +562,42 @@
                     "repeats": false
                 },
                 {
+                    "description": "Move the pad's cursor to the nearest key in a direction (the first move: the middle key).",
+                    "label": "On-screen keyboard: move",
+                    "method": "unrealqt.osd_keyboard_nav",
+                    "params": [
+                        {
+                            "description": "up, down, left, right",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Tap the key under the cursor on the machine; a modifier (CS, SS, Shift) latches for the next key.",
+                    "label": "On-screen keyboard: press",
+                    "method": "unrealqt.osd_keyboard_tap",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The keyboard shown whatever the model, kept in the settings.",
+                    "label": "On-screen keyboard: which",
+                    "method": "unrealqt.osd_keyboard_force",
+                    "params": [
+                        {
+                            "description": "\"\" the machine's own, minimal (the bare ZX matrix), steam (Steam's system keyboard), or a picture id of the same matrix (zx48k, pentagon, ...)",
+                            "kind": "string",
+                            "name": "keyboard",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
                     "description": "Open Tools > Controllers.",
                     "label": "Controllers window",
                     "method": "unrealqt.controllers_open",
@@ -588,7 +624,90 @@
             "level": "host",
             "name": "unrealqt",
             "state": [
-                "osd_keyboard"
+                "osd_keyboard",
+                "osd_keyboard_state"
+            ]
+        },
+        {
+            "commands": [
+                {
+                    "description": "Open or close the controller menu over the picture (handheld mode: Steam Deck Game Mode, UNREAL_HANDHELD=1). The machine pauses while it is open.",
+                    "label": "Handheld menu",
+                    "method": "handheld.menu",
+                    "params": [
+                        {
+                            "description": "absent: flip it",
+                            "kind": "bool",
+                            "name": "on",
+                            "optional": true
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Move the menu's focus: sections, rows, slots, a picker's choices.",
+                    "label": "Menu: move",
+                    "method": "handheld.nav",
+                    "params": [
+                        {
+                            "description": "up, down, left, right",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": true
+                },
+                {
+                    "description": "Open the section, activate the row, load the slot, choose.",
+                    "label": "Menu: select",
+                    "method": "handheld.accept",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "Close a picker, leave the page; on the sections it closes the menu.",
+                    "label": "Menu: back",
+                    "method": "handheld.back",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "A page's own X / Y button.",
+                    "label": "Menu: page button",
+                    "method": "handheld.option",
+                    "params": [
+                        {
+                            "description": "x (save into the slot) or y (delete the slot)",
+                            "kind": "string",
+                            "name": "button",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                },
+                {
+                    "description": "The previous / next section; a page up / down in a picker.",
+                    "label": "Menu: section",
+                    "method": "handheld.section",
+                    "params": [
+                        {
+                            "description": "prev or next",
+                            "kind": "string",
+                            "name": "dir",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
+                }
+            ],
+            "description": "The handheld menu (Steam Deck): the verbs the pad drives it with, for the automation.",
+            "level": "host",
+            "name": "handheld",
+            "state": [
+                "handheld_menu"
             ]
         }
     ],

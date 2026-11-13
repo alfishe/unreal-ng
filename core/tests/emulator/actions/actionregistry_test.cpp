@@ -464,6 +464,12 @@ TEST(ActionRegistryBuiltins_Test, StepInStepsAPausedMachineAndAShortResetDoesNot
     EXPECT_TRUE(registry.Run("mach.reset", Press(true), id, hands).ok);
     const ActionResult early = registry.Run("mach.reset", Press(false), id, hands);
     EXPECT_EQ(early.error, "not_now") << "released before 1 s: no reset";
+    ActionValue atOnce = Press(true);
+    atOnce.params["now"] = true;
+    const ActionResult reset = registry.Run("mach.reset", atOnce, id, hands);
+    EXPECT_TRUE(reset.ok) << "now: a UI that confirmed resets at the press, " << reset.message;
+    atOnce.pressed = false;
+    EXPECT_TRUE(registry.Run("mach.reset", atOnce, id, hands).ok) << "its release is nothing to refuse";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
     EXPECT_EQ(registry.Run("run.step_in", Press(), id, hands).error, "Not Found") << "the instance is gone";

@@ -28,6 +28,11 @@
 #include "wheelclaim.h"
 #endif
 #include "controllers/connectorview.h"
+
+namespace gamescope
+{
+class SteamOverlay;
+}
 #include "emulator/actions/contextstate.h"
 
 class Emulator;
@@ -264,6 +269,12 @@ private:
     /// Own the devices while this process is the first live one of the queue; a queue with no live client is claimed
     void updateOwner();
     QString _ownersPath;  ///< "" in a windowless session: it never takes the devices from a window
+    /// Steam's menus over the window in gamescope (platform/linux/steamoverlay.h): the devices are Steam's meanwhile,
+    /// neither the machine nor the app's own screens read them. Checked every 50 ms while in gamescope
+    void checkSteamOverlay();
+    std::shared_ptr<gamescope::SteamOverlay> _steamOverlay;  ///< in gamescope only (Linux)
+    bool _steamOverlayUp = false;
+    QTimer* _steamOverlayTimer = nullptr;
     controllers::WheelClaim _wheelClaim;
     std::map<controllers::WheelClaim::Window, void*> _wheelHolds;  ///< WheelMenuWindows::Take's holds by window
     bool _wheelConnected = false;

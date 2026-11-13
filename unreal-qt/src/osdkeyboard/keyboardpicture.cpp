@@ -89,6 +89,14 @@ std::vector<std::string> KeyboardPictures::forModel(const std::string& model) co
     return it == _models.end() ? std::vector<std::string>{} : it->second;
 }
 
+std::vector<std::string> KeyboardPictures::ids() const
+{
+    std::vector<std::string> list;
+    for (const auto& [id, name] : _names)
+        list.push_back(id);
+    return list;
+}
+
 QString KeyboardPictures::name(const std::string& id) const
 {
     const auto it = _names.find(id);

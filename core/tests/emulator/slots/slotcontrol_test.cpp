@@ -170,6 +170,42 @@ TEST_F(SlotControl_Test, QueriesServeTheCoreReports)
     EXPECT_EQ(Run(one).httpStatus, 400);
 }
 
+/// catalog with a slot (the handheld menu's card picker for one slot): every card planned into that slot, not the one
+/// the planner would suggest; inSlot marks what sits there now; label is the name without markdown
+TEST_F(SlotControl_Test, CatalogForOneSlotPlansIntoThatSlot)
+{
+    std::shared_ptr<Emulator> emulator = Create("PENTAGON", {{"ay-socket", "tsfm"}, {"zxbus.1", "gs"}});
+    ASSERT_NE(emulator, nullptr);
+    const std::string id = emulator->GetId();
+
+    const SlotControlReply catalog = Run(Request("catalog", id, "zxbus.1"));
+    ASSERT_TRUE(catalog.Ok()) << catalog.message;
+    EXPECT_EQ(Field(catalog.body, "slot").s, "zxbus.1");
+    const StateNode* gs = nullptr;
+    const StateNode* tsfm = nullptr;
+    for (const StateNode& card : Field(catalog.body, "cards").items)
+    {
+        const std::string& label = Field(card, "label").s;
+        EXPECT_FALSE(label.empty()) << Field(card, "id").s;
+        EXPECT_EQ(label.find('`'), std::string::npos) << "label without markdown: " << label;
+        EXPECT_EQ(Field(Field(card, "thisMachine"), "slot").s, "zxbus.1") << Field(card, "id").s;
+        if (Field(card, "id").s == "gs")
+            gs = &card;
+        if (Field(card, "id").s == "tsfm")
+            tsfm = &card;
+    }
+    ASSERT_NE(gs, nullptr);
+    ASSERT_NE(tsfm, nullptr);
+    EXPECT_TRUE(Field(Field(*gs, "thisMachine"), "inSlot").b) << "the GS sits in zxbus.1";
+    EXPECT_FALSE(Field(Field(*tsfm, "thisMachine"), "inSlot").b) << "the TSFM sits in the AY socket";
+    EXPECT_EQ(Field(Field(*tsfm, "thisMachine"), "outcome").s, "refused") << "an AY-socket card does not go on the ZX-bus";
+
+    const SlotControlReply suggested = Run(Request("catalog", id));
+    ASSERT_TRUE(suggested.Ok()) << suggested.message;
+    for (const StateNode& card : Field(suggested.body, "cards").items)
+        EXPECT_EQ(Field(card, "thisMachine").find("inSlot"), nullptr) << "inSlot only for a slot asked for";
+}
+
 /// The §2.5 script: a displacing plug refused (409, the plan lists every card it would remove with its undo), the
 /// same plug with replaceIfIncompatible applied by a restart (new id, the reply's plan equal to the core's), an
 /// options change, a remove; each reply's plan compared with SlotManager::PlanChange for the same request

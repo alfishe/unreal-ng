@@ -1819,11 +1819,13 @@ namespace PythonBindings
             request.verb = "list";
             return python_slots::Call(request, emulatorId, py::kwargs());
         }, "The slot report: buses, slots, fitted cards, built-in devices", py::arg("emulator_id") = "");
-        m.def("slots_catalog", [](const std::string& emulatorId) {
+        m.def("slots_catalog", [](const std::string& emulatorId, const std::string& slot) {
             SlotControlRequest request;
             request.verb = "catalog";
+            request.slot = slot;
             return python_slots::Call(request, emulatorId, py::kwargs());
-        }, "Every card with its options and how it fits this machine (slot, fit, outcome)", py::arg("emulator_id") = "");
+        }, "Every card with its options and how it fits this machine (slot, fit, outcome); slot: each card planned into "
+           "that slot (another bus refused, the card there now in_slot)", py::arg("emulator_id") = "", py::arg("slot") = "");
         m.def("slots_matrix", [](const std::string& table) {
             SlotControlRequest request;
             request.verb = "matrix";

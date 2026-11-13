@@ -97,7 +97,8 @@ const Descriptions& DescriptionTable()
         // Context
         {"ctx.set", "Set the instance's surface context (play, ttd, ttd.timecode, debug.disasm); \"\" returns to the default."},
         // Machine and capture
-        {"mach.reset", "Reset the machine; hold the control for a second."},
+        {"mach.reset",
+         "Reset the machine; hold the control for a second, or at once with now (a UI that confirms first)."},
         {"mach.nmi", "Send a non-maskable interrupt (the Magic button)."},
         {"mach.turbo_toggle", "Switch the turbo rate on or off."},
         {"mach.start", "Start a machine of a model (param model); with replace it takes the place of the target."},
@@ -134,7 +135,9 @@ const Descriptions& DescriptionTable()
         {"media.protect", "Write-protect a disk, or allow writes (param drive)."},
         {"media.save", "Save a changed medium back to its file."},
         {"media.create", "Insert a new blank disk."},
-        {"snapshot.quick", "Save or load the quick snapshot (param op)."},
+        {"snapshot.quick",
+         "Save, load, list or delete the quick snapshots (params op, slot 1..9, dir); a save keeps the presented "
+         "frame as quick-<n>.png beside it."},
         {"snapshot.save", "Save a snapshot to a file (param path)."},
         // Video
         {"video.overscan_toggle", "Show the border's overscan, or hide it."},

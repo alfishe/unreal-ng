@@ -162,7 +162,7 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     if (_osdKeyboardWindow)
     {
         _osdKeyboardWindow->followModel();  // its pictures are the shown machine's even while it is hidden
-        s.osdKeyboard = _osdKeyboardWindow->isVisible();
+        s.osdKeyboard = _osdKeyboardWindow->shown();
         s.osdKeyboardPicture = _osdKeyboardWindow->picture().id;
         s.osdKeyboardPictures = _osdKeyboardWindow->choices();
         s.osdKeyboardStyle = _osdKeyboardWindow->style();

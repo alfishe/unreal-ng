@@ -601,27 +601,36 @@ std::vector<RegistrationHandle> RegisterBuiltinActions(ActionRegistry& registry)
 
     // 3.4 Capture and machine
     const char* machine = "Capture and machine";
-    add("mach.reset", "Reset (hold 1 s)", machine, ValueKind::Press,
-        [](const ActionCall& call) {
-            const auto key = std::make_pair(call.instanceId, call.origin.identity);
-            const auto now = std::chrono::steady_clock::now();
-            std::lock_guard<std::mutex> lock(ResetMutex());
-            if (call.value.pressed)
-            {
-                ResetPresses()[key] = now;
-                StateNode body = StateNode::Object();
-                body["armed"] = true;
-                return ActionResult::Success(std::move(body), "Hold for 1 s, then release to reset");
-            }
-            auto it = ResetPresses().find(key);
-            const bool longEnough = it != ResetPresses().end() && now - it->second >= std::chrono::seconds(1);
-            if (it != ResetPresses().end())
-                ResetPresses().erase(it);
-            if (!longEnough)
-                return ActionResult::Failure("not_now", "hold the reset for 1 s");
-            return FromRun(RunControl(call.emulator).Reset());
-        },
-        rules(ScopeRun), true);
+    // `now`: a UI that confirms first (the handheld menu) resets at the press, no hold
+    const auto reset = [](const ActionCall& call) {
+        std::string paramError;
+        const bool atOnce = BoolParam(call.value, "now", paramError).value_or(false);
+        if (!paramError.empty())
+            return ActionResult::Failure("Bad Request", paramError);
+        if (atOnce)
+            return call.value.pressed ? FromRun(RunControl(call.emulator).Reset()) : ActionResult::Success();
+        const auto key = std::make_pair(call.instanceId, call.origin.identity);
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard<std::mutex> lock(ResetMutex());
+        if (call.value.pressed)
+        {
+            ResetPresses()[key] = now;
+            StateNode body = StateNode::Object();
+            body["armed"] = true;
+            return ActionResult::Success(std::move(body), "Hold for 1 s, then release to reset");
+        }
+        auto it = ResetPresses().find(key);
+        const bool longEnough = it != ResetPresses().end() && now - it->second >= std::chrono::seconds(1);
+        if (it != ResetPresses().end())
+            ResetPresses().erase(it);
+        if (!longEnough)
+            return ActionResult::Failure("not_now", "hold the reset for 1 s");
+        return FromRun(RunControl(call.emulator).Reset());
+    };
+    handles.push_back(registry.Register(
+        {"mach.reset", "Reset (hold 1 s)", machine, ValueKind::Press, true, "now? (false: hold the control 1 s)", {},
+         false},
+        reset, rules(ScopeRun)));
     add("mach.nmi", "NMI", machine, ValueKind::Press,
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).Nmi()); }, rules(ScopeRun));
     add("mach.turbo_toggle", "Turbo", machine, ValueKind::Press,

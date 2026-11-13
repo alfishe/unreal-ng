@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Live check of unreal-qt on the GUI control plane: an offscreen unreal-qt on ports of its own, a fresh muted
-machine, then every command of `debugger`, `metadata`, `disassembly`, `memory`, `unrealqt` and `window` called through
-the Python client with its state read back; last, verify_mcp.py against the same program.
+machine, then every command of `debugger`, `metadata`, `disassembly`, `memory`, `unrealqt`, `handheld` (the program in
+handheld mode, UNREAL_HANDHELD=1) and `window` called through the Python client with its state read back; last,
+verify_mcp.py against the same program.
 
     python3 tools/guicontrol/verify_unrealqt.py [--port-base 28800]
 
@@ -12,7 +13,9 @@ import argparse
 import os
 import subprocess
 import sys
+import json
 import time
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
@@ -132,6 +135,48 @@ def check(gui, png):
     expect(not gui.state('debugger')['state']['visible'], 'debugger.close hides it')
 
 
+def check_handheld(gui, port_base):
+    """The handheld menu and the pad's cursor on the on-screen keyboard (docs/inprogress/2026-11-12-handheld-menu)"""
+    menu = lambda: gui.list()['state']['handheld_menu']  # noqa: E731
+    expect(refused(gui, 'handheld.nav', 'failed', dir='down'), 'handheld.nav: refused while the menu is closed')
+    expect(gui.call('handheld.menu', on=True) == {'on': True}, 'handheld.menu on')
+    state = menu()
+    expect(state['open'] and state['section'] == 'resume' and state['focus'] == 'sections',
+           'the menu opens on Resume, the focus on the sections', state)
+    state = gui.call('handheld.nav', dir='down')
+    expect(state['section'] == 'slots', 'handheld.nav down: Save & Load', state)
+    state = gui.call('handheld.accept')
+    expect(state['focus'] == 'page' and len(state['items']) == 9, 'handheld.accept: the nine slots', state)
+    state = gui.call('handheld.nav', dir='right')
+    expect(state['row'] == 1, 'handheld.nav right: the next slot', state)
+    expect(refused(gui, 'handheld.option', 'bad_request', button='z'), 'handheld.option refuses a button but x, y')
+    state = gui.call('handheld.section', dir='next')
+    expect(state['section'] == 'machine' and state['items'][0]['label'] == 'Model', 'handheld.section next: Machine',
+           state)
+    state = gui.call('handheld.accept')
+    expect(state['focus'] == 'picker' and len(state['picker']['items']) > 1, 'Model opens the model picker', state)
+    state = gui.call('handheld.back')
+    expect(state['focus'] == 'page', 'handheld.back closes the picker', state)
+    gui.call('handheld.back')
+    state = gui.call('handheld.back')
+    expect(not state['open'], 'handheld.back on the sections closes the menu', state)
+
+    gui.call('unrealqt.osd_keyboard', on=True)
+    first = gui.call('unrealqt.osd_keyboard_nav', dir='right')
+    expect(first['focus'] != '', 'osd_keyboard_nav: the cursor lands on a key', first)
+    second = gui.call('unrealqt.osd_keyboard_nav', dir='right')
+    expect(second['focus'] not in ('', first['focus']), 'osd_keyboard_nav right: the next key', second)
+    gui.call('unrealqt.osd_keyboard_tap')
+    state = gui.call('unrealqt.osd_keyboard_force', keyboard='minimal')
+    expect(state['picture'] == 'zxmatrix' and state['forced'] == 'minimal', 'osd_keyboard_force minimal: the ZX matrix',
+           state)
+    expect(refused(gui, 'unrealqt.osd_keyboard_force', 'bad_request', keyboard='bogus'),
+           'osd_keyboard_force refuses an unknown keyboard')
+    state = gui.call('unrealqt.osd_keyboard_force', keyboard='')
+    expect(state['picture'] == 'pentagon' and state['forced'] == '', 'osd_keyboard_force "": the machine\'s own', state)
+    gui.call('unrealqt.osd_keyboard', on=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--binary', default=os.path.join(ROOT, 'cmake-build-agent-release', 'bin', 'unreal-qt.app',
@@ -143,6 +188,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     os.environ['UNREAL_GUI_CONTROL_DIR'] = os.path.join(args.out, 'discovery')
 
+    os.environ['UNREAL_HANDHELD'] = '1'
     process = mcplib.launch(args.binary, args.port_base)
     try:
         mcplib.Session(f'http://127.0.0.1:{args.port_base + 200}/mcp', 'PENTAGON').fresh_machine()
@@ -161,6 +207,7 @@ def main():
             raise SystemExit('the program has no GUI control host with a machine bound')
         with gui:
             check(gui, os.path.join(args.out, 'debugger.png'))
+            check_handheld(gui, args.port_base)
         mcp = subprocess.run([sys.executable, os.path.join(HERE, 'verify_mcp.py'), args.unreal_gui])
         expect(mcp.returncode == 0, 'verify_mcp.py')
     finally:

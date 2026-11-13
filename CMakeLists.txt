@@ -771,6 +771,12 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/boot"
+            # Controller profiles, device database and the on-screen keyboard pictures (FileHelper::GetResourcesPath:
+            # beside the executable); the game catalogue the profiles match by signature
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/controllers" "${SUITE_STAGING_DIR}/controllers"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/software" "${SUITE_STAGING_DIR}/software"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
             COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
@@ -930,6 +936,12 @@ if (BUILD_QT_APPS)
                 "${DATA_PATH}/testrom" "${SUITE_STAGING_DIR}/rom"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${DATA_PATH}/boot" "${SUITE_STAGING_DIR}/boot"
+            # Controller profiles, device database and the on-screen keyboard pictures (FileHelper::GetResourcesPath:
+            # beside the executable); the game catalogue the profiles match by signature
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/controllers" "${SUITE_STAGING_DIR}/controllers"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${DATA_PATH}/software" "${SUITE_STAGING_DIR}/software"
             COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CONFIGS_DIR}" "${SUITE_STAGING_DIR}/configs"
             COMMAND ${CMAKE_COMMAND} "-DDEST=${SUITE_STAGING_DIR}/configs" -P "${CMAKE_SOURCE_DIR}/cmake/ExtractConfigImages.cmake"
