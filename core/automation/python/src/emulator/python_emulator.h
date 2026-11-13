@@ -6824,6 +6824,11 @@ namespace PythonBindings
             }, "Step back N scanlines of the machine (lands at nearest M1 <= target)",
                py::arg("scanlines") = 1)
 
+            .def("ttd_reverse_step_over", [](Emulator& self) -> bool {
+                const ttd::TTDReply reply = TtdRunPy(self, "reverse-step-over", {});
+                return reply.Ok() && reply.body.find("stepped")->b;
+            }, "Step back over a routine whose return comes before, else one instruction back")
+
             .def("ttd_reverse_continue", [](Emulator& self, const std::vector<uint16_t>& pcs, const py::kwargs& kwargs) -> py::object {
                 std::string list;
                 for (uint16_t pc : pcs)

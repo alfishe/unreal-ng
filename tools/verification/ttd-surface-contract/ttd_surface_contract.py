@@ -313,6 +313,11 @@ def run_contract(c: Contract) -> None:
     c.check(status == 400, f"WebAPI reverse-step without count or tstates is 400 ({status})")
     lua = c.lua("print(tostring(ttd_reverse_step(2)))")
     c.check(lua == "true", f"Lua reverse-step ({lua!r})")
+    _, web = c.web("POST", "/ttd/reverse-step-over", {})
+    c.check(web.get("stepped") is True and "Stepped back" in web.get("text", ""),
+            f"WebAPI reverse-step-over ({web.get('text')!r})")
+    lua = c.lua("print(tostring(ttd_reverse_step_over()))")
+    c.check(lua == "true", f"Lua reverse-step-over ({lua!r})")
     lua = c.lua("print(tostring(ttd_resume()))")
     _, web = c.web("GET", "/ttd/status")
     c.check(lua == "true" and web.get("state") == "recording", f"Lua resume: recording again ({lua!r}, {web.get('state')})")

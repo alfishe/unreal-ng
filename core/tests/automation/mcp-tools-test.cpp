@@ -3961,6 +3961,28 @@ TEST_F(McpTools_Test, TimeTravel_ReverseStep_NeedsExactlyOneUnit)
     EXPECT_FALSE(call->body.isMember("tstates"));
 }
 
+TEST_F(McpTools_Test, TimeTravel_ReverseStepOver_PostsTheVerbAndSaysWhatItDid)
+{
+    Json::Value reply;
+    reply["stepped"] = true;
+    reply["over_call"] = true;
+    reply["skipped"] = 6;
+    reply["pc"] = 0x8004;
+    reply["frame"] = 12;
+    reply["tinframe"] = 500;
+    reply["text"] = "Stepped back over a routine (6 instructions) to #8004";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-step-over"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "reverse_step_over";
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    ASSERT_NE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step-over"), nullptr);
+    // An agent may read only the text: what happened and where
+    EXPECT_NE(result.text.find("over a routine (6 instructions) to #8004"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)
 {
     Json::Value reply;

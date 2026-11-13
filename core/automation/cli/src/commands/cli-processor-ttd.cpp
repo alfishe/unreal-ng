@@ -313,6 +313,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDStepInstruction(session, context, args);
     }
+    else if (subcommand == "reverse-step-over" || subcommand == "rso")
+    {
+        HandleTTDReverseStepOver(session, context);
+    }
     else if (subcommand == "reverse-step"   ||
              subcommand == "reverse-continue" ||
              subcommand == "rs"             ||
@@ -462,6 +466,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
+    ss << "  ttd reverse-step-over            Step back over a routine (its return before): back to its CALL" << NEWLINE;
     ss << "    [--tstates T]                     Step back T t-states (aligns to M1)" << NEWLINE;
     ss << "    [--scanlines L]                   Step back L scanlines (the machine's line length each)" << NEWLINE;
     ss << "  ttd reverse-continue --pc <A>    Run backward until any PC matches" << NEWLINE;
@@ -494,7 +499,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd replay-check [F [G]] [--stride N] [--limit N]   Replay frames F..G (default: all) from their checkpoints" << NEWLINE;
     ss << "      and compare each with the next checkpoint: what diverged (cpu, chipset, ram, device, region)" << NEWLINE;
     ss << "  ttd seek-check [on|off]   Every seek also replay-checks the frame it lands in (off by default); the counts" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
+    ss << "  Aliases: rs=reverse-step, rso=reverse-step-over, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
           "backtrace=bt, find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
@@ -1694,6 +1699,23 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
     {
         session.SendResponse(std::string("TTD: Reverse-step failed (at session start or out of history)") + NEWLINE);
     }
+}
+
+void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context)
+{
+    // Back over a routine when the instruction before is its return, else one instruction back
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step-over", {}});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::stringstream ss;
+    ss << "TTD: " << reply.body.find("text")->s;
+    if (reply.body.find("stepped")->b)
+        ss << " (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i << ")";
+    ss << NEWLINE << FormatCheck(reply.body);
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,

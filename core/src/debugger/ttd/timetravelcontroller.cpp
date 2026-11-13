@@ -6750,6 +6750,100 @@ bool TimeTravelController::StepForwardInstruction()
     return true;
 }
 
+namespace
+{
+// RET, RET cc, and RETN / RETI with their undocumented ED duplicates
+bool IsReturnOpcode(uint8_t op, uint8_t next)
+{
+    if (op == 0xC9 || (op & 0xC7) == 0xC0)
+        return true;
+    return op == 0xED && (next & 0xC7) == 0x45;
+}
+
+// a is at the stack level of b or above it (a stack that grew less); the difference is taken modulo 64K
+bool StackAtOrAbove(uint16_t a, uint16_t b)
+{
+    return static_cast<int16_t>(static_cast<uint16_t>(a - b)) >= 0;
+}
+}  // namespace
+
+ttd::TTDReverseStepOverResult TimeTravelController::ReverseStepOver()
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    TTDReverseStepOverResult result;
+    Z80* cpu = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!cpu || !_context->pMemory)
+        return result;
+    // The stack level the step back over returns to: where the machine stands now
+    const uint16_t level = cpu->sp;
+    if (!StepBackInstruction())
+        return result;
+    result.moved = true;
+    const TTDTimePoint ret = CurrentPosition();
+    result.arrivedAt = ret;
+    result.pc = cpu->pc;
+    const uint8_t opcode = _context->pMemory->DirectReadFromZ80Memory(cpu->pc);
+    const uint8_t next = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(cpu->pc + 1));
+    // Only a return that lifted the stack to this level closes a routine; any other instruction is the step back
+    if (!IsReturnOpcode(opcode, next) || StackAtOrAbove(cpu->sp, level))
+        return result;
+    result.overCall = true;
+
+    // Walk back a frame at a time, newest instruction first: the routine's instructions run below this level; the
+    // first one at it or above is the CALL / RST that entered the routine, or the instruction an interrupt came after
+    const uint64_t retT = GlobalT(ret);
+    const TTDTimePoint start = _lines.front()->timeline.empty() ? _line->timeline.front().time
+                                                                : _lines.front()->timeline.front().time;
+    const uint64_t floorT = GlobalT(start);
+    std::optional<TTDM1Record> found;
+    uint32_t skipped = 1;   // the return itself
+    TTDExternalEvent barrier;
+    std::vector<TTDM1Record> m1s;
+    for (uint64_t endT = retT; !found && endT > floorT;)
+    {
+        const TTDTimePoint at = TimePointAt(endT - 1);
+        const uint64_t fromT = std::max(floorT, GlobalT(TTDTimePoint{at.frame, 0}));
+        EnumerateM1InRange(fromT, endT, m1s, &barrier);
+        for (auto it = m1s.rbegin(); it != m1s.rend(); ++it)
+        {
+            if (it->globalT >= retT)
+                continue;
+            if (StackAtOrAbove(it->sp, level))
+            {
+                found = *it;
+                break;
+            }
+            ++skipped;
+        }
+        if (barrier.reason[0] != '\0')
+            break;
+        endT = fromT;
+    }
+
+    if (!found)
+    {
+        // Out of reach: the machine stays on the return, one instruction back
+        result.callOutOfReach = true;
+        if (barrier.reason[0] != '\0')
+            result.blockingMarker = barrier;
+        SeekTo(ret);
+        return result;
+    }
+    result.skipped = skipped;
+    result.arrivedAt = TimePointAt(found->globalT);
+    if (!SeekTo(result.arrivedAt))
+    {
+        MLOGWARNING("TimeTravelController::ReverseStepOver — SeekTo the routine's caller failed");
+        result.callOutOfReach = true;
+        SeekTo(ret);
+        result.arrivedAt = ret;
+        result.overCall = true;
+        return result;
+    }
+    result.pc = cpu->pc;
+    return result;
+}
+
 // ===========================================================================
 // Phase 4 reverse execution: M1 enumeration + ReverseStep / ReverseContinue
 // ===========================================================================
@@ -6918,6 +7012,7 @@ TimeTravelController::EnumerateM1InRangeOnLine(uint64_t startGlobalT, uint64_t e
             m1.globalT  = GlobalT(h.time);
             m1.pc       = h.pc;
             m1.physPage = h.physPage;
+            m1.sp       = h.sp;
             intervalM1s.push_back(m1);
         }
 

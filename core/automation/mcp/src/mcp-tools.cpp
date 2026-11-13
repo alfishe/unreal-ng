@@ -5685,7 +5685,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* action : {"status", "start", "stop", "invalidate", "position", "markers", "seek", "step_back_frame",
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
-                               "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
+                               "reverse_step_over", "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
                                "bookmark_delete", "seek_bookmark", "branch_list", "branch_switch", "branch_update",
                                "branch_delete", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
@@ -5705,7 +5705,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
-        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_continue' (run backward until PC hits one of pcs; "
+        "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_step_over' (one instruction back, "
+        "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
         "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
         "did not run), "
@@ -6650,6 +6651,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step"), body.get(), caller, [](const Json::Value& b) {
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
                                FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
+                    }, done);
+                }
+                else if (action == "reverse_step_over")
+                {
+                    Json::Value overBody(Json::objectValue);
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/reverse-step-over"), &overBody, caller, [](const Json::Value& b) {
+                        return b["text"].asString() + ", at " + FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
                 }
                 else if (action == "reverse_continue")

@@ -616,4 +616,21 @@ struct TTDReverseContinueResult
     std::vector<TTDReverseHit> hits;     ///< Newest first; single mode: the one hit
     bool truncated = false;              ///< all: the walk stopped at the limit, older hits may exist
 };
+
+/// @brief What a reverse step over did (TimeTravelController::ReverseStepOver).
+struct TTDReverseStepOverResult
+{
+    bool moved = false;               ///< The machine went back (false: no earlier instruction, nothing changed)
+    /// The instruction stepped back over was the return of a routine (or of an interrupt handler): the machine went
+    /// back past the whole routine, to the instruction at this stack level before it (the CALL / RST, or the one an
+    /// interrupt came after)
+    bool overCall = false;
+    /// overCall wanted but the routine's start is out of reach (older than the history, or behind a barrier): the
+    /// machine stays one instruction back, on the return
+    bool callOutOfReach = false;
+    uint32_t skipped = 0;             ///< overCall: the instructions of the routine passed over
+    uint16_t pc = 0;                  ///< moved: PC where the machine stands now
+    TTDTimePoint arrivedAt{};         ///< moved: the moment it stands at
+    TTDExternalEvent blockingMarker{};   ///< callOutOfReach because of a barrier: the marker
+};
 }  // namespace ttd

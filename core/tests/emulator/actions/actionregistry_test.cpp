@@ -424,8 +424,8 @@ TEST(ActionRegistryBuiltins_Test, TheCoreRegistersTheMovedActions)
     for (const char* id : {"run.pause_toggle", "run.step_in", "run.step_over", "run.step_out", "run.frame_step",
                            "run.wait_int", "run.to_scanline", "run.n_scanlines", "run.turbo_hold", "ttd.record_toggle",
                            "ttd.step_back_frame", "ttd.step_forward_frame", "ttd.step_back_instruction",
-                           "ttd.step_forward_instruction", "ttd.reverse_step", "ttd.reverse_continue",
-                           "ttd.bookmark_add", "ttd.resume_live", "ttd.jog_frames", "ttd.jog_instructions",
+                           "ttd.step_forward_instruction", "ttd.reverse_step", "ttd.reverse_step_over",
+                           "ttd.reverse_continue", "ttd.bookmark_add", "ttd.resume_live", "ttd.jog_frames", "ttd.jog_instructions",
                            "mach.reset", "mach.nmi", "mach.turbo_toggle"})
     {
         EXPECT_TRUE(registry.Find(id).has_value()) << id;
