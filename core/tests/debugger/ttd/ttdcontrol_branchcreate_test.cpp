@@ -297,3 +297,65 @@ TEST_F(TTDControl_BranchCreate_Test, BranchEventsArePublishedInOrder)
     EXPECT_EQ(_ttd->PublishedBranches().event.removed, 1u);
 }
 
+
+/// Pokes and registers land on the new branch as tool edits (recorded, so the branch replays them), before the run;
+/// the input script takes joystick buttons and release_all; bad pokes and registers refuse before anything forks
+TEST_F(TTDControl_BranchCreate_Test, PokesRegistersAndJoystickDriveTheBranch)
+{
+    RecordTrunk();
+    EXPECT_EQ(Run("branch-create", {{"poke", "#6000"}}).error, ttd::TTDControlError::BadRequest);
+    EXPECT_EQ(Run("branch-create", {{"poke", "#6000=256"}}).error, ttd::TTDControlError::BadRequest);
+    EXPECT_EQ(Run("branch-create", {{"regs", "nosuch=1"}}).error, ttd::TTDControlError::BadRequest);
+    EXPECT_EQ(Run("branch-create", {{"regs", "a=300"}}).error, ttd::TTDControlError::BadRequest);
+    EXPECT_EQ(Run("branch-create", {{"run_frames", "2"}, {"input", "0:joy.nosuch"}}).error,
+              ttd::TTDControlError::BadRequest);
+    EXPECT_EQ(_ttd->ReadSessionInfo().branches, nullptr) << "nothing forked";
+
+    // #7F00 lies past what the loop has folded by then: the poke survives the run
+    const ttd::TTDReply created = Run("branch-create", {{"name", "edited"},
+                                                        {"frame", std::to_string(_start + 10)},
+                                                        {"poke", "#7F00=#5A,#7F01=7"},
+                                                        {"regs", "bc=#1234"},
+                                                        {"run_frames", "3"},
+                                                        {"input", "0:joy.fire:down,1:release_all,2:a"},
+                                                        {"read", "#7F00:2"},
+                                                        {"go_back", "true"}});
+    ASSERT_TRUE(created.Ok()) << created.message;
+    EXPECT_EQ(created.body.find("poked")->i, 2);
+    EXPECT_EQ(created.body.find("registers_set")->i, 1);
+    const StateNode& bytes = *created.body.find("reads")->items[0].find("bytes");
+    ASSERT_EQ(bytes.items.size(), 2u);
+    EXPECT_EQ(bytes.items[0].i, 0x5A);
+    EXPECT_EQ(bytes.items[1].i, 7);
+    EXPECT_EQ(_ttd->ReadSessionInfo().activeBranch, ttd::kTTDTrunk);
+    EXPECT_NE(_context->pMemory->DirectReadFromZ80Memory(0x7F00), 0x5A) << "the trunk is not poked";
+
+    // The branch replays the edit: a moment on it after the fork has the bytes
+    ASSERT_TRUE(Run("branch-switch", {{"branch", "edited"}, {"frame", std::to_string(_start + 12)}}).Ok());
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x7F00), 0x5A);
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x7F01), 7);
+}
+
+/// Asked while the session records, branch-create forks at the asked moment (the recording closes the trunk at its
+/// last committed frame), the run lands on the new branch, and go_back returns to the trunk's end: the frame in
+/// progress was never recorded
+TEST_F(TTDControl_BranchCreate_Test, WhileRecordingItForksAtTheAskedMoment)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _start = _context->emulatorState.frame_counter;
+    _emulator->RunNFrames(20);
+    const ttd::TTDReply created = Run("branch-create", {{"name", "mid"},
+                                                        {"frame", std::to_string(_start + 8)},
+                                                        {"run_frames", "2"},
+                                                        {"go_back", "true"}});
+    ASSERT_TRUE(created.Ok()) << created.message;
+    EXPECT_EQ(created.body.find("ran_frames")->i, 2);
+    EXPECT_EQ(created.body.find("end")->find("frame")->i, static_cast<int64_t>(_start + 10));
+    const ttd::TTDSessionInfo info = _ttd->ReadSessionInfo();
+    const ttd::TTDBranchInfo* mid = Find(info, "mid");
+    ASSERT_NE(mid, nullptr);
+    EXPECT_EQ(mid->fork.frame, _start + 8);
+    EXPECT_EQ(info.activeBranch, ttd::kTTDTrunk) << created.body.find("text")->s;
+    ASSERT_NE(created.body.find("returned_to"), nullptr);
+    EXPECT_EQ(_ttd->CurrentPosition().frame, info.branches->Find(ttd::kTTDTrunk)->end.frame);
+}

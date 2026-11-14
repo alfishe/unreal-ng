@@ -1341,7 +1341,8 @@ ttd_branch_info("probe")                    -- --> {branch, children, ancestors,
 -- An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by "lua"):
 local p = ttd_branch_create{name = "probe", frame = 4823, run = "r1", run_frames = 50,
                             input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}
--- input: "frame:key[+key][:hold|:down|:up]" from the branch start (hold default 2 frames, 1..1000); read: "addr[:len]"
+-- input: "frame:key[+key][:hold|:down|:up]" from the branch start (hold default 2 frames, 1..1000), "5:joy.fire:down",
+-- "9:release_all"; read: "addr[:len]"; poke = {"#8100=5"} and regs = {"a=1"} change the branch first (tool edits)
 -- --> {created, branch, parent, at, ran_frames, aborted, end, reads = {{address, length, bytes, hex}}, returned_to,
 --      media, state, text}  or  {created = false, error = "..."}  (media = "ask": needs_decision with the media)
 ttd_branch_prune{run = "r1"}                -- a dry run: {dry_run, would_delete, kept, frames, file_bytes, text}
@@ -1736,6 +1737,8 @@ emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind,
 local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
 emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
 emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+-- keep_branch: replayed as a TTD branch of this machine afterwards (result.branch {created, guid, reproduced})
+emu.analysis("experiment", {spec = '{"poke": {"$8100": 5}, "frames": 50, "keep_branch": "mode 5"}', run = "r7"})
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 

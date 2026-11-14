@@ -59,7 +59,7 @@
 //   review {op?, id?, verdict?, label?, title?, comment?, kind?, names?, by?, experiment?, ranges?, reason?, offset?,
 //           limit?}
 //                         → POST /analysis/review    (P5: the review queue; next, list, show, resolve)
-//   experiment {spec | path, finding?, parallel?} → POST /analysis/experiment (P5: spec an object or an array)
+//   experiment {spec | path, finding?, parallel?, keep_branches?, run?} → POST /analysis/experiment (P5: spec an object or an array)
 //   cover {budget?, per_branch?, frames?, parallel?, limit?, ranges?} → POST /analysis/cover (P5: directed coverage)
 // The answer's "text" (shared with the CLI) is the tool's text.
 //
@@ -1657,7 +1657,8 @@ void RegisterAnalysis(ToolRegistry& registry)
         "{\"a\": 1}, \"input\": [{\"frame\": 0, \"key\": \"q\"}], \"from\": \"start\" | \"end\" | "
         "\"frame:N\", \"frames\": 50, \"watch\": [{\"pc\": \"$8130\", \"as\": \"rare\"}, {\"write\": "
         "\"$8101\"}], \"expect\": {\"rare\": \"reached\", \"mem:$8101\": \"$AA\", \"screen\": "
-        "\"changed\", \"new_code\": \">0\"}, \"finding\": \"F12\"}";
+        "\"changed\", \"new_code\": \">0\"}, \"finding\": \"F12\", \"keep_branch\": true | \"name\"}; "
+        "keep_branch replays that experiment in this instance's TTD session as a branch (created by analyzer)";
     schema["properties"]["experiment"]["description"] =
         "review resolve: an experiment spec (as for spec) whose result marks the finding";
     schema["properties"]["names"]["description"] =
@@ -1668,6 +1669,17 @@ void RegisterAnalysis(ToolRegistry& registry)
     schema["properties"]["finding"]["description"] = "experiment: the finding the result marks (none: a new experiment finding)";
     schema["properties"]["parallel"]["type"] = "integer";
     schema["properties"]["parallel"]["description"] = "experiment, cover: clones run at once (1..8, default by the cores)";
+    schema["properties"]["keep_branches"]["type"] = "string";
+    schema["properties"]["keep_branches"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* mode : {"asked", "observed", "all"})
+        schema["properties"]["keep_branches"]["enum"].append(mode);
+    schema["properties"]["keep_branches"]["description"] =
+        "experiment: which experiments replay as TTD branches of this instance's session (asked: only specs with "
+        "keep_branch, the default; observed: and every observed one; all); the source stays paused where it stood";
+    schema["properties"]["run"]["type"] = "string";
+    schema["properties"]["run"]["description"] =
+        "experiment: the run id the kept branches share (default experiment-<n>); time_travel branch_prune by it "
+        "removes them";
     schema["properties"]["budget"]["type"] = "integer";
     schema["properties"]["budget"]["description"] = "cover: experiments in all (default 64)";
     schema["properties"]["per_branch"]["type"] = "integer";
@@ -1821,7 +1833,7 @@ void RegisterAnalysis(ToolRegistry& registry)
                                   "title"}},
                     {"review", {"op", "id", "verdict", "label", "title", "comment", "kind", "names", "by", "experiment",
                                 "ranges", "reason", "offset", "limit"}},
-                    {"experiment", {"spec", "path", "parallel", "finding"}},
+                    {"experiment", {"spec", "path", "parallel", "finding", "keep_branches", "run"}},
                     {"cover", {"budget", "per_branch", "frames", "parallel", "limit", "ranges"}},
                 };
                 Json::Value body(Json::objectValue);

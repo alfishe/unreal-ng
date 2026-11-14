@@ -1,6 +1,6 @@
 # TTD branches: test strategy, cases, fuzzing, benchmarks
 
-Part of [TTD branches](README.md). Status: P1-P2 cases and benchmarks built with them (`e0ac62a53`); P5's T-C12, T-C13, T-A3, T-A4 built 2026-11-13 (`TTDControl_BranchCreate_Test`, `WsHub_Test.TtdBranches*`, `McpTools_Test.TimeTravel_Branch*`, the MCP live block `test_branch_create_info_prune`); the rest come with their phases. Design 2026-11-08. Covers [architecture.md](architecture.md),
+Part of [TTD branches](README.md). Status: P1-P2 cases and benchmarks built with them (`e0ac62a53`); P5's T-C12, T-C13, T-A3, T-A4 built 2026-11-13 (`TTDControl_BranchCreate_Test`, `WsHub_Test.TtdBranches*`, `McpTools_Test.TimeTravel_Branch*`, the MCP live block `test_branch_create_info_prune`), the analyzer's loop (`AnalysisL3_Test.ExperimentKeptAsABranch*`, `ExperimentWithPinsIsNotKept`) and B-4 (`BM_TTD_Branch_AnalyzerWorkload`); the rest come with their phases. Design 2026-11-08. Covers [architecture.md](architecture.md),
 [storage.md](storage.md), [surfaces.md](surfaces.md), [tools.md](tools.md).
 
 The bar: branching unused costs nothing measurable; branching used is exact (every recorded position of every
@@ -168,6 +168,7 @@ Results so far (2026-11-10, load 9-14, three repetitions):
 | B-5 | one branch of 1000: (b)+(c) p50 4.94 ms, (a) 5.73 ms; 52 KB per branch | yes, (b)+(c) kept |
 | B-6 | owner lookup 3.7 / 7.1 / 18.7 ns at depth 1 / 10 / 100, the same at 100x the session length; select by tag over 10 000 branches 45 us, by creator 79 us | yes |
 | B-7 | find-last: linear 71.6 ms, depth 10 72.9 ms (+1.8 %); reverse-continue: linear 94 us, depth 10 69 us | yes |
+| B-4 | 2026-11-13, load 155 (the wall clock inflated 3.5x by it; CPU time is the figure): 1000 `branch-create` calls of the analyzer's form (a poke, an input script, 200 frames, a read, `go_back`) from one point of a 300-frame trunk: 95 s CPU, about 95 ms CPU per experiment (0.48 ms a frame); wall p50 316 ms, p99 700 ms; memory 36 KB per branch; disk 81 KB and 1 file per branch; one prune by the run id: 16 s for 1000 branches (16 ms each), after it 0.38 MB, 1 file and 1 MB of memory stay over the trunk alone | measured (no pass line) |
 | B-9 | save all 240 ms (16.7 MB), save lineage 221 ms (14.8 MB), load 233 ms | yes (load < 1 s) |
 
 F-1 (`DamageNeverLoadsAnotherBranch`): 3000 loads of

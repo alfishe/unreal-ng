@@ -1794,7 +1794,8 @@ emu.ttd_branch_info('probe')                # -> {'branch', 'children', 'ancesto
 # An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by 'python'):
 p = emu.ttd_branch_create(name='probe', frame=4823, run='r1', run_frames=50,
                           input=['0:a', '10:caps+5:4'], read=['#5C00:16'], go_back=True)
-# input: 'frame:key[+key][:hold|:down|:up]' from the branch start (hold default 2 frames, 1..1000); read: 'addr[:len]'
+# input: 'frame:key[+key][:hold|:down|:up]' from the branch start (hold default 2 frames, 1..1000), '5:joy.fire:down',
+# '9:release_all'; read: 'addr[:len]'; poke=['#8100=5'] and regs=['a=1'] change the branch first (tool edits)
 # -> {'created', 'branch', 'parent', 'at', 'ran_frames', 'aborted', 'end', 'reads': [{'address', 'length', 'bytes',
 #    'hex'}], 'returned_to', 'media', 'state', 'text'}; ValueError for a bad option, {'created': False, 'error'} otherwise
 emu.ttd_branch_prune(run='r1')              # a dry run: {'dry_run', 'would_delete', 'kept', 'frames', 'file_bytes', 'text'}
@@ -2189,6 +2190,7 @@ item = emu.analysis("review")                          # the next item: {item, s
 emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label="MainLoop", title="The main loop")
 emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
              "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
+emu.analysis("experiment", keep_branches="observed", run="r7", spec=[...])  # observed ones become TTD branches
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 

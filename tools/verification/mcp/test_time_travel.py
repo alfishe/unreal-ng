@@ -405,12 +405,16 @@ def test_branch_create_info_prune(s):
     before = s.call('time_travel', {'action': 'status'}).text
     first = int(re.search(r'frames (\d+)\.\.', before).group(1))
     r = s.call('time_travel', {'action': 'branch_create', 'name': 'mcp-probe', 'frame': first + 4, 'run': 'mcp-run',
-                               'run_frames': 3, 'input': ['0:a:2'], 'read': ['0x5C78:2'], 'go_back': True})
+                               'run_frames': 3, 'input': ['0:a:2', '2:release_all'], 'read': ['0x5C78:2', '0xC000'],
+                               'poke': ['#C000=171'], 'regs': ['bc=4660'], 'go_back': True})
     c = r.structured
     expect(not r.is_error and c.get('created') and c.get('ran_frames') == 3, 'created and ran', r.text)
+    expect(c.get('poked') == 1 and c.get('registers_set') == 1 and 'Poked 1 byte' in r.text,
+           'the poke and the register on the branch', r.text)
+    expect(len(c.get('reads', [])) == 2 and c['reads'][1].get('bytes') == [171], 'the poked byte read back', c)
     expect(c.get('branch', {}).get('created_by') == 'mcp' and c.get('returned_to') is not None,
            'created by mcp, back where it was', c)
-    expect(len(c.get('reads', [])) == 1 and 'Read' in r.text, 'the read in the answer', r.text)
+    expect('Read' in r.text, 'the read in the answer', r.text)
     r = s.call('time_travel', {'action': 'branch_info', 'branch': 'mcp-probe'})
     expect(not r.is_error and r.structured.get('branch', {}).get('name') == 'mcp-probe' and
            r.structured.get('ancestors'), 'the info names its ancestors', r.structured)

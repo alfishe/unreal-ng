@@ -5955,7 +5955,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["input"]["description"] =
         "branch_create with run_frames: the keys to press, each 'frame:key[+key][:hold|:down|:up]' - frame counted from "
         "the branch start (0 = the first run frame), key names as the keyboard action ('a', 'enter', 'space', "
-        "'caps', 'sym'), hold in frames (default 2, 1..1000), down / up hold or release until told";
+        "'caps', 'sym') or joy.<button> (up, down, left, right, fire), hold in frames (default 2, 1..1000), down / up "
+        "hold or release until told; 'frame:release_all' lets every key and button go";
+    schema["properties"]["poke"]["type"] = "array";
+    schema["properties"]["poke"]["items"]["type"] = "string";
+    schema["properties"]["poke"]["description"] =
+        "branch_create: bytes written at the fork before the run, each 'address=byte' (a tool edit the branch records)";
+    schema["properties"]["regs"]["type"] = "array";
+    schema["properties"]["regs"]["items"]["type"] = "string";
+    schema["properties"]["regs"]["description"] =
+        "branch_create: CPU registers set at the fork before the run, each 'name=value' ('pc=0x8000', 'a=5')";
     schema["properties"]["read"]["type"] = "array";
     schema["properties"]["read"]["items"]["type"] = "string";
     schema["properties"]["read"]["description"] =
@@ -7130,7 +7139,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     Json::Value body(Json::objectValue);
                     for (const char* key : {"branch", "frame", "tinframe", "name", "reason", "tags", "note", "pinned",
-                                            "run", "media", "run_frames", "input", "read", "go_back"})
+                                            "run", "media", "run_frames", "input", "read", "go_back", "poke", "regs"})
                     {
                         if (args.isMember(key) && !args[key].isNull())
                         {

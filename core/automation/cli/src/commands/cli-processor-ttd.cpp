@@ -435,8 +435,10 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd branch info <b>              The branch: its fork, children, ancestors and files" << NEWLINE;
     ss << "  ttd branch create [name]         A branch here (--frame F [--tinframe T], --on <b>: on that branch's" << NEWLINE;
     ss << "        lineage), --reason R, --tags a,b, --note TEXT, --pin, --run ID; --frames N runs it headless N" << NEWLINE;
-    ss << "        frames, --input 0:a,10:caps+5:4 feeds keys (frame:key[+key][:hold|:down|:up]), --read #5C00:16" << NEWLINE;
-    ss << "        reads memory at the end, --return goes back where you stood; --media ask|empty|keep" << NEWLINE;
+    ss << "        frames, --input 0:a,10:caps+5:4 feeds keys (frame:key[+key][:hold|:down|:up], joy.fire for a" << NEWLINE;
+    ss << "        joystick button, frame:release_all), --poke #8100=5 / --regs pc=#8000 edit the fork first," << NEWLINE;
+    ss << "        --read #5C00:16 reads memory at the end, --return goes back where you stood; --media ask|empty|keep"
+       << NEWLINE;
     ss << "  ttd branch prune [filters]       What the --created-by/--run/--tag/... filter picks (a dry run);" << NEWLINE;
     ss << "        --apply deletes them (the active lineage and pinned branches stay)" << NEWLINE;
     ss << "  ttd branch switch <b> [f] [t]    Continue on branch <b>, at frame/tinframe (default: its end)" << NEWLINE;
@@ -1096,7 +1098,8 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
             {"--created-after", "created_after"}, {"--created-before", "created_before"},
             {"--reason", "reason"},   {"--frame", "frame"},           {"--tinframe", "tinframe"},
             {"--on", "branch"},       {"--frames", "run_frames"},     {"--input", "input"},
-            {"--read", "read"},       {"--media", "media"}};
+            {"--read", "read"},       {"--media", "media"},           {"--poke", "poke"},
+            {"--regs", "regs"}};
         if (const auto it = valued.find(args[i]); it != valued.end())
         {
             if (i + 1 >= args.size())

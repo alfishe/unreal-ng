@@ -1525,7 +1525,17 @@
     schemas["TTDBranchCreateRequest"]["properties"]["input"]["items"]["type"] = "string";
     schemas["TTDBranchCreateRequest"]["properties"]["input"]["description"] =
         "Key changes during the run, frames from its start: 'frame:key[+key][:hold|:down|:up]' (a tap held 2 "
-        "frames by default; keys as the keyboard routes name them). Needs run_frames.";
+        "frames by default; keys as the keyboard routes name them, joy.<button> for a joystick button), or "
+        "'frame:release_all'. Needs run_frames.";
+    for (const char* name : {"poke", "regs"})
+    {
+        schemas["TTDBranchCreateRequest"]["properties"][name]["type"] = "array";
+        schemas["TTDBranchCreateRequest"]["properties"][name]["items"]["type"] = "string";
+    }
+    schemas["TTDBranchCreateRequest"]["properties"]["poke"]["description"] =
+        "Bytes written (CPU view) at the fork, before the run: 'address=byte'. A tool edit the branch records.";
+    schemas["TTDBranchCreateRequest"]["properties"]["regs"]["description"] =
+        "CPU registers set at the fork, before the run: 'name=value' (the debugger's register names).";
     schemas["TTDBranchCreateRequest"]["properties"]["read"]["type"] = "array";
     schemas["TTDBranchCreateRequest"]["properties"]["read"]["items"]["type"] = "string";
     schemas["TTDBranchCreateRequest"]["properties"]["read"]["description"] =

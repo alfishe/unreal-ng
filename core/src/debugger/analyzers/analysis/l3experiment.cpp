@@ -258,8 +258,8 @@ bool ParseInput(const StateNode& item, ExperimentInput& in, std::string& error)
 
 const std::vector<std::string>& SpecFields()
 {
-    static const std::vector<std::string> fields = {"id",    "finding", "claim", "from",   "poke",
-                                                    "regs",  "input",   "frames", "watch", "expect"};
+    static const std::vector<std::string> fields = {"id",    "finding", "claim",  "from",   "poke",       "regs",
+                                                    "input", "frames",  "watch",  "expect", "keep_branch"};
     return fields;
 }
 
@@ -529,6 +529,9 @@ void RunOne(const ExperimentSpec& spec, AnalysisInstance& machine, const L1Resul
         return;
     }
 
+    for (const ExperimentExpect& e : spec.expect)
+        if (e.subject == ExperimentExpect::Subject::Memory)
+            result.endMemory.emplace_back(e.address, memory->DirectReadFromZ80Memory(e.address));
     result.branchDecided = decided;
     result.branchTaken = taken;
     std::sort(fresh.begin(), fresh.end());
@@ -647,7 +650,7 @@ bool ParseExperiment(const StateNode& node, ExperimentSpec& spec, std::string& e
         if (std::find(fields.begin(), fields.end(), name) == fields.end())
         {
             error = "unknown experiment field '" + name + "' (id, finding, claim, from, poke, regs, input, frames, "
-                    "watch, expect)";
+                    "watch, expect, keep_branch)";
             return false;
         }
     }
@@ -658,6 +661,21 @@ bool ParseExperiment(const StateNode& node, ExperimentSpec& spec, std::string& e
     text("id", spec.id);
     text("finding", spec.finding);
     text("claim", spec.claim);
+    if (const StateNode* keep = node.find("keep_branch"); keep != nullptr)
+    {
+        if (keep->kind == StateNode::Kind::Bool)
+            spec.keepBranch = keep->b;
+        else if (keep->kind == StateNode::Kind::String && !keep->s.empty() && keep->s.size() <= 63)
+        {
+            spec.keepBranch = true;
+            spec.branchName = keep->s;
+        }
+        else
+        {
+            error = "keep_branch: true, false or the branch's name (1..63 characters)";
+            return false;
+        }
+    }
     if (const StateNode* from = node.find("from"); from != nullptr)
     {
         std::string value = from->kind == StateNode::Kind::String ? Lower(from->s) : std::string();
@@ -966,6 +984,23 @@ StateNode ExperimentResultNode(const ExperimentResult& r)
         ranges.push(Hex4(lo) + "-" + Hex4(hi));
     node["new_ranges"] = ranges;
     node["worker"] = static_cast<uint64_t>(r.worker);
+    if (r.kept.asked)
+    {
+        StateNode kept = StateNode::Object();
+        kept["created"] = r.kept.created;
+        if (r.kept.created)
+        {
+            kept["id"] = static_cast<uint64_t>(r.kept.id);
+            kept["guid"] = r.kept.guid;
+            kept["name"] = r.kept.name;
+            kept["run"] = r.kept.run;
+            kept["reproduced"] = r.kept.reproduced < 0 ? StateNode() : StateNode(r.kept.reproduced == 1);
+            kept["mismatch"] = r.kept.mismatch;
+        }
+        else
+            kept["error"] = r.kept.error;
+        node["branch"] = kept;
+    }
     return node;
 }
 
@@ -983,6 +1018,16 @@ std::string ExperimentResultLine(const ExperimentResult& r)
         line += "; " + std::to_string(r.newCode) + " new instructions at";
         for (size_t i = 0; i < r.newRanges.size() && i < 4; ++i)
             line += " " + Hex4(r.newRanges[i].first) + "-" + Hex4(r.newRanges[i].second);
+    }
+    if (r.kept.asked)
+    {
+        if (!r.kept.created)
+            line += "; no branch: " + r.kept.error;
+        else
+            line += "; kept as branch '" + r.kept.name + "' (" + r.kept.guid + ")" +
+                    (r.kept.reproduced == 1   ? ", reproduced"
+                     : r.kept.reproduced == 0 ? ", NOT reproduced: " + r.kept.mismatch
+                                              : "");
     }
     return line;
 }

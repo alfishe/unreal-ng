@@ -17,8 +17,11 @@
 ///              {"frame": 0, "joystick": "fire"}, {"frame": 20, "release_all": true}],
 ///    "frames": 50,
 ///    "watch": [{"pc": "$8123", "as": "rare"}, {"write": "$8100", "as": "w"}, {"read": "$8100", "as": "r"}],
-///    "expect": {"rare": "reached", "w": ">=2", "mem:$8100": "!=5", "screen": "changed", "new_code": ">0"}}
+///    "expect": {"rare": "reached", "w": ">=2", "mem:$8100": "!=5", "screen": "changed", "new_code": ">0"},
+///    "keep_branch": true | "<name>"}
 /// @endcode
+/// keep_branch: once run, the experiment is replayed in the source instance's TTD session as a branch a human can
+/// open (l3experimentbranch.h); without it the source stays untouched.
 /// Watch checks: reached, not_reached, >=N, <=N, ==N (N alone: ==N). Memory: N, ==N, !=N, >=N, <=N, changed,
 /// unchanged (against the value once the pokes are in). Screen ($4000-$5AFF): changed, unchanged. new_code
 /// (instructions L1 never saw run): >0, 0, >=N.
@@ -123,6 +126,9 @@ struct ExperimentSpec
     bool wantTaken = true;
     /// Coverage: keys held until the branch ran once (input sets them at frame 0)
     bool releaseInputWhenDecided = false;
+    /// Replay it as a branch of the source's TTD session (keep_branch); branchName: its name (empty: "exp <id>")
+    bool keepBranch = false;
+    std::string branchName;
 };
 
 /// Parse one spec object; false with @p error (the field and what it takes)
@@ -157,6 +163,22 @@ struct ExperimentResult
     bool branchTaken = false;
     uint32_t worker = 0;
     uint64_t micros = 0;
+    /// The bytes the memory checks saw at the end (address, value), in the checks' order
+    std::vector<std::pair<uint16_t, uint8_t>> endMemory;
+
+    /// keep_branch: the branch it was replayed as in the source's TTD session (l3experimentbranch.h)
+    struct KeptBranch
+    {
+        bool asked = false;
+        bool created = false;
+        uint32_t id = 0;
+        std::string guid;
+        std::string name;
+        std::string run;
+        std::string error;       ///< why there is no branch
+        int reproduced = -1;     ///< the memory checks' bytes match on the branch: 1, differ: 0, nothing to compare: -1
+        std::string mismatch;    ///< "$8100: $06 here, $05 on the branch"
+    } kept;
 };
 
 struct ExperimentRunOptions

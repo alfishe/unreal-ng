@@ -1,6 +1,6 @@
 # TTD branches: user surfaces and automation planes
 
-Part of [TTD branches](README.md). Status: **partly built**: §1 Qt panel (`66f6811ae`), the debuggers ([debuggers.md](debuggers.md), `0744664bb`), the verbs `branches` / `branch-switch` / `branch-update` / `branch-delete` on every plane (`e0ac62a53`). Open: §2 actions and readouts, §3 Stream Deck, §4 controllers, §5 `branch-info` / `branch-create` / `branch-prune` and the `ttd.branches` topic, §5.3 the analyzer ([README](README.md#phases) P5, P6). Design 2026-11-08. Model: [architecture.md](architecture.md).
+Part of [TTD branches](README.md). Status: **partly built**: §1 Qt panel (`66f6811ae`), the debuggers ([debuggers.md](debuggers.md), `0744664bb`), §5 every verb on every plane (`e0ac62a53`, `c675c6a37`), the `ttd.branches` topic and §5.3 the analyzer's loop (2026-11-13). Open: §2 actions and readouts, §3 Stream Deck, §4 controllers. Design 2026-11-08. Model: [architecture.md](architecture.md).
 
 Rule for every surface: without branches nothing changes (no new widget, key face or reply field appears until the
 session has a second branch). With branches, the default view is the active lineage with fork marks and the
@@ -162,9 +162,31 @@ branches. `resume` reports `{branch: new, kept: old}` and no longer "history aft
 
 ### 5.3 The analyzer (UC-5)
 
-Open (P5's remaining item). The analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes its
-branches with `branch-prune {run: <id>}` after the run, unless it pins the ones it reports. Its positions name
+Design: the analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes
+its branches with `branch-prune {run: <id>}` after the run, unless it pins the ones it reports. Its positions name
 branches by GUID so a human can open them.
+
+As built (2026-11-13, owner decision: clones, a branch on request):
+
+- **Experiments stay on analysis clones.** `analysis experiment` runs every spec on a muted headless clone seeked
+  from the captured trace (the L3 pool, `l3experiment.h`); the source instance is not touched by default. Running
+  hundreds of experiments as branches of the user's session would fill its table and pause the user's machine for
+  each one.
+- **A branch on request.** A spec with `"keep_branch": true` (or a name, 1..63 characters), or the action option
+  `keep_branches=observed|all` (default `asked`), replays the experiment in the source instance's TTD session after
+  the batch (`l3experimentbranch.h`): `branch-create` at the experiment's start frame, its pokes and registers as tool
+  edits (`poke` / `regs`, recorded so the branch replays them), its input as the input script (keys, `joy.<button>`,
+  `release_all`), its frames as `run_frames`, `created_by analyzer`, the batch's run id (`run`, default
+  `experiment-<n>`), tags `analyzer,experiment[,<finding>]`, the claim and the result line as the note, then
+  `go_back`. The memory checks' bytes are read on the branch and compared with the clone's: each result carries
+  `branch {created, id, guid, name, run, reproduced, mismatch}` (or `{created: false, error}`); the reply counts
+  `branches_kept` and names `branch_run`. `ttd branch prune --run <id> --apply` removes them.
+- **Not kept**: a coverage experiment's pins (a byte held before every instruction has no branch form), an
+  experiment that did not run, and one whose medium changed after its start frame (`media ask`: the reply names the
+  decision, the analyzer does not make it).
+- The source ends paused where it stood (`branch-create` pauses first). A recording in progress ends at its last
+  committed frame (the fork closes the branch it recorded), and `go_back` returns to that frame: the frame that was in
+  progress was never recorded.
 
 ## 6. External debuggers
 

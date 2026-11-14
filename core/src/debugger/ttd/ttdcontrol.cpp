@@ -28,9 +28,11 @@
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
 #include "debugger/debugmanager.h"
+#include "debugger/joystick/debugjoystickmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/capture/recordingcontrol.h"
 #include "emulator/config.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/coordinator/ports.h"
 #include "emulator/emulator.h"
 #include "emulator/memory/devicememory.h"
@@ -515,7 +517,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                       "created_after", "created_before", "limit", "offset"}},
         {"branch-info", {"branch"}},
         {"branch-create", {"branch", "frame", "tinframe", "name", "reason", "tags", "note", "pinned", "run",
-                           "created_by", "media", "run_frames", "input", "read", "go_back"}},
+                           "created_by", "media", "run_frames", "input", "read", "go_back", "poke", "regs"}},
         {"branch-prune", {"scope", "created_by", "run", "tag", "name_prefix", "pinned", "min_length", "max_length",
                           "created_after", "created_before", "dry_run"}},
         {"branch-switch", {"branch", "frame", "tinframe"}},
@@ -2200,12 +2202,20 @@ namespace
 struct ScriptKey
 {
     uint64_t frame = 0;
-    std::vector<std::string> keys;
+    std::vector<std::string> keys;  ///< keyboard key names, or "joy.<button>" for a joystick button
     bool press = true;
+    bool releaseAll = false;        ///< "frame:release_all": every key and button up
 };
 
-/// "0:enter,10:caps+5:4,20:space:down,30:space:up" -> press / release changes, by frame (a tap: pressed at its
-/// frame, released `hold` frames later, default 2)
+constexpr const char* kJoystickPrefix = "joy.";
+
+bool IsJoystickToken(const std::string& key)
+{
+    return key.rfind(kJoystickPrefix, 0) == 0;
+}
+
+/// "0:enter,10:caps+5:4,20:space:down,30:space:up,40:joy.fire+joy.up:down,60:release_all" -> press / release
+/// changes, by frame (a tap: pressed at its frame, released `hold` frames later, default 2)
 bool ParseInputScript(const std::string& text, std::vector<ScriptKey>& out, std::string& err)
 {
     for (const std::string& item : SplitList(text))
@@ -2223,23 +2233,40 @@ bool ParseInputScript(const std::string& text, std::vector<ScriptKey>& out, std:
                 keys.push_back(keysText.substr(from, plus - from));
             from = plus + 1;
         }
+        if (keys.size() == 1 && keys[0] == "release_all" && mode.empty())
+        {
+            if (!ParseU64(item.substr(0, c1), frame))
+            {
+                err = "Invalid input '" + item + "' (expected frame:release_all)";
+                return false;
+            }
+            ScriptKey all;
+            all.frame = frame;
+            all.press = false;
+            all.releaseAll = true;
+            out.push_back(all);
+            continue;
+        }
         bool known = !keys.empty();
         for (const std::string& k : keys)
-            known = known && DebugKeyboardManager::IsKnownKeyName(k);
+            known = known && (IsJoystickToken(k)
+                                  ? DebugJoystickManager::ResolveButtons(k.substr(std::string(kJoystickPrefix).size())) != 0
+                                  : DebugKeyboardManager::IsKnownKeyName(k));
         uint64_t hold = 2;
         const bool down = mode == "down";
         const bool up = mode == "up";
         if (c1 == std::string::npos || !ParseU64(item.substr(0, c1), frame) || !known ||
             (!mode.empty() && !down && !up && (!ParseU64(mode, hold) || hold == 0 || hold > 1000)))
         {
-            err = "Invalid input '" + item + "' (expected frame:key[+key...][:hold|:down|:up], keys as the keyboard "
-                  "verbs name them, hold 1..1000 frames)";
+            err = "Invalid input '" + item + "' (expected frame:key[+key...][:hold|:down|:up] or frame:release_all, "
+                  "keys as the keyboard verbs name them or joy.<button> (up, down, left, right, fire), hold 1..1000 "
+                  "frames)";
             return false;
         }
         if (!up)
-            out.push_back({frame, keys, true});
+            out.push_back({frame, keys, true, false});
         if (!down)
-            out.push_back({up ? frame : frame + hold, keys, false});
+            out.push_back({up ? frame : frame + hold, keys, false, false});
     }
     std::stable_sort(out.begin(), out.end(), [](const ScriptKey& a, const ScriptKey& b) { return a.frame < b.frame; });
     return true;
@@ -2263,6 +2290,46 @@ bool ParseReads(const std::string& text, std::vector<std::pair<uint16_t, uint16_
     }
     return true;
 }
+
+/// "#8100=5,23560=0" -> CPU-view bytes written after the fork, before the run (a tool edit the branch records)
+bool ParsePokes(const std::string& text, std::vector<std::pair<uint16_t, uint8_t>>& out, std::string& err)
+{
+    for (const std::string& item : SplitList(text))
+    {
+        const size_t eq = item.find('=');
+        uint64_t address = 0;
+        uint64_t value = 0;
+        if (eq == std::string::npos || !ParseU64(item.substr(0, eq), address) || address > 0xFFFF ||
+            !ParseU64(item.substr(eq + 1), value) || value > 0xFF)
+        {
+            err = "Invalid poke '" + item + "' (expected address=byte)";
+            return false;
+        }
+        out.emplace_back(static_cast<uint16_t>(address), static_cast<uint8_t>(value));
+    }
+    return true;
+}
+
+/// "a=#10,pc=#8000" -> CPU registers set after the fork, before the run (the register names of the debugger)
+bool ParseRegisters(const std::string& text, std::vector<std::pair<std::string, uint16_t>>& out, std::string& err)
+{
+    for (const std::string& item : SplitList(text))
+    {
+        const size_t eq = item.find('=');
+        uint64_t value = 0;
+        std::string name = eq == std::string::npos ? std::string() : item.substr(0, eq);
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const Z80::RegisterInfo* info = name.empty() ? nullptr : Z80::FindRegister(name);
+        if (!info || !ParseU64(item.substr(eq + 1), value) || value > (info->is16bit ? 0xFFFFu : 0xFFu) ||
+            (info->maxValue && value > info->maxValue))
+        {
+            err = "Invalid register '" + item + "' (expected name=value, a register name of the debugger)";
+            return false;
+        }
+        out.emplace_back(name, static_cast<uint16_t>(value));
+    }
+    return true;
+}
 }  // namespace
 
 TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
@@ -2283,6 +2350,12 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
     }
     if (const std::string* read = Option(request, "read"); read && !ParseReads(*read, reads, err))
         return Fail(TTDControlError::BadRequest, err);
+    std::vector<std::pair<uint16_t, uint8_t>> pokes;
+    if (const std::string* poke = Option(request, "poke"); poke && !ParsePokes(*poke, pokes, err))
+        return Fail(TTDControlError::BadRequest, err);
+    std::vector<std::pair<std::string, uint16_t>> registers;
+    if (const std::string* regs = Option(request, "regs"); regs && !ParseRegisters(*regs, registers, err))
+        return Fail(TTDControlError::BadRequest, err);
     bool goBack = false;
     if (const std::string* g = Option(request, "go_back"); g && !ParseBool(*g, goBack))
         return Fail(TTDControlError::BadRequest, "go_back must be true or false");
@@ -2294,8 +2367,9 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
     if (!_manager->HasHistory())
         return Fail(TTDControlError::Conflict, "branch-create needs a recorded history: start a recording first");
     Emulator* emulator = _context ? _context->pEmulator : nullptr;
-    if (runFrames > 0 && (!emulator || OnMachineThread()))
-        return Fail(TTDControlError::Conflict, "run_frames cannot run the machine from here (its own thread)");
+    if ((runFrames > 0 || !pokes.empty() || !registers.empty()) && (!emulator || OnMachineThread()))
+        return Fail(TTDControlError::Conflict, "run_frames, poke and regs cannot drive the machine from here (its own "
+                                               "thread)");
 
     // Who asks: the option, else the surface the request came through
     TTDBranchMeta meta;
@@ -2398,33 +2472,86 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
     std::string text = "Created branch '" + created->meta.name + "' at frame " + std::to_string(forkAt.frame) +
                        (parent ? " of '" + parent->meta.name + "'" : std::string()) + "\n";
 
-    // The run (Q-6: recorded): the machine runs the branch headless, fed by the script; the branch records it
+    // The edits at the fork (an experiment's pokes and registers): tool edits the new branch records, so a replay
+    // of it applies them
     TTDReply reply;
+    if (!pokes.empty())
+    {
+        Memory* memory = _context->pMemory;
+        const std::string refused =
+            emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("branch-create", "memory", pokes.front().first, pokes.size()),
+                                         [&]() {
+                                             for (const auto& [address, value] : pokes)
+                                                 memory->DirectWriteToZ80Memory(address, value);
+                                         });
+        if (!refused.empty())
+            return Fail(TTDControlError::Conflict, "the branch was created, its pokes refused: " + refused);
+        text += "Poked " + std::to_string(pokes.size()) + " byte(s)\n";
+    }
+    for (const auto& [name, value] : registers)
+    {
+        std::string refused;
+        if (!emulator->SetRegisterFromTool("branch-create", name, value, &refused))
+            return Fail(TTDControlError::Conflict, "the branch was created, register " + name + " refused" +
+                                                       (refused.empty() ? std::string() : ": " + refused));
+    }
+    if (!registers.empty())
+        text += "Set " + std::to_string(registers.size()) + " register(s)\n";
+    reply.body["poked"] = static_cast<uint64_t>(pokes.size());
+    reply.body["registers_set"] = static_cast<uint64_t>(registers.size());
+
+    // The run (Q-6: recorded): the machine runs the branch headless, fed by the script; the branch records it
     uint64_t ran = 0;
     bool aborted = false;
     if (runFrames > 0)
     {
         DebugKeyboardManager* keyboard = _context->pDebugManager ? _context->pDebugManager->GetKeyboardManager() : nullptr;
-        if (!script.empty() && !keyboard)
+        DebugJoystickManager* joystick = _context->pDebugManager ? _context->pDebugManager->GetJoystickManager() : nullptr;
+        bool keys = false;
+        bool buttons = false;
+        for (const ScriptKey& change : script)
+            for (const std::string& key : change.keys)
+                (IsJoystickToken(key) ? buttons : keys) = true;
+        if (keys && !keyboard)
             return Fail(TTDControlError::NotAvailable, "input: this machine has no keyboard to feed");
+        if (buttons && !joystick)
+            return Fail(TTDControlError::NotAvailable, "input: this machine has no joystick to feed");
+        const size_t prefix = std::string(kJoystickPrefix).size();
         std::set<std::string> held;
+        std::string inputError;
+        auto press = [&](const std::string& key, bool down) {
+            if (IsJoystickToken(key))
+            {
+                const JoystickInjectResult r = down ? joystick->Press(key.substr(prefix)) : joystick->Release(key.substr(prefix));
+                if (!r.ok() && inputError.empty())
+                    inputError = r.message;
+            }
+            else if (down)
+                keyboard->PressKey(key);
+            else
+                keyboard->ReleaseKey(key);
+            if (down)
+                held.insert(key);
+            else
+                held.erase(key);
+        };
         size_t next = 0;
         for (; ran < runFrames; ++ran)
         {
             for (; next < script.size() && script[next].frame <= ran; ++next)
-                for (const std::string& key : script[next].keys)
+            {
+                if (script[next].releaseAll)
                 {
-                    if (script[next].press)
-                    {
-                        keyboard->PressKey(key);
-                        held.insert(key);
-                    }
-                    else
-                    {
-                        keyboard->ReleaseKey(key);
-                        held.erase(key);
-                    }
+                    const std::set<std::string> all = held;
+                    for (const std::string& key : all)
+                        press(key, false);
+                    continue;
                 }
+                for (const std::string& key : script[next].keys)
+                    press(key, script[next].press);
+            }
+            if (!inputError.empty())
+                return Fail(TTDControlError::Conflict, "the branch was created, its input refused: " + inputError);
             emulator->RunNFrames(1);
             if (emulator->LastDirectRunAborted())
             {
@@ -2433,8 +2560,9 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
                 break;
             }
         }
-        for (const std::string& key : held)   // nothing stays pressed after the run
-            keyboard->ReleaseKey(key);
+        const std::set<std::string> still = held;   // nothing stays pressed after the run
+        for (const std::string& key : still)
+            press(key, false);
         text += "Ran " + std::to_string(ran) + " frames" + (aborted ? " (stopped: control taken back)" : "") + "\n";
     }
     reply.body["ran_frames"] = ran;
@@ -2472,8 +2600,18 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
     // Back where the caller stood, when asked
     if (goBack)
     {
+        // Asked while recording, the caller stood past what the fork closed its branch at (the frame in progress
+        // was never committed): back to that branch's end
+        TTDTimePoint back = returnTo;
+        if (const TTDSessionInfo now = _manager->ReadSessionInfo(); now.branches)
+            if (const TTDBranchInfo* b = now.branches->Find(returnBranch); b)
+            {
+                const TTDTimePoint end{b->end.frame, static_cast<uint32_t>(b->end.tInFrame)};
+                if (end < back)
+                    back = end;
+            }
         std::string error;
-        if (!_manager->SwitchBranch(returnBranch, returnTo, error))
+        if (!_manager->SwitchBranch(returnBranch, back, error))
             text += "Could not go back: " + error + "\n";
         else
         {
