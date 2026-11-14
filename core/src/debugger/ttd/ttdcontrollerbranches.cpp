@@ -541,6 +541,40 @@ bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector
     return true;
 }
 
+bool TimeTravelController::DeleteBranches(const std::vector<uint32_t>& branches, bool force,
+                                          std::vector<uint32_t>& removed, std::vector<BranchDeleteRefusal>& refused)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    removed.clear();
+    refused.clear();
+    std::vector<uint32_t> protect;
+    for (const TTDLineageSpan& s : _branches.Lineage(_tip))
+        protect.push_back(s.branch);
+    TTDBranchInfo first{};
+    bool any = false;
+    for (uint32_t branch : branches)
+    {
+        const TTDBranchInfo* asked = _branches.Get(branch);
+        const TTDBranchInfo before = asked ? *asked : TTDBranchInfo{};
+        std::vector<uint32_t> subtree;
+        std::string error;
+        if (!_branches.Delete(branch, protect, force, subtree, error))
+        {
+            refused.push_back({branch, error});
+            continue;
+        }
+        if (!any)
+            first = before;
+        any = true;
+        removed.insert(removed.end(), subtree.begin(), subtree.end());
+    }
+    if (!any)
+        return false;
+    ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", first, static_cast<uint32_t>(removed.size()));
+    return true;
+}
+
 bool TimeTravelController::UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};

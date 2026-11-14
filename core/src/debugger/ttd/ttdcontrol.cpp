@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -2664,7 +2665,30 @@ TTDReply TTDControlBackend::BranchPrune(const TTDRequest& request)
         std::set<uint32_t> lineage;
         for (const TTDLineageSpan& span : view.lineage)
             lineage.insert(span.branch);
-        const std::string folder = _manager->ShadowRecordingFolder();
+        // The folder's files once, by line: a listing per branch made a prune of n branches n listings of n files
+        std::map<uint32_t, uint64_t> lineBytes;
+        if (const std::string folder = _manager->ShadowRecordingFolder(); !folder.empty())
+        {
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(folder), ec))
+            {
+                uint32_t number = 0;
+                uint32_t fileLine = 0;
+                if (!ParseSegmentFileName(entry.path().filename().string(), number, fileLine))
+                    continue;
+                std::error_code sizeError;
+                const uintmax_t size = entry.file_size(sizeError);
+                lineBytes[fileLine] += sizeError ? 0 : static_cast<uint64_t>(size);
+            }
+        }
+        struct Doomed
+        {
+            uint32_t id;
+            std::vector<uint32_t> subtree;
+            uint64_t frames;
+            uint64_t bytes;
+        };
+        std::vector<Doomed> doomed;
         for (uint32_t id : selected)
         {
             // A selected ancestor takes it with it
@@ -2675,7 +2699,7 @@ TTDReply TTDControlBackend::BranchPrune(const TTDRequest& request)
             if (underSelected)
                 continue;
             const TTDBranchInfo& b = *view.Find(id);
-            const std::vector<uint32_t> subtree = BranchSubtree(view, id);
+            std::vector<uint32_t> subtree = BranchSubtree(view, id);
             std::string why;
             for (uint32_t s : subtree)
                 if (const TTDBranchInfo* d = view.Find(s))
@@ -2693,38 +2717,54 @@ TTDReply TTDControlBackend::BranchPrune(const TTDRequest& request)
                 text += "Kept '" + b.meta.name + "': " + why + "\n";
                 continue;
             }
-            uint64_t subtreeFrames = 0;
-            uint64_t subtreeFiles = 0;
-            for (uint32_t s : subtree)
-                if (const TTDBranchInfo* d = view.Find(s))
+            Doomed d{id, std::move(subtree), 0, 0};
+            for (uint32_t s : d.subtree)
+                if (const TTDBranchInfo* sub = view.Find(s))
                 {
-                    subtreeFrames += BranchListFilter::BranchLength(*d, info);
-                    for (const auto& file : BranchFiles(folder, s))
-                        subtreeFiles += file.second;
+                    d.frames += BranchListFilter::BranchLength(*sub, info);
+                    if (const auto it = lineBytes.find(s); it != lineBytes.end())
+                        d.bytes += it->second;
                 }
-            if (!dryRun)
+            doomed.push_back(std::move(d));
+        }
+
+        // One delete for them all: one folder batch, one publish, one event
+        std::set<uint32_t> refusedIds;
+        if (!dryRun && !doomed.empty())
+        {
+            std::vector<uint32_t> ids;
+            ids.reserve(doomed.size());
+            for (const Doomed& d : doomed)
+                ids.push_back(d.id);
+            std::vector<uint32_t> removed;
+            std::vector<TimeTravelController::BranchDeleteRefusal> refused;
+            _manager->DeleteBranches(ids, false, removed, refused);
+            for (const TimeTravelController::BranchDeleteRefusal& r : refused)
             {
-                std::vector<uint32_t> removed;
-                std::string error;
-                if (!_manager->DeleteBranch(id, false, removed, error))
+                refusedIds.insert(r.branch);
+                if (const TTDBranchInfo* b = view.Find(r.branch))
                 {
-                    StateNode k = BranchRefNode(b);
-                    k["reason"] = error;
+                    StateNode k = BranchRefNode(*b);
+                    k["reason"] = r.error;
                     kept.push(std::move(k));
-                    text += "Kept '" + b.meta.name + "': " + error + "\n";
-                    continue;
+                    text += "Kept '" + b->meta.name + "': " + r.error + "\n";
                 }
             }
-            for (uint32_t s : subtree)
-                if (const TTDBranchInfo* d = view.Find(s))
+        }
+        for (const Doomed& d : doomed)
+        {
+            if (refusedIds.count(d.id))
+                continue;
+            for (uint32_t s : d.subtree)
+                if (const TTDBranchInfo* sub = view.Find(s))
                 {
-                    StateNode node = BranchRefNode(*d);
-                    node["length"] = BranchListFilter::BranchLength(*d, info);
+                    StateNode node = BranchRefNode(*sub);
+                    node["length"] = BranchListFilter::BranchLength(*sub, info);
                     deleted.push(std::move(node));
-                    text += std::string(dryRun ? "Would delete '" : "Deleted '") + d->meta.name + "'\n";
+                    text += std::string(dryRun ? "Would delete '" : "Deleted '") + sub->meta.name + "'\n";
                 }
-            frames += subtreeFrames;
-            fileBytes += subtreeFiles;
+            frames += d.frames;
+            fileBytes += d.bytes;
         }
     }
     reply.body["dry_run"] = dryRun;
