@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <functional>
 #include <iomanip>
@@ -31,6 +32,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include <atomic>
 #include <cstdlib>
 
@@ -39,6 +41,8 @@
 #include "debugger/ttd/ttdsessionport.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/notifications.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/controllers/controllerconfig.h"
@@ -1918,6 +1922,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->hitKind = cause.kind;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
+            payload->main = cause.main;
         }
         else if (cause.step)
         {
@@ -1925,6 +1930,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->address = cause.address;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
+            payload->main = cause.main;
         }
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
         return;
@@ -3103,7 +3109,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
             return false;
 
         if (!_directStop.hit)
-            _directStop = BreakpointStop{true, breakpointId, address, kind};
+            _directStop = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
         if (kind == BreakpointHitKind::Execute)
         {
             _stoppedAtExecBreakpoint = true;
@@ -3123,7 +3129,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         _stoppedAtExecBreakpoint = true;
         _stoppedAtExecPc = address;
     }
-    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
+    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
     NoteBreakpointCallbacks(breakpointId, address, kind);
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
@@ -3143,7 +3149,7 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
 {
     const BreakpointSnapshot bp = breakpoints.GetBreakpointById(breakpointId);
     const bool hidden = bp && bp->hidden;
-    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc};
+    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc, false, {}};
     auto post = [&]() {
         auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
         payload->kind = kind;
@@ -3162,9 +3168,10 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     }
 
     // The emulator's own run: pause with the cause, notify, park this thread (inside the card's catch-up: a host
-    // port access of the main CPU or the frame end) until Resume()
+    // port access of the main CPU, the frame end, or in tight mode any main instruction start) until Resume()
     _pendingPauseOwner = bp ? bp->owner : std::string();
     _pendingPauseCause = stop;
+    _pendingPauseCause.main = MainPositionAt(cpu);
     Pause();
     _pendingPauseCause = BreakpointStop{};
     _pendingPauseOwner.clear();
@@ -3179,10 +3186,31 @@ void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
     stop.address = cpuPc;
     stop.cpu = cpu;
     stop.cpuPc = cpuPc;
+    stop.main = MainPositionAt(cpu);
     _pendingPauseCause = stop;
     Pause();
     _pendingPauseCause = BreakpointStop{};
     ParkInsideCardRun();
+}
+
+MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
+{
+    MainPosition position;
+    Z80* z80 = _core ? _core->GetZ80() : nullptr;
+    GSCardTarget* target = _context && _context->pDebugManager ? _context->pDebugManager->GetCardTarget(cpu) : nullptr;
+    GeneralSoundCard* card = target ? target->Card() : nullptr;
+    if (!z80 || !card || card->cardUnitsPerSecond() <= 0.0)
+        return position;
+    position.known = true;
+    position.frameEnd = card->inFrameEndCatchUp();
+    position.pc = z80->m1_pc;
+    // The instruction's start T is kept in the debug path only, the one tight mode runs
+    if (!position.frameEnd && (z80->isDebugMode || z80->execTapHold || z80->cardTight) && z80->t >= z80->instrStartT)
+        position.tInInstruction = z80->t - z80->instrStartT;
+    const double lead = static_cast<double>(card->hostLead()) /
+                        GSHostClock::unitsPerZxTact(_context, card->cardUnitsPerSecond());
+    position.gapT = static_cast<int32_t>(std::llround(lead));
+    return position;
 }
 
 void Emulator::ParkInsideCardRun()

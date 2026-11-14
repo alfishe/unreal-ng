@@ -226,6 +226,8 @@ public:
         uint16_t cpuPc = 0;
         /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
         bool step = false;
+        /// Another CPU's stop in the emulator's own run: where the main CPU parked with it
+        MainPosition main;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -1056,6 +1058,8 @@ public:
     void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
     /// WaitWhilePaused, marked as parked inside another CPU's run (IsParkedInsideCardRun)
     void ParkInsideCardRun();
+    /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)
+    MainPosition MainPositionAt(DebugCpuId cpu) const;
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

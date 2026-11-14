@@ -436,6 +436,12 @@ public:
     }
     /// Card time in the card's own unit and that unit's rate (classic GS: 12 MHz cycles; NeoGS: 120 MHz ticks)
     virtual int64_t cardTime() const { return 0; }
+    /// Run the card up to the main CPU's current time (the catch-up a host port access does): tight mode's catch-up
+    /// at every main instruction start while the card is debugged (GS debugger design §5.2). A card without a CPU: nothing
+    virtual void catchUpToHost() {}
+    /// How far the main CPU's current time is ahead of the card, in the card's unit (cardUnitsPerSecond): what a
+    /// catch-up would run now. 0 without a CPU, or while the host clock has no base for this frame
+    virtual int64_t hostLead() const { return 0; }
     virtual double cardUnitsPerSecond() const { return 0.0; }
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame

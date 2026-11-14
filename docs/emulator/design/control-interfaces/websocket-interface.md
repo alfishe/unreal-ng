@@ -36,7 +36,8 @@ The same handler as the REST route: same scopes, body and errors. Calls with dif
 order. The sound card CPU's registers, memory and code are the REST routes with `?cpu=gs`
 (`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
 [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
-and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu` and `cpu_pc`.
+and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu`, `cpu_pc` and `main` (where
+the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`).
 An answer budget works the same way: `?max_chars=2000` in the path fits the result's `body` (a JSON object gets
 `truncated`; [answer budgets](webapi-interface.md#answer-budgets-max_chars)).
 
