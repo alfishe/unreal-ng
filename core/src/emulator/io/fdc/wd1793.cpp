@@ -1842,6 +1842,30 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     WDSTATE prevState = _state;
     [[maybe_unused]] WDSTATE prevState2 = _state2;
 
+    // A write cut short leaves on the disk what it wrote so far: WRITE TRACK's partial stream is indexed (the
+    // index still described the old layout), WRITE SECTOR's data is there without its CRC (a CRC error on read)
+    if (!noCommandExecuted && _writeTrackTarget)
+    {
+        if (_lastDecodedCmd == WD_CMD_WRITE_TRACK && _rawDataBufferIndex > 0)
+        {
+            _writeTrackTarget->reindex();
+            _writeTrackTarget->markRawTrackDirty();
+            _writeTrackTarget->markDirty();
+        }
+        else if (_lastDecodedCmd == WD_CMD_WRITE_SECTOR && _currentSector && _currentSector->hasData &&
+                 _rawDataBuffer > _currentSector->data && _rawDataBuffer <= _currentSector->data + _currentSector->dataSize)
+        {
+            _currentSector->dataCrcValid = _currentSector->isDataCRCValid();
+            _currentSector->dirty = true;
+            _writeTrackTarget->markDirty();
+        }
+    }
+    _writeTrackTarget = nullptr;
+    _currentSector = nullptr;
+    _currentReadTrack = nullptr;
+    _rawDataBuffer = nullptr;
+    _writeTrackEscapeNext = false;
+
     // Terminate any current command - always happens regardless of I0-I3 flags
     _state = S_IDLE;
     _state2 = S_IDLE;
@@ -2358,6 +2382,12 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
                             const DiskImage::Encoding encoding = controllerEncoding();
                             const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
+                            // The previous command's sector and buffers point into the stream and index this command
+                            // replaces (a resize below frees the stream, the reindex at the end rebuilds the index)
+                            _currentSector = nullptr;
+                            _currentReadTrack = nullptr;
+                            _sectorData = nullptr;
+                            _idamData = nullptr;
                             if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
                             {
                                 const bool mfm = (encoding == DiskImage::Encoding::MFM);
@@ -4575,17 +4605,23 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
     // The sector in use: its track, then its index in the track's list
     DiskRef sectorTrack;
     uint16_t sectorIndex = 0xFFFF;
-    if (_currentSector && _currentSector->id)
+    // By address among the live index entries of the drives' tracks: the pointer is not followed (an entry that
+    // left the index is saved as no sector)
+    for (uint8_t d = 0; _currentSector && d < 4 && sectorIndex == 0xFFFF; d++)
     {
-        sectorTrack = Locate(_context, reinterpret_cast<const uint8_t*>(_currentSector->id));
-        if (DiskImage::Track* track = TrackOf(_context, sectorTrack.drive, sectorTrack.track))
+        FDD* fdd = _context ? _context->coreState.diskDrives[d] : nullptr;
+        DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
+        for (unsigned t = 0; image && t < 255 && sectorIndex == 0xFFFF; t++)
         {
+            DiskImage::Track* track = image->getTrack(static_cast<uint8_t>(t));
+            if (!track)
+                break;
             const auto& sectors = track->sectors();
-            for (size_t i = 0; i < sectors.size(); i++)
-            {
-                if (&sectors[i] == _currentSector)
-                    sectorIndex = static_cast<uint16_t>(i);
-            }
+            if (sectors.empty() || _currentSector < sectors.data() || _currentSector >= sectors.data() + sectors.size())
+                continue;
+            sectorTrack.drive = d;
+            sectorTrack.track = static_cast<uint8_t>(t);
+            sectorIndex = static_cast<uint16_t>(_currentSector - sectors.data());
         }
     }
     put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.drive);
