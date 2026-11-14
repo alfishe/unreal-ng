@@ -139,8 +139,7 @@ def decode_track(raw: bytes) -> list[Sector]:
             fields = raw[i + 3 : i + 8]
             if len(fields) < 5:
                 break
-            _, cyl, head, number, size_code = fields
-            size_code &= 3
+            _, cyl, head, number, size_code = fields  # raw N: only the data length below uses N & 3
             idam_crc_stored = raw[i + 8 : i + 10]
             idam_end = i + 10
 
@@ -157,7 +156,7 @@ def decode_track(raw: bytes) -> list[Sector]:
                     DAM_DELETED,
                 ):
                     dam = raw[j + 3]
-                    size = 128 << size_code
+                    size = 128 << (size_code & 3)
                     data_start = j + 4
                     data = raw[data_start : data_start + size]
                     if len(data) == size:
