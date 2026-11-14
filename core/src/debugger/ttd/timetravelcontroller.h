@@ -1105,8 +1105,22 @@ public:
         _nextBranchMeta = std::move(meta);
         _nextBranchMetaSet = true;
     }
+    /// branch-create (surfaces.md §5.1): the next resume forks a branch with @p meta even at the active branch's
+    /// end, where a resume only goes on. Taken by the next resume; CancelBranchCreate drops it when none came
+    void PrepareBranchCreate(TTDBranchMeta meta)
+    {
+        SetNextBranchMeta(std::move(meta));
+        _forceFork = true;
+    }
+    void CancelBranchCreate()
+    {
+        _forceFork = false;
+        _nextBranchMetaSet = false;
+    }
     /// The lineage spans of the active branch (trunk first)
     std::vector<TTDLineageSpan> ActiveLineage() const { return _branches.Lineage(_tip); }
+    /// The branches as last published (no fresh publish asked)
+    TTDBranchesPublished PublishedBranches() const override;
 
     /// endregion </Branches>
     /// The media a recording continued from @p from could not set back there (M5, F11): another medium in the
@@ -1858,6 +1872,10 @@ private:
     uint32_t _viewId = 0;   ///< the line read and written now (an ancestor's while standing in its part)
     TTDBranchMeta _nextBranchMeta;
     bool _nextBranchMetaSet = false;
+    bool _forceFork = false;   ///< PrepareBranchCreate: the next resume forks at the end too
+    /// The table's last change (the ttd.branches topic); NoteBranchEvent numbers them
+    TTDBranchEvent _branchEvent;
+    void NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed = 0);
     /// Per branch id: where it was last visited (SwitchBranch's default)
     std::vector<std::optional<TTDTimePoint>> _lastVisited = {std::nullopt};
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording

@@ -31,7 +31,7 @@ Each phase: tests first, then code; lands when its tests, B-0 (zero overhead) an
 | P2 | Storage: branch streams, folder (b)+(c), save all / lineage, load, old-reader compatibility | T-F*, F-1, F-3, B-5, B-9 | ✅ 2026-11-10 (`e0ac62a53`) |
 | P3 | Two tiers: eviction to disk, read back, history limit without trimming | T-C8-C10, B-3 | open |
 | P4 | Media in the stream, version tree, write-through following the active moment | T-M*, B-8 | open (media changes in the recorded past are refused with a hint) |
-| P5 | Automation planes, `branch-create` with run, prune, the analyzer's loop | T-A*, T-C12-C13, B-4, MCP live block | in part: `branches`, `branch-switch`, `branch-update`, `branch-delete` on every plane, `forks_here`. Open: `branch-info`, `branch-create` (with `run`), `branch-prune`, the `ttd.branches` topic and `branch` in `ttd.position`, the analyzer's loop |
+| P5 | Automation planes, `branch-create` with run, prune, the analyzer's loop | T-A*, T-C12-C13, B-4, MCP live block | in part: every verb (`branches` with the full filter, `branch-info`, `branch-create` with a run, input script and reads, `branch-switch`, `branch-update`, `branch-delete`, `branch-prune`) on every plane, `forks_here`, the `ttd.branches` topic and `branch` in `ttd.position` (2026-11-13). Open: the analyzer's loop (§5.3 of [surfaces.md](surfaces.md)) and its benchmark B-4 |
 | P6 | Qt, actions, Stream Deck, controllers | T-A5-A6, surface contract | in part: the Qt TTD panel (`66f6811ae`), the Embedded and eCat debuggers (`0744664bb`, [debuggers.md](debuggers.md)). Open: actions and readouts, Stream Deck, controllers |
 | P7 | Python tools | tools tests, F-4 | open |
 | P8 | Stale texts updated (§5), recipes, command-interface | docs | ✅ 2026-11-13 |

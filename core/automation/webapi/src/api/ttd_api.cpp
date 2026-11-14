@@ -17,7 +17,9 @@
 ///
 /// TTD branches (a resume in the past keeps the old future as a branch):
 ///   GET    /ttd/branches                   — the branch tree, filtered and paged
-///   GET    /ttd/branches/{branch}          — one branch ({branch}: an id, a GUID or a name)
+///   POST   /ttd/branches                   — create one at a moment, optionally run headless with scripted input
+///   POST   /ttd/branches/prune             — delete the branches a filter picks (a dry run by default)
+///   GET    /ttd/branches/{branch}          — one branch with its children, ancestors and files
 ///   PATCH  /ttd/branches/{branch}          — rename, note, tags, pin
 ///   DELETE /ttd/branches/{branch}          — delete it and its descendants (?force=true: pinned ones too)
 ///   POST   /ttd/branches/{branch}/switch   — continue on it (at frame / tinframe, default its end)
@@ -45,6 +47,7 @@
 #include <map>
 #include <string>
 
+#include "../common/longcallpool.h"
 #include "../common/statenode_json.h"
 #include "../emulator_api.h"
 #include "debugger/ttd/ttdcontrol.h"
@@ -448,48 +451,55 @@ void EmulatorAPI::getTTDBranches(const HttpRequestPtr& req,
 
 /// @brief GET /api/v1/emulator/{id}/ttd/branches/{branch}
 ///
-/// One branch of the `branches` list: { "branch": {...}, "active", "viewed", "lineage", "text" }. 404 for an unknown
-/// branch. The name is matched as the verbs match it: an id or a GUID first, then a name.
+/// One branch (the branch-info verb): { "branch": {...}, "children": [ {id, guid, name, fork, length} ],
+/// "ancestors": [ {id, guid, name} ] (from the trunk), "files": [ {name, bytes} ], "file_bytes", "folder", "active",
+/// "text" }. 404 for an unknown branch. {branch}: an id or a GUID first, then a name.
 void EmulatorAPI::getTTDBranch(const HttpRequestPtr& req,
                                std::function<void(const HttpResponsePtr&)>&& callback,
                                const std::string& id, const std::string& branch) const
 {
     (void)req;
-    RespondTTD(id, "branches", {{"limit", "4294967295"}}, callback, [&branch](ttd::TTDReply& reply) {
-        if (!reply.Ok())
-            return;
-        const StateNode* list = reply.body.find("branches");
-        const StateNode* found = nullptr;
-        if (list)
-        {
-            for (const StateNode& b : list->items)
-                if (const StateNode* bid = b.find("id"); (bid && std::to_string(bid->i) == branch) ||
-                                                         (b.find("guid") && b.find("guid")->s == branch))
-                    found = found ? found : &b;
-            for (const StateNode& b : list->items)
-                if (!found && b.find("name") && b.find("name")->s == branch)
-                    found = &b;
-        }
-        if (!found)
-        {
-            reply.error = ttd::TTDControlError::NotFound;
-            reply.message = "Unknown branch: " + branch +
-                            (list && list->items.empty() ? " (the session has the trunk alone)" : "");
-            reply.body = StateNode::Object();
-            return;
-        }
-        StateNode body = StateNode::Object();
-        body["branch"] = *found;
-        for (const char* key : {"active", "viewed", "lineage"})
-            if (const StateNode* v = reply.body.find(key))
-                body[key] = *v;
-        const StateNode* name = found->find("name");
-        const StateNode* length = found->find("length");
-        body["text"] = "Branch '" + (name ? name->s : branch) + "', " +
-                       std::to_string(length ? length->i : 0) + " frames" +
-                       (found->find("active") && found->find("active")->b ? " (active)" : "") + "\n";
-        reply.body = std::move(body);
+    RespondTTD(id, "branch-info", {{"branch", branch}}, callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/branches
+///
+/// Body: { "frame": F, "tinframe": T (default: where the machine stands), "branch": <lineage> (default the active
+/// one), "name", "reason", "tags": [...], "note", "pinned", "run": "<run id>", "created_by" (default "webapi"),
+/// "media": "ask" | "empty" | "keep", "run_frames": N (0..10000: the machine runs the new branch headless and records
+/// it), "input": ["0:a", "10:caps+5:4", "20:space:down", "30:space:up"], "read": ["#5C00:16"], "go_back": true }.
+/// 200 with { "created", "branch", "parent", "at", "ran_frames", "aborted", "end", "reads", "returned_to", "state",
+/// "text" } (media=ask with a medium to decide: { "created": false, "needs_decision", "media" }); 400 for a bad
+/// option, 404 for an unknown branch, 409 without a recorded history. A run takes its time: it answers from the
+/// long-call pool, the HTTP workers stay free.
+void EmulatorAPI::createTTDBranch(const HttpRequestPtr& req,
+                                  std::function<void(const HttpResponsePtr&)>&& callback,
+                                  const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    options.emplace("created_by", "webapi");
+    auto answer = std::make_shared<std::function<void(const HttpResponsePtr&)>>(std::move(callback));
+    LongCallPool::Instance().Run([id, options = std::move(options), answer]() mutable {
+        RespondTTD(id, "branch-create", std::move(options), *answer);
     });
+}
+
+/// @brief POST /api/v1/emulator/{id}/ttd/branches/prune
+///
+/// Body: the GET /ttd/branches filter ("created_by", "run", "tag", "name_prefix", "pinned", "min_length",
+/// "max_length", "created_after", "created_before", "scope") and "dry_run" (default true). 200 with { "dry_run",
+/// "would_delete" | "deleted": [ {id, guid, name, length} ], "kept": [ {id, guid, name, reason} ], "frames",
+/// "file_bytes", "memory_bytes_freed", "text" }; 400 without a filter. The active lineage and pinned branches stay.
+void EmulatorAPI::pruneTTDBranches(const HttpRequestPtr& req,
+                                   std::function<void(const HttpResponsePtr&)>&& callback,
+                                   const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondTTD(id, "branch-prune", std::move(options), callback);
 }
 
 /// @brief PATCH /api/v1/emulator/{id}/ttd/branches/{branch} (only the fields given change)

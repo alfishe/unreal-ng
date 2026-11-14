@@ -54,6 +54,10 @@ public:
         std::function<QString(const std::string& verb, const std::string& slot, const std::string& card)> changeSlot;
         /// A short note for the user (the status bar or the HUD toast)
         std::function<void(const QString&)> notice;
+        /// The floppy drive under the hand (HostControllers::DriveHaptics): the head's steps and the turning disk on the
+        /// pads; empty: no controllers in this build
+        std::function<bool()> driveHaptics;
+        std::function<void(bool)> setDriveHaptics;
     };
 
     HandheldMenu(Hooks hooks, QWidget* parent);

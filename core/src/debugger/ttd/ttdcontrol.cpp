@@ -27,6 +27,7 @@
 #include "debugger/ttd/ttdportsearch.h"
 #include "debugger/ttd/ttdprobe.h"
 #include "debugger/ttd/ttdrecordingfolders.h"
+#include "debugger/debugmanager.h"
 #include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/capture/recordingcontrol.h"
 #include "emulator/config.h"
@@ -365,6 +366,9 @@ private:
     TTDReply BranchSwitch(const TTDRequest& request);
     TTDReply BranchUpdate(const TTDRequest& request);
     TTDReply BranchDelete(const TTDRequest& request);
+    TTDReply BranchInfo(const TTDRequest& request);
+    TTDReply BranchCreate(const TTDRequest& request);
+    TTDReply BranchPrune(const TTDRequest& request);
     /// The branch `branch` names (an id, a GUID or a name); empty: all good, otherwise the reply to send
     std::optional<TTDReply> ResolveBranch(const TTDRequest& request, uint32_t& id) const;
     TTDReply BookmarkExport(const TTDRequest& request);
@@ -458,7 +462,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
         "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip",
-        "branches", "branch-switch", "branch-update", "branch-delete"};
+        "branches", "branch-info", "branch-create", "branch-switch", "branch-update", "branch-delete", "branch-prune"};
     return verbs;
 }
 
@@ -507,7 +511,13 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"seek-check", {"enabled"}},
         {"file-info", {"path"}},
         {"dump", {"path", "lineage"}},
-        {"branches", {"scope", "created_by", "tag", "name_prefix", "pinned", "limit", "offset"}},
+        {"branches", {"scope", "created_by", "run", "tag", "name_prefix", "pinned", "min_length", "max_length",
+                      "created_after", "created_before", "limit", "offset"}},
+        {"branch-info", {"branch"}},
+        {"branch-create", {"branch", "frame", "tinframe", "name", "reason", "tags", "note", "pinned", "run",
+                           "created_by", "media", "run_frames", "input", "read", "go_back"}},
+        {"branch-prune", {"scope", "created_by", "run", "tag", "name_prefix", "pinned", "min_length", "max_length",
+                          "created_after", "created_before", "dry_run"}},
         {"branch-switch", {"branch", "frame", "tinframe"}},
         {"branch-update", {"branch", "name", "note", "tags", "add_tags", "remove_tags", "pinned"}},
         {"branch-delete", {"branch", "force"}},
@@ -582,7 +592,7 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
     // machine (debuggers.md §7). A start there waits for the next frame boundary (StartRecording)
     static const std::set<std::string> moves = {"seek", "step-back", "step-forward", "step-instruction",
                                                 "reverse-step-over", "reverse-step", "reverse-continue", "resume",
-                                                "branch-switch", "load"};
+                                                "branch-switch", "branch-create", "load"};
     if (_context && _context->pEmulator && _context->pEmulator->IsParkedInsideCardRun() && moves.count(verb))
         return Fail(TTDControlError::Conflict,
                     "the machine is stopped inside the sound card's run (a General Sound breakpoint or step): "
@@ -670,6 +680,12 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return BranchUpdate(request);
     if (verb == "branch-delete")
         return BranchDelete(request);
+    if (verb == "branch-info")
+        return BranchInfo(request);
+    if (verb == "branch-create")
+        return BranchCreate(request);
+    if (verb == "branch-prune")
+        return BranchPrune(request);
     return Fail(TTDControlError::Internal, "verb '" + verb + "' has no implementation");
 }
 
@@ -1786,34 +1802,141 @@ std::optional<TTDReply> TTDControlBackend::ResolveBranch(const TTDRequest& reque
     return Fail(TTDControlError::NotFound, "Unknown branch: " + *text);
 }
 
-TTDReply TTDControlBackend::Branches(const TTDRequest& request)
+namespace
 {
-    // The published copy: a list never parks the machine
-    const TTDSessionInfo info = _manager->ReadSessionInfo();
+/// The branch filter of `branches` and `branch-prune` (surfaces.md §5.1), read from the request
+struct BranchListFilter
+{
     bool lineageOnly = false;
+    bool any = false;   ///< a criterion was given (scope excluded)
+    std::optional<bool> pinned;
+    std::optional<std::string> createdBy, run, namePrefix;
+    std::vector<std::string> tags;   ///< every one of them
+    std::optional<uint64_t> minLength, maxLength, createdAfter, createdBefore;
+
+    bool Matches(const TTDBranchInfo& b, const TTDSessionInfo& info) const
+    {
+        if (lineageOnly && std::none_of(info.branches->lineage.begin(), info.branches->lineage.end(),
+                                        [&](const TTDLineageSpan& s) { return s.branch == b.id; }))
+            return false;
+        if (createdBy && b.meta.createdBy.rfind(*createdBy, 0) != 0)
+            return false;
+        if (run && b.meta.run != *run)
+            return false;
+        for (const std::string& tag : tags)
+            if (!std::binary_search(b.meta.tags.begin(), b.meta.tags.end(), tag))
+                return false;
+        if (namePrefix && b.meta.name.rfind(*namePrefix, 0) != 0)
+            return false;
+        if (pinned && b.meta.pinned != *pinned)
+            return false;
+        const uint64_t length = BranchLength(b, info);
+        if ((minLength && length < *minLength) || (maxLength && length > *maxLength))
+            return false;
+        if ((createdAfter && b.meta.createdHostMicros < *createdAfter) ||
+            (createdBefore && b.meta.createdHostMicros > *createdBefore))
+            return false;
+        return true;
+    }
+
+    /// Frames from the fork to the end; the active branch records on, its end is the session's
+    static uint64_t BranchLength(const TTDBranchInfo& b, const TTDSessionInfo& info)
+    {
+        uint64_t end = b.end.frame;
+        if (b.id == info.activeBranch && info.currentEndFrame > end)
+            end = info.currentEndFrame;
+        return end >= b.fork.frame ? end - b.fork.frame : 0;
+    }
+};
+
+std::optional<TTDReply> ParseBranchListFilter(const TTDRequest& request, BranchListFilter& f)
+{
     if (const std::string* scope = Option(request, "scope"))
     {
         if (*scope != "all" && *scope != "lineage")
             return Fail(TTDControlError::BadRequest, "scope must be all or lineage");
-        lineageOnly = *scope == "lineage";
+        f.lineageOnly = *scope == "lineage";
     }
-    std::optional<bool> pinned;
     if (const std::string* p = Option(request, "pinned"))
     {
         bool value = false;
         if (!ParseBool(*p, value))
             return Fail(TTDControlError::BadRequest, "pinned must be true or false");
-        pinned = value;
+        f.pinned = value;
+        f.any = true;
     }
+    for (const auto& [name, field] : {std::pair<const char*, std::optional<std::string>*>{"created_by", &f.createdBy},
+                                      {"run", &f.run}, {"name_prefix", &f.namePrefix}})
+        if (const std::string* v = Option(request, name))
+        {
+            *field = *v;
+            f.any = true;
+        }
+    if (const std::string* t = Option(request, "tag"))
+    {
+        f.tags = SplitList(*t);
+        f.any = f.any || !f.tags.empty();
+    }
+    for (const auto& [name, field] :
+         {std::pair<const char*, std::optional<uint64_t>*>{"min_length", &f.minLength}, {"max_length", &f.maxLength},
+          {"created_after", &f.createdAfter}, {"created_before", &f.createdBefore}})
+        if (const std::string* v = Option(request, name))
+        {
+            uint64_t value = 0;
+            if (!ParseU64(*v, value))
+                return Fail(TTDControlError::BadRequest, std::string(name) + " must be a non-negative integer");
+            *field = value;
+            f.any = true;
+        }
+    return std::nullopt;
+}
+
+/// A recording folder's files of branch line @p line: {name, bytes}, by name
+std::vector<std::pair<std::string, uint64_t>> BranchFiles(const std::string& folder, uint32_t line)
+{
+    std::vector<std::pair<std::string, uint64_t>> files;
+    if (folder.empty())
+        return files;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(folder), ec))
+    {
+        uint32_t number = 0;
+        uint32_t fileLine = 0;
+        const std::string name = entry.path().filename().string();
+        if (!ParseSegmentFileName(name, number, fileLine) || fileLine != line)
+            continue;
+        std::error_code sizeError;
+        const uintmax_t size = entry.file_size(sizeError);
+        files.emplace_back(name, sizeError ? 0 : static_cast<uint64_t>(size));
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+/// @p id and its live descendants in @p view, parents first
+std::vector<uint32_t> BranchSubtree(const TTDBranchesView& view, uint32_t id)
+{
+    std::vector<uint32_t> out{id};
+    for (size_t i = 0; i < out.size(); ++i)
+        if (const TTDBranchInfo* b = view.Find(out[i]))
+            out.insert(out.end(), b->children.begin(), b->children.end());
+    return out;
+}
+}  // namespace
+
+TTDReply TTDControlBackend::Branches(const TTDRequest& request)
+{
+    // The published copy: a list never parks the machine
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    BranchListFilter filter;
+    if (auto refusal = ParseBranchListFilter(request, filter))
+        return *refusal;
     uint64_t limit = 1000;
     uint64_t offset = 0;
     if (const std::string* l = Option(request, "limit"); l && (!ParseU64(*l, limit) || limit == 0))
         return Fail(TTDControlError::BadRequest, "limit must be a positive integer");
     if (const std::string* o = Option(request, "offset"); o && !ParseU64(*o, offset))
         return Fail(TTDControlError::BadRequest, "offset must be a non-negative integer");
-    const std::string* createdBy = Option(request, "created_by");
-    const std::string* tag = Option(request, "tag");
-    const std::string* namePrefix = Option(request, "name_prefix");
 
     TTDReply reply;
     StateNode list = StateNode::Array();
@@ -1822,16 +1945,7 @@ TTDReply TTDControlBackend::Branches(const TTDRequest& request)
     if (info.branches)
         for (const TTDBranchInfo& b : info.branches->branches)
         {
-            if (lineageOnly && std::none_of(info.branches->lineage.begin(), info.branches->lineage.end(),
-                                            [&](const TTDLineageSpan& s) { return s.branch == b.id; }))
-                continue;
-            if (createdBy && b.meta.createdBy.rfind(*createdBy, 0) != 0)
-                continue;
-            if (tag && !std::binary_search(b.meta.tags.begin(), b.meta.tags.end(), *tag))
-                continue;
-            if (namePrefix && b.meta.name.rfind(*namePrefix, 0) != 0)
-                continue;
-            if (pinned && b.meta.pinned != *pinned)
+            if (!filter.Matches(b, info))
                 continue;
             if (matched++ < offset || list.size() >= limit)
                 continue;
@@ -1992,6 +2106,507 @@ TTDReply TTDControlBackend::BranchDelete(const TTDRequest& request)
     }
     reply.body["removed_names"] = list;
     reply.body["text"] = "Deleted " + joined + "\n";
+    return reply;
+}
+
+TTDReply TTDControlBackend::BranchInfo(const TTDRequest& request)
+{
+    uint32_t id = 0;
+    if (auto refusal = ResolveBranch(request, id))
+        return *refusal;
+    // The published copy and the folder's files: a read never parks the machine
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    std::string text;
+    if (!info.branches)
+    {
+        // The trunk alone: nothing about branches to show but the trunk itself
+        StateNode node = StateNode::Object();
+        node["id"] = static_cast<uint64_t>(kTTDTrunk);
+        node["name"] = std::string("trunk");
+        node["parent"] = StateNode();
+        node["length"] = info.currentEndFrame >= info.sessionStartFrame ? info.currentEndFrame - info.sessionStartFrame : 0;
+        node["active"] = true;
+        reply.body["branch"] = node;
+        reply.body["children"] = StateNode::Array();
+        reply.body["ancestors"] = StateNode::Array();
+        text = "The trunk alone: the history is one line\n";
+    }
+    else
+    {
+        const TTDBranchInfo* b = info.branches->Find(id);
+        if (!b)
+            return Fail(TTDControlError::NotFound, "Unknown branch: " + *Option(request, "branch"));
+        StateNode node = BranchNode(*b, info);
+        const uint64_t length = node["length"].i;
+        reply.body["branch"] = node;
+        StateNode children = StateNode::Array();
+        std::string childText;
+        for (uint32_t c : b->children)
+            if (const TTDBranchInfo* child = info.branches->Find(c))
+            {
+                StateNode ref = BranchRefNode(*child);
+                ref["fork"] = TimePointNode({child->fork.frame, static_cast<uint32_t>(child->fork.tInFrame)});
+                ref["length"] = BranchListFilter::BranchLength(*child, info);
+                children.push(std::move(ref));
+                childText += (childText.empty() ? "'" : ", '") + child->meta.name + "'";
+            }
+        reply.body["children"] = children;
+        // From the trunk down to its parent
+        StateNode ancestors = StateNode::Array();
+        std::vector<const TTDBranchInfo*> chain;
+        for (const TTDBranchInfo* up = info.branches->Find(b->parent); up; up = info.branches->Find(up->parent))
+            chain.push_back(up);
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+            ancestors.push(BranchRefNode(**it));
+        reply.body["ancestors"] = ancestors;
+        const TTDBranchInfo* parent = info.branches->Find(b->parent);
+        text = "Branch '" + b->meta.name + "' (" + std::to_string(b->id) + "), " + std::to_string(length) + " frames" +
+               (parent ? ", from frame " + std::to_string(b->fork.frame) + " of '" + parent->meta.name + "'"
+                       : std::string()) +
+               (b->id == info.activeBranch ? " (active)" : "") + (b->meta.pinned ? ", pinned" : "") + "\n";
+        if (!b->meta.reason.empty() || !b->meta.createdBy.empty())
+            text += "Created by " + (b->meta.createdBy.empty() ? std::string("?") : b->meta.createdBy) +
+                    (b->meta.reason.empty() ? std::string() : " (" + b->meta.reason + ")") + "\n";
+        if (!childText.empty())
+            text += "Children: " + childText + "\n";
+        if (!b->meta.note.empty())
+            text += "Note: " + b->meta.note + "\n";
+    }
+    // Its files in the recording's folder (storage.md §4); a loaded session's history is in the file it came from
+    StateNode files = StateNode::Array();
+    uint64_t fileBytes = 0;
+    for (const auto& [name, bytes] : BranchFiles(_manager->ShadowRecordingFolder(), id))
+    {
+        StateNode f = StateNode::Object();
+        f["name"] = name;
+        f["bytes"] = bytes;
+        files.push(std::move(f));
+        fileBytes += bytes;
+    }
+    reply.body["folder"] = StringOrNull(_manager->ShadowRecordingFolder());
+    reply.body["files"] = files;
+    reply.body["file_bytes"] = fileBytes;
+    if (!files.items.empty())
+        text += "Files: " + std::to_string(files.items.size()) + " (" + std::to_string(fileBytes) + " bytes)\n";
+    reply.body["active"] = static_cast<uint64_t>(info.activeBranch);
+    reply.body["text"] = text;
+    return reply;
+}
+
+namespace
+{
+/// One key change of a branch-create run's input script (frames counted from the run's start)
+struct ScriptKey
+{
+    uint64_t frame = 0;
+    std::vector<std::string> keys;
+    bool press = true;
+};
+
+/// "0:enter,10:caps+5:4,20:space:down,30:space:up" -> press / release changes, by frame (a tap: pressed at its
+/// frame, released `hold` frames later, default 2)
+bool ParseInputScript(const std::string& text, std::vector<ScriptKey>& out, std::string& err)
+{
+    for (const std::string& item : SplitList(text))
+    {
+        const size_t c1 = item.find(':');
+        const size_t c2 = c1 == std::string::npos ? std::string::npos : item.find(':', c1 + 1);
+        uint64_t frame = 0;
+        const std::string keysText = c1 == std::string::npos ? std::string() : item.substr(c1 + 1, c2 == std::string::npos ? std::string::npos : c2 - c1 - 1);
+        const std::string mode = c2 == std::string::npos ? std::string() : item.substr(c2 + 1);
+        std::vector<std::string> keys;
+        for (size_t from = 0; from <= keysText.size();)
+        {
+            const size_t plus = std::min(keysText.find('+', from), keysText.size());
+            if (plus > from)
+                keys.push_back(keysText.substr(from, plus - from));
+            from = plus + 1;
+        }
+        bool known = !keys.empty();
+        for (const std::string& k : keys)
+            known = known && DebugKeyboardManager::IsKnownKeyName(k);
+        uint64_t hold = 2;
+        const bool down = mode == "down";
+        const bool up = mode == "up";
+        if (c1 == std::string::npos || !ParseU64(item.substr(0, c1), frame) || !known ||
+            (!mode.empty() && !down && !up && (!ParseU64(mode, hold) || hold == 0 || hold > 1000)))
+        {
+            err = "Invalid input '" + item + "' (expected frame:key[+key...][:hold|:down|:up], keys as the keyboard "
+                  "verbs name them, hold 1..1000 frames)";
+            return false;
+        }
+        if (!up)
+            out.push_back({frame, keys, true});
+        if (!down)
+            out.push_back({up ? frame : frame + hold, keys, false});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const ScriptKey& a, const ScriptKey& b) { return a.frame < b.frame; });
+    return true;
+}
+
+/// "#5C00:16,23560" -> CPU-view ranges (address[:length], length 1..256)
+bool ParseReads(const std::string& text, std::vector<std::pair<uint16_t, uint16_t>>& out, std::string& err)
+{
+    for (const std::string& item : SplitList(text))
+    {
+        const size_t colon = item.find(':');
+        uint64_t address = 0;
+        uint64_t length = 1;
+        if (!ParseU64(item.substr(0, colon), address) || address > 0xFFFF ||
+            (colon != std::string::npos && (!ParseU64(item.substr(colon + 1), length) || length == 0 || length > 256)))
+        {
+            err = "Invalid read '" + item + "' (expected address[:length], length 1..256)";
+            return false;
+        }
+        out.emplace_back(static_cast<uint16_t>(address), static_cast<uint16_t>(length));
+    }
+    return true;
+}
+}  // namespace
+
+TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
+{
+    // The options first: nothing moves for a request that cannot be done
+    uint64_t runFrames = 0;
+    if (const std::string* r = Option(request, "run_frames"); r && (!ParseU64(*r, runFrames) || runFrames > 10000))
+        return Fail(TTDControlError::BadRequest, "run_frames must be 0..10000");
+    std::vector<ScriptKey> script;
+    std::vector<std::pair<uint16_t, uint16_t>> reads;
+    std::string err;
+    if (const std::string* input = Option(request, "input"))
+    {
+        if (runFrames == 0)
+            return Fail(TTDControlError::BadRequest, "input needs run_frames (the frames the machine runs fed by it)");
+        if (!ParseInputScript(*input, script, err))
+            return Fail(TTDControlError::BadRequest, err);
+    }
+    if (const std::string* read = Option(request, "read"); read && !ParseReads(*read, reads, err))
+        return Fail(TTDControlError::BadRequest, err);
+    bool goBack = false;
+    if (const std::string* g = Option(request, "go_back"); g && !ParseBool(*g, goBack))
+        return Fail(TTDControlError::BadRequest, "go_back must be true or false");
+    bool pinned = false;
+    if (const std::string* p = Option(request, "pinned"); p && !ParseBool(*p, pinned))
+        return Fail(TTDControlError::BadRequest, "pinned must be true or false");
+    if (Option(request, "tinframe") && !Option(request, "frame"))
+        return Fail(TTDControlError::BadRequest, "tinframe needs frame");
+    if (!_manager->HasHistory())
+        return Fail(TTDControlError::Conflict, "branch-create needs a recorded history: start a recording first");
+    Emulator* emulator = _context ? _context->pEmulator : nullptr;
+    if (runFrames > 0 && (!emulator || OnMachineThread()))
+        return Fail(TTDControlError::Conflict, "run_frames cannot run the machine from here (its own thread)");
+
+    // Who asks: the option, else the surface the request came through
+    TTDBranchMeta meta;
+    if (const std::string* name = Option(request, "name"))
+        meta.name = *name;
+    if (const std::string* by = Option(request, "created_by"); by && !by->empty())
+        meta.createdBy = *by;
+    else
+    {
+        const coordinator::OpSource source = coordinator::CurrentSource();
+        meta.createdBy = source == coordinator::OpSource::Unknown ? "automation" : coordinator::OpSourceName(source);
+    }
+    if (const std::string* run = Option(request, "run"))
+        meta.run = *run;
+    // "create", with the caller's details: an explicit branch stays even before it records (§4.6)
+    meta.reason = "create";
+    if (const std::string* reason = Option(request, "reason"); reason && !reason->empty())
+        meta.reason += ": " + *reason;
+    if (const std::string* tags = Option(request, "tags"))
+        meta.tags = SplitList(*tags);
+    if (const std::string* note = Option(request, "note"))
+        meta.note = *note;
+    meta.pinned = pinned;
+
+    PauseAndConfirm();
+    const TTDSessionInfo before = _manager->ReadSessionInfo();
+    const uint32_t returnBranch = before.activeBranch;
+    const TTDTimePoint returnTo = _manager->CurrentPosition();
+
+    // On another branch's lineage: stand there first (at frame / tinframe, default where it was last visited)
+    TTDRequest resume{"resume", {}};
+    if (const std::string* media = Option(request, "media"))
+        resume.options["media"] = *media;
+    if (Option(request, "branch"))
+    {
+        uint32_t id = 0;
+        if (auto refusal = ResolveBranch(request, id))
+            return *refusal;
+        TTDRequest sw{"branch-switch", {{"branch", std::to_string(id)}}};
+        for (const char* key : {"frame", "tinframe"})
+            if (const std::string* v = Option(request, key))
+                sw.options[key] = *v;
+        const TTDReply switched =
+            AsOperation(coordinator::OpKind::TimelineSeek, "branch-create", sw, [&]() { return BranchSwitch(sw); });
+        if (!switched.Ok())
+            return switched;
+    }
+    else if (_manager->GetState() == TTDSessionState::Idle)
+    {
+        // A stopped recording: the machine goes to the moment first (default where it stands, inside the history)
+        const TTDTimePoint here = _manager->CurrentPosition();
+        TTDRequest seek{"seek", {{"frame", std::to_string(here.frame)}, {"tinframe", std::to_string(here.tInFrame)}}};
+        for (const char* key : {"frame", "tinframe"})
+            if (const std::string* v = Option(request, key))
+                seek.options[key] = *v;
+        if (Option(request, "frame") && !Option(request, "tinframe"))
+            seek.options["tinframe"] = "0";
+        const TTDReply moved =
+            AsOperation(coordinator::OpKind::TimelineSeek, "branch-create", seek, [&]() { return Seek(seek); });
+        if (!moved.Ok())
+            return moved;
+        if (const StateNode* reached = moved.body.find("reached"); reached && !reached->b)
+        {
+            const StateNode* why = moved.body.find("message");
+            return Fail(TTDControlError::Conflict,
+                        "the moment is outside the recorded history" + (why ? ": " + why->s : std::string()));
+        }
+        NotifyFrameRefresh();
+    }
+    else
+        for (const char* key : {"frame", "tinframe"})
+            if (const std::string* v = Option(request, key))
+                resume.options[key] = *v;
+
+    // The fork: a resume that keeps whatever lies after the moment, at the active branch's end too
+    std::set<uint32_t> known;
+    if (const TTDSessionInfo now = _manager->ReadSessionInfo(); now.branches)
+        for (const TTDBranchInfo& b : now.branches->branches)
+            known.insert(b.id);
+    else
+        known.insert(kTTDTrunk);
+    _manager->PrepareBranchCreate(std::move(meta));
+    TTDReply resumed = Resume(resume);
+    _manager->CancelBranchCreate();
+    if (!resumed.Ok())
+        return resumed;
+    if (const StateNode* decision = resumed.body.find("needs_decision"); decision && decision->b)
+    {
+        resumed.body["created"] = false;
+        return resumed;   // media=ask: the slots that need a decision, nothing changed
+    }
+    TTDSessionInfo info = _manager->ReadSessionInfo();
+    const TTDBranchInfo* created = info.branches ? info.branches->Find(info.activeBranch) : nullptr;
+    if (!created || known.count(created->id))
+        return Fail(TTDControlError::Conflict, "the branch could not be created (the session holds the most branches "
+                                               "it can)");
+    const uint32_t newId = created->id;
+    const TTDTimePoint forkAt = _manager->CurrentPosition();
+    const TTDBranchInfo* parent = info.branches->Find(created->parent);
+    std::string text = "Created branch '" + created->meta.name + "' at frame " + std::to_string(forkAt.frame) +
+                       (parent ? " of '" + parent->meta.name + "'" : std::string()) + "\n";
+
+    // The run (Q-6: recorded): the machine runs the branch headless, fed by the script; the branch records it
+    TTDReply reply;
+    uint64_t ran = 0;
+    bool aborted = false;
+    if (runFrames > 0)
+    {
+        DebugKeyboardManager* keyboard = _context->pDebugManager ? _context->pDebugManager->GetKeyboardManager() : nullptr;
+        if (!script.empty() && !keyboard)
+            return Fail(TTDControlError::NotAvailable, "input: this machine has no keyboard to feed");
+        std::set<std::string> held;
+        size_t next = 0;
+        for (; ran < runFrames; ++ran)
+        {
+            for (; next < script.size() && script[next].frame <= ran; ++next)
+                for (const std::string& key : script[next].keys)
+                {
+                    if (script[next].press)
+                    {
+                        keyboard->PressKey(key);
+                        held.insert(key);
+                    }
+                    else
+                    {
+                        keyboard->ReleaseKey(key);
+                        held.erase(key);
+                    }
+                }
+            emulator->RunNFrames(1);
+            if (emulator->LastDirectRunAborted())
+            {
+                aborted = true;
+                ++ran;
+                break;
+            }
+        }
+        for (const std::string& key : held)   // nothing stays pressed after the run
+            keyboard->ReleaseKey(key);
+        text += "Ran " + std::to_string(ran) + " frames" + (aborted ? " (stopped: control taken back)" : "") + "\n";
+    }
+    reply.body["ran_frames"] = ran;
+    reply.body["aborted"] = aborted;
+
+    // The outcome readouts, where the run ended (or at the fork)
+    Memory* memory = _context ? _context->pMemory : nullptr;
+    StateNode readNodes = StateNode::Array();
+    for (const auto& [address, length] : reads)
+    {
+        StateNode r = StateNode::Object();
+        r["address"] = static_cast<uint64_t>(address);
+        r["length"] = static_cast<uint64_t>(length);
+        StateNode bytes = StateNode::Array();
+        std::string hex;
+        char digits[4];
+        for (uint16_t i = 0; i < length && memory; ++i)
+        {
+            const uint8_t v = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+            bytes.push(static_cast<uint64_t>(v));
+            std::snprintf(digits, sizeof(digits), "%02X", v);
+            hex += digits;
+        }
+        r["bytes"] = bytes;
+        r["hex"] = hex;
+        readNodes.push(std::move(r));
+        char head[16];
+        std::snprintf(head, sizeof(head), "#%04X", address);
+        text += std::string("Read ") + head + ": " + hex + "\n";
+    }
+    reply.body["reads"] = readNodes;
+    const TTDTimePoint endAt = _manager->CurrentPosition();
+    reply.body["end"] = TimePointNode(endAt);
+
+    // Back where the caller stood, when asked
+    if (goBack)
+    {
+        std::string error;
+        if (!_manager->SwitchBranch(returnBranch, returnTo, error))
+            text += "Could not go back: " + error + "\n";
+        else
+        {
+            reply.body["returned_to"] = TimePointNode(_manager->CurrentPosition());
+            text += "Back at frame " + std::to_string(_manager->CurrentPosition().frame) + "\n";
+        }
+        NotifyFrameRefresh();
+    }
+
+    info = _manager->ReadSessionInfo();
+    reply.body["created"] = true;
+    if (const TTDBranchInfo* b = info.branches ? info.branches->Find(newId) : nullptr)
+        reply.body["branch"] = BranchNode(*b, info);
+    if (parent)
+        reply.body["parent"] = BranchRefNode(*parent);
+    reply.body["at"] = TimePointNode(forkAt);
+    if (const StateNode* media = resumed.body.find("media"))
+        reply.body["media"] = *media;
+    reply.body["state"] = TTDSessionStateToString(info.state);
+    reply.body["text"] = text;
+    return reply;
+}
+
+TTDReply TTDControlBackend::BranchPrune(const TTDRequest& request)
+{
+    BranchListFilter filter;
+    if (auto refusal = ParseBranchListFilter(request, filter))
+        return *refusal;
+    if (!filter.any)
+        return Fail(TTDControlError::BadRequest, "branch-prune needs a filter: created_by, run, tag, name_prefix, "
+                                                 "pinned, min_length, max_length, created_after or created_before");
+    bool dryRun = true;
+    if (const std::string* d = Option(request, "dry_run"); d && !ParseBool(*d, dryRun))
+        return Fail(TTDControlError::BadRequest, "dry_run must be true or false");
+
+    const TTDSessionInfo info = _manager->ReadSessionInfo();
+    TTDReply reply;
+    StateNode deleted = StateNode::Array();
+    StateNode kept = StateNode::Array();
+    uint64_t frames = 0;
+    uint64_t fileBytes = 0;
+    std::string text;
+    if (info.branches)
+    {
+        const TTDBranchesView& view = *info.branches;
+        std::set<uint32_t> selected;
+        for (const TTDBranchInfo& b : view.branches)
+            if (b.id != kTTDTrunk && filter.Matches(b, info))
+                selected.insert(b.id);
+        std::set<uint32_t> lineage;
+        for (const TTDLineageSpan& span : view.lineage)
+            lineage.insert(span.branch);
+        const std::string folder = _manager->ShadowRecordingFolder();
+        for (uint32_t id : selected)
+        {
+            // A selected ancestor takes it with it
+            bool underSelected = false;
+            for (const TTDBranchInfo* up = view.Find(view.Find(id)->parent); up && !underSelected;
+                 up = view.Find(up->parent))
+                underSelected = selected.count(up->id) != 0;
+            if (underSelected)
+                continue;
+            const TTDBranchInfo& b = *view.Find(id);
+            const std::vector<uint32_t> subtree = BranchSubtree(view, id);
+            std::string why;
+            for (uint32_t s : subtree)
+                if (const TTDBranchInfo* d = view.Find(s))
+                {
+                    if (lineage.count(s) && why.empty())
+                        why = s == id ? "on the active lineage" : "holds the active lineage ('" + d->meta.name + "')";
+                    else if (d->meta.pinned && why.empty())
+                        why = s == id ? "pinned" : "a pinned branch under it ('" + d->meta.name + "')";
+                }
+            if (!why.empty())
+            {
+                StateNode k = BranchRefNode(b);
+                k["reason"] = why;
+                kept.push(std::move(k));
+                text += "Kept '" + b.meta.name + "': " + why + "\n";
+                continue;
+            }
+            uint64_t subtreeFrames = 0;
+            uint64_t subtreeFiles = 0;
+            for (uint32_t s : subtree)
+                if (const TTDBranchInfo* d = view.Find(s))
+                {
+                    subtreeFrames += BranchListFilter::BranchLength(*d, info);
+                    for (const auto& file : BranchFiles(folder, s))
+                        subtreeFiles += file.second;
+                }
+            if (!dryRun)
+            {
+                std::vector<uint32_t> removed;
+                std::string error;
+                if (!_manager->DeleteBranch(id, false, removed, error))
+                {
+                    StateNode k = BranchRefNode(b);
+                    k["reason"] = error;
+                    kept.push(std::move(k));
+                    text += "Kept '" + b.meta.name + "': " + error + "\n";
+                    continue;
+                }
+            }
+            for (uint32_t s : subtree)
+                if (const TTDBranchInfo* d = view.Find(s))
+                {
+                    StateNode node = BranchRefNode(*d);
+                    node["length"] = BranchListFilter::BranchLength(*d, info);
+                    deleted.push(std::move(node));
+                    text += std::string(dryRun ? "Would delete '" : "Deleted '") + d->meta.name + "'\n";
+                }
+            frames += subtreeFrames;
+            fileBytes += subtreeFiles;
+        }
+    }
+    reply.body["dry_run"] = dryRun;
+    reply.body[dryRun ? "would_delete" : "deleted"] = deleted;
+    reply.body["kept"] = kept;
+    reply.body["frames"] = frames;
+    reply.body["file_bytes"] = fileBytes;
+    if (!dryRun && !deleted.items.empty())
+    {
+        const TTDSessionInfo after = _manager->ReadSessionInfo();
+        reply.body["memory_bytes_freed"] =
+            info.historyBytes > after.historyBytes ? info.historyBytes - after.historyBytes : 0;
+    }
+    if (deleted.items.empty() && kept.items.empty())
+        text = "No branch matches\n";
+    else
+        text += std::to_string(deleted.items.size()) + (dryRun ? " would go" : " deleted") + ", " +
+                std::to_string(frames) + " frames, " + std::to_string(fileBytes) + " bytes of files" +
+                (dryRun ? " (dry run: dry_run=false deletes them)" : "") + "\n";
+    reply.body["text"] = text;
     return reply;
 }
 

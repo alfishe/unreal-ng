@@ -32,6 +32,12 @@ struct Reads
     {
         return Every(InputRole::KeyMatrix, kRowLine + static_cast<int>(row));
     }
+    /// The half-row is read in at least half the frames: part of a key scan
+    bool Scanned(unsigned row) const
+    {
+        const DeviceAccessChannel* channel = Of(InputRole::KeyMatrix, kRowLine + static_cast<int>(row));
+        return channel != nullptr && channel->frames >= kKeyScanFrames;
+    }
     uint8_t Tested(unsigned row) const
     {
         const DeviceAccessChannel* channel = Of(InputRole::KeyMatrix, kRowLine + static_cast<int>(row));
@@ -130,15 +136,17 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
 
     // The half-rows: Row3 = #F7FE (1-5), Row4 = #EFFE (0-6), Row1 = #FDFE (A-G), Row2 = #FBFE (Q-T),
     // Row5 = #DFFE (P-Y), Row7 = #7FFE (SPACE-B)
+    // A whole-keyboard scan (7 or 8 half-rows in at least half the frames) is the keyboard before any joystick of the
+    // half-rows: a scan that skipped a few frames of its last rows must not read as Sinclair or Cursor
     unsigned rows = 0;
     for (unsigned row = 0; row < 8; ++row)
-        if (reads.Row(row))
+        if (reads.Scanned(row))
             ++rows;
     if (rows >= 7)
     {
         decision.keyboard = true;
         decision.label = "keyboard";
-        decision.reason = "every half-row read in nearly every frame";
+        decision.reason = "every half-row read in most frames";
         return decision;
     }
     const bool row3 = reads.Row(3);

@@ -16,7 +16,9 @@
 ///   ttd bookmark [add|note|export|del|list] — agent bookmarks with notes (advisory, never barriers)
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///   ttd branches [...]         — the branches of the history (a resume keeps the old future as a branch)
-///   ttd branch switch|update|delete <branch> — continue on a branch, rename / tag / pin it, delete it
+///   ttd branch switch|update|delete|info <branch> — continue on a branch, rename / tag / pin it, delete it, show it
+///   ttd branch create [name] [...]  — a branch at a moment, optionally run headless with scripted input
+///   ttd branch prune [filters] [--apply] — delete the branches a filter picks (a dry run without --apply)
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
 ///   ttd explain [F]            — explain frame: what one frame did (time, routines, ports, memory, screen, keys)
@@ -427,7 +429,16 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << NEWLINE;
     ss << "Branches (a resume in the past keeps the old future as a branch; <branch>: an id, a GUID or a name):" << NEWLINE;
     ss << "  ttd branches                     List the branches ('*' the active one): [--scope all|lineage]" << NEWLINE;
-    ss << "        [--created-by P] [--tag T] [--name-prefix P] [--pinned true|false] [--limit N] [--offset N]" << NEWLINE;
+    ss << "        [--created-by P] [--run ID] [--tag a,b] [--name-prefix P] [--pinned true|false]" << NEWLINE;
+    ss << "        [--min-length F] [--max-length F] [--created-after US] [--created-before US] [--limit N] [--offset N]"
+       << NEWLINE;
+    ss << "  ttd branch info <b>              The branch: its fork, children, ancestors and files" << NEWLINE;
+    ss << "  ttd branch create [name]         A branch here (--frame F [--tinframe T], --on <b>: on that branch's" << NEWLINE;
+    ss << "        lineage), --reason R, --tags a,b, --note TEXT, --pin, --run ID; --frames N runs it headless N" << NEWLINE;
+    ss << "        frames, --input 0:a,10:caps+5:4 feeds keys (frame:key[+key][:hold|:down|:up]), --read #5C00:16" << NEWLINE;
+    ss << "        reads memory at the end, --return goes back where you stood; --media ask|empty|keep" << NEWLINE;
+    ss << "  ttd branch prune [filters]       What the --created-by/--run/--tag/... filter picks (a dry run);" << NEWLINE;
+    ss << "        --apply deletes them (the active lineage and pinned branches stay)" << NEWLINE;
     ss << "  ttd branch switch <b> [f] [t]    Continue on branch <b>, at frame/tinframe (default: its end)" << NEWLINE;
     ss << "  ttd branch update <b>            Edit: --name N, --note TEXT, --tags a,b, --add-tags, --remove-tags," << NEWLINE;
     ss << "        --pin | --unpin" << NEWLINE;
@@ -1080,7 +1091,12 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
             {"--scope", "scope"},     {"--created-by", "created_by"}, {"--tag", "tag"},
             {"--name-prefix", "name_prefix"}, {"--pinned", "pinned"}, {"--limit", "limit"},
             {"--offset", "offset"},   {"--name", "name"},             {"--note", "note"},
-            {"--tags", "tags"},       {"--add-tags", "add_tags"},     {"--remove-tags", "remove_tags"}};
+            {"--tags", "tags"},       {"--add-tags", "add_tags"},     {"--remove-tags", "remove_tags"},
+            {"--run", "run"},         {"--min-length", "min_length"}, {"--max-length", "max_length"},
+            {"--created-after", "created_after"}, {"--created-before", "created_before"},
+            {"--reason", "reason"},   {"--frame", "frame"},           {"--tinframe", "tinframe"},
+            {"--on", "branch"},       {"--frames", "run_frames"},     {"--input", "input"},
+            {"--read", "read"},       {"--media", "media"}};
         if (const auto it = valued.find(args[i]); it != valued.end())
         {
             if (i + 1 >= args.size())
@@ -1094,6 +1110,10 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
             options["pinned"] = args[i] == "--pin" ? "true" : "false";
         else if (args[i] == "--force")
             options["force"] = "true";
+        else if (args[i] == "--return")
+            options["go_back"] = "true";
+        else if (args[i] == "--apply")
+            options["dry_run"] = "false";
         else if (args[i].rfind("--", 0) == 0)
         {
             session.SendResponse("Error: unknown option " + args[i] + NEWLINE);
@@ -1169,8 +1189,32 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
         return;
     }
 
+    if (action == "info" || action == "show")
+    {
+        if (!needsBranch("ttd branch info <branch>"))
+            return;
+        run("branch-info");
+        return;
+    }
+
+    if (action == "create" || action == "new" || action == "fork")
+    {
+        // The positional argument is the new branch's name; --on names the branch whose lineage holds the moment
+        if (!positional.empty())
+            options["name"] = positional[0];
+        // --pin makes the new branch pinned (the list's --pinned filter has no meaning here)
+        run("branch-create");
+        return;
+    }
+
+    if (action == "prune")
+    {
+        run("branch-prune");
+        return;
+    }
+
     session.SendResponse(std::string("Error: Unknown branch action '") + action + "'" + NEWLINE +
-                         "Usage: ttd branch [list|switch|update|del]" + NEWLINE);
+                         "Usage: ttd branch [list|info|create|switch|update|del|prune]" + NEWLINE);
 }
 
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)

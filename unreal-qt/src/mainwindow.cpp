@@ -450,6 +450,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
+    // The floppy drive under the hand: the handheld (Steam Deck) only for now
+    _hostControllers->SetDriveHapticsAllowed(handheld::IsHandheldMode());
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
@@ -584,6 +586,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
                     list.push_back(std::move(picture));
             return list;
         };
+#ifdef ENABLE_CONTROLLERS
+        hooks.driveHaptics = [this]() { return _hostControllers && _hostControllers->DriveHaptics(); };
+        hooks.setDriveHaptics = [this](bool on) {
+            if (_hostControllers)
+                _hostControllers->SetDriveHaptics(on);
+        };
+#endif
         hooks.keyboard = [this]() { return _osdKeyboardWindow ? _osdKeyboardWindow->forced() : std::string(); };
         hooks.setKeyboard = [this](const std::string& id) {
             std::string error;
@@ -633,6 +642,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             auto alive = std::make_shared<std::atomic<bool>>(true);
             _handheldPadAlive = alive;
             HandheldPad* pad = _handheldPad;
+            // In the 128K menu and BASIC the back grips type the loaders, in a game the profile has them
+            connect(_hostControllers, &HostControllers::menuKeysChanged, _handheldPad, &HandheldPad::SetTyping);
             _hostControllers->Service().SetUiTap([alive, pad](const controllers::ControlEvent& event) {
                 if (!alive->load() || !pad->Takes(event.device, event.control))
                     return false;
@@ -786,7 +797,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
     // Handheld mode: the shown keyboard takes the pads
     if (handheld::IsHandheldMode())
+    {
         connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, this, &MainWindow::updateHandheldGrab);
+        // No mouse pointer at all: Steam draws its own for the trackpads, the emulator's would show over the picture
+        QApplication::setOverrideCursor(Qt::BlankCursor);
+    }
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
@@ -4448,7 +4463,21 @@ void MainWindow::handleHandheldVerb(int verbValue)
         return;
     }
     if (!keyboard)
+    {
+        // The machine reads the keyboard (the 128K menu, BASIC): the back grips type without the on-screen keyboard
+        if (_handheldPad && _handheldPad->Typing())
+        {
+            switch (verb)
+            {
+                case Verb::Paddle3: _osdKeyboardWindow->tapMatrixKey(ZXKEY_ENTER); break;
+                case Verb::Back: _osdKeyboardWindow->tapMatrixKey(ZXKEY_EXT_DELETE); break;
+                case Verb::Paddle1: _handheldMenu->Run("basic.run", QStringLiteral("LOAD \"\"")); break;
+                case Verb::Paddle2: _handheldMenu->Run("basic.run", QStringLiteral("RUN \"boot\"")); break;
+                default: break;
+            }
+        }
         return;
+    }
     switch (verb)
     {
         case Verb::Up: _osdKeyboardWindow->moveFocus(0, -1); break;

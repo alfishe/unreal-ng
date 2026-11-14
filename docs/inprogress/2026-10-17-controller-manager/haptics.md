@@ -145,6 +145,37 @@ Built (2026-10-23):
   off by default. The controllers dialog's Haptics panel has the switch: **DSP filters on the sound**, enabled while
   **Haptics from the sound** is on and kept in the settings (`Controllers/SoundHapticsDsp`).
 
+### 4.4 The floppy drive under the hand
+
+The drive's mechanics, not its sound: every step of the head is one short dry knock, a lone step (the next track)
+knocks once, a seek rattles at the step rate; all of it short and quiet. The turning disk plays nothing. Steam Deck only for now (the
+handheld mode); the same feed fits any pad with haptics.
+
+- **Core.** The controllers count the head's step pulses: the WD1793 (Beta 128, Profi, Sprinter) one per pulse in
+  `processStep` (stepping out at track 0 too: the head knocks the stop), the +3's uPD765 a whole seek when it starts
+  (`completeSeeks` moves the head in one jump). `ControllerManager::FeedHaptics` takes them into
+  `HapticFrame::drive` (steps, the step period the command set) only while a feed is set (H-7); a counter
+  increment per pulse is the whole cost.
+- **Steps.** `DriveHaptics` (`core/controllers/src/haptics/drivehaptics.h`) plays each step as one knock: a raw pulse
+  on both trackpads' voice coils `kPulseUs` long (400 µs, at -6 dB lone and -8 dB in a seek;
+  `HapticClicks::pulseUs`, the Deck's pulse report takes the on and off times in microseconds). The firmware's own
+  effects (tick, click, tone) have a fixed shape and last longer: owner check 2026-11-13, a tone per seek, 2 ms and
+  then 600 µs pulses at full gain felt too long and too strong, and 200 µs at -14 / -16 dB was not felt at all. Each frame's steps play when the frame is fed, never
+  queued: the emulator runs frames in bursts ahead of the audio, and a queue on the host's clock fell behind the drive
+  (owner check 2026-11-13: the knocks lagged the track on the HUD). A step with none in the frame before (the next
+  track while reading) is a lone knock; the steps of a seek, a few per frame, are a train of knocks at the step rate
+  (6 ms: 167 a second); a new train replaces the one playing. Fast disk mode packs a whole seek into a frame: it plays
+  at the drive's pace, at most `kSeekMaxMs`. A pad with motors only plays a 15 ms pulse of its high motor for a lone
+  step and holds it, released over `kRingMs`, for a seek.
+- **No spin.** The turning disk plays nothing: a 5 Hz swell on the low motor (the spindle's 300 rpm) and then a
+  steady hum both felt too strong (owner check 2026-11-13).
+- **Gate.** The clicks go through `HostInputService::PlayGameClicks`: only while the service owns the pads (not
+  while Steam's menu is up) and the gate is open (pause, turbo, replay, focus loss close it). A replay or a TTD seek
+  (`OnHapticHold`) ends the series (a train already sent plays out: at most `kSeekMaxMs`).
+- **Switch.** Handheld menu > Controls > Haptics > **Floppy drive feel** (`Controllers/DriveHaptics`, on by
+  default). `DriveHaptics` wraps whichever feed plays the game (the profile's, the sound haptics, or none).
+- **Tuning.** The constants and what each changes are listed at `DriveHaptics::kPulseUs`.
+
 ## 5. Sources: game events
 
 Exact sources, written per game in its haptic profile. They are **probes**: debugger-style watches that never stop

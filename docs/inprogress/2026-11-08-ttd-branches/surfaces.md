@@ -124,6 +124,28 @@ all through `TTDControl` verbs.
 | `branch-prune` | the `branches` filter, `dry_run` (default true) | the list that is (would be) deleted, bytes freed |
 | `save` (existing `dump`) | + `lineage=<branch>` | the file; default all branches |
 
+As built (2026-11-13):
+
+- **`branch-create`** takes flat options: `frame` / `tinframe` (default the current moment; on a stopped recording the
+  machine seeks there first, a moment outside the history is refused) or `branch` (fork on it, at `frame` / `tinframe`
+  on it, default its end), `name`, `reason` (stored as `create` or `create: <reason>`), `tags`, `note`, `pinned`,
+  `run` (the run id), `created_by` (default the calling plane: `cli`, `webapi`, `mcp`, `lua`, `python`, ...), `media`
+  (as `resume`). An explicit branch stays while it is still empty (a resume's empty tip is dropped, a created one is
+  not). The run: `run_frames` (at most 10000) recorded frames with an input script `input`, each line
+  `frame:key[+key][:hold|:down|:up]` (frame counted from the branch start, hold in frames, default 2, 1..1000; `down`
+  / `up` hold or release until told; the presses are journaled like any keyboard input), then `read` (`addr[:len]`,
+  len 1..256: `reads[] {address, length, bytes, hex}`) where the run ended, then `go_back` (the option is not called
+  `return`: a keyword in Lua and Python) switches back to the branch and moment the call started from. A run the user
+  takes control from stops (`aborted`).
+- **`branch-info`** gives `children` (with fork and length), `ancestors` (from the trunk), the branch's segment
+  `files` and `file_bytes`.
+- **`branch-prune`** needs at least one filter; it never deletes a branch on the active lineage, a pinned one or one
+  holding either below it: each stays in `kept` with the reason. A selected branch whose ancestor is selected goes
+  with it. The reply counts the frames, the file bytes and the memory freed.
+- **Events**: the controller publishes the last branch change (`created`, `switched`, `updated`, `deleted`, with a
+  sequence number, the branch and how many a delete removed) with the branch table; the WebSocket topic
+  `ttd.branches` pushes it (`NC_READOUTS_CHANGED` area `ttd.branches`, never per frame).
+
 Existing verbs: positions take an optional `branch` (`seek`, `resume`, `bookmark-add`, `memory-at`, `diff`
 between two moments of the lineage, `find-*`); replies carry `branch` in every position when the session has
 branches. `resume` reports `{branch: new, kept: old}` and no longer "history after that point was discarded".
@@ -134,13 +156,13 @@ branches. `resume` reports `{branch: new, kept: old}` and no longer "history aft
 |---|---|
 | CLI (`cli-processor-ttd.cpp`) | `ttd branches`, `ttd branch create|switch|update|delete|prune|info` |
 | REST (`emulator_api.h`, `api/ttd_api.cpp`) | `GET /api/v1/emulator/{id}/ttd/branches`, `POST .../branches`, `GET|PATCH|DELETE .../branches/{branch}`, `POST .../branches/{branch}/switch`, `POST .../branches/prune` |
-| WebSocket | every route as a `call`; topic `ttd.position` gains `branch {id, guid, name}` and `branch_count` (only with branches); new topic `ttd.branches` with `{event: created|updated|deleted|switched, branch}` |
+| WebSocket | every route as a `call`; topic `ttd.position` gains `branch {id, guid, name}` and `branch_count` (only with branches); new topic `ttd.branches` with `{available, count, revision, active, viewed, last: {seq, event: created|updated|deleted|switched, branch, removed}}` |
 | MCP `time_travel` (`mcp-tools.cpp`) | actions `branch_list`, `branch_info`, `branch_create`, `branch_switch`, `branch_update`, `branch_delete`, `branch_prune`; the text answers name the branch and stay inside the answer budgets (lists summarised past 20 rows) |
-| Lua / Python | `emu:ttd_branches()`, `emu:ttd_branch_create{...}` and the same set |
+| Lua / Python | Lua `ttd_branches{...}`, `ttd_branch_info`, `ttd_branch_create{...}`, `ttd_branch_switch`, `ttd_branch_update`, `ttd_branch_delete`, `ttd_branch_prune{...}`; Python `emu.ttd_branches(...)` and the same set with keyword options |
 
 ### 5.3 The analyzer (UC-5)
 
-The analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes its
+Open (P5's remaining item). The analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes its
 branches with `branch-prune {run: <id>}` after the run, unless it pins the ones it reports. Its positions name
 branches by GUID so a human can open them.
 

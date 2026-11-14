@@ -676,7 +676,7 @@ protected:
     bool _feature_hud_enabled = false;
     uint8_t _screenSwitchCount = 0;
 
-    VideoModeEnum _mode;
+    VideoModeEnum _mode = M_NUL;
     RasterState _rasterState;
     FramebufferDescriptor _framebuffer;
     DisplayViewport _displayViewport;  // Current viewport for display cropping

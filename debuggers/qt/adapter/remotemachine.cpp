@@ -728,19 +728,28 @@ public:
             rest.erase(it);
             return value;
         };
+        // A branch name may hold spaces or '+' ("resume 1", "+00:00:25.150"): one path segment, percent-encoded
+        auto segment = [](const QString &value) { return QString::fromUtf8(QUrl::toPercentEncoding(value)); };
         const char * method = "POST";
         QString path = m_base + "/ttd/";
         if (verb == "status" || verb == "position" || verb == "branches") {
             method = "GET";
             path += QString::fromStdString(verb);
+        } else if (verb == "branch-info") {
+            method = "GET";
+            path += "branches/" + segment(take("branch"));
+        } else if (verb == "branch-create") {
+            path += "branches";
+        } else if (verb == "branch-prune") {
+            path += "branches/prune";
         } else if (verb == "branch-switch") {
-            path += "branches/" + take("branch") + "/switch";
+            path += "branches/" + segment(take("branch")) + "/switch";
         } else if (verb == "branch-update") {
             method = "PATCH";
-            path += "branches/" + take("branch");
+            path += "branches/" + segment(take("branch"));
         } else if (verb == "branch-delete") {
             method = "DELETE";
-            path += "branches/" + take("branch");
+            path += "branches/" + segment(take("branch"));
         } else {
             path += QString::fromStdString(verb);
         }

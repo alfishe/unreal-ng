@@ -828,6 +828,14 @@
    "params": "scale? (1..4, next, prev; next)"
   },
   {
+   "id": "view.picture",
+   "label": "Picture",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "params": "view? (full|screen|content|next|prev; next)"
+  },
+  {
    "id": "view.toolbar",
    "label": "Toolbar",
    "group": "View",
