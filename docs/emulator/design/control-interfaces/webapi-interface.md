@@ -1537,6 +1537,16 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/tap \
      -d '{"key": "a", "frames": 3}'
 ```
 
+`count` taps the key several times in a row (1..100, default 1) and `gap_frames` waits after each release (default
+0); both apply to `combo` too. Repeats of the same key always wait until it stayed released 5 frames: the ROM's KSTATE
+takes a press as a new key only then. Moving a menu cursor four rows:
+
+```bash
+curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/tap \
+     -H "Content-Type: application/json" \
+     -d '{"key": "down", "count": 4}'
+```
+
 **Key Combo** (e.g., SYMBOL+P for double-quote):
 ```bash
 curl -X POST http://localhost:8090/api/v1/emulator/{id}/keyboard/combo \

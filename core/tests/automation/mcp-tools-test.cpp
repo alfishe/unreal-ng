@@ -2214,6 +2214,34 @@ TEST_F(McpTools_Test, TypeInput_Type_PostsKeyboardTypeWithText)
     EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/type")->body["text"].asString(), "LOAD \"\"");
 }
 
+// MCP-04: tap and combo forward count / gap_frames
+TEST_F(McpTools_Test, TypeInput_Tap_ForwardsCountAndGap)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/keyboard/tap"] = {200, Json::Value(Json::objectValue)};
+    _caller->routes["POST /api/v1/emulator/emu-1/keyboard/combo"] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "tap";
+    args["key"] = "down";
+    args["count"] = 4;
+    args["gap_frames"] = 6;
+    RunTool(*_registry, "type_input", args, *_caller);
+    const auto* tap = _caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/tap");
+    ASSERT_NE(tap, nullptr);
+    EXPECT_EQ(tap->body["count"].asUInt(), 4u);
+    EXPECT_EQ(tap->body["gap_frames"].asUInt(), 6u);
+
+    args["action"] = "combo";
+    args.removeMember("key");
+    args["keys"].append("caps");
+    args["keys"].append("6");
+    RunTool(*_registry, "type_input", args, *_caller);
+    const auto* combo = _caller->Last("POST", "/api/v1/emulator/emu-1/keyboard/combo");
+    ASSERT_NE(combo, nullptr);
+    EXPECT_EQ(combo->body["count"].asUInt(), 4u);
+    EXPECT_EQ(combo->body["gap_frames"].asUInt(), 6u);
+}
+
 // ===========================================================================
 // mouse_input
 // ===========================================================================

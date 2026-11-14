@@ -40,6 +40,40 @@ static bool rejectUnknownKey(const std::string& keyName, const std::function<voi
     return true;
 }
 
+namespace
+{
+    /// count (1..MAX_TAP_COUNT, default 1) and gap_frames (default 0) of a tap / combo body; false after a 400
+    bool ParseTapRepeat(const Json::Value& json, uint16_t& count, uint16_t& gapFrames,
+                        std::function<void(const HttpResponsePtr&)>& callback)
+    {
+        count = 1;
+        gapFrames = 0;
+        auto fail = [&](const std::string& message) {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = message;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return false;
+        };
+        if (json.isMember("count"))
+        {
+            if (!json["count"].isUInt() || json["count"].asUInt() < 1 || json["count"].asUInt() > DebugKeyboardManager::MAX_TAP_COUNT)
+                return fail("count must be 1.." + std::to_string(DebugKeyboardManager::MAX_TAP_COUNT));
+            count = static_cast<uint16_t>(json["count"].asUInt());
+        }
+        if (json.isMember("gap_frames"))
+        {
+            if (!json["gap_frames"].isUInt() || json["gap_frames"].asUInt() > 500)
+                return fail("gap_frames must be 0..500");
+            gapFrames = static_cast<uint16_t>(json["gap_frames"].asUInt());
+        }
+        return true;
+    }
+}
+
 /// @brief POST /api/v1/emulator/{id}/keyboard/tap
 /// @brief Tap a key (press and release)
 void EmulatorAPI::keyTap(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
@@ -93,13 +127,18 @@ void EmulatorAPI::keyTap(const HttpRequestPtr& req, std::function<void(const Htt
     if (rejectUnknownKey(keyName, callback))
         return;
     uint16_t frames = json->isMember("frames") ? (*json)["frames"].asUInt() : 2;
+    uint16_t count = 1, gapFrames = 0;
+    if (!ParseTapRepeat(*json, count, gapFrames, callback))
+        return;
 
-    context->pDebugManager->GetKeyboardManager()->TapKey(keyName, frames);
+    context->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, frames, count, gapFrames);
 
     Json::Value ret;
     ret["success"] = true;
     ret["key"] = keyName;
     ret["frames"] = frames;
+    ret["count"] = count;
+    ret["gap_frames"] = gapFrames;
     ret["message"] = "Key tapped: " + keyName;
 
     auto resp = HttpResponse::newHttpJsonResponse(ret);
@@ -293,11 +332,16 @@ void EmulatorAPI::keyCombo(const HttpRequestPtr& req, std::function<void(const H
     }
 
     uint16_t frames = json->isMember("frames") ? (*json)["frames"].asUInt() : 2;
-    context->pDebugManager->GetKeyboardManager()->TapCombo(keyNames, frames);
+    uint16_t count = 1, gapFrames = 0;
+    if (!ParseTapRepeat(*json, count, gapFrames, callback))
+        return;
+    context->pDebugManager->GetKeyboardManager()->TapComboRepeated(keyNames, frames, count, gapFrames);
 
     Json::Value ret;
     ret["success"] = true;
     ret["keys"] = (*json)["keys"];
+    ret["count"] = count;
+    ret["gap_frames"] = gapFrames;
     ret["frames"] = frames;
     ret["message"] = "Key combo tapped";
 

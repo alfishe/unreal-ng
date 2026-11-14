@@ -499,3 +499,51 @@ TEST(ScreenOCRMachine_Test, PentagonMenuBarFollowsDown)
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
+
+/// KEY-01 (ZF6 mastering, MCP-04): four taps of the same key in a row, with the defaults, move the menu bar four rows,
+/// and TapKeyRepeated does the same in one call -
+/// the ROM's KSTATE takes a press of the same key as new only after it stayed released for 5 interrupts, the
+/// keyboard manager holds the next tap back until then
+TEST(ScreenOCRMachine_Test, PentagonMenuFourDownTapsMoveFourRows)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    emulator->GetContext()->config.reset_rom = RM_128;
+    emulator->Reset();
+    emulator->EnableTurboMode();
+
+    std::vector<ScreenOCR::ZxLine> lines;
+    int page = -1;
+    auto highlightedRow = [&]() {
+        if (!ScreenOCR::readZxScreen(emulator, lines, page))
+            return -1;
+        for (int row = 0; row < static_cast<int>(lines.size()); row++)
+            if (lines[row].highlighted)
+                return row;
+        return -1;
+    };
+    int bar = -1;
+    for (int frame = 0; frame < 400 && bar < 0; frame += 10)
+    {
+        emulator->RunNFrames(10, true);
+        bar = highlightedRow();
+    }
+    ASSERT_GE(bar, 0) << ScreenOCR::ocrScreen(emulator);
+
+    DebugKeyboardManager* keyboard = emulator->GetContext()->pDebugManager->GetKeyboardManager();
+    for (int i = 0; i < 4; i++)
+        keyboard->TapKey("down");
+    for (int frame = 0; frame < 200 && keyboard->IsSequenceRunning(); frame++)
+        emulator->RunNFrames(1, true);
+    emulator->RunNFrames(10, true);
+    EXPECT_EQ(highlightedRow(), bar + 4) << ScreenOCR::ocrScreen(emulator);
+
+    // The same in one call: count = 2 moves it back two rows
+    keyboard->TapKeyRepeated("up", DebugKeyboardManager::DEFAULT_HOLD_FRAMES, 2, 0);
+    for (int frame = 0; frame < 200 && keyboard->IsSequenceRunning(); frame++)
+        emulator->RunNFrames(1, true);
+    emulator->RunNFrames(10, true);
+    EXPECT_EQ(highlightedRow(), bar + 2) << ScreenOCR::ocrScreen(emulator);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

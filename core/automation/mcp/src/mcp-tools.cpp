@@ -4967,7 +4967,7 @@ void RegisterTypeInput(ToolRegistry& registry)
         schema["properties"]["action"]["enum"].append(action);
     }
     schema["properties"]["action"]["description"] =
-        "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames; 'combo' presses several keys at once; "
+        "Input operation. 'type' sends text (auto-shift; a line end presses ENTER; a character no key types refuses the text); 'tap' presses a key for N frames (count: N taps in a row); 'combo' presses several keys at once; "
         "'route' sets where keys go (route = auto | matrix | ps2 | both: the ZX matrix, the PS/2 keyboard controller of a ZX-Evo / "
         "ATM Turbo 2+, both); 'status' shows it.";
     schema["properties"]["route"]["type"] = "string";
@@ -4989,6 +4989,14 @@ void RegisterTypeInput(ToolRegistry& registry)
     schema["properties"]["frames"]["type"] = "integer";
     schema["properties"]["frames"]["default"] = 2;
     schema["properties"]["frames"]["description"] = "Hold duration in frames for tap/combo";
+    schema["properties"]["count"]["type"] = "integer";
+    schema["properties"]["count"]["default"] = 1;
+    schema["properties"]["count"]["description"] = "tap/combo: taps in a row, 1..100 (move a menu cursor N rows in one call)";
+    schema["properties"]["gap_frames"]["type"] = "integer";
+    schema["properties"]["gap_frames"]["default"] = 0;
+    schema["properties"]["gap_frames"]["description"] =
+        "tap/combo: frames to wait after each release before the next tap. Repeats of the same key are already spaced "
+        "for the ROM (5 released frames: its KSTATE takes a press as new only then); raise it for a game with a slower scan";
     schema["properties"]["delay_frames"]["type"] = "integer";
     schema["properties"]["delay_frames"]["default"] = 2;
     schema["properties"]["delay_frames"]["description"] = "Inter-key delay for 'type'";
@@ -5058,6 +5066,8 @@ void RegisterTypeInput(ToolRegistry& registry)
                 Json::Value body;
                 body["key"] = args["key"].asString();
                 if (action == "tap" && args.isMember("frames")) body["frames"] = args["frames"].asUInt();
+                if (action == "tap" && args.isMember("count")) body["count"] = args["count"].asUInt();
+                if (action == "tap" && args.isMember("gap_frames")) body["gap_frames"] = args["gap_frames"].asUInt();
                 std::string suffix = action == "tap" ? "/keyboard/tap" : (action == "press" ? "/keyboard/press" : "/keyboard/release");
                 ResolveAndForward(args, "POST", suffix, &body, caller, "Key " + action + ": " + args["key"].asString(), done);
                 return;
@@ -5072,6 +5082,8 @@ void RegisterTypeInput(ToolRegistry& registry)
                 Json::Value body;
                 body["keys"] = args["keys"];
                 if (args.isMember("frames")) body["frames"] = args["frames"].asUInt();
+                if (args.isMember("count")) body["count"] = args["count"].asUInt();
+                if (args.isMember("gap_frames")) body["gap_frames"] = args["gap_frames"].asUInt();
                 ResolveAndForward(args, "POST", "/keyboard/combo", &body, caller, "Key combo tapped", done);
                 return;
             }

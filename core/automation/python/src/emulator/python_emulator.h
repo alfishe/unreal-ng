@@ -6215,13 +6215,16 @@ namespace PythonBindings
                 Keyboard* keyboard = self.GetContext() ? self.GetContext()->pKeyboard : nullptr;
                 return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
             }, "The PS/2 / XT keyboard controller's name ('PROFI-XT firmware 1.27', ...); '' when there is none or it has no name")
-            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
+            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames, uint16_t count, uint16_t gapFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
                 if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
-                ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
+                if (count < 1 || count > DebugKeyboardManager::MAX_TAP_COUNT) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames, count, gapFrames);
                 return true;
-            }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
+            }, "Tap a key (press, hold, release); count taps in a row (1..100), gap_frames to wait after each release "
+               "(repeats of one key always wait 5 released frames for the ROM)",
+               py::arg("key"), py::arg("frames") = 2, py::arg("count") = 1, py::arg("gap_frames") = 0)
             .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;

@@ -3141,14 +3141,19 @@ public:
             return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
-        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
+        // key_tap(key [, frames [, count [, gap_frames]]]): count taps in a row (1..100), gap_frames after each release
+        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames,
+                                           sol::optional<uint16_t> count, sol::optional<uint16_t> gapFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
             if (!DebugKeyboardManager::IsKnownKeyName(keyName))
                 return false;  // an unknown name fails, not a silent no-op
-            ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
+            const uint16_t taps = count.value_or(1);
+            if (taps < 1 || taps > DebugKeyboardManager::MAX_TAP_COUNT)
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames.value_or(2), taps, gapFrames.value_or(0));
             return true;
         });
 

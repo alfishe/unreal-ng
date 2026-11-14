@@ -177,6 +177,15 @@ public:
     /// @param holdFrames How many frames to hold (default: 2)
     void TapKey(ZXKeysEnum key, uint16_t holdFrames = DEFAULT_HOLD_FRAMES);
     void TapKey(const std::string& keyName, uint16_t holdFrames = DEFAULT_HOLD_FRAMES);
+
+    /// Tap a key `count` times in a row (a menu cursor moved N rows in one call)
+    /// @param gapFrames Frames to wait after each release before the next tap; 0 = none beyond the
+    ///        REPRESS_RELEASED_FRAMES a press of the same key always waits for (enough for the ROM; a program
+    ///        with its own slower keyboard scan may need more)
+    void TapKeyRepeated(const std::string& keyName, uint16_t holdFrames, uint16_t count, uint16_t gapFrames);
+
+    /// Most taps one call queues (TapKeyRepeated / TapComboRepeated)
+    static constexpr uint16_t MAX_TAP_COUNT = 100;
     
     /// Release all currently pressed keys
     void ReleaseAllKeys();
@@ -200,6 +209,9 @@ public:
     /// @param holdFrames How many frames to hold (default: 2)
     void TapCombo(const std::vector<ZXKeysEnum>& keys, uint16_t holdFrames = DEFAULT_HOLD_FRAMES);
     void TapCombo(const std::vector<std::string>& keyNames, uint16_t holdFrames = DEFAULT_HOLD_FRAMES);
+
+    /// TapCombo `count` times in a row; gapFrames as for TapKeyRepeated
+    void TapComboRepeated(const std::vector<std::string>& keyNames, uint16_t holdFrames, uint16_t count, uint16_t gapFrames);
     
     /// endregion </Modifier + Key Combo Operations>
     

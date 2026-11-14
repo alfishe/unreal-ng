@@ -350,6 +350,29 @@ void DebugKeyboardManager::ReleaseCombo(const std::vector<std::string>& keyNames
     ReleaseCombo(keys);
 }
 
+void DebugKeyboardManager::TapKeyRepeated(const std::string& keyName, uint16_t holdFrames, uint16_t count, uint16_t gapFrames)
+{
+    count = std::min(count, MAX_TAP_COUNT);
+    for (uint16_t i = 0; i < count; i++)
+    {
+        if (i > 0 && gapFrames > 0)
+            QueueSequence(KeyboardSequence("tap_gap", {KeyboardSequenceEvent(KeyboardSequenceEvent::Action::WAIT, std::vector<ZXKeysEnum>{}, gapFrames)}));
+        TapKey(keyName, holdFrames);
+    }
+}
+
+void DebugKeyboardManager::TapComboRepeated(const std::vector<std::string>& keyNames, uint16_t holdFrames, uint16_t count,
+                                            uint16_t gapFrames)
+{
+    count = std::min(count, MAX_TAP_COUNT);
+    for (uint16_t i = 0; i < count; i++)
+    {
+        if (i > 0 && gapFrames > 0)
+            QueueSequence(KeyboardSequence("tap_gap", {KeyboardSequenceEvent(KeyboardSequenceEvent::Action::WAIT, std::vector<ZXKeysEnum>{}, gapFrames)}));
+        TapCombo(keyNames, holdFrames);
+    }
+}
+
 void DebugKeyboardManager::TapCombo(const std::vector<ZXKeysEnum>& keys, uint16_t holdFrames)
 {
     if (keys.empty())
