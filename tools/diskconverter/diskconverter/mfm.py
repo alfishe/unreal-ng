@@ -126,19 +126,36 @@ def encode_track(sectors: list[Sector]) -> EncodedTrack:
     return EncodedTrack(raw=bytes(raw), clock_missing=clock_missing)
 
 
-def decode_track(raw: bytes) -> list[Sector]:
+def decode_track(raw: bytes, clock_bitmap: bytes | None = None) -> list[Sector]:
     """Scans for `A1 A1 A1 FE` IDAM markers, reads C/H/R/N + CRC, then looks for the next
     `A1 A1 A1 <DAM>` within the WD1793 datasheet's search window (43 bytes) for the data
     field. A sector whose data field never turns up (or whose bytes run past the end of the
     stream) is recorded as ID-only (`no_data=True`), matching FDI's own convention for that
-    case."""
+    case.
+
+    clock_bitmap (UDI: bit i set = byte i carries a missing-clock mark): an A1 counts as a
+    sync byte only when it carries the mark, so `A1 A1 A1 FE` inside sector data is no
+    phantom sector. Without a bitmap (or with an empty one: files that never stored the
+    marks) every literal A1 counts."""
     sectors: list[Sector] = []
     n = len(raw)
     DAM_SEARCH_WINDOW = 43
 
+    use_clock = clock_bitmap is not None and any(clock_bitmap)
+
+    def is_sync(k: int) -> bool:
+        if raw[k] != SYNC_BYTE:
+            return False
+        if not use_clock:
+            return True
+        return k >> 3 < len(clock_bitmap) and bool(clock_bitmap[k >> 3] & (1 << (k & 7)))
+
+    def sync3(k: int) -> bool:
+        return is_sync(k) and is_sync(k + 1) and is_sync(k + 2)
+
     i = 0
     while i < n - 6:
-        if raw[i] == SYNC_BYTE and raw[i + 1] == SYNC_BYTE and raw[i + 2] == SYNC_BYTE and raw[i + 3] == IDAM:
+        if sync3(i) and raw[i + 3] == IDAM:
             fields = raw[i + 3 : i + 8]
             if len(fields) < 5:
                 break
@@ -156,10 +173,7 @@ def decode_track(raw: bytes) -> list[Sector]:
             search_end = min(idam_end + DAM_SEARCH_WINDOW, n)
             j = idam_end
             while j < search_end - 4:
-                if raw[j] == SYNC_BYTE and raw[j + 1] == SYNC_BYTE and raw[j + 2] == SYNC_BYTE and raw[j + 3] in (
-                    DAM_NORMAL,
-                    DAM_DELETED,
-                ):
+                if sync3(j) and raw[j + 3] in (DAM_NORMAL, DAM_DELETED):
                     dam = raw[j + 3]
                     size = 128 << (size_code & 3)
                     data_start = j + 4

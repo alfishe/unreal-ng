@@ -82,3 +82,23 @@ def test_dc05_trd_refuses_bad_id_crc(scratch):
     assert not disk.get_track(0, 0).is_standard_trdos()
     with pytest.raises(DiskConversionError):
         trd.write(disk, str(scratch / "bad.trd"))
+
+
+def test_dc08_marks_inside_data_are_no_sectors(scratch):
+    """A data field (no ID before it, as after a damaged ID) whose bytes hold A1 A1 A1 FE + a valid ID:
+    without missing clocks those bytes are data, not a sector"""
+    from conftest import crc_ccitt
+
+    fake_id = bytes([0xFE, 0x01, 0x00, 0x07, 0x01])
+    crc = crc_ccitt(bytes([0xA1] * 3) + fake_id)
+    payload = bytes([0xA1] * 3) + fake_id + bytes([crc >> 8, crc & 0xFF]) + bytes(246)
+    raw, clocks = mfm_track([mfm_field(bytes([0xFB]) + payload, gap=80)])
+    (scratch / "phantom.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
+    assert udi.read(str(scratch / "phantom.udi")).get_track(0, 0).sectors == []
+
+
+def test_udi_without_clock_marks_still_decodes(scratch):
+    """Files that never stored the marks (all-zero bitmap): every literal A1 counts"""
+    (raw, _clocks), _ = _key_track()
+    (scratch / "noclk.udi").write_bytes(build_udi([(raw, [])], cylinders=1, heads=1))
+    assert len(udi.read(str(scratch / "noclk.udi")).get_track(0, 0).sectors) == 1

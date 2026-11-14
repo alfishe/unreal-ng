@@ -78,9 +78,11 @@ def read(path: str) -> DiskImage:
                 )
             raw = data[offset : offset + tlen]
             offset += tlen
-            offset += (tlen + 7) // 8  # skip clock bitmap - decode_track re-derives sync positions itself
+            bitmap = data[offset : offset + (tlen + 7) // 8]
+            offset += (tlen + 7) // 8
 
-            sectors = mfm.decode_track(raw)
+            # Sync bytes are the A1 with a missing clock: an A1 A1 A1 FE inside sector data is no address mark
+            sectors = mfm.decode_track(raw, bitmap)
             disk.track(cyl, head).sectors = sectors
 
     return disk
