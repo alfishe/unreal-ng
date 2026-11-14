@@ -2601,6 +2601,9 @@ void WD1793::processStep()
     fddTrack += stepCorrection;
     _selectedDrive->setTrack(fddTrack);
     notifyFDDStateChanged();
+    // A pulse the drive's stepper takes (outward at track 0 too: the head knocks the stop)
+    if (_hapticSteps < UINT16_MAX)
+        _hapticSteps++;
 
     /// endregion </Make head step>
 

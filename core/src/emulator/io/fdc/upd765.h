@@ -218,6 +218,7 @@ protected:
 
     // Drives
     UnitState _units[UNITS];
+    uint16_t _hapticSteps = 0;  // step pulses since TakeHapticSteps
     bool _motorOn = false;
     /// endregion </Fields>
 
@@ -242,6 +243,16 @@ public:
     void setMotor(bool on);
     bool getMotor() const { return _motorOn; }
     /// endregion </Ports>
+
+    /// The head's step pulses since the last call (haptics: the drive's mechanics), with the step period in ms. A seek is
+    /// counted whole when it starts (completeSeeks moves the head in one jump)
+    uint16_t TakeHapticSteps(uint8_t& stepMs)
+    {
+        const uint16_t steps = _hapticSteps;
+        _hapticSteps = 0;
+        stepMs = static_cast<uint8_t>((16u - (_stepRateTime & 0x0F)) * 2u);
+        return steps;
+    }
 
     /// region <Methods>
 public:

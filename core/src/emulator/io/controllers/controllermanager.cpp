@@ -22,6 +22,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/upd765.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/tape/tape.h"
@@ -827,6 +829,22 @@ void ControllerManager::FeedHaptics(uint64_t frame)
     summary.frameTStates = _context->GetFrameTStates();
     summary.cpuHz = _context->emulatorState.current_z80_frequency;
     summary.beeperEdges = sound->getBeeper().TakeEarEdges();
+    // The floppy drive's mechanics: counters the controllers keep anyway, read here only while a feed is set (H-7)
+    // (both controllers on a +3 with a Beta 128: the steps add up)
+    if (WD1793* wd = _context->pBetaDisk)
+    {
+        summary.drive.present = true;
+        summary.drive.steps = wd->TakeHapticSteps(summary.drive.stepMs);
+    }
+    if (UPD765* fdc = _context->pUPD765)
+    {
+        uint8_t stepMs = 0;
+        const uint16_t steps = fdc->TakeHapticSteps(stepMs);
+        summary.drive.present = true;
+        if (steps > 0)
+            summary.drive.stepMs = stepMs;
+        summary.drive.steps = static_cast<uint16_t>(std::min<unsigned>(summary.drive.steps + steps, UINT16_MAX));
+    }
     const int chips = std::min<int>(sound->getAYChipCount(), static_cast<int>(HapticFrame::kMaxAy));
     for (int index = 0; index < chips; index++)
     {

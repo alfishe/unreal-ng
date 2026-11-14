@@ -200,6 +200,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
     _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
+    _driveHaptics = QSettings().value("Controllers/DriveHaptics", true).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
     _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
@@ -368,6 +369,29 @@ void HostControllers::SetSoundHapticsDsp(bool on)
     _service->SetHapticsDspDefaults(on);
     if (_attached)
         attachHaptics();  // the key below names the filters: the sound feed is made again
+#endif
+}
+
+void HostControllers::SetDriveHaptics(bool on)
+{
+    if (on == _driveHaptics)
+        return;
+    _driveHaptics = on;
+    QSettings().setValue("Controllers/DriveHaptics", on);
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
+#endif
+}
+
+void HostControllers::SetDriveHapticsAllowed(bool allowed)
+{
+    if (allowed == _driveHapticsAllowed)
+        return;
+    _driveHapticsAllowed = allowed;
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
 #endif
 }
 
@@ -1282,9 +1306,11 @@ void HostControllers::attachHaptics()
     const bool game = !_resolved.haptics.IsNull() && ParseHapticProfile(_resolved.haptics, profile, error);
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
-    const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
-                                                  : std::string());
+    const bool drive = _driveHaptics && _driveHapticsAllowed;
+    const std::string key = (game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
+                                  : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                   : std::string())) +
+                            (drive ? "+drive" : "");
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -1294,6 +1320,9 @@ void HostControllers::attachHaptics()
         _hapticFeed = _service->HapticFeedFor(_attached->GetId());
     else
         _hapticFeed.reset();
+    // The floppy drive over whichever feed plays the game (or alone)
+    if (drive)
+        _hapticFeed = _service->DriveHapticFeedFor(_attached->GetId(), _hapticFeed);
     context->pControllerManager->SetHapticFeed(_hapticFeed);
 }
 

@@ -97,6 +97,10 @@ struct HapticClicks
     Wave wave = Wave::Click;
     uint8_t count = 1;
     uint16_t periodMs = 0;
+    /// The strength 0..1 where the device can set it (the Steam Deck: -24..0 dB); 1: its full click
+    float level = 1.0f;
+    /// Click: each pulse's length in microseconds where the device can set it (a Steam Deck voice coil); 0: its own
+    uint16_t pulseUs = 0;
 };
 
 /// region <Surface outputs (control surfaces controls-and-feedback.md §3-§4)>

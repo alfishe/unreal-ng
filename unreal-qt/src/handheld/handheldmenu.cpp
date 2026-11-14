@@ -828,6 +828,13 @@ void HandheldMenu::controlRows(std::vector<Row>& list) const
                             self->_hooks.showKeyboard();
                     }});
     list.push_back({QStringLiteral("keyboard"), tr("Keyboard"), keyboard, true, [self] { self->openKeyboardPicker(); }});
+    if (_hooks.driveHaptics && _hooks.setDriveHaptics)
+    {
+        list.push_back({{}, tr("Haptics"), {}, false, {}, {}, true});
+        list.push_back({QStringLiteral("disk"), tr("Floppy drive feel"), OnOff(_hooks.driveHaptics()), false, {}, [self](int) {
+                            self->_hooks.setDriveHaptics(!self->_hooks.driveHaptics());
+                        }});
+    }
     list.push_back({{}, tr("On the keyboard"), {}, false, {}, {}, true});
     list.push_back({QStringLiteral("info"), tr("Press the key"), tr("A / left pad click"), false, {}});
     list.push_back({QStringLiteral("info"), tr("SPACE / ENTER"), tr("X / Y"), false, {}});

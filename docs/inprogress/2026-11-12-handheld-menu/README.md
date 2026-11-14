@@ -77,7 +77,7 @@ windows, toolbar / status bar, full screen and window scale, video sync, Help, r
 | Display | CRT effect (a popup: Off, the models by name, the shaders); Temporal effect (a popup: Off, frame blending, ZX DLSS de-flicker), with blending its frames ◀▶ and weights (a popup); Overscan on / off and its border crop (a popup), Pentagon only; HUD, GPU. A choice among several is a popup, on / off a switch; no shader parameters (their names and numbers mean nothing on a handheld) | `video.crt_toggle`, `video.crt_profile`, `video.temporal_*`, `video.blending`, `video.overscan_toggle`, `video.viewport`, `hud.toggle`, `video.gpu_toggle` |
 | Sound | a mixer drawn as SteamOS sliders: the master and each source (its name from the mixer) with the level on a track and the live peak under it; ◀▶ volume, A mutes | `audio.mixer`, `audio.mute_toggle`, `audio.volume_by`, `audio.source_mute` |
 | Network | a monitor, not a list, nothing to focus (500 ms): the card with the settings as chips and Active / Idle; tiles for the traffic (rate, a graph of the last half minute, total), the virtual network, the COM port, other fitted ports, the expansion cards | `DeviceState::Network` |
-| Controls | show the keyboard, keyboard picker, the pad's legend on the keyboard | `unrealqt.osd_keyboard_force` |
+| Controls | show the keyboard, keyboard picker, the pad's legend on the keyboard, the floppy drive feel ([haptics.md §4.4](../2026-10-17-controller-manager/haptics.md#44-the-floppy-drive-under-the-hand)) | `unrealqt.osd_keyboard_force`; `Controllers/DriveHaptics` (settings) |
 | Quit | quick save and quit, quit without saving | `snapshot.quick` |
 
 Value rows (◀▶) take left / right; group captions are never focused; a long page scrolls with the focus. The file

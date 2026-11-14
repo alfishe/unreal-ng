@@ -450,6 +450,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
+    // The floppy drive under the hand: the handheld (Steam Deck) only for now
+    _hostControllers->SetDriveHapticsAllowed(handheld::IsHandheldMode());
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
@@ -584,6 +586,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
                     list.push_back(std::move(picture));
             return list;
         };
+#ifdef ENABLE_CONTROLLERS
+        hooks.driveHaptics = [this]() { return _hostControllers && _hostControllers->DriveHaptics(); };
+        hooks.setDriveHaptics = [this](bool on) {
+            if (_hostControllers)
+                _hostControllers->SetDriveHaptics(on);
+        };
+#endif
         hooks.keyboard = [this]() { return _osdKeyboardWindow ? _osdKeyboardWindow->forced() : std::string(); };
         hooks.setKeyboard = [this](const std::string& id) {
             std::string error;

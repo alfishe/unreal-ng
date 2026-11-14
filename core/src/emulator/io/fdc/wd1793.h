@@ -743,6 +743,7 @@ protected:
     bool _loadHead = false;  // Determines if load should be loaded or unloaded during Type1 command
     bool _verifySeek =
         false;  // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
+    uint16_t _hapticSteps = 0;  // step pulses since TakeHapticSteps
     uint8_t _steppingMotorRate =
         6;  // Step period in ms of the current Type I command: STEP_TIMINGS_MS_1MHZ / STEP_TIMINGS_MS_2MHZ
             // by the r1r0 bits and the controller clock at the time of the step pulse
@@ -1362,6 +1363,15 @@ public:
     /// Asleep: handleStep returns at once. Awake and inert, it still stamps its time on every step (handleStepAwake)
     bool IsAsleep() const { return _sleeping; }
     void handleFrameEnd();
+    /// The head's step pulses since the last call (haptics: the drive's mechanics, HapticDriveFrame), with the step
+    /// period of the last one in ms; counted always, one increment per pulse
+    uint16_t TakeHapticSteps(uint8_t& stepMs)
+    {
+        const uint16_t steps = _hapticSteps;
+        _hapticSteps = 0;
+        stepMs = _steppingMotorRate;
+        return steps;
+    }
     /// handleStep's work while the controller is awake
     void handleStepAwake();
     /// endregion </Emulation events>
