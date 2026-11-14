@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/scratchfolder.h"
@@ -13,6 +14,8 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/floppydriveslot.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/media/mediahistory.h"
 #include "emulator/media/mediamanager.h"
 
 namespace
@@ -176,4 +179,57 @@ TEST(FloppyDriveSlot_Test, ConfiguredDiskIsInAtStart)
     EXPECT_NE(emulator->GetContext()->coreState.diskDrives[1]->getDiskImage(), nullptr);
     EXPECT_EQ(emulator->GetContext()->pMediaManager->Info("fdd.b")->format, "trd");
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+namespace
+{
+    uint64_t SlotVersion(EmulatorContext* context, const char* slot)
+    {
+        std::vector<MediaVersionInfo> versions;
+        context->pMediaManager->CurrentVersions(versions);
+        for (const MediaVersionInfo& v : versions)
+            if (v.slot == slot)
+                return v.version;
+        return 0;
+    }
+
+    /// The machine's WD1793 with drive A selected, motor on, head on track 0
+    WD1793CUT* ReadyController(EmulatorContext* context)
+    {
+        WD1793CUT* fdc = reinterpret_cast<WD1793CUT*>(context->pBetaDisk);
+        fdc->_beta128Register = WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_RESET;
+        fdc->_drive = 0;
+        fdc->_selectedDrive = context->coreState.diskDrives[0];
+        fdc->wakeUp();
+        fdc->_time = 1000;
+        fdc->prolongFDDMotorRotation();
+        fdc->getDrive()->setMotor(true);
+        fdc->_trackRegister = 0;
+        fdc->_selectedDrive->setTrack(0);
+        fdc->_sideUp = false;
+        return fdc;
+    }
+}
+
+/// READ TRACK writes nothing: the disk's version stays. WRITE TRACK is a write: the version moves (the undo copy of
+/// the track is kept for TTD seeks). The marker used to sit in cmdReadTrack
+TEST(FloppyDriveSlot_Test, ReadTrackIsNoWriteAndWriteTrackIs)
+{
+    for (const bool write : {false, true})
+    {
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        ASSERT_NE(emulator, nullptr);
+        EmulatorContext* context = emulator->GetContext();
+        ASSERT_TRUE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Trdos, 80, 2));
+        const uint64_t before = SlotVersion(context, "fdd.a");
+
+        WD1793CUT* fdc = ReadyController(context);
+        if (write)
+            fdc->cmdWriteTrack(0);
+        else
+            fdc->cmdReadTrack(0);
+
+        EXPECT_EQ(SlotVersion(context, "fdd.a"), before + (write ? 1 : 0)) << (write ? "WRITE TRACK" : "READ TRACK");
+        EmulatorTestHelper::CleanupEmulator(emulator);
+    }
 }

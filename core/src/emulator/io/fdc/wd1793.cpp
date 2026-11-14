@@ -1720,19 +1720,6 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    // Phase 2 Item 6 - record a disk-write marker for the format command.
-    // Write Track reformats an entire track, which is heavily destructive
-    // to replay fidelity.
-    {
-        char reason[64];
-        std::snprintf(reason, sizeof(reason),
-                      "Write Track (format) trk=%u side=%u",
-                      static_cast<unsigned>(_trackRegister),
-                      static_cast<unsigned>(_sideUp));
-        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
-        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
-    }
-
     if (!track->rawData() || track->rawSize() == 0)
     {
         // Handle error - invalid track
@@ -1788,6 +1775,17 @@ void WD1793::cmdWriteTrack(uint8_t value)
         _statusRegister |= WDS_NOTFOUND;
         transitionFSM(S_END_COMMAND);
         return;
+    }
+
+    // Disk-write marker and the track's undo copy (media versions, TTD): Write Track reformats the whole track
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
     }
 
     // A new track starts with the control-byte language active (an escape left by an aborted command is void)
