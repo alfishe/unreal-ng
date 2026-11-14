@@ -38,3 +38,47 @@ def test_udi_round_trip_keeps_raw_n(scratch):
     udi.write(udi.read(str(scratch / "key.udi")), str(scratch / "out.udi"))
     sector = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
     assert (sector.size_code, sector.data, sector.crc_valid) == (0xF7, data, True)
+
+
+def _bad_id_crc_track():
+    """16 TR-DOS sectors; sector 5 has its ID CRC broken (both bytes inverted)"""
+    fields = []
+    for r in range(1, 17):
+        id_bytes, id_clocks = mfm_field(bytes([0xFE, 0, 0, r, 1]), gap=80 if r == 1 else 54)
+        if r == 5:
+            id_bytes = id_bytes[:-2] + bytes([id_bytes[-2] ^ 0xFF, id_bytes[-1] ^ 0xFF])
+        fields.append((id_bytes, id_clocks))
+        fields.append(mfm_field(bytes([0xFB]) + bytes([r]) * 256))
+    return mfm_track(fields)
+
+
+def test_dc05_bad_id_crc_detected_and_kept(scratch, capsys):
+    raw, clocks = _bad_id_crc_track()
+    (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
+    disk = udi.read(str(scratch / "bad.udi"))
+    sectors = disk.get_track(0, 0).sectors
+    assert len(sectors) == 16
+    assert [s.number for s in sectors if not s.id_crc_valid] == [5]
+
+    # UDI -> UDI reproduces the broken ID CRC
+    udi.write(disk, str(scratch / "out.udi"))
+    again = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors
+    assert [s.number for s in again if not s.id_crc_valid] == [5]
+
+    # UDI -> FDI warns: FDI has no place for it
+    fdi.write(disk, str(scratch / "out.fdi"))
+    assert "ID CRC error is not representable in FDI" in capsys.readouterr().out
+
+
+def test_dc05_trd_refuses_bad_id_crc(scratch):
+    import pytest
+
+    from diskconverter.disk_image import DiskConversionError
+    from diskconverter.formats import trd
+
+    raw, clocks = _bad_id_crc_track()
+    (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
+    disk = udi.read(str(scratch / "bad.udi"))
+    assert not disk.get_track(0, 0).is_standard_trdos()
+    with pytest.raises(DiskConversionError):
+        trd.write(disk, str(scratch / "bad.trd"))

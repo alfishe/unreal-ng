@@ -107,6 +107,11 @@ def write(disk: DiskImage, path: str) -> None:
             track_headers += struct.pack("<IHB", track_data_offset, 0, len(sectors))
 
             for sector in sectors:
+                if not sector.id_crc_valid:
+                    print(
+                        f"warning: cyl={cyl} head={head} sector={sector.number}: ID CRC error is not representable "
+                        f"in FDI (the sector will read with a valid ID); use UDI to keep it"
+                    )
                 doff = len(data_area) - track_data_offset
                 if sector.no_data:
                     flags = FLAG_NO_DATA

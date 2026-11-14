@@ -32,9 +32,10 @@ class Sector:
     size_code: int  # raw N byte of the ID field (0..255); data length 128 << (N & 3), as the WD1793 reads it.
     # N > 3 is kept as is: protections write ID fields with N = #F7 that read back as 1K sectors
     data: bytes  # length == data_size, or 0 bytes when no_data is set
-    crc_valid: bool = True
+    crc_valid: bool = True  # data field CRC
     deleted: bool = False
     no_data: bool = False
+    id_crc_valid: bool = True  # ID field CRC (computed over A1 A1 A1 FE C H R N with the raw N)
 
     @property
     def data_size(self) -> int:
@@ -65,7 +66,7 @@ class Track:
         return None
 
     def is_standard_trdos(self) -> bool:
-        """16 sectors, R=1..16 (any physical order), 256 bytes, data present and CRC-valid,
+        """16 sectors, R=1..16 (any physical order), 256 bytes, data present, ID and data CRC valid,
         not deleted - the only geometry TRD (and a TR-DOS-compatible SCL round-trip) can
         express."""
         if len(self.sectors) != 16:
@@ -77,6 +78,7 @@ class Track:
                 or sector.no_data
                 or sector.deleted
                 or not sector.crc_valid
+                or not sector.id_crc_valid
                 or not (1 <= sector.number <= 16)
             ):
                 return False

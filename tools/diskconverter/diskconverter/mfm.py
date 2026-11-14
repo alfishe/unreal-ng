@@ -95,7 +95,10 @@ def encode_track(sectors: list[Sector]) -> EncodedTrack:
 
         idam_fields = bytes([IDAM, sector.cylinder, sector.head, sector.number, sector.size_code])
         raw += idam_fields
-        _put_crc(raw, crc_wd1793(idam_fields))
+        id_crc = crc_wd1793(idam_fields)
+        if not sector.id_crc_valid:
+            id_crc ^= 0x0001  # an ID CRC error is part of the disk (protections): reproduce it
+        _put_crc(raw, id_crc)
 
         raw += bytes([0x4E] * GAP_POST_ID)
 
@@ -141,6 +144,8 @@ def decode_track(raw: bytes) -> list[Sector]:
                 break
             _, cyl, head, number, size_code = fields  # raw N: only the data length below uses N & 3
             idam_crc_stored = raw[i + 8 : i + 10]
+            idam_crc = crc_wd1793(bytes(fields))
+            id_crc_valid = bytes([idam_crc & 0xFF, (idam_crc >> 8) & 0xFF]) == bytes(idam_crc_stored)
             idam_end = i + 10
 
             data = b""
@@ -183,6 +188,7 @@ def decode_track(raw: bytes) -> list[Sector]:
                     crc_valid=crc_valid,
                     deleted=deleted,
                     no_data=no_data,
+                    id_crc_valid=id_crc_valid,
                 )
             )
             continue
