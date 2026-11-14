@@ -517,6 +517,7 @@ public:
     using Tape::_currentOffsetWithinPulse;
     using Tape::_currentClockCount;
     using Tape::_currentTapeBlock;
+    using Tape::_tapeBitState;
 };
 
 #endif // _CODE_UNDER_TEST
