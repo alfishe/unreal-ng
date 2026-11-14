@@ -87,8 +87,9 @@ testdata/loaders/td0/trdos-sample.td0     -> fdi -> udi -> trd            (reads
 testdata/loaders/td0/trdos-sample-adv.td0 (compressed)                    -> correctly refused with a clear error
 ```
 
-No automated test suite yet — a good next step would be a pytest file driving the same
-matrix above.
+Automated tests: `python3 -m pytest tools/diskconverter/tests` (synthetic images built in the tests; artifacts go to
+`scratch/diskconverter-tests/`). The size code is kept raw: an ID field with N = #F7 (a protection trick) stays #F7
+in every format that can carry it, the data length is `128 << (N & 3)`.
 
 ### A bug this self-round-trip testing missed
 

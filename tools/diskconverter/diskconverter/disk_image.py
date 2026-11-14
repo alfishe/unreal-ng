@@ -29,7 +29,8 @@ class Sector:
     cylinder: int
     head: int
     number: int
-    size_code: int  # 0=128B 1=256B 2=512B 3=1024B (128 << size_code)
+    size_code: int  # raw N byte of the ID field (0..255); data length 128 << (N & 3), as the WD1793 reads it.
+    # N > 3 is kept as is: protections write ID fields with N = #F7 that read back as 1K sectors
     data: bytes  # length == data_size, or 0 bytes when no_data is set
     crc_valid: bool = True
     deleted: bool = False

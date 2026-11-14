@@ -50,12 +50,13 @@ def read(path: str) -> DiskImage:
                 c, h, r, n, flags, doff = struct.unpack_from("<BBBBBH", data, offset)
                 offset += 7
 
-                size_code = n & 3
+                # The raw N stays in the ID field; only the data length uses N & 3 (WD1793)
+                size_code = n
                 if n > 3:
-                    print(f"warning: {path}: cyl={cyl} head={head} sector={r}: size code {n} masked to {size_code}")
+                    print(f"info: {path}: cyl={cyl} head={head} sector={r}: N=#{n:02X} kept, data {128 << (n & 3)} bytes")
 
                 no_data = bool(flags & FLAG_NO_DATA)
-                size = 128 << size_code
+                size = 128 << (size_code & 3)
                 sector_data = b""
                 crc_valid = True
                 if not no_data:
@@ -69,7 +70,7 @@ def read(path: str) -> DiskImage:
                         no_data = True
                         sector_data = b""
                     else:
-                        crc_valid = bool(flags & (1 << size_code))
+                        crc_valid = bool(flags & (1 << (size_code & 3)))
 
                 trk.sectors.append(
                     Sector(
@@ -110,7 +111,7 @@ def write(disk: DiskImage, path: str) -> None:
                 if sector.no_data:
                     flags = FLAG_NO_DATA
                 else:
-                    flags = (1 << sector.size_code) if sector.crc_valid else 0
+                    flags = (1 << (sector.size_code & 3)) if sector.crc_valid else 0
                     if sector.deleted:
                         flags |= FLAG_DELETED
                     data_area += sector.data
