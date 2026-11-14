@@ -603,6 +603,21 @@ void HandheldMenu::machineRows(std::vector<Row>& list) const
         speed = QStringLiteral("%1×").arg(static_cast<int>(emulator->GetSpeedMultiplier()));
         turbo = emulator->IsTurboMode();
     }
+    // Pause / continue: the machine waits while the menu is open (C-6); this says what it does once the menu closes.
+    // Either way back to the machine at once: a paused one stays on its frozen picture until Continue here
+    if (emulator != nullptr)
+    {
+        if (_pausedByMenu)
+            list.push_back({QStringLiteral("pause"), tr("Pause"), {}, false, [self] {
+                                self->_pausedByMenu = false;  // the menu's own pause stays after it closes
+                                self->Close();
+                            }});
+        else
+            list.push_back({QStringLiteral("play"), tr("Continue"), tr("paused"), false, [self] {
+                                self->_pausedByMenu = true;  // closing resumes it (retried once if refused)
+                                self->Close();
+                            }});
+    }
     list.push_back({QStringLiteral("machine"), tr("Model"), model, true, [self] { self->openModelPicker(); }});
     list.push_back({QStringLiteral("speed"), tr("Speed"), speed, true, [self] { self->openSpeedPicker(); }});
     list.push_back({QStringLiteral("turbo"), tr("Turbo"), OnOff(turbo), false, {},
@@ -611,9 +626,13 @@ void HandheldMenu::machineRows(std::vector<Row>& list) const
                         StateNode params = StateNode::Object();
                         params["now"] = StateNode(true);
                         self->submit("mach.reset", std::move(params));
+                        // A reset is for the machine: back to it at once, not to the menu
+                        self->Close();
                     }});
-    list.push_back({QStringLiteral("power"), tr("Hard reset"), {}, false,
-                    [self] { self->submit("mach.cold_reset", StateNode::Object()); }});
+    list.push_back({QStringLiteral("power"), tr("Hard reset"), {}, false, [self] {
+                        self->submit("mach.cold_reset", StateNode::Object());
+                        self->Close();
+                    }});
     list.push_back({QStringLiteral("nmi"), tr("NMI"), {}, false, [self] { self->submit("mach.nmi", StateNode::Object()); }});
     // The front-panel switches the machine has (the Profi's TURBO and CP/M)
     const StateNode switches = readout("machine.switches");

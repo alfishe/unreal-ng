@@ -633,6 +633,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             auto alive = std::make_shared<std::atomic<bool>>(true);
             _handheldPadAlive = alive;
             HandheldPad* pad = _handheldPad;
+            // In the 128K menu and BASIC the back grips type the loaders, in a game the profile has them
+            connect(_hostControllers, &HostControllers::menuKeysChanged, _handheldPad, &HandheldPad::SetTyping);
             _hostControllers->Service().SetUiTap([alive, pad](const controllers::ControlEvent& event) {
                 if (!alive->load() || !pad->Takes(event.device, event.control))
                     return false;
@@ -4448,7 +4450,21 @@ void MainWindow::handleHandheldVerb(int verbValue)
         return;
     }
     if (!keyboard)
+    {
+        // The machine reads the keyboard (the 128K menu, BASIC): the back grips type without the on-screen keyboard
+        if (_handheldPad && _handheldPad->Typing())
+        {
+            switch (verb)
+            {
+                case Verb::Paddle3: _osdKeyboardWindow->tapMatrixKey(ZXKEY_ENTER); break;
+                case Verb::Back: _osdKeyboardWindow->tapMatrixKey(ZXKEY_EXT_DELETE); break;
+                case Verb::Paddle1: _handheldMenu->Run("basic.run", QStringLiteral("LOAD \"\"")); break;
+                case Verb::Paddle2: _handheldMenu->Run("basic.run", QStringLiteral("RUN \"boot\"")); break;
+                default: break;
+            }
+        }
         return;
+    }
     switch (verb)
     {
         case Verb::Up: _osdKeyboardWindow->moveFocus(0, -1); break;

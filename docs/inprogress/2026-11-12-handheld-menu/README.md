@@ -72,7 +72,7 @@ windows, toolbar / status bar, full screen and window scale, video sync, Help, r
 |---|---|---|
 | Save & Load | nine quick slots with pictures: A load, X save, Y delete | `snapshot.quick` |
 | Media | Open file… (browser), Save snapshot to a file (Library/Saves), then one row per medium slot of the machine (`MediaManager::List()`: tape with ▶/■ and block, drives, IDE / SD / CD) with an action picker (play / pause, rewind, go to block, insert or replace through the browser, save the changes, write protect, eject); fast tape / turbo tape / fast disk switches | `media.open`, `media.insert`, `media.tape`, `media.eject`, `media.save`, `media.protect`, `snapshot.save`, `set.toggle` |
-| Machine | model and speed pickers, turbo, reset, hard reset, NMI, front-panel switches | `mach.start`, `set.speed`, `mach.turbo_toggle`, `mach.reset`, `mach.cold_reset`, `mach.nmi`, `mach.switch` |
+| Machine | Pause / Continue (the state the machine is in once the menu closes; the menu closes at once), model and speed pickers, turbo, reset and hard reset (the menu closes: back to the machine at once), NMI, front-panel switches | `mach.start`, `set.speed`, `mach.turbo_toggle`, `mach.reset`, `mach.cold_reset`, `mach.nmi`, `mach.switch`; pause: the menu's own `run.pause` / `run.resume` |
 | Expansion | the slot report (configured slots with their card, the machine's own slots, built-in devices); per slot Remove or a card from the catalogue planned into that slot (`catalog` with `slot`: refused cards hidden, plain `label`, "(here now)", "(replaces …)"), Add a card… (the planner's slot); a change restarts the machine, the window follows | `DeviceState::Slots`, `SlotControl` `catalog` / `plug` / `remove` (no desktop dialogs) |
 | Display | CRT effect (a popup: Off, the models by name, the shaders); Temporal effect (a popup: Off, frame blending, ZX DLSS de-flicker), with blending its frames ◀▶ and weights (a popup); Overscan on / off and its border crop (a popup), Pentagon only; HUD, GPU. A choice among several is a popup, on / off a switch; no shader parameters (their names and numbers mean nothing on a handheld) | `video.crt_toggle`, `video.crt_profile`, `video.temporal_*`, `video.blending`, `video.overscan_toggle`, `video.viewport`, `hud.toggle`, `video.gpu_toggle` |
 | Sound | a mixer drawn as SteamOS sliders: the master and each source (its name from the mixer) with the level on a track and the live peak under it; ◀▶ volume, A mutes | `audio.mixer`, `audio.mute_toggle`, `audio.volume_by`, `audio.source_mute` |
@@ -220,6 +220,11 @@ nothing, so a D-pad press moves Steam's menu only.
 | Menu | close | open the menu |
 | View | — | hide the keyboard (shows it in the game) |
 | R4 / R5 / L4 (Deck) | — | `basic.run` `LOAD ""` / `RUN "boot"` / ENTER |
+
+The back grips type the loaders without the keyboard too, while the machine reads the whole keyboard (the 128K menu,
+BASIC: the same rolling-window decision that gives the pad the cursor keys, `HostControllers::menuKeysChanged`,
+`HandheldPad::SetTyping`): the UI takes R4, R5 and L4 then, and B is DELETE (CAPS SHIFT + 0). In a game that reads a
+joystick they are the profile's again (the second fire, the auto fire, SPACE; B the second fire).
 
 The keyboard in handheld mode is an overlay the screen draws over the game (`DeviceScreenWrapper::setOverlayPainter`,
 `OsdKeyboardWindow::paintOverlay`): the picture fitted by its ratio at the bottom, the whole width of the screen (keys

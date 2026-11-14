@@ -1630,15 +1630,52 @@ void HostControllers::applyConnectorPlans()
 
 void HostControllers::checkAuto()
 {
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr)
+        return;
+    ControllerManager* manager = context->pControllerManager;
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const std::string instance = emulator->GetId();
+    InputRouter& router = _service->Router();
+    if (!evidence.active)
+    {
+        // Menu keys keep the watch on: a program started from the menu (TR-DOS, the 128K menu's Tape Loader) turns
+        // them off once it stops reading the whole keyboard. A new window decides nothing for its first frames
+        if (router.MenuKeys(instance))
+            manager->WatchPortReads(true);
+        return;
+    }
+    const AutoDecision decision = DecideAuto(evidence);
+    // The pad drives a menu with the cursor keys while the program reads the whole keyboard (the 128K menu, BASIC, a
+    // text prompt), over the rolling window, whatever the auto plug decided before. On at once; off only after a whole
+    // window without the key scan, and until then no joystick is plugged (a reset's first moments look like one)
+    if (evidence.window >= DeviceAccessWatch::kWindow)
+    {
+        const bool menuKeys = router.MenuKeys(instance);
+        const auto frame = static_cast<int64_t>(evidence.framesObserved);
+        if (decision.keyboard)
+        {
+            _keyScanLostAt = -1;
+            if (!menuKeys)
+            {
+                router.SetMenuKeys(instance, true);
+                emit menuKeysChanged(true);
+            }
+        }
+        else if (menuKeys)
+        {
+            if (_keyScanLostAt < 0 || frame < _keyScanLostAt)  // a new watch counts from 0 again
+                _keyScanLostAt = frame;
+            if (frame - _keyScanLostAt < static_cast<int64_t>(DeviceAccessWatch::kWindow))
+                return;
+            _keyScanLostAt = -1;
+            router.SetMenuKeys(instance, false);
+            emit menuKeysChanged(false);
+        }
+    }
     if (_autoDone)
         return;
-    EmulatorContext* context = _binding->context();
-    if (context == nullptr || context->pControllerManager == nullptr)
-        return;
-    const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
-    if (!evidence.active)
-        return;
-    const AutoDecision decision = DecideAuto(evidence);
     if (decision.keyboard)
     {
         // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later

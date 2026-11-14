@@ -264,6 +264,54 @@ TEST_F(InputRouter_Test, Roles_InstancesAndTheAutoConnector)
     EXPECT_EQ(Kempston("emu-3"), kFire);
 }
 
+TEST_F(InputRouter_Test, MenuKeys_AutoTargetsHoldTheCursorKeysWhileTheProgramReadsTheKeyboard)
+{
+    // The 128K menu and BASIC read the keyboard, not a joystick: with menu keys on, a pad's `auto:` directions hold
+    // CAPS SHIFT with 5 6 7 8 and its fire ENTER, besides the player's connector; a fixed connector's binding does not
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad"), Bind({"south"}, "auto:fire"), Bind({"east"}, "kempston:fire2")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    auto keysOf = [](const char* name) {
+        std::vector<uint8_t> keys;
+        EXPECT_TRUE(ZxKeysFromName(name, keys));
+        std::sort(keys.begin(), keys.end());
+        return keys;
+    };
+    auto held = [this] {
+        std::vector<uint8_t> keys = _last.keys;
+        std::sort(keys.begin(), keys.end());
+        return keys;
+    };
+
+    Set("fake:1", "dpad.down", 1);
+    EXPECT_EQ(Kempston(), kDown);
+    EXPECT_TRUE(_last.keys.empty()) << "menu keys off: the joystick alone";
+
+    _router.SetMenuKeys("emu-1", true);
+    EXPECT_TRUE(_router.MenuKeys("emu-1"));
+    EXPECT_FALSE(_router.MenuKeys("emu-2")) << "per instance";
+    EXPECT_EQ(Kempston(), kDown) << "the joystick still sees it";
+    EXPECT_EQ(held(), keysOf("down")) << "CAPS SHIFT + 6";
+    Set("fake:1", "dpad.down", 0);
+    Set("fake:1", "dpad.up", 1);
+    Sample();
+    EXPECT_EQ(held(), keysOf("up"));
+    Set("fake:1", "dpad.up", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(held(), keysOf("enter")) << "fire selects";
+    Set("fake:1", "south", 0);
+    Set("fake:1", "east", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty()) << "a fixed connector's binding holds no menu key";
+
+    _router.SetMenuKeys("emu-1", false);
+    Set("fake:1", "east", 0);
+    Set("fake:1", "dpad.left", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty());
+}
+
 TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
 {
     // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,

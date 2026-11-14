@@ -47,6 +47,11 @@ public:
     void SetGrabbing(bool grabbing);
     bool Grabbing() const { return _grabbing.load(); }
 
+    /// The machine reads the whole keyboard (the 128K menu, BASIC): the back grips R4, R5, L4 and B are the UI's too
+    /// (they type LOAD "", RUN "boot", ENTER and DELETE); otherwise the game profile has them
+    void SetTyping(bool typing);
+    bool Typing() const { return _typing.load(); }
+
     /// The tap's question, on the input backend's thread: does the UI take this event of @p device (a keyboard's
     /// never)
     bool Takes(const std::string& device, const std::string& control) const;
@@ -70,6 +75,8 @@ private:
     /// A direction source (the D-pad, the left stick) points somewhere else now
     void steer(const QString& source, Direction direction);
     void stopRepeat();
+    /// R4, R5, L4 and B: what the UI takes while the machine reads the keyboard
+    static bool IsTypingControl(const std::string& control);
     static Verb VerbOf(Direction direction);
     /// The left trackpad as a cursor: one step per stretch of the finger's travel on the axis the touch picked first
     void track(const QString& source, bool touching, float x, float y);
@@ -85,6 +92,7 @@ private:
     };
 
     std::atomic<bool> _grabbing{false};
+    std::atomic<bool> _typing{false};
     std::map<QString, float> _values;         ///< device|control -> the last value
     std::map<QString, Direction> _directions;  ///< device|source -> where it points
     std::map<QString, PadTrack> _pads;         ///< device|ltouchpad -> the touch

@@ -1454,6 +1454,11 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();
+
+    // The ROM starts again (the 128K menu, BASIC): the controllers watch its port reads as a new program's, so a pad
+    // drives the menu with the cursor keys (retro-devices.md §6)
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
 }
 
 void Emulator::RequestNMI()
@@ -1615,6 +1620,10 @@ void Emulator::Start()
         MLOGINFO("Emulator::Start() aborted - Stop() raced the startup sequence");
         return;
     }
+
+    // The machine starts from its ROM (the 128K menu, BASIC): the controllers watch its port reads as a program's
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
 
     // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();

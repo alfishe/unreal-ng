@@ -53,6 +53,9 @@ struct AutoDecision
 
 /// Frames of the window a class must be read in to count as "every frame"
 constexpr unsigned kEveryFrame = 45;
+/// Frames of the window a half-row must be read in to count toward a key scan: a whole-keyboard scan skips frames now
+/// and then (the 128K menu after a reset reads #DFFE..#7FFE in 42 of 50) and is still no joystick
+constexpr unsigned kKeyScanFrames = 25;
 
 AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence);
 

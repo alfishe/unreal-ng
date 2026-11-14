@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "hostcontrols.h"
+#include "zxkeys.h"
 
 namespace controllers
 {
@@ -463,6 +464,39 @@ bool InputRouter::Analog(const HostDeviceId& id, const std::string& control, Ana
                 }
         }
     return false;
+}
+
+std::vector<uint8_t> InputRouter::MenuKeysOf(uint16_t bits)
+{
+    // The cursor keys of a Spectrum 128 keyboard (CAPS SHIFT with 5 6 7 8, the 128K menu's and the editor's), fire ENTER
+    static const auto keysOf = [](const char* name) {
+        std::vector<uint8_t> keys;
+        ZxKeysFromName(name, keys);
+        return keys;
+    };
+    static const std::pair<uint16_t, std::vector<uint8_t>> kMenu[] = {
+        {kLeft, keysOf("left")}, {kDown, keysOf("down")}, {kUp, keysOf("up")},
+        {kRight, keysOf("right")}, {kFire, keysOf("enter")}};
+    std::vector<uint8_t> keys;
+    for (const auto& [bit, held] : kMenu)
+        if (bits & bit)
+            for (uint8_t key : held)
+                if (std::find(keys.begin(), keys.end(), key) == keys.end())
+                    keys.push_back(key);
+    return keys;
+}
+
+void InputRouter::SetMenuKeys(const std::string& instance, bool on)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _instances[instance].menuKeys = on;
+}
+
+bool InputRouter::MenuKeys(const std::string& instance) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _instances.find(instance);
+    return it != _instances.end() && it->second.menuKeys;
 }
 
 void InputRouter::SetFocus(const std::string& instance)
@@ -1505,6 +1539,8 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                             target.retro.connector == "auto" ? player : target.retro.connector;
                         if (!connector.empty())
                             masks[connector] |= bits;
+                        if (instance.menuKeys && target.retro.connector == "auto")
+                            hold(MenuKeysOf(bits));
                         break;
                     }
                     case TargetKind::Keys:

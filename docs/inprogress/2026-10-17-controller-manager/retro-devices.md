@@ -273,8 +273,19 @@ card; the Qt host says it once and fits nothing (a card restarts the machine).
   The scan runs once per code site. A channel's `tested` is the union over its sites; `auto` shows it as
   `evidence.channels[].tested_bits`.
 - **When it runs.** A media load opens a window of 30 s (`ControllerManager::WatchPortReads`: tape, disk, snapshot).
-  The count restarts while a tape plays. The feature `deviceaccess` (alias `dacc`, off by default) keeps it on
-  continuously. Off, it costs the decoder one flag test.
+  A start or a reset opens it too, so the ROM's menu and BASIC are seen. The count restarts while a tape plays. The
+  feature `deviceaccess` (alias `dacc`, off by default) keeps it on continuously. Off, it costs the decoder one flag
+  test.
+- **Menu keys.** While the rolling window says the program scans the keyboard (`AutoDecision::keyboard`: 7 or more
+  half-rows read in at least half the frames, `kKeyScanFrames`, the ROM's key scan; it comes before the joysticks of
+  the half-rows, since the 128K menu after a reset reads its last half-rows in only 42 of 50 frames and once passed
+  for Sinclair 1), the router's menu keys are on for that machine
+  (`InputRouter::SetMenuKeys`, set by the Qt host from each full window). Then every `auto:` target also holds the
+  cursor keys: up, down, left and right press CAPS SHIFT with 7, 6, 5 and 8, fire presses ENTER. The 128K menu, the
+  editor and BASIC answer to the D-pad and the stick, and the auto joystick still gets the same input. A fixed
+  connector's binding (`kempston:fire`) holds no menu key. While the menu keys are on, the watch stays open, so they
+  switch off once a game stops scanning the keyboard: on at once, off only after a whole window (50 frames) without the
+  scan, and until then no joystick is plugged. Test: `InputRouter_Test.MenuKeys_*`.
 - **`DecideFromAccess`** checks the roles in this order:
   1. NR #B2 every frame: an MD 6-button pad on `next.left`, or on `next.right` when `#37` is read every frame too;
   2. Kempston 2, Kempston, Fuller, Kempston mouse, AMX mouse;

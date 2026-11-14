@@ -132,6 +132,11 @@ public:
     void Promote(const HostDeviceId& from, const HostDeviceId& to);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
+    /// Menu keys for an instance (its program reads the whole keyboard: the 128K menu, BASIC, a text prompt): the
+    /// `auto:` targets also hold the cursor keys, CAPS SHIFT with 5 6 7 8 for left down up right, and ENTER for fire,
+    /// besides the player's connector
+    void SetMenuKeys(const std::string& instance, bool on);
+    bool MenuKeys(const std::string& instance) const;
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
@@ -336,11 +341,14 @@ private:
     {
         std::map<std::pair<HostDeviceId, size_t>, Phase> phases;
         std::set<std::string> held;  ///< connectors with bits at the last sample
+        bool menuKeys = false;        ///< SetMenuKeys
     };
 
     using ValueOf = std::function<float(const std::string&)>;
 
     static bool Compile(const Binding& binding, CompiledBinding& out, std::string& error);
+    /// The keys menu keys hold for retro bits (SetMenuKeys)
+    static std::vector<uint8_t> MenuKeysOf(uint16_t bits);
     const CompiledSet* BindingsForLocked(const Device& device) const;
     static float Value(const Device& device, const std::string& control);
     DeviceRole RoleLocked(const HostDeviceId& device) const;
