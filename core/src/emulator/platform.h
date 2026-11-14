@@ -929,6 +929,11 @@ struct CONFIG
 		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
 		// BIOS opens its Setup Utility)
 		uint8_t ts_bios_sd_boot = 1;
+		// ZX-Evo BaseConf: the EVO Reset Service settings a machine starts with when no NVRAM file gives them
+		// ([EVO] ErsNvram=): 1 = FLOPPY, the ERS defaults with its virtual drive on D, so a disk in drive A boots
+		// ("TR-DOS boot"); 0 = BLANK, blank cells (the ERS writes its own defaults: virtual drive A, which hides
+		// drive A)
+		uint8_t ers_floppy_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept

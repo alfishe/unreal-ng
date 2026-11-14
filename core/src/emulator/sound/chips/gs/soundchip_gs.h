@@ -163,6 +163,8 @@ public:
     uint32_t cardPageCount(CardPage::Kind kind) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return totalGsCycles(); }
+    void catchUpToHost() override;
+    int64_t hostLead() const override;
     double cardUnitsPerSecond() const override { return _unitsPerSecond; }
     int64_t cardFrameTime() const override { return totalGsCycles() - _frameStartGsCycles; }
     bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
@@ -419,6 +421,7 @@ private:
 
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
+    bool hostTarget(int64_t& target) const;  // the card time of the current ZX tact; false without a base
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
     void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's loop
     void runTo(int64_t targetGsCycles)
@@ -520,6 +523,7 @@ private:
     bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
+    GSHostClock::Rate _tightRate;  // catchUpToHost's conversion, per host instruction in tight mode
     bool _nmiPending = false;
     uint32_t _busEffects = 0;  // GSCardRunner::busEffects
 

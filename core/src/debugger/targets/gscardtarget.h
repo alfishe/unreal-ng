@@ -86,6 +86,8 @@ public:
     /// Disarm a step that did not end (a timeout, a pause of another cause)
     void CancelStep();
     bool StepArmed() const { return _stepKind.load(std::memory_order_acquire) != StepKind::None; }
+    /// Debugged with a stop (a stopping breakpoint, an armed step): the machine runs in tight mode for it
+    bool WantsTight() const { return _stopWanted.load(std::memory_order_acquire) || StepArmed(); }
     /// The machine is parked inside the card's run (a card breakpoint or step): the next instruction is the
     /// boundary's
     bool ParkedInside() const { return _parkedInside.load(std::memory_order_acquire); }
@@ -132,6 +134,7 @@ public:
 private:
     /// The hooks on the current card when wanted, off it otherwise
     void Attach();
+    void UpdateTight();  ///< DebugManager::UpdateCardTight: tight mode follows WantsTight
     /// A hit of the instruction just done, reported at the next boundary (the first one wins)
     void Note(uint16_t id, uint16_t address, uint8_t value, BreakpointHitKind kind, uint16_t pc);
     /// Stop the machine with the card at `boundaryPc`
@@ -152,6 +155,7 @@ private:
     std::function<GeneralSoundCard*()> _cardSource;
     std::unique_ptr<BreakpointManager> _breakpoints;
     bool _wanted = false;                    // an active breakpoint asks for the hooks
+    std::atomic<bool> _stopWanted{false};    // an active breakpoint stops (tight mode)
     struct LiveEdit
     {
         uint32_t callbackId = 0;

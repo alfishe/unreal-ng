@@ -264,15 +264,19 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 
     // Let debugger process step event. A run that skips breakpoints still tells the execution taps (haptic probes,
     // analyzers, script callbacks): they never stop (breakpoint-taps §3)
-    if ((cpu.isDebugMode || cpu.execTapHold) && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execTapHold || cpu.cardTight) && _context->pDebugManager != nullptr)
     {
+        cpu.instrStartT = cpu.t;
+        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here
+        if (cpu.cardTight)
+            _context->pDebugManager->CatchUpCards();
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         if (skipBreakpoints)
         {
             if (cpu.execTapHold)
                 brk.HandlePCTaps(pc);
         }
-        else
+        else if (cpu.isDebugMode || cpu.execTapHold)  // tight mode alone: no breakpoint work
         {
             // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
             uint16_t breakpointID = brk.HandlePCChange(pc);
@@ -389,6 +393,9 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     // (RunHaltedIdle learns the fetch length by one). Debug mode and the exec taps (haptic probes, script callbacks,
     // analyzers) are none while no breakpoint or tap sees the HALT
     if (busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
+        return false;
+    // Tight mode catches a debugged card up at every instruction start: an idle stretch would leave it behind
+    if (cardTight)
         return false;
     if (isDebugMode || execTapHold)
     {

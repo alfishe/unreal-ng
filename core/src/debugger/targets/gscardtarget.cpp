@@ -133,7 +133,9 @@ void GSCardTarget::OnBreakpointDemand(const BreakpointTapDemand& demand)
 {
     // Every active breakpoint of the card (a stop or a tap) needs the debug loop
     _wanted = demand.stop || demand.exec || demand.read || demand.write || demand.other;
+    _stopWanted.store(demand.stop, std::memory_order_release);
     Attach();
+    UpdateTight();
 }
 
 void GSCardTarget::Note(uint16_t id, uint16_t address, uint8_t value, BreakpointHitKind kind, uint16_t pc)
@@ -218,12 +220,20 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
     }
     _stepKind.store(kind, std::memory_order_release);
     Attach();
+    UpdateTight();
     return {};
 }
 
 void GSCardTarget::CancelStep()
 {
     _stepKind.store(StepKind::None, std::memory_order_release);
+    UpdateTight();  // a step that ended inside the card's run left tight mode on for this call
+}
+
+void GSCardTarget::UpdateTight()
+{
+    if (_context && _context->pDebugManager)
+        _context->pDebugManager->UpdateCardTight();
 }
 
 bool GSCardTarget::IsReturnAt(GeneralSoundCard* card, uint16_t pc) const

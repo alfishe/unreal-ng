@@ -200,6 +200,17 @@ const char* Config::RamPowerOnName(RamPowerOn mode)
 	return mode == RamPowerOn::Zero ? "zero" : "random";
 }
 
+namespace
+{
+std::string& DefaultNvramFolder()
+{
+	static std::string folder;
+	return folder;
+}
+}  // namespace
+
+void Config::SetDefaultNvramFolder(const std::string& folder) { DefaultNvramFolder() = folder; }
+
 std::function<void(CONFIG&)> Config::RamPowerOnOverride(RamPowerOn mode)
 {
 	return [mode](CONFIG& config) { config.ramPowerOn = mode; };
@@ -326,6 +337,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	if (config.atm.evo_nvram_path[0] == '\0' && !DefaultNvramFolder().empty() && !_configFilePath.empty())
+	{
+		// No [EVO] NvramFile: the app's per-user folder keeps the battery-backed settings, one file per config
+		const std::filesystem::path configFolder = FileHelper::ToFsPath(_configFilePath).parent_path().filename();
+		const auto text = (FileHelper::ToFsPath(DefaultNvramFolder()) / configFolder).u8string() + u8".nvram";
+		CopyStringValue(std::string(text.begin(), text.end()).c_str(), config.atm.evo_nvram_path,
+		                sizeof config.atm.evo_nvram_path);
+	}
 	{
 		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
 		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
@@ -336,6 +355,18 @@ bool Config::ParseConfig(IniFile& inimanager)
 			config.atm.ts_bios_sd_boot = 1;
 			if (preset != "SDBOOT" && preset != "sdboot")
 				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
+		}
+	}
+	{
+		// ZX-Evo BaseConf: the ERS settings without an NVRAM file (PortDecoder_ATM3::ApplyErsFloppyBootNvram)
+		const std::string preset = inimanager.GetValue("EVO", "ErsNvram", "FLOPPY");
+		if (preset == "BLANK" || preset == "blank")
+			config.atm.ers_floppy_boot = 0;
+		else
+		{
+			config.atm.ers_floppy_boot = 1;
+			if (preset != "FLOPPY" && preset != "floppy")
+				MLOGWARNING("Config: unknown [EVO] ErsNvram='%s' - using FLOPPY (FLOPPY | BLANK)", preset.c_str());
 		}
 	}
 

@@ -83,6 +83,34 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] Test: `LuaGSCardHook_Test.ALogicCardHookIsRecordedAndReplayedWithoutRunningIt` (record a substitution, a poke
   and a register, seek back, replay: the same card state, the hook not called).
 
+## Design §5 (one time line) — phase 2, branch `gs-phase2` (2026-11-13)
+
+- [x] Tight mode (§5.2): a stopping card breakpoint or an armed card step sets `Z80::cardTight`
+  (`FeatureManager::setCardTightHold`, `GSCardTarget::WantsTight`, `DebugManager::UpdateCardTight`); every main
+  instruction start catches the card up (`DebugManager::CatchUpCards` -> `GeneralSoundCard::catchUpToHost`), never
+  past the frame's end, never inside the card's own parked run. The main CPU keeps its memory path and debug mode
+  (risk 1's fallback: at every memory access, which needed the debug memory path, it cost +44 % over lazy).
+  Test: `GSCardTarget_Test.ACardBreakpointParksTheMainCpuNearby` (tight: main within an
+  instruction of the card's stop; lazy: up to a frame).
+- [x] Main position in a card's pause (§5.4, first part): `MainPosition` (`pc`, `t_in_instruction` from
+  `Z80::instrStartT`, `gap_t` from `GeneralSoundCard::hostLead`, `frame_end`) in `Emulator::BreakpointStop`, the
+  pause payload, the `debug` topic's `paused` event and the card step's `stop` (`main`).
+- [x] A card step never runs ahead of main (§5.3): an armed step turns tight mode on; the stop's `gap_t` is never
+  negative (`TheMachinesCardStepsThroughRunControl`). Paused mid-frame, the card is still lazily behind: the steps walk
+  it towards main.
+- [x] Determinism (§5.6): `GSCardTarget_Test.TightModeRunsTheCardAsLazyDoes`, the machine's NeoGS through its loader's
+  clock switch, every card-side event identical lazy and tight.
+- [x] A/B benchmark: `BM_HostFrame_NeoGS_Idle_CardLazy` / `_CardTight` beside `_Idle_Fast` (hostbusoverlay_benchmark).
+  M-series Mac, 8 interleaved rounds, CPU time per host frame (median): all off 648 us, main debug path 766 us, card
+  breakpoint lazy 715 us, card breakpoint tight 889 us (+24 % over lazy). The profile splits the rest about evenly:
+  the catch-up calls (`CatchUpCards`, `catchUpToHost`, `endRun`, about 7 %) and the cost of running both CPUs in
+  ~7000 short pieces per frame (cache and branch history, main and card loops alike). A cached card rate and an early
+  return when the card is already at the target are in. Only while a stopping card breakpoint or a card step is
+  active; with none the instruction start tests one more flag (Pentagon fast 458 us, unchanged).
+- [ ] The rest of §5.4: the instruction's total T, the bus cycle under way (opcode M-cycle tables), the UI's progress.
+- [ ] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger), card run-to
+  (§5.3).
+
 ### Later
 
 - [x] Card breakpoint conditions (2026-10-27): the card's registers, memory and pages through `IDebugTarget::Registers`

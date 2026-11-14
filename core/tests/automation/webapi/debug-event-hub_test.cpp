@@ -163,6 +163,33 @@ TEST_F(DebugEventHub_Test, EventsReachTheMatchingSubscriptionsNumberedPerEmulato
     EXPECT_EQ(everything[1]["seq"].asUInt64(), 1u);
 }
 
+// A sound card's stop names where the main CPU parked with it (gs-debugger design §5.4); a main CPU's stop does not
+TEST_F(DebugEventHub_Test, ACardsPauseCarriesTheMainPosition)
+{
+    Inbox inbox;
+    _hub.HandleMessage(&inbox, R"({"op":"subscribe","id":"a","emulator":")" + std::string(kFirst) + R"("})",
+                       inbox.Sender());
+    auto* payload = new EmulatorStateChangePayload(std::string(kFirst), StatePaused);
+    payload->pauseCause = PauseCause::Step;
+    payload->cpu = "gs";
+    payload->cpuPc = 0x4010;
+    payload->main = MainPosition{true, false, 0x8003, 5, 2};
+    MessageCenter::DefaultMessageCenter().Post(NC_EMULATOR_STATE_CHANGE, payload, true);
+    PostPause(kFirst, true);
+    ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 2; }, std::chrono::seconds(2)));
+
+    const auto events = inbox.Events();
+    EXPECT_EQ(events[0]["reason"].asString(), "step");
+    EXPECT_EQ(events[0]["cpu"].asString(), "gs");
+    EXPECT_EQ(events[0]["cpu_pc"].asUInt(), 0x4010u);
+    const Json::Value& main = events[0]["main"];
+    EXPECT_EQ(main["pc"].asUInt(), 0x8003u);
+    EXPECT_EQ(main["t_in_instruction"].asUInt(), 5u);
+    EXPECT_EQ(main["gap_t"].asInt(), 2);
+    EXPECT_FALSE(main["frame_end"].asBool());
+    EXPECT_FALSE(events[1].isMember("main")) << "the main CPU's own breakpoint";
+}
+
 TEST_F(DebugEventHub_Test, UnsubscribeAndClosingStopTheEvents)
 {
     Inbox kept, left, closed;
