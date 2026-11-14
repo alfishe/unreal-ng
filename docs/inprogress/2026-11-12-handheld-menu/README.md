@@ -72,12 +72,12 @@ windows, toolbar / status bar, full screen and window scale, video sync, Help, r
 |---|---|---|
 | Save & Load | nine quick slots with pictures: A load, X save, Y delete | `snapshot.quick` |
 | Media | Open file… (browser), Save snapshot to a file (Library/Saves), then one row per medium slot of the machine (`MediaManager::List()`: tape with ▶/■ and block, drives, IDE / SD / CD) with an action picker (play / pause, rewind, go to block, insert or replace through the browser, save the changes, write protect, eject); fast tape / turbo tape / fast disk switches | `media.open`, `media.insert`, `media.tape`, `media.eject`, `media.save`, `media.protect`, `snapshot.save`, `set.toggle` |
-| Machine | model and speed pickers, turbo, reset, hard reset, NMI, front-panel switches | `mach.start`, `set.speed`, `mach.turbo_toggle`, `mach.reset`, `mach.cold_reset`, `mach.nmi`, `mach.switch` |
+| Machine | Pause / Continue (the state the machine is in once the menu closes; the menu closes at once), model and speed pickers, turbo, reset and hard reset (the menu closes: back to the machine at once), NMI, front-panel switches | `mach.start`, `set.speed`, `mach.turbo_toggle`, `mach.reset`, `mach.cold_reset`, `mach.nmi`, `mach.switch`; pause: the menu's own `run.pause` / `run.resume` |
 | Expansion | the slot report (configured slots with their card, the machine's own slots, built-in devices); per slot Remove or a card from the catalogue planned into that slot (`catalog` with `slot`: refused cards hidden, plain `label`, "(here now)", "(replaces …)"), Add a card… (the planner's slot); a change restarts the machine, the window follows | `DeviceState::Slots`, `SlotControl` `catalog` / `plug` / `remove` (no desktop dialogs) |
-| Display | CRT effect (a popup: Off, the models by name, the shaders); Temporal effect (a popup: Off, frame blending, ZX DLSS de-flicker), with blending its frames ◀▶ and weights (a popup); Overscan on / off and its border crop (a popup), Pentagon only; HUD, GPU. A choice among several is a popup, on / off a switch; no shader parameters (their names and numbers mean nothing on a handheld) | `video.crt_toggle`, `video.crt_profile`, `video.temporal_*`, `video.blending`, `video.overscan_toggle`, `video.viewport`, `hud.toggle`, `video.gpu_toggle` |
+| Display | CRT effect (a popup: Off, the models by name, the shaders); Temporal effect (a popup: Off, frame blending, ZX DLSS de-flicker), with blending its frames ◀▶ and weights (a popup); Overscan on / off and its border crop (a popup), Pentagon only; Picture: full (with the border) or borderless (the screen alone), any model; HUD, GPU. A choice among several is a popup, on / off a switch; no shader parameters (their names and numbers mean nothing on a handheld) | `video.crt_toggle`, `video.crt_profile`, `video.temporal_*`, `video.blending`, `video.overscan_toggle`, `video.viewport`, `view.picture`, `hud.toggle`, `video.gpu_toggle` |
 | Sound | a mixer drawn as SteamOS sliders: the master and each source (its name from the mixer) with the level on a track and the live peak under it; ◀▶ volume, A mutes | `audio.mixer`, `audio.mute_toggle`, `audio.volume_by`, `audio.source_mute` |
 | Network | a monitor, not a list, nothing to focus (500 ms): the card with the settings as chips and Active / Idle; tiles for the traffic (rate, a graph of the last half minute, total), the virtual network, the COM port, other fitted ports, the expansion cards | `DeviceState::Network` |
-| Controls | show the keyboard, keyboard picker, the pad's legend on the keyboard | `unrealqt.osd_keyboard_force` |
+| Controls | show the keyboard, keyboard picker, the pad's legend on the keyboard, the floppy drive feel ([haptics.md §4.4](../2026-10-17-controller-manager/haptics.md#44-the-floppy-drive-under-the-hand)) | `unrealqt.osd_keyboard_force`; `Controllers/DriveHaptics` (settings) |
 | Quit | quick save and quit, quit without saving | `snapshot.quick` |
 
 Value rows (◀▶) take left / right; group captions are never focused; a long page scrolls with the focus. The file
@@ -142,6 +142,9 @@ The tape with its block list (play, rewind, jump to a block), drives A–D with 
 
 The file browser is controller-only (no system file dialog in Game Mode): folders, type icons, a preview of the
 selected file (the loading screen for tapes, the first screen for disks and snapshots) and its known profile.
+It opens in the folder the last file came from, that file focused (`Handheld/lastFolder`, `lastRoot`, `lastFile` in
+the settings); `.. (up)` climbs to the root it was reached from and on to the roots. A folder that is gone opens the
+roots.
 
 ![Open file](img/06-open-file.png)
 
@@ -221,12 +224,21 @@ nothing, so a D-pad press moves Steam's menu only.
 | View | — | hide the keyboard (shows it in the game) |
 | R4 / R5 / L4 (Deck) | — | `basic.run` `LOAD ""` / `RUN "boot"` / ENTER |
 
+The back grips type the loaders without the keyboard too, while the machine reads the whole keyboard (the 128K menu,
+BASIC: the same rolling-window decision that gives the pad the cursor keys, `HostControllers::menuKeysChanged`,
+`HandheldPad::SetTyping`): the UI takes R4, R5 and L4 then, and B is DELETE (CAPS SHIFT + 0). In a game that reads a
+joystick they are the profile's again (the second fire, the auto fire, SPACE; B the second fire).
+
 The keyboard in handheld mode is an overlay the screen draws over the game (`DeviceScreenWrapper::setOverlayPainter`,
 `OsdKeyboardWindow::paintOverlay`): the picture fitted by its ratio at the bottom, the whole width of the screen (keys
 big enough for a finger), translucent, no switches and no background; no key is highlighted until the first move.
 A touch goes to the keyboard first (`DeviceScreenWrapper::setOverlayPointer`, `OsdKeyboardWindow::overlayPointer`):
 a key under the finger is pressed and held at least one tap (80 ms); while the keyboard shows, the machine's mouse
 gets no pointer events and no cursor is drawn.
+In handheld mode the application never draws a mouse pointer (`QApplication::setOverrideCursor(Qt::BlankCursor)`):
+Steam draws its own for the trackpads. The keys of the on-screen keyboard go through `KeyboardManager::postVirtualKey`
+as the host keyboard's do, the ZX keys and the PC keys the machine's PS/2 controller takes for them, so Wild Commander
+on TS-Conf (it reads the AVR's PS/2 log, never the matrix) gets the cursor keys too.
 
 The GUI control plane has the same verbs (`handheld.menu`, `.nav`, `.accept`, `.back`, `.option`, `.section`, state
 `handheld_menu`; `unrealqt.osd_keyboard_nav`, `_tap`, `_force`, state `osd_keyboard_state`), so an agent drives the

@@ -99,6 +99,20 @@ TEST(AutoDecision_Test, Decide_RolesRowsAndTheKeyboard)
     EXPECT_FALSE(decision.decisive);
     EXPECT_TRUE(decision.keyboard);
     EXPECT_FALSE(DecideFromAccess(Evidence({ Row(7) })).decisive) << "SPACE / BREAK alone decides nothing";
+
+    // The 128K menu after a reset: its scan skips a few frames of the last half-rows; still the keyboard, not Sinclair
+    auto rowIn = [](int row, uint16_t frames) {
+        Read read = Row(row);
+        read.frames = frames;
+        return read;
+    };
+    decision = DecideFromAccess(
+        Evidence({ Row(0), Row(1), Row(2), Row(3), Row(4), rowIn(5, 42), rowIn(6, 42), rowIn(7, 42) }));
+    EXPECT_TRUE(decision.keyboard) << decision.label;
+    EXPECT_FALSE(decision.decisive);
+    decision = DecideFromAccess(
+        Evidence({ Row(0), Row(1), Row(2), Row(3), Row(4), rowIn(5, 10), rowIn(6, 10), rowIn(7, 10) }));
+    EXPECT_FALSE(decision.keyboard) << "a few rows now and then are no key scan";
 }
 
 TEST(AutoDecision_Test, Decide_NextB2RowBitsAndAyR14)

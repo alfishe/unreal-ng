@@ -4303,6 +4303,7 @@ companion scope (their routes change nothing).
 | `video.viewport` | press | `viewport?` (a name, `next`, `prev`; next) | The overscan frame's crop | |
 | `view.fullscreen` | press | `on?` | Full screen on / off | `toggle.view.fullscreen` |
 | `view.scale` | press | `scale?` (1..4, `next`, `prev`; next) | Fit the window to the picture at that zoom | |
+| `view.picture` | press | `view?` (`full`, `screen`, `content`, `next`, `prev`; next) | The whole frame with its border, the screen alone or the program's content | |
 | `view.toolbar`, `view.status_bar` | press | `on?` | Show / hide the bar | `toggle.view.toolbar`, `toggle.view.status_bar` |
 | `view.next_layers` | press | `on?` | The ZX Next layers window | `toggle.view.next_layers` |
 | `view.next_layers_mode` | press | `mode?` (layers, composed, winner, `next`, `prev`) | Its mode | |

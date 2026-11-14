@@ -199,7 +199,7 @@ TEST_F(PictureActions_Test, HeadlessTheWindowActionsAreListedAndSayThereIsNoWind
     for (const char* id : {"video.gpu_toggle", "video.crt_toggle", "video.crt_profile", "video.crt_param_by",
                            "video.crt_params_reset", "video.blending", "video.blending_decay_by", "video.temporal_toggle",
                            "video.temporal_effect", "video.viewport",
-                           "view.fullscreen", "view.scale", "view.toolbar", "view.status_bar", "view.next_layers",
+                           "view.fullscreen", "view.scale", "view.picture", "view.toolbar", "view.status_bar", "view.next_layers",
                            "view.next_layers_mode", "view.next_layer", "hud.toggle", "hud.theme", "hud.notice",
                            "osd.keyboard_picture", "osd.keyboard_style"})
     {

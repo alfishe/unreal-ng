@@ -220,7 +220,7 @@ public:
         if (known == nullptr || !known->writable)
             return false;
         const uint16_t count = std::max<uint16_t>(1, clicks.count);
-        if (clicks.wave == HapticClicks::Wave::Click && count == 1)
+        if (clicks.wave == HapticClicks::Wave::Click && count == 1 && clicks.level >= 1.0f && clicks.pulseUs == 0)
         {
             SteamDeck::PadEffect click;
             click.command = SteamDeck::PadCommand::Click;
@@ -228,10 +228,13 @@ public:
         }
         if (clicks.wave == HapticClicks::Wave::Click)
         {
-            const unsigned period = std::max<unsigned>(clicks.periodMs * 1000u, 4000u);
-            return Feature(*known, SteamDeck::PulseReport(SteamDeck::Pad::Both, 2000,
-                                                          static_cast<uint16_t>(std::min(period - 2000u, 65535u)),
-                                                          count, 0));
+            // A pulse of onUs every period: 2 ms pulses at least 4 ms apart by default; a set pulse length (as short
+            // as the coil moves: a fraction of a millisecond) keeps at least 1 ms of rest after it
+            const unsigned on = clicks.pulseUs > 0 ? clicks.pulseUs : 2000u;
+            const unsigned period = std::max<unsigned>(clicks.periodMs * 1000u, clicks.pulseUs > 0 ? on + 1000u : 4000u);
+            return Feature(*known, SteamDeck::PulseReport(SteamDeck::Pad::Both, static_cast<uint16_t>(on),
+                                                          static_cast<uint16_t>(std::min(period - on, 65535u)),
+                                                          count, SteamDeck::GainDb(clicks.level)));
         }
         return Feature(*known, SteamDeck::PulseReport(SteamDeck::Pad::Both, 2500, 2500,
                                                       static_cast<uint16_t>(20 * count), 0));

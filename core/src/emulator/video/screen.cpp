@@ -499,6 +499,13 @@ void Screen::InitMemoryCounters()
 
 void Screen::SetVideoMode(VideoModeEnum mode)
 {
+    // Overscan always starts centred (the symmetric crop), whoever turns it on: the GUI, an action, or the guest's own
+    // EFF7 384 bit. A caller asking for another crop sets it after the switch; leaving overscan shows the full frame
+    const bool wasOverscan = _mode == M_P384;
+    if (mode == M_P384 && !wasOverscan)
+        SetDisplayViewport(ViewportPresets::SYMMETRIC_HORIZONTAL);
+    else if (mode != M_P384 && wasOverscan)
+        SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
     _mode = mode;
     _nullCallback = _drawCallbacks[M_NUL];
     _drawCallback = _drawCallbacks[_mode];

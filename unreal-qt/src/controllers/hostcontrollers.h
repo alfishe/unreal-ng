@@ -10,6 +10,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -145,6 +146,14 @@ public:
         return _soundHapticsDsp;
     }
     void SetSoundHapticsDsp(bool on);
+    /// The floppy drive under the hand (haptics.md §4.4, kept in the settings, on by default): the head's steps and the
+    /// turning disk on the pads. Plays only where allowed (SetDriveHapticsAllowed: the handheld mode for now)
+    bool DriveHaptics() const
+    {
+        return _driveHaptics;
+    }
+    void SetDriveHaptics(bool on);
+    void SetDriveHapticsAllowed(bool allowed);
     /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
     /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
     /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine.
@@ -203,6 +212,9 @@ signals:
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
     void autoDecided(const QString& text);
+    /// The program started or stopped reading the whole keyboard (the 128K menu, BASIC): the pad drives it with the
+    /// cursor keys and the handheld back grips type the loaders (InputRouter::SetMenuKeys)
+    void menuKeysChanged(bool on);
     /// A player device arrived; @p first: never seen on this computer before (the toast with Open controllers),
     /// @p connector: the one it drives ("" none)
     void deviceConnected(const QString& name, const QString& connector, bool first);
@@ -294,6 +306,10 @@ private:
     /// reads a joystick
     bool _autoDone = false;
     bool _keyboardNoticed = false;
+    /// The watch's frame where the key scan last stopped while the menu keys were on (-1: it has not): they go off
+    /// only after a whole window without it (a menu's scan skips a moment after a reset)
+    int64_t _keyScanLostAt = -1;
+    uint64_t _keyBufferReads = 0;  ///< the PS/2 controller's key-buffer reads at the last poll
     bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
@@ -331,6 +347,8 @@ private:
     std::map<std::string, HeldContext> _layerContexts;  ///< by device: the debug layer keys held up
     std::string _manualProfile;
     bool _soundHaptics = false;
+    bool _driveHaptics = true;
+    bool _driveHapticsAllowed = false;
     bool _soundHapticsDsp = false;
     bool _globalShortcuts = false;
     QWidget* _mainWindow = nullptr;
