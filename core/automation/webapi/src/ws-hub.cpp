@@ -7,6 +7,7 @@
 #include "debug-event-hub.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "debugger/ttd/ttdcursorcell.h"
+#include "debugger/ttd/ttdsessiontypes.h"
 #include "common/statenode_json.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/actions/activityfeed.h"
@@ -27,6 +28,17 @@
 
 namespace
 {
+
+/// {id, guid, name} of a branch in the published table (the trunk when the table is not there yet)
+Json::Value BranchRefJson(const ttd::TTDBranchesView* view, uint32_t id)
+{
+    Json::Value ref(Json::objectValue);
+    ref["id"] = static_cast<Json::UInt>(id);
+    const ttd::TTDBranchInfo* branch = view != nullptr ? view->Find(id) : nullptr;
+    ref["guid"] = branch != nullptr ? ttd::TTDGuidToString(branch->guid) : std::string();
+    ref["name"] = branch != nullptr ? branch->meta.name : std::string(id == ttd::kTTDTrunk ? "trunk" : "");
+    return ref;
+}
 std::string Compact(const Json::Value& value)
 {
     Json::StreamWriterBuilder builder;
@@ -675,7 +687,8 @@ const std::vector<std::string>& WsHub::TopicNames()
 const std::vector<std::string>& WsHub::StateTopicNames()
 {
     static const std::vector<std::string> names = [] {
-        std::vector<std::string> all = {"run.state", "ttd.position", "surfaces.context", kStreamDeck, "audio.mixer"};
+        std::vector<std::string> all = {"run.state",   "ttd.position", "ttd.branches", "surfaces.context",
+                                        kStreamDeck, "audio.mixer"};
         // Monitoring (monitoring::ProcessNames / InstanceNames: host.stats, emulator.stats, debug.breakpoints, ...)
         all.insert(all.end(), monitoring::ProcessNames().begin(), monitoring::ProcessNames().end());
         all.insert(all.end(), monitoring::InstanceNames().begin(), monitoring::InstanceNames().end());
@@ -735,6 +748,45 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["fps"] = ttd::TTDFrameRate(context);
         value["unit"] = actions::ScrubUnitOf(instanceId);  // the scrub unit (ttd.scrub_unit, D3.2)
         value["unit_count"] = static_cast<Json::Int64>(actions::ScrubCountOf(instanceId));
+        // The branch the cursor is on, only once the session has more than the trunk (TTD branches surfaces.md §6)
+        if (hooks != nullptr)
+        {
+            const ttd::TTDBranchesPublished published = hooks->PublishedBranches();
+            if (published.view != nullptr && published.view->branches.size() > 1)
+            {
+                value["branch"] = BranchRefJson(published.view.get(), published.viewed);
+                value["branch_count"] = static_cast<Json::UInt>(published.view->branches.size());
+            }
+        }
+        return value;
+    }
+    if (name == "ttd.branches")
+    {
+        // The published branch table (TTD branches surfaces.md §6): sent when a branch is created, switched, renamed
+        // or deleted (NotifyReadoutsChanged "ttd.branches"), never per frame; the list itself is GET .../ttd/branches
+        const ttd::ITimeTravelHooks* hooks = context->pTimeTravelHooks;
+        const ttd::TTDBranchesPublished published = hooks != nullptr ? hooks->PublishedBranches()
+                                                                     : ttd::TTDBranchesPublished{};
+        const ttd::TTDBranchesView* view = published.view.get();
+        value["available"] = view != nullptr;
+        value["count"] = static_cast<Json::UInt>(view != nullptr ? view->branches.size() : 0);
+        value["revision"] = static_cast<Json::UInt64>(view != nullptr ? view->revision : 0);
+        value["active"] = BranchRefJson(view, published.active);
+        value["viewed"] = BranchRefJson(view, published.viewed);
+        const ttd::TTDBranchEvent& event = published.event;
+        if (event.seq != 0)
+        {
+            Json::Value last(Json::objectValue);
+            last["seq"] = static_cast<Json::UInt64>(event.seq);
+            last["event"] = event.event;
+            last["branch"]["id"] = static_cast<Json::UInt>(event.branch);
+            last["branch"]["guid"] = ttd::TTDGuidToString(event.guid);
+            last["branch"]["name"] = event.name;
+            last["removed"] = static_cast<Json::UInt>(event.removed);
+            value["last"] = last;
+        }
+        else
+            value["last"] = Json::Value(Json::nullValue);
         return value;
     }
     if (name == "audio.mixer")
@@ -1412,7 +1464,7 @@ WsHub::ReadoutCadence WsHub::Cadence(const std::string& name)
         "debug.labels",      "debug.analyzers",  "surfaces.context", "media.recent",    "machine.previous",
         "machine.switches",  "input.connectors", "video.window",     "video.crt_params", "video.viewport",
         "video.temporal",    "actions.unavailable", "analysis.progress", "analysis.ready", "controllers.devices",
-        "debug.markup",
+        "debug.markup", "ttd.branches",
     };
     // With wall time: read on time while subscribed
     static const std::set<std::string> meters = {"host.stats", "host.clients", kStreamDeck};

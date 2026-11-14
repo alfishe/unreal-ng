@@ -617,21 +617,39 @@
             "and pin; active is the branch recording continues on, lineage the spans the history shown is made of. "
             "Without branches the list is empty and text says so. A published copy: the machine never parks for it.";
         list["parameters"].append(idParam());
-        for (const char* name : {"scope", "created_by", "tag", "name_prefix", "pinned", "limit", "offset"})
+        // The filter `branches` and `branch-prune` share (surfaces.md §5.1)
+        static const std::vector<std::pair<const char*, const char*>> filter = {
+            {"scope", "all (default) or lineage: only the active branch's lineage"},
+            {"created_by", "Only the branches whose creator starts with it (user, webapi, mcp, analyzer, ...)"},
+            {"run", "Only the branches of this run id (an analyzer's or a script's)"},
+            {"tag", "Only the branches with these tags (a, b: every one)"},
+            {"name_prefix", "Only the branches whose name starts with it"},
+            {"pinned", "true / false: only the pinned (unpinned) ones"},
+            {"min_length", "Only the branches at least this many frames long"},
+            {"max_length", "Only the branches at most this many frames long"},
+            {"created_after", "Only the branches created at or after this host time (microseconds)"},
+            {"created_before", "Only the branches created at or before this host time (microseconds)"}};
+        for (const auto& [name, text] : filter)
         {
             Json::Value p;
             p["name"] = name;
             p["in"] = "query";
-            p["schema"]["type"] = std::string(name) == "limit" || std::string(name) == "offset" ? "integer" : "string";
+            p["description"] = text;
+            const std::string n = name;
+            const bool number = n == "min_length" || n == "max_length" || n == "created_after" || n == "created_before";
+            p["schema"]["type"] = number ? "integer" : "string";
             list["parameters"].append(p);
         }
-        list["parameters"][1]["description"] = "all (default) or lineage: only the active branch's lineage";
-        list["parameters"][2]["description"] = "Only the branches whose creator starts with it (user, agent, analyzer)";
-        list["parameters"][3]["description"] = "Only the branches with this tag";
-        list["parameters"][4]["description"] = "Only the branches whose name starts with it";
-        list["parameters"][5]["description"] = "true / false: only the pinned (unpinned) ones";
-        list["parameters"][6]["description"] = "At most this many rows (default 1000); total counts every match";
-        list["parameters"][7]["description"] = "Rows to skip";
+        for (const auto& [name, text] : std::vector<std::pair<const char*, const char*>>{
+                 {"limit", "At most this many rows (default 1000); total counts every match"}, {"offset", "Rows to skip"}})
+        {
+            Json::Value p;
+            p["name"] = name;
+            p["in"] = "query";
+            p["description"] = text;
+            p["schema"]["type"] = "integer";
+            list["parameters"].append(p);
+        }
         list["responses"]["200"]["description"] = "The branches";
         list["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
             "#/components/schemas/TTDBranchesResponse";
@@ -639,15 +657,53 @@
         list["responses"]["404"]["description"] = "Emulator instance not found";
         list["responses"]["501"]["description"] = "TTD engine not available in this build";
 
+        Json::Value& create = paths["/api/v1/emulator/{id}/ttd/branches"]["post"];
+        create["summary"] = "Create a TTD branch at a moment, optionally run it headless with scripted input";
+        create["tags"].append("Time-Travel Debug");
+        create["description"] =
+            "A branch forks at the moment (frame / tinframe, default where the machine stands; branch: on that "
+            "branch's lineage), at the active branch's end too; whatever lay after the moment stays on its parent. "
+            "With run_frames the machine runs the new branch headless that many frames, fed by the input script, "
+            "and the branch records it (owner decision Q-6); read returns memory where the run ended; go_back puts "
+            "the machine back where it stood. A branch created this way stays even before it records anything. "
+            "Answers from the long-call pool: a run does not hold the HTTP workers.";
+        create["parameters"].append(idParam());
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchCreateRequest";
+        create["responses"]["200"]["description"] = "Created (or created false with needs_decision for media=ask)";
+        create["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchCreateResponse";
+        create["responses"]["400"]["description"] = "A bad option: run_frames, input, read, tinframe without frame";
+        create["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+        create["responses"]["409"]["description"] = "No recorded history, a moment outside it, or no room for a branch";
+
+        Json::Value& prune = paths["/api/v1/emulator/{id}/ttd/branches/prune"]["post"];
+        prune["summary"] = "Delete the TTD branches a filter picks (a dry run by default)";
+        prune["tags"].append("Time-Travel Debug");
+        prune["description"] =
+            "The filter of GET /ttd/branches (at least one criterion) picks branches; each goes with its "
+            "descendants. The active lineage and pinned branches (or a branch with one under it) stay and are named "
+            "in kept. dry_run (default true) lists what would go and changes nothing.";
+        prune["parameters"].append(idParam());
+        prune["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchPruneRequest";
+        prune["responses"]["200"]["description"] = "What went (or would go) and what stayed";
+        prune["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchPruneResponse";
+        prune["responses"]["400"]["description"] = "No filter, or a bad value";
+        prune["responses"]["404"]["description"] = "Emulator instance not found";
+
         Json::Value& one = paths["/api/v1/emulator/{id}/ttd/branches/{branch}"]["get"];
-        one["summary"] = "One TTD branch";
+        one["summary"] = "One TTD branch with its children, ancestors and files";
         one["tags"].append("Time-Travel Debug");
-        one["description"] = "The branch as the list shows it, with the active branch and the lineage.";
+        one["description"] =
+            "The branch as the list shows it, its children (fork, length), its ancestors from the trunk, and its "
+            "files in the recording's folder. A published copy: the machine never parks for it.";
         one["parameters"].append(idParam());
         one["parameters"].append(branchParam());
         one["responses"]["200"]["description"] = "The branch";
         one["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
-            "#/components/schemas/TTDBranchResponse";
+            "#/components/schemas/TTDBranchInfoResponse";
         one["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
 
         Json::Value& patch = paths["/api/v1/emulator/{id}/ttd/branches/{branch}"]["patch"];

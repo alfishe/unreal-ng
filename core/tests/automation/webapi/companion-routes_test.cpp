@@ -117,6 +117,8 @@ const std::set<std::string> kDebugRoutes = {
     "POST /tape/render",
     "POST /watches",
     "POST /ttd/bookmarks",
+    "POST /ttd/branches",
+    "POST /ttd/branches/prune",
     "POST /ttd/branches/{branch}/switch",
     "POST /ttd/dump",
     "POST /ttd/export-bookmarks",

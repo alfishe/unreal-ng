@@ -5495,6 +5495,38 @@ std::string FormatTtdBranchLine(const Json::Value& b)
     return line;
 }
 
+/// @p text without its trailing newlines, at most @p limit lines; the rest summarised (the structured result keeps them)
+std::string CapTextLines(const std::string& text, size_t limit)
+{
+    std::string out;
+    size_t lines = 0;
+    size_t pos = 0;
+    size_t more = 0;
+    while (pos < text.size())
+    {
+        size_t eol = text.find('\n', pos);
+        if (eol == std::string::npos)
+        {
+            eol = text.size();
+        }
+        if (lines < limit)
+        {
+            out += (lines ? "\n" : "") + text.substr(pos, eol - pos);
+        }
+        else
+        {
+            ++more;
+        }
+        ++lines;
+        pos = eol + 1;
+    }
+    if (more > 0)
+    {
+        out += "\n... " + std::to_string(more) + " more line(s) in the structured result";
+    }
+    return out;
+}
+
 /// The branch list as text: a heading naming the active branch, at most 20 rows (the rest summarised), the lineage
 std::string FormatTtdBranches(const Json::Value& b, const std::string& id)
 {
@@ -5701,8 +5733,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "step_forward_frame", "step_back_instruction", "step_forward_instruction", "reverse_step",
                                "reverse_step_over", "reverse_continue", "find_last", "port_events", "probe_frames", "resume", "dump", "load", "file_info",
                                "bookmark_add", "bookmark_list", "bookmark_note", "bookmark_export",
-                               "bookmark_delete", "seek_bookmark", "branch_list", "branch_switch", "branch_update",
-                               "branch_delete", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
+                               "bookmark_delete", "seek_bookmark", "branch_list", "branch_info", "branch_create",
+                               "branch_switch", "branch_update", "branch_delete", "branch_prune", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff"})
@@ -5757,10 +5789,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "disassembly + memory read per bookmark. "
         "Branches (a resume in the past keeps the old future as a branch named 'resume N'; the trunk is id 0; "
         "'branch' names one by id, GUID or name): 'branch_list' (the tree, '*' the active one, and the active "
-        "lineage; scope lineage, created_by, tag, name_prefix, pinned filter; limit / offset page), 'branch_switch' "
+        "lineage; scope lineage, created_by, tag, name_prefix, pinned, run, min_length / max_length, created_after / "
+        "created_before filter; limit / offset page), 'branch_info' (one branch: its fork, creator, note, children, "
+        "ancestors from the trunk, files), 'branch_create' (an explicit branch at frame / tinframe - default the "
+        "current moment - or on 'branch', default its end; it stays even while empty; with run_frames it runs that many "
+        "frames there pressing the keys of 'input', reads the bytes of 'read' and with go_back=true returns where it "
+        "was: one call per what-if probe instead of seek + resume + key presses + run + memory reads), 'branch_switch' "
         "(continue on a branch at frame / tinframe on it, default its end; not while recording), 'branch_update' "
         "(rename, note, tags / add_tags / remove_tags, pinned), 'branch_delete' (the branch and its descendants; not "
-        "the trunk or the active lineage; force=true deletes pinned ones). 'dump' saves every branch; lineage=true "
+        "the trunk or the active lineage; force=true deletes pinned ones), 'branch_prune' (delete the branches a filter "
+        "selects - run, created_by, tag, name_prefix, min_length / max_length, created_after / created_before - "
+        "keeping the active lineage and pinned ones; dry_run defaults to true: it lists what would go). 'dump' saves every branch; lineage=true "
         "saves only the active lineage as one linear history. "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
         "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
@@ -5849,7 +5888,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["history_bytes"]["description"] =
         "start / history_limit: keep the history's checkpoint data under this many bytes; 0 = no limit";
     schema["properties"]["reason"]["type"] = "string";
-    schema["properties"]["reason"]["description"] = "invalidate: free-text reason echoed back and logged";
+    schema["properties"]["reason"]["description"] =
+        "invalidate: free-text reason echoed back and logged; branch_create: why the branch was made (kept as "
+        "'create: <reason>')";
     schema["properties"]["label"]["type"] = "string";
     schema["properties"]["label"]["description"] =
         "Bookmark label for bookmark_add / bookmark_note / bookmark_delete / seek_bookmark (non-empty, at most 63 "
@@ -5857,13 +5898,14 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["note"]["type"] = "string";
     schema["properties"]["note"]["description"] =
         "bookmark_add / bookmark_note: what the agent learned at this moment (at most 4096 characters); bookmark_note "
-        "replaces it, or appends it as a new line with append=true. branch_update: the branch's note (replaces it)";
+        "replaces it, or appends it as a new line with append=true. branch_update: the branch's note (replaces it); "
+        "branch_create: the new branch's note";
     schema["properties"]["append"]["type"] = "boolean";
     schema["properties"]["append"]["description"] = "bookmark_note: add 'note' as a new line instead of replacing it";
     schema["properties"]["tags"]["type"] = "array";
     schema["properties"]["tags"]["items"]["type"] = "string";
     schema["properties"]["tags"]["description"] =
-        "bookmark_add / bookmark_note / branch_update: tags (at most 8, each 1..31 of A-Z a-z 0-9 _ . -); "
+        "bookmark_add / bookmark_note / branch_update / branch_create: tags (at most 8, each 1..31 of A-Z a-z 0-9 _ . -); "
         "bookmark_note and branch_update replace them";
     schema["properties"]["add_tags"]["type"] = "array";
     schema["properties"]["add_tags"]["items"]["type"] = "string";
@@ -5876,7 +5918,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "bookmark_note: the bookmark's new label; branch_update: the branch's new name";
     schema["properties"]["branch"]["type"] = "string";
     schema["properties"]["branch"]["description"] =
-        "branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or its name";
+        "branch_info / branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or "
+        "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end)";
     schema["properties"]["scope"]["type"] = "string";
     schema["properties"]["scope"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["scope"]["enum"].append("all");
@@ -5885,15 +5928,64 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "branch_list: all branches (default) or only the active branch's lineage";
     schema["properties"]["created_by"]["type"] = "string";
     schema["properties"]["created_by"]["description"] =
-        "branch_list: only the branches whose creator starts with it (user, agent, analyzer)";
+        "branch_list / branch_prune: only the branches whose creator starts with it (user, agent, analyzer, mcp); "
+        "branch_create: who creates it (default mcp)";
     schema["properties"]["name_prefix"]["type"] = "string";
     schema["properties"]["name_prefix"]["description"] = "branch_list: only the branches whose name starts with it";
     schema["properties"]["pinned"]["type"] = "boolean";
     schema["properties"]["pinned"]["description"] =
-        "branch_list: only the pinned (true) or unpinned (false) branches; branch_update: pin or unpin (a pinned "
+        "branch_list / branch_prune: only the pinned (true) or unpinned (false) branches; branch_update / "
+        "branch_create: pin or unpin (a pinned "
         "branch survives a delete without force)";
     schema["properties"]["force"]["type"] = "boolean";
     schema["properties"]["force"]["description"] = "branch_delete: pinned branches go too";
+    schema["properties"]["name"]["type"] = "string";
+    schema["properties"]["name"]["description"] = "branch_create: the new branch's name (default 'branch N')";
+    schema["properties"]["run"]["type"] = "string";
+    schema["properties"]["run"]["description"] =
+        "branch_create: a run id grouping the branches of one analysis (1..63 of A-Z a-z 0-9 _ . -); branch_list / "
+        "branch_prune: only the branches of that run";
+    schema["properties"]["run_frames"]["type"] = "integer";
+    schema["properties"]["run_frames"]["minimum"] = 0;
+    schema["properties"]["run_frames"]["maximum"] = 10000;
+    schema["properties"]["run_frames"]["description"] =
+        "branch_create: frames to run on the new branch (recorded into it; default 0, at most 10000)";
+    schema["properties"]["input"]["type"] = "array";
+    schema["properties"]["input"]["items"]["type"] = "string";
+    schema["properties"]["input"]["description"] =
+        "branch_create with run_frames: the keys to press, each 'frame:key[+key][:hold|:down|:up]' - frame counted from "
+        "the branch start (0 = the first run frame), key names as the keyboard action ('a', 'enter', 'space', "
+        "'caps', 'sym'), hold in frames (default 2, 1..1000), down / up hold or release until told";
+    schema["properties"]["read"]["type"] = "array";
+    schema["properties"]["read"]["items"]["type"] = "string";
+    schema["properties"]["read"]["description"] =
+        "branch_create: Z80 memory to read after the run, each 'addr[:len]' (len 1..256, default 1; '0x..' / '#..' "
+        "hex)";
+    schema["properties"]["go_back"]["type"] = "boolean";
+    schema["properties"]["go_back"]["description"] =
+        "branch_create: return to the branch and moment the call started from afterwards (default false: stay at the "
+        "new branch's end)";
+    schema["properties"]["media"]["type"] = "string";
+    schema["properties"]["media"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* media : {"ask", "empty", "keep"})
+        schema["properties"]["media"]["enum"].append(media);
+    schema["properties"]["media"]["description"] =
+        "branch_create: when the inserted media changed after the fork - 'ask' (default: the answer names the choice), "
+        "'empty' (the media of the fork moment) or 'keep' (the media inserted now)";
+    schema["properties"]["dry_run"]["type"] = "boolean";
+    schema["properties"]["dry_run"]["description"] =
+        "branch_prune: list what would be deleted without deleting (default true)";
+    for (const char* key : {"min_length", "max_length", "created_after", "created_before"})
+    {
+        schema["properties"][key]["type"] = "integer";
+        schema["properties"][key]["minimum"] = 0;
+    }
+    schema["properties"]["min_length"]["description"] = "branch_list / branch_prune: only branches at least this many frames long";
+    schema["properties"]["max_length"]["description"] = "branch_list / branch_prune: only branches at most this many frames long";
+    schema["properties"]["created_after"]["description"] =
+        "branch_list / branch_prune: only branches created at or after this time (Unix seconds)";
+    schema["properties"]["created_before"]["description"] =
+        "branch_list / branch_prune: only branches created before this time (Unix seconds)";
     schema["properties"]["lineage"]["type"] = "boolean";
     schema["properties"]["lineage"]["description"] =
         "dump: only the active branch's lineage, as one linear history (default false: every branch)";
@@ -5904,7 +5996,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "at most 8, length 1..16)";
     schema["properties"]["tag"]["type"] = "string";
     schema["properties"]["tag"]["description"] =
-        "bookmark_list / bookmark_export: only the bookmarks with this tag; branch_list: only the branches with it";
+        "bookmark_list / bookmark_export: only the bookmarks with this tag; branch_list / branch_prune: only the "
+        "branches with it";
     schema["properties"]["title"]["type"] = "string";
     schema["properties"]["title"]["description"] = "bookmark_export: the heading (the game or the task)";
     schema["properties"]["format"]["type"] = "string";
@@ -5921,10 +6014,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Frame number: target for seek (required), optional start point for resume (default: the current point), optional position for bookmark_add "
         "(default: current position), frame to test for coverage_probe, the moment for cause_chain (default: the "
         "current position), the frame for explain_frame (default: the current one), the moment for backtrace (default: "
-        "the current position), the moment on the branch for branch_switch (default: its end)";
+        "the current position), the moment on the branch for branch_switch (default: its end), the fork moment for "
+        "branch_create (default: the current one)";
     schema["properties"]["tinframe"]["type"] = "integer";
     schema["properties"]["tinframe"]["description"] =
-        "T-states within 'frame' for seek / resume / bookmark_add / branch_switch (default 0). A seek without it lands at the frame's end "
+        "T-states within 'frame' for seek / resume / bookmark_add / branch_switch / branch_create (default 0). A seek without it lands at the frame's end "
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
@@ -6185,7 +6279,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "branch_switch" || action == "branch_update" || action == "branch_delete")
+            if (action == "branch_info" || action == "branch_switch" || action == "branch_update" ||
+                action == "branch_delete")
             {
                 const Json::Value& branch = args["branch"];
                 if (!(branch.isIntegral() && !branch.isBool()) && !(branch.isString() && !branch.asString().empty()))
@@ -7011,7 +7106,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "branch_list")
                 {
                     std::string query;
-                    for (const char* key : {"scope", "created_by", "tag", "name_prefix", "pinned", "limit", "offset"})
+                    for (const char* key : {"scope", "created_by", "tag", "name_prefix", "pinned", "run", "min_length",
+                                            "max_length", "created_after", "created_before", "limit", "offset"})
                     {
                         if (args.isMember(key) && !args[key].isNull())
                         {
@@ -7022,6 +7118,56 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     }
                     CallAndSummarize("GET", Endpoint(id, "/ttd/branches" + query), nullptr, caller,
                                      [id](const Json::Value& b) { return FormatTtdBranches(b, id); }, done);
+                }
+                else if (action == "branch_info")
+                {
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString())),
+                                     nullptr, caller, [](const Json::Value& b) {
+                                         return CapTextLines(b["text"].asString(), 20);
+                                     }, done);
+                }
+                else if (action == "branch_create")
+                {
+                    Json::Value body(Json::objectValue);
+                    for (const char* key : {"branch", "frame", "tinframe", "name", "reason", "tags", "note", "pinned",
+                                            "run", "media", "run_frames", "input", "read", "go_back"})
+                    {
+                        if (args.isMember(key) && !args[key].isNull())
+                        {
+                            body[key] = args[key];
+                        }
+                    }
+                    if (args.isMember("created_by") && args["created_by"].isString() && !args["created_by"].asString().empty())
+                    {
+                        body["created_by"] = args["created_by"];
+                    }
+                    else
+                    {
+                        body["created_by"] = "mcp";
+                    }
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/branches"), &body, caller, [id](const Json::Value& b) {
+                        if (b["needs_decision"].asBool())
+                        {
+                            return "No branch created on " + id + ": " + b["text"].asString() +
+                                   " Call again with media 'empty' or 'keep'.";
+                        }
+                        return CapTextLines(b["text"].asString(), 20) + "\n(on " + id + ", state " +
+                               b["state"].asString() + ")";
+                    }, done);
+                }
+                else if (action == "branch_prune")
+                {
+                    Json::Value body(Json::objectValue);
+                    for (const char* key : {"run", "created_by", "tag", "name_prefix", "pinned", "min_length",
+                                            "max_length", "created_after", "created_before", "dry_run"})
+                    {
+                        if (args.isMember(key) && !args[key].isNull())
+                        {
+                            body[key] = args[key];
+                        }
+                    }
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/branches/prune"), &body, caller,
+                                     [](const Json::Value& b) { return CapTextLines(b["text"].asString(), 20); }, done);
                 }
                 else if (action == "branch_switch")
                 {

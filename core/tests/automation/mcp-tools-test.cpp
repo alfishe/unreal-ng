@@ -3579,7 +3579,7 @@ TEST_F(McpTools_Test, TimeTravel_BranchDelete_ForceInTheQueryAndNamesWhatWent)
 
 TEST_F(McpTools_Test, TimeTravel_BranchActions_WithoutBranchRejectBeforeAnyCall)
 {
-    for (const char* action : {"branch_switch", "branch_update", "branch_delete"})
+    for (const char* action : {"branch_info", "branch_switch", "branch_update", "branch_delete"})
     {
         Json::Value args;
         args["action"] = action;
@@ -3588,6 +3588,91 @@ TEST_F(McpTools_Test, TimeTravel_BranchActions_WithoutBranchRejectBeforeAnyCall)
         EXPECT_NE(result.text.find("requires 'branch'"), std::string::npos) << result.text;
     }
     EXPECT_TRUE(_caller->calls.empty());
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchCreate_PostsTheProbeAsMcpAndCapsTheText)
+{
+    Json::Value reply;
+    reply["created"] = true;
+    reply["branch"] = BranchRow(2, "probe", false);
+    reply["state"] = "detached";
+    std::string text = "Created branch 'probe' (2) at frame 110\nRan 5 frames\n";
+    for (int i = 0; i < 30; ++i)
+        text += "Read #" + std::to_string(6000 + i) + ": 00\n";
+    reply["text"] = text;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/branches"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "branch_create";
+    args["name"] = "probe";
+    args["frame"] = 110;
+    args["run"] = "r1";
+    args["run_frames"] = 5;
+    args["input"].append("0:a:3");
+    args["read"].append("0x6000:2");
+    args["go_back"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Created branch 'probe'"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("12 more line(s) in the structured result"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("(on emu-1, state detached)"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/branches");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["created_by"].asString(), "mcp");
+    EXPECT_EQ(call->body["name"].asString(), "probe");
+    EXPECT_EQ(call->body["run_frames"].asUInt(), 5u);
+    EXPECT_EQ(call->body["input"][0].asString(), "0:a:3");
+    EXPECT_EQ(call->body["read"][0].asString(), "0x6000:2");
+    EXPECT_TRUE(call->body["go_back"].asBool());
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchCreate_AMediaDecisionIsNamed)
+{
+    Json::Value reply;
+    reply["created"] = false;
+    reply["needs_decision"] = true;
+    reply["text"] = "The disk in A: changed after that moment.";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/branches"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "branch_create";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("No branch created on emu-1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("media 'empty' or 'keep'"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_BranchInfoAndPrune_ReachTheirRoutes)
+{
+    Json::Value info;
+    info["branch"] = BranchRow(1, "probe", false);
+    info["text"] = "Branch 'probe' (1)\nChildren: none\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/branches/probe"] = {200, info};
+    Json::Value args;
+    args["action"] = "branch_info";
+    args["branch"] = "probe";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_EQ(result.text, "Branch 'probe' (1)\nChildren: none");
+
+    Json::Value pruned;
+    pruned["dry_run"] = true;
+    pruned["text"] = "Would delete 'probe'\n1 would go, 5 frames\n";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/branches/prune"] = {200, pruned};
+    Json::Value prune;
+    prune["action"] = "branch_prune";
+    prune["run"] = "r1";
+    prune["min_length"] = 3;
+    result = RunTool(*_registry, "time_travel", prune, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Would delete 'probe'"), std::string::npos) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/branches/prune");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["run"].asString(), "r1");
+    EXPECT_EQ(call->body["min_length"].asUInt(), 3u);
+    EXPECT_FALSE(call->body.isMember("dry_run")) << "the default (true) is the core's";
 }
 
 TEST_F(McpTools_Test, TimeTravel_DumpLineage_PostsTheFlag)

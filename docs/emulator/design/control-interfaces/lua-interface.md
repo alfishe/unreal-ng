@@ -1325,6 +1325,8 @@ Bookmarks are advisory and never stop a seek; markers do.
 
 ```lua
 local b = ttd_branches()                    -- or ttd_branches{scope = "lineage", tag = "boss", pinned = true, limit = 20, offset = 0}
+-- more filters: run = "r1", created_by = "lua", name_prefix = "p", min_length = 5, max_length = 100,
+--   created_after = <unix s>, created_before = <unix s>
 -- --> { branches = { {id, guid, name, parent, fork = {frame, tinframe} | nil, ["end"] = {...}, length, created_by,
 --       reason, tags, note, pinned, children, active, on_lineage}, ... }, total, count, active, viewed,
 --       lineage = { {branch, from = {frame, tinframe}}, ... }, text }   (no branches: an empty list)
@@ -1335,6 +1337,15 @@ ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags 
 -- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
 ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
 -- --> { deleted = true, removed = {ids}, removed_names = {...}, text }  or  { deleted = false, error = "..." }
+ttd_branch_info("probe")                    -- --> {branch, children, ancestors, files, file_bytes, folder, active, text}
+-- An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by "lua"):
+local p = ttd_branch_create{name = "probe", frame = 4823, run = "r1", run_frames = 50,
+                            input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}
+-- input: "frame:key[+key][:hold|:down|:up]" from the branch start (hold default 2 frames, 1..1000); read: "addr[:len]"
+-- --> {created, branch, parent, at, ran_frames, aborted, end, reads = {{address, length, bytes, hex}}, returned_to,
+--      media, state, text}  or  {created = false, error = "..."}  (media = "ask": needs_decision with the media)
+ttd_branch_prune{run = "r1"}                -- a dry run: {dry_run, would_delete, kept, frames, file_bytes, text}
+ttd_branch_prune{run = "r1", dry_run = false}   -- deletes; the active lineage and pinned ones stay (kept, with why)
 ```
 
 **Sessions on disk:**

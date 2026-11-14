@@ -2,7 +2,7 @@
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
 timeline, the cause chain, find event, explain frame, diff of two moments, the replay check and the seek check,
-bookmarks with notes and export, branches: list, rename and pin, switch, delete"""
+bookmarks with notes and export, branches: list, rename and pin, switch, delete, create with a run, info, prune"""
 
 import re
 import sys
@@ -398,6 +398,34 @@ def test_branches_list_update_switch_delete(s):
     r = s.call('time_travel', {'action': 'branch_switch'}, ok=False)
     expect(r.is_error and "'branch'" in r.text, 'the branch is required', r.text)
 
+
+
+def test_branch_create_info_prune(s):
+    # An explicit what-if probe on the history of test_record_stop_seek: fork, run with a key, read, come back
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'branch_create', 'name': 'mcp-probe', 'frame': first + 4, 'run': 'mcp-run',
+                               'run_frames': 3, 'input': ['0:a:2'], 'read': ['0x5C78:2'], 'go_back': True})
+    c = r.structured
+    expect(not r.is_error and c.get('created') and c.get('ran_frames') == 3, 'created and ran', r.text)
+    expect(c.get('branch', {}).get('created_by') == 'mcp' and c.get('returned_to') is not None,
+           'created by mcp, back where it was', c)
+    expect(len(c.get('reads', [])) == 1 and 'Read' in r.text, 'the read in the answer', r.text)
+    r = s.call('time_travel', {'action': 'branch_info', 'branch': 'mcp-probe'})
+    expect(not r.is_error and r.structured.get('branch', {}).get('name') == 'mcp-probe' and
+           r.structured.get('ancestors'), 'the info names its ancestors', r.structured)
+    r = s.call('time_travel', {'action': 'branch_list', 'run': 'mcp-run'})
+    expect(not r.is_error and [x.get('name') for x in r.structured.get('branches', [])] == ['mcp-probe'],
+           'the run filters', r.structured)
+    r = s.call('time_travel', {'action': 'branch_prune', 'run': 'mcp-run'})
+    expect(not r.is_error and r.structured.get('dry_run') and "Would delete 'mcp-probe'" in r.text,
+           'a dry run by default', r.text)
+    r = s.call('time_travel', {'action': 'branch_prune', 'run': 'mcp-run', 'dry_run': False})
+    expect(not r.is_error and "Deleted 'mcp-probe'" in r.text, 'the run pruned', r.text)
+    r = s.call('time_travel', {'action': 'branch_prune'}, ok=False)
+    expect(r.is_error and 'filter' in r.text.lower(), 'prune needs a filter', r.text)
+    r = s.call('time_travel', {'action': 'branch_create', 'run_frames': 3, 'input': ['x:nosuch']}, ok=False)
+    expect(r.is_error, 'a bad input refused', r.text)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))
