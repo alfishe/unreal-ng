@@ -312,6 +312,29 @@ TEST_F(InputRouter_Test, MenuKeys_AutoTargetsHoldTheCursorKeysWhileTheProgramRea
     EXPECT_TRUE(_last.keys.empty());
 }
 
+TEST_F(InputRouter_Test, MenuKeys_ReplaceAKeyboardJoystickOfThePlayer)
+{
+    // A game profile kept a Sinclair joystick on keyjoy.1; after a reset the 128K menu reads the keyboard: the
+    // digits held with the cursor keys would be two keys at once, so the menu keys alone are held
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad")});
+    _router.SetPlayerConnector("fake:1", "keyjoy.1");
+    Set("fake:1", "dpad.down", 1);
+    auto masks = Sample();
+    ASSERT_TRUE(masks.count("keyjoy.1") != 0);
+    EXPECT_EQ(masks["keyjoy.1"], kDown) << "menu keys off: the joystick";
+
+    _router.SetMenuKeys("emu-1", true);
+    masks = Sample();
+    EXPECT_EQ(masks.count("keyjoy.1") != 0 ? masks["keyjoy.1"] : 0, 0) << "menu keys on: no digit of the keyboard joystick";
+    std::vector<uint8_t> keys;
+    ASSERT_TRUE(ZxKeysFromName("down", keys));
+    std::sort(keys.begin(), keys.end());
+    std::vector<uint8_t> held = _last.keys;
+    std::sort(held.begin(), held.end());
+    EXPECT_EQ(held, keys);
+}
+
 TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
 {
     // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,

@@ -797,7 +797,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
     // Handheld mode: the shown keyboard takes the pads
     if (handheld::IsHandheldMode())
+    {
         connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, this, &MainWindow::updateHandheldGrab);
+        // No mouse pointer at all: Steam draws its own for the trackpads, the emulator's would show over the picture
+        QApplication::setOverrideCursor(Qt::BlankCursor);
+    }
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);

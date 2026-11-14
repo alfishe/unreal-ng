@@ -285,7 +285,15 @@ card; the Qt host says it once and fits nothing (a card restarts the machine).
   editor and BASIC answer to the D-pad and the stick, and the auto joystick still gets the same input. A fixed
   connector's binding (`kempston:fire`) holds no menu key. While the menu keys are on, the watch stays open, so they
   switch off once a game stops scanning the keyboard: on at once, off only after a whole window (50 frames) without the
-  scan, and until then no joystick is plugged. Test: `InputRouter_Test.MenuKeys_*`.
+  scan, and until then no joystick is plugged. A program that reads the PC keyboard from the machine's PS/2 controller
+  and no half-row (Wild Commander on TS-Conf pops the ZX-Evo AVR's PS/2 log through `#BFF7`) counts as a key scan too,
+  when no device was decided: `IPs2KeySink::KeyBufferReads` moved since the last poll. With the menu keys on, a
+  keyboard joystick of the player (`keyjoy.N`: a game profile's Sinclair joystick, still plugged in the 128K menu after
+  a reset) gets no mask: its digits held with the cursor keys would be two keys at once and the ROM's scan takes
+  neither. The held keys reach the PS/2 controller as PC keys (Caps Shift with 5-8 as the arrows) wherever the
+  keyboard's route includes it, as the host keyboard's do (`ControllerManager::ApplyHostKeys`), and the on-screen
+  keyboard posts its keys through `KeyboardManager::postVirtualKey`, the ZX keys and the PC keys the controller takes
+  for them. Test: `InputRouter_Test.MenuKeys_*`.
 - **`DecideFromAccess`** checks the roles in this order:
   1. NR #B2 every frame: an MD 6-button pad on `next.left`, or on `next.right` when `#37` is read every frame too;
   2. Kempston 2, Kempston, Fuller, Kempston mouse, AMX mouse;

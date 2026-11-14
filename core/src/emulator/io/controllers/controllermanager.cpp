@@ -1138,9 +1138,12 @@ bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
         rows = _hostKeys;
         pcOnly = _pcOnlyKeys;
     }
-    // A machine whose software reads a PS/2 controller instead of the matrix gets the same keys as PC keys
-    IPs2KeySink* sink = _context && _context->pKeyboard ? _context->pKeyboard->GetPs2Sink() : nullptr;
-    if (!sink || !sink->WantsHostOverlayKeys())
+    // The PS/2 controller gets the same keys as PC keys wherever the keyboard's route reaches it, as the host keyboard
+    // does: software that reads the controller and never the matrix (Sprinter DSS, Wild Commander on TS-Conf) sees the
+    // pad's keys and the menu keys too
+    Keyboard* keyboard = _context ? _context->pKeyboard : nullptr;
+    IPs2KeySink* sink = keyboard ? keyboard->GetPs2Sink() : nullptr;
+    if (!sink || !(sink->WantsHostOverlayKeys() || keyboard->RoutesToPs2()))
     {
         _ps2HostKeys.clear();
         return true;

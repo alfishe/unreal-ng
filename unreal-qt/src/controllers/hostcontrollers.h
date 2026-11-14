@@ -309,6 +309,7 @@ private:
     /// The watch's frame where the key scan last stopped while the menu keys were on (-1: it has not): they go off
     /// only after a whole window without it (a menu's scan skips a moment after a reset)
     int64_t _keyScanLostAt = -1;
+    uint64_t _keyBufferReads = 0;  ///< the PS/2 controller's key-buffer reads at the last poll
     bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;

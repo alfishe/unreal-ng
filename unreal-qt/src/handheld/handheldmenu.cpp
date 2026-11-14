@@ -741,12 +741,22 @@ void HandheldMenu::displayRows(std::vector<Row>& list) const
     const StateNode viewport = readout("video.viewport");
     if (Flag(viewport, "overscan_available"))
     {
-        // Overscan (the Pentagon's larger frame) and its crop; the window view, not this, hides the whole border
+        // Overscan (the Pentagon's larger frame) and its crop; Picture below hides the whole border
         list.push_back({QStringLiteral("display"), tr("Overscan"), OnOff(Flag(viewport, "overscan")), false, {},
                         press("video.overscan_toggle")});
         if (Flag(viewport, "overscan"))
             list.push_back({QStringLiteral("display"), tr("Border"), ViewportTitle(Text(viewport, "viewport")), true,
                             [self] { self->openBorderPicker(); }});
+    }
+    // The whole frame or the screen alone: the border goes (any model, overscan or not)
+    {
+        const bool full = settings->view == "full";
+        const QString shown = full ? tr("Full") : settings->view == "screen" ? tr("Borderless") : tr("Content");
+        list.push_back({QStringLiteral("display"), tr("Picture"), shown, false, {}, [self, full](int) {
+                            StateNode params = StateNode::Object();
+                            params["view"] = StateNode(std::string(full ? "screen" : "full"));
+                            self->submit("view.picture", std::move(params));
+                        }});
     }
     list.push_back({QStringLiteral("hud"), tr("HUD"), OnOff(settings->hud), false, {}, press("hud.toggle")});
     if (settings->gpuAvailable)

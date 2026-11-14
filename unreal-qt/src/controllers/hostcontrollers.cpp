@@ -1676,6 +1676,16 @@ void HostControllers::checkAuto()
         return;
     }
     const AutoDecision decision = DecideAuto(evidence);
+    // A program that takes the PC keys from the machine's PS/2 controller (Wild Commander pops the ZX-Evo AVR's log
+    // through #BFF7) reads the keyboard too, though no half-row: read since the last poll, with no joystick decided
+    bool keyBuffer = false;
+    if (IPs2KeySink* sink = context->pKeyboard != nullptr ? context->pKeyboard->GetPs2Sink() : nullptr)
+    {
+        const uint64_t reads = sink->KeyBufferReads();
+        keyBuffer = reads != _keyBufferReads && _keyBufferReads != 0 && !decision.decisive;
+        _keyBufferReads = reads;
+    }
+    const bool keyScan = decision.keyboard || keyBuffer;
     // The pad drives a menu with the cursor keys while the program reads the whole keyboard (the 128K menu, BASIC, a
     // text prompt), over the rolling window, whatever the auto plug decided before. On at once; off only after a whole
     // window without the key scan, and until then no joystick is plugged (a reset's first moments look like one)
@@ -1683,7 +1693,7 @@ void HostControllers::checkAuto()
     {
         const bool menuKeys = router.MenuKeys(instance);
         const auto frame = static_cast<int64_t>(evidence.framesObserved);
-        if (decision.keyboard)
+        if (keyScan)
         {
             _keyScanLostAt = -1;
             if (!menuKeys)

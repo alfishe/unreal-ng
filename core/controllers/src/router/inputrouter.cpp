@@ -1537,9 +1537,13 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                         const uint16_t bits = Output(compiled, state, phase, frame);
                         const std::string& connector =
                             target.retro.connector == "auto" ? player : target.retro.connector;
-                        if (!connector.empty())
+                        // Menu keys replace a keyboard joystick (keyjoy.N) of the player: its digits held with the
+                        // cursor keys are two keys at once, and the ROM's scan takes neither (a game profile's Sinclair
+                        // joystick in the 128K menu after a reset)
+                        const bool menuKeys = instance.menuKeys && target.retro.connector == "auto";
+                        if (!connector.empty() && !(menuKeys && connector.rfind("keyjoy.", 0) == 0))
                             masks[connector] |= bits;
-                        if (instance.menuKeys && target.retro.connector == "auto")
+                        if (menuKeys)
                             hold(MenuKeysOf(bits));
                         break;
                     }
