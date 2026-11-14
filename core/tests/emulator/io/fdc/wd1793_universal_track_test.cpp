@@ -882,6 +882,42 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7TakesTwoByteCells)
     EXPECT_NEAR(span, 6248.0 * cell, 3.0 * cell);
 }
 
+/// An F7 before any F5 starts its CRC at the index, not where the previous WRITE TRACK left it: an MFM format ends
+/// with its last F5 near byte 6000, then an FM format of a 3125-byte track sends F7 first. The old start lay past
+/// the new stream (an out-of-bounds read of up to 64K), the CRC now covers the bytes written so far
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7BeforeF5_StartsCrcAtIndex)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    // MFM format whose last F5 sits at byte 6000
+    std::vector<uint8_t> mfm(6000, 0x4E);
+    mfm.insert(mfm.end(), {0xF5, 0xF5, 0xF5, 0xFE, 0x00, 0x00, 0x01, 0x01, 0xF7});
+    padTrack(mfm);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, mfm, 1000);
+    waitIdle(fdc);
+    ASSERT_GT(fdc._crcStartPosition, 3125u);
+
+    // FM (single density) format: a few gap bytes, then F7 without any mark before it
+    fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    std::vector<uint8_t> fm = {0xFF, 0xFF, 0xFF, 0xF7};
+    fm.resize(3300, 0xFF);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, fm, fdc._time + 100);
+    waitIdle(fdc);
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    ASSERT_EQ(track->rawSize(), 3125u);
+
+    const uint16_t crc = CRCHelper::crcWD1793FM(const_cast<uint8_t*>(track->rawData()), 3);
+    EXPECT_EQ(track->rawData()[3], static_cast<uint8_t>(crc & 0xFF));
+    EXPECT_EQ(track->rawData()[4], static_cast<uint8_t>(crc >> 8));
+}
+
 /// endregion </WRITE TRACK control-byte language>
 
 /// region <WRITE TRACK past the image geometry (ZF6 mastering, FDC-03)>

@@ -2372,6 +2372,9 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             _rawDataBuffer = track->rawData();
                             _rawDataBufferIndex = 0;
                             _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                            // An F7 before the first F5 / FM mark covers the stream from the index: never the
+                            // previous command's start, which may lie past the end of this (shorter) track
+                            _crcStartPosition = 0;
                             _writeTrackTarget = track;  // Store track for reindexing on completion
                         }, 0, tag);
         case FifoKind::NextReadSector:
@@ -3265,6 +3268,8 @@ void WD1793::processWriteTrack()
                 // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
                 // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
                 // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
+                // A start past the write position (a restored or foreign state) would read beyond the stream
+                if (_crcStartPosition > _rawDataBufferIndex) _crcStartPosition = _rawDataBufferIndex;
                 size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
                 // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
                 uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
