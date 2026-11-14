@@ -205,6 +205,10 @@ public:
 	/// A create-time config override (EmulatorManager::Create*) that sets
 	/// the power-on RAM mode over what the model's unreal.ini says
 	static std::function<void(CONFIG&)> RamPowerOnOverride(RamPowerOn mode);
+	/// Battery-backed settings that outlive the process: a config with no [EVO] NvramFile keeps its ZX-Evo NVRAM in
+	/// @p folder as "<config folder>.nvram" (the desktop app sets it to ~/.unreal-ng/nvram). Empty (the default:
+	/// tests, headless instances) = such a config keeps its NVRAM for the session only
+	static void SetDefaultNvramFolder(const std::string& folder);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

@@ -151,14 +151,44 @@ void PortDecoder_ATM3::reset()
     {
         _nvramLoaded = true;
         const char* nvramPath = _context->config.atm.evo_nvram_path;
-        if (nvramPath[0] != '\0' && !_evoAvr.LoadNvram(nvramPath))
+        const bool loaded = nvramPath[0] != '\0' && _evoAvr.LoadNvram(nvramPath);
+        if (nvramPath[0] != '\0' && !loaded)
             MLOGINFO("PortDecoder_ATM3: no ZX-Evo NVRAM at '%s' yet, starting blank", nvramPath);
+        // No saved settings: the ERS settings that let a disk in drive A boot
+        if (!loaded && _context->config.atm.ers_floppy_boot)
+            ApplyErsFloppyBootNvram();
     }
 
     // The card and its session writes survive a Z80 reset (the media manager
     // inserted the configured card before the first one). The controller
     // itself resets (spihub.v: /CS high)
     _zc.Reset();
+}
+
+void PortDecoder_ATM3::ApplyErsFloppyBootNvram()
+{
+    // EVO Reset Service settings, CMOS #E8-#EF (pentevo rom/global_vars.a80 CMOS, counting down from #F0). On a
+    // CRC mismatch the ERS writes CMOS_DEFAULT (rom/page5/source/addons.a80: ED..E8 = 04 82 00 00 00 00), where
+    // #EB = 0 puts both the TR-DOS drive (bits 3..2) and its virtual drive (bits 1..0, the FPGA traps that drive
+    // to the ERS's RAM disk) on A: "TR-DOS boot" then reads the unformatted virtual drive and reports "Virtual
+    // drive not formatted or image not loaded" whatever is in drive A. These are the same defaults with the
+    // virtual drive on D (#EB = 3), what "Y" pressed three times stores, and the CRC the ERS checks
+    // (rom/page5/source/call_cmos.a80 INIT_CMOS: CRC-16/CCITT, init #FFFF, over ED..E8; high byte in #EF)
+    static constexpr uint8_t kCells[] = {0x00, 0x00, 0x00, 0x03, 0x82, 0x04};  // #E8..#ED
+    static constexpr uint8_t kFirstCell = 0xE8;
+    static_assert(sizeof(kCells) == 0xED - kFirstCell + 1, "one value per cell #E8..#ED");
+    for (size_t i = 0; i < sizeof(kCells); ++i)
+        _evoAvr.WriteRegister(static_cast<uint8_t>(kFirstCell + i), kCells[i]);
+
+    uint16_t crc = 0xFFFF;
+    for (int cell = 0xED; cell >= 0xE8; --cell)
+    {
+        crc ^= static_cast<uint16_t>(kCells[cell - kFirstCell] << 8);
+        for (int bit = 0; bit < 8; ++bit)
+            crc = static_cast<uint16_t>((crc & 0x8000) ? (crc << 1) ^ 0x1021 : crc << 1);
+    }
+    _evoAvr.WriteRegister(0xEE, static_cast<uint8_t>(crc & 0xFF));
+    _evoAvr.WriteRegister(0xEF, static_cast<uint8_t>(crc >> 8));
 }
 
 /// @brief One BaseConf decode arm per I/O cycle
