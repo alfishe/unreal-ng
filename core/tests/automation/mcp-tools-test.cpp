@@ -1756,6 +1756,35 @@ TEST_F(McpTools_Test, InspectState_MemoryMapAspect_FetchesSparseMap)
     EXPECT_NE(result.text.find("rom0 data, size 16384"), std::string::npos) << "text was: " << result.text;
 }
 
+// OCR-01 (ZF6 mastering, MCP-01): the text part carries the whole screen - all 24 lines, no "..." cut at 200 chars
+TEST_F(McpTools_Test, InspectState_ScreenOcr_TextHasAllLines)
+{
+    std::string screen;
+    for (int row = 0; row < 24; row++)
+        screen += "LINE " + std::to_string(row) + std::string(32 - 5 - std::to_string(row).size(), 'x') + "\n";
+    Json::Value body;
+    body["text"] = screen;
+    body["rows"] = 24;
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/ocr"] = {200, body};
+
+    Json::Value args;
+    args["aspects"] = Json::Value(Json::arrayValue);
+    args["aspects"].append("screen_ocr");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_NE(result.text.find("LINE 0"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("LINE 23"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("..."), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("truncated"), std::string::npos) << result.text;
+
+    // A text bigger than the cap says so and where the rest is
+    body["text"] = std::string(5000, 'A');
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/ocr"] = {200, body};
+    result = RunTool(*_registry, "inspect_state", args, *_caller);
+    EXPECT_NE(result.text.find("(truncated, full text: structuredContent.screen_ocr.text)"), std::string::npos);
+}
+
 // TD-3: the memory aspect forwards format=hexdump by default (~80% token cut)
 TEST_F(McpTools_Test, InspectState_MemoryAspect_DefaultsToHexdump)
 {

@@ -3573,12 +3573,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             }
                             else if (aspect == "screen_ocr")
                             {
+                                // The whole screen as a block (24 x 32 on the ZX screen, ~800 characters): an agent may see
+                                // only this text. A text mode bigger than the cap says where the rest is
+                                static constexpr size_t kOcrTextCap = 4096;
                                 std::string text = value["text"].asString();
-                                if (text.size() > 200)
-                                {
-                                    text = text.substr(0, 200) + "...";
-                                }
-                                out << "\n[screen_ocr] \"" << text << "\"";
+                                while (!text.empty() && text.back() == '\n')
+                                    text.pop_back();
+                                const bool truncated = text.size() > kOcrTextCap;
+                                if (truncated)
+                                    text.resize(kOcrTextCap);
+                                out << "\n[screen_ocr]\n" << text;
+                                if (truncated)
+                                    out << "\n(truncated, full text: structuredContent.screen_ocr.text)";
                             }
                             else if (aspect == "memory")
                             {
