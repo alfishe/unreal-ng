@@ -290,6 +290,7 @@ Screen::ModeSelection Screen::DetectVideoMode(MEM_MODEL model) const
         case MM_NEXT:
             return { M_NEXT, R_256_192 };
         case MM_PENTAGON:
+            return DetectModePentagon(state);
         case MM_P2666:
             return DetectModeP2666(state);
         case MM_ATM450:
