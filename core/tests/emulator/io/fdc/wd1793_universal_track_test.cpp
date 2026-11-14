@@ -847,6 +847,41 @@ TEST_F(WD1793_UniversalTrack_Test, ReadTrack_AfterF7Trick_ReturnsWrittenStream)
     EXPECT_EQ(std::memcmp(read.data() + kFirstIdam - 3, expected, sizeof(expected)), 0);
 }
 
+/// WT-09 (FDC-02): an F7 puts two CRC bytes on the disk, two byte cells: the host bytes of a TR-DOS track
+/// (32 F7) are spread over the whole revolution - 6250 - 32 DRQs, the last one a revolution after the first
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7TakesTwoByteCells)
+{
+    DiskImage image(1, 1);
+    const std::vector<uint8_t> stream = formatStream(Spec::trdos(), 0, 0, 0x00);
+    ASSERT_EQ(std::count(stream.begin(), stream.end(), 0xF7), 32);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+
+    // One t-state steps: a coarser poll rounds every byte's DRQ up to the next poll and stretches the span
+    std::vector<size_t> served;
+    for (size_t clk = 1000; clk < 1000 + TEST_DURATION_TSTATES && fdc._state != WD1793::S_IDLE; clk++)
+    {
+        fdc._time = clk;
+        fdc.process();
+        if ((fdc._beta128status & WD1793::DRQ) && served.size() < stream.size())
+        {
+            fdc.writeDataRegister(stream[served.size()]);
+            served.push_back(clk);
+        }
+    }
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_LOSTDATA);
+    EXPECT_EQ(served.size(), 6250u - 32u);
+
+    // served[0] is the byte loaded before the index; served[1] follows raw byte 0, the last one raw byte 6248
+    const size_t cell = fdc._tstatesPerByte;
+    const double span = static_cast<double>(served.back() - served[1]);
+    EXPECT_NEAR(span, 6248.0 * cell, 3.0 * cell);
+}
+
 /// endregion </WRITE TRACK control-byte language>
 
 /// region <READ ADDRESS>

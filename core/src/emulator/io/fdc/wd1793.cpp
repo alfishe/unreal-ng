@@ -3288,10 +3288,11 @@ void WD1793::processWriteTrack()
                 // The next byte from the host is written literally
                 _writeTrackEscapeNext = true;
 
-                // CRC bytes written - request next data with proper timing delay
+                // CRC bytes written - they take two byte cells on the disk, so the next byte is due after both
+                // (one revolution is the whole track length in time, whatever the number of F7 in the stream)
                 _drq_served = false;
                 raiseDrq();
-                transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, _tstatesPerByte);
+                transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, 2 * _tstatesPerByte);
                 return;  // Don't write a third byte
             }
 
