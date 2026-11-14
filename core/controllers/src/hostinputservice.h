@@ -133,6 +133,9 @@ public:
     void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
     /// Play a test effect (haptics.md §10): a clicker's clicks straight to its backend, an envelope as PlayEffect
     void PlayTest(const HostDeviceId& device, const TestEffect& test);
+    /// A game's train of clicks (the floppy drive's steps, DriveHaptics): played only while the service owns the pads
+    /// and the haptics gate is open (H-5), unlike a test's
+    void PlayGameClicks(const HostDeviceId& device, const HapticClicks& clicks);
     /// What Identify did
     struct Identified
     {
@@ -153,6 +156,9 @@ public:
     void SetHapticsStrength(float strength);
     /// The generic sound haptics of one instance (haptics.md §4) for its ControllerManager::SetHapticFeed: they
     /// play on the devices with motors that drive the instance
+    /// The floppy drive's mechanics on the pads of @p instance (haptics.md §4.4) over @p inner (the profile's or the sound
+    /// feed; may be null)
+    std::shared_ptr<IHapticFeed> DriveHapticFeedFor(const std::string& instance, std::shared_ptr<IHapticFeed> inner);
     std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance);
     /// The DSP defaults of haptics.md §4 (`lowband(mix)`, `onset(mix)`) in the generic feeds made from now on (Advanced,
     /// off by default)

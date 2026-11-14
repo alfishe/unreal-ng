@@ -878,19 +878,11 @@ void OsdKeyboardWindow::post(const PictureKey& key, bool pressed)
             return;
         _target = emulator->GetUUID().toString();
     }
-    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
-    const KeyEventEnum type = pressed ? KEY_PRESSED : KEY_RELEASED;
-    if (key.pc != PcKey::None)
-        messageCenter.Post(pressed ? MC_PCKEY_PRESSED : MC_PCKEY_RELEASED,
-                           new PcKeyEvent(static_cast<uint8_t>(key.pc), type, _target));
-    // A combination (True Video: CS + 3) goes down in order and up in reverse, as fingers do
-    const auto send = [&](ZXKeysEnum zx) {
-        messageCenter.Post(pressed ? MC_KEY_PRESSED : MC_KEY_RELEASED, new KeyboardEvent(zx, type, _target));
-    };
-    if (pressed)
-        std::for_each(key.zx.begin(), key.zx.end(), send);
-    else
-        std::for_each(key.zx.rbegin(), key.zx.rend(), send);
+    // Through the keyboard manager, as the host keyboard: the matrix and the machine's PS/2 controller each get the key
+    // (a ZX key a PC key of its own: the cursor of Wild Commander on TS-Conf), the machine's route gates them
+    EmulatorContext* ctx = context();
+    const IPs2KeySink* sink = ctx != nullptr && ctx->pKeyboard != nullptr ? ctx->pKeyboard->GetPs2Sink() : nullptr;
+    KeyboardManager::postVirtualKey(key.zx, key.pc, pressed ? KEY_PRESSED : KEY_RELEASED, _target, sink);
 }
 
 QString OsdKeyboardWindow::notice() const

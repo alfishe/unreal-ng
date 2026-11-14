@@ -9,6 +9,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "common/collectionhelper.h"
 #include "emulator/io/keyboard/keyboard.h"
@@ -72,6 +73,15 @@ public:
     /// targetId broadcasts. macOS: the Command key and keys pressed while it is held stay with the host
     /// (commandKeyToGuest); the physical Control key is the machine's Ctrl
     static void postHostKey(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId);
+
+    /// One key of a virtual keyboard (the on-screen keyboard, the handheld's buttons) for the emulator, as the host
+    /// keyboard sends it: the ZX keys (MC_KEY_*, the matrix side; a combination down in order, up in reverse) and the
+    /// physical keys (MC_PCKEY_*, the PS/2 side). `pc` given: that key; none: the keys the machine's PS/2 controller
+    /// takes for the ZX keys (`sink`'s reverse map, Up for ZXKEY_EXT_UP; pckey::FromZxKey without one). The machine's
+    /// keyboard route gates each side, so software reading a PS/2 controller and never the matrix (Wild Commander on
+    /// TS-Conf, Sprinter DSS) gets the key too
+    static void postVirtualKey(const std::vector<ZXKeysEnum>& zx, PcKey pc, KeyEventEnum type,
+                               const std::string& targetId, const IPs2KeySink* sink);
 
     /// Post releases of every key still held (the window lost the key events:
     /// focus change, full screen toggle): the physical keys, so a PS/2 machine

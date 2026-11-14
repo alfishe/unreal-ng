@@ -7,6 +7,7 @@
 #include "stdafx.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -217,6 +218,9 @@ public:
     void TTDArmRegions(bool) override {}
     /// endregion </TTD>
 
+    /// Pops of the PS/2 log by the guest (extension type 2 reads): no state of the machine, only a reading for the host
+    uint64_t KeyBufferReads() const override { return _ps2LogPops.load(std::memory_order_relaxed); }
+
 protected:
     uint8_t ReadExtension(uint8_t index) const;
     /// ps2keyboard_from_log: pop one byte (0 empty, #FF overflow -> log reset)
@@ -254,6 +258,7 @@ protected:
     uint8_t _eepromPage = 0;
     bool _eepromMode = false;
     bool _capsLed = false;
+    std::atomic<uint64_t> _ps2LogPops{0};
     bool _tapeOutMode = false;
     bool _sdPresent = false;
     bool _sdWriteProtected = false;

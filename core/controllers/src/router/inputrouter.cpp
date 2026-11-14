@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "hostcontrols.h"
+#include "zxkeys.h"
 
 namespace controllers
 {
@@ -463,6 +464,39 @@ bool InputRouter::Analog(const HostDeviceId& id, const std::string& control, Ana
                 }
         }
     return false;
+}
+
+std::vector<uint8_t> InputRouter::MenuKeysOf(uint16_t bits)
+{
+    // The cursor keys of a Spectrum 128 keyboard (CAPS SHIFT with 5 6 7 8, the 128K menu's and the editor's), fire ENTER
+    static const auto keysOf = [](const char* name) {
+        std::vector<uint8_t> keys;
+        ZxKeysFromName(name, keys);
+        return keys;
+    };
+    static const std::pair<uint16_t, std::vector<uint8_t>> kMenu[] = {
+        {kLeft, keysOf("left")}, {kDown, keysOf("down")}, {kUp, keysOf("up")},
+        {kRight, keysOf("right")}, {kFire, keysOf("enter")}};
+    std::vector<uint8_t> keys;
+    for (const auto& [bit, held] : kMenu)
+        if (bits & bit)
+            for (uint8_t key : held)
+                if (std::find(keys.begin(), keys.end(), key) == keys.end())
+                    keys.push_back(key);
+    return keys;
+}
+
+void InputRouter::SetMenuKeys(const std::string& instance, bool on)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _instances[instance].menuKeys = on;
+}
+
+bool InputRouter::MenuKeys(const std::string& instance) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _instances.find(instance);
+    return it != _instances.end() && it->second.menuKeys;
 }
 
 void InputRouter::SetFocus(const std::string& instance)
@@ -1503,8 +1537,14 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                         const uint16_t bits = Output(compiled, state, phase, frame);
                         const std::string& connector =
                             target.retro.connector == "auto" ? player : target.retro.connector;
-                        if (!connector.empty())
+                        // Menu keys replace a keyboard joystick (keyjoy.N) of the player: its digits held with the
+                        // cursor keys are two keys at once, and the ROM's scan takes neither (a game profile's Sinclair
+                        // joystick in the 128K menu after a reset)
+                        const bool menuKeys = instance.menuKeys && target.retro.connector == "auto";
+                        if (!connector.empty() && !(menuKeys && connector.rfind("keyjoy.", 0) == 0))
                             masks[connector] |= bits;
+                        if (menuKeys)
+                            hold(MenuKeysOf(bits));
                         break;
                     }
                     case TargetKind::Keys:

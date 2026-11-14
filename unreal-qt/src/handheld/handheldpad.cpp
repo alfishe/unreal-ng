@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace
 {
@@ -52,7 +53,27 @@ bool HandheldPad::Takes(const std::string& device, const std::string& control) c
         return false;
     if (_grabbing.load())
         return true;
+    if (_typing.load() && IsTypingControl(control))
+        return true;
     return control == "menu" || control == "view";
+}
+
+void HandheldPad::SetTyping(bool typing)
+{
+    if (_typing.exchange(typing) == typing || typing)
+        return;
+    // The typing controls go back to the router: their releases no longer come here, so the next press starts from
+    // released
+    for (auto it = _values.begin(); it != _values.end();)
+    {
+        const auto bar = it->first.lastIndexOf('|');
+        it = IsTypingControl(it->first.mid(bar + 1).toStdString()) ? _values.erase(it) : std::next(it);
+    }
+}
+
+bool HandheldPad::IsTypingControl(const std::string& control)
+{
+    return control == "paddle.p1" || control == "paddle.p2" || control == "paddle.p3" || control == "east";
 }
 
 HandheldPad::Verb HandheldPad::VerbOf(Direction direction)

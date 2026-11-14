@@ -43,7 +43,8 @@ public:
         QString detail;  ///< size and date, or what a root holds
     };
 
-    /// At the roots, offering @p filter
+    /// Offering @p filter: in the folder the last file was opened from (its file focused; Up climbs to the roots), at
+    /// the roots when there is none or it is gone
     void Open(Filter filter);
     Filter filter() const { return _filter; }
 

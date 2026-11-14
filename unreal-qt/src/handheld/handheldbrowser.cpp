@@ -16,6 +16,10 @@
 namespace
 {
 const QString kRecentKey = QStringLiteral("Handheld/recentFiles");
+/// Where the last file was opened from: the browser opens there next time
+const QString kLastFolderKey = QStringLiteral("Handheld/lastFolder");
+const QString kLastRootKey = QStringLiteral("Handheld/lastRoot");
+const QString kLastFileKey = QStringLiteral("Handheld/lastFile");
 constexpr int kRecentMax = 20;
 
 QString Tr(const char* text)
@@ -86,7 +90,22 @@ void HandheldBrowser::Open(Filter filter)
     _filter = filter;
     _root.clear();
     _focusAfterMove = 0;
-    listRoots();
+    const QSettings settings;
+    const QString folder = settings.value(kLastFolderKey).toString();
+    if (folder.isEmpty() || !QFileInfo(folder).isDir())
+    {
+        listRoots();
+        return;
+    }
+    // The root it came down from, while the folder is still under it (else the folder is its own root)
+    const QString root = settings.value(kLastRootKey).toString();
+    const QString under = QDir(root).absolutePath() + '/';
+    _root = !root.isEmpty() && (QDir(folder) == QDir(root) || QDir(folder).absolutePath().startsWith(under)) ? root : folder;
+    listFolder(folder);
+    const QString file = settings.value(kLastFileKey).toString();
+    for (size_t n = 0; n < _entries.size(); ++n)
+        if (!file.isEmpty() && _entries[n].path == file)
+            _focusAfterMove = static_cast<int>(n);
 }
 
 QString HandheldBrowser::title() const
@@ -203,7 +222,15 @@ QString HandheldBrowser::Activate(int index)
         case Kind::Tape:
         case Kind::Disk:
         case Kind::File:
+        {
+            // Next time the browser opens here (a file from the recent list: in its own folder)
+            QSettings settings;
+            const QString folder = QFileInfo(entry.path).absolutePath();
+            settings.setValue(kLastFolderKey, folder);
+            settings.setValue(kLastRootKey, _atRecent ? folder : _root);
+            settings.setValue(kLastFileKey, entry.path);
             return entry.path;
+        }
     }
     return {};
 }

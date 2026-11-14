@@ -200,6 +200,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
     _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
+    _driveHaptics = QSettings().value("Controllers/DriveHaptics", true).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
     _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
@@ -368,6 +369,29 @@ void HostControllers::SetSoundHapticsDsp(bool on)
     _service->SetHapticsDspDefaults(on);
     if (_attached)
         attachHaptics();  // the key below names the filters: the sound feed is made again
+#endif
+}
+
+void HostControllers::SetDriveHaptics(bool on)
+{
+    if (on == _driveHaptics)
+        return;
+    _driveHaptics = on;
+    QSettings().setValue("Controllers/DriveHaptics", on);
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
+#endif
+}
+
+void HostControllers::SetDriveHapticsAllowed(bool allowed)
+{
+    if (allowed == _driveHapticsAllowed)
+        return;
+    _driveHapticsAllowed = allowed;
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
 #endif
 }
 
@@ -1282,9 +1306,11 @@ void HostControllers::attachHaptics()
     const bool game = !_resolved.haptics.IsNull() && ParseHapticProfile(_resolved.haptics, profile, error);
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
-    const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
-                                                  : std::string());
+    const bool drive = _driveHaptics && _driveHapticsAllowed;
+    const std::string key = (game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
+                                  : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                   : std::string())) +
+                            (drive ? "+drive" : "");
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -1294,6 +1320,9 @@ void HostControllers::attachHaptics()
         _hapticFeed = _service->HapticFeedFor(_attached->GetId());
     else
         _hapticFeed.reset();
+    // The floppy drive over whichever feed plays the game (or alone)
+    if (drive)
+        _hapticFeed = _service->DriveHapticFeedFor(_attached->GetId(), _hapticFeed);
     context->pControllerManager->SetHapticFeed(_hapticFeed);
 }
 
@@ -1630,15 +1659,62 @@ void HostControllers::applyConnectorPlans()
 
 void HostControllers::checkAuto()
 {
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr)
+        return;
+    ControllerManager* manager = context->pControllerManager;
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const std::string instance = emulator->GetId();
+    InputRouter& router = _service->Router();
+    if (!evidence.active)
+    {
+        // Menu keys keep the watch on: a program started from the menu (TR-DOS, the 128K menu's Tape Loader) turns
+        // them off once it stops reading the whole keyboard. A new window decides nothing for its first frames
+        if (router.MenuKeys(instance))
+            manager->WatchPortReads(true);
+        return;
+    }
+    const AutoDecision decision = DecideAuto(evidence);
+    // A program that takes the PC keys from the machine's PS/2 controller (Wild Commander pops the ZX-Evo AVR's log
+    // through #BFF7) reads the keyboard too, though no half-row: read since the last poll, with no joystick decided
+    bool keyBuffer = false;
+    if (IPs2KeySink* sink = context->pKeyboard != nullptr ? context->pKeyboard->GetPs2Sink() : nullptr)
+    {
+        const uint64_t reads = sink->KeyBufferReads();
+        keyBuffer = reads != _keyBufferReads && _keyBufferReads != 0 && !decision.decisive;
+        _keyBufferReads = reads;
+    }
+    const bool keyScan = decision.keyboard || keyBuffer;
+    // The pad drives a menu with the cursor keys while the program reads the whole keyboard (the 128K menu, BASIC, a
+    // text prompt), over the rolling window, whatever the auto plug decided before. On at once; off only after a whole
+    // window without the key scan, and until then no joystick is plugged (a reset's first moments look like one)
+    if (evidence.window >= DeviceAccessWatch::kWindow)
+    {
+        const bool menuKeys = router.MenuKeys(instance);
+        const auto frame = static_cast<int64_t>(evidence.framesObserved);
+        if (keyScan)
+        {
+            _keyScanLostAt = -1;
+            if (!menuKeys)
+            {
+                router.SetMenuKeys(instance, true);
+                emit menuKeysChanged(true);
+            }
+        }
+        else if (menuKeys)
+        {
+            if (_keyScanLostAt < 0 || frame < _keyScanLostAt)  // a new watch counts from 0 again
+                _keyScanLostAt = frame;
+            if (frame - _keyScanLostAt < static_cast<int64_t>(DeviceAccessWatch::kWindow))
+                return;
+            _keyScanLostAt = -1;
+            router.SetMenuKeys(instance, false);
+            emit menuKeysChanged(false);
+        }
+    }
     if (_autoDone)
         return;
-    EmulatorContext* context = _binding->context();
-    if (context == nullptr || context->pControllerManager == nullptr)
-        return;
-    const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
-    if (!evidence.active)
-        return;
-    const AutoDecision decision = DecideAuto(evidence);
     if (decision.keyboard)
     {
         // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later

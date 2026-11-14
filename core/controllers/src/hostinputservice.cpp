@@ -8,6 +8,7 @@
 
 #include "backendfactory.h"
 #include "devicedatabase.h"
+#include "haptics/drivehaptics.h"
 #include "haptics/profilehaptics.h"
 #include "haptics/soundhaptics.h"
 #include "hostcontrols.h"
@@ -491,6 +492,22 @@ void HostInputService::PlayTest(const HostDeviceId& device, const TestEffect& te
         backend->PlayClicks(device, *test.clicks);
 }
 
+void HostInputService::PlayGameClicks(const HostDeviceId& device, const HapticClicks& clicks)
+{
+    if (!_haptics->GateOpen())
+        return;
+    std::lock_guard<std::mutex> write(_hapticsWrite);
+    if (!_owner.load())
+        return;
+    IBackend* backend = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        backend = BackendOfLocked(device);
+    }
+    if (backend != nullptr)
+        backend->PlayClicks(device, clicks);
+}
+
 HostInputService::Identified HostInputService::Identify(const HostDeviceId& device)
 {
     Identified done;
@@ -543,6 +560,14 @@ std::function<std::vector<HostDeviceId>()> HostInputService::TargetsFor(const st
                 targets.push_back(device.id);
         return targets;
     };
+}
+
+std::shared_ptr<IHapticFeed> HostInputService::DriveHapticFeedFor(const std::string& instance,
+                                                                  std::shared_ptr<IHapticFeed> inner)
+{
+    return std::make_shared<DriveHaptics>(
+        std::move(inner), *_haptics, TargetsFor(instance), [this](const HostDeviceId& device) { return RumbleActuators(device); },
+        [this](const HostDeviceId& device, const HapticClicks& clicks) { PlayGameClicks(device, clicks); });
 }
 
 std::shared_ptr<IHapticFeed> HostInputService::HapticFeedFor(const std::string& instance)

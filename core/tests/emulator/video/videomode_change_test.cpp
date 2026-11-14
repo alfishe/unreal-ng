@@ -109,6 +109,25 @@ TEST_F(VideoModeChange_Test, ForcedOverscan_PersistsAcrossRedetection)
     EXPECT_EQ(_screen->GetVideoMode(), M_PENTAGON128K);
 }
 
+TEST_F(VideoModeChange_Test, OverscanOn_StartsCentredEveryTime)
+{
+    // Overscan on shows the centred crop (symmetric, 352x304) whoever switches it, even after the full frame was picked;
+    // off shows the whole frame
+    auto same = [](const DisplayViewport& a, const DisplayViewport& b) {
+        return a.cropLeft == b.cropLeft && a.cropRight == b.cropRight && a.cropTop == b.cropTop &&
+               a.cropBottom == b.cropBottom;
+    };
+    ASSERT_TRUE(_emulator->SetOverscanMode(true));
+    EXPECT_TRUE(same(_screen->GetDisplayViewport(), ViewportPresets::SYMMETRIC_HORIZONTAL));
+    EXPECT_EQ(_screen->GetDisplayWidth(), 352u);
+
+    _screen->SetDisplayViewport(ViewportPresets::FULL_OVERSCAN);
+    ASSERT_TRUE(_emulator->SetOverscanMode(false));
+    EXPECT_TRUE(same(_screen->GetDisplayViewport(), ViewportPresets::FULL_OVERSCAN));
+    ASSERT_TRUE(_emulator->SetOverscanMode(true));
+    EXPECT_TRUE(same(_screen->GetDisplayViewport(), ViewportPresets::SYMMETRIC_HORIZONTAL));
+}
+
 TEST_F(VideoModeChange_Test, SizeChangingSwitch_BuffersStayCoherent)
 {
     // A size-changing switch (352x288 -> 384x304) must resize the present
