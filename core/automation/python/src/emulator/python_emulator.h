@@ -4515,6 +4515,33 @@ namespace PythonBindings
             .def("capture_ocr", [](Emulator& self) -> std::string {
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
+            .def("capture_ocr_lines", [](Emulator& self) -> py::dict {
+                // The ZX screen row by row: text, attribute bytes, inverse columns, the menu bar flag
+                py::dict result;
+                std::vector<ScreenOCR::ZxLine> lines;
+                int page = -1;
+                result["success"] = ScreenOCR::readZxScreen(&self, lines, page);
+                result["screen_page"] = page;
+                py::list rows;
+                for (const ScreenOCR::ZxLine& line : lines)
+                {
+                    py::dict row;
+                    row["text"] = line.text;
+                    row["highlighted"] = line.highlighted;
+                    py::list attrs, inverse;
+                    for (size_t col = 0; col < line.attrs.size(); col++)
+                    {
+                        attrs.append(line.attrs[col]);
+                        if (line.inverse[col])
+                            inverse.append(col);
+                    }
+                    row["attrs"] = attrs;
+                    row["inverse"] = inverse;
+                    rows.append(row);
+                }
+                result["lines"] = rows;
+                return result;
+            }, "The ZX screen OCR row by row: success (false in a text mode: use capture_ocr), screen_page (5 / 7, -1 = the #4000 window), lines [{text, highlighted (the menu bar), attrs[32], inverse (columns)}]")
             .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
                                        const std::string& path, const std::string& source) -> py::dict {
                 py::dict result;
@@ -6188,13 +6215,16 @@ namespace PythonBindings
                 Keyboard* keyboard = self.GetContext() ? self.GetContext()->pKeyboard : nullptr;
                 return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
             }, "The PS/2 / XT keyboard controller's name ('PROFI-XT firmware 1.27', ...); '' when there is none or it has no name")
-            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames) -> bool {
+            .def("key_tap", [](Emulator& self, const std::string& keyName, uint16_t holdFrames, uint16_t count, uint16_t gapFrames) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;
                 if (!DebugKeyboardManager::IsKnownKeyName(keyName)) return false;  // not a silent no-op
-                ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames);
+                if (count < 1 || count > DebugKeyboardManager::MAX_TAP_COUNT) return false;
+                ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames, count, gapFrames);
                 return true;
-            }, "Tap a key (press, hold, release)", py::arg("key"), py::arg("frames") = 2)
+            }, "Tap a key (press, hold, release); count taps in a row (1..100), gap_frames to wait after each release "
+               "(repeats of one key always wait 5 released frames for the ROM)",
+               py::arg("key"), py::arg("frames") = 2, py::arg("count") = 1, py::arg("gap_frames") = 0)
             .def("key_press", [](Emulator& self, const std::string& keyName) -> bool {
                 auto* ctx = self.GetContext();
                 if (!ctx || !ctx->pDebugManager->GetKeyboardManager()) return false;

@@ -788,6 +788,7 @@ protected:
     size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
     size_t _rotationalDelayTStates = 0;             // Byte cells between the head and the data field of the matched sector
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
+    bool _writeTrackEscapeNext = false;  // WRITE TRACK: the byte after an F7 is written literally and joins the next CRC
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
@@ -1579,6 +1580,7 @@ public:
     using WD1793::_rawDataBuffer;
     using WD1793::_rawDataBufferIndex;
     using WD1793::_crcStartPosition;
+    using WD1793::_writeTrackEscapeNext;
     using WD1793::_writeTrackLength;
     using WD1793::_currentSector;
     using WD1793::_currentReadTrack;

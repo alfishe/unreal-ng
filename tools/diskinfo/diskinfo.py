@@ -129,6 +129,7 @@ def describe_track(trk: Track | None, cyl: int = -1, head: int = -1) -> str:
         return "unformatted"
     deleted = sum(1 for s in trk.sectors if s.deleted)
     bad_crc = sum(1 for s in trk.sectors if not s.crc_valid)
+    bad_id_crc = sum(1 for s in trk.sectors if not s.id_crc_valid)
     no_data = sum(1 for s in trk.sectors if s.no_data)
     mismatched = sum(1 for s in trk.sectors if cyl >= 0 and (s.cylinder != cyl or s.head != head))
     sizes = "+".join(f"{size} B" for size in sorted({128 << (s.size_code & 3) for s in trk.sectors}))
@@ -138,6 +139,8 @@ def describe_track(trk: Track | None, cyl: int = -1, head: int = -1) -> str:
         notes.append(f"{mismatched} id-mismatch")
     if deleted:
         notes.append(f"{deleted} deleted")
+    if bad_id_crc:
+        notes.append(f"{bad_id_crc} id-crc errors")
     if bad_crc:
         notes.append(f"{bad_crc} data-crc errors")
     if no_data:
@@ -380,6 +383,8 @@ def analyze_protection(disk: DiskImage, fs_names: list[str] | None = None) -> tu
     deleted: list[int] = []
     crc_errors: list[int] = []
     id_only: list[int] = []
+    id_crc_errors: list[int] = []
+    odd_size: list[int] = []
     for cyl, head in iter_selected_tracks(disk, None, None):
         trk = disk.get_track(cyl, head)
         if not trk:
@@ -392,6 +397,10 @@ def analyze_protection(disk: DiskImage, fs_names: list[str] | None = None) -> tu
                 crc_errors.append(logical)
             if s.no_data:
                 id_only.append(logical)
+            if not s.id_crc_valid:
+                id_crc_errors.append(logical)
+            if s.size_code > 3:
+                odd_size.append(logical)
     if deleted:
         strong += 1
         findings.append(f"deleted (F8) data marks on logical {fmt_numbers(set(deleted[:12]))}")
@@ -403,6 +412,12 @@ def analyze_protection(disk: DiskImage, fs_names: list[str] | None = None) -> tu
     if id_only:
         strong += 1
         findings.append(f"ID-only sectors (no data field) on logical {fmt_numbers(set(id_only[:12]))}")
+    if id_crc_errors:
+        strong += 1
+        findings.append(f"ID-CRC errors on logical {fmt_numbers(set(id_crc_errors[:12]))} (sector unreadable by ID search)")
+    if odd_size:
+        strong += 1
+        findings.append(f"size codes N > 3 on logical {fmt_numbers(set(odd_size[:12]))} (read as N & 3 by the WD1793)")
 
     weak = 0
     if disk.cylinders > 80:
@@ -525,16 +540,25 @@ def dump_sectors(
         write_payload(out_binary, payload)
 
 
+def fmt_size_code(n: int) -> str:
+    """The raw N byte of an ID field with the data length the WD1793 reads for it (128 << (N & 3)):
+    `N=1 (256 B)`, or `N=#F7 (1024 B)` for a size code above 3 (a protection trick)"""
+    shown = f"#{n:02X}" if n > 3 else f"{n}"
+    return f"N={shown} ({128 << (n & 3)} B)"
+
+
 def idam_line(sec: Sector) -> str:
-    """The ID field as a WD1793 sees it: CHRN plus the CRC-16 bytes the field
-    carries. crc_wd1793 returns the byte-swapped register, and the on-disk order
-    is swapped-low then swapped-high (see the long note in mfm.crc_wd1793), so
-    the two display bytes are value&0xFF then value>>8."""
-    fields = bytes([mfm.IDAM, sec.cylinder, sec.head, sec.number, sec.size_code & 3])
+    """The ID field as a WD1793 sees it: CHRN (raw N) plus the CRC-16 of the field.
+    crc_wd1793 returns the byte-swapped register, and the on-disk order is
+    swapped-low then swapped-high (see the long note in mfm.crc_wd1793), so the two
+    display bytes are value&0xFF then value>>8. The CRC is computed over the raw N;
+    a sector whose stored ID CRC differs is marked ERROR."""
+    fields = bytes([mfm.IDAM, sec.cylinder, sec.head, sec.number, sec.size_code])
     crc = mfm.crc_wd1793(fields)
+    state = "ok" if sec.id_crc_valid else "ERROR (stored CRC differs)"
     return (
-        f"C={sec.cylinder} H={sec.head} R={sec.number} N={sec.size_code & 3} "
-        f"({sec.data_size} B), id-crc {crc & 0xFF:02X}{(crc >> 8) & 0xFF:02X}"
+        f"C={sec.cylinder} H={sec.head} R={sec.number} {fmt_size_code(sec.size_code)}, "
+        f"id-crc {crc & 0xFF:02X}{(crc >> 8) & 0xFF:02X} {state}"
     )
 
 
@@ -608,9 +632,8 @@ def marker_lines(raw: bytes) -> list[str]:
         mark = raw[i + 3]
         if mark == mfm.IDAM and i + 8 <= len(raw):
             cyl, head, number, size_code = raw[i + 4 : i + 8]
-            size_code &= 3
-            pending_size_code = size_code
-            lines.append(f"    offset {i:4d}: IDAM C={cyl} H={head} R={number} N={size_code} ({128 << size_code} B)")
+            pending_size_code = size_code & 3
+            lines.append(f"    offset {i:4d}: IDAM C={cyl} H={head} R={number} {fmt_size_code(size_code)}")
         elif mark in (mfm.DAM_NORMAL, mfm.DAM_DELETED):
             kind = "DAM (deleted)" if mark == mfm.DAM_DELETED else "DAM"
             lines.append(f"    offset {i:4d}: {kind}, data {128 << pending_size_code} B")

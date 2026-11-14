@@ -131,6 +131,7 @@ void CLIProcessor::ShowKeyHelp(const ClientSession& session)
     ss << "Examples:" << NEWLINE;
     ss << "  key tap a              - Tap the 'A' key" << NEWLINE;
     ss << "  key tap enter 5        - Tap ENTER, hold for 5 frames" << NEWLINE;
+    ss << "  key tap down 2 4 10    - Tap DOWN 4 times, 10 frames apart after each release" << NEWLINE;
     ss << "  key combo caps 5       - Tap CAPS+5 (cursor left)" << NEWLINE;
     ss << "  key combo symbol p     - Tap SYMBOL+P (quote character)" << NEWLINE;
     ss << "  key macro e_mode       - Enter Extended mode (E cursor)" << NEWLINE;
@@ -208,7 +209,7 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
 {
     if (args.size() < 2)
     {
-        session.SendResponse(std::string("Error: Missing key name. Usage: key tap <key> [frames]") + NEWLINE);
+        session.SendResponse(std::string("Error: Missing key name. Usage: key tap <key> [frames] [count] [gap_frames]") + NEWLINE);
         return;
     }
 
@@ -244,9 +245,32 @@ void CLIProcessor::HandleKeyTap(const ClientSession& session, EmulatorContext* c
         return;
     }
 
-    kbdMgr->TapKey(keyName, holdFrames);
-    session.SendResponse(std::string("Tapping: ") + displayName + 
-                        " for " + std::to_string(holdFrames) + " frames" + NEWLINE);
+    // [count] taps in a row, [gap_frames] after each release (repeats of one key always wait 5 released frames)
+    uint16_t count = 1, gapFrames = 0;
+    for (size_t i = 3; i < args.size() && i < 5; i++)
+    {
+        int value = -1;
+        try
+        {
+            value = std::stoi(args[i]);
+        }
+        catch (const std::exception&)
+        {
+        }
+        const int limit = i == 3 ? DebugKeyboardManager::MAX_TAP_COUNT : 500;
+        if (value < (i == 3 ? 1 : 0) || value > limit)
+        {
+            session.SendResponse(std::string("Error: ") + (i == 3 ? "count" : "gap_frames") + " '" + args[i] + "' must be " +
+                                 (i == 3 ? "1.." : "0..") + std::to_string(limit) + NEWLINE);
+            return;
+        }
+        (i == 3 ? count : gapFrames) = static_cast<uint16_t>(value);
+    }
+
+    kbdMgr->TapKeyRepeated(keyName, holdFrames, count, gapFrames);
+    session.SendResponse(std::string("Tapping: ") + displayName + " for " + std::to_string(holdFrames) + " frames" +
+                         (count > 1 ? ", " + std::to_string(count) + " times" : std::string()) +
+                         (gapFrames ? ", " + std::to_string(gapFrames) + " frames apart" : std::string()) + NEWLINE);
 }
 
 void CLIProcessor::HandleKeyCombo(const ClientSession& session, EmulatorContext* context, 

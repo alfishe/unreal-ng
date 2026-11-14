@@ -136,6 +136,12 @@ public:
     /// in sector 9 and the drive type it measured), as on real hardware
     DiskImage::Track* trackUnderHead(uint8_t side);
 
+    /// The track WRITE TRACK writes: the one under the head, created when the head stands past the last
+    /// cylinder of the image. A real disk has tracks there (FORMAT programs lay out 82 or more cylinders), so
+    /// the image grows up to MAX_CYLINDERS with erased tracks. nullptr when there is no disk, the side is not
+    /// in the image or the head sits between two 48 tpi tracks
+    DiskImage::Track* trackUnderHeadForWrite(uint8_t side);
+
     bool isTrack00() { return _track == 0; }
     bool isIndex() { return _index; }
     bool isWriteProtect() { return _writeProtect; }

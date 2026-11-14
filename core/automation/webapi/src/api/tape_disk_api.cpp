@@ -6,6 +6,7 @@
 #include "../common/upload_helper.h"
 
 #include <debugger/media/sectorwrite.h>
+#include <emulator/media/floppyformats.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -1452,7 +1453,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = geometryInRange ? createError : "cylinders must be 40 or 80, sides 1 or 2";
+        error["message"] = geometryInRange ? createError : std::string("expected ") + BlankFloppySpec::GeometryHelp;
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);

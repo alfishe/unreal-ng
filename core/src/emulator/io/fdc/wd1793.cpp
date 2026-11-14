@@ -190,6 +190,7 @@ void WD1793::internalReset()
     _crcAccumulator = 0xFFFF;
     _writeTrackTarget = nullptr;
     _crcStartPosition = 0;
+    _writeTrackEscapeNext = false;
 
     // Clear timing state
     _time = 0;
@@ -1719,19 +1720,6 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    // Phase 2 Item 6 - record a disk-write marker for the format command.
-    // Write Track reformats an entire track, which is heavily destructive
-    // to replay fidelity.
-    {
-        char reason[64];
-        std::snprintf(reason, sizeof(reason),
-                      "Write Track (format) trk=%u side=%u",
-                      static_cast<unsigned>(_trackRegister),
-                      static_cast<unsigned>(_sideUp));
-        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
-        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
-    }
-
     if (!track->rawData() || track->rawSize() == 0)
     {
         // Handle error - invalid track
@@ -1781,13 +1769,30 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
+    // Past the last cylinder of the image the disk still has a track (an image lists only what was dumped or
+    // created): the image grows. WRITE TRACK has no Record Not Found (status bit 4 is always 0 for it); with no
+    // surface under the head at all (a side the image lacks, between two 48 tpi tracks) the drive is not ready
+    DiskImage::Track* track = _selectedDrive->trackUnderHeadForWrite(_sideUp);
     if (!track)
     {
-        _statusRegister |= WDS_NOTFOUND;
+        _statusRegister |= WDS_NOTRDY;
         transitionFSM(S_END_COMMAND);
         return;
     }
+
+    // Disk-write marker and the track's undo copy (media versions, TTD): Write Track reformats the whole track
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
+    }
+
+    // A new track starts with the control-byte language active (an escape left by an aborted command is void)
+    _writeTrackEscapeNext = false;
 
     // Set DRQ to request first byte from host (per datasheet: "The Data Request is activated immediately upon
     // receiving the command"). The byte must be loaded before the index pulse, so the service flag starts false
@@ -2340,10 +2345,10 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             }
 
                             // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+                            DiskImage::Track* track = selectedDrive->trackUnderHeadForWrite(sideUp);
                             if (!track)
                             {
-                                this->_statusRegister |= WDS_NOTFOUND;
+                                this->_statusRegister |= WDS_NOTRDY;
                                 return;
                             }
 
@@ -3219,101 +3224,114 @@ void WD1793::processWriteTrack()
     // F5 / F6 are not allowed and are written literally, the address marks themselves carry the C7 / D7 clocks.
     const bool fm = (_writeTrackEncoding == DiskImage::Encoding::FM);
 
-    switch (dataByte)
-    {
-        case 0xF5:
-            if (fm)
-            {
-                byteToWrite = dataByte;  // Not allowed in FM: written as an ordinary byte
-                break;
-            }
-            // Write A1 with missing clock (sync byte for MFM)
-            // Also presets CRC and records start position for F7 calculation
-            byteToWrite = 0xA1;
-            clockMark = true;
-            _crcAccumulator = 0xCDB4;  // Preset CRC after 3x A1 sync bytes
-            _crcStartPosition = _rawDataBufferIndex + 1;  // CRC calculation starts AFTER this byte
-            break;
+    // The byte that follows an F7 is not interpreted (WD177x / WD179x): it is written as is, with normal clocks,
+    // presets nothing and is accumulated into the running CRC, so the next F7 covers it. "F7 F7" therefore writes
+    // the CRC and then a literal F7 - the trick behind readable ID fields with N = #F7 (Atari ST Copy Protection,
+    // J. L. Guerin, sections 4.3 and 4.8). FM follows the same rule by analogy.
+    const bool literal = _writeTrackEscapeNext;
+    _writeTrackEscapeNext = false;
 
-        case 0xF6:
-            if (fm)
+    if (!literal)
+    {
+        switch (dataByte)
+        {
+            case 0xF5:
+                if (fm)
+                {
+                    byteToWrite = dataByte;  // Not allowed in FM: written as an ordinary byte
+                    break;
+                }
+                // Write A1 with missing clock (sync byte for MFM)
+                // Also presets CRC and records start position for F7 calculation
+                byteToWrite = 0xA1;
+                clockMark = true;
+                _crcAccumulator = 0xCDB4;  // Preset CRC after 3x A1 sync bytes
+                _crcStartPosition = _rawDataBufferIndex + 1;  // CRC calculation starts AFTER this byte
+                break;
+
+            case 0xF6:
+                if (fm)
+                {
+                    byteToWrite = dataByte;
+                    break;
+                }
+                // Write C2 with missing clock
+                byteToWrite = 0xC2;
+                clockMark = true;
+                break;
+
+            case 0xF7:
             {
+                // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
+                // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
+                // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
+                size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
+                // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
+                uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
+                                  : CRCHelper::crcWD1793(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen));
+                
+                // Write CRC bytes in on-disk order: true CRC high byte first.
+                // crcWD1793 returns the value byte-swapped (its low byte is the true high byte), matching the
+                // little-endian uint16_t layout used by AddressMarkRecord::id_crc / Sector::dataCRC().
+                if (_rawDataBufferIndex < _writeTrackLength)
+                {
+                    if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
+                    _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // True CRC high byte
+                    _bytesToWrite--;
+                }
+                if (_rawDataBufferIndex < _writeTrackLength)
+                {
+                    if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
+                    _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);    // True CRC low byte
+                    _bytesToWrite--;
+                }
+                
+                // The next byte from the host is written literally
+                _writeTrackEscapeNext = true;
+
+                // CRC bytes written - they take two byte cells on the disk, so the next byte is due after both
+                // (one revolution is the whole track length in time, whatever the number of F7 in the stream)
+                _drq_served = false;
+                raiseDrq();
+                transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, 2 * _tstatesPerByte);
+                return;  // Don't write a third byte
+            }
+
+            case 0xF8:
+            case 0xF9:
+            case 0xFA:
+            case 0xFB:
+                // Data Address Mark bytes - written literally
+                // F8 = Deleted Data Mark, FB = Normal Data Mark
+                byteToWrite = dataByte;
+                if (fm)
+                {
+                    clockMark = true;                          // Clock C7
+                    _crcStartPosition = _rawDataBufferIndex;   // FM CRC covers the mark itself, preset FFFF
+                }
+                break;
+
+            case 0xFC:
+                // Index Address Mark
+                byteToWrite = 0xFC;
+                if (fm) clockMark = true;                      // Clock D7
+                break;
+
+            case 0xFE:
+                // ID Address Mark. In MFM it presets nothing: the CRC was preset by the last F5 (A1) before it
+                byteToWrite = 0xFE;
+                if (fm)
+                {
+                    clockMark = true;                          // Clock C7
+                    _crcStartPosition = _rawDataBufferIndex;
+                }
+                break;
+
+            default:
+                // Normal data byte - written literally
                 byteToWrite = dataByte;
                 break;
-            }
-            // Write C2 with missing clock
-            byteToWrite = 0xC2;
-            clockMark = true;
-            break;
-
-        case 0xF7:
-        {
-            // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
-            // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
-            // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
-            size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
-            // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
-            uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
-                              : CRCHelper::crcWD1793(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen));
-            
-            // Write CRC bytes in on-disk order: true CRC high byte first.
-            // crcWD1793 returns the value byte-swapped (its low byte is the true high byte), matching the
-            // little-endian uint16_t layout used by AddressMarkRecord::id_crc / Sector::dataCRC().
-            if (_rawDataBufferIndex < _writeTrackLength)
-            {
-                if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // True CRC high byte
-                _bytesToWrite--;
-            }
-            if (_rawDataBufferIndex < _writeTrackLength)
-            {
-                if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);    // True CRC low byte
-                _bytesToWrite--;
-            }
-            
-            // CRC bytes written - request next data with proper timing delay
-            _drq_served = false;
-            raiseDrq();
-            transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, _tstatesPerByte);
-            return;  // Don't write a third byte
         }
-
-        case 0xF8:
-        case 0xF9:
-        case 0xFA:
-        case 0xFB:
-            // Data Address Mark bytes - written literally
-            // F8 = Deleted Data Mark, FB = Normal Data Mark
-            byteToWrite = dataByte;
-            if (fm)
-            {
-                clockMark = true;                          // Clock C7
-                _crcStartPosition = _rawDataBufferIndex;   // FM CRC covers the mark itself, preset FFFF
-            }
-            break;
-
-        case 0xFC:
-            // Index Address Mark
-            byteToWrite = 0xFC;
-            if (fm) clockMark = true;                      // Clock D7
-            break;
-
-        case 0xFE:
-            // ID Address Mark - preset CRC after writing
-            byteToWrite = 0xFE;
-            _crcAccumulator = 0xCDB4;  // Preset CRC
-            if (fm)
-            {
-                clockMark = true;                          // Clock C7
-                _crcStartPosition = _rawDataBufferIndex;
-            }
-            break;
-
-        default:
-            // Normal data byte - written literally
-            byteToWrite = dataByte;
-            break;
     }
 
     // Write the byte to the raw track buffer, recording whether it carries a missing-clock mark
@@ -3491,6 +3509,7 @@ void WD1793::processWaitIndex()
 
 void WD1793::processEndCommand()
 {
+    _writeTrackEscapeNext = false;
     endCommand();
     _currentReadTrack = nullptr; // no read in progress: never a stale track for the next command
 
@@ -4518,6 +4537,7 @@ DiskRef LocateTrack(EmulatorContext* context, const DiskImage::Track* track)
 }
 
 constexpr size_t kFifoSlots = 4;
+constexpr size_t kTransferContextEscapeOffset = 99;  // after the 4 FIFO slots (59 + 4 x 10)
 }  // namespace
 
 // Layout (kTransferContextSize = 112 bytes; little-endian):
@@ -4533,7 +4553,8 @@ constexpr size_t kFifoSlots = 4;
 //   50   4  read-track noise seed                      54   4  its length (0 = none)
 //   58   1  queued steps (up to 4 kept)
 //   59  40  4 x step: FifoKind, state, drive, track, sector, side, delay (u32)
-//   99  13  reserved (0)
+//   99   1  WRITE TRACK escape: the next byte is written literally (0 in contexts saved before it existed)
+//  100  12  reserved (0)
 void WD1793::SaveTransferContext(uint8_t* dst) const
 {
     std::memset(dst, 0, kTransferContextSize);
@@ -4606,11 +4627,13 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
         put_u8(cur, tag.side);
         PutU32(cur, static_cast<uint32_t>(event.getDelay()));
     }
+    dst[kTransferContextEscapeOffset] = _writeTrackEscapeNext ? 1 : 0;
 }
 
 void WD1793::LoadTransferContext(const uint8_t* src)
 {
     const uint8_t* cur = src;
+    _writeTrackEscapeNext = src[kTransferContextEscapeOffset] != 0;
     _rateRetryState = static_cast<WDSTATE>(get_u8(cur));
     _rateRetryDeadline = get_u64(cur);
     _multiSectorOverrun = get_u8(cur) != 0;

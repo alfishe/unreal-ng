@@ -19,6 +19,7 @@ bool DiskImage::allocateMemory(uint8_t cylinders, uint8_t sides)
 
         /// region <Allocate objects for new disk>
         const size_t trackNumber = static_cast<size_t>(cylinders) * sides;
+        _tracks.reserve(static_cast<size_t>(MAX_CYLINDERS) * sides);  // growCylinders() never moves the tracks
         _tracks.resize(trackNumber);
 
         for (size_t i = 0; i < trackNumber; i++)

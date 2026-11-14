@@ -38,6 +38,7 @@
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
+#include <emulator/media/floppyformats.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/media/recentfiles.h>
 #include <emulator/capture/recordingcontrol.h>
@@ -2817,7 +2818,7 @@ public:
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
             if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255)
-                return {false, "cylinders must be 40 or 80, sides 1 or 2"};
+                return {false, std::string("expected ") + BlankFloppySpec::GeometryHelp};
             std::string error;  // carries the TTD refusal while recording
             const bool ok = effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed,
                                                                  static_cast<uint8_t>(cylinders),
@@ -3140,14 +3141,19 @@ public:
             return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
-        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
+        // key_tap(key [, frames [, count [, gap_frames]]]): count taps in a row (1..100), gap_frames after each release
+        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames,
+                                           sol::optional<uint16_t> count, sol::optional<uint16_t> gapFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
             if (!DebugKeyboardManager::IsKnownKeyName(keyName))
                 return false;  // an unknown name fails, not a silent no-op
-            ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
+            const uint16_t taps = count.value_or(1);
+            if (taps < 1 || taps > DebugKeyboardManager::MAX_TAP_COUNT)
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames.value_or(2), taps, gapFrames.value_or(0));
             return true;
         });
 

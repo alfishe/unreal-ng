@@ -1221,6 +1221,44 @@ public:
 
     /// region <Helper methods>
 public:
+    /// Erase every track: a gap-filled stream of the default MFM length with no address marks, which is what a
+    /// never-formatted disk reads as (READ ADDRESS: Record Not Found). Dirty flags cleared
+    void eraseAll()
+    {
+        for (Track& track : _tracks)
+        {
+            track.resizeRaw(RawTrack::DEFAULT_TRACK_SIZE_MFM);
+            track.markClean();
+        }
+        _dirty = false;
+    }
+
+    /// Grow the image to `cylinders` (at most MAX_CYLINDERS) with erased tracks, as WRITE TRACK finds them past the
+    /// last cylinder of an image of a real disk. Track storage is reserved for MAX_CYLINDERS up front, so pointers
+    /// to existing tracks stay valid. The image is marked dirty when it grows. False when out of range
+    bool growCylinders(uint8_t cylinders)
+    {
+        if (cylinders <= _cylinders)
+            return true;
+        if (cylinders > MAX_CYLINDERS || _tracks.capacity() < static_cast<size_t>(cylinders) * _sides)
+            return false;
+
+        const size_t first = _tracks.size();
+        _tracks.resize(static_cast<size_t>(cylinders) * _sides);
+        for (size_t i = first; i < _tracks.size(); i++)
+        {
+            Track& track = _tracks[i];
+            track._diskImage = this;
+            track._cylinder = static_cast<uint8_t>(i / _sides);
+            track._side = static_cast<uint8_t>(i % _sides);
+            track.resizeRaw(RawTrack::DEFAULT_TRACK_SIZE_MFM);
+            track.markClean();
+        }
+        _cylinders = cylinders;
+        _dirty = true;
+        return true;
+    }
+
     /// Low-level format of every track with the given layout (data cleared, dirty flags cleared)
     void formatAll(const TrackFormatSpec& spec)
     {

@@ -755,7 +755,7 @@ public:
 
     /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
     /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
-    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
+    /// @param cylinders 1..86 Unformatted, 40 or 80 Trdos / Plus3; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
     /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
