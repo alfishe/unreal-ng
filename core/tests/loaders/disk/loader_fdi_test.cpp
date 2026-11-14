@@ -625,6 +625,23 @@ TEST_F(LoaderFDI_Test, Save_WarnsOnContentFdiCannotStore)
     EXPECT_TRUE(udiWarnings.empty());
 }
 
+/// DC-05c (ZF6 mastering, DISK-07): a broken ID CRC is named in the save warnings, so the CLI / MCP answer says why
+TEST_F(LoaderFDI_Test, Save_NamesIdCrcErrors)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->getRawSector(4)->id->id_crc ^= 0xFFFF;
+    track->reindex();
+    ASSERT_FALSE(track->getRawSector(4)->idCrcValid);
+
+    LoaderFDI fdi(_context, "");
+    std::vector<uint8_t> out;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(fdi.serialize(&image, out, warnings));
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings[0].find("sector 5: ID CRC error cannot be stored"), std::string::npos) << warnings[0];
+}
+
 /// DC-11 (ZF6 mastering, DISK-06): N = #F7 stays in the ID field, the data is 1K, and the file round-trips
 TEST_F(LoaderFDI_Test, Load_SizeCodeF7_KeptInId_RoundTrips)
 {

@@ -346,6 +346,9 @@ bool LoaderFDI::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
                 if (!sector->idCrcValid)
                 {
                     lossy = true;  // FDI has no way to say "ID CRC wrong"
+                    warnings.push_back(StringHelper::Format("FDI cylinder %d head %d sector %d: ID CRC error cannot be stored, "
+                                                            "the sector will read with a valid ID (use UDI)",
+                                                            cylinder, head, sector->number()));
                 }
 
                 out.push_back(sector->cylinder());
