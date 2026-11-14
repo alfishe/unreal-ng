@@ -41,10 +41,13 @@ void HandheldPad::SetGrabbing(bool grabbing)
 {
     if (_grabbing.exchange(grabbing) == grabbing)
         return;
-    // A screen that opens or closes starts from rest: a direction held across it does not repeat into the next one
+    // A screen that opens or closes starts from rest: a direction held across it does not repeat into the next one, and
+    // a button starts released. A that opened a file or changed the model closed the menu while down: its release went
+    // to the router, and a press kept here made the next A in the menu no press at all (it took two)
     stopRepeat();
     _directions.clear();
     _pads.clear();
+    _values.clear();
 }
 
 bool HandheldPad::Takes(const std::string& device, const std::string& control) const

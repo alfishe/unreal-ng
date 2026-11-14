@@ -294,6 +294,12 @@ card; the Qt host says it once and fits nothing (a card restarts the machine).
   keyboard's route includes it, as the host keyboard's do (`ControllerManager::ApplyHostKeys`), and the on-screen
   keyboard posts its keys through `KeyboardManager::postVirtualKey`, the ZX keys and the PC keys the controller takes
   for them. Test: `InputRouter_Test.MenuKeys_*`.
+- **Mouse buttons.** When the decision is a Kempston or AMX mouse (the ZiFi client on TS-Conf reads `#FADF`), the Qt
+  host turns the router's mouse buttons on for that machine (`InputRouter::SetMouseButtons`) and off when a new program
+  loads: an `auto:` target's fire also holds the mouse's left button for as long as the control is held, the turbo's
+  pulses aside. On the Steam Deck A and R2 click, L2 is the right button (`play/steam-deck.yaml`, Steam's desktop
+  layout), the right trackpad moves the pointer and its click is the left button. Test:
+  `InputRouter_Test.MouseButtons_*`.
 - **`DecideFromAccess`** checks the roles in this order:
   1. NR #B2 every frame: an MD 6-button pad on `next.left`, or on `next.right` when `#37` is read every frame too;
   2. Kempston 2, Kempston, Fuller, Kempston mouse, AMX mouse;

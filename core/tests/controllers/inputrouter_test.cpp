@@ -312,6 +312,38 @@ TEST_F(InputRouter_Test, MenuKeys_AutoTargetsHoldTheCursorKeysWhileTheProgramRea
     EXPECT_TRUE(_last.keys.empty());
 }
 
+TEST_F(InputRouter_Test, MouseButtons_AutoFireClicksTheLeftButtonAsHeld)
+{
+    // A program reading a mouse (the ZiFi client): the pad's fire buttons are its left button, held as long as the
+    // control is, not in the turbo's pulses; a fixed connector's fire clicks nothing
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "auto:fire"), To({"rt.click"}, Retro("auto:fire")), Bind({"east"}, "kempston:fire2")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0) << "mouse buttons off: the joystick alone";
+
+    _router.SetMouseButtons("emu-1", true);
+    EXPECT_TRUE(_router.MouseButtons("emu-1"));
+    EXPECT_FALSE(_router.MouseButtons("emu-2")) << "per instance";
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "A clicks the left button";
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "held";
+    Set("fake:1", "south", 0);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0);
+    Set("fake:1", "east", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0) << "a fixed connector's fire clicks nothing";
+
+    _router.SetMouseButtons("emu-1", false);
+    Set("fake:1", "east", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0);
+}
+
 TEST_F(InputRouter_Test, MenuKeys_ReplaceAKeyboardJoystickOfThePlayer)
 {
     // A game profile kept a Sinclair joystick on keyjoy.1; after a reset the 128K menu reads the keyboard: the

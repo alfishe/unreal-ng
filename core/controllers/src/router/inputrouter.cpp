@@ -499,6 +499,19 @@ bool InputRouter::MenuKeys(const std::string& instance) const
     return it != _instances.end() && it->second.menuKeys;
 }
 
+void InputRouter::SetMouseButtons(const std::string& instance, bool on)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _instances[instance].mouseButtons = on;
+}
+
+bool InputRouter::MouseButtons(const std::string& instance) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _instances.find(instance);
+    return it != _instances.end() && it->second.mouseButtons;
+}
+
 void InputRouter::SetFocus(const std::string& instance)
 {
     std::vector<ActionEvent> actions;
@@ -1545,6 +1558,9 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                             masks[connector] |= bits;
                         if (menuKeys)
                             hold(MenuKeysOf(bits));
+                        // The control as held, not the turbo's pulses: a click is held as long as the finger is
+                        if (instance.mouseButtons && target.retro.connector == "auto" && (state.bits & kFire) != 0)
+                            out.mouse.buttons |= static_cast<uint8_t>(1u << static_cast<unsigned>(MouseControl::Left));
                         break;
                     }
                     case TargetKind::Keys:

@@ -1605,6 +1605,7 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
     Reapply();
 }
 
@@ -1623,6 +1624,7 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
     _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
     Reapply();
 }
 
@@ -1753,6 +1755,9 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
     manager->WatchPortReads(false);
     if (decision.device == "kempston-mouse" || decision.device == "amx-mouse")
     {
+        // The pad's fire buttons click: the pointer moves with the trackpad or the stick already
+        if (Emulator* emulator = _binding->emulator())
+            _service->Router().SetMouseButtons(emulator->GetId(), true);
         emit notice(tr("This program reads the %1 (%2)")
                         .arg(QString::fromStdString(decision.label), QString::fromStdString(decision.reason)));
         return;
