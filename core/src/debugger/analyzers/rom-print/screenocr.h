@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 #include <emulator/emulatormanager.h>
 #include <emulator/memory/memory.h>
 #include "zxspectrumfont.h"
@@ -10,13 +12,26 @@
 /// ScreenOCR: Extract text from ZX Spectrum screen using ROM font matching
 ///
 /// Uses the ROM font bitmap data to recognize characters displayed on screen.
-/// ZX Spectrum screen: 32 columns × 24 rows of 8×8 pixel characters.
+/// ZX Spectrum screen: 32 columns × 24 rows of 8×8 pixel characters, read from the screen the picture shows
+/// (page 5, or 7 when #7FFD bit 3 selects the shadow screen).
 /// Text video modes (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL: 80x25) are read
 /// exactly from their character codes through the video mapper instead.
 ///
 class ScreenOCR
 {
 public:
+    /// One text row of the ZX screen with what the pixels alone do not say
+    struct ZxLine
+    {
+        std::string text;                       ///< 32 characters ('?' where no glyph matched)
+        std::array<uint8_t, 32> attrs{};        ///< attribute byte of every cell
+    };
+
+    /// The ZX screen as text rows. displayedPage is the RAM page the picture shows (5 / 7), -1 when the bytes came
+    /// from the Z80's #4000 window (no screen device: a bare memory in tests).
+    /// False when the current mode has a text layer or no memory (ocrScreen covers those)
+    static bool readZxScreen(Emulator* emulator, std::vector<ZxLine>& lines, int& displayedPage);
+
     /// OCR entire screen and return all visible text
     /// @param emulatorId EmulatorManager emulator ID
     /// @return All text on screen (24 lines, newline-separated)
@@ -50,6 +65,9 @@ private:
 
     /// Match bitmap against ROM font using hash lookup (O(1) vs O(96))
     static char matchFont(const uint8_t* bitmap8bytes);
+
+    /// The 6,912 bytes of the displayed ZX screen; displayedPage as in readZxScreen
+    static bool copyZxScreen(Emulator* emulator, uint8_t* out6912, int& displayedPage);
 
     /// Hash function for 8-byte bitmap (uses first 4 bytes as uint32 + last 4)
     static uint64_t hashBitmap(const uint8_t* bitmap);

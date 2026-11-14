@@ -304,6 +304,8 @@ TEST_F(ScreenOCR_Test, ScreenAddressFormula)
 #include "emulator/emulator.h"
 #include "emulator/video/screen.h"
 
+#include <algorithm>
+
 /// ATM Turbo 2+ text mode: the codes are in video memory, OCR reads them through the video mapper
 TEST(ScreenOCRTextMode_Test, AtmTextModeIsReadFromTheCharacterCodes)
 {
@@ -359,6 +361,63 @@ TEST(ScreenOCRTextMode_Test, SprinterTextSquaresAreRead)
     const std::string text = ScreenOCR::ocrScreen(emulator->GetId());
     EXPECT_EQ(text.substr(0, 1), "B") << text.substr(0, 200);
     EXPECT_TRUE(ScreenOCR::containsText(emulator->GetId(), "B"));
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+// ============================================================================
+// THE DISPLAYED SCREEN (ZF6 mastering: MCP-03)
+// ============================================================================
+
+namespace
+{
+    /// Writes text into the screen bitmap of a RAM page (the ZX layout from its first byte)
+    void WriteToPage(uint8_t* page, int row, int col, const std::string& text)
+    {
+        for (size_t i = 0; i < text.size(); i++)
+        {
+            const uint8_t* glyph = ZXSpectrum::FONT_BITMAP[text[i] - 0x20];
+            for (int line = 0; line < 8; line++)
+            {
+                const int y = row * 8 + line;
+                const int offset = ((y & 0xC0) << 5) + ((y & 7) << 8) + ((y & 0x38) << 2) + col + static_cast<int>(i);
+                page[offset] = glyph[line];
+            }
+        }
+    }
+
+    void ClearPage(uint8_t* page, uint8_t attr)
+    {
+        std::fill(page, page + 6144, 0x00);
+        std::fill(page + 6144, page + 6912, attr);
+    }
+}
+
+/// OCR-03: with #7FFD bit 3 the picture shows page 7: the OCR reads it, whatever the Z80 has at #4000 (page 5)
+TEST(ScreenOCRMachine_Test, ShadowScreenIsReadFromPage7)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    uint8_t* page5 = context->pMemory->RAMPageAddress(5);
+    uint8_t* page7 = context->pMemory->RAMPageAddress(7);
+    ClearPage(page5, 0x38);
+    ClearPage(page7, 0x38);
+    WriteToPage(page5, 0, 0, "BANK FIVE");
+    WriteToPage(page7, 0, 0, "BANK SEVEN");
+
+    std::vector<ScreenOCR::ZxLine> lines;
+    int page = -1;
+    ASSERT_TRUE(ScreenOCR::readZxScreen(emulator, lines, page));
+    EXPECT_EQ(page, 5);
+    EXPECT_EQ(lines[0].text.substr(0, 9), "BANK FIVE");
+
+    context->emulatorState.p7FFD = 0x08;  // the shadow screen; page 5 stays at #4000
+    ASSERT_TRUE(ScreenOCR::readZxScreen(emulator, lines, page));
+    EXPECT_EQ(page, 7);
+    EXPECT_EQ(lines[0].text.substr(0, 10), "BANK SEVEN");
+    EXPECT_EQ(ScreenOCR::ocrScreen(emulator).substr(0, 10), "BANK SEVEN");
+    EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(0x5800), 0x38) << "the Z80 still sees page 5 at #4000";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

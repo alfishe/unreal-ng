@@ -103,6 +103,12 @@ void EmulatorAPI::captureOcr(const HttpRequestPtr& req, std::function<void(const
     ret["lines"] = lines;
     ret["text"] = screenText;
 
+    // The ZX screen (not a text mode): the RAM page the picture shows (5, or 7 with the shadow screen)
+    std::vector<ScreenOCR::ZxLine> zx;
+    int page = -1;
+    if (ScreenOCR::readZxScreen(emulator.get(), zx, page) && page >= 0)
+        ret["screen_page"] = page;
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);

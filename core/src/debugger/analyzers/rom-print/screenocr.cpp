@@ -3,6 +3,9 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/video/map/videomapservice.h"
+#include "emulator/video/screen.h"
+
+#include <algorithm>
 
 // Static member definitions
 std::unordered_map<uint64_t, char> ScreenOCR::_fontHashTable;
@@ -66,25 +69,15 @@ std::string ScreenOCR::ocrScreen(Emulator* emulator)
     if (textLayerScreen(emulator, text))
         return text;
 
-    Memory* memory = emulator->GetMemory();
-    if (!memory)
+    std::vector<ZxLine> lines;
+    int page = -1;
+    if (!readZxScreen(emulator, lines, page))
         return "";
-
-    // Ensure hash table is ready
-    initFontHashTable();
 
     std::string result;
     result.reserve(ROWS * (COLS + 1));  // +1 for newlines
-
-    for (int row = 0; row < ROWS; row++)
-    {
-        for (int col = 0; col < COLS; col++)
-        {
-            result += ocrCell(memory, row, col);
-        }
-        result += '\n';
-    }
-
+    for (const ZxLine& line : lines)
+        result += line.text + '\n';
     return result;
 }
 
@@ -98,37 +91,70 @@ bool ScreenOCR::containsText(const std::string& emulatorId, const std::string& s
     if (!emulator)
         return false;
 
-    std::string text;
-    if (textLayerScreen(emulator.get(), text))
-        return text.find(searchText) != std::string::npos;
+    // Row by row: a match never spans two rows (the text of a row ends with its newline)
+    return ocrScreen(emulator.get()).find(searchText) != std::string::npos;
+}
 
+bool ScreenOCR::copyZxScreen(Emulator* emulator, uint8_t* out6912, int& displayedPage)
+{
+    displayedPage = -1;
+    EmulatorContext* context = emulator->GetContext();
     Memory* memory = emulator->GetMemory();
     if (!memory)
         return false;
 
-    initFontHashTable();
-
-    // Search each row for the text using a sliding window
-    size_t searchLen = searchText.length();
-
-    for (int row = 0; row < ROWS; row++)
+    // The bytes the picture is read from (Screen::DescribeDisplayedMemory): the ZX layout is one span of 6,912 bytes
+    // in page 5, or 7 when #7FFD bit 3 shows the shadow screen - not what the Z80 has paged in at #4000
+    Screen* screen = context ? context->pScreen : nullptr;
+    if (screen)
     {
-        // Build this row's text on-demand
-        for (int startCol = 0; startCol <= COLS - static_cast<int>(searchLen); startCol++)
+        std::vector<ScreenMemorySpan> spans;
+        screen->DescribeDisplayedMemory(spans);
+        if (spans.size() == 1 && !spans[0].region && spans[0].bytes == 6912 && memory->RAMBase() &&
+            spans[0].offset + 6912u <= MAX_RAM_SIZE)
         {
-            bool match = true;
-            for (size_t i = 0; i < searchLen && match; i++)
-            {
-                char c = ocrCell(memory, row, startCol + static_cast<int>(i));
-                if (c != searchText[i])
-                    match = false;
-            }
-            if (match)
-                return true;
+            std::copy_n(memory->RAMBase() + spans[0].offset, 6912, out6912);
+            displayedPage = static_cast<int>(spans[0].offset / 0x4000u);
+            return true;
         }
     }
 
-    return false;
+    // No ZX layout described (no screen device, another family's mode): what the Z80 sees at #4000
+    for (uint16_t i = 0; i < 6912; i++)
+        out6912[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(SCREEN_BASE + i));
+    return true;
+}
+
+bool ScreenOCR::readZxScreen(Emulator* emulator, std::vector<ZxLine>& lines, int& displayedPage)
+{
+    lines.clear();
+    displayedPage = -1;
+    if (!emulator)
+        return false;
+    std::string text;
+    if (textLayerScreen(emulator, text))
+        return false;
+
+    uint8_t screen[6912];
+    if (!copyZxScreen(emulator, screen, displayedPage))
+        return false;
+
+    initFontHashTable();
+    lines.resize(ROWS);
+    for (int row = 0; row < ROWS; row++)
+    {
+        ZxLine& line = lines[row];
+        line.text.reserve(COLS);
+        for (int col = 0; col < COLS; col++)
+        {
+            uint8_t bitmap[8];
+            for (int pixelLine = 0; pixelLine < 8; pixelLine++)
+                bitmap[pixelLine] = screen[getScreenAddr(row, col, pixelLine) - SCREEN_BASE];
+            line.text += matchFont(bitmap);
+            line.attrs[col] = screen[6144 + row * COLS + col];
+        }
+    }
+    return true;
 }
 
 char ScreenOCR::ocrCell(Memory* memory, int row, int col)
