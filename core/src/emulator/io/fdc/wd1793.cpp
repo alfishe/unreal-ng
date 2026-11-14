@@ -301,8 +301,11 @@ void WD1793::onDiskChanged(FDD* drive)
     // right after this, so every pointer into it goes now - wherever the
     // command in progress is. The command then ends on its next step the way
     // the chip ends one when the medium goes away: the read and write paths
-    // find no buffer and finish with NOT READY
-    if (drive != _selectedDrive)
+    // find no buffer and finish with NOT READY.
+    // The pointers belong to the drive the command started on, which need not be the selected one: a program may
+    // select another drive in the middle of a command or after it (the sector in hand stays). A change there freed
+    // their target as well (heap use after free under the format's writes: WD1793_Fuzz_Test)
+    if (drive != _selectedDrive && _commandDrive != nullptr && drive != _commandDrive)
         return;
     _currentSector = nullptr;
     _currentReadTrack = nullptr;
@@ -1198,6 +1201,8 @@ void WD1793::processWD93Command(uint8_t value)
         }
 
         // Persist information about command
+        if (command != WD_CMD_FORCE_INTERRUPT)
+            _commandDrive = _selectedDrive;
         _commandRegister = value;
         _lastDecodedCmd = command;
         _lastCmdValue = commandValue;
@@ -4454,6 +4459,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
     }
 
     // Pointers into disk image data are intentionally not restored
+    _commandDrive = nullptr;
     // (re-established by the next command setup). Reset them to nullptr so
     // any stale value from before the restore cannot be dereferenced.
     _rawDataBuffer    = nullptr;

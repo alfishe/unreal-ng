@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
@@ -1009,6 +1010,56 @@ TEST_F(WD1793_UniversalTrack_Test, WriteSector_ForceInterrupt_LeavesDataCrcError
     EXPECT_FALSE(sector->dataCrcValid) << "the CRC was never written";
     EXPECT_EQ(sector->data[0], 0x99);
     EXPECT_TRUE(track->isDirty());
+}
+
+/// A format runs on drive A, the program selects drive B, the disk in A is replaced and freed (a media change lands
+/// at a frame boundary whatever the controller does). The controller must let go of A's stream: the format went on
+/// writing into the freed image (heap use after free; on Windows a heap fail-fast kills the process without a dump)
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InCommandDrive_NotSelected_DropsPointers)
+{
+    auto first = std::make_unique<DiskImage>(1, 1);
+    DiskImage second(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, *first, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);  // through the dispatcher: it notes the command's drive
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    fdc.selectDrive(1);
+    FDD* driveA = _context->coreState.diskDrives[0];
+    driveA->insertDisk(&second);
+    first.reset();
+
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+
+    // The command ends on its next steps without touching the freed stream
+    waitIdle(fdc);
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+}
+
+/// A change in a drive no command used keeps the running command's pointers
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InOtherDrive_KeepsRunningCommand)
+{
+    DiskImage image(1, 1);
+    DiskImage other(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    _context->coreState.diskDrives[2]->insertDisk(&other);
+    EXPECT_NE(fdc._rawDataBuffer, nullptr);
+    _context->coreState.diskDrives[2]->ejectDisk();
 }
 
 /// endregion </Pointers into a stream a command replaces>
