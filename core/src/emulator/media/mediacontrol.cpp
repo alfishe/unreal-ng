@@ -1717,13 +1717,13 @@ MediaReply MediaControl::Create(const MediaRequest& request)
         if (auto it = o.find("cylinders"); it != o.end())
         {
             if (!ParseUnsigned(it->second, number) || number > 255)
-                return Fail(MediaError::BadRequest, "cylinders '" + it->second + "': expected 40 or 80");
+                return Fail(MediaError::BadRequest, "cylinders '" + it->second + "': expected " + BlankFloppySpec::GeometryHelp);
             spec.cylinders = static_cast<uint8_t>(number);
         }
         if (auto it = o.find("sides"); it != o.end())
         {
             if (!ParseUnsigned(it->second, number) || number > 255)
-                return Fail(MediaError::BadRequest, "sides '" + it->second + "': expected 1 or 2");
+                return Fail(MediaError::BadRequest, "sides '" + it->second + "': expected " + BlankFloppySpec::GeometryHelp);
             spec.sides = static_cast<uint8_t>(number);
         }
         std::unique_ptr<DiskImage> disk;

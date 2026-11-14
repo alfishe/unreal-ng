@@ -38,6 +38,7 @@
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
+#include <emulator/media/floppyformats.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/media/recentfiles.h>
 #include <emulator/capture/recordingcontrol.h>
@@ -2817,7 +2818,7 @@ public:
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
             if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255)
-                return {false, "cylinders must be 40 or 80, sides 1 or 2"};
+                return {false, std::string("expected ") + BlankFloppySpec::GeometryHelp};
             std::string error;  // carries the TTD refusal while recording
             const bool ok = effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed,
                                                                  static_cast<uint8_t>(cylinders),

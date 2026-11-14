@@ -673,6 +673,48 @@ TEST_F(LoaderFDI_Test, Load_SizeCodeF7_KeptInId_RoundTrips)
     delete image;
 }
 
+/// DC-09 / DC-10: 83 and 86 cylinders load and save with their geometry, empty tracks stay empty; 87 is refused
+TEST_F(LoaderFDI_Test, Load_OverlongGeometry_And_EmptyTracks_RoundTrip)
+{
+    for (uint16_t cylinders : {83, 86})
+    {
+        FdiBuilder b;
+        b.cylinders = cylinders;
+        b.heads = 2;
+        for (size_t t = 0; t < cylinders * 2u; t++)
+        {
+            if (t == 0)
+                b.tracks.push_back({{0, 0, 1, 1, 0x02, std::vector<uint8_t>(256, 0x01)}});
+            else
+                b.tracks.push_back({});
+        }
+        std::vector<uint8_t> data = b.build();
+
+        LoaderFDI loader(_context, "");
+        std::vector<std::string> warnings;
+        DiskImage* image = loader.parse(data.data(), data.size(), warnings);
+        ASSERT_NE(image, nullptr) << cylinders;
+        EXPECT_EQ(image->getCylinders(), cylinders);
+        EXPECT_EQ(image->getTrackForCylinderAndSide(static_cast<uint8_t>(cylinders - 1), 1)->sectorCount(), 0u);
+
+        std::vector<uint8_t> out;
+        std::vector<std::string> saveWarnings;
+        ASSERT_TRUE(loader.serialize(image, out, saveWarnings));
+        EXPECT_EQ(out, data) << cylinders;
+        delete image;
+    }
+
+    FdiBuilder tooMany;
+    tooMany.cylinders = 87;
+    for (size_t t = 0; t < 87; t++) tooMany.tracks.push_back({});
+    std::vector<uint8_t> data = tooMany.build();
+    LoaderFDI loader(_context, "");
+    std::vector<std::string> warnings;
+    EXPECT_EQ(loader.parse(data.data(), data.size(), warnings), nullptr);
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings[0].find("supported range is 1..86"), std::string::npos) << warnings[0];
+}
+
 TEST_F(LoaderFDI_Test, Negative_Truncated_And_BadOffsets)
 {
     std::vector<uint8_t> d = readFile(fixture("loaders/fdi/VORON1.FDI"));

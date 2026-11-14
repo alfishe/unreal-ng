@@ -164,8 +164,9 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/disk/B/create" \
 - `format`: `auto` (the default) is `plus3` on a +3 and `unformatted` elsewhere.
   `unformatted` has no sectors: FORMAT it from TR-DOS (or +3DOS) before saving.
   `plus3` is a formatted +3DOS disk (9 x 512-byte sectors per track): SAVE right away.
-- `cylinders` 40 or 80, `sides` 1 or 2; left out, the format's own (80/2
-  unformatted, 40/1 plus3).
+- `cylinders` 1..86 for `unformatted` (mastering programs lay out 82 or more), 40 or 80 for `trdos` and `plus3`;
+  `sides` 1 or 2; left out, the format's own (80/2 unformatted, 40/1 plus3). WRITE TRACK past the last cylinder of
+  an image grows it (up to 86), as on a real disk.
 - Blank disks report `file: "<blank>"` in `/disk/B/info`.
 - CLI: `disk create B 80 2 unformatted`; Lua/Python: `disk_create(1, 0, 0, "plus3")`.
 

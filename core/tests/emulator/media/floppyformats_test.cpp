@@ -195,7 +195,7 @@ TEST(FloppyFormats_Test, MgtDiskSavedAsImgStaysMgt)
     EXPECT_EQ(ReadAll(copy), ReadAll(Fixture("testdata/loaders/mgt/synthetic.img")));
 }
 
-/// region <Blank disks (ZF6 mastering: MEDIA-02)>
+/// region <Blank disks (ZF6 mastering: MEDIA-01, MEDIA-02)>
 
 namespace
 {
@@ -229,6 +229,60 @@ TEST(FloppyFormats_Test, BlankUnformattedHasNoSectors)
     trdos.format = "trdos";
     ASSERT_TRUE(FloppyFormats::CreateBlank(false, trdos, disk).Ok());
     EXPECT_EQ(SectorsOnDisk(*disk), 80u * 2 * 16);
+}
+
+/// MC-01 / MC-02 / MC-03: unformatted takes 1..86 cylinders, trdos and plus3 only 40 or 80; one text everywhere
+TEST(FloppyFormats_Test, BlankGeometryRules)
+{
+    std::unique_ptr<DiskImage> disk;
+    for (uint8_t cylinders : {1, 41, 42, 83, 86})
+    {
+        BlankFloppySpec spec;
+        spec.format = "unformatted";
+        spec.cylinders = cylinders;
+        spec.sides = 2;
+        ASSERT_TRUE(FloppyFormats::CreateBlank(false, spec, disk).Ok()) << int(cylinders);
+        EXPECT_EQ(disk->getCylinders(), cylinders);
+        EXPECT_EQ(SectorsOnDisk(*disk), 0u);
+        EXPECT_EQ(disk->isFortyTrack(), cylinders <= 42) << int(cylinders);
+    }
+
+    struct Refused { const char* format; uint8_t cylinders; };
+    for (const Refused& r : {Refused{"unformatted", 87}, Refused{"trdos", 83}, Refused{"plus3", 41}, Refused{"trdos", 42}})
+    {
+        BlankFloppySpec spec;
+        spec.format = r.format;
+        spec.cylinders = r.cylinders;
+        const MediaResult result = FloppyFormats::CreateBlank(false, spec, disk);
+        EXPECT_FALSE(result.Ok()) << r.format << " " << int(r.cylinders);
+        EXPECT_NE(result.message.find(BlankFloppySpec::GeometryHelp), std::string::npos) << result.message;
+        EXPECT_EQ(disk, nullptr);
+    }
+}
+
+/// MC-01 + DC-09: an 83-cylinder unformatted disk saves with its geometry (FDI and UDI) and loads back as it was
+TEST(FloppyFormats_Test, BlankOverlongDiskSavesItsGeometry)
+{
+    BlankFloppySpec spec;
+    spec.format = "unformatted";
+    spec.cylinders = 83;
+    std::unique_ptr<DiskImage> disk;
+    ASSERT_TRUE(FloppyFormats::CreateBlank(false, spec, disk).Ok());
+
+    ScratchFolder folder("floppy-blank-83");
+    for (const char* name : {"blank83.fdi", "blank83.udi"})
+    {
+        const std::string path = Utf8(folder.Path() / name);
+        const FloppySaveResult saved = FloppyFormats::Save(nullptr, *disk, path, false);
+        ASSERT_TRUE(saved.saved) << name << ": " << saved.reason;
+
+        std::unique_ptr<DiskImage> back;
+        std::string format;
+        ASSERT_TRUE(FloppyFormats::Load(nullptr, path, back, format).Ok()) << name;
+        EXPECT_EQ(back->getCylinders(), 83) << name;
+        EXPECT_EQ(back->getSides(), 2) << name;
+        EXPECT_EQ(SectorsOnDisk(*back), 0u) << name;
+    }
 }
 
 /// endregion </Blank disks>
