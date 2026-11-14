@@ -1221,6 +1221,18 @@ public:
 
     /// region <Helper methods>
 public:
+    /// Erase every track: a gap-filled stream of the default MFM length with no address marks, which is what a
+    /// never-formatted disk reads as (READ ADDRESS: Record Not Found). Dirty flags cleared
+    void eraseAll()
+    {
+        for (Track& track : _tracks)
+        {
+            track.resizeRaw(RawTrack::DEFAULT_TRACK_SIZE_MFM);
+            track.markClean();
+        }
+        _dirty = false;
+    }
+
     /// Low-level format of every track with the given layout (data cleared, dirty flags cleared)
     void formatAll(const TrackFormatSpec& spec)
     {

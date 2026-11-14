@@ -194,3 +194,41 @@ TEST(FloppyFormats_Test, MgtDiskSavedAsImgStaysMgt)
     ASSERT_TRUE(saved.saved) << saved.reason;
     EXPECT_EQ(ReadAll(copy), ReadAll(Fixture("testdata/loaders/mgt/synthetic.img")));
 }
+
+/// region <Blank disks (ZF6 mastering: MEDIA-02)>
+
+namespace
+{
+    size_t SectorsOnDisk(DiskImage& disk)
+    {
+        size_t total = 0;
+        for (uint8_t c = 0; c < disk.getCylinders(); c++)
+            for (uint8_t h = 0; h < disk.getSides(); h++)
+                total += disk.getTrackForCylinderAndSide(c, h)->sectorCount();
+        return total;
+    }
+}
+
+/// MC-04: an unformatted blank disk has no sectors on any track (it used to be TR-DOS laid out underneath)
+TEST(FloppyFormats_Test, BlankUnformattedHasNoSectors)
+{
+    BlankFloppySpec spec;
+    spec.format = "unformatted";
+    std::unique_ptr<DiskImage> disk;
+    ASSERT_TRUE(FloppyFormats::CreateBlank(false, spec, disk).Ok());
+    EXPECT_EQ(spec.cylinders, 80);
+    EXPECT_EQ(spec.sides, 2);
+    EXPECT_EQ(SectorsOnDisk(*disk), 0u);
+    EXPECT_FALSE(disk->isDirty());
+    DiskImage::Track* track = disk->getTrackForCylinderAndSide(79, 1);
+    EXPECT_EQ(track->rawSize(), 6250u);
+    EXPECT_FALSE(track->hasClockMarks());
+
+    // trdos and plus3 stay formatted
+    BlankFloppySpec trdos;
+    trdos.format = "trdos";
+    ASSERT_TRUE(FloppyFormats::CreateBlank(false, trdos, disk).Ok());
+    EXPECT_EQ(SectorsOnDisk(*disk), 80u * 2 * 16);
+}
+
+/// endregion </Blank disks>

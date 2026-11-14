@@ -523,6 +523,10 @@ FormatResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec
     disk = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
                  : std::make_unique<DiskImage>(cylinders, sides);
     disk->setFortyTrack(cylinders == 40);
+    // Unformatted means no address marks at all: READ ADDRESS finds nothing until the machine formats the disk
+    // (DiskImage(c, s) itself lays out TR-DOS tracks)
+    if (format == "unformatted")
+        disk->eraseAll();
     // A TR-DOS disk as FORMAT leaves it: 16 x 256-byte sectors on every track, an empty catalogue and the system
     // sector (track 0, sector 9) naming the geometry and the free space
     if (format == "trdos")
