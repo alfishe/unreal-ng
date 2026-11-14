@@ -26,8 +26,10 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   | `lip_sync_offset_ms` | -200..200 | moves the frames' target times against the sound |
 
 - **Low latency** is a machine feature, not a window setting: `feature lowlatency on` (CLI; WebAPI / MCP features)
-  makes each frame due at its latch, so the newest finished frame is shown at once and the sound follows ~50 ms
-  later. Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock` `latch`.
+  makes each frame due at its latch, so the newest finished frame is shown at once, and shortens the sound path
+  (audio ring target from 10 ms, 15 ms on Windows, adapted to the host; a 128-frame device period on macOS): the sound follows ~20-30 ms later
+  (~55 ms on Windows). Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock`
+  `latch`; `GET /audio/mixer` -> `host_output.device` shows the ring and the latency.
 
 - **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl-timed` on Linux / `gl` / `software`),
   `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `presented`, `shown`,

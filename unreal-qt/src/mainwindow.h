@@ -170,6 +170,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     /// An automation session took, released or lost control of an emulator (any thread): the guard re-reads it
     void handleRunControlChanged(int id, Message* message);
+    void handleFeatureChanged(int id, Message* message);
     /// The toolbar's Take Back Control and the HUD's REMOTE indicator follow the guard
     void updateRemoteControlUi();
     void openFileDialog();

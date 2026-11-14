@@ -428,6 +428,18 @@ and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws`
 > | `holds_taken` | holds ever taken, by reason |
 > | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
 > | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
+> | `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 10 ms (15 ms on Windows) and 40 ms |
+> | `device.drc_target_raises` | times the adaptive low-latency setpoint went up (a gap, or a second whose `trough_ms` fell below 2 ms) |
+> | `device.drc_trim` | the DRC's current rate trim (±0.005; 0 while disengaged) |
+> | `device.name` / `sample_rate_hz` | the host output device and its rate |
+> | `device.buffer_ms` / `output_latency_ms` | the device buffer and the latency the OS reports below it |
+> | `device.ring_ms` | the ring occupancy now |
+> | `device.trough_ms` | the least the device callbacks left in the ring over the last closed one-second window (`null` before the first): the margin against a gap |
+> | `device.trough_windows` | windows closed |
+> | `device.underruns` | gaps: callbacks that found the ring short after a full one (stays `0`) |
+> | `device.ring_overruns` | frames the ring refused (stays `0`) |
+> | `device.latency_ms` | ring now + device buffer + output latency |
+> | `device.reinits` | times the device was opened again (reroute, `lowlatency` changed on macOS) |
 >
 > Example: a Sprinter playing music, `POST /pause`, `POST /run_frames {"count":50}`, `POST /resume`. During
 > `run_frames`, `holders.direct_run` is `1` and `frames_held` grows by 50. After `resume`, `held` is `false`,

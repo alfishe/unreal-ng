@@ -946,6 +946,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
     messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
 
+    ObserverCallbackMethod featureCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleFeatureChanged);
+    messageCenter.AddObserver(NC_FEATURE_CHANGED, observerInstance, featureCallback);
+
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
     // Check if there's already a running emulator instance (started before UI)
@@ -5592,6 +5595,9 @@ void MainWindow::unsubscribeFromMessageBus()
     ObserverCallbackMethod runControlCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
     messageCenter.RemoveObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+
+    ObserverCallbackMethod featureCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleFeatureChanged);
+    messageCenter.RemoveObserver(NC_FEATURE_CHANGED, observerInstance, featureCallback);
 }
 
 void MainWindow::handleRunControlChanged(int id, Message* message)
@@ -5786,6 +5792,9 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
                                _soundManager->deviceDescriptor());
     emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+    // The device follows the bound machine's feature lowlatency (a shorter period where the platform takes one)
+    if (FeatureManager* features = emulator->GetFeatureManager())
+        _soundManager->setLowLatency(features->isEnabled(Features::kLowLatency));
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"
              << QString::fromStdString(emulator->GetId());
@@ -5795,6 +5804,23 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
 /// An instance the manager removed (or is removing): released, announced as
 /// destroyed, or no longer registered. Binding the UI to it would leave every
 /// widget and the next unbind calling into a context that is gone
+/// A feature changed on some machine (any thread): the bound machine's lowlatency reaches the audio device on the
+/// GUI thread
+void MainWindow::handleFeatureChanged(int id, Message* message)
+{
+    (void)id;
+    const auto* payload = message ? dynamic_cast<const FeatureChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->featureId != Features::kLowLatency)
+        return;
+    const std::string emulatorId = payload->emulatorId.toString();
+    const bool enabled = payload->enabled;
+    QMetaObject::invokeMethod(this, [this, emulatorId, enabled]() {
+        QMutexLocker locker(&_audioMutex);
+        if (_soundManager && emulatorId == _audioBoundId)
+            _soundManager->setLowLatency(enabled);
+    }, Qt::QueuedConnection);
+}
+
 bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
 {
     if (!emulator || emulator->IsReleased() || emulator->IsRetiring())
@@ -5976,8 +6002,7 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
 
 #ifdef __linux__
     // Steam Deck Game Mode: the picture as soon as it is made (platform/linux/steamdeckgamemode.h)
-    if (_emulator->GetContext())
-        steamdeck::ApplyGameModeFeatures(_emulator->GetContext()->pFeatureManager);
+    steamdeck::ApplyGameModeFeatures(_emulator->GetFeatureManager());
 #endif
 
     // The published copy follows the new binding

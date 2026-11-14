@@ -17,6 +17,7 @@
 #include "common/sound/filters/filter_interpolate.h"
 #include "common/sound/filters/audio_character_chain.h"
 #include "common/sound/filters/voicingstage.h"
+#include "emulator/sound/lowlatencytarget.h"
 #include "emulator/sound/audio.h"
 #include "common/sound/filters/masterlimiter.h"
 #include "common/sound/filters/resampler_drc.h"
@@ -281,6 +282,32 @@ public:
     // only through abnormal events (device re-init windows, long stalls).
     static constexpr double HARD_RESYNC_MS = 160.0;  // 4x target
 
+    // Feature lowlatency (Steam Deck Game Mode): the floor of the adaptive setpoint (LowLatencyTarget) the ring is held
+    // at instead of DRC_TARGET_MS; gaps and near-gaps raise it up to DRC_TARGET_MS, quiet spells bring it back. The
+    // occupancy the DRC reads is the one before the frame's sound goes in (the trough of the sawtooth), so this is
+    // the margin the ring keeps against an underrun: a device callback period plus the emulation thread's wake jitter.
+    // Measured with every core busy (20 s windows, the least trough per second): macOS 10 ms (2 x 128-frame periods)
+    // kept >= 8 ms; the Steam Deck 10 ms (2 x 256) kept >= 4.5 ms; Windows (WASAPI shared, 3 x 10 ms) at 10 ms fell to
+    // 0.6 ms, at 15 ms kept >= 9 ms
+#ifdef _WIN32
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 15.0;
+#else
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 10.0;
+#endif
+    // Where the adaptive setpoint starts (feature on, or a new device): above the floor, since a host shows its jitter
+    // only under load. The Steam Deck starting at 10 ms with every core busy had its one gap within the first minute
+    // (Pentagon and Next alike), after which 16 ms held; thirty quiet seconds per 1 ms bring it down to the floor in about 2.5 minutes
+    static constexpr double LOW_LATENCY_DRC_START_MS = 15.0;
+
+    /// The ring's setpoint now: DRC_TARGET_MS, or with the feature lowlatency the adaptive one (LowLatencyTarget:
+    /// starts at LOW_LATENCY_DRC_START_MS, stays between LOW_LATENCY_DRC_TARGET_MS and DRC_TARGET_MS, raised by gaps
+    /// and near-gaps, lowered after quiet spells)
+    double drcTargetMs() const;
+    /// Times the adaptive low-latency setpoint went up (gaps or near-gaps)
+    uint64_t drcTargetRaises() const { return _llTargetRaises.load(std::memory_order_relaxed); }
+    /// The DRC's trim of the resample ratio (+-DRC_MAX_TRIM; 0 while disengaged)
+    double drcTrim() const { return _drcTrim.load(std::memory_order_relaxed); }
+
     /// Restart the DRC controller state (EMA seed + integrator): called on
     /// device re-establishment so tracking resumes from the fresh occupancy
     /// instead of stale pre-reroute state
@@ -346,6 +373,15 @@ protected:
     // the emulation thread)
     std::atomic<bool> _feature_sound_enabled{true};
     std::atomic<bool> _feature_soundhq_enabled{true};
+    /// Feature lowlatency: the ring held at the adaptive setpoint (from LOW_LATENCY_DRC_TARGET_MS) instead of DRC_TARGET_MS
+    std::atomic<bool> _feature_lowlatency{false};
+    /// The DRC's last trim (the resample ratio over its base, minus one; 0 while disengaged), for the reports
+    std::atomic<double> _drcTrim{0.0};
+    /// The adaptive low-latency setpoint (emulation thread) and its published value / raise count (any thread)
+    LowLatencyTarget _llTarget{LOW_LATENCY_DRC_START_MS, LOW_LATENCY_DRC_TARGET_MS, DRC_TARGET_MS};
+    std::atomic<double> _llTargetMs{LOW_LATENCY_DRC_START_MS};
+    std::atomic<uint64_t> _llTargetRaises{0};
+    void updateLowLatencyTarget();
     /// The thread that runs the frames (stored by handleFrameStart; a default id until the first frame). The
     /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
     std::atomic<std::thread::id> _emulationThread{};

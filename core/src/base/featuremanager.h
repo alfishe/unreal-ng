@@ -149,9 +149,11 @@ constexpr const char* const kEsxDosDesc =
     "machine is bound to a TTD timeline or an RZX recording plays.";
 
 constexpr const char* const kLowLatencyDesc =
-    "Low-latency video: each frame is shown as soon as it is made, not when its sound is heard. The picture comes "
-    "about 50 ms sooner and leads the sound by as much (the audio path's delay). Off by default; Steam Deck Game Mode "
-    "turns it on. A temporal effect (ZX DLSS) still delays the picture by its look-ahead.";
+    "Low latency: each frame is shown as soon as it is made, not when its sound is heard, and the sound path is "
+    "shortened (audio ring of 15 ms instead of 40 ms, down to 10 ms where the host holds it, raised only as far as it needs). The "
+    "picture comes about 50 ms sooner and leads "
+    "the sound by the shortened audio path's delay. Off by default; Steam Deck Game Mode turns it on. A temporal "
+    "effect (ZX DLSS) still delays the picture by its look-ahead.";
 
 constexpr const char* const kTTDRestartDesc =
     "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "

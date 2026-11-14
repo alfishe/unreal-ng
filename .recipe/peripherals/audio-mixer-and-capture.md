@@ -137,6 +137,18 @@ None of them touches the user's master mute.
 | `holds_taken` | holds ever taken, by reason |
 | `stale_holds_cleared` | holds a `resume` found without their reason and dropped (a leak; stays `0`) |
 | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames given to the speakers / of those, not silent / withheld |
+| `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 10 ms (15 ms on Windows) and 40 ms |
+| `device.drc_target_raises` | times the adaptive low-latency setpoint went up (a gap, or a second whose `trough_ms` fell below 2 ms) |
+| `device.drc_trim` | the DRC's current rate trim (±0.005; 0 while disengaged) |
+| `device.name` / `sample_rate_hz` | the host output device and its rate |
+| `device.buffer_ms` / `output_latency_ms` | the device buffer and the latency the OS reports below it |
+| `device.ring_ms` | the ring occupancy now |
+| `device.trough_ms` | the least the device callbacks left in the ring over the last closed one-second window (`null` before the first): the margin against a gap |
+| `device.trough_windows` | windows closed |
+| `device.underruns` | gaps: callbacks that found the ring short after a full one (stays `0`) |
+| `device.ring_overruns` | frames the ring refused (stays `0`) |
+| `device.latency_ms` | ring now + device buffer + output latency |
+| `device.reinits` | times the device was opened again (reroute, `lowlatency` changed on macOS) |
 
 "I resumed and hear nothing" - read it twice, a second apart:
 
@@ -150,6 +162,17 @@ and `frames_delivered` / `frames_audible` growing by about 50 a second. If
 silence (check `master.muted` and the devices' `peak`). If a holder is not `0`
 after `resume`, something still runs fast (turbo on, a TTD replay); `resume`
 itself drops holds whose reason is gone.
+
+"Is the sound late or does it crackle" - watch the device a few seconds:
+
+```bash
+curl -s "$BASE/emulator/$EMU_ID/audio/mixer" | jq '.host_output.device'
+```
+
+`trough_ms` is the margin left before a gap; it sits a little below
+`drc_target_ms`. `underruns` growing means gaps (audible clicks); a trough near
+`0` warns of them first. Under `lowlatency` the setpoint answers both: it goes up
+(`drc_target_raises`) and comes down again a millisecond per quiet half-minute. `latency_ms` is how late the speakers play.
 
 ## Reading a capture result
 

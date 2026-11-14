@@ -277,7 +277,11 @@
         "turbo - withholds it), holders (active holds by reason: direct_run, ttd_replay, turbo; all 0 while the "
         "machine plays), holds_taken (ever taken, by reason), stale_holds_cleared (holds a resume found without "
         "their reason and dropped), frames_delivered, frames_audible (of those, non-silent), frames_held (emulated "
-        "frames since creation).";
+        "frames since creation), device = the host device and its ring: drc_target_ms (the occupancy the DRC holds; "
+        "adaptive with the lowlatency feature: from 10 ms, 15 on Windows, up to 40), drc_trim, drc_target_raises, "
+        "name, sample_rate_hz, buffer_ms, output_latency_ms, ring_ms, "
+        "trough_ms (the least the callbacks left over the last second; null before the first), trough_windows, "
+        "underruns (gaps), ring_overruns, latency_ms, reinits).";
     paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/audio/mixer"]["get"]["parameters"][0]["required"] = true;
