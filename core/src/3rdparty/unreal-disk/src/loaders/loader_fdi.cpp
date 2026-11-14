@@ -185,8 +185,10 @@ DiskImage* LoaderFDI::parse(const uint8_t* data, size_t len, std::vector<std::st
 
                 if (sizeCodes[s] > 3)
                 {
-                    warnings.push_back(StringHelper::Format("FDI cylinder %d head %d sector %d: size code %d masked to %d (WD1793 uses 2 bits)",
-                                                            cylinder, head, numbers[s], sizeCodes[s], sizeCodes[s] & 3));
+                    // Informational: the raw N goes into the ID field unchanged (a protection trick), the WD1793 reads
+                    // 128 << (N & 3) data bytes for it
+                    warnings.push_back(StringHelper::Format("FDI cylinder %d head %d sector %d: N=%d kept in ID, data length %u (N & 3)",
+                                                            cylinder, head, numbers[s], sizeCodes[s], 128u << (sizeCodes[s] & 3)));
                 }
 
                 const size_t dataSize = 128u << (sizeCodes[s] & 3);
