@@ -37,6 +37,7 @@
 #include "emulator/sound/chips/gs/gsaudioout.h"
 #include "emulator/sound/chips/gs/gscardrunner.h"
 #include "emulator/sound/chips/gs/gscpuregisters.h"
+#include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"
 #include "emulator/sound/chips/gs/gsmodulereplay.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
@@ -147,6 +148,8 @@ public:
     uint32_t cardPageCount(CardPage::Kind kind) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return _runner.now(); }
+    void catchUpToHost() override;
+    int64_t hostLead() const override;
     int64_t cardFrameTime() const override { return _runner.now() - _frameStartTicks; }
     bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
     bool pokeCardMemory(uint16_t addr, uint8_t value) override { return _cpu && _mem.writeRam(addr, value); }
@@ -584,6 +587,7 @@ private:
     int64_t _frameStartTicks = 0;
     bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     int64_t _frameTicks = 0;
+    GSHostClock::Rate _tightRate;  // catchUpToHost's conversion, per host instruction in tight mode
 
     // Audio
     AudioFrameDescriptor _audioDescriptor;

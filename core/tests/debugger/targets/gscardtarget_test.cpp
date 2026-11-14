@@ -8,8 +8,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <memory>
+#include <vector>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/gsslot.h"
@@ -20,11 +23,14 @@
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
+#include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/execution/runcontrol.h"
 #include "emulator/sound/audio.h"
+#include "emulator/sound/chips/gs/gshostclock.h"
+#include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 
@@ -483,6 +489,143 @@ TEST(GSCardTarget_Test, TheMachinesCardStopsWhereItLoops)
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
+// Tight mode (gs-debugger design §5.2): a stopping card breakpoint or an armed card step has the main CPU catch the
+// card up at every instruction start, so the card's stop comes while main is within an instruction of it, and the pause
+// says where main stands. Without it the card runs at port accesses and frame ends only: main is found up to a frame
+// ahead. Boot-bound, turbo: about 100 ms for both runs
+TEST(GSCardTarget_Test, ACardBreakpointParksTheMainCpuNearby)
+{
+    auto stopWith = [](bool tight) -> MainPosition {
+        MainPosition main;
+        SoundCardScope sound(TestSound::GeneralSound);
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        EXPECT_NE(emulator, nullptr);
+        if (!emulator)
+            return main;
+        EmulatorContext* context = emulator->GetContext();
+        EXPECT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+        FeatureManager* features = emulator->GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        GSCardTarget* target = context->pDebugManager->GetGSTarget();
+        GeneralSoundCard* card = context->pSoundManager->getGeneralSound();
+        // Stopped at a frame's end, the card caught up to it (a pause mid-frame would leave it lazily behind)
+        emulator->RunNFrames(3);
+        EXPECT_FALSE(features->cardTightHold());
+
+        Z80CpuRegisters regs{};
+        EXPECT_TRUE(card->cardRegisters(regs));
+        std::string error;
+        BreakpointManager* breakpoints = context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
+        const uint16_t id = breakpoints->AddBreakpoint(Exec(regs.pc), error);
+        EXPECT_NE(id, BRK_INVALID) << error;
+        EXPECT_TRUE(features->cardTightHold()) << "a stopping card breakpoint";
+        if (!tight)
+            features->setCardTightHold(false);
+
+        const uint64_t stops = target->StopCount();
+        emulator->EnableTurboMode();
+        emulator->StartAsync();
+        EXPECT_TRUE(TestWait::For([&] { return target->StopCount() > stops && emulator->IsParkedInsideCardRun(); }));
+        main = emulator->LastStop().breakpoint.main;
+        EXPECT_TRUE(main.known);
+        EXPECT_EQ(main.gapT, static_cast<int32_t>(std::llround(
+                                 static_cast<double>(card->hostLead()) /
+                                 GSHostClock::unitsPerZxTact(context, card->cardUnitsPerSecond()))))
+            << "the gap as the parked card has it";
+        EXPECT_EQ(main.pc, context->pCore->GetZ80()->m1_pc);
+
+        breakpoints->RemoveBreakpointByID(id);
+        EXPECT_FALSE(features->cardTightHold()) << "no card breakpoint left";
+        EXPECT_EQ(target->ArmStep(GSCardTarget::StepKind::In), "");
+        EXPECT_TRUE(features->cardTightHold()) << "an armed card step";
+        target->CancelStep();
+        EXPECT_FALSE(features->cardTightHold());
+        emulator->Stop();
+        EmulatorTestHelper::CleanupEmulator(emulator);
+        return main;
+    };
+    const MainPosition tight = stopWith(true);
+    EXPECT_FALSE(tight.frameEnd);
+    EXPECT_GE(tight.gapT, 0);
+    EXPECT_LT(tight.gapT, 24) << "main within an instruction of the card's stop";
+    EXPECT_LT(tight.tInInstruction, 24u);
+    const MainPosition lazy = stopWith(false);
+    EXPECT_TRUE(lazy.frameEnd || lazy.gapT > 1000) << "lazy: main ran on to a port access or the frame end; gap "
+                                                   << lazy.gapT;
+}
+
+// Tight mode only splits the card's catch-up into more runs, it does not change them (gs-debugger design §5.6): the
+// machine's NeoGS boots through its loader's clock switch with the same card-side events lazy and tight - every port
+// access of either side, DAC fetch and INT at the same card time, from the same PC, with the same byte. A breakpoint
+// never hit keeps the card in its debug loop both ways. (The card's time after a frame is not compared: tight, the
+// card follows the main CPU's first T of the next frame.) About 0.4 s
+TEST(GSCardTarget_Test, TightModeRunsTheCardAsLazyDoes)
+{
+    constexpr size_t kCapacity = size_t{1} << 18;
+    struct Run
+    {
+        std::vector<GSTraceEvent> events;
+        uint8_t clockBefore = 0;
+        uint8_t clockAfter = 0;
+    };
+    auto run = [](bool tight) -> Run {
+        Run result;
+        SoundCardScope sound(TestSound::GeneralSound);
+        Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+        EXPECT_NE(emulator, nullptr);
+        if (!emulator)
+            return result;
+        EmulatorContext* context = emulator->GetContext();
+        EXPECT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+        FeatureManager* features = emulator->GetFeatureManager();
+        features->setFeature(Features::kDebugMode, true);
+        auto* card = dynamic_cast<SoundChip_NeoGS*>(context->pSoundManager->getGeneralSound());
+        EXPECT_NE(card, nullptr);
+        if (!card)
+            return result;
+        std::string error;
+        BreakpointManager* breakpoints = context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS);
+        EXPECT_NE(breakpoints->AddBreakpoint(Exec(0x3FFF), error), BRK_INVALID) << error;  // never executed
+        features->setCardTightHold(tight);
+
+        GSHistory events{"gs", "GS port and activity events", kCapacity};
+        EXPECT_TRUE(events.Configure({.mode = history::Mode::Ring, .limit = kCapacity}, error)) << error;
+        card->attachPortTrace(&events);
+        result.clockBefore = card->gscfg0();
+        emulator->RunNFrames(25);
+        result.clockAfter = card->gscfg0();
+        card->attachPortTrace(nullptr);
+        result.events = events.Snapshot();
+        EmulatorTestHelper::CleanupEmulator(emulator);
+        return result;
+    };
+    const Run lazy = run(false);
+    const Run tight = run(true);
+    ASSERT_FALSE(lazy.events.empty());
+    ASSERT_FALSE(tight.events.empty());
+    EXPECT_LT(lazy.events.size(), kCapacity) << "the whole run in the ring";
+    EXPECT_LT(tight.events.size(), kCapacity);
+    EXPECT_NE(lazy.clockBefore, lazy.clockAfter) << "the loader switched the clock within the run";
+    EXPECT_EQ(tight.clockAfter, lazy.clockAfter);
+
+    // Up to where both got: the later of the two runs' ends is past the other's last event
+    const int64_t end = std::min(lazy.events.back().timestamp, tight.events.back().timestamp);
+    size_t compared = 0;
+    for (size_t i = 0; i < lazy.events.size() && lazy.events[i].timestamp <= end; i++, compared++)
+    {
+        ASSERT_LT(i, tight.events.size());
+        const GSTraceEvent& l = lazy.events[i];
+        const GSTraceEvent& t = tight.events[i];
+        ASSERT_TRUE(l.timestamp == t.timestamp && l.side == t.side && l.port == t.port && l.pc == t.pc &&
+                    l.value == t.value && l.flags == t.flags && l.channel == t.channel)
+            << "event " << i << ": lazy t=" << l.timestamp << " port #" << std::hex << l.port << " pc #" << l.pc
+            << " = #" << int(l.value) << ", tight t=" << std::dec << t.timestamp << " port #" << std::hex << t.port
+            << " pc #" << t.pc << " = #" << int(t.value);
+    }
+    EXPECT_GT(compared, 100000u);
+    EXPECT_TRUE(compared == tight.events.size() || tight.events[compared].timestamp > end);
+}
+
 /// The MultiSound's General Sound is the `ms` CPU (platform-debugging P1): its own target and breakpoints, found on
 /// the slot card; the General Sound slot's target stays empty. An execute breakpoint where its firmware loops stops
 /// there; the stop names the CPU
@@ -651,6 +794,12 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
         EXPECT_EQ(stop->find("cpu")->s, "gs") << kind;
         EXPECT_EQ(reply.body.find("pc")->i, pc) << kind;
         EXPECT_NE(reply.body.find("main_pc"), nullptr);
+        // The card never runs ahead of main (design §5.3): its stop has main at or past it. How far: as far as the
+        // card was behind when the machine paused (between frames none; a pause mid-frame leaves it lazily behind)
+        const StateNode* main = stop->find("main");
+        EXPECT_NE(main, nullptr) << kind;
+        if (main)
+            EXPECT_GE(main->find("gap_t")->i, 0) << kind;
         EXPECT_EQ(reply.body.find("state")->s, "paused") << kind;
         EXPECT_TRUE(emulator->IsPaused());
     };

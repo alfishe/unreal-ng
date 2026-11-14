@@ -61,6 +61,8 @@ protected:
     /// Posts NC_DEBUG_TARGETS_CHANGED when the card CPUs there differ from the last post
     int TargetsMask() const;  ///< bit 0: gs, bit 1: ms
     void PublishTargetsIfChanged();
+    bool _catchingUp = false;      ///< CatchUpCards is running (the emulation thread only): no nested catch-up
+    bool _shuttingDown = false;    ///< the destructor: the targets going away do not switch tight mode
     /// endregion </Fields>
 
     /// region <Constructors / Destructors>
@@ -108,6 +110,13 @@ public:
     void OnGeneralSoundCardCreated();
     /// The slot cards were built or released (SlotManager): the MultiSound GS's hooks follow its card
     void OnSlotCardsChanged();
+    /// Tight mode on while any card CPU is debugged with a stop (GSCardTarget::WantsTight), off when none is: the
+    /// main CPU catches the card up at every instruction start (FeatureManager::setCardTightHold). Called from a target's changes
+    /// (breakpoint demand, step armed or cancelled), never from inside the card's run
+    void UpdateCardTight();
+    /// Tight mode, at a main CPU instruction start: each card debugged with a stop runs up to the main CPU's time
+    /// (where a breakpoint or step of the card parks the machine). Not while a card is parked inside its own run
+    void CatchUpCards();
     /// Every CPU a debugger can name (main, gs, ms) and whether it is there now
     std::vector<std::pair<std::string, bool>> DebugTargets() const;
 

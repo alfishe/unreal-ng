@@ -49,6 +49,32 @@ bool GSHostClock::targetUnits(const EmulatorContext* context, double unitsPerSec
     return true;
 }
 
+bool GSHostClock::targetUnits(const EmulatorContext* context, double unitsPerSecond, uint64_t frameStartZxTacts,
+                              int64_t frameStartUnits, Rate& rate, int64_t& target)
+{
+    const uint64_t zxTacts = currentZxTacts(context, frameStartZxTacts);
+    if (zxTacts < frameStartZxTacts)
+        return false;
+    if (context)
+    {
+        const CONFIG& config = context->config;
+        const uint8_t hostMultiplier = context->emulatorState.HostSpeedMultiplier();
+        if (rate.value == 0 || rate.frame != config.frame || rate.frameDurationUs != config.frame_duration_us ||
+            rate.hostMultiplier != hostMultiplier) [[unlikely]]
+        {
+            rate.frame = config.frame;
+            rate.frameDurationUs = config.frame_duration_us;
+            rate.hostMultiplier = hostMultiplier;
+            rate.value = unitsPerZxTact(context, unitsPerSecond);
+        }
+    }
+    else
+        rate.value = unitsPerZxTact(context, unitsPerSecond);
+    const uint64_t relative = zxTacts - frameStartZxTacts;
+    target = frameStartUnits + static_cast<int64_t>(std::llround(static_cast<double>(relative) * rate.value));
+    return true;
+}
+
 int64_t GSHostClock::zxElapsedSince(const EmulatorContext* context, uint64_t anchorZxTacts)
 {
     const uint64_t now = currentZxTacts(context, anchorZxTacts);

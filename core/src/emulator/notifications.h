@@ -348,6 +348,17 @@ enum class PauseCause : uint8_t
     Step          // another CPU's step ended (a sound card's: the machine parked with it at `cpuPc`)
 };
 
+/// Where the main CPU parked with another CPU's stop (a card's: gs-debugger design §5.2): its instruction, how far
+/// into it, and how far the card's time is behind main's. Tight mode keeps the gap under one main instruction
+struct MainPosition
+{
+    bool known = false;
+    bool frameEnd = false;        ///< the stop came in the frame-end catch-up: main is between frames, not inside `pc`
+    uint16_t pc = 0;              ///< main's instruction (its M1 address)
+    uint32_t tInInstruction = 0;  ///< T of that instruction already run
+    int32_t gapT = 0;             ///< main's time minus the card's, in main T
+};
+
 /// Payload for NC_EMULATOR_STATE_CHANGE.
 /// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
 /// StatePaused / StateResumed / StateStopped) — same as the legacy
@@ -364,6 +375,7 @@ public:
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
     std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
     uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
+    MainPosition main;        ///< a card's stop: where the main CPU parked with it
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}

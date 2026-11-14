@@ -166,10 +166,20 @@ both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
 - **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
   instruction boundary, with the PC of the instruction that did it. The machine parks (pause) inside the card's
   catch-up; a direct step of the main CPU ends after its instruction.
+- **Tight mode** (gs-debugger design §5.2). While a stopping card breakpoint is active or a card step is armed, the
+  main CPU catches the card up at every instruction start (`Z80::cardTight`), not only at a host port access and the
+  frame end. So a card stop finds the main CPU at the start of the instruction under way at that card time, not up
+  to a frame later; its memory path stays as it was. Tight mode only splits the card's catch-up into shorter runs: the card
+  executes the same instructions at the same card times as without it.
 - **Cost.** The hooks are on the card only while an active card breakpoint exists; without them the card runs its
-  fast loop unchanged.
+  fast loop unchanged. Tight mode splits the card's run into one piece per main instruction while a card breakpoint
+  or step asks for it (about a quarter more per host frame than the same breakpoint without it); with none, the
+  instruction start tests one more flag.
 - **Stops.** The pause, the breakpoint payload, a step's stop and `wait` carry `cpu` (`main` or `gs`) and, for a card
-  stop, `cpu_pc` (the card instruction) beside the main PC.
+  stop, `cpu_pc` (the card instruction) beside the main PC. A card's pause in the machine's own run (the `debug`
+  topic's `paused` event, the card step's `stop`) adds `main`: where the main CPU parked with the card - `pc` (its
+  instruction), `t_in_instruction` (T of it already run), `gap_t` (main's time past the card's, in main T; under one
+  main instruction in tight mode) and `frame_end` (the stop came in the frame-end catch-up, main between frames).
 
 | Plane | The CPU | Event breakpoint |
 | :--- | :--- | :--- |
@@ -219,10 +229,11 @@ The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` (the snapshot's `
 `breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`, the
 main CPU's `main_pc` and `main_sp`, `state`.
 
-The card has no lock-step mode: it runs behind the main CPU and catches up at a host port access (#B3 / #BB) or at
-the frame end, and its step parks inside that catch-up. So the main CPU moves on during a card step, up to the point
-where the card catches up (at most a frame). Paused inside the card's run (after a card step or breakpoint) the next
-step starts from that boundary; paused between frames, the card's first boundary is the instruction at its PC.
+The card never runs ahead of the main CPU: an armed step turns tight mode on, so the card catches up at every main
+instruction start and its step parks inside that catch-up, with the main CPU at the start of its next instruction
+(the stop's `main`). The main CPU moves on during a card step only as far as the card's time needs. Paused inside the card's run
+(after a card step or breakpoint) the next step starts from that boundary; paused between frames, the card's first
+boundary is the instruction at its PC.
 
 | Plane | Step in | Step over / out |
 | :--- | :--- | :--- |

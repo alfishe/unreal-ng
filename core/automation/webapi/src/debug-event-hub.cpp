@@ -36,6 +36,19 @@ void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t add
     if (cpu != "main")
         event["cpu_pc"] = cpuPc;
 }
+
+/// A card's stop: where the main CPU parked with it (gs-debugger design §5.2)
+void AddMainPosition(Json::Value& event, const MainPosition& main)
+{
+    if (!main.known)
+        return;
+    Json::Value node;
+    node["pc"] = main.pc;
+    node["t_in_instruction"] = main.tInInstruction;
+    node["gap_t"] = main.gapT;
+    node["frame_end"] = main.frameEnd;
+    event["main"] = std::move(node);
+}
 }  // namespace
 
 DebugEventHub& DebugEventHub::Instance()
@@ -271,6 +284,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 event["reason"] = "breakpoint";
                 AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
                                     payload->cpuPc);
+                AddMainPosition(event, payload->main);
             }
             else if (payload->pauseCause == PauseCause::Step)
             {
@@ -278,6 +292,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 event["reason"] = "step";
                 event["cpu"] = payload->cpu;
                 event["cpu_pc"] = payload->cpuPc;
+                AddMainPosition(event, payload->main);
             }
             else
                 event["reason"] = "pause";

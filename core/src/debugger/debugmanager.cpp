@@ -145,6 +145,29 @@ std::vector<std::pair<std::string, bool>> DebugManager::DebugTargets() const
             {DebugCpuName(DebugCpuId::MultiSoundGS), _msTarget && _msTarget->Available()}};
 }
 
+void DebugManager::UpdateCardTight()
+{
+    if (_shuttingDown || !_context || !_context->pFeatureManager)
+        return;
+    const bool tight = (_gsTarget && _gsTarget->WantsTight()) || (_msTarget && _msTarget->WantsTight());
+    _context->pFeatureManager->setCardTightHold(tight);
+}
+
+void DebugManager::CatchUpCards()
+{
+    if (_catchingUp)
+        return;
+    _catchingUp = true;
+    for (GSCardTarget* target : {_gsTarget.get(), _msTarget.get()})
+    {
+        if (!target || !target->WantsTight() || target->ParkedInside())
+            continue;
+        if (GeneralSoundCard* card = target->Card())
+            card->catchUpToHost();
+    }
+    _catchingUp = false;
+}
+
 int DebugManager::TargetsMask() const
 {
     return (_gsTarget && _gsTarget->Available() ? 1 : 0) | (_msTarget && _msTarget->Available() ? 2 : 0);
@@ -168,6 +191,7 @@ DebugManager::~DebugManager()
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
     _frameWatches.reset();
+    _shuttingDown = true;      // the targets' breakpoints going away leave the features as they are
     _msTarget.reset();
     _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();

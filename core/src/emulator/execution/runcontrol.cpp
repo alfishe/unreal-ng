@@ -17,6 +17,22 @@
 namespace execution
 {
 
+namespace
+{
+/// A card's stop: where the main CPU parked with it (gs-debugger design §5.2)
+void AddMainPosition(StateNode& stop, const MainPosition& main)
+{
+    if (!main.known)
+        return;
+    StateNode node = StateNode::Object();
+    node["pc"] = static_cast<int>(main.pc);
+    node["t_in_instruction"] = static_cast<int>(main.tInInstruction);
+    node["gap_t"] = static_cast<int>(main.gapT);
+    node["frame_end"] = main.frameEnd;
+    stop["main"] = std::move(node);
+}
+}  // namespace
+
 int RunReply::HttpStatus() const
 {
     switch (status)
@@ -314,6 +330,7 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         stopNode["cpu"] = DebugCpuName(cpu);
         stopNode["reason"] = "step";
         stopNode["cpu_pc"] = static_cast<int>(target->LastStop().boundaryPc);
+        AddMainPosition(stopNode, cause.main);
     }
     else if (last.reason == Emulator::DebugStop::Reason::Breakpoint && cause.hit)
     {
@@ -324,6 +341,7 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         stopNode["access"] = BreakpointHitKindName(cause.kind);
         if (cause.cpu != DebugCpuId::Main)
             stopNode["cpu_pc"] = static_cast<int>(cause.cpuPc);
+        AddMainPosition(stopNode, cause.main);
     }
     else
     {

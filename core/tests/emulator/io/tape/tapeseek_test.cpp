@@ -6,6 +6,8 @@
 
 #include "_helpers/testpathhelper.h"
 #include "_helpers/tzxtapebuilder.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/tape/tape.h"
@@ -337,6 +339,45 @@ TEST_F(TapePosition_Test, PositionNulloptWithoutImage)
 
     MountImage(MakePairs(1), "nullopt.tzx");
     EXPECT_TRUE(_tape->GetPosition().has_value());
+}
+
+/// The last pulse of the tape toggles the level and stops playback in the same
+/// step, before the loader's next IN. The ended tape must keep that level on
+/// EAR: the board's idle level (on the 48K the #FE bit 4 feedback) would undo
+/// the final edge, and a loader counting it (Deflektor's turbo block, pause 0)
+/// times out.
+TEST_F(TapePosition_Test, EndedTapeHoldsLastEdgeLevel)
+{
+    TzxTapeBuilder builder;
+    builder.AddPureTone(2168, 3);  // odd pulse count: the tape ends on the opposite level
+    const std::string path = TestPathHelper::GetTestScratchPath("tapeseek/ended-holds-edge.tzx");
+    ASSERT_TRUE(TzxTapeBuilder::WriteToFile(builder.Bytes(), path));
+    _context->coreState.tapeFilePath = path;
+    ASSERT_TRUE(_tape->EnsureImageLoaded());
+
+    _context->config.mem_model = MM_SPECTRUM48;
+    _tape->StartPlaybackAtCursor();
+    _tape->handleFrameStart();
+    ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Playing);
+    const bool startLevel = _tape->_tapeBitState;
+
+    // EAR output feedback set to the level the tape starts on: the idle
+    // level a stopped 48K would fall back to
+    _context->emulatorState.pFE = startLevel ? 0x10 : 0x00;
+
+    Z80* z80 = _context->pCore->GetZ80();
+    for (int i = 0; i < 1000 && _tape->GetPlaybackState() != TapePlaybackState::Ended; i++)
+    {
+        z80->t += 100;
+        _tape->handlePortIn(0xFE);
+    }
+    ASSERT_EQ(_tape->GetPlaybackState(), TapePlaybackState::Ended);
+    ASSERT_NE(_tape->_tapeBitState, startLevel);
+
+    const uint8_t expected = _tape->_tapeBitState ? 0x40 : 0x00;
+    EXPECT_EQ(_tape->handlePortIn(0xFE) & 0x40, expected);
+    _context->emulatorState.pFE ^= 0x10;  // the board level flips; the tape level holds
+    EXPECT_EQ(_tape->handlePortIn(0xFE) & 0x40, expected);
 }
 
 /// The fast-load plan must be computed over the parser-FILLED catalog, not
