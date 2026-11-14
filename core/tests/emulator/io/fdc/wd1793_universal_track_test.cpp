@@ -884,6 +884,63 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7TakesTwoByteCells)
 
 /// endregion </WRITE TRACK control-byte language>
 
+/// region <WRITE TRACK past the image geometry (ZF6 mastering, FDC-03)>
+
+/// WT-11: WRITE TRACK on a cylinder the image does not have grows the image instead of reporting Record Not Found
+/// (bit 4 is always 0 for WRITE TRACK; a real disk has a track there). Tracks in between come out erased,
+/// existing tracks keep their address, and the drive's mechanical end (86) is the limit
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_PastLastCylinder_GrowsImage)
+{
+    DiskImage image(80, 2);
+    DiskImage::Track* first = image.getTrack(0);
+    const std::vector<uint8_t> stream = formatStream(Spec::trdos(), 80, 0, 0x00);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 80);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTRDY);
+    EXPECT_EQ(image.getCylinders(), 81);
+    EXPECT_TRUE(image.isDirty());
+    EXPECT_EQ(image.getTrack(0), first) << "existing tracks do not move";
+    ASSERT_NE(image.getTrackForCylinderAndSide(80, 0), nullptr);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(80, 0)->sectorCount(), 16u);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(80, 1)->sectorCount(), 0u) << "the other side is erased";
+
+    // Cylinder 85: 81..84 come out erased - READ ADDRESS on 83 finds nothing
+    fdc._selectedDrive->setTrack(85);
+    fdc._trackRegister = 85;
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, formatStream(Spec::trdos(), 85, 0, 0x00), fdc._time + 100);
+    waitIdle(fdc);
+    EXPECT_EQ(image.getCylinders(), 86);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(85, 0)->sectorCount(), 16u);
+    for (uint8_t c = 81; c < 85; c++)
+        EXPECT_EQ(image.getTrackForCylinderAndSide(c, 0)->sectorCount(), 0u) << int(c);
+
+    fdc._selectedDrive->setTrack(83);
+    fdc._trackRegister = 83;
+    issue(fdc, 0xC0);
+    EXPECT_TRUE(runReadUntilIdle(fdc, fdc._time + 100).empty());
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+
+    // Position 86 is the drive's mechanical end, past any cylinder: no track, the image stays at 86
+    fdc._selectedDrive->setTrack(86);
+    fdc._trackRegister = 86;
+    issue(fdc, 0xF0);
+    waitIdle(fdc);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTRDY);
+    EXPECT_EQ(image.getCylinders(), 86);
+}
+
+/// endregion </WRITE TRACK past the image geometry>
+
+
 /// region <READ ADDRESS>
 
 /// READ ADDRESS returns the next ID field under the head (rotational position) and copies its

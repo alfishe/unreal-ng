@@ -1769,10 +1769,13 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
+    // Past the last cylinder of the image the disk still has a track (an image lists only what was dumped or
+    // created): the image grows. WRITE TRACK has no Record Not Found (status bit 4 is always 0 for it); with no
+    // surface under the head at all (a side the image lacks, between two 48 tpi tracks) the drive is not ready
+    DiskImage::Track* track = _selectedDrive->trackUnderHeadForWrite(_sideUp);
     if (!track)
     {
-        _statusRegister |= WDS_NOTFOUND;
+        _statusRegister |= WDS_NOTRDY;
         transitionFSM(S_END_COMMAND);
         return;
     }
@@ -2342,10 +2345,10 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             }
 
                             // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+                            DiskImage::Track* track = selectedDrive->trackUnderHeadForWrite(sideUp);
                             if (!track)
                             {
-                                this->_statusRegister |= WDS_NOTFOUND;
+                                this->_statusRegister |= WDS_NOTRDY;
                                 return;
                             }
 

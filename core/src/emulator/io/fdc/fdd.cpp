@@ -72,6 +72,24 @@ DiskImage::Track* FDD::trackUnderHead(uint8_t side)
     return _diskImage->getTrackForCylinderAndSide(cylinder, side);
 }
 
+DiskImage::Track* FDD::trackUnderHeadForWrite(uint8_t side)
+{
+    DiskImage::Track* track = trackUnderHead(side);
+    if (track || !_diskImage || side >= _diskImage->getSides())
+        return track;
+
+    uint8_t cylinder = _track;
+    if (_driveCylinders >= 80 && _diskImage->isFortyTrack())
+    {
+        if (_track & 1)
+            return nullptr;
+        cylinder = static_cast<uint8_t>(_track / 2);
+    }
+    if (cylinder >= MAX_CYLINDERS || !_diskImage->growCylinders(static_cast<uint8_t>(cylinder + 1)))
+        return nullptr;
+    return _diskImage->getTrackForCylinderAndSide(cylinder, side);
+}
+
 void FDD::insertDisk(DiskImage* diskImage)
 {
     if (diskImage)
