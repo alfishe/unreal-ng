@@ -166,34 +166,27 @@ TEST_F(ScreenOCR_Test, RecognizeLetterAtEveryPosition_ThirdThird)
 // INVERSE VIDEO (all pixels inverted)
 // ============================================================================
 
+/// OCR-04: an inverse glyph (INVERSE 1) reads as its character
 TEST_F(ScreenOCR_Test, RecognizeInverseChar_SingleLetter)
 {
-    WriteCharToScreen(0, 0, 'A', true);  // Inverse
-    
-    // Current implementation might not handle inverse - test behavior
-    char result = ScreenOCR::ocrCell(_memory, 0, 0);
-    // Inverse 'A' won't match normal font - should return '?' 
-    // (or 'A' if inverse support is implemented)
-    EXPECT_TRUE(result == '?' || result == 'A') 
-        << "Inverse 'A' returned: " << result;
+    WriteCharToScreen(0, 0, 'A', true);
+    EXPECT_EQ(ScreenOCR::ocrCell(_memory, 0, 0), 'A');
 }
 
+/// OCR-04: every inverse glyph is recognised (the ROM font has no glyph that is another one inverted)
 TEST_F(ScreenOCR_Test, RecognizeInverseAllChars)
 {
-    // Track how many inverse chars are recognized (for future inverse support)
-    int recognized = 0;
     for (int code = 0x21; code <= 0x7F; code++)  // Skip space
     {
         ClearScreen();
         WriteCharToScreen(0, 0, static_cast<char>(code), true);
-        
-        char result = ScreenOCR::ocrCell(_memory, 0, 0);
-        if (result == static_cast<char>(code)) recognized++;
+        EXPECT_EQ(ScreenOCR::ocrCell(_memory, 0, 0), static_cast<char>(code)) << "inverse code 0x" << std::hex << code;
     }
-    
-    // Log how many inverse chars were recognized
-    // (0 expected until inverse support added)
-    std::cout << "[INFO] Inverse recognition: " << recognized << "/95 chars\n";
+
+    // A solid cell is an inverse space
+    for (int line = 0; line < 8; line++)
+        _memory->DirectWriteToZ80Memory(GetScreenAddr(0, 1, line), 0xFF);
+    EXPECT_EQ(ScreenOCR::ocrCell(_memory, 0, 1), ' ');
 }
 
 // ============================================================================
@@ -303,6 +296,8 @@ TEST_F(ScreenOCR_Test, ScreenAddressFormula)
 #include "_helpers/emulatortesthelper.h"
 #include "emulator/emulator.h"
 #include "emulator/video/screen.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
 
 #include <algorithm>
 
@@ -366,13 +361,13 @@ TEST(ScreenOCRTextMode_Test, SprinterTextSquaresAreRead)
 }
 
 // ============================================================================
-// THE DISPLAYED SCREEN (ZF6 mastering: MCP-03)
+// THE DISPLAYED SCREEN, INVERSE CELLS AND THE MENU BAR (ZF6 mastering: MCP-02, MCP-03)
 // ============================================================================
 
 namespace
 {
     /// Writes text into the screen bitmap of a RAM page (the ZX layout from its first byte)
-    void WriteToPage(uint8_t* page, int row, int col, const std::string& text)
+    void WriteToPage(uint8_t* page, int row, int col, const std::string& text, bool inverse = false)
     {
         for (size_t i = 0; i < text.size(); i++)
         {
@@ -381,7 +376,7 @@ namespace
             {
                 const int y = row * 8 + line;
                 const int offset = ((y & 0xC0) << 5) + ((y & 7) << 8) + ((y & 0x38) << 2) + col + static_cast<int>(i);
-                page[offset] = glyph[line];
+                page[offset] = inverse ? static_cast<uint8_t>(~glyph[line]) : glyph[line];
             }
         }
     }
@@ -390,6 +385,12 @@ namespace
     {
         std::fill(page, page + 6144, 0x00);
         std::fill(page + 6144, page + 6912, attr);
+    }
+
+    void FillAttrs(uint8_t* page, int row, int from, int to, uint8_t attr)
+    {
+        for (int col = from; col < to; col++)
+            page[6144 + row * 32 + col] = attr;
     }
 }
 
@@ -418,6 +419,83 @@ TEST(ScreenOCRMachine_Test, ShadowScreenIsReadFromPage7)
     EXPECT_EQ(lines[0].text.substr(0, 10), "BANK SEVEN");
     EXPECT_EQ(ScreenOCR::ocrScreen(emulator).substr(0, 10), "BANK SEVEN");
     EXPECT_EQ(context->pMemory->DirectReadFromZ80Memory(0x5800), 0x38) << "the Z80 still sees page 5 at #4000";
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// OCR-02 / OCR-04: inverse cells are flagged; the menu bar is the panel row that differs in PAPER / BRIGHT only,
+/// a title strip with another INK is not, nor a bar without text
+TEST(ScreenOCRMachine_Test, InverseCellsAndHighlightedRow)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    uint8_t* page5 = emulator->GetContext()->pMemory->RAMPageAddress(5);
+    ClearPage(page5, 0x38);
+    // The 128 menu as the ROM draws it: title 0x47, panel 0x78, bar 0x68 (cyan PAPER, same black INK)
+    FillAttrs(page5, 7, 7, 21, 0x47);
+    WriteToPage(page5, 7, 7, "128");
+    for (int row = 8; row <= 13; row++)
+        FillAttrs(page5, row, 7, 21, 0x78);
+    WriteToPage(page5, 8, 8, "Tape Loader");
+    WriteToPage(page5, 9, 8, "128 BASIC");
+    WriteToPage(page5, 10, 8, "Calculator");
+    FillAttrs(page5, 10, 7, 21, 0x68);
+    WriteToPage(page5, 20, 2, "INVERSE", true);
+    FillAttrs(page5, 22, 0, 32, 0x68);  // a coloured strip without text
+
+    std::vector<ScreenOCR::ZxLine> lines;
+    int page = -1;
+    ASSERT_TRUE(ScreenOCR::readZxScreen(emulator, lines, page));
+    for (int row = 0; row < 24; row++)
+        EXPECT_EQ(lines[row].highlighted, row == 10) << "row " << row << ": " << lines[row].text;
+    EXPECT_EQ(lines[20].text.substr(2, 7), "INVERSE");
+    for (int col = 0; col < 32; col++)
+        EXPECT_EQ(lines[20].inverse[col], col >= 2 && col < 9) << col;
+    EXPECT_FALSE(lines[8].inverse[8]);
+    EXPECT_EQ(lines[10].attrs[7], 0x68);
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// OCR-02 end to end: the Pentagon's 128 menu from its ROM - the bar is on the first item, Down moves it one row.
+/// Boot-bound: turbo, ~150 frames
+TEST(ScreenOCRMachine_Test, PentagonMenuBarFollowsDown)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError, RamPowerOn::Zero);
+    ASSERT_NE(emulator, nullptr);
+    emulator->GetContext()->config.reset_rom = RM_128;
+    emulator->Reset();
+    emulator->EnableTurboMode();
+
+    std::vector<ScreenOCR::ZxLine> lines;
+    int page = -1;
+    auto highlightedRow = [&]() {
+        if (!ScreenOCR::readZxScreen(emulator, lines, page))
+            return -1;
+        int found = -1;
+        for (int row = 0; row < static_cast<int>(lines.size()); row++)
+            if (lines[row].highlighted)
+                found = found < 0 ? row : -2;  // -2: more than one
+        return found;
+    };
+    int bar = -1;
+    for (int frame = 0; frame < 400 && bar < 0; frame += 10)
+    {
+        emulator->RunNFrames(10, true);
+        bar = highlightedRow();
+    }
+    ASSERT_GE(bar, 0) << ScreenOCR::ocrScreen(emulator);
+    EXPECT_NE(lines[bar].text.find("Tape Loader"), std::string::npos) << lines[bar].text;
+
+    emulator->GetContext()->pDebugManager->GetKeyboardManager()->TapKey("down");
+    int moved = bar;
+    for (int frame = 0; frame < 100 && moved == bar; frame += 5)
+    {
+        emulator->RunNFrames(5, true);
+        moved = highlightedRow();
+    }
+    EXPECT_EQ(moved, bar + 1) << ScreenOCR::ocrScreen(emulator);
+    EXPECT_NE(lines[bar + 1].text.find("128 BASIC"), std::string::npos) << lines[bar + 1].text;
 
     EmulatorTestHelper::CleanupEmulator(emulator);
 }

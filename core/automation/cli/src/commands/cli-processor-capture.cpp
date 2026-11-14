@@ -2,6 +2,7 @@
 /// @date 22.01.2026
 /// @brief CLI Capture commands handler (OCR, screen capture, ROM text capture)
 
+#include <algorithm>
 #include <common/filehelper.h>
 #include <emulator/video/framebufferexport.h>
 #include "cli-processor.h"
@@ -109,7 +110,29 @@ void CLIProcessor::HandleCaptureOCR(const ClientSession& session, std::shared_pt
     ss << "================================" << NEWLINE;
     ss << screenText;
     ss << "================================" << NEWLINE;
-    
+
+    // The ZX screen: the menu bar row, inverse text, the shadow screen
+    std::vector<ScreenOCR::ZxLine> lines;
+    int page = -1;
+    auto ocrEmulator = manager->GetEmulator(emulatorId);  // the one read above
+    if (ocrEmulator && ScreenOCR::readZxScreen(ocrEmulator.get(), lines, page))
+    {
+        std::string highlighted, inverse;
+        for (size_t row = 0; row < lines.size(); row++)
+        {
+            if (lines[row].highlighted)
+                highlighted += (highlighted.empty() ? "" : ", ") + std::to_string(row);
+            if (std::find(lines[row].inverse.begin(), lines[row].inverse.end(), true) != lines[row].inverse.end())
+                inverse += (inverse.empty() ? "" : ", ") + std::to_string(row);
+        }
+        if (page == 7)
+            ss << "Screen: the shadow screen (page 7)" << NEWLINE;
+        if (!highlighted.empty())
+            ss << "Highlighted row: " << highlighted << NEWLINE;
+        if (!inverse.empty())
+            ss << "Inverse text on rows: " << inverse << NEWLINE;
+    }
+
     session.SendResponse(ss.str());
 }
 

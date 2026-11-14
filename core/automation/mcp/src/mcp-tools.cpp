@@ -2718,7 +2718,7 @@ void RegisterInspectState(ToolRegistry& registry)
         "paging state (tagged latches + bank table), static port map with tags (ports), video mode (video: resolution, colour depth, "
         "memory layout, displayed RAM pages, #EFF7/#DFFD/#FF77), screen state (screen: active screen and RAM pages, per-screen "
         "Z80 mapping, #7FFD, contention), FLASH timing (screen_flash), per-cell ink/paper/bright/flash (screen_attributes), "
-        "screen OCR text, screen image metadata, screen digest hash, raster timing (timing: the beam and the layer pixel under it), "
+        "screen OCR text (screen_ocr: the screen the picture shows, inverse glyphs included; '> ' marks the highlighted row of a menu), screen image metadata, screen digest hash, raster timing (timing: the beam and the layer pixel under it), "
         "the mode's layers and beam windows (video_layout), the exact text of ATM / ZX-Evo text modes (video_text; the pixel "
         "behind a point and the pixels a byte feeds: GET /video/pixel and /video/address through invoke_api), "
         "ROM signatures, AY/SSG chips (audio_ay), TurboSound FM YM2203 halves (audio_fm), General Sound card (audio_gs), Covox / SoundDrive (audio_covox), MoonSound OPL4 (audio_moonsound, audio_opl4_fm, audio_opl4_pcm), Beta Disk WD1793 (fdc), IDE board (ide), CMOS clock (rtc), ZX Profi board chips (profi), "
@@ -3579,12 +3579,51 @@ void RegisterInspectState(ToolRegistry& registry)
                                 std::string text = value["text"].asString();
                                 while (!text.empty() && text.back() == '\n')
                                     text.pop_back();
+                                // The menu bar (highlighted_rows): "> " before its row, "  " before the others
+                                const Json::Value& highlighted = value["highlighted_rows"];
+                                if (highlighted.isArray() && !highlighted.empty())
+                                {
+                                    std::vector<bool> marked;
+                                    for (const Json::Value& row : highlighted)
+                                    {
+                                        const Json::UInt r = row.asUInt();
+                                        if (marked.size() <= r)
+                                            marked.resize(r + 1, false);
+                                        marked[r] = true;
+                                    }
+                                    std::string prefixed;
+                                    size_t row = 0, start = 0;
+                                    while (start <= text.size())
+                                    {
+                                        size_t end = text.find('\n', start);
+                                        if (end == std::string::npos)
+                                            end = text.size();
+                                        prefixed += (row < marked.size() && marked[row]) ? "> " : "  ";
+                                        prefixed += text.substr(start, end - start);
+                                        if (end < text.size())
+                                            prefixed += '\n';
+                                        start = end + 1;
+                                        row++;
+                                    }
+                                    text = prefixed;
+                                }
                                 const bool truncated = text.size() > kOcrTextCap;
                                 if (truncated)
                                     text.resize(kOcrTextCap);
                                 out << "\n[screen_ocr]\n" << text;
                                 if (truncated)
                                     out << "\n(truncated, full text: structuredContent.screen_ocr.text)";
+                                if (value["screen_page"].isUInt() && value["screen_page"].asUInt() == 7)
+                                    out << "\n(the shadow screen: page 7)";
+                                const Json::Value& inverse = value["inverse"];
+                                if (inverse.isArray() && !inverse.empty())
+                                {
+                                    out << "\n(inverse text on row";
+                                    out << (inverse.size() > 1 ? "s" : "");
+                                    for (Json::ArrayIndex i = 0; i < inverse.size(); i++)
+                                        out << (i ? ", " : " ") << inverse[i]["row"].asUInt();
+                                    out << ")";
+                                }
                             }
                             else if (aspect == "memory")
                             {

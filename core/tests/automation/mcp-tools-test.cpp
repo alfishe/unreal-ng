@@ -1785,6 +1785,40 @@ TEST_F(McpTools_Test, InspectState_ScreenOcr_TextHasAllLines)
     EXPECT_NE(result.text.find("(truncated, full text: structuredContent.screen_ocr.text)"), std::string::npos);
 }
 
+// OCR-02 / OCR-03 / OCR-04: the menu bar row gets "> " (the others "  "), inverse rows and the shadow screen are named
+TEST_F(McpTools_Test, InspectState_ScreenOcr_MarksHighlightInverseAndShadow)
+{
+    Json::Value body;
+    body["text"] = "TITLE\nTape Loader\n128 BASIC\n";
+    body["rows"] = 3;
+    body["screen_page"] = 7;
+    body["highlighted_rows"].append(1);
+    Json::Value cells;
+    cells["row"] = 2;
+    cells["cols"].append(0);
+    body["inverse"].append(cells);
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/ocr"] = {200, body};
+
+    Json::Value args;
+    args["aspects"] = Json::Value(Json::arrayValue);
+    args["aspects"].append("screen_ocr");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError);
+    EXPECT_NE(result.text.find("[screen_ocr]\n  TITLE\n> Tape Loader\n  128 BASIC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("(the shadow screen: page 7)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("(inverse text on row 2)"), std::string::npos) << result.text;
+
+    // No highlighted row: the text stays as it is
+    body.removeMember("highlighted_rows");
+    body.removeMember("inverse");
+    body["screen_page"] = 5;
+    _caller->routes["GET /api/v1/emulator/emu-1/capture/ocr"] = {200, body};
+    result = RunTool(*_registry, "inspect_state", args, *_caller);
+    EXPECT_NE(result.text.find("[screen_ocr]\nTITLE\nTape Loader"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("shadow"), std::string::npos) << result.text;
+}
+
 // TD-3: the memory aspect forwards format=hexdump by default (~80% token cut)
 TEST_F(McpTools_Test, InspectState_MemoryAspect_DefaultsToHexdump)
 {

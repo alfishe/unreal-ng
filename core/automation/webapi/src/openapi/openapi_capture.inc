@@ -4,7 +4,15 @@
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["description"] =
         "Extract text from screen using ROM font bitmap matching (OCR). "
         "Returns 24 lines x 32 characters matched against the ZX Spectrum ROM font; in a text video mode (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL) the exact 80x25 text from the character codes. rows / cols give the size. "
-        "The ZX screen is read from the page the picture shows (screen_page: 5, or 7 when #7FFD bit 3 selects the shadow screen).";
+        "The ZX screen is read from the page the picture shows (screen_page: 5, or 7 when #7FFD bit 3 selects the shadow screen). "
+        "Inverse glyphs (INVERSE 1) read as their characters, listed in inverse [{row, cols}]. highlighted_rows: the menu bar - rows whose "
+        "panel differs from the panel most rows use in PAPER / BRIGHT only, same INK, with text (the 128K / Pentagon / Scorpion menus). "
+        "attributes=1 adds line_info [{row, text, highlighted, attrs[32], inverse}].";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][1]["name"] = "attributes";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][1]["in"] = "query";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][1]["required"] = false;
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][1]["schema"]["type"] = "boolean";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][1]["description"] = "Add line_info with every row's attribute bytes (ZX screen only)";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["parameters"][0]["required"] = true;
@@ -20,6 +28,10 @@
          ["properties"]["text"]["type"] = "string";
     paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
          ["properties"]["screen_page"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["highlighted_rows"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/capture/ocr"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+         ["properties"]["inverse"]["type"] = "array";
 
     // Capture screen endpoint
     {

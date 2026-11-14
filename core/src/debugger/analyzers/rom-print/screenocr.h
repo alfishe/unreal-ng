@@ -13,7 +13,7 @@
 ///
 /// Uses the ROM font bitmap data to recognize characters displayed on screen.
 /// ZX Spectrum screen: 32 columns × 24 rows of 8×8 pixel characters, read from the screen the picture shows
-/// (page 5, or 7 when #7FFD bit 3 selects the shadow screen).
+/// (page 5, or 7 when #7FFD bit 3 selects the shadow screen). Inverse glyphs (INVERSE 1) are recognised too.
 /// Text video modes (ATM Turbo 2+ ATMTX, ZX-Evo ATMTL: 80x25) are read
 /// exactly from their character codes through the video mapper instead.
 ///
@@ -25,10 +25,15 @@ public:
     {
         std::string text;                       ///< 32 characters ('?' where no glyph matched)
         std::array<uint8_t, 32> attrs{};        ///< attribute byte of every cell
+        std::array<bool, 32> inverse{};         ///< the cell's glyph is drawn inverted (INVERSE 1)
+        bool highlighted = false;               ///< a menu bar: see readZxScreen
     };
 
     /// The ZX screen as text rows. displayedPage is the RAM page the picture shows (5 / 7), -1 when the bytes came
     /// from the Z80's #4000 window (no screen device: a bare memory in tests).
+    /// A row is highlighted when its panel cells (not the screen's background attribute) differ from the attribute
+    /// most rows' panels use in PAPER / BRIGHT only, with the same INK, and the row has text: the bar of the 128K /
+    /// Pentagon / Scorpion menus. A title strip in other colours (another INK) is not a highlight.
     /// False when the current mode has a text layer or no memory (ocrScreen covers those)
     static bool readZxScreen(Emulator* emulator, std::vector<ZxLine>& lines, int& displayedPage);
 
@@ -66,8 +71,14 @@ private:
     /// Match bitmap against ROM font using hash lookup (O(1) vs O(96))
     static char matchFont(const uint8_t* bitmap8bytes);
 
+    /// matchFont, then the inverted bitmap; inverse is set when only the inverted one matched a glyph
+    static char matchFontOrInverse(const uint8_t* bitmap8bytes, bool& inverse);
+
     /// The 6,912 bytes of the displayed ZX screen; displayedPage as in readZxScreen
     static bool copyZxScreen(Emulator* emulator, uint8_t* out6912, int& displayedPage);
+
+    /// The highlighted rows of readZxScreen
+    static void markHighlightedRows(std::vector<ZxLine>& lines);
 
     /// Hash function for 8-byte bitmap (uses first 4 bytes as uint32 + last 4)
     static uint64_t hashBitmap(const uint8_t* bitmap);

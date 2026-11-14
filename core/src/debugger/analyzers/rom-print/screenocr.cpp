@@ -6,6 +6,7 @@
 #include "emulator/video/screen.h"
 
 #include <algorithm>
+#include <cctype>
 
 // Static member definitions
 std::unordered_map<uint64_t, char> ScreenOCR::_fontHashTable;
@@ -150,11 +151,67 @@ bool ScreenOCR::readZxScreen(Emulator* emulator, std::vector<ZxLine>& lines, int
             uint8_t bitmap[8];
             for (int pixelLine = 0; pixelLine < 8; pixelLine++)
                 bitmap[pixelLine] = screen[getScreenAddr(row, col, pixelLine) - SCREEN_BASE];
-            line.text += matchFont(bitmap);
+            bool inverse = false;
+            line.text += matchFontOrInverse(bitmap, inverse);
+            line.inverse[col] = inverse;
             line.attrs[col] = screen[6144 + row * COLS + col];
         }
     }
+    markHighlightedRows(lines);
     return true;
+}
+
+void ScreenOCR::markHighlightedRows(std::vector<ZxLine>& lines)
+{
+    // Attributes compared without FLASH
+    auto key = [](uint8_t attr) { return static_cast<uint8_t>(attr & 0x7F); };
+    auto mostCommon = [](const std::array<int, 128>& counts, int& count) {
+        int best = 0;
+        for (int a = 1; a < 128; a++)
+            if (counts[a] > counts[best])
+                best = a;
+        count = counts[best];
+        return static_cast<uint8_t>(best);
+    };
+
+    // The background: the attribute most cells have
+    std::array<int, 128> counts{};
+    for (const ZxLine& line : lines)
+        for (uint8_t attr : line.attrs)
+            counts[key(attr)]++;
+    int count = 0;
+    const uint8_t background = mostCommon(counts, count);
+
+    // Each row's panel: the attribute most of its other cells have (at least 4 of them, a bar not a dot)
+    static constexpr int kMinPanelCells = 4;
+    std::vector<int> panel(lines.size(), -1);
+    std::array<int, 128> rowsPerPanel{};
+    for (size_t r = 0; r < lines.size(); r++)
+    {
+        std::array<int, 128> row{};
+        for (uint8_t attr : lines[r].attrs)
+            if (key(attr) != background)
+                row[key(attr)]++;
+        const uint8_t attr = mostCommon(row, count);
+        if (count >= kMinPanelCells)
+        {
+            panel[r] = attr;
+            rowsPerPanel[attr]++;
+        }
+    }
+
+    // The panel most rows share (a menu box); with none shared by two rows the background is the panel (a menu
+    // drawn on the whole screen)
+    uint8_t common = mostCommon(rowsPerPanel, count);
+    if (count < 2)
+        common = background;
+
+    for (size_t r = 0; r < lines.size(); r++)
+    {
+        ZxLine& line = lines[r];
+        const bool hasText = std::any_of(line.text.begin(), line.text.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)); });
+        line.highlighted = panel[r] >= 0 && panel[r] != common && (panel[r] & 0x07) == (common & 0x07) && hasText;
+    }
 }
 
 char ScreenOCR::ocrCell(Memory* memory, int row, int col)
@@ -162,7 +219,8 @@ char ScreenOCR::ocrCell(Memory* memory, int row, int col)
     initFontHashTable();  // Ensure initialized for direct ocrCell calls
     uint8_t bitmap[8];
     extractCellBitmap(memory, row, col, bitmap);
-    return matchFont(bitmap);
+    bool inverse = false;
+    return matchFontOrInverse(bitmap, inverse);
 }
 
 uint16_t ScreenOCR::getScreenAddr(int charRow, int charCol, int pixelLine)
@@ -226,4 +284,21 @@ char ScreenOCR::matchFont(const uint8_t* bitmap8bytes)
         return it->second;
 
     return '?';  // No match
+}
+
+char ScreenOCR::matchFontOrInverse(const uint8_t* bitmap8bytes, bool& inverse)
+{
+    inverse = false;
+    const char direct = matchFont(bitmap8bytes);
+    if (direct != '?')
+        return direct;
+
+    // INVERSE 1 (or a menu that draws its bar with set pixels): the glyph is the paper. A solid cell is an inverse
+    // space and stays unflagged
+    uint8_t inverted[8];
+    for (int i = 0; i < 8; i++)
+        inverted[i] = static_cast<uint8_t>(~bitmap8bytes[i]);
+    const char glyph = matchFont(inverted);
+    inverse = glyph != '?' && glyph != ' ';
+    return glyph;
 }

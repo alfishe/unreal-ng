@@ -4515,6 +4515,33 @@ namespace PythonBindings
             .def("capture_ocr", [](Emulator& self) -> std::string {
                 return ScreenOCR::ocrScreen(self.GetId());
             }, "OCR text from screen (32x24 chars)")
+            .def("capture_ocr_lines", [](Emulator& self) -> py::dict {
+                // The ZX screen row by row: text, attribute bytes, inverse columns, the menu bar flag
+                py::dict result;
+                std::vector<ScreenOCR::ZxLine> lines;
+                int page = -1;
+                result["success"] = ScreenOCR::readZxScreen(&self, lines, page);
+                result["screen_page"] = page;
+                py::list rows;
+                for (const ScreenOCR::ZxLine& line : lines)
+                {
+                    py::dict row;
+                    row["text"] = line.text;
+                    row["highlighted"] = line.highlighted;
+                    py::list attrs, inverse;
+                    for (size_t col = 0; col < line.attrs.size(); col++)
+                    {
+                        attrs.append(line.attrs[col]);
+                        if (line.inverse[col])
+                            inverse.append(col);
+                    }
+                    row["attrs"] = attrs;
+                    row["inverse"] = inverse;
+                    rows.append(row);
+                }
+                result["lines"] = rows;
+                return result;
+            }, "The ZX screen OCR row by row: success (false in a text mode: use capture_ocr), screen_page (5 / 7, -1 = the #4000 window), lines [{text, highlighted (the menu bar), attrs[32], inverse (columns)}]")
             .def("capture_screen", [](Emulator& self, const std::string& format, py::object fullLegacy, const std::string& area,
                                        const std::string& path, const std::string& source) -> py::dict {
                 py::dict result;
