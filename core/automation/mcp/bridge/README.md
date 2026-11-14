@@ -27,9 +27,13 @@ MCP client (IDE)                unreal-mcp-bridge                       drogon (
   JSON parsing — line-level extraction only.
 - Writes the response body + `\n` to stdout **only when non-empty**
   (notifications → HTTP 202 → silence, keeping the line protocol clean).
-- Connect/transport failure emits
-  `{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"bridge: cannot reach <url> (…)"}}`
-  and keeps running — start the emulator later and retry.
+- Connect/transport failure answers the request under its own `id` (taken from the line by a string-aware scan of the
+  top-level object), so the client ends the call at once instead of waiting for its timeout:
+  `{"jsonrpc":"2.0","id":7,"error":{"code":-32603,"message":"bridge: no emulator answers at <url> (connection refused): unreal-qt is not running, or it has exited or crashed","data":{"bridge":"unreachable","url":"…","detail":"…"}}}`.
+  `data.bridge` is `unreachable` (nothing listens: not started, exited or crashed before the call) or
+  `connection_lost` (the connection broke during the call, including a framed answer cut short: the process went away
+  while working on it). A notification (no `id`) gets no answer. The bridge keeps running — start the emulator again
+  and retry.
 - stdin EOF → exit 0. `SIGPIPE` ignored (POSIX). Winsock guarded (Windows).
 - Response bodies: `Content-Length` and `Transfer-Encoding: chunked`
   handling; 5-minute receive ceiling so a wedged server cannot hang the daemon.
