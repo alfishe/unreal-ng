@@ -234,6 +234,29 @@ TEST_F(P2666Video_Test, PaletteWritesReachEveryModeAndTheBorder)
     EXPECT_EQ(State().p2666.palette[10], 0x5678);
 }
 
+/// T-V1 (screen page): #7FFD.3 shows screen 1 (RAM page 7) in the ZX mode (hardware-reference.md §6 mode table);
+/// NedoOS games (UFO 2) draw in page 7 and flip to it
+TEST_F(P2666Video_Test, Port7FFDBit3ShowsPage7)
+{
+    using namespace P2666Geometry;
+    DosOff();
+    uint8_t* page5 = _context->pMemory->RAMPageAddress(5);
+    uint8_t* page7 = _context->pMemory->RAMPageAddress(7);
+    std::memset(page5, 0, 0x4000);
+    std::memset(page7, 0, 0x4000);
+    page7[0] = 0xFF;
+    page7[0x1800] = 0x02;  // ink red, paper black
+    SelectMode(3, false);
+
+    Out(0x7FFD, 0x08);
+    RenderFrame();
+    EXPECT_EQ(Pixel(kBorderLeft, kBorderTop), Palette(2)) << "page 7 on the screen";
+
+    Out(0x7FFD, 0x00);
+    RenderFrame();
+    EXPECT_EQ(Pixel(kBorderLeft, kBorderTop), Palette(0)) << "back to page 5";
+}
+
 /// T-V2 (text): the font is the board's otmfnt ROM, not the ATM Turbo 2+ one; kept across a CPU reset
 TEST_F(P2666Video_Test, TextModeUsesTheBoardFont)
 {

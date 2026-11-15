@@ -10,16 +10,23 @@
 //   P2666_PROBE_OUT     a directory for a PNG after every step (step-NN.png)
 //   P2666_PROBE_TURBO   1: the emulator's turbo (no pacing; the machine's own clock stays)
 //   P2666_PROBE_MODEL   another model to run the same script on (a reference: PENTAGON, ...)
+//   P2666_PROBE_CONFIG  a config folder for that model (zxevo-ers with ATM3: the ZX-Evo as a NedoOS reference)
+//   P2666_PROBE_RAM     its RAM in KB (with P2666_PROBE_CONFIG; 0: the model's default)
 //   P2666_PROBE_DUMP    1: after every step the window pages, registers, the code around PC and the stack
 //   P2666_PROBE_STEPS   N: single-step N instructions after the script and print each
 //   P2666_PROBE_FIND    text: after every step the RAM pages (0..127) that hold it
 //   P2666_PROBE_BUS     a bus to trace (zc.spi): its events and findings at the end
 //   P2666_PROBE_AUTOSTART 1: boot the disk through Emulator::AutostartDisk instead of only inserting it
+//   P2666_PROBE_UNTILPC hex PC: single-step until it, then print the last 400 instructions
+//   P2666_PROBE_WATCH   "page:offset" (hex): every change of that RAM byte with the PC and the windows
+//   P2666_PROBE_WATCHSTOP hex value: stop the watch when the byte takes it
+//   P2666_PROBE_SAVEPAGES comma-separated hex RAM pages to save into P2666_PROBE_OUT after the script
 
 #include <emulator/cpu/core.h>
 #include <emulator/cpu/z80.h>
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
+#include <emulator/emulatormanager.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -79,7 +86,17 @@ bool KeyByName(const std::string& name, ZXKeysEnum& key)
 TEST(P2666SoftwareProbe_Test, DISABLED_Run)
 {
     const char* model = Env("P2666_PROBE_MODEL") ? Env("P2666_PROBE_MODEL") : "P2666";
-    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
+    std::shared_ptr<Emulator> configured;  // P2666_PROBE_CONFIG: owned here until the end of the run
+    Emulator* emulator = nullptr;
+    if (const char* config = Env("P2666_PROBE_CONFIG"))
+    {
+        configured = EmulatorManager::GetInstance()->CreateEmulatorWithModelAndRAM(
+            config, model, static_cast<uint32_t>(std::strtoul(Env("P2666_PROBE_RAM") ? Env("P2666_PROBE_RAM") : "0", nullptr, 10)),
+            LoggerLevel::LogError);
+        emulator = configured.get();
+    }
+    else
+        emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError, RamPowerOn::Zero);
     ASSERT_NE(emulator, nullptr);
     EmulatorContext* context = emulator->GetContext();
     auto* decoder = dynamic_cast<PortDecoderP2666*>(context->pPortDecoder);
@@ -167,12 +184,13 @@ TEST(P2666SoftwareProbe_Test, DISABLED_Run)
             }
         }
         const EmulatorState& state = context->emulatorState;
-        std::printf("step %02d frame %llu pc %04X x%d dos %d 7FFD %02X EFF7 %02X xx77 %02X ramdisk pos %d intrq %d\n",
+        std::printf("step %02d frame %llu pc %04X x%d dos %d 7FFD %02X EFF7 %02X xx77 %02X ramdisk pos %d intrq %d sys %02X\n",
                     index, static_cast<unsigned long long>(state.frame_counter), z80->pc,
                     state.current_z80_frequency_multiplier, (state.flags & CF_TRDOS) ? 1 : 0, state.p7FFD,
                     state.pEFF7, state.p2666.pxx77,
                     decoder && decoder->GetRamDisk() ? decoder->GetRamDisk()->Position() : -1,
-                    decoder && decoder->GetRamDisk() ? decoder->GetRamDisk()->Intrq() : 0);
+                    decoder && decoder->GetRamDisk() ? decoder->GetRamDisk()->Intrq() : 0,
+                    decoder && decoder->GetRamDisk() ? decoder->GetRamDisk()->System() : 0xFF);
         if (const char* needle = Env("P2666_PROBE_FIND"))
         {
             // RAM pages holding the text (a shell prompt, a marker)

@@ -1,0 +1,26 @@
+bat: cmd.com
+bas: basic.com
+txt,new,ext,ini,nfo,diz: texted.com
+bmp: scratch.com
+gif,jpg,png,htm,svg: browser.com
+16c,scr,fnt,img,3  ,888,y  ,+  ,-  ,plc,mc ,mcx,grf,ch$,mg1,mg2,mg4,mg8,rm ,mlt,53c,atr,zxs: view.com
+tfc,mt3,m  ,et ,etc,cmp,tfd,tfm: player.com
+s98: s98_play.com
+zip,gz : pkunzip.com
+tar: tar.com
+rar: unrar.com
+trd,scl,fdi,tap: dmm.com -Za
+sna,b  ,z80: nmisvc.com
+thk: texted.com
+x86: x86.com
+ch8: NSChip.com
+ps6: ps6_play.com
+bbp: BBPlayer.com
+v20: vic20.com
+bk : bk.com
+unt: untr.com
+z5 : zxzvm.com
+pt2,pt3,mod,mp3,mid,ogg,aac,mwm,vgm,vgz,gpl,s3m: gp.com
+sca: scaview.com
+wav: playwav.com
+

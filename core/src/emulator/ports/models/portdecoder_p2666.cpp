@@ -710,13 +710,17 @@ void PortDecoderP2666::Write7FFD(uint8_t value)
     EmulatorState& state = *_state;
     // PaE.vhd:1268-1277 (HR §2.5)
     if (!(state.pEFF7 & kEff7Lock128) || DosOn())
-    {
         state.p7FFD = value;
-        return;
+    else if (!(state.p7FFD & PORT_7FFD_LOCK))
+        state.p7FFD = static_cast<uint8_t>((state.p7FFD & 0xC0) | (value & 0x3F));
+
+    // #7FFD.3 picks screen 0 / 1: ZX pages 5 / 7 (HR §6 mode table)
+    if (_screen)
+    {
+        const SpectrumScreenEnum screen = (state.p7FFD & 0x08) ? SCREEN_SHADOW : SCREEN_NORMAL;
+        if (static_cast<uint8_t>(screen) != _screen->GetActiveScreen())
+            _screen->SetActiveScreen(screen);
     }
-    if (state.p7FFD & PORT_7FFD_LOCK)
-        return;
-    state.p7FFD = static_cast<uint8_t>((state.p7FFD & 0xC0) | (value & 0x3F));
 }
 
 void PortDecoderP2666::Write77Atm(uint16_t port, uint8_t value)
