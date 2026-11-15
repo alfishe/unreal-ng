@@ -687,6 +687,9 @@ protected:
     bool _chipAttachedToPortDecoder = false;
 
     FDD* _selectedDrive = nullptr;
+    /// The drive selected when the last command started: its transfer pointers point into that drive's disk even
+    /// after the program selects another one (onDiskChanged). Null = not known (after a TTD restore): any change clears
+    FDD* _commandDrive = nullptr;
 
     // New WD93 state to migrate to
     WD93State _wd93State;
@@ -1529,6 +1532,7 @@ public:
     using WD1793::isType3Command;
     using WD1793::isType4Command;
     using WD1793::processWD93Command;
+    using WD1793::selectDrive;
 
     using WD1793::cmdForceInterrupt;
     using WD1793::cmdReadAddress;

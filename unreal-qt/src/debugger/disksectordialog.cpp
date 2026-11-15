@@ -30,9 +30,10 @@ namespace
 {
 constexpr int kDrives = 4;
 
-DiskImage* ImageIn(FDD* fdd)
+/// A copy of the drive's disk: the emulation thread may reshape or release the image while the dialog looks at it
+std::unique_ptr<DiskImage> ImageIn(FDD* fdd)
 {
-    return fdd && fdd->isDiskInserted() ? fdd->getDiskImage() : nullptr;
+    return fdd && fdd->isDiskInserted() ? fdd->SnapshotDisk() : nullptr;
 }
 
 /// The sectors of a track by ID (each ID once, the first in the stream), with what is odd about them
@@ -125,7 +126,7 @@ DiskSectorDialog::DiskSectorDialog(std::shared_ptr<Emulator> emulator, QWidget* 
         for (int i = 0; i < kDrives; ++i)
             if (FDD* fdd = machine->coreState.diskDrives[i])
             {
-                DiskImage* image = ImageIn(fdd);
+                std::unique_ptr<DiskImage> image = ImageIn(fdd);
                 const QString name = image ? QFileInfo(QString::fromStdString(image->getFilePath())).fileName() : "";
                 _drive->addItem(QString("%1: %2").arg(QChar('A' + i)).arg(
                                     !image ? QString("empty") : name.isEmpty() ? QString("disk") : name),
@@ -169,7 +170,7 @@ void DiskSectorDialog::showNote(const QString& text)
 void DiskSectorDialog::driveSelected()
 {
     // The image's geometry bounds the choices
-    DiskImage* image = ImageIn(drive());
+    std::unique_ptr<DiskImage> image = ImageIn(drive());
     {
         QSignalBlocker blockCylinder(_cylinder);
         QSignalBlocker blockSide(_side);
@@ -186,7 +187,7 @@ void DiskSectorDialog::driveSelected()
 void DiskSectorDialog::trackSelected()
 {
     // The IDs this track holds; the same ID stays chosen when the new track has it
-    DiskImage* image = ImageIn(drive());
+    std::unique_ptr<DiskImage> image = ImageIn(drive());
     DiskImage::Track* track = image ? image->getTrackForCylinderAndSide(static_cast<uint8_t>(_cylinder->value()),
                                                                         static_cast<uint8_t>(_side->value()))
                                     : nullptr;
@@ -248,7 +249,7 @@ void DiskSectorDialog::load()
 {
     _shown.clear();
     FDD* fdd = drive();
-    DiskImage* image = ImageIn(fdd);
+    std::unique_ptr<DiskImage> image = ImageIn(fdd);
     if (!image)
     {
         showNote(fdd ? QString("No disk in drive %1.").arg(QChar('A' + _drive->currentData().toInt()))

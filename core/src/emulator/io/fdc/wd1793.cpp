@@ -301,8 +301,11 @@ void WD1793::onDiskChanged(FDD* drive)
     // right after this, so every pointer into it goes now - wherever the
     // command in progress is. The command then ends on its next step the way
     // the chip ends one when the medium goes away: the read and write paths
-    // find no buffer and finish with NOT READY
-    if (drive != _selectedDrive)
+    // find no buffer and finish with NOT READY.
+    // The pointers belong to the drive the command started on, which need not be the selected one: a program may
+    // select another drive in the middle of a command or after it (the sector in hand stays). A change there freed
+    // their target as well (heap use after free under the format's writes: WD1793_Fuzz_Test)
+    if (drive != _selectedDrive && _commandDrive != nullptr && drive != _commandDrive)
         return;
     _currentSector = nullptr;
     _currentReadTrack = nullptr;
@@ -1198,6 +1201,8 @@ void WD1793::processWD93Command(uint8_t value)
         }
 
         // Persist information about command
+        if (command != WD_CMD_FORCE_INTERRUPT)
+            _commandDrive = _selectedDrive;
         _commandRegister = value;
         _lastDecodedCmd = command;
         _lastCmdValue = commandValue;
@@ -1842,6 +1847,30 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     WDSTATE prevState = _state;
     [[maybe_unused]] WDSTATE prevState2 = _state2;
 
+    // A write cut short leaves on the disk what it wrote so far: WRITE TRACK's partial stream is indexed (the
+    // index still described the old layout), WRITE SECTOR's data is there without its CRC (a CRC error on read)
+    if (!noCommandExecuted && _writeTrackTarget)
+    {
+        if (_lastDecodedCmd == WD_CMD_WRITE_TRACK && _rawDataBufferIndex > 0)
+        {
+            _writeTrackTarget->reindex();
+            _writeTrackTarget->markRawTrackDirty();
+            _writeTrackTarget->markDirty();
+        }
+        else if (_lastDecodedCmd == WD_CMD_WRITE_SECTOR && _currentSector && _currentSector->hasData &&
+                 _rawDataBuffer > _currentSector->data && _rawDataBuffer <= _currentSector->data + _currentSector->dataSize)
+        {
+            _currentSector->dataCrcValid = _currentSector->isDataCRCValid();
+            _currentSector->dirty = true;
+            _writeTrackTarget->markDirty();
+        }
+    }
+    _writeTrackTarget = nullptr;
+    _currentSector = nullptr;
+    _currentReadTrack = nullptr;
+    _rawDataBuffer = nullptr;
+    _writeTrackEscapeNext = false;
+
     // Terminate any current command - always happens regardless of I0-I3 flags
     _state = S_IDLE;
     _state2 = S_IDLE;
@@ -2358,6 +2387,12 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
                             const DiskImage::Encoding encoding = controllerEncoding();
                             const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
+                            // The previous command's sector and buffers point into the stream and index this command
+                            // replaces (a resize below frees the stream, the reindex at the end rebuilds the index)
+                            _currentSector = nullptr;
+                            _currentReadTrack = nullptr;
+                            _sectorData = nullptr;
+                            _idamData = nullptr;
                             if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
                             {
                                 const bool mfm = (encoding == DiskImage::Encoding::MFM);
@@ -2372,6 +2407,9 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             _rawDataBuffer = track->rawData();
                             _rawDataBufferIndex = 0;
                             _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                            // An F7 before the first F5 / FM mark covers the stream from the index: never the
+                            // previous command's start, which may lie past the end of this (shorter) track
+                            _crcStartPosition = 0;
                             _writeTrackTarget = track;  // Store track for reindexing on completion
                         }, 0, tag);
         case FifoKind::NextReadSector:
@@ -3265,6 +3303,8 @@ void WD1793::processWriteTrack()
                 // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
                 // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
                 // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
+                // A start past the write position (a restored or foreign state) would read beyond the stream
+                if (_crcStartPosition > _rawDataBufferIndex) _crcStartPosition = _rawDataBufferIndex;
                 size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
                 // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
                 uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
@@ -4419,6 +4459,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
     }
 
     // Pointers into disk image data are intentionally not restored
+    _commandDrive = nullptr;
     // (re-established by the next command setup). Reset them to nullptr so
     // any stale value from before the restore cannot be dereferenced.
     _rawDataBuffer    = nullptr;
@@ -4570,17 +4611,23 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
     // The sector in use: its track, then its index in the track's list
     DiskRef sectorTrack;
     uint16_t sectorIndex = 0xFFFF;
-    if (_currentSector && _currentSector->id)
+    // By address among the live index entries of the drives' tracks: the pointer is not followed (an entry that
+    // left the index is saved as no sector)
+    for (uint8_t d = 0; _currentSector && d < 4 && sectorIndex == 0xFFFF; d++)
     {
-        sectorTrack = Locate(_context, reinterpret_cast<const uint8_t*>(_currentSector->id));
-        if (DiskImage::Track* track = TrackOf(_context, sectorTrack.drive, sectorTrack.track))
+        FDD* fdd = _context ? _context->coreState.diskDrives[d] : nullptr;
+        DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
+        for (unsigned t = 0; image && t < 255 && sectorIndex == 0xFFFF; t++)
         {
+            DiskImage::Track* track = image->getTrack(static_cast<uint8_t>(t));
+            if (!track)
+                break;
             const auto& sectors = track->sectors();
-            for (size_t i = 0; i < sectors.size(); i++)
-            {
-                if (&sectors[i] == _currentSector)
-                    sectorIndex = static_cast<uint16_t>(i);
-            }
+            if (sectors.empty() || _currentSector < sectors.data() || _currentSector >= sectors.data() + sectors.size())
+                continue;
+            sectorTrack.drive = d;
+            sectorTrack.track = static_cast<uint8_t>(t);
+            sectorIndex = static_cast<uint16_t>(_currentSector - sectors.data());
         }
     }
     put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.drive);
