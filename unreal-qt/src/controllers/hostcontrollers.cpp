@@ -45,6 +45,7 @@
 #include "emulator/config.h"
 #include "emulator/io/controllers/controllercontrol.h"
 #include "emulator/io/controllers/controllermanager.h"
+#include "router/zxkeys.h"
 #include "emulator/monitoring/hostdevices.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -184,6 +185,10 @@ public:
     {
         return _host.HapticsUnderTrial();
     }
+    JsonValue MachineInputs() const override
+    {
+        return _host.MachineInputs();
+    }
     bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
     {
         return ProgramSignatures(path, context, error);
@@ -316,6 +321,11 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         QMetaObject::invokeMethod(this, [this, id, path, bytes] { onGuestProgram(id, path, bytes); },
                                   Qt::QueuedConnection);
     });
+    // The machine reset: its ROM runs as a new program (the ZX-Evo service menu reads the mouse, a game before it
+    // the joystick), so the auto decision starts again with the program's profile kept
+    _resetObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SYSTEM_RESET, [this](int, Message*) {
+        QMetaObject::invokeMethod(this, [this] { onMachineReset(); }, Qt::QueuedConnection);
+    });
     // The context of an instance changed (ctx.set on any plane, the GUI's own panes): the router follows it
     _contextObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SURFACE_CONTEXT, [this](int, Message*) {
         QMetaObject::invokeMethod(this, [this] { followContext(); }, Qt::QueuedConnection);
@@ -349,6 +359,7 @@ HostControllers::~HostControllers()
     monitoring::HostDevices::Instance().Withdraw();
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_GUEST_PROGRAM, _guestObserver);
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SYSTEM_RESET, _resetObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     releaseWheelMenu();
@@ -1606,6 +1617,8 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     _autoConnector.clear();
     _decision = {};
     _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
     Reapply();
 }
 
@@ -1625,6 +1638,28 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
     _autoConnector.clear();
     _decision = {};
     _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
+    Reapply();
+}
+
+void HostControllers::onMachineReset()
+{
+    // The reset carries no instance: the bound one's reset armed its port watch again (Emulator::Reset), another
+    // instance's leaves it as it was
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr ||
+        !context->pControllerManager->PortReads().active || !_autoDone)
+        return;
+    _autoDone = false;
+    _keyboardNoticed = false;
+    _cardNoticed = false;
+    _autoConnector.clear();
+    _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the ROM decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
     Reapply();
 }
 
@@ -1656,7 +1691,66 @@ void HostControllers::applyConnectorPlans()
     {
         _autoDone = true;
         manager->WatchPortReads(false);
+        _autoReport = JsonValue::Object({{"device", JsonValue()},
+                                         {"reason", JsonValue::String("the game profile holds the connectors")}});
     }
+}
+
+JsonValue HostControllers::MachineInputs() const
+{
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr)
+        return {};
+    const ControllerManager* manager = context->pControllerManager;
+    const std::string instance = emulator->GetId();
+    const InputRouter& router = _service->Router();
+    static const std::pair<const char*, uint16_t> kControls[] = {
+        {"right", kRight}, {"left", kLeft}, {"down", kDown}, {"up", kUp},
+        {"fire", kFire},   {"fire2", kFire2}, {"fire3", kFire3}, {"fire4", kFire4}};
+    std::vector<JsonValue> connectors;
+    for (size_t index = 0; index < manager->Count(); index++)
+    {
+        const Connector connector = manager->At(index);
+        if (connector.id.empty())
+            continue;
+        JsonValue value = JsonValue::Object(
+            {{"id", JsonValue::String(connector.id)},
+             {"device", connector.device == RetroDeviceKind::None
+                            ? JsonValue()
+                            : JsonValue::String(RetroDeviceKindName(connector.device))},
+             {"fixed", JsonValue::Bool(connector.fixed)}});
+        if (connector.kind == ConnectorKind::KeyboardJoystick && connector.device != RetroDeviceKind::None)
+        {
+            JsonValue keys = JsonValue::Object();
+            for (const auto& [name, bit] : kControls)
+            {
+                std::vector<uint8_t> chord;
+                for (ZXKeysEnum key : ControllerManager::WiredKeys(connector, bit))
+                    chord.push_back(static_cast<uint8_t>(key));
+                if (!chord.empty())
+                    keys.Set(name, JsonValue::String(ZxChordName(chord)));
+            }
+            value.Set("keys", std::move(keys));
+        }
+        connectors.push_back(std::move(value));
+    }
+    // The recorded reason when it agrees with the router's state (another path may have switched it)
+    auto ruleOf = [](bool on, const std::string& rule) {
+        return rule.rfind(on ? "on" : "off", 0) == 0 ? rule : std::string(on ? "on" : "off");
+    };
+    const bool menuKeys = router.MenuKeys(instance);
+    const bool mouseButtons = router.MouseButtons(instance);
+    return JsonValue::Object(
+        {{"instance", JsonValue::String(instance)},
+         {"machine", JsonValue::String(Context().machine)},
+         {"ps2", JsonValue::Bool(manager->HostKeysReachPs2())},
+         {"auto", _autoReport},
+         {"menu_keys", JsonValue::Object({{"on", JsonValue::Bool(menuKeys)},
+                                          {"rule", JsonValue::String(ruleOf(menuKeys, _menuKeysRule))}})},
+         {"mouse_buttons", JsonValue::Object({{"on", JsonValue::Bool(mouseButtons)},
+                                              {"rule", JsonValue::String(ruleOf(mouseButtons, _mouseButtonsRule))}})},
+         {"connectors", JsonValue::Array(std::move(connectors))}});
 }
 
 void HostControllers::checkAuto()
@@ -1687,7 +1781,9 @@ void HostControllers::checkAuto()
         keyBuffer = reads != _keyBufferReads && _keyBufferReads != 0 && !decision.decisive;
         _keyBufferReads = reads;
     }
-    const bool keyScan = decision.keyboard || keyBuffer;
+    // A pointer menu reads the mouse and the whole keyboard (the ZX-Evo service ROM): the mouse decides, the pad's
+    // directions still move its cursor (decision.keyboardScan)
+    const bool keyScan = decision.keyboard || decision.keyboardScan || keyBuffer;
     // The pad drives a menu with the cursor keys while the program reads the whole keyboard (the 128K menu, BASIC, a
     // text prompt), over the rolling window, whatever the auto plug decided before. On at once; off only after a whole
     // window without the key scan, and until then no joystick is plugged (a reset's first moments look like one)
@@ -1698,6 +1794,10 @@ void HostControllers::checkAuto()
         if (keyScan)
         {
             _keyScanLostAt = -1;
+            _menuKeysRule = decision.keyboard       ? "on: the program scans the whole keyboard"
+                            : decision.keyboardScan ? "on: a pointer menu scans the whole keyboard beside the " +
+                                                          decision.label
+                                                    : "on: the program reads the PS/2 controller's keys";
             if (!menuKeys)
             {
                 router.SetMenuKeys(instance, true);
@@ -1711,6 +1811,7 @@ void HostControllers::checkAuto()
             if (frame - _keyScanLostAt < static_cast<int64_t>(DeviceAccessWatch::kWindow))
                 return;
             _keyScanLostAt = -1;
+            _menuKeysRule = "off: the program stopped scanning the whole keyboard";
             router.SetMenuKeys(instance, false);
             emit menuKeysChanged(false);
         }
@@ -1758,6 +1859,11 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
         // The pad's fire buttons click: the pointer moves with the trackpad or the stick already
         if (Emulator* emulator = _binding->emulator())
             _service->Router().SetMouseButtons(emulator->GetId(), true);
+        _mouseButtonsRule = "on: the auto decision " + decision.label + " (" + decision.reason + ")";
+        _autoReport = JsonValue::Object({{"device", JsonValue::String(decision.device)},
+                                         {"label", JsonValue::String(decision.label)},
+                                         {"connector", JsonValue()},
+                                         {"reason", JsonValue::String(decision.reason)}});
         emit notice(tr("This program reads the %1 (%2)")
                         .arg(QString::fromStdString(decision.label), QString::fromStdString(decision.reason)));
         return;
@@ -1797,6 +1903,10 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
     }
     _decision = decision;
     _autoConnector = connector;
+    _autoReport = JsonValue::Object({{"device", JsonValue::String(decision.device)},
+                                     {"label", JsonValue::String(decision.label)},
+                                     {"connector", JsonValue::String(connector)},
+                                     {"reason", JsonValue::String(decision.reason)}});
     Reapply();
     emit autoDecided(tr("%1 on %2 (port reads: %3)")
                          .arg(QString::fromStdString(decision.label), QString::fromStdString(connector),

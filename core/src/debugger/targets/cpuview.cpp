@@ -53,6 +53,28 @@ std::string Select(EmulatorContext* context, const std::string& name, DebugCpuId
     return {};
 }
 
+std::string SetSelected(EmulatorContext* context, const std::string& name)
+{
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    if (!debug)
+        return "no debugger on this machine";
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (std::string error = Select(context, name, cpu); !error.empty())
+        return error;
+    debug->SelectCpu(cpu);
+    return {};
+}
+
+StateNode Selected(EmulatorContext* context)
+{
+    StateNode ret = StateNode::Object();
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    const DebugCpuId cpu = debug ? debug->SelectedCpu() : DebugCpuId::Main;
+    ret["cpu"] = std::string(DebugCpuName(cpu));
+    ret["follows"] = IsCardCpu(cpu) && Card(context, cpu) != nullptr;
+    return ret;
+}
+
 GeneralSoundCard* Card(EmulatorContext* context, DebugCpuId cpu)
 {
     DebugManager* debug = context ? context->pDebugManager : nullptr;

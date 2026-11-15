@@ -204,6 +204,12 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
     });
     connect(m_cpu_tabs, &QTabWidget::currentChanged, this, [this](int) {
+        //The tab's CPU is the one shown: a card's follows the main CPU's steps of the paused machine
+        //(this->e: the constructor's parameter of the same name is not captured)
+        if (CPU * c = current_cpu(); c != nullptr && this->e->loaded) {
+            Emulator * em = this->e;
+            em->invoke([em, c]() { em->debug_select(c); });
+        }
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();
@@ -721,6 +727,9 @@ void DebuggerWindow::show_state()
         case Emulator::DSTOP_NO_PROGRESS: text = tr("%1 executes nothing").arg(who); break;
         default:                          text = tr("Paused"); break;
         }
+        //A card's stop: where the main CPU stood at the card's moment
+        const std::string main = e->debug_stop_main_text();
+        if (!main.empty()) text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(main);
     } else {
         text = tr("Running");
     }

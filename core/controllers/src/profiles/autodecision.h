@@ -28,6 +28,9 @@ struct AutoDecision
 {
     bool decisive = false;
     bool keyboard = false;   ///< the program polls the whole keyboard: hint, not a plug
+    /// The whole keyboard is scanned, whatever else decided: a pointer menu (the ZX-Evo service ROM) reads the mouse
+    /// every frame and the keyboard too, and a pad drives it with the cursor keys as well
+    bool keyboardScan = false;
     std::string device;      ///< RetroDeviceKindName ("kempston-joystick", "sinclair-joystick", ...); "kempston-mouse",
                              ///< "amx-mouse" (a mouse: said, not plugged)
     /// The input role of the decisive reads and the registry device that answered them ("kempston-joystick",

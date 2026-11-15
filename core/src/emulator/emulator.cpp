@@ -1307,7 +1307,8 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
     request.plan = request.autostart->Prepare(*request.image);
     const DiskAutostart::Action action = request.plan.action;
     request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
-                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated;
+                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated ||
+                      action == DiskAutostart::Action::BootServiceMenu;
     if (!request.started)
     {
         stage.NoChange();
@@ -1316,6 +1317,14 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
 
     stage.CommitPoint();
     request.autostart->Disarm();
+    if (action == DiskAutostart::Action::BootServiceMenu)
+    {
+        // ZX-Evo: the configured reset (the service ROM), whose menu is then driven to boot drive A
+        _core->ResetKeepingClock();
+        RestartFrame();
+        request.autostart->ArmServiceMenuBoot();
+        return true;
+    }
     _core->ResetKeepingClock(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active, the guest's clock kept
     RestartFrame();        // Frame 0 starts at the reset state (see Reset())
     request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)
@@ -3213,13 +3222,53 @@ MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
     position.known = true;
     position.frameEnd = card->inFrameEndCatchUp();
     position.pc = z80->m1_pc;
-    // The instruction's start T is kept in the debug path only, the one tight mode runs
-    if (!position.frameEnd && (z80->isDebugMode || z80->execTapHold || z80->cardTight) && z80->t >= z80->instrStartT)
-        position.tInInstruction = z80->t - z80->instrStartT;
     const double lead = static_cast<double>(card->hostLead()) /
                         GSHostClock::unitsPerZxTact(_context, card->cardUnitsPerSecond());
     position.gapT = static_cast<int32_t>(std::llround(lead));
+    // The instruction's start T is kept while the instruction-start debug work runs (debug mode, exec taps, tight
+    // mode). Tight mode's catch-up runs before the next start is taken: main finished m1_pc's instruction
+    if (position.frameEnd || !(z80->isDebugMode || z80->execTapHold || z80->cardTight) || z80->t < z80->instrStartT)
+        return position;
+    position.tInInstruction = z80->t - z80->instrStartT;
+    position.onBoundary = _context->pDebugManager->CatchingUp();
+    FillInstructionProgress(position);
     return position;
+}
+
+void Emulator::FillInstructionProgress(MainPosition& position) const
+{
+    // The card's moment, in T of main's instruction; before its start: no progress to show
+    const int64_t elapsed = static_cast<int64_t>(position.tInInstruction) - position.gapT;
+    Memory* memory = _context->pMemory;
+    if (elapsed < 0 || !memory)
+        return;
+    uint8_t bytes[4];
+    for (uint16_t i = 0; i < sizeof(bytes); i++)
+        bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position.pc + i));
+    const Z80MCycles decoded = Z80MCycleDecoder::Decode(bytes, sizeof(bytes));
+    if (!decoded.valid)
+        return;
+
+    const Z80MCycleList* way = &decoded.met;
+    if (decoded.conditional)
+    {
+        if (position.onBoundary)
+        {
+            // Finished: the way main took is the one its T reach (the taken way is the longer one)
+            if (position.tInInstruction < decoded.met.total)
+                way = &decoded.notMet;
+        }
+        else
+            position.totalTAlt = decoded.notMet.total;  // still under way: the ways part only at the end
+    }
+    position.timed = true;
+    position.elapsedT = static_cast<uint32_t>(elapsed);
+    position.totalT = way->total;
+    position.cycles = *way;
+    position.contended = position.onBoundary && position.tInInstruction > way->total;
+    const Z80MCyclePosition at = Z80MCycleDecoder::Locate(*way, position.elapsedT);
+    if (at.inside)
+        position.busCycle = static_cast<int8_t>(at.index);
 }
 
 void Emulator::ParkInsideCardRun()
@@ -3398,6 +3447,9 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
             else
                 brk->DisarmExecPass();
         }
+        // A card a front-end has selected follows this run in tight mode (gs-debugger design §5.2)
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(true);
     }
 }
 
@@ -3431,6 +3483,8 @@ Emulator::DirectStepScope::~DirectStepScope()
     // A refused run touched nothing: no stop, no picture, no refresh to report
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1 && !_refused)
     {
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;

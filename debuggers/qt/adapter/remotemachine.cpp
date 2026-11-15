@@ -196,6 +196,7 @@ struct Snapshot {
     QString state;          // running | paused | stopped
     QString reason;         // none | pause | breakpoint | step
     QString stop_cpu;       // the CPU of the stop: main, gs, ms
+    QString stop_main;      // a card's stop: where the main CPU stood (pause.main.text)
     QJsonObject regs;
     QByteArray memory;      // the CPU's 64 KB
     struct Bank { QString kind; unsigned int page = 0; bool writable = false; } banks[4];
@@ -801,6 +802,7 @@ public:
         m_snap.state = s.value("state").toString();
         m_snap.reason = s.value("pause").toObject().value("reason").toString();
         m_snap.stop_cpu = s.value("pause").toObject().value("cpu").toString();
+        m_snap.stop_main = s.value("pause").toObject().value("main").toObject().value("text").toString();
         m_snap.regs = s.value("regs").toObject();
         const QJsonArray mem = s.value("memory").toArray();
         m_snap.memory = mem.isEmpty() ? QByteArray(0x10000, '\xFF')
@@ -919,6 +921,7 @@ public:
     void debug_detach() override
     {
         clear_run_to();
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", "main"}});
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
         changed();
     }
@@ -965,6 +968,12 @@ public:
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
     }
+    // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
+    void debug_select(ecatshim::CPU * c) override
+    {
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", card ? card->cpu() : QString("main")}});
+    }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
         // A breakpoint of its own group (of the CPU of the tab) that goes away at the next stop. The WebAPI keeps one
@@ -995,6 +1004,10 @@ public:
         // A card's breakpoint or step: its tab
         RemoteCardZ80 * c = card(const_cast<RemoteMachine *>(this)->snap().stop_cpu);
         return c ? static_cast<ecatshim::CPU *>(c) : m_cpu.get();
+    }
+    std::string debug_stop_main_text() const override
+    {
+        return const_cast<RemoteMachine *>(this)->snap().stop_main.toStdString();
     }
     int debug_stop_reason() const override
     {

@@ -2952,6 +2952,21 @@ public:
             return sol::lua_nil;
         });
 
+        // select_cpu(cpu) / selected_cpu(): the CPU the front-ends show (CpuView::SetSelected), {cpu, follows}; a card
+        // shown follows the main CPU's steps of the paused machine in tight mode
+        lua.set_function("select_cpu", [this](const std::string& cpuName, sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            if (const std::string error = CpuView::SetSelected(emulator->GetContext(), cpuName); !error.empty())
+                throw std::runtime_error(error);
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
+        });
+        lua.set_function("selected_cpu", [this](sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
+        });
+
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;
@@ -6034,7 +6049,8 @@ public:
             if (!ctx) return info;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return info;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return info;
             info["cylinders"] = disk->getCylinders();
             info["sides"] = disk->getSides();
@@ -6055,7 +6071,8 @@ public:
             if (!ctx) return data;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return data;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return data;
             auto* track = disk->getTrackForCylinderAndSide(cyl, side);
             if (!track) return data;
@@ -6110,7 +6127,8 @@ public:
             if (!ctx) return "";
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return "";
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return "";
             return disk->DumpSectorHex(trackNo, sector);
         });

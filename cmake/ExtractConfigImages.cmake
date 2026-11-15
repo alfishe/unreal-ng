@@ -1,3 +1,5 @@
+# Completes a copied configs folder with the media the shipped configs name: the ZX Spectrum Next SD card folder
+# (testdata/machines/zxnext/card -> configs/next/card, [NEXT] SdCard), and the disk images below.
 # Unpacks the disk images that data/configs keeps as <name>.img.7z (a 100 MB mostly empty FAT image is a
 # few hundred KB packed) into the copied configs folder. Run after the configs are copied:
 #   cmake -DDEST=<copied configs folder> -P cmake/ExtractConfigImages.cmake
@@ -6,6 +8,12 @@
 # archive again does not unpack it again.
 if(NOT DEST)
     message(FATAL_ERROR "ExtractConfigImages: -DDEST=<folder> is required")
+endif()
+
+# The Next boot card (TBBLUE.FW, NextZXOS): one tree in the repository, used by the tests where it is
+get_filename_component(_repoRoot "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+if(EXISTS "${DEST}/next")
+    file(COPY "${_repoRoot}/testdata/machines/zxnext/card" DESTINATION "${DEST}/next")
 endif()
 
 file(GLOB_RECURSE archives "${DEST}/*.img.7z")

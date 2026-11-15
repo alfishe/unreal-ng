@@ -1271,7 +1271,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                                "run_until_pc", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
                                "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "callbacks", "callback_resume", "callback_remove", "callback_policy",
-                               "set_register", "port_out", "wait", "take_control", "release_control"})
+                               "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -1284,7 +1284,9 @@ void RegisterControlExecution(ToolRegistry& registry)
         "chunk. watch_add arms the same rules on the running machine (then pause / notify): resume, then wait. "
         "pace: the paced run (pace_op). callbacks / "
         "callback_resume / callback_remove / callback_policy list and manage the Lua / Python script callbacks "
-        "(callback_id, policy); a callback is registered only from a script.";
+        "(callback_id, policy); a callback is registered only from a script. select_cpu (cpu; none: report): the CPU "
+        "the debugger front-ends show; a card CPU shown follows the main CPU's steps of the paused machine, so its "
+        "registers and memory are the ones at the main CPU's moment.";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
@@ -1348,7 +1350,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_*, set_register and the steps: whose breakpoints / register / step, main (default), gs (the CPU of the "
+        "For bp_*, set_register, the steps and select_cpu: whose breakpoints / register / step, main (default), gs (the CPU of the "
         "General Sound / NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait "
         "reports the card instruction) or ms (the General Sound on a MultiSound card, the same way). A card CPU's "
         "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
@@ -1840,7 +1842,13 @@ void RegisterControlExecution(ToolRegistry& registry)
                                               pause.get("cpu", "").asString().c_str(), pause["cpu_pc"].asUInt());
                                 text += where;
                             }
+                            // Where the main CPU stood at the card's moment, its instruction's progress
+                            if (pause.isMember("main"))
+                                text += "; " + pause["main"].get("text", "").asString();
                         }
+                        else if (pause.get("reason", "none").asString() == "step" && pause.isMember("main"))
+                            text += " (a " + pause.get("cpu", "").asString() + " step; " +
+                                    pause["main"].get("text", "").asString() + ")";
                         else if (pause.get("reason", "none").asString() == "watch")
                         {
                             // An armed frame watch held it: which one, where, and why
@@ -1858,6 +1866,29 @@ void RegisterControlExecution(ToolRegistry& registry)
                         }
                         else if (pause.get("reason", "none").asString() != "none")
                             text += " (last stop: " + pause.get("reason", "").asString() + ")";
+                        done(ToolResult::Ok(text, std::move(response)));
+                    });
+                    return;
+                }
+                if (action == "select_cpu")
+                {
+                    // The CPU the front-ends show (GET / PUT /debug/selected_cpu, core CpuView::SetSelected)
+                    const bool set = args.isMember("cpu") && args["cpu"].isString();
+                    Json::Value body;
+                    if (set)
+                        body["cpu"] = args["cpu"];
+                    caller.Call(set ? "PUT" : "GET", Endpoint(id, "/debug/selected_cpu"), set ? &body : nullptr,
+                                [done](int status, Json::Value response) {
+                        if (status < 200 || status >= 300)
+                        {
+                            done(ToolResult::Error("select_cpu failed (HTTP " + std::to_string(status) + "): " +
+                                                   DescribeErrorBody(response)));
+                            return;
+                        }
+                        const std::string text = "Selected cpu: " + response.get("cpu", "main").asString() +
+                                                 (response.get("follows", false).asBool()
+                                                      ? " (follows the main CPU's steps of the paused machine)"
+                                                      : "");
                         done(ToolResult::Ok(text, std::move(response)));
                     });
                     return;

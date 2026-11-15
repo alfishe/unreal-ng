@@ -145,18 +145,28 @@ TEST_F(PortDecoder_Profi_Test, IsPort_DFFD)
 
 /// region <Scorpion ZS-256>
 
-// Port #7FFD - equation /IORQ /WR M1 /A15 A14 A12 A5 A2 /A1 A0
+// Port #7FFD - equation /IORQ /WR M1 /A15 A14 A5 A2 /A1 A0 (A12 not decoded)
 TEST_F(PortDecoder_Scorpion256_Test, IsPort_7FFD)
 {
     ExpectDecodeMatchesEquation(
-        "#7FFD", [this](uint16_t port) { return _portDecoder->IsPort_7FFD(port); }, {0b1101'0000'0010'0111, 0b0101'0000'0010'0101});
+        "#7FFD", [this](uint16_t port) { return _portDecoder->IsPort_7FFD(port); }, {0b1100'0000'0010'0111, 0b0100'0000'0010'0101});
 }
 
-// Port #1FFD - equation /IORQ /WR M1 /A15 /A14 A12 A5 A2 /A1 A0
+// Port #1FFD - equation /IORQ /WR M1 /A15 /A14 A5 A2 /A1 A0 (A12 not decoded)
 TEST_F(PortDecoder_Scorpion256_Test, IsPort_1FFD)
 {
     ExpectDecodeMatchesEquation(
-        "#1FFD", [this](uint16_t port) { return _portDecoder->IsPort_1FFD(port); }, {0b1101'0000'0010'0111, 0b0001'0000'0010'0101});
+        "#1FFD", [this](uint16_t port) { return _portDecoder->IsPort_1FFD(port); }, {0b1100'0000'0010'0111, 0b0000'0000'0010'0101});
+}
+
+// SQ-Tracker Digital's player: XOR A : OUT (#FD),A is port #00FD, and it must reach #1FFD (A12 is not decoded)
+TEST_F(PortDecoder_Scorpion256_Test, OutFdWithZeroInAReachesPort1FFD)
+{
+    EXPECT_TRUE(_portDecoder->IsPort_1FFD(0x00FD));
+    EXPECT_TRUE(_portDecoder->IsPort_7FFD(0x40FD)) << "A12 is not decoded on #7FFD either";
+    EXPECT_FALSE(_portDecoder->IsPort_1FFD(0x00F9)) << "#F9 (A2 = 0) is a SoundDrive mode-2 channel";
+    EXPECT_FALSE(_portDecoder->IsPort_1FFD(0x00FF)) << "A1 = 1 is not a paging register";
+    EXPECT_FALSE(_portDecoder->IsPort_1FFD(0x00DD)) << "A5 = 0 (#DD, the Covox) is not a paging register";
 }
 
 /// endregion </Scorpion ZS-256>

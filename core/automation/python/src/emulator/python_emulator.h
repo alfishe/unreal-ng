@@ -3089,7 +3089,8 @@ namespace PythonBindings
                  }, py::arg("id"), "The game profile by hand ('none': by the loaded file)")
             .def("controllers_bindings", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("bindings", options);
-                 }, "The effective bindings (device=..., layer='play'), each with the profile it came from")
+                 }, "The effective bindings (device=..., layer='play'): each with its profile and rule, and what it drives now "
+                    "down to the matrix keys (connector, menu keys, mouse button), with the machine's input state")
             .def("controllers_bind", [](Emulator&, const std::string& control, const py::object& spec,
                                         const py::kwargs& options) {
                      py::kwargs all = options;
@@ -3219,6 +3220,17 @@ namespace PythonBindings
                 return py::none();
             }, "Step over call instructions; cpu='gs' / 'ms': the sound card CPU's (returns its step's reply)",
                py::arg("cpu") = "")
+            // The CPU the front-ends show (CpuView::SetSelected): a card shown follows the main CPU's steps
+            .def("select_cpu", [](Emulator& self, const std::string& cpu) -> py::object {
+                if (const std::string error = CpuView::SetSelected(self.GetContext(), cpu); !error.empty())
+                    throw py::value_error(error);
+                return StateNodeToPy(CpuView::Selected(self.GetContext()));
+            }, "Show a CPU in the debugger front-ends ('main', 'gs', 'ms'): a card shown follows the main CPU's steps of "
+               "the paused machine in tight mode, so its state is the one at the main CPU's moment; returns {cpu, follows}",
+               py::arg("cpu"))
+            .def("selected_cpu", [](Emulator& self) -> py::object {
+                return StateNodeToPy(CpuView::Selected(self.GetContext()));
+            }, "The CPU the debugger front-ends show: {cpu, follows}")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {
@@ -5670,7 +5682,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return info;
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return info;
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return info;
                 info["cylinders"] = disk->getCylinders();
                 info["sides"] = disk->getSides();
@@ -5687,7 +5700,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return py::bytes();
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return py::bytes();
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return py::bytes();
                 auto* track = disk->getTrackForCylinderAndSide(cyl, side);
                 if (!track) return py::bytes();
@@ -5716,7 +5730,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return "";
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return "";
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return "";
                 return disk->DumpSectorHex(track, sector);
             }, "Read sector as hex dump", py::arg("drive"), py::arg("track"), py::arg("sector"))

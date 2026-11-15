@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -21,6 +22,7 @@
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/targets/cpuview.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
 #include "emulator/cpu/core.h"
@@ -548,10 +550,74 @@ TEST(GSCardTarget_Test, ACardBreakpointParksTheMainCpuNearby)
     EXPECT_FALSE(tight.frameEnd);
     EXPECT_GE(tight.gapT, 0);
     EXPECT_LT(tight.gapT, 24) << "main within an instruction of the card's stop";
-    EXPECT_LT(tight.tInInstruction, 24u);
+    // The card caught up at main's instruction start: main finished the instruction the card's moment is in, and the
+    // pause says how far into it that moment is and which bus cycle it was (design §5.4)
+    EXPECT_TRUE(tight.onBoundary);
+    EXPECT_TRUE(tight.timed);
+    EXPECT_EQ(static_cast<int64_t>(tight.elapsedT), static_cast<int64_t>(tight.tInInstruction) - tight.gapT);
+    EXPECT_GT(tight.totalT, 0);
+    EXPECT_GT(tight.cycles.count, 0);
+    EXPECT_EQ(tight.cycles.total, tight.totalT);
+    EXPECT_EQ(tight.totalTAlt, 0) << "finished: the way taken is known";
+    if (!tight.contended)
+        EXPECT_EQ(tight.tInInstruction, tight.totalT) << "Pentagon: no contention, all of the instruction's T";
+    else
+        EXPECT_GT(tight.tInInstruction, tight.totalT) << "an interrupt's acknowledge after it";
+    if (tight.elapsedT < tight.totalT)
+        EXPECT_GE(tight.busCycle, 0);
     const MainPosition lazy = stopWith(false);
     EXPECT_TRUE(lazy.frameEnd || lazy.gapT > 1000) << "lazy: main ran on to a port access or the frame end; gap "
                                                    << lazy.gapT;
+}
+
+// The card a front-end shows follows the main CPU's steps of the paused machine (gs-debugger design §5.2, the third
+// trigger): tight mode for the direct run and a catch-up at its end, so the card stands at the main CPU's moment, not
+// at the last port access or frame end. Tight mode is off again after the run, and off while the main CPU is shown
+TEST(GSCardTarget_Test, TheSelectedCardFollowsTheMainCpusSteps)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    GeneralSoundCard* card = context->pSoundManager->getGeneralSound();
+    DebugManager* debug = context->pDebugManager;
+    emulator->RunNFrames(3);
+    // The card's lag behind the main CPU in ZX T (the card can end up to an instruction ahead: negative)
+    auto gap = [&] {
+        return std::llround(static_cast<double>(card->hostLead()) /
+                            GSHostClock::unitsPerZxTact(context, card->cardUnitsPerSecond()));
+    };
+
+    emulator->RunNCPUCycles(40, true);
+    const long long lazy = gap();
+    EXPECT_GT(lazy, 100) << "not shown: the card stays where the frame end left it";
+
+    EXPECT_EQ(CpuView::SetSelected(context, "gs"), "");
+    EXPECT_EQ(debug->SelectedCpu(), DebugCpuId::GS);
+    EXPECT_FALSE(features->cardTightHold()) << "shown, but nothing runs: no tight mode";
+    for (int i = 0; i < 5; i++)
+    {
+        emulator->RunSingleCPUCycle(true);
+        EXPECT_LT(std::llabs(gap()), 24) << "step " << i << ": the card at the main CPU's moment";
+        EXPECT_FALSE(features->cardTightHold()) << "off again after the step";
+    }
+    emulator->RunNCPUCycles(40, true);
+    EXPECT_LT(std::llabs(gap()), 24) << "after steps too";
+    StateNode selected = CpuView::Selected(context);
+    EXPECT_EQ(selected["cpu"].s, "gs");
+    EXPECT_TRUE(selected["follows"].b);
+
+    EXPECT_EQ(CpuView::SetSelected(context, "main"), "");
+    emulator->RunNCPUCycles(40, true);
+    EXPECT_GT(gap(), 100) << "the main CPU shown: the card lags again";
+    EXPECT_FALSE(CpuView::Selected(context)["follows"].b);
+    EXPECT_NE(CpuView::SetSelected(context, "ms"), "") << "no MultiSound card";
+    EXPECT_NE(CpuView::SetSelected(context, "zx"), "");
+    EXPECT_EQ(debug->SelectedCpu(), DebugCpuId::Main) << "a refused choice keeps the last one";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 // Tight mode only splits the card's catch-up into more runs, it does not change them (gs-debugger design §5.6): the

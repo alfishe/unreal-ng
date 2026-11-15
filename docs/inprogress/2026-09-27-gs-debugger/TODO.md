@@ -107,9 +107,25 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   ~7000 short pieces per frame (cache and branch history, main and card loops alike). A cached card rate and an early
   return when the card is already at the target are in. Only while a stopping card breakpoint or a card step is
   active; with none the instruction start tests one more flag (Pentagon fast 458 us, unchanged).
-- [ ] The rest of §5.4: the instruction's total T, the bus cycle under way (opcode M-cycle tables), the UI's progress.
-- [ ] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger), card run-to
-  (§5.3).
+- [x] The rest of §5.4 (branch `gs-progress`, 2026-11-14): `Z80MCycleDecoder` (debugger/disassembler/z80mcycles)
+  gives an instruction's machine cycles, both ways of a conditional; checked against every FUSE vector's bus trace
+  (`Z80MCycles_Test`, 1341 cases one instruction, 15 compared to the instruction's end). Tight mode's catch-up runs
+  before the next instruction start is taken, so a card's stop sees the instruction its moment is in (`on_boundary`).
+  `main` gains `on_boundary`, `elapsed_t`, `total_t`, `total_t_alt`, `contended`, `bus_cycles`, `bus_cycle`,
+  `bus_cycle_index` and `text` (`execution::MainPositionNode` / `MainPositionText`, one source for the card step's
+  `stop`, the `debug` topic's `paused` event and the snapshot's and `wait`'s `pause`). MCP `wait` adds the text; the
+  debugger's status line shows it after a card's stop (`ecatshim::Emulator::debug_stop_main_text`, both adapters).
+  Contention: the measured T beside the table's (`contended`), the cycle is the uncontended one.
+- [x] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger, 2026-11-14):
+  `DebugManager::SelectCpu` (one per machine, the last front-end's), tight mode for a direct run of the paused machine
+  (`Emulator::DirectStepScope` -> `DebugManager::OnDirectRun`) and a catch-up at its end, so the card stands at the
+  main CPU's moment after each step. Not on pause edges: `applyDebugMode` takes a `CpuHold`, the edge comes from inside
+  the arbiter. Planes: `CpuView::SetSelected` / `Selected`; REST `GET` / `PUT /debug/selected_cpu`, CLI
+  `selected-cpu`, Lua / Python `select_cpu` / `selected_cpu`, MCP `control_execution` `select_cpu`; the Qt debugger's
+  CPU tab (`ecatshim::Emulator::debug_select`, both adapters; main again at detach). Tests:
+  `GSCardTarget_Test.TheSelectedCardFollowsTheMainCpusSteps`, live `test_gs_debugger.py`.
+- [ ] Card run-to (§5.3) on the automation planes. The Qt debugger already runs a card to the cursor (a breakpoint of
+  its own owner / group on the card's tab, both adapters).
 
 ### Later
 

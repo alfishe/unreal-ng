@@ -1241,8 +1241,7 @@ public:
                 const auto* raw = std::get_if<DiskImage::RawTrack>(&image);
                 if (!track || !raw)
                     return false;
-                static_cast<DiskImage::RawTrack&>(*track) = *raw;
-                track->reindex();  // the sector index points into the stream
+                track->restoreRaw(*raw);  // the sector index points into the stream: rebuilt with it
                 track->markDirty();
                 return true;
             }

@@ -1013,6 +1013,7 @@ public:
     void debug_detach() override
     {
         clear_run_to();
+        if (DebugManager * debug = m_emu->GetContext()->pDebugManager) debug->SelectCpu(DebugCpuId::Main);
         if (m_emu->IsPaused()) m_emu->Resume(kGui);
     }
     bool debug_paused() const override { return m_emu->IsPaused(); }
@@ -1055,6 +1056,12 @@ public:
         if (card_step(c, "out", 1)) return;
         m_emu->StepOut();
     }
+    // The tab's CPU shown (DebugManager::SelectCpu): a card's follows the main CPU's steps of the paused machine
+    void debug_select(ecatshim::CPU * c) override
+    {
+        auto * card = dynamic_cast<CardZ80 *>(c);
+        if (DebugManager * debug = m_emu->GetContext()->pDebugManager) debug->SelectCpu(card ? card->id() : DebugCpuId::Main);
+    }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
         // A breakpoint of its own that goes away at the next stop, whatever stops the machine: a stop after this run
@@ -1075,6 +1082,13 @@ public:
             for (const auto &c : m_cards)
                 if (s.breakpoint.cpu == c->id()) return c.get();
         return m_main.get();
+    }
+    std::string debug_stop_main_text() const override
+    {
+        const ::Emulator::DebugStop s = m_emu->LastStop();
+        if (s.reason != ::Emulator::DebugStop::Reason::Breakpoint && s.reason != ::Emulator::DebugStop::Reason::Step)
+            return std::string();
+        return s.breakpoint.main.known ? execution::MainPositionText(s.breakpoint.main) : std::string();
     }
     int debug_stop_reason() const override
     {

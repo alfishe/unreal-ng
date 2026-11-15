@@ -568,6 +568,13 @@ at cycle 60,000, which is main T 17,500.
 When all three are false, tight mode is off. The card then simply stays
 behind until the next port access or frame end, as today.
 
+> **As built (2026-11-14), the third trigger:** the selection is one per machine (`DebugManager::SelectCpu`, the last
+> front-end's choice). Tight mode comes with a direct run of the paused machine (`Emulator::DirectStepScope`: a step,
+> steps, a run of T or frames), plus one catch-up at the run's end, rather than with the pause itself: switching tight
+> mode takes a `CpuHold` (`FeatureManager::applyDebugMode`), and a pause edge comes from inside the execution arbiter.
+> The main CPU only runs while paused in a direct run, so the effect is the same. The card does not catch up at the
+> selection itself, only with the next step.
+
 ### 5.3 The stepping coordinator
 
 All run and step requests from all front-ends go to one object,
@@ -625,6 +632,13 @@ precise T. So main's clock may be slightly past the card's time. That
 difference is the **gap** in S2, and it is shown.
 
 ### 5.4 Instruction progress for the main CPU
+
+> **As built (2026-11-14):** `Z80::instrStartT` (T, not `tt`), set at each instruction start while the start-of-
+> instruction debug work runs; tight mode catches the card up before it moves, so `m1_pc` and `instrStartT` name the
+> finished instruction the card's moment is in. The machine cycles come from `Z80MCycleDecoder` (no table in the
+> opcode records), checked against the FUSE vectors. Contention: the measured T (`t_in_instruction`) beside the
+> table's, `contended` when they differ; no contention counter. The payload is `MainPosition` / the `main` node, not
+> `CpuTimePosition`.
 
 - **Start T.** A new field `Z80::instrStartTT` (same scale as `tt`) is set
   next to `m1_pc` in `RecordInstructionStart`, which runs once per

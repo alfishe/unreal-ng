@@ -616,6 +616,8 @@ public:
     // PC history with pages (debugger additions tdd §7)
     ADD_METHOD_TO(EmulatorAPI::getPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -2030,6 +2032,11 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
     void postPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
+    /// GET / PUT /debug/selected_cpu - the CPU the front-ends show (core CpuView::Selected / SetSelected)
+    void getSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void putSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,

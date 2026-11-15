@@ -632,7 +632,9 @@ are the machine's). `registers pc --cpu gs`, `r a 0x10 --cpu gs`, `memory 0x4000
 Edits are tool edits (recorded by a time travel session; in the recorded past they fork a branch there). A card without a CPU or an
 empty slot answers that the CPU is not there. On `step [count]`, `steps <count>`, `stepover` and `stepout` it steps
 the card CPU: the machine resumes until the card's step ends and pauses again; the main CPU moves on to where the
-card catches up (a host port access or the frame end). The reply names the card's PC and SP and the main PC. Every
+card catches up (a host port access or the frame end). The reply names the card's PC and SP and the main PC.
+`selected-cpu [main|gs|ms]` sets or shows the CPU the debugger front-ends show: a card shown follows the main CPU's
+steps of the paused machine, so its state is the one at the main CPU's moment. Every
 plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
 
 #### 3.1 Memory Commands

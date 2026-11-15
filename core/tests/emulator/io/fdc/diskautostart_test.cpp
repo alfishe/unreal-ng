@@ -567,18 +567,28 @@ INSTANTIATE_TEST_SUITE_P(Models, DiskAutostart_Models_Test,
                          ::testing::Values(std::make_pair("Pentagon", 0), std::make_pair("Scorpion", 0),
                                            std::make_pair("ATM710", 0), std::make_pair("ProfScorp", 0)));
 
-TEST(DiskAutostart_Unsupported, Atm3ReportsReason)
+/// ZX-Evo BaseConf: no direct reset into TR-DOS there; the autostart resets into the service ROM (ERS) and drives its
+/// menu: `1` (drive A), ENTER on "TR-DOS boot", ENTER on the disk's boot. The disk's program leaves the ERS
+TEST(DiskAutostart_ServiceMenu, Atm3BootsDriveAThroughTheServiceRom)
 {
     MessageCenter::DisposeDefaultMessageCenter();
     Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("ATM3", LoggerLevel::LogError);
     ASSERT_NE(emulator, nullptr);
-    std::string reason;
-    EXPECT_FALSE(emulator->GetContext()->pDiskAutostart->IsTrdosCapable(&reason));
-    EXPECT_NE(reason.find("BaseConf"), std::string::npos);
+    EmulatorContext* context = emulator->GetContext();
+    emulator->EnableTurboMode();
 
-    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/atarin.trd"));
-    EXPECT_TRUE(result.mounted);
-    EXPECT_FALSE(result.started);
+    auto result = emulator->AutostartDisk(TestPathHelper::GetTestDataPath("loaders/trd/EyeAche.trd"));
+    ASSERT_TRUE(result.mounted) << result.message;
+    EXPECT_TRUE(result.started) << result.message;
+    EXPECT_TRUE(context->pDiskAutostart->IsServiceMenuBootPending());
+
+    // The ERS idles in its menu at #6117 with window 0 on ROM; its "TR-DOS boot" then runs the disk's boot in TR-DOS
+    const int frames = EmulatorTestHelper::RunUntil(emulator, [&] {
+        return !context->pDiskAutostart->IsServiceMenuBootPending() && (context->emulatorState.flags & CF_TRDOS) != 0;
+    }, 400, 1);
+    EXPECT_FALSE(context->pDiskAutostart->IsServiceMenuBootPending()) << "the menu sequence did not finish";
+    EXPECT_NE(context->emulatorState.flags & CF_TRDOS, 0u) << "TR-DOS never ran the disk after " << frames
+                                                          << " frames, PC " << std::hex << context->pCore->GetZ80()->pc;
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 

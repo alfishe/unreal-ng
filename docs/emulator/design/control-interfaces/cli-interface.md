@@ -168,7 +168,8 @@ Available commands:
 works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
 `step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
-(`stepover --cpu gs`).
+(`stepover --cpu gs`). `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
+the main CPU's steps of the paused machine.
 
 **Command Aliases**:
 The CLI supports command aliases for convenience:

@@ -37,7 +37,9 @@ order. The sound card CPU's registers, memory and code are the REST routes with 
 (`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
 [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
 and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu`, `cpu_pc` and `main` (where
-the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`).
+the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary`, and its
+instruction's progress `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`,
+`contended`; [instruction progress](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
 An answer budget works the same way: `?max_chars=2000` in the path fits the result's `body` (a JSON object gets
 `truncated`; [answer budgets](webapi-interface.md#answer-budgets-max_chars)).
 

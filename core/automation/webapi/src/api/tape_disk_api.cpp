@@ -1655,12 +1655,13 @@ void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
                 auto* fdd = context->coreState.diskDrives[i];
                 driveInfo["write_protected"] = fdd->isWriteProtect();
                 
-                // Get disk image info if available
-                auto* diskImage = fdd->getDiskImage();
-                if (diskImage) {
-                    driveInfo["cylinders"] = diskImage->getCylinders();
-                    driveInfo["sides"] = diskImage->getSides();
-                }
+                // Get disk image info if available (under the drive's lock: the image may change meanwhile)
+                fdd->WithDisk([&](const DiskImage* diskImage) {
+                    if (diskImage) {
+                        driveInfo["cylinders"] = diskImage->getCylinders();
+                        driveInfo["sides"] = diskImage->getSides();
+                    }
+                });
             }
         } else {
             driveInfo["mounted"] = false;
@@ -1753,7 +1754,9 @@ void EmulatorAPI::getDiskSector(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -1991,7 +1994,9 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2103,7 +2108,9 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2211,7 +2218,9 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2298,7 +2307,9 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2393,7 +2404,9 @@ void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2531,7 +2544,9 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";

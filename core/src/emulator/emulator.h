@@ -1060,6 +1060,8 @@ public:
     void ParkInsideCardRun();
     /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)
     MainPosition MainPositionAt(DebugCpuId cpu) const;
+    /// MainPositionAt's instruction progress: elapsed and total T, the machine cycle under way (design §5.4)
+    void FillInstructionProgress(MainPosition& position) const;
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

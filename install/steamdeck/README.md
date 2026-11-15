@@ -38,9 +38,11 @@ Running `install.sh` again (from a new bundle, or `~/Applications/unreal-ng/inst
 prints one line per step:
 
 ```
-app: /home/deck/Applications/unreal-ng (20261108.121658)
+app: /home/deck/Applications/unreal-ng (<version>)
 launcher: /home/deck/.local/share/applications/unreal-ng.desktop
-Steam library: Unreal NG (3357196967) with its artwork in /home/deck/.local/share/Steam/userdata/58956458
+Steam library: Unreal NG (3357196967) with its artwork in /home/deck/.local/share/Steam/userdata/<account>
+Steam: started again
+Steam library: Unreal NG registered
 Stream Deck udev rule: installed
 ```
 
@@ -54,78 +56,14 @@ The installer sets up:
 | The artwork: poster, wide capsule, hero, logo, icon | `userdata/<account>/config/grid/<appid>*.png` |
 | The Stream Deck udev rule | `/etc/udev/rules.d/70-unreal-streamdeck.rules`, only with `--udev` (asks for the sudo password) |
 
-Steam reads its library and the artwork when it starts and writes the library back when it stops. So when the entry or
-its artwork needs a change (the first install, new artwork), the installer stops Steam for a moment, writes them, and
-starts Steam again (in Game Mode the session restarts Steam by itself). When both are in place already it leaves Steam
-alone and says `Steam library: up to date`. If a game is running while something needs a change, the installer leaves
-the library alone and says so: close the game and run it again.
-
-To uninstall, run `~/Applications/unreal-ng/install.sh --remove`. That removes the app, the menu entry, and the
-Steam library entry with its artwork. The settings stay in `~/.config` (unreal-qt and `unreal-streamdeck/`).
-
-The log goes to `~/.local/state/unreal-ng/unreal-ng.log`.
-
-## Game Mode
-
-When started from the library in Game Mode (the gamescope session, `XDG_CURRENT_DESKTOP=gamescope`), unreal-qt:
-
-- opens full screen, without the menu, toolbars or status bar, and stays that way (the fullscreen shortcut does not
-  leave it);
-- starts a Pentagon 128K, unless a file is named on the command line;
-- scales the picture to the panel's height with its aspect ratio kept.
-
-The code is in [`unreal-qt/src/platform/linux/steamdeckgamemode.h`](../../unreal-qt/src/platform/linux/steamdeckgamemode.h)
-and is built on Linux only. Desktop Mode gets the usual window with its menu. gamescope never confirms the fullscreen
-state to the window, so the module hides the menu, toolbars and status bar itself and keeps them hidden.
-
-The WebAPI listens on `http://127.0.0.1:8090` and MCP on `:8092`, as on the desktop.
-
-## Stream Deck
-
-An Elgato Stream Deck (any model, including the Stream Deck + XL) works when plugged into the Deck's USB-C port,
-directly or through a dock. To turn it on:
-
-1. Install the udev rule once. Without it only root can open the deck. In Konsole:
-
-   ```sh
-   ~/Applications/unreal-ng/install.sh --udev
-   ```
-
-   Over SSH use `ssh -t deck@<host> /home/deck/Applications/unreal-ng/install.sh --udev`. Write the full path,
-   because a `~` would expand on the machine you type it on. sudo asks for the password of `deck`; set one with
-   `passwd` if there is none. Then unplug the Stream Deck and plug it back in.
-2. Start Unreal NG. unreal-qt starts the daemon (`unreal-streamdeck`, from the AppImage) when a deck is plugged in,
-   unless Tools > Stream Deck is set to off.
-3. Pair once: tap the deck's strip while it says `NOT PAIRED - TOUCH TO PAIR`. A daemon on the same machine is
-   approved at once, with no code to compare. The token is kept in `~/.config/unreal-streamdeck/companion.json`, and
-   later starts connect without pairing.
-
-The daemon grabs the deck's keyboard device, the evdev node the kernel makes of the deck. Without the grab every key
-press reached the window manager, and the window maximised and restored on each press.
-
-| Symptom | Cause and fix |
-|:--|:--|
-| The deck stays dark | No udev rule: `ls -l /dev/hidraw*` shows no `+` (ACL). Run `install.sh --udev` and replug |
-| A tap on `NOT PAIRED` ends in a refusal | Pairing requests are turned off in Tools > Companions. Turn them on |
-| `COMPANION REVOKED - TOUCH TO PAIR` | The companion was removed in Tools > Companions. Tap to pair again |
-| No daemon (`pgrep -af unreal-streamdeck` is empty) | Tools > Stream Deck is off, or no deck is plugged in |
-
-Daemon details: [docs/companions/streamdeck/daemon.md](../../docs/companions/streamdeck/daemon.md).
-
-## Build
-
-The release workflow (`.github/workflows/release.yml`, job `build-linux`) builds the bundle right after the AppImage,
-checks what it contains, and uploads it as `UnrealNG-SteamDeck-x86_64.tar.gz`. The release job attaches it to the
-GitHub release with the other downloads.
-
-To build it by hand, make the AppImage in the release configuration (the CI image, `tools/package-appimage.sh build`;
-the commands are in [the recipe](../../.recipe/testing/steamdeck.md#build-the-bundle)), then run:
-
-```sh
-install/steamdeck/package.sh build                            # build/packages/UnrealNG-SteamDeck-x86_64.tar.gz
-install/steamdeck/package.sh build --deploy deck@steamdeck    # also install it on a Deck over SSH
-UNREAL_PACKAGE_VERSION=20261108.120000 install/steamdeck/package.sh build   # the VERSION it carries
-```
+Steam reads its library and the artwork when it starts and writes the library back when it stops. So every run of
+the installer (an install, an update, a redeploy) re-registers the entry: it stops Steam for a moment, rewrites the
+entry and its artwork, starts Steam again and checks that the entry is there (`Steam library: Unreal NG registered`).
+The app id stays the same, so the Game Mode tile, its play time and its launch id stay. An older entry named
+"Unreal NG" that points to another executable is replaced. In Game Mode Steam is the user unit
+`steam-launcher.service`, which the Game Mode session restarts at once; the installer masks it in `/run` while it
+writes and always unmasks and starts it afterwards. If a game is running, the installer leaves the library alone and
+says so: close the game and run it again.
 
 The artwork comes from [`tools/icons/generate_steam_art.py`](../../tools/icons/generate_steam_art.py), which writes
 `art/` (`--preview sheet.png` draws a contact sheet). The PNGs are committed; rerun the script and commit them after a
@@ -143,7 +81,7 @@ entries it adds a random app id, and it reads their artwork only after a restart
 |:--|:--|
 | `steam-library.py list` | The non-Steam games and their app ids |
 | `steam-library.py check --name N --exe E --art DIR` | Exit 0 when the entry and its artwork are in place |
-| `steam-library.py add --name N --exe E --art DIR [--icon --start-dir --shortcut-path --launch-options]` | Add or update the entry with its artwork (refuses while Steam runs) |
+| `steam-library.py add --name N --exe E --art DIR [--icon --start-dir --shortcut-path --launch-options]` | Add or update the entry with its artwork, replacing older entries of the same executable or name (refuses while Steam runs) |
 | `steam-library.py remove --exe E` | Remove the entries of an executable and their artwork (refuses while Steam runs) |
 | `steam-library.py art --match S --art DIR` | Artwork only, for entries whose executable contains `S` (entries Steam added itself) |
 

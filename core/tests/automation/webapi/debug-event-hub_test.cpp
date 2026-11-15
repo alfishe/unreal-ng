@@ -173,7 +173,21 @@ TEST_F(DebugEventHub_Test, ACardsPauseCarriesTheMainPosition)
     payload->pauseCause = PauseCause::Step;
     payload->cpu = "gs";
     payload->cpuPc = 0x4010;
-    payload->main = MainPosition{true, false, 0x8003, 5, 2};
+    // OUT (n),A finished at the instruction start (tight mode), the card's moment 2 T before its end: inside the
+    // port cycle (ocf 4, od 3, pw 4)
+    MainPosition position;
+    position.known = true;
+    position.pc = 0x8003;
+    position.tInInstruction = 11;
+    position.gapT = 2;
+    position.onBoundary = true;
+    position.timed = true;
+    position.elapsedT = 9;
+    position.totalT = 11;
+    const uint8_t out[] = {0xD3, 0xFE};
+    position.cycles = Z80MCycleDecoder::Decode(out, sizeof(out)).met;
+    position.busCycle = 2;
+    payload->main = position;
     MessageCenter::DefaultMessageCenter().Post(NC_EMULATOR_STATE_CHANGE, payload, true);
     PostPause(kFirst, true);
     ASSERT_TRUE(TestWait::For([&] { return inbox.Events().size() == 2; }, std::chrono::seconds(2)));
@@ -184,9 +198,19 @@ TEST_F(DebugEventHub_Test, ACardsPauseCarriesTheMainPosition)
     EXPECT_EQ(events[0]["cpu_pc"].asUInt(), 0x4010u);
     const Json::Value& main = events[0]["main"];
     EXPECT_EQ(main["pc"].asUInt(), 0x8003u);
-    EXPECT_EQ(main["t_in_instruction"].asUInt(), 5u);
+    EXPECT_EQ(main["t_in_instruction"].asUInt(), 11u);
     EXPECT_EQ(main["gap_t"].asInt(), 2);
     EXPECT_FALSE(main["frame_end"].asBool());
+    EXPECT_TRUE(main["on_boundary"].asBool());
+    EXPECT_EQ(main["elapsed_t"].asUInt(), 9u);
+    EXPECT_EQ(main["total_t"].asUInt(), 11u);
+    EXPECT_FALSE(main.isMember("total_t_alt")) << "not a conditional";
+    EXPECT_FALSE(main["contended"].asBool());
+    EXPECT_EQ(main["bus_cycle"].asString(), "pw");
+    EXPECT_EQ(main["bus_cycle_index"].asUInt(), 2u);
+    ASSERT_EQ(main["bus_cycles"].size(), 3u);
+    EXPECT_EQ(main["bus_cycles"][1]["kind"].asString(), "od");
+    EXPECT_EQ(main["bus_cycles"][1]["t"].asUInt(), 3u);
     EXPECT_FALSE(events[1].isMember("main")) << "the main CPU's own breakpoint";
 }
 
