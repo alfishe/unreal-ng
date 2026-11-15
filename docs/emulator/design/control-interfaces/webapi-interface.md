@@ -479,6 +479,11 @@ with the card - `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary` an
 moves on only as far as the card's time needs, and parks at the start of an instruction; none within 2 s (over / out
 5 s) is a `timeout`.
 
+`GET` / `PUT /debug/selected_cpu` (`{cpu: "main" | "gs" | "ms"}` or `?cpu=`): the CPU the debugger front-ends show,
+one per machine, `{cpu, follows}`. A card shown follows the main CPU's steps of the paused machine (step, steps,
+`run_tstates`, `run_frames`) in tight mode, so its registers and memory are the ones at the main CPU's moment. 400 for
+no name or another one, 404 for a card CPU with no card in its slot.
+
 Every `format=binary` answer is the bytes alone (`application/octet-stream`) with the headers `X-Unreal-Space`
 (`cpu`, `ram5`, a region name), `X-Unreal-Address` and `X-Unreal-Length`, exposed to browser clients
 (`Access-Control-Expose-Headers`). Errors stay JSON with a 4xx status. The JSON formats are unchanged.

@@ -2952,6 +2952,21 @@ public:
             return sol::lua_nil;
         });
 
+        // select_cpu(cpu) / selected_cpu(): the CPU the front-ends show (CpuView::SetSelected), {cpu, follows}; a card
+        // shown follows the main CPU's steps of the paused machine in tight mode
+        lua.set_function("select_cpu", [this](const std::string& cpuName, sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            if (const std::string error = CpuView::SetSelected(emulator->GetContext(), cpuName); !error.empty())
+                throw std::runtime_error(error);
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
+        });
+        lua.set_function("selected_cpu", [this](sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
+        });
+
         // Frame stepping methods
         lua.set_function("run_frame", [this](sol::optional<bool> skipBP) {
             if (!effectiveEmulator()) return;

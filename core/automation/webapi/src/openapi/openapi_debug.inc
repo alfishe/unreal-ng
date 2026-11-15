@@ -281,6 +281,42 @@
         post["responses"]["400"]["description"] = "Body without a boolean 'enabled'";
     }
 
+    // GET / PUT /api/v1/emulator/{id}/debug/selected_cpu - the CPU the front-ends show (gs-debugger design §5.2)
+    {
+        const char* kPath = "/api/v1/emulator/{id}/debug/selected_cpu";
+        Json::Value& get = paths[kPath]["get"];
+        get["summary"] = "The CPU the debugger front-ends show";
+        get["tags"].append("Debug Commands");
+        get["description"] =
+            "{cpu: main | gs | ms, follows}. One per machine, the last front-end's choice. A card CPU shown follows the "
+            "main CPU's steps of the paused machine (step, steps, run_tstates, run_frames) in tight mode: the card runs up "
+            "to the main CPU's time at every main instruction start and at the step's end, so its registers and memory "
+            "are the ones at the main CPU's moment (follows: a card is shown and is in its slot). Costs nothing while "
+            "the machine runs.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        get["responses"]["200"]["description"] = "{cpu, follows}";
+
+        Json::Value& put = paths[kPath]["put"];
+        put["summary"] = "Show a CPU in the debugger front-ends";
+        put["tags"].append("Debug Commands");
+        put["description"] = "Body {\"cpu\": \"gs\"} (or ?cpu=gs); main stops a card following the main CPU's steps.";
+        put["parameters"] = Json::Value(Json::arrayValue);
+        put["parameters"].append(get["parameters"][0]);
+        put["parameters"][1]["name"] = "cpu";
+        put["parameters"][1]["in"] = "query";
+        put["parameters"][1]["description"] = "main, gs or ms (or the body's cpu)";
+        put["parameters"][1]["schema"]["type"] = "string";
+        put["requestBody"]["required"] = false;
+        put["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        put["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["type"] = "string";
+        put["responses"]["200"]["description"] = "{cpu, follows}";
+        put["responses"]["400"]["description"] = "No cpu or an unknown one";
+        put["responses"]["404"]["description"] = "A card CPU with no card in its slot";
+    }
+
     // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
     {
         Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];
