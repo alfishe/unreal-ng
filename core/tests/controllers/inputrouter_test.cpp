@@ -344,6 +344,37 @@ TEST_F(InputRouter_Test, MouseButtons_AutoFireClicksTheLeftButtonAsHeld)
     EXPECT_EQ(_last.mouse.buttons, 0);
 }
 
+TEST_F(InputRouter_Test, MenuKeys_WithMouseButtonsFireClicksAndTheDirectionsMoveTheCursor)
+{
+    // A pointer menu reads the mouse and the whole keyboard (the ZX-Evo service ROM): the directions hold the cursor
+    // keys, fire clicks the left button and holds no ENTER (one press is not a click and a selection at once)
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad"), Bind({"south"}, "auto:fire")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    _router.SetMenuKeys("emu-1", true);
+    _router.SetMouseButtons("emu-1", true);
+    std::vector<uint8_t> down;
+    ASSERT_TRUE(ZxKeysFromName("down", down));
+    std::sort(down.begin(), down.end());
+
+    Set("fake:1", "dpad.down", 1);
+    Sample();
+    std::vector<uint8_t> held = _last.keys;
+    std::sort(held.begin(), held.end());
+    EXPECT_EQ(held, down) << "CAPS SHIFT + 6 moves the cursor";
+    Set("fake:1", "dpad.down", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty()) << "fire holds no ENTER";
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "fire clicks";
+
+    _router.SetMouseButtons("emu-1", false);
+    Sample();
+    std::vector<uint8_t> enter;
+    ASSERT_TRUE(ZxKeysFromName("enter", enter));
+    EXPECT_EQ(_last.keys, enter) << "no mouse: fire selects with ENTER again";
+}
+
 TEST_F(InputRouter_Test, MenuKeys_ReplaceAKeyboardJoystickOfThePlayer)
 {
     // A game profile kept a Sinclair joystick on keyjoy.1; after a reset the 128K menu reads the keyboard: the

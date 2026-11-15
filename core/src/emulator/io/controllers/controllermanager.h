@@ -125,6 +125,13 @@ public:
     /// The reverse of ParseKeys: the bound controls in bit order, lower case ("right:p,left:o,...")
     static std::string KeysSpec(const std::array<ZXKeysEnum, kOverlayControls>& keys);
     static OverlayOptions DefaultOptions(RetroDeviceKind device);
+    /// The matrix keys a keyboard joystick holds for one control bit (kUp, kFire, ...) as UpdateOverlay wires them:
+    /// Sinclair port 1 / 2, Cursor (with CAPS SHIFT on a direction when `shift`), the keys joystick's own keys. Empty
+    /// for another connector kind or an unwired control (the bindings report, hostinputcontrol)
+    static std::vector<ZXKeysEnum> WiredKeys(const Connector& connector, uint16_t bit);
+    /// The host keys also reach the machine's PS/2 controller as PC keys (ZX-Evo, TS-Conf, Sprinter): ApplyHostKeys's
+    /// route
+    bool HostKeysReachPs2() const;
     /// endregion </Plugs>
 
     /// region <Input>

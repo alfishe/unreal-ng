@@ -353,6 +353,16 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         }
     }
 
+    // ZX-Evo disk autostart: the service ROM's menu waits for a key here; the next key of the boot sequence (a
+    // replay has the keys in its journal and never runs the hook)
+    if (pc == DiskAutostart::SERVICE_MENU_IDLE && _context->pDiskAutostart != nullptr &&
+        _context->pDiskAutostart->IsServiceMenuBootPending())
+    {
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        if (!ttd || !ttd->IsReplayActive())
+            _context->pDiskAutostart->HandleServiceMenuIdle();
+    }
+
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).
     // Drains pending sector bytes directly into memory via Z80::wd() when armed.
     if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)

@@ -142,6 +142,15 @@ public:
     {
         return Resolved().haptics;
     }
+    /// The machine side of the bindings report (the bindings verb, mapping-and-profiles.md §9): an object with
+    /// `instance`, `machine`, `ps2` (the host keys also reach the PS/2 controller), `auto` (the port reads' decision:
+    /// device, label, connector, reason; null before one), `menu_keys` and `mouse_buttons` ({on, rule}: why they are
+    /// on or off), `connectors` ([{id, device, fixed, keys: {control: chord}}], keys for the keyboard joysticks). Null:
+    /// no machine in this process
+    virtual JsonValue MachineInputs() const
+    {
+        return {};
+    }
 };
 
 class HostInputControl
@@ -180,6 +189,10 @@ private:
     HostReply Delete(const HostRequest& request);
     HostReply Apply(const HostRequest& request);
     HostReply Bindings(const HostRequest& request);
+    /// Why a binding is there: the profile and how it was chosen (a game profile's match, a user's, the default)
+    std::string BindingRule(const std::string& profile) const;
+    /// What @p binding drives for @p device now, down to the matrix keys, each output with its rule (Bindings)
+    JsonValue ResolveBinding(const EffectiveBinding& binding, const HostDeviceId& device, const JsonValue& machine) const;
     HostReply Bind(const HostRequest& request, bool unbind);
     HostReply Scheme(const HostRequest& request);
     HostReply Haptics(const HostRequest& request);
