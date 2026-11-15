@@ -99,9 +99,11 @@ bool AppSoundManager::init()
     // WASAPI shared mode mixes in 10 ms engine periods: 2 x 5.8 ms left the device one
     // engine period of slack, and any scheduling hiccup (another window busy) was a
     // dropout. One engine period per callback, three of them (~30 ms); the ring and
-    // the DRC target (40 ms) sit on top as before
+    // the DRC target (40 ms) sit on top as before. Low latency takes two (~20 ms): on the
+    // RME ADI-2 DAC, 10 min runs with 12 cores busy and on an idle Next had no more gaps
+    // than three, 10 ms less latency
     config.periodSizeInMilliseconds = 10;
-    config.periods                  = 3;
+    config.periods                  = _lowLatency ? 2 : 3;
     // MMCSS for the WASAPI device thread. miniaudio requests it only when a usage is
     // set: without it the thread ran at plain priority and lost to any busy process
     config.wasapi.usage = ma_wasapi_usage_pro_audio;
@@ -112,7 +114,7 @@ bool AppSoundManager::init()
 #ifdef __APPLE__
     // Low latency: half the period (2 x 2.9 ms); CoreAudio's real-time thread kept the ring clean at it with every
     // core busy. Linux keeps 256: the Steam Deck at 128 had 5 gaps per 10 min with all cores busy even under the
-    // adaptive setpoint (0 at 256). Windows (WASAPI shared: 10 ms engine periods) keeps its own
+    // adaptive setpoint (0 at 256). Windows (WASAPI shared: 10 ms engine periods) sets its count above
     if (_lowLatency)
         config.periodSizeInFrames = 128;
 #endif
@@ -188,12 +190,16 @@ void AppSoundManager::setLowLatency(bool lowLatency)
     if (_lowLatency == lowLatency)
         return;
     _lowLatency = lowLatency;
-#ifdef __APPLE__
-    // Another period: the device opens again (the ring's sound, at the old period's pace, is dropped with it)
+#if defined(__APPLE__) || defined(_WIN32)
+    // Another period (count): the device opens again (the ring's sound, at the old pace, is dropped with it)
     if (ma_device_get_state(&_audioDevice) == ma_device_state_uninitialized || _shuttingDown.load())
         return;
     const bool started = ma_device_is_started(&_audioDevice);
+#ifdef __APPLE__
     stopNominalRateWatch();
+#else
+    stopFormatWatch();  // not registered while the device is torn down (see handleDeviceRerouted)
+#endif
     ma_device_uninit(&_audioDevice);
     if (!init())
     {
