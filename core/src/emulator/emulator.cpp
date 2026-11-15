@@ -1307,7 +1307,8 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
     request.plan = request.autostart->Prepare(*request.image);
     const DiskAutostart::Action action = request.plan.action;
     request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
-                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated;
+                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated ||
+                      action == DiskAutostart::Action::BootServiceMenu;
     if (!request.started)
     {
         stage.NoChange();
@@ -1316,6 +1317,14 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
 
     stage.CommitPoint();
     request.autostart->Disarm();
+    if (action == DiskAutostart::Action::BootServiceMenu)
+    {
+        // ZX-Evo: the configured reset (the service ROM), whose menu is then driven to boot drive A
+        _core->ResetKeepingClock();
+        RestartFrame();
+        request.autostart->ArmServiceMenuBoot();
+        return true;
+    }
     _core->ResetKeepingClock(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active, the guest's clock kept
     RestartFrame();        // Frame 0 starts at the reset state (see Reset())
     request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)

@@ -3,6 +3,8 @@
 #include <cstring>
 
 #include "common/modulelogger.h"
+#include "debugger/debugmanager.h"
+#include "debugger/keyboard/debugkeyboardmanager.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/trdosbootinjector.h"
@@ -100,10 +102,8 @@ bool DiskAutostart::IsTrdosCapable(std::string* reason) const
     if (_context->pMemory->base_dos_rom == nullptr || _context->pMemory->base_sys_rom == nullptr)
         return fail("This machine has no TR-DOS");
 
-    // ZX-Evo (ATM3/BaseConf) runs EVO-DOS: a reset into it goes through the BaseConf boot menu (service ROM),
-    // it does not cold-start TR-DOS with RUN "boot". Direct entry is not possible there
-    if (_context->config.mem_model == MM_ATM3)
-        return fail("ZX-Evo boots disks through the BaseConf menu - autostart is not supported on this machine");
+    // ZX-Evo (ATM3/BaseConf) runs EVO-DOS: a reset goes through the BaseConf service ROM, which boots the disk itself
+    // ("TR-DOS boot"); TR-DOS is not entered directly there (MakePlan: Action::BootServiceMenu)
     return true;
 }
 
@@ -129,6 +129,24 @@ DiskAutostart::Plan DiskAutostart::MakePlan(DiskImage& image) const
     }
 
     TrdosCatalog catalog;
+    // ZX-Evo BaseConf: the service ROM's "TR-DOS boot" lists the disk's BASIC files (boot selected when there is one)
+    // and runs the selected one; a direct reset into TR-DOS is not possible there (EVO-DOS, no $027B line builder)
+    if (_context->config.mem_model == MM_ATM3)
+    {
+        if (!catalog.Parse(image))
+        {
+            plan.message = "Disk is not TR-DOS formatted - mounted only";
+            return plan;
+        }
+        if (catalog.FindBoot() == nullptr && catalog.BasicFiles().empty())
+        {
+            plan.message = "No BASIC programs on disk - mounted only";
+            return plan;
+        }
+        plan.action = Action::BootServiceMenu;
+        plan.message = "Autostart: the ZX-Evo service menu boots drive A";
+        return plan;
+    }
     if (!catalog.Parse(image))
     {
         if (IsIsdosBootDisk(image))
@@ -241,8 +259,59 @@ void DiskAutostart::ArmCommand(const std::vector<uint8_t>& commandLine, const st
     _armed = !commandLine.empty();
 }
 
+void DiskAutostart::ArmServiceMenuBoot()
+{
+    _serviceStage = ServiceStage::SelectDrive;
+    _serviceArmedAt = _context->emulatorState.frame_counter;
+    _serviceSince = _serviceArmedAt;
+}
+
+void DiskAutostart::HandleServiceMenuIdle()
+{
+    if (_serviceStage == ServiceStage::Idle || !_context->pMemory->IsBank0ROM())
+        return;
+    const uint64_t frame = _context->emulatorState.frame_counter;
+    if (frame < _serviceArmedAt)  // another reset restarted the frame count: count from it
+        _serviceArmedAt = _serviceSince = frame;
+    if (frame - _serviceArmedAt > SERVICE_TIMEOUT_FRAMES)
+    {
+        _serviceStage = ServiceStage::Idle;
+        return;
+    }
+    // The first key once the menu has drawn, each next one a gap later (the ERS's own key scan sees every tap)
+    if (frame - _serviceSince < SERVICE_KEY_GAP_FRAMES)
+        return;
+    DebugKeyboardManager* keyboard = _context->pDebugManager ? _context->pDebugManager->GetKeyboardManager() : nullptr;
+    if (keyboard == nullptr)
+    {
+        _serviceStage = ServiceStage::Idle;
+        return;
+    }
+    switch (_serviceStage)
+    {
+        case ServiceStage::SelectDrive:
+            keyboard->TapKey(ZXKEY_1);
+            _serviceStage = ServiceStage::BootItem;
+            break;
+        case ServiceStage::BootItem:
+            keyboard->TapKey(ZXKEY_ENTER);
+            _serviceStage = ServiceStage::RunFile;
+            break;
+        case ServiceStage::RunFile:
+            keyboard->TapKey(ZXKEY_ENTER);
+            _serviceStage = ServiceStage::Idle;
+            _context->pModuleLogger->Info(PlatformModulesEnum::MODULE_DISK, PlatformDiskSubmodulesEnum::SUBMODULE_DISK_FDC,
+                                          "DiskAutostart: the service menu runs the disk in drive A");
+            break;
+        case ServiceStage::Idle:
+            break;
+    }
+    _serviceSince = frame;
+}
+
 void DiskAutostart::Disarm()
 {
+    _serviceStage = ServiceStage::Idle;
     _armed = false;
     _coldStartFinishPending = false;
     _name.clear();
