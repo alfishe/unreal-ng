@@ -150,7 +150,7 @@ constexpr const char* const kEsxDosDesc =
 
 constexpr const char* const kLowLatencyDesc =
     "Low latency: each frame is shown as soon as it is made, not when its sound is heard, and the sound path is "
-    "shortened (audio ring of 15 ms instead of 40 ms, down to 10 ms where the host holds it, raised only as far as it needs). The "
+    "shortened (audio ring of 15 ms instead of 40 ms, down to 6-15 ms where the host holds it, raised only as far as it needs). The "
     "picture comes about 50 ms sooner and leads "
     "the sound by the shortened audio path's delay. Off by default; Steam Deck Game Mode turns it on. A temporal "
     "effect (ZX DLSS) still delays the picture by its look-ahead.";

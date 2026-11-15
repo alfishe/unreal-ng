@@ -137,7 +137,7 @@ None of them touches the user's master mute.
 | `holds_taken` | holds ever taken, by reason |
 | `stale_holds_cleared` | holds a `resume` found without their reason and dropped (a leak; stays `0`) |
 | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames given to the speakers / of those, not silent / withheld |
-| `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 10 ms (15 ms on Windows) and 40 ms |
+| `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 6 ms on macOS (10 ms on Linux, 15 ms on Windows) and 40 ms |
 | `device.drc_target_raises` | times the adaptive low-latency setpoint went up (a gap, or a second whose `trough_ms` fell below 2 ms) |
 | `device.drc_trim` | the DRC's current rate trim (±0.005; 0 while disengaged) |
 | `device.name` / `sample_rate_hz` | the host output device and its rate |

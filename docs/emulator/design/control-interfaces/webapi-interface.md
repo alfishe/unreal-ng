@@ -428,7 +428,7 @@ and stops at a breakpoint (`stop_reason`). The `run.state` topic of `/api/v1/ws`
 > | `holds_taken` | holds ever taken, by reason |
 > | `stale_holds_cleared` | leaked holds a `resume` dropped (should stay `0`; each one is also logged) |
 > | `frames_delivered` / `frames_audible` / `frames_held` | emulated frames handed to the speakers / of those, not silent / withheld |
-> | `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 10 ms (15 ms on Windows) and 40 ms |
+> | `device.drc_target_ms` | the ring occupancy the DRC holds before a frame's sound goes in: 40 ms; with the `lowlatency` feature adaptive, starts at 15 ms, between 6 ms on macOS (10 ms on Linux, 15 ms on Windows) and 40 ms |
 > | `device.drc_target_raises` | times the adaptive low-latency setpoint went up (a gap, or a second whose `trough_ms` fell below 2 ms) |
 > | `device.drc_trim` | the DRC's current rate trim (±0.005; 0 while disengaged) |
 > | `device.name` / `sample_rate_hz` | the host output device and its rate |

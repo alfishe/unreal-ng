@@ -111,7 +111,8 @@ bool AppSoundManager::init()
 #endif
 #ifdef __APPLE__
     // Low latency: half the period (2 x 2.9 ms); CoreAudio's real-time thread kept the ring clean at it with every
-    // core busy. Linux (the Steam Deck: dips with 128) and Windows (WASAPI shared: 10 ms engine periods) keep theirs
+    // core busy. Linux keeps 256: the Steam Deck at 128 had 5 gaps per 10 min with all cores busy even under the
+    // adaptive setpoint (0 at 256). Windows (WASAPI shared: 10 ms engine periods) keeps its own
     if (_lowLatency)
         config.periodSizeInFrames = 128;
 #endif

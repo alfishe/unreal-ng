@@ -288,15 +288,19 @@ public:
     // the margin the ring keeps against an underrun: a device callback period plus the emulation thread's wake jitter.
     // Measured with every core busy (20 s windows, the least trough per second): macOS 10 ms (2 x 128-frame periods)
     // kept >= 8 ms; the Steam Deck 10 ms (2 x 256) kept >= 4.5 ms; Windows (WASAPI shared, 3 x 10 ms) at 10 ms fell to
-    // 0.6 ms, at 15 ms kept >= 9 ms
+    // 0.6 ms, at 15 ms kept >= 9 ms. macOS goes to 6 ms: over 10 min with every core busy (Pentagon, Next) and idle
+    // it kept >= 2.6 ms with no gap, the setpoint itself stopping at 6-7 ms (only quiet seconds lower it)
 #ifdef _WIN32
     static constexpr double LOW_LATENCY_DRC_TARGET_MS = 15.0;
+#elif defined(__APPLE__)
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 6.0;
 #else
     static constexpr double LOW_LATENCY_DRC_TARGET_MS = 10.0;
 #endif
     // Where the adaptive setpoint starts (feature on, or a new device): above the floor, since a host shows its jitter
     // only under load. The Steam Deck starting at 10 ms with every core busy had its one gap within the first minute
-    // (Pentagon and Next alike), after which 16 ms held; thirty quiet seconds per 1 ms bring it down to the floor in about 2.5 minutes
+    // (Pentagon and Next alike), after which 16 ms held; thirty quiet seconds per 1 ms bring it down to the floor
+    // (2.5 minutes to 10 ms)
     static constexpr double LOW_LATENCY_DRC_START_MS = 15.0;
 
     /// The ring's setpoint now: DRC_TARGET_MS, or with the feature lowlatency the adaptive one (LowLatencyTarget:
