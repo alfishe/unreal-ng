@@ -3447,6 +3447,9 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
             else
                 brk->DisarmExecPass();
         }
+        // A card a front-end has selected follows this run in tight mode (gs-debugger design §5.2)
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(true);
     }
 }
 
@@ -3480,6 +3483,8 @@ Emulator::DirectStepScope::~DirectStepScope()
     // A refused run touched nothing: no stop, no picture, no refresh to report
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1 && !_refused)
     {
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;

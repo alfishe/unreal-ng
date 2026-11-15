@@ -592,6 +592,8 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
     # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
     # or {ok: False, error}
+    # select_cpu("gs") / selected_cpu(): the CPU the front-ends show, {cpu, follows}; a card shown follows the main
+    # CPU's steps of the paused machine (its state at the main CPU's moment); "main" ends it
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""

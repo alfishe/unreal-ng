@@ -921,6 +921,7 @@ public:
     void debug_detach() override
     {
         clear_run_to();
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", "main"}});
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
         changed();
     }
@@ -966,6 +967,12 @@ public:
         drop_run_to();
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
+    }
+    // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
+    void debug_select(ecatshim::CPU * c) override
+    {
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", card ? card->cpu() : QString("main")}});
     }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {

@@ -709,6 +709,8 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
+c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 
 -- Properties
 id = emu:get_id()

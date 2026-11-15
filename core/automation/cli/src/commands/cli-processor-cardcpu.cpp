@@ -276,3 +276,27 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
     session.SendResponse(out.str());
     return true;
 }
+
+// selected-cpu [main|gs|ms]: the CPU the front-ends show (gs-debugger design §5.2, core CpuView::SetSelected, the
+// WebAPI GET / PUT /debug/selected_cpu); a card shown follows the main CPU's steps of the paused machine
+void CLIProcessor::HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    if (!args.empty())
+    {
+        if (const std::string error = CpuView::SetSelected(context, args[0]); !error.empty())
+        {
+            session.SendResponse("Error: " + error + NEWLINE);
+            return;
+        }
+    }
+    StateNode selected = CpuView::Selected(context);
+    session.SendResponse("Selected cpu: " + selected["cpu"].s +
+                         (selected["follows"].b ? " (follows the main CPU's steps)" : "") + NEWLINE);
+}
