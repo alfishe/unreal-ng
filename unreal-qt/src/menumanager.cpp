@@ -1575,11 +1575,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (context && context->pBetaDisk)
         {
             FDD* drive = context->pBetaDisk->getDrive();
-            if (drive && drive->getDiskImage())
-            {
-                hasDiskLoaded = true;
-                isDiskDirty = drive->getDiskImage()->isDirty();
-            }
+            if (drive)
+                drive->WithDisk([&](const DiskImage* image) {  // the image may be released meanwhile
+                    hasDiskLoaded = image != nullptr;
+                    isDiskDirty = image && image->isDirty();
+                });
         }
     }
     

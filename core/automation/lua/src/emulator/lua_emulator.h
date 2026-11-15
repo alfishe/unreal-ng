@@ -6034,7 +6034,8 @@ public:
             if (!ctx) return info;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return info;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return info;
             info["cylinders"] = disk->getCylinders();
             info["sides"] = disk->getSides();
@@ -6055,7 +6056,8 @@ public:
             if (!ctx) return data;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return data;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return data;
             auto* track = disk->getTrackForCylinderAndSide(cyl, side);
             if (!track) return data;
@@ -6110,7 +6112,8 @@ public:
             if (!ctx) return "";
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return "";
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return "";
             return disk->DumpSectorHex(trackNo, sector);
         });
