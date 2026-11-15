@@ -4,6 +4,7 @@
 #include "emulator/io/fdc/diskimage.h"
 
 #include <cstring>
+#include <memory>
 #include <vector>
 
 class LoaderSCP_Test : public ::testing::Test
@@ -255,3 +256,177 @@ TEST_F(LoaderSCP_Test, Serialize_FmTrack_DetectedOnLoad)
 
     delete loaded;
 }
+
+/// region <Round trips: the tracks come back byte for byte>
+
+namespace
+{
+void FormatAllScp(DiskImage& image, bool fm)
+{
+    for (uint8_t c = 0; c < image.getCylinders(); c++)
+    {
+        for (uint8_t s = 0; s < image.getSides(); s++)
+        {
+            DiskImage::TrackFormatSpec spec =
+                fm ? DiskImage::TrackFormatSpec::ibm3740() : DiskImage::TrackFormatSpec::trdos(nullptr, 16);
+            image.getTrackForCylinderAndSide(c, s)->formatTrack(c, s, spec);
+        }
+    }
+}
+
+void ExpectSameTracksScp(DiskImage& expected, DiskImage& actual)
+{
+    ASSERT_EQ(actual.getCylinders(), expected.getCylinders());
+    ASSERT_EQ(actual.getSides(), expected.getSides());
+    for (uint8_t c = 0; c < expected.getCylinders(); c++)
+    {
+        for (uint8_t s = 0; s < expected.getSides(); s++)
+        {
+            DiskImage::Track* want = expected.getTrackForCylinderAndSide(c, s);
+            DiskImage::Track* got = actual.getTrackForCylinderAndSide(c, s);
+            ASSERT_EQ(got->encoding(), want->encoding()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->rawSize(), want->rawSize()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(0, std::memcmp(got->rawData(), want->rawData(), want->rawSize()))
+                << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->clockBitmap(), want->clockBitmap()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->sectorCount(), want->sectorCount()) << "cylinder " << int(c) << " side " << int(s);
+        }
+    }
+}
+
+uint32_t ReadU32(const std::vector<uint8_t>& d, size_t at)
+{
+    return d[at] | (d[at + 1] << 8) | (d[at + 2] << 16) | (static_cast<uint32_t>(d[at + 3]) << 24);
+}
+
+void WriteU32(std::vector<uint8_t>& d, size_t at, uint32_t v)
+{
+    for (int i = 0; i < 4; i++) d[at + i] = static_cast<uint8_t>(v >> (8 * i));
+}
+}  // namespace
+
+TEST_F(LoaderSCP_Test, RoundTrip_TrdosTracksStayMfmByteExact)
+{
+    DiskImage image(80, 2);
+    FormatAllScp(image, false);
+    ASSERT_EQ(image.getTrackForCylinderAndSide(0, 0)->rawSize(), 6250u);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+
+    // Index time: one revolution of 6250 MFM bytes, 200 ms in 25 ns ticks
+    const uint32_t track0 = ReadU32(buffer, LoaderSCP::TRACK_TABLE_OFFSET);
+    EXPECT_EQ(ReadU32(buffer, track0 + LoaderSCP::TRACK_HEADER_SIZE), 8000000u);
+
+    LoaderSCP loader;
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(loaded->getTrackForCylinderAndSide(0, 0)->sectorCount(), 16u);
+    ExpectSameTracksScp(image, *loaded);
+}
+
+TEST_F(LoaderSCP_Test, RoundTrip_FmTracksByteExact)
+{
+    DiskImage image(40, 2);
+    FormatAllScp(image, true);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+
+    LoaderSCP loader;
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    ExpectSameTracksScp(image, *loaded);
+}
+
+TEST_F(LoaderSCP_Test, Serialize_SingleSided_EndTrackIsLastCylinderSideZero)
+{
+    DiskImage image(40, 1);
+    FormatAllScp(image, false);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+    EXPECT_EQ(buffer[6], 0);
+    EXPECT_EQ(buffer[7], 78);  // track number = cylinder * 2 + side, single-sided too
+
+    LoaderSCP loader;
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    ExpectSameTracksScp(image, *loaded);
+}
+
+TEST_F(LoaderSCP_Test, Serialize_MoreCylindersThanTheTrackTable_Refused)
+{
+    DiskImage image(86, 2);
+    FormatAllScp(image, false);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    EXPECT_FALSE(saver.serialize(&image, buffer, warnings));
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings.back().find("track table"), std::string::npos) << warnings.back();
+}
+
+TEST_F(LoaderSCP_Test, Parse_EndTrackPastTheTable_StopsAtTheTable)
+{
+    DiskImage image(40, 2);
+    FormatAllScp(image, false);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+    buffer[7] = 255;
+
+    LoaderSCP loader;
+    warnings.clear();
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_FALSE(warnings.empty());
+    EXPECT_EQ(loaded->getTrackForCylinderAndSide(39, 1)->sectorCount(), 16u);
+}
+
+TEST_F(LoaderSCP_Test, Parse_Resolution50ns_ScalesTheTicks)
+{
+    DiskImage image(40, 2);
+    FormatAllScp(image, false);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+
+    // Same flux at 50 ns a tick: every value and the index time halved
+    buffer[11] = 1;
+    for (size_t t = 0; t < LoaderSCP::TRACK_TABLE_ENTRIES; t++)
+    {
+        const uint32_t offset = ReadU32(buffer, LoaderSCP::TRACK_TABLE_OFFSET + 4 * t);
+        if (offset == 0) continue;
+        const size_t rev = offset + LoaderSCP::TRACK_HEADER_SIZE;
+        WriteU32(buffer, rev, ReadU32(buffer, rev) / 2);
+        const uint32_t count = ReadU32(buffer, rev + 4);
+        const size_t data = offset + ReadU32(buffer, rev + 8);
+        for (uint32_t i = 0; i < count; i++)
+        {
+            uint32_t v = (buffer[data + 2 * i] << 8) | buffer[data + 2 * i + 1];
+            ASSERT_EQ(v % 2, 0u);
+            v /= 2;
+            buffer[data + 2 * i] = static_cast<uint8_t>(v >> 8);
+            buffer[data + 2 * i + 1] = static_cast<uint8_t>(v);
+        }
+    }
+
+    LoaderSCP loader;
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    ExpectSameTracksScp(image, *loaded);
+}
+
+/// endregion </Round trips: the tracks come back byte for byte>

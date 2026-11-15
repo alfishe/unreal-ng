@@ -67,25 +67,19 @@ void processInterval(uint32_t intervalNs) {
 
 ### 2.3 Automatic mode detection
 
-Analyse a histogram of flux intervals to determine MFM vs FM:
-- MFM: clusters at 2 µs, 3 µs, 4 µs (1T, 1.5T, 2T cells)
-- FM: clusters at 4 µs, 8 µs (clock-only, clock+data)
+Double density at 300 rpm, from the flux intervals:
+- MFM (2 µs cells): intervals of 4, 6 and 8 µs (2, 3, 4 cells)
+- FM (4 µs cells): intervals of 4 and 8 µs only (clock alone, clock + data)
+
+The 6 µs interval is MFM's own; gaps of 4E and any data give plenty of them.
 
 ```cpp
 Mode detectMode(const uint32_t* intervals, size_t count) {
-    // Build histogram in 500 ns buckets
-    int histogram[20] = {0};  // 0-10 µs range
-    for (size_t i = 0; i < count; i++) {
-        int bucket = intervals[i] / 500;
-        if (bucket < 20) histogram[bucket]++;
-    }
-    
-    // MFM: strong peak at bucket 4 (2000 ns)
-    // FM: strong peak at bucket 8 (4000 ns)
-    int mfmScore = histogram[3] + histogram[4] + histogram[5];  // 1.5-2.5 µs
-    int fmScore = histogram[7] + histogram[8] + histogram[9];   // 3.5-4.5 µs
-    
-    return (fmScore > mfmScore * 2) ? Mode::FM : Mode::MFM;
+    size_t shortOrLong = 0;  // 3..5 us and 7..9 us: both encodings
+    size_t middle = 0;       // 5..7 us: MFM only
+    // ... count ...
+    if (middle + shortOrLong == 0) return Mode::MFM;
+    return (middle * 20 >= middle + shortOrLong) ? Mode::MFM : Mode::FM;
 }
 ```
 
