@@ -2373,7 +2373,8 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                                 return;
                             }
 
-                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
+                            // The head writes the drive's physical track; past the image's last cylinder the image
+                            // grows (cmdWriteTrack grew it already when the command started there)
                             DiskImage::Track* track = selectedDrive->trackUnderHeadForWrite(sideUp);
                             if (!track)
                             {
@@ -3265,7 +3266,9 @@ void WD1793::processWriteTrack()
     // The byte that follows an F7 is not interpreted (WD177x / WD179x): it is written as is, with normal clocks,
     // presets nothing and is accumulated into the running CRC, so the next F7 covers it. "F7 F7" therefore writes
     // the CRC and then a literal F7 - the trick behind readable ID fields with N = #F7 (Atari ST Copy Protection,
-    // J. L. Guerin, sections 4.3 and 4.8). FM follows the same rule by analogy.
+    // J. L. Guerin, sections 4.3 and 4.8). FM follows the same rule: the source describes MFM only, MAME's wd_fdc
+    // writes the F7 after a CRC literally in both encodings (its FM branch, WRITE_TRACK_DATA) - no hardware capture
+    // of an FM Read Track confirms it yet. MAME narrows the literal to an F7; the source's "next byte" is kept.
     const bool literal = _writeTrackEscapeNext;
     _writeTrackEscapeNext = false;
 
