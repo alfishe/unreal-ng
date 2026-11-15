@@ -34,6 +34,17 @@ TEST_F(ScorpionPorts_Test, OutOneFFDBankBitSelectsBankEight)
     EXPECT_EQ(BankTag(0xC000), 0x48) << "#1FFD bit4 maps RAM bank 8 at #C000";
 }
 
+/// @brief SQ-Tracker Digital's player: XOR A : OUT (#FD),A (port #00FD) clears #1FFD, as on the machine - A12 is
+///        not part of the decode. The bank it had paged at #C000 goes back to the #7FFD one
+TEST_F(ScorpionPorts_Test, OutFdWithZeroInAReachesOneFFD)
+{
+    WritePort(0x1FFD, 0x10);
+    ASSERT_EQ(BankTag(0xC000), 0x48);
+    WritePort(0x00FD, 0x00);
+    EXPECT_EQ(_context->emulatorState.p1FFD, 0x00) << "OUT (#FD),A with A = 0 did not reach #1FFD";
+    EXPECT_EQ(BankTag(0xC000), 0x40) << "bank 0 back at #C000";
+}
+
 /// @brief IN (#1FFD) returns 0xFF and is decoded: the write-only register
 ///        answers with an open bus instead of tripping the unmapped-port path
 TEST_F(ScorpionPorts_Test, InOneFFDReturnsHighDecoded)
