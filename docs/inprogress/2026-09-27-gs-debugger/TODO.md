@@ -107,7 +107,15 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   ~7000 short pieces per frame (cache and branch history, main and card loops alike). A cached card rate and an early
   return when the card is already at the target are in. Only while a stopping card breakpoint or a card step is
   active; with none the instruction start tests one more flag (Pentagon fast 458 us, unchanged).
-- [ ] The rest of §5.4: the instruction's total T, the bus cycle under way (opcode M-cycle tables), the UI's progress.
+- [x] The rest of §5.4 (branch `gs-progress`, 2026-11-14): `Z80MCycleDecoder` (debugger/disassembler/z80mcycles)
+  gives an instruction's machine cycles, both ways of a conditional; checked against every FUSE vector's bus trace
+  (`Z80MCycles_Test`, 1341 cases one instruction, 15 compared to the instruction's end). Tight mode's catch-up runs
+  before the next instruction start is taken, so a card's stop sees the instruction its moment is in (`on_boundary`).
+  `main` gains `on_boundary`, `elapsed_t`, `total_t`, `total_t_alt`, `contended`, `bus_cycles`, `bus_cycle`,
+  `bus_cycle_index` and `text` (`execution::MainPositionNode` / `MainPositionText`, one source for the card step's
+  `stop`, the `debug` topic's `paused` event and the snapshot's and `wait`'s `pause`). MCP `wait` adds the text; the
+  debugger's status line shows it after a card's stop (`ecatshim::Emulator::debug_stop_main_text`, both adapters).
+  Contention: the measured T beside the table's (`contended`), the cycle is the uncontended one.
 - [ ] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger), card run-to
   (§5.3).
 

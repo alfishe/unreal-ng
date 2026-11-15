@@ -7,6 +7,7 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
+#include "debugger/disassembler/z80mcycles.h"
 
 class EmulatorContext;
 
@@ -354,9 +355,21 @@ struct MainPosition
 {
     bool known = false;
     bool frameEnd = false;        ///< the stop came in the frame-end catch-up: main is between frames, not inside `pc`
-    uint16_t pc = 0;              ///< main's instruction (its M1 address)
-    uint32_t tInInstruction = 0;  ///< T of that instruction already run
+    uint16_t pc = 0;              ///< main's instruction (its M1 address): the one the card's moment falls in
+    uint32_t tInInstruction = 0;  ///< T of that instruction main has run
     int32_t gapT = 0;             ///< main's time minus the card's, in main T
+
+    /// Instruction progress (gs-debugger design §5.4), known while main runs the instruction-start debug work
+    /// (debug mode, exec taps, tight mode) and the card's moment is inside `pc`
+    bool onBoundary = false;  ///< main finished `pc` and stands at the next instruction's start (tight mode's catch-up)
+    bool timed = false;       ///< the fields below are known
+    uint32_t elapsedT = 0;    ///< T into `pc` at the card's moment
+    uint8_t totalT = 0;       ///< `pc`'s T, uncontended (the way taken when it is known)
+    uint8_t totalTAlt = 0;    ///< a conditional not decided yet: the other way's T (0: none)
+    bool contended = false;   ///< main spent more T on `pc` than the table's (contention, an interrupt's acknowledge
+                              ///< after it): the bus cycle is the uncontended one at `elapsedT`
+    int8_t busCycle = -1;     ///< the machine cycle under way in `cycles` (-1: past the instruction's cycles)
+    Z80MCycleList cycles;     ///< `pc`'s machine cycles (Z80MCycleDecoder), the way `totalT` counts
 };
 
 /// Payload for NC_EMULATOR_STATE_CHANGE.

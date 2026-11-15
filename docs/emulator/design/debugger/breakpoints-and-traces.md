@@ -177,9 +177,22 @@ both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
   instruction start tests one more flag.
 - **Stops.** The pause, the breakpoint payload, a step's stop and `wait` carry `cpu` (`main` or `gs`) and, for a card
   stop, `cpu_pc` (the card instruction) beside the main PC. A card's pause in the machine's own run (the `debug`
-  topic's `paused` event, the card step's `stop`) adds `main`: where the main CPU parked with the card - `pc` (its
-  instruction), `t_in_instruction` (T of it already run), `gap_t` (main's time past the card's, in main T; under one
-  main instruction in tight mode) and `frame_end` (the stop came in the frame-end catch-up, main between frames).
+  topic's `paused` event, the card step's `stop`) adds `main`: where the main CPU parked with the card - `pc` (the
+  instruction the card's moment falls in), `t_in_instruction` (T of it main has run), `gap_t` (main's time past the
+  card's, in main T; under one main instruction in tight mode), `frame_end` (the stop came in the frame-end catch-up,
+  main between frames) and `on_boundary` (tight mode's catch-up: main finished `pc` and stands at the next
+  instruction's start).
+- **Instruction progress** (gs-debugger design §5.4). `main.text` says it in one line ("main #8123 (finished): T 9 of
+  11, port write; 2 T past the card"): MCP `wait` adds it to its answer, the debugger's status line shows it after a
+  card's stop. When main runs its instruction-start debug work (debug mode,
+  exec taps, tight mode) and the card's moment is inside `pc`, `main` also has `elapsed_t` (T into `pc` at the card's
+  moment, `t_in_instruction - gap_t`), `total_t` (its T, uncontended; the way taken when it is known),
+  `total_t_alt` (a conditional instruction still under way: the other way's T), `bus_cycles` (its machine cycles,
+  `{kind, t}` with `kind` `ocf` opcode fetch, `od` operand read, `mr` / `mw` memory read / write, `pr` / `pw` port
+  read / write, `int` internal T), `bus_cycle` and `bus_cycle_index` (the cycle under way at `elapsed_t`) and
+  `contended` (main spent more T on `pc` than the table's - contention, an interrupt's acknowledge after it; the
+  cycle is then the uncontended one at `elapsed_t`). The cycles come from `Z80MCycleDecoder`, checked against the FUSE
+  vectors' bus traces opcode by opcode.
 
 | Plane | The CPU | Event breakpoint |
 | :--- | :--- | :--- |
@@ -223,8 +236,8 @@ boundary (`GSCardTarget::ArmStep`), resumes the machine and waits until it pause
   other instruction is a step in;
 - **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP.
 
-The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` (the snapshot's `pause`, the WebSocket `debug` topic's
-`paused` event). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
+The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` and `main` (the snapshot's and `wait`'s `pause`, the
+WebSocket `debug` topic's `paused` event; a card breakpoint's pause carries `main` too). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
 2 s (over / out 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
 `breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`, the
 main CPU's `main_pc` and `main_sp`, `state`.

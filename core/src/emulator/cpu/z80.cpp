@@ -266,10 +266,11 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // analyzers, script callbacks): they never stop (breakpoint-taps §3)
     if ((cpu.isDebugMode || cpu.execTapHold || cpu.cardTight) && _context->pDebugManager != nullptr)
     {
-        cpu.instrStartT = cpu.t;
-        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here
+        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here. Before the
+        // new start is taken: a card stopping inside sees m1_pc and instrStartT of the instruction its moment is in
         if (cpu.cardTight)
             _context->pDebugManager->CatchUpCards();
+        cpu.instrStartT = cpu.t;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         if (skipBreakpoints)
         {

@@ -242,6 +242,9 @@ public:
     virtual unsigned int debug_serial() const = 0;
     virtual CPU * debug_stop_cpu() const = 0;
     virtual int debug_stop_reason() const = 0;
+    // A card CPU's stop: where the main CPU stood at the card's moment, its instruction's progress
+    // ("main #8123: T 9 of 11, port write; 2 T past the card"); empty for any other stop
+    virtual std::string debug_stop_main_text() const { return std::string(); }
     virtual void set_debug_listener(const std::function<void()> &fn) = 0;
     // A remote machine's connection: false while its emulator is gone and it waits for a suitable one (it reattaches
     // by itself, the listener tells both). The last state stays readable; nothing runs, steps or changes
