@@ -3089,7 +3089,8 @@ namespace PythonBindings
                  }, py::arg("id"), "The game profile by hand ('none': by the loaded file)")
             .def("controllers_bindings", [](Emulator&, const py::kwargs& options) {
                      return HostControllerCallPy("bindings", options);
-                 }, "The effective bindings (device=..., layer='play'), each with the profile it came from")
+                 }, "The effective bindings (device=..., layer='play'): each with its profile and rule, and what it drives now "
+                    "down to the matrix keys (connector, menu keys, mouse button), with the machine's input state")
             .def("controllers_bind", [](Emulator&, const std::string& control, const py::object& spec,
                                         const py::kwargs& options) {
                      py::kwargs all = options;

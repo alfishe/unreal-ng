@@ -56,7 +56,7 @@ connector verbs keep working (keyboard joystick, automation input).
 | `identify` | Built: a 300 ms rumble (two clicks on a clicker) and a white blink of the light, back to its colour after 300 ms (`HostInputService::Identify`); `rumble`, `light`, `ms`; `unavailable` with both reasons when the device has neither. |
 | `role` | Built: set `player`, `debugger-remote`, `disabled` (`InputRouter::SetRole`, kept by id across a replug while the process runs). |
 | `pin` | Built: set `follow-focus`, `pinned:<instance>`, `all` (`InputRouter::SetInstanceMode`); `devices` shows `pin`. The instance id is not checked against the running ones. |
-| `bindings` | Read the effective bindings of a device per layer, with the profile each one came from. |
+| `bindings` | Read the effective bindings of a device per layer, with the profile each one came from, and what each one drives now, down to the matrix keys ([§2.1](#21-the-bindings-report)). |
 | `bind` / `unbind` | Change one binding in the user layer of a profile. |
 | `scheme` | The scheme a user profile extends (how the pad works: Kempston, Sinclair 1, QAOP + Space), or none. |
 | `profiles` | List profiles (play and debug sets, scopes, match rules); `apply`, `save`, `delete`, `export`, `import`. |
@@ -132,6 +132,48 @@ How it costs nothing while nothing changes:
 
 Measured (`DevicesFeed_Test`, the WebSocket hub's `ControllersDevicesPushesWhatTheOwnerPublishesAndNothingElse`): one
 build per 2 s with nothing changing, and no hub read on frames.
+
+
+### 2.1 The bindings report
+
+`bindings` answers the whole chain from a control to the machine, so an agent never guesses why a button does what it
+does. Every plane has it: REST `GET /api/v1/controllers/bindings`, the WebSocket `call`, MCP `controllers` with
+`action: bindings`, CLI `controllers bindings`, Python `emulator.controllers_bindings()` and Lua
+`controllers_host("bindings")`. The same `HostInputControl::Bindings` builds it
+on every plane; CLI and MCP print it as text (MCP: an agent may see only the text).
+
+| Field | Content |
+|-------|---------|
+| `scope` | the router scope: `every device`, `family:<family>`, a device id |
+| `applied` | the profile ids of the scope, lowest first |
+| `devices[]` | each device the bindings drive: `player_connector`, `player_rule` (automatic choice or chosen by the user), `layers` up |
+| `machine` | `instance`, `machine`, `ps2` (host keys also reach the PS/2 controller as PC keys), `auto` (the port reads' decision: `device`, `label`, `connector`, `reason`; null before one), `menu_keys` and `mouse_buttons` (`{on, rule}`), `connectors[]` (`id`, `device`, `fixed`, and `keys` per control for a keyboard joystick) |
+| `bindings[]` | `layer`, `control`, `spec`, `profile`, `rule` (why: a game profile and its match, a manual choice, a user profile, the default of every pad), `resolved[]` |
+| `resolved[]` | per device: `outputs[]`, each `{to, ..., rule}` |
+
+The outputs of one binding:
+
+| `to` | Fields | When |
+|------|--------|------|
+| `connector` | `connector`, `device`, `controls`, `keys` (a keyboard joystick's matrix keys per control) | a retro target; `auto:` goes to the player connector |
+| `keys` | `keys` (a chord `caps+6`, a map `{up: caps+7}`, or the steps of a macro), `ps2` | a key, chord or macro target; the menu keys of an `auto:` target while the program scans the whole keyboard (they replace a `keyjoy.N` connector) |
+| `mouse` | `button` or `axis` (`scale`) | a mouse target; the left button of an `auto:` fire while the mouse buttons are on (then fire holds no ENTER) |
+| `action`, `layer`, `nothing` | `action`, `layer` | a host command, a layer switch, an unbound control or one with no player connector |
+
+Example (ZX-Evo service menu, the Kempston mouse decided, the pad on `kempston`), CLI:
+
+```
+Machine atm3:
+  menu keys on - on: a pointer menu scans the whole keyboard beside the Kempston mouse
+  mouse buttons on - on: the auto decision Kempston mouse (kempston-mouse port read in 50 of 50 frames (3.0 per frame))
+  ...
+  play.dpad.*: {"retro":"auto:dpad"} - the default of every pad (builtin/play/pad-default)
+      <device> -> kempston [kempston-joystick] right,left,down,up  (auto: the player connector of <device> (automatic choice))
+      <device> -> keys right=caps+8 left=caps+5 down=caps+6 up=caps+7 (+PS/2)  (menu keys: on: a pointer menu ...)
+  play.south: {"retro":"auto:fire"} - the default of every pad (builtin/play/pad-default)
+      <device> -> kempston [kempston-joystick] fire  (auto: ...)
+      <device> -> mouse left  (mouse buttons: on: the auto decision Kempston mouse (...))
+```
 
 ## 3. Selectors
 

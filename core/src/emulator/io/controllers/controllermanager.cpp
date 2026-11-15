@@ -1202,6 +1202,47 @@ bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
     return true;
 }
 
+std::vector<ZXKeysEnum> ControllerManager::WiredKeys(const Connector& connector, uint16_t bit)
+{
+    std::vector<ZXKeysEnum> keys;
+    if (connector.kind != ConnectorKind::KeyboardJoystick || bit == 0)
+        return keys;
+    unsigned index = 0;
+    while (index < kOverlayControls && (bit & (1u << index)) == 0)
+        index++;
+    if (index >= kOverlayControls)
+        return keys;
+    switch (connector.device)
+    {
+        case RetroDeviceKind::SinclairJoystick:
+            if (index < 5)
+                keys.push_back((connector.options.sinclairPort == 2 ? kSinclair2Keys : kSinclair1Keys)[index]);
+            break;
+        case RetroDeviceKind::CursorJoystick:
+            if (index < 5)
+            {
+                if (connector.options.cursorShift && (bit & kDirections))
+                    keys.push_back(ZXKEY_CAPS_SHIFT);
+                keys.push_back(kCursorKeys[index]);
+            }
+            break;
+        case RetroDeviceKind::KeysJoystick:
+            if (connector.options.keys[index] != ZXKEY_NONE)
+                keys.push_back(connector.options.keys[index]);
+            break;
+        default:
+            break;
+    }
+    return keys;
+}
+
+bool ControllerManager::HostKeysReachPs2() const
+{
+    Keyboard* keyboard = _context ? _context->pKeyboard : nullptr;
+    IPs2KeySink* sink = keyboard ? keyboard->GetPs2Sink() : nullptr;
+    return sink != nullptr && (sink->WantsHostOverlayKeys() || keyboard->RoutesToPs2());
+}
+
 uint8_t ControllerManager::HostKeys(uint8_t row) const
 {
     std::lock_guard<std::mutex> lock(_mutex);

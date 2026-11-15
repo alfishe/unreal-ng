@@ -105,6 +105,9 @@ public:
     std::string ChoosePlayerConnector(const std::string& device, const std::string& connector, std::string& message);
     /// "" automatic, "none", or the chosen connector's id
     std::string PlayerChoice(const std::string& device) const;
+    /// The machine side of the bindings report (IHostInputOwner::MachineInputs): connectors with their matrix keys,
+    /// the auto decision, why the menu keys and the mouse buttons are on
+    controllers::JsonValue MachineInputs() const;
     /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
     /// machine's order decide again
     void ResetPlayerChoices();
@@ -254,6 +257,7 @@ private:
     void applyConnectorPlans();
     void onFileLoaded(const QString& emulatorId, const QString& path);
     void onGuestProgram(const QString& emulatorId, const QString& path, const QByteArray& data);
+    void onMachineReset();
     void checkAuto();
     void applyAuto(const controllers::AutoDecision& decision);
     bool saveUserProfile(controllers::Profile profile, QString& error);
@@ -295,6 +299,7 @@ private:
     std::string _videoKey;    ///< the profile and `video:` gameVideoChanged told last
     uint64_t _fileObserver = 0;
     uint64_t _guestObserver = 0;
+    uint64_t _resetObserver = 0;
     uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
     /// The signatures, file hash and TR-DOS file set of the program loaded last into the bound emulator (only those
@@ -313,6 +318,10 @@ private:
     bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
+    /// For the bindings report: why the menu keys / mouse buttons are as they are, and the last auto decision
+    std::string _menuKeysRule = "off: no whole-keyboard scan seen";
+    std::string _mouseButtonsRule = "off: no mouse decided";
+    controllers::JsonValue _autoReport;
     std::unique_ptr<controllers::HostInputService> _service;
     controllers::ProfileStore _profiles;
     controllers::ResolvedProfiles _resolved;

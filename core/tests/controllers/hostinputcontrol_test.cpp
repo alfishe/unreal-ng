@@ -92,6 +92,10 @@ public:
     {
         return input;
     }
+    JsonValue MachineInputs() const override
+    {
+        return machineInputs;
+    }
     void SetDevices(std::vector<HostDeviceInfo> devices)
     {
         _context.devices = std::move(devices);
@@ -116,6 +120,7 @@ public:
     std::map<std::string, std::vector<std::string>> signaturesOf;
     int reapplied = 0;
     HostInputService* input = nullptr;
+    JsonValue machineInputs;
 
 private:
     ProfileStore _store;
@@ -696,4 +701,76 @@ TEST(HostInputControl_Test, HapticsTrialLaysOverAndClearsWithoutAFile)
     EXPECT_FALSE(reply.body.Find("active")->AsBool());
     EXPECT_TRUE(owner.Resolved().haptics.IsNull() || owner.Resolved().haptics.Find("sources") == nullptr ||
                 owner.Resolved().haptics.Find("sources")->Find("shot") == nullptr);
+}
+
+TEST(HostInputControl_Test, BindingsResolveDownToTheMatrixKeysWithTheirRules)
+{
+    // bindings tells, per binding, the rule that put it there and what it drives now for each device: the player
+    // connector (and a keyboard joystick's matrix keys), the menu keys, the mouse button, each with its rule
+    FakeOwner owner(TestPathHelper::GetUniqueTestScratchPath("host-bindings-resolved"));
+    HostInputService service;
+    owner.input = &service;
+    const std::string pad = "bt:054c:0ce6:1";
+    service.Router().SetPlayerConnector(pad, "keyjoy.1");
+    std::string error;
+    auto json = [&error](const char* text) {
+        JsonValue value;
+        EXPECT_TRUE(ParseJson(text, value, error)) << error;
+        return value;
+    };
+    owner.machineInputs = json(R"({"instance": "emu-1", "machine": "pentagon", "ps2": false, "auto": null,
+        "menu_keys": {"on": false, "rule": "off: no whole-keyboard scan seen"},
+        "mouse_buttons": {"on": false, "rule": "off: no mouse decided"},
+        "connectors": [{"id": "kempston", "device": "kempston-joystick", "fixed": false},
+                       {"id": "keyjoy.1", "device": "sinclair-joystick", "fixed": false,
+                        "keys": {"right": "7", "left": "6", "down": "8", "up": "9", "fire": "0"}}]})");
+    HostInputControl control(owner);
+
+    // The pad's own scope (the shipped DualSense profile gives its family one); without device= the bindings of
+    // every device list the devices with no scope of their own
+    HostReply reply = control.Execute({"bindings", {{"device", pad}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    EXPECT_EQ(reply.body.Find("machine")->Find("machine")->AsString(), "pentagon");
+    const JsonValue* device = FindItem(*reply.body.Find("devices"), "id", pad);
+    ASSERT_NE(device, nullptr);
+    EXPECT_EQ(device->Find("player_connector")->AsString(), "keyjoy.1");
+    const JsonValue* dpad = FindItem(*reply.body.Find("bindings"), "control", "dpad.*");
+    ASSERT_NE(dpad, nullptr);
+    EXPECT_NE(dpad->Find("rule")->AsString().find("builtin/play/pad-default"), std::string::npos)
+        << dpad->Find("rule")->AsString();
+    const JsonValue& outputs = *FindItem(*dpad->Find("resolved"), "device", pad)->Find("outputs");
+    ASSERT_EQ(outputs.Items().size(), 1u) << outputs.Dump();
+    EXPECT_EQ(outputs.Items()[0].Find("connector")->AsString(), "keyjoy.1");
+    EXPECT_EQ(outputs.Items()[0].Find("device")->AsString(), "sinclair-joystick");
+    EXPECT_EQ(outputs.Items()[0].Find("keys")->Dump(), R"({"right":"7","left":"6","down":"8","up":"9"})");
+    const JsonValue* north = FindItem(*reply.body.Find("bindings"), "control", "north");
+    ASSERT_NE(north, nullptr);
+    // The fake owner's machine is a Next: its MD pad profile binds north to the pad's Y, which a Sinclair joystick
+    // has no key for
+    EXPECT_NE(north->Find("rule")->AsString().find("next-md-pad"), std::string::npos) << north->Find("rule")->AsString();
+    const JsonValue& y = FindItem(*north->Find("resolved"), "device", pad)->Find("outputs")->Items()[0];
+    EXPECT_EQ(y.Find("controls")->Dump(), R"(["y"])");
+    EXPECT_EQ(y.Find("keys")->Dump(), "{}");
+
+    // A pointer menu (the ZX-Evo service ROM): menu keys and mouse buttons on; the menu keys replace the keyboard
+    // joystick, fire clicks instead of ENTER
+    owner.machineInputs.Set("menu_keys", json(R"({"on": true, "rule": "on: a pointer menu scans the whole keyboard"})"));
+    owner.machineInputs.Set("mouse_buttons", json(R"({"on": true, "rule": "on: the auto decision Kempston mouse"})"));
+    owner.machineInputs.Set("ps2", JsonValue::Bool(true));
+    reply = control.Execute({"bindings", {{"device", pad}}});
+    ASSERT_TRUE(reply.Ok()) << reply.message;
+    dpad = FindItem(*reply.body.Find("bindings"), "control", "dpad.*");
+    const JsonValue& menu = *FindItem(*dpad->Find("resolved"), "device", pad)->Find("outputs");
+    ASSERT_EQ(menu.Items().size(), 1u) << menu.Dump();
+    EXPECT_EQ(menu.Items()[0].Find("to")->AsString(), "keys");
+    EXPECT_EQ(menu.Items()[0].Find("keys")->Dump(),
+              R"({"right":"caps+8","left":"caps+5","down":"caps+6","up":"caps+7"})");
+    EXPECT_TRUE(menu.Items()[0].Find("ps2")->AsBool());
+    EXPECT_NE(menu.Items()[0].Find("rule")->AsString().find("pointer menu"), std::string::npos);
+    const JsonValue* south = FindItem(*reply.body.Find("bindings"), "control", "south");
+    const JsonValue& fire = *FindItem(*south->Find("resolved"), "device", pad)->Find("outputs");
+    ASSERT_EQ(fire.Items().size(), 1u) << fire.Dump();
+    EXPECT_EQ(fire.Items()[0].Find("to")->AsString(), "mouse");
+    EXPECT_EQ(fire.Items()[0].Find("button")->AsString(), "left");
+    EXPECT_NE(fire.Items()[0].Find("rule")->AsString().find("Kempston mouse"), std::string::npos);
 }

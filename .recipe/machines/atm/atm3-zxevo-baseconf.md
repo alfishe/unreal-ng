@@ -29,7 +29,14 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     old tree (readback on `#xxBE`) for the older `rom/zxevo.rom` image.
   - **ROM**: the shipped image is the official `rom/zxevo-fe.rom`; its EVO
     Reset Service idles in the main menu at PC `#6117` about 60 frames after
-    reset.
+    reset. Keys `1`-`4` choose the TR-DOS drive and keep it in the CMOS (a stray digit moves the boot drive).
+  - **TRD/SCL autostart** (opening a disk image, `autostart` on any plane): the disk goes into drive A, the machine
+    resets, and the service menu is driven by keys, one at each idle at `#6117`, 25 frames apart: `1` (drive A),
+    `ENTER` ("2.TR-DOS boot" lists the disk with `boot` selected), `ENTER` (runs it). After about 2 s `CF_TRDOS` is set
+    and the program runs. A disk without `boot` or BASIC files is only mounted.
+  - **Pad in the service menu**: the ERS reads the Kempston mouse and the whole keyboard. The auto decision plugs
+    the mouse (the pad's fire = left click, the stick or the trackpad move the pointer). The pad's directions hold
+    the cursor keys (`keyboardScan`) and fire holds no ENTER there. A reset starts the decision again.
   - **`#BF` bits** (shadow ports): bit 2 = every memory write also writes the
     text-mode **font RAM** (`A & #7FF`, address `code * 8 + row`; read the byte
     under the beam on `#0EBD`; the font survives a reset); bit 5 = **4:4:4
