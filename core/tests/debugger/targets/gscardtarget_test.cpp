@@ -548,7 +548,21 @@ TEST(GSCardTarget_Test, ACardBreakpointParksTheMainCpuNearby)
     EXPECT_FALSE(tight.frameEnd);
     EXPECT_GE(tight.gapT, 0);
     EXPECT_LT(tight.gapT, 24) << "main within an instruction of the card's stop";
-    EXPECT_LT(tight.tInInstruction, 24u);
+    // The card caught up at main's instruction start: main finished the instruction the card's moment is in, and the
+    // pause says how far into it that moment is and which bus cycle it was (design §5.4)
+    EXPECT_TRUE(tight.onBoundary);
+    EXPECT_TRUE(tight.timed);
+    EXPECT_EQ(static_cast<int64_t>(tight.elapsedT), static_cast<int64_t>(tight.tInInstruction) - tight.gapT);
+    EXPECT_GT(tight.totalT, 0);
+    EXPECT_GT(tight.cycles.count, 0);
+    EXPECT_EQ(tight.cycles.total, tight.totalT);
+    EXPECT_EQ(tight.totalTAlt, 0) << "finished: the way taken is known";
+    if (!tight.contended)
+        EXPECT_EQ(tight.tInInstruction, tight.totalT) << "Pentagon: no contention, all of the instruction's T";
+    else
+        EXPECT_GT(tight.tInInstruction, tight.totalT) << "an interrupt's acknowledge after it";
+    if (tight.elapsedT < tight.totalT)
+        EXPECT_GE(tight.busCycle, 0);
     const MainPosition lazy = stopWith(false);
     EXPECT_TRUE(lazy.frameEnd || lazy.gapT > 1000) << "lazy: main ran on to a port access or the frame end; gap "
                                                    << lazy.gapT;

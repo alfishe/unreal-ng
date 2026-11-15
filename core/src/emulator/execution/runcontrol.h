@@ -27,8 +27,16 @@ namespace framewatch { struct Spec; }
 class EmulatorContext;
 enum EmulatorStateEnum : uint8_t;
 
+struct MainPosition;
+
 namespace execution
 {
+
+/// A card's stop: where the main CPU parked with it, its instruction's progress (gs-debugger design §5.2, §5.4).
+/// The node every surface sends as `main` (the card step's `stop`, the `debug` topic's `paused` event)
+StateNode MainPositionNode(const MainPosition& main);
+/// The same in one line, the node's `text` ("main #8123: T 9 of 11, port write; 2 T past the card")
+std::string MainPositionText(const MainPosition& main);
 
 /// One call's answer: the route's status, its error phrase and the body every surface converts
 struct RunReply

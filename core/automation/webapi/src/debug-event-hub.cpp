@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -40,14 +41,8 @@ void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t add
 /// A card's stop: where the main CPU parked with it (gs-debugger design §5.2)
 void AddMainPosition(Json::Value& event, const MainPosition& main)
 {
-    if (!main.known)
-        return;
-    Json::Value node;
-    node["pc"] = main.pc;
-    node["t_in_instruction"] = main.tInInstruction;
-    node["gap_t"] = main.gapT;
-    node["frame_end"] = main.frameEnd;
-    event["main"] = std::move(node);
+    if (main.known)
+        event["main"] = StateNodeToJson(execution::MainPositionNode(main));
 }
 }  // namespace
 

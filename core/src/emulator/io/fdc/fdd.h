@@ -3,6 +3,9 @@
 #include <stdafx.h>
 
 #include <functional>
+#include <memory>
+#include <mutex>
+#include "unrealdisk/layoutmutex.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "debugger/ttd/ttdserializable.h"  // TTDSerializable (P1.5 — captured via WD1793)
 #include "emulator/notifications.h"
@@ -54,6 +57,13 @@ protected:
     bool _writeProtect = false;
 
     DiskImage* _diskImage = nullptr;    // Pointer to a disk image inserted to this drive
+    // A reader on another thread (WebAPI, CLI, scripts, the GUI) reaches the image only under this lock
+    // (SnapshotDisk / WithDisk). Insert and eject swap _diskImage under it, so the image a reader holds is not
+    // released meanwhile; the image's layout changes take it too (DiskImage::setLayoutMutex). The emulation thread
+    // waits only when it reshapes a track or changes the disk while a reader holds it - spinning, for one track's
+    // copy at most: readers give way to it (unrealdisk::LayoutMutex)
+    mutable unrealdisk::LayoutMutex _imageMutex;
+    uint64_t _diskChanges = 0;          // Inserts and ejects, under _imageMutex: a new image may reuse a freed address
     // Called on insert / eject, before the previous image can be released:
     // the controller drops every pointer it holds into that image
     std::function<void(FDD*)> _diskChanged;
@@ -149,7 +159,26 @@ public:
     bool isReady() { return _ready; }
 
     bool isDiskInserted() { return _diskInserted; }
+    /// The inserted image, for the emulation thread (and code that runs while it is parked). Any other thread reads
+    /// through SnapshotDisk or WithDisk: the image may be released or reshaped while it looks at it
     DiskImage* getDiskImage() { return _diskImage; }
+
+    /// A copy of the inserted disk that belongs to the caller, nullptr when the drive is empty. For readers on
+    /// any thread while the emulation runs. The drive's lock is held for one track's stream at a time (a plain
+    /// memory copy, about a microsecond); the sector index is rebuilt after it is released. The copy never keeps
+    /// the drive's image alive. Bytes of a sector being written at that moment may come half old, half new, and
+    /// two tracks may come from moments a few microseconds apart
+    std::unique_ptr<DiskImage> SnapshotDisk() const;
+
+    /// Run `read` on the inserted image (nullptr when empty) under the drive's lock: for short reads from another
+    /// thread (geometry, a track or a sector). The emulation thread waits if it reshapes a track meanwhile, so
+    /// nothing long (a file system walk, an export) belongs here - that is SnapshotDisk
+    template <typename Read>
+    auto WithDisk(Read&& read) const
+    {
+        unrealdisk::LayoutMutex::ReaderGuard lock(_imageMutex);
+        return read(static_cast<const DiskImage*>(_diskImage));
+    }
     uint8_t getDriveId() const { return _driveID; }
     /// endregion </Properties>
 

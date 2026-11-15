@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
@@ -882,7 +883,186 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7TakesTwoByteCells)
     EXPECT_NEAR(span, 6248.0 * cell, 3.0 * cell);
 }
 
+/// An F7 before any F5 starts its CRC at the index, not where the previous WRITE TRACK left it: an MFM format ends
+/// with its last F5 near byte 6000, then an FM format of a 3125-byte track sends F7 first. The old start lay past
+/// the new stream (an out-of-bounds read of up to 64K), the CRC now covers the bytes written so far
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7BeforeF5_StartsCrcAtIndex)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    // MFM format whose last F5 sits at byte 6000
+    std::vector<uint8_t> mfm(6000, 0x4E);
+    mfm.insert(mfm.end(), {0xF5, 0xF5, 0xF5, 0xFE, 0x00, 0x00, 0x01, 0x01, 0xF7});
+    padTrack(mfm);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, mfm, 1000);
+    waitIdle(fdc);
+    ASSERT_GT(fdc._crcStartPosition, 3125u);
+
+    // FM (single density) format: a few gap bytes, then F7 without any mark before it
+    fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    std::vector<uint8_t> fm = {0xFF, 0xFF, 0xFF, 0xF7};
+    fm.resize(3300, 0xFF);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, fm, fdc._time + 100);
+    waitIdle(fdc);
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    ASSERT_EQ(track->rawSize(), 3125u);
+
+    const uint16_t crc = CRCHelper::crcWD1793FM(const_cast<uint8_t*>(track->rawData()), 3);
+    EXPECT_EQ(track->rawData()[3], static_cast<uint8_t>(crc & 0xFF));
+    EXPECT_EQ(track->rawData()[4], static_cast<uint8_t>(crc >> 8));
+}
+
 /// endregion </WRITE TRACK control-byte language>
+
+/// region <Pointers into a stream a command replaces (found by WD1793_Fuzz_Test)>
+
+/// READ ADDRESS leaves its sector in hand; a WRITE TRACK in the other density replaces the stream and empties the
+/// index. The sector must not survive into the new command: a TTD save in the middle of the format followed it
+/// (container-overflow under ASan, a crash on a freed index in a release build)
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_OtherDensity_DropsPreviousSector)
+{
+    DiskImage image(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xC0);
+    ASSERT_EQ(runReadUntilIdle(fdc, 1000).size(), 6u);
+    ASSERT_NE(fdc._currentSector, nullptr);
+
+    // FM format: the MFM stream is replaced (3125 bytes), the index rebuilt only when the format ends
+    fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    issue(fdc, 0xF0);
+    std::vector<uint8_t> fm(40, 0xFF);
+    runWriteUntilIdle(fdc, fm, fdc._time + 100);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE) << "the format is still running";
+    EXPECT_EQ(image.getTrack(0)->sectorCount(), 0u);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+
+    std::vector<uint8_t> context(WD1793::kTransferContextSize);
+    fdc.SaveTransferContext(context.data());
+    EXPECT_EQ(context[23], 0xFF) << "no sector in the saved context (byte 23: its drive)";
+}
+
+/// Force Interrupt in the middle of WRITE TRACK: what was written stays on the disk and is indexed (the index no
+/// longer describes the old layout), the track is dirty, the controller holds no pointer into it
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_ForceInterrupt_KeepsAndIndexesWrittenPart)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->markClean();
+
+    // One 256-byte sector numbered #42, then gap: the interrupt comes after it
+    std::vector<uint8_t> stream;
+    appendFieldStart(stream, 80);
+    stream.insert(stream.end(), {0xFE, 0x00, 0x00, 0x42, 0x01, 0xF7});
+    appendFieldStart(stream, 22);
+    stream.push_back(0xFB);
+    stream.insert(stream.end(), 256, 0x77);
+    stream.push_back(0xF7);
+    stream.insert(stream.end(), 40, 0x4E);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+
+    fdc.cmdForceInterrupt(0xD0);
+
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_TRUE(track->isDirty());
+    ASSERT_GE(track->sectorCount(), 1u);
+    EXPECT_EQ(track->getRawSector(0)->number(), 0x42) << "the index describes the written part";
+    EXPECT_TRUE(track->getRawSector(0)->dataCrcValid);
+}
+
+/// Force Interrupt in the middle of WRITE SECTOR: the bytes written so far are on the disk without their CRC
+TEST_F(WD1793_UniversalTrack_Test, WriteSector_ForceInterrupt_LeavesDataCrcError)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->markClean();
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc._sectorRegister = 1;
+    issue(fdc, 0xA0);
+    runWriteUntilIdle(fdc, std::vector<uint8_t>(100, 0x99), 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE) << "the sector is half written";
+
+    DiskImage::Sector* sector = fdc._currentSector;
+    ASSERT_NE(sector, nullptr);
+    fdc.cmdForceInterrupt(0xD0);
+
+    EXPECT_EQ(fdc._currentSector, nullptr);
+    EXPECT_FALSE(sector->dataCrcValid) << "the CRC was never written";
+    EXPECT_EQ(sector->data[0], 0x99);
+    EXPECT_TRUE(track->isDirty());
+}
+
+/// A format runs on drive A, the program selects drive B, the disk in A is replaced and freed (a media change lands
+/// at a frame boundary whatever the controller does). The controller must let go of A's stream: the format went on
+/// writing into the freed image (heap use after free; on Windows a heap fail-fast kills the process without a dump)
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InCommandDrive_NotSelected_DropsPointers)
+{
+    auto first = std::make_unique<DiskImage>(1, 1);
+    DiskImage second(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, *first, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);  // through the dispatcher: it notes the command's drive
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    fdc.selectDrive(1);
+    FDD* driveA = _context->coreState.diskDrives[0];
+    driveA->insertDisk(&second);
+    first.reset();
+
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+
+    // The command ends on its next steps without touching the freed stream
+    waitIdle(fdc);
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+}
+
+/// A change in a drive no command used keeps the running command's pointers
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InOtherDrive_KeepsRunningCommand)
+{
+    DiskImage image(1, 1);
+    DiskImage other(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    _context->coreState.diskDrives[2]->insertDisk(&other);
+    EXPECT_NE(fdc._rawDataBuffer, nullptr);
+    _context->coreState.diskDrives[2]->ejectDisk();
+}
+
+/// endregion </Pointers into a stream a command replaces>
 
 /// region <WRITE TRACK past the image geometry (ZF6 mastering, FDC-03)>
 

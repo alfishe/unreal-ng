@@ -418,7 +418,9 @@ void CLIProcessor::HandleDiskSector(const ClientSession& session, EmulatorContex
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -505,7 +507,9 @@ void CLIProcessor::HandleDiskTrack(const ClientSession& session, EmulatorContext
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -568,7 +572,9 @@ void CLIProcessor::HandleDiskSysinfo(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -661,7 +667,9 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);

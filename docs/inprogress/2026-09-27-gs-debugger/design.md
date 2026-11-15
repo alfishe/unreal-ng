@@ -626,6 +626,13 @@ difference is the **gap** in S2, and it is shown.
 
 ### 5.4 Instruction progress for the main CPU
 
+> **As built (2026-11-14):** `Z80::instrStartT` (T, not `tt`), set at each instruction start while the start-of-
+> instruction debug work runs; tight mode catches the card up before it moves, so `m1_pc` and `instrStartT` name the
+> finished instruction the card's moment is in. The machine cycles come from `Z80MCycleDecoder` (no table in the
+> opcode records), checked against the FUSE vectors. Contention: the measured T (`t_in_instruction`) beside the
+> table's, `contended` when they differ; no contention counter. The payload is `MainPosition` / the `main` node, not
+> `CpuTimePosition`.
+
 - **Start T.** A new field `Z80::instrStartTT` (same scale as `tt`) is set
   next to `m1_pc` in `RecordInstructionStart`, which runs once per
   instruction start already (commit `1bce58b7`). It costs one store in the

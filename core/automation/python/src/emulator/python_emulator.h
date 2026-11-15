@@ -5671,7 +5671,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return info;
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return info;
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return info;
                 info["cylinders"] = disk->getCylinders();
                 info["sides"] = disk->getSides();
@@ -5688,7 +5689,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return py::bytes();
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return py::bytes();
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return py::bytes();
                 auto* track = disk->getTrackForCylinderAndSide(cyl, side);
                 if (!track) return py::bytes();
@@ -5717,7 +5719,8 @@ namespace PythonBindings
                 if (!ctx || drive < 0 || drive > 3) return "";
                 FDD* fdd = ctx->coreState.diskDrives[drive];
                 if (!fdd) return "";
-                DiskImage* disk = fdd->getDiskImage();
+                std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+                DiskImage* disk = snapshot.get();
                 if (!disk) return "";
                 return disk->DumpSectorHex(track, sector);
             }, "Read sector as hex dump", py::arg("drive"), py::arg("track"), py::arg("sector"))

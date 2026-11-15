@@ -1840,7 +1840,13 @@ void RegisterControlExecution(ToolRegistry& registry)
                                               pause.get("cpu", "").asString().c_str(), pause["cpu_pc"].asUInt());
                                 text += where;
                             }
+                            // Where the main CPU stood at the card's moment, its instruction's progress
+                            if (pause.isMember("main"))
+                                text += "; " + pause["main"].get("text", "").asString();
                         }
+                        else if (pause.get("reason", "none").asString() == "step" && pause.isMember("main"))
+                            text += " (a " + pause.get("cpu", "").asString() + " step; " +
+                                    pause["main"].get("text", "").asString() + ")";
                         else if (pause.get("reason", "none").asString() == "watch")
                         {
                             // An armed frame watch held it: which one, where, and why
