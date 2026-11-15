@@ -1076,6 +1076,13 @@ public:
                 if (s.breakpoint.cpu == c->id()) return c.get();
         return m_main.get();
     }
+    std::string debug_stop_main_text() const override
+    {
+        const ::Emulator::DebugStop s = m_emu->LastStop();
+        if (s.reason != ::Emulator::DebugStop::Reason::Breakpoint && s.reason != ::Emulator::DebugStop::Reason::Step)
+            return std::string();
+        return s.breakpoint.main.known ? execution::MainPositionText(s.breakpoint.main) : std::string();
+    }
     int debug_stop_reason() const override
     {
         switch (m_emu->LastStop().reason) {

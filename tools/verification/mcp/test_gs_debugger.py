@@ -47,6 +47,16 @@ def test_card_breakpoint_parks_the_machine(s):
     expect('at breakpoint' in text and 'of the gs CPU' in text, 'the wait names the card CPU', text)
     expect(pause.get('cpu') == 'gs' and pause.get('address') == pc and pause.get('cpu_pc') == pc,
            'the pause carries cpu and the card instruction', pause)
+    # Where the main CPU stood at the card's moment (design §5.4): a card breakpoint holds tight mode, so main finished
+    # the instruction the moment is in; the text says it, the pause's main has the numbers and the bus cycles
+    main_pos = pause.get('main', {})
+    expect(re.search(r'main #[0-9A-F]{4}', text), "the wait's text says where main stood", text)
+    expect(main_pos.get('on_boundary') is True and 0 <= main_pos.get('gap_t', -1) < 24,
+           'tight mode: main at the next instruction start, within an instruction of the card', main_pos)
+    cycles = main_pos.get('bus_cycles', [])
+    expect(cycles and sum(c.get('t', 0) for c in cycles) == main_pos.get('total_t')
+           and main_pos.get('elapsed_t', -1) == main_pos.get('t_in_instruction', 0) - main_pos.get('gap_t', 0),
+           "the instruction's progress and its machine cycles", main_pos)
     expect(s.call('inspect_state', {'aspects': ['registers']}).text, 'the machine answers while parked')
     hits = s.call('control_execution', {'action': 'bp_list', 'cpu': 'gs'}).text
     expect(re.search(r'hits [1-9]', hits), 'counted on the card', hits)

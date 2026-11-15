@@ -1556,8 +1556,10 @@ void InputRouter::Sample(const std::string& instanceName, uint64_t frame, HostSa
                         const bool menuKeys = instance.menuKeys && target.retro.connector == "auto";
                         if (!connector.empty() && !(menuKeys && connector.rfind("keyjoy.", 0) == 0))
                             masks[connector] |= bits;
+                        // Fire clicks in a pointer menu (the ZX-Evo service ROM): there the menu keys give the
+                        // cursor only, so one press is not a click and ENTER at once
                         if (menuKeys)
-                            hold(MenuKeysOf(bits));
+                            hold(MenuKeysOf(instance.mouseButtons ? static_cast<uint16_t>(bits & ~kFire) : bits));
                         // The control as held, not the turbo's pulses: a click is held as long as the finger is
                         if (instance.mouseButtons && target.retro.connector == "auto" && (state.bits & kFire) != 0)
                             out.mouse.buttons |= static_cast<uint8_t>(1u << static_cast<unsigned>(MouseControl::Left));

@@ -163,7 +163,7 @@ class SpecTest(Base):
         self.expect("tools:  {at: [2, 0], open: tools}", "tool:   {at: [2, 0], open: tools}", "its id must be 'tools'",
                     20)
         self.expect("tools:  {at: [2, 0], open: tools}", "", "is opened from no key", 22)
-        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of load|save",
+        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of delete|list|load|save",
                     26)
         self.expect("value: {op: save, slot: 1}", "value: {op: save, slots: 1}", "param 'slots'", 26)
         self.expect("{at: [0, 1], uc: C1.2, action: mach.reset}", "{at: [0, 1], uc: C1.2, action: mach.reset, colour: x}",

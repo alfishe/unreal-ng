@@ -266,10 +266,11 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
     // analyzers, script callbacks): they never stop (breakpoint-taps §3)
     if ((cpu.isDebugMode || cpu.execTapHold || cpu.cardTight) && _context->pDebugManager != nullptr)
     {
-        cpu.instrStartT = cpu.t;
-        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here
+        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here. Before the
+        // new start is taken: a card stopping inside sees m1_pc and instrStartT of the instruction its moment is in
         if (cpu.cardTight)
             _context->pDebugManager->CatchUpCards();
+        cpu.instrStartT = cpu.t;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         if (skipBreakpoints)
         {
@@ -350,6 +351,16 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
             if (recorded)
                 ttd->EndToolEdit(rewritten ? "disk autostart" : nullptr);
         }
+    }
+
+    // ZX-Evo disk autostart: the service ROM's menu waits for a key here; the next key of the boot sequence (a
+    // replay has the keys in its journal and never runs the hook)
+    if (pc == DiskAutostart::SERVICE_MENU_IDLE && _context->pDiskAutostart != nullptr &&
+        _context->pDiskAutostart->IsServiceMenuBootPending())
+    {
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        if (!ttd || !ttd->IsReplayActive())
+            _context->pDiskAutostart->HandleServiceMenuIdle();
     }
 
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).

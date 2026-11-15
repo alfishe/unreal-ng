@@ -1,6 +1,7 @@
 #include "emulator/execution/runcontrol.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 
 #include "common/uuid.h"
@@ -17,19 +18,68 @@
 namespace execution
 {
 
+std::string MainPositionText(const MainPosition& main)
+{
+    char text[160];
+    const std::string gap = std::to_string(main.gapT) + " T past the card";
+    if (main.frameEnd)
+        return "main between frames; " + gap;
+    if (!main.timed)
+    {
+        std::snprintf(text, sizeof(text), "main #%04X; %s", main.pc, gap.c_str());
+        return text;
+    }
+    std::string total = std::to_string(main.totalT);
+    if (main.totalTAlt)
+        total += "/" + std::to_string(main.totalTAlt);
+    std::snprintf(text, sizeof(text), "main #%04X%s: T %u of %s%s%s%s; %s", main.pc,
+                  main.onBoundary ? " (finished)" : "", main.elapsedT, total.c_str(),
+                  main.contended ? " contended" : "", main.busCycle >= 0 ? ", " : "",
+                  main.busCycle >= 0 ? Z80MCycleDecoder::Description(main.cycles.cycles[main.busCycle].kind) : "",
+                  gap.c_str());
+    return text;
+}
+
+StateNode MainPositionNode(const MainPosition& main)
+{
+    StateNode node = StateNode::Object();
+    node["text"] = MainPositionText(main);
+    node["pc"] = static_cast<int>(main.pc);
+    node["t_in_instruction"] = static_cast<int>(main.tInInstruction);
+    node["gap_t"] = static_cast<int>(main.gapT);
+    node["frame_end"] = main.frameEnd;
+    node["on_boundary"] = main.onBoundary;
+    if (!main.timed)
+        return node;
+    node["elapsed_t"] = static_cast<int>(main.elapsedT);
+    node["total_t"] = static_cast<int>(main.totalT);
+    if (main.totalTAlt)
+        node["total_t_alt"] = static_cast<int>(main.totalTAlt);
+    node["contended"] = main.contended;
+    StateNode cycles = StateNode::Array();
+    for (uint8_t i = 0; i < main.cycles.count; i++)
+    {
+        StateNode cycle = StateNode::Object();
+        cycle["kind"] = std::string(Z80MCycleDecoder::Name(main.cycles.cycles[i].kind));
+        cycle["t"] = static_cast<int>(main.cycles.cycles[i].t);
+        cycles.push(std::move(cycle));
+    }
+    node["bus_cycles"] = std::move(cycles);
+    if (main.busCycle >= 0)
+    {
+        node["bus_cycle"] = std::string(Z80MCycleDecoder::Name(main.cycles.cycles[main.busCycle].kind));
+        node["bus_cycle_index"] = static_cast<int>(main.busCycle);
+    }
+    return node;
+}
+
 namespace
 {
 /// A card's stop: where the main CPU parked with it (gs-debugger design §5.2)
 void AddMainPosition(StateNode& stop, const MainPosition& main)
 {
-    if (!main.known)
-        return;
-    StateNode node = StateNode::Object();
-    node["pc"] = static_cast<int>(main.pc);
-    node["t_in_instruction"] = static_cast<int>(main.tInInstruction);
-    node["gap_t"] = static_cast<int>(main.gapT);
-    node["frame_end"] = main.frameEnd;
-    stop["main"] = std::move(node);
+    if (main.known)
+        stop["main"] = MainPositionNode(main);
 }
 }  // namespace
 

@@ -142,4 +142,39 @@ std::vector<std::string> KnownZxKeyNames()
     return names;
 }
 
+std::string ZxKeyName(uint8_t code)
+{
+    switch (code)
+    {
+        case kCaps:
+            return "caps";
+        case kSym:
+            return "sym";
+        case kEnter:
+            return "enter";
+        case kSpace:
+            return "space";
+        default:
+            break;
+    }
+    if (code >= k0 && code <= k0 + 9)
+        return std::string(1, static_cast<char>('0' + (code - k0)));
+    for (char c = 'a'; c <= 'z'; c++)
+        if (Letter(c) == code)
+            return std::string(1, c);
+    for (const auto& pcOnly : kPcOnly)
+        if (pcOnly.code == code)
+            return pcOnly.name;
+    static const char kHex[] = "0123456789abcdef";
+    return std::string("#") + kHex[code >> 4] + kHex[code & 0x0F];
+}
+
+std::string ZxChordName(const std::vector<uint8_t>& keys)
+{
+    std::string name;
+    for (uint8_t key : keys)
+        name += (name.empty() ? "" : "+") + ZxKeyName(key);
+    return name;
+}
+
 }  // namespace controllers

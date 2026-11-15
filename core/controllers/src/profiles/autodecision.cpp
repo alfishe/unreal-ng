@@ -82,6 +82,13 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     const Reads reads{evidence};
     constexpr int kAny = DeviceAccessChannel::kNoIndex;
 
+    // The whole-keyboard scan (7 or 8 half-rows in at least half the frames), said whatever device decides below
+    unsigned scannedRows = 0;
+    for (unsigned row = 0; row < 8; ++row)
+        if (reads.Scanned(row))
+            ++scannedRows;
+    decision.keyboardScan = scannedRows >= 7;
+
     auto decide = [&decision, &reads](const char* device, InputRole input, const char* label, std::string reason) {
         decision.decisive = true;
         decision.device = device;
@@ -138,11 +145,7 @@ AutoDecision DecideFromAccess(const DeviceAccessEvidence& evidence)
     // Row5 = #DFFE (P-Y), Row7 = #7FFE (SPACE-B)
     // A whole-keyboard scan (7 or 8 half-rows in at least half the frames) is the keyboard before any joystick of the
     // half-rows: a scan that skipped a few frames of its last rows must not read as Sinclair or Cursor
-    unsigned rows = 0;
-    for (unsigned row = 0; row < 8; ++row)
-        if (reads.Scanned(row))
-            ++rows;
-    if (rows >= 7)
+    if (decision.keyboardScan)
     {
         decision.keyboard = true;
         decision.label = "keyboard";
@@ -254,6 +257,7 @@ AutoDecision DecideAuto(const DeviceAccessEvidence& evidence, SignatureQuery que
         if (matcher->Match(query, decision))
         {
             decision.decisive = true;
+            decision.keyboardScan = DecideFromAccess(evidence).keyboardScan;
             return decision;
         }
     }

@@ -117,6 +117,8 @@ public:
     /// Tight mode, at a main CPU instruction start: each card debugged with a stop runs up to the main CPU's time
     /// (where a breakpoint or step of the card parks the machine). Not while a card is parked inside its own run
     void CatchUpCards();
+    /// CatchUpCards is running: the main CPU stands at an instruction start, the previous instruction finished
+    bool CatchingUp() const { return _catchingUp; }
     /// Every CPU a debugger can name (main, gs, ms) and whether it is there now
     std::vector<std::pair<std::string, bool>> DebugTargets() const;
 

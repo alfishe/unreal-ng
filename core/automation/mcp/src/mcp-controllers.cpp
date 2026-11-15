@@ -82,6 +82,99 @@ namespace
         return Json::writeString(builder, value);
     }
 
+    /// The bindings verb as text (an agent may read only this): the machine's input state, each device's player
+    /// connector, each binding with its rule and what it drives down to the matrix keys (the CLI prints the same)
+    std::string BindingsText(const Json::Value& reply)
+    {
+        auto keysText = [](const Json::Value& keys) {
+            if (keys.isString())
+                return keys.asString();
+            std::string text;
+            if (keys.isArray())
+                for (const Json::Value& step : keys)
+                    text += (text.empty() ? "" : ", ") + step.asString();
+            else if (keys.isObject())
+                for (const std::string& control : keys.getMemberNames())
+                    text += (text.empty() ? "" : " ") + control + "=" + keys[control].asString();
+            return text;
+        };
+        std::ostringstream out;
+        out << "Bindings of " << reply["scope"].asString();
+        if (reply["applied"].isArray() && !reply["applied"].empty())
+        {
+            std::string list;
+            for (const Json::Value& id : reply["applied"])
+                list += (list.empty() ? "" : ", ") + id.asString();
+            out << " (profiles: " << list << ")";
+        }
+        const Json::Value& machine = reply["machine"];
+        if (machine.isObject())
+        {
+            out << "\nMachine " << machine["machine"].asString() << ":";
+            out << "\n  menu keys " << (machine["menu_keys"]["on"].asBool() ? "on" : "off") << " - "
+                << machine["menu_keys"]["rule"].asString();
+            out << "\n  mouse buttons " << (machine["mouse_buttons"]["on"].asBool() ? "on" : "off") << " - "
+                << machine["mouse_buttons"]["rule"].asString();
+            const Json::Value& decision = machine["auto"];
+            if (decision.isObject())
+                out << "\n  auto: " << (decision["label"].asString().empty() ? "no device" : decision["label"].asString())
+                    << (decision["connector"].isString() ? " on " + decision["connector"].asString() : "") << " - "
+                    << decision["reason"].asString();
+            else
+                out << "\n  auto: not decided";
+            out << "\n  host keys to PS/2: " << (machine["ps2"].asBool() ? "yes" : "no");
+            for (const Json::Value& connector : machine["connectors"])
+            {
+                out << "\n  connector " << connector["id"].asString() << ": "
+                    << (connector["device"].isString() ? connector["device"].asString() : "empty");
+                if (connector.isMember("keys"))
+                    out << " (" << keysText(connector["keys"]) << ")";
+            }
+        }
+        for (const Json::Value& device : reply["devices"])
+        {
+            std::string layers;
+            for (const Json::Value& layer : device["layers"])
+                layers += (layers.empty() ? "" : ",") + layer.asString();
+            out << "\nDevice " << device["id"].asString() << ": player connector "
+                << (device["player_connector"].asString().empty() ? "none" : device["player_connector"].asString())
+                << " (" << device["player_rule"].asString() << "), layers " << layers;
+        }
+        for (const Json::Value& binding : reply["bindings"])
+        {
+            out << "\n  " << binding["layer"].asString() << "." << binding["control"].asString() << ": "
+                << Compact(binding["spec"]) << " - " << binding.get("rule", binding["profile"]).asString();
+            for (const Json::Value& perDevice : binding["resolved"])
+                for (const Json::Value& output : perDevice["outputs"])
+                {
+                    const std::string to = output["to"].asString();
+                    std::string what = to;
+                    if (to == "connector")
+                    {
+                        std::string controls;
+                        for (const Json::Value& control : output["controls"])
+                            controls += (controls.empty() ? "" : ",") + control.asString();
+                        what = output["connector"].asString() + " [" +
+                               (output["device"].isString() ? output["device"].asString() : std::string("empty")) +
+                               "] " + controls;
+                        if (output.isMember("keys"))
+                            what += " = keys " + keysText(output["keys"]);
+                    }
+                    else if (to == "keys")
+                        what = "keys " + keysText(output["keys"]) + (output.isMember("ps2") ? " (+PS/2)" : "");
+                    else if (to == "mouse")
+                        what = "mouse " + (output.isMember("button") ? output["button"] : output["axis"]).asString();
+                    else if (to == "action")
+                        what = "action " + output["action"].asString();
+                    else if (to == "layer")
+                        what = "layer " + output["layer"].asString();
+                    out << "\n      " << perDevice["device"].asString() << " -> " << what << "  ("
+                        << output["rule"].asString() << ")";
+                }
+        }
+        return out.str();
+    }
+
     std::string HostSummary(const std::string& action, const Json::Value& reply)
     {
         std::ostringstream out;
@@ -287,13 +380,7 @@ namespace
             return out.str();
         }
         if (action == "bindings")
-        {
-            out << reply["scope"].asString() << ":";
-            for (const Json::Value& binding : reply["bindings"])
-                out << "\n" << binding["layer"].asString() << "." << binding["control"].asString() << ": "
-                    << Compact(binding["spec"]) << " (" << binding["profile"].asString() << ")";
-            return out.str();
-        }
+            return BindingsText(reply);
         return reply.get("message", action + ": ok").asString();
     }
 
@@ -514,8 +601,9 @@ void RegisterControllers(ToolRegistry& registry)
         "unless async. Host actions (no target: the process's game controllers, the Qt client's): devices (each with "
         "its battery, whether its light can be set, a notice of what is missing and how to fix it), context "
         "(machine, applied profiles, the manual game profile), profiles, profile (as YAML), save, delete, apply (the "
-        "game profile by hand, for a program started from the machine itself), bindings (effective, with the profile "
-        "each came from), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
+        "game profile by hand, for a program started from the machine itself), bindings (effective, each with "
+        "the rule that put it there and what it drives now down to the matrix keys: connector, menu keys, mouse button; "
+        "with the machine's auto decision and why the menu keys and mouse buttons are on), bind, unbind (in a user profile, saved and applied at once), scheme (how the pad works: "
         "Kempston, Sinclair 1, QAOP + Space; the scheme the user profile extends), haptics (whether the emulator "
         "drives a device's motors, else why; its test effects), rumble (play a test effect on a host device), output (a "
         "control surface such as the Surface Dial: a haptic pattern, its steps per turn and clicks, or a seek's marks "

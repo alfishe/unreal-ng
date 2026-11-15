@@ -473,7 +473,8 @@ offset}]}`). A card write lands as the card CPU's would (a ROM / flash window or
 `?cpu=gs` on `POST /step`, `/steps` (body `count` 1-10000), `/stepover` and `/stepout` steps the card CPU: the
 machine resumes until the card's step ends and pauses again. The reply: `stop` (`cpu`, `reason` `step` /
 `breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`, `main`: where the main CPU parked
-with the card - `pc`, `t_in_instruction`, `gap_t`, `frame_end`), the card CPU's `pc` and `sp`, `main_pc`, `main_sp`,
+with the card - `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary` and the instruction's progress
+`elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`, `contended`), the card CPU's `pc` and `sp`, `main_pc`, `main_sp`,
 `state`; 409 when not paused or a step of that CPU is under way. The step runs the card in tight mode: the main CPU
 moves on only as far as the card's time needs, and parks at the start of an instruction; none within 2 s (over / out
 5 s) is a `timeout`.
