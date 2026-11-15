@@ -41,14 +41,26 @@ or on the Deck: `tar xzf UnrealNG-SteamDeck-x86_64.tar.gz && UnrealNG-SteamDeck/
 step:
 
 ```
-app: /home/deck/Applications/unreal-ng (20261108.121658)
+app: /home/deck/Applications/unreal-ng (<version>)
 launcher: /home/deck/.local/share/applications/unreal-ng.desktop
-Steam library: up to date                       # or: Unreal NG (3357196967) with its artwork in ...
+Steam library: Unreal NG (3357196967) with its artwork in ...
+Steam: started again
+Steam library: Unreal NG registered
 Stream Deck udev rule: installed
 ```
 
-- The library entry and its artwork are written while Steam is stopped; the installer stops and starts Steam only when
-  something changes, and leaves it alone while a game runs ("a game is running, not changed": close it, run again).
+Every deploy is a full bundle install that re-registers the Steam entry; see
+[deploy guidelines](../../docs/guidelines/deploy-guidelines.md). Never copy binaries or an AppDir over an install
+for the user: the Steam entry, the launcher and the extracted config images (`configs/*/*.img`) are then missing.
+
+- The installer always stops Steam, rewrites the entry "Unreal NG" and its artwork (same app id, so the Game Mode tile
+  and `steam://rungameid/...` stay), starts Steam again and checks the entry. An older entry with the same name but
+  another executable is replaced.
+- Game Mode: Steam runs as the user unit `steam-launcher.service`, which `gamescope-session.target` upholds (systemd
+  restarts it at once after `steam -shutdown`). The installer masks the unit in `/run` for the moment of the write and
+  unmasks and starts it afterwards (also on any failure, through a trap). The screen is black for a few seconds.
+- A running game blocks the change ("a game is running, not changed"): close it and run the installer again.
+- The last line must be `Steam library: Unreal NG registered`; `NOT registered` is a failed deploy.
 - The udev rule needs sudo: `ssh -t deck@<host> /home/deck/Applications/unreal-ng/install.sh --udev`. Write the full
   path: a `~` in the command expands on the machine you type it on, not on the Deck.
 - Never edit `shortcuts.vdf` while Steam runs (it writes the file back on exit): use `steam-library.py`, which refuses.
