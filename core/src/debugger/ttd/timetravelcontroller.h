@@ -1096,6 +1096,18 @@ public:
     /// Delete @p branch and its descendants (TTDBranchTable::Delete: never the trunk or the active lineage, pinned
     /// ones only with @p force); their history leaves memory. @p removed: the ids deleted
     bool DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed, std::string& error);
+    /// One refusal of DeleteBranches: the branch asked for and why it stays
+    struct BranchDeleteRefusal
+    {
+        uint32_t branch = 0;
+        std::string error;
+    };
+    /// Delete several branches with their descendants in one operation (a prune): each by DeleteBranch's rules,
+    /// the refused ones in @p refused, the rest gone together - one delete batch in the recording folder (one sync,
+    /// one sweep of the files), one session publish, one `deleted` event counting them all. @p removed: every id
+    /// deleted. False only when none was
+    bool DeleteBranches(const std::vector<uint32_t>& branches, bool force, std::vector<uint32_t>& removed,
+                        std::vector<BranchDeleteRefusal>& refused);
     /// Edit @p branch's name, note, tags or pin (the table's rules: a name stays unique among the live branches)
     bool UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error);
     /// Who asks for the next fork and why (createdBy, run, tags, note, name; reason when empty: resume): taken by

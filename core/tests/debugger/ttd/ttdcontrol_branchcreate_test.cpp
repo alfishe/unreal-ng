@@ -251,9 +251,15 @@ TEST_F(TTDControl_BranchCreate_Test, PruneDeletesARunsBranchesAndKeepsTheProtect
     EXPECT_EQ(dry.body.find("kept")->items[0].find("reason")->s, "pinned");
     EXPECT_EQ(_ttd->ReadSessionInfo().branches->branches.size(), 5u) << "a dry run deletes nothing";
 
+    const uint64_t seq = _ttd->PublishedBranches().event.seq;
     const ttd::TTDReply done = Run("branch-prune", {{"run", "r1"}, {"dry_run", "false"}});
     ASSERT_TRUE(done.Ok()) << done.message;
     EXPECT_EQ(done.body.find("deleted")->items.size(), 2u);
+    // One delete for the batch: one event counting both
+    const ttd::TTDBranchesPublished published = _ttd->PublishedBranches();
+    EXPECT_EQ(published.event.seq, seq + 1);
+    EXPECT_EQ(published.event.event, "deleted");
+    EXPECT_EQ(published.event.removed, 2u);
     ttd::TTDSessionInfo info = _ttd->ReadSessionInfo();
     EXPECT_EQ(Find(info, "r1-a"), nullptr);
     EXPECT_EQ(Find(info, "r1-b"), nullptr);

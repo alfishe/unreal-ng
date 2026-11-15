@@ -141,7 +141,9 @@ As built (2026-11-13):
   `files` and `file_bytes`.
 - **`branch-prune`** needs at least one filter; it never deletes a branch on the active lineage, a pinned one or one
   holding either below it: each stays in `kept` with the reason. A selected branch whose ancestor is selected goes
-  with it. The reply counts the frames, the file bytes and the memory freed.
+  with it. The selected branches go in one delete (`TimeTravelController::DeleteBranches`): one batch of
+  delete records in `branches.tdx`, one sync, one sweep of the files, one publish and one `deleted` event counting
+  them all. The reply counts the frames, the file bytes and the memory freed.
 - **Events**: the controller publishes the last branch change (`created`, `switched`, `updated`, `deleted`, with a
   sequence number, the branch and how many a delete removed) with the branch table; the WebSocket topic
   `ttd.branches` pushes it (`NC_READOUTS_CHANGED` area `ttd.branches`, never per frame).

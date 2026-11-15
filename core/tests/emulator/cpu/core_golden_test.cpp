@@ -76,7 +76,9 @@ const Golden kGolden[] = {
     // ATM3 re-recorded 2026-10-04: the frozen RTC (SetFixedTime) now shows the instant's UTC wall time on every
     // host instead of the host's local time; BaseConf copies the clock into RAM, so only the RAM hash moved (the
     // old row held 07:00:30, recorded on a UTC-5 machine; Linux CI in UTC got 12:00:30)
-    {"ATM3", nullptr, 0x8F56139A4E4E2656ull, 0xF77434D0AC7101B1ull, 10483200ull},  // 2026-10-05: the ERS's CMOS reads wait for the AVR (#BFF7 /WAIT)
+    // ATM3 re-recorded 2026-11-14 (6de779c75): blank NVRAM starts with the ERS's floppy-boot settings (virtual
+    // drive on D, CRC valid), so the BIOS no longer writes its CMOS defaults
+    {"ATM3", nullptr, 0xD3A08B0FD4AF61FFull, 0x2885BC238A755433ull, 10483200ull},
     // TSL (TS-Conf): no row yet - the boot is covered by tsconf_boot_test (BOOT-1/2).
 };
 
