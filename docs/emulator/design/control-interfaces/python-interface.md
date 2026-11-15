@@ -1785,6 +1785,8 @@ b = emu.ttd_branches()                      # also scope='lineage', created_by=,
 emu.ttd_branch_switch('+00:00:25.150')           # at its end; emu.ttd_branch_switch(1, frame=4830, tinframe=0)
 # -> {'switched': True, 'branch': {...}, 'arrived_at': {...}, 'state': ..., 'check': {...}, 'text': ...}
 #    or {'switched': False, 'error': '...'}
+emu.ttd_branch_switch_to('previous')             # the branch left last (again: further back); 'next_sibling' /
+# 'prev_sibling': the next / previous branch at the nearest fork (adds 'fork_frame', 'siblings'); ValueError for another word
 emu.ttd_branch_update('+00:00:25.150', name='boss fight', note='...', add_tags=['boss'], pinned=True)
 # also tags=[...] (replace), remove_tags=[...]; -> {'updated': True, 'branch': {...}, 'text': ...};
 # ValueError for nothing to change or a bound broken, {'updated': False, 'error': ...} otherwise

@@ -7,6 +7,7 @@
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "emulator/actions/actionregistry.h"
+#include "emulator/actions/branchactions.h"
 #include "emulator/actions/pictureactions.h"
 #include "emulator/actions/steppingactions.h"
 #include "emulator/actions/machinereadouts.h"
@@ -215,6 +216,9 @@ const std::vector<std::string>& BaseReadoutNames()
         // The machine area's (machinereadouts.h)
         for (const std::string& name : MachineReadoutNames())
             all.push_back(name);
+        // The TTD branches' (branchactions.h)
+        for (const std::string& name : BranchReadoutNames())
+            all.push_back(name);
         return all;
     }();
     return names;
@@ -290,6 +294,8 @@ StateNode ReadReadout(Emulator& emulator, const std::string& name)
         return picture;  // video.window, video.crt_params, video.viewport (pictureactions.h)
     if (StateNode area = ReadMachineReadout(emulator, name); area.kind != StateNode::Kind::Null)
         return area;
+    if (StateNode branch = ReadBranchReadout(emulator, name); branch.kind != StateNode::Kind::Null)
+        return branch;
     std::string id;
     StateNode params;
     if (name.compare(0, 7, "toggle.") == 0 && ToggleOf(name, id, params))

@@ -1333,6 +1333,8 @@ local b = ttd_branches()                    -- or ttd_branches{scope = "lineage"
 for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
 ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
 -- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_switch_to("previous")            -- the branch left last (again: further back); "next_sibling" / "prev_sibling":
+-- the next / previous branch at the nearest fork (the reply adds fork_frame, siblings); error for another word
 ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
 -- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
 ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it

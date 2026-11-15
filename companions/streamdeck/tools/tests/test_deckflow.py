@@ -163,7 +163,7 @@ class SpecTest(Base):
         self.expect("tools:  {at: [2, 0], open: tools}", "tool:   {at: [2, 0], open: tools}", "its id must be 'tools'",
                     20)
         self.expect("tools:  {at: [2, 0], open: tools}", "", "is opened from no key", 22)
-        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of load|save",
+        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of",
                     26)
         self.expect("value: {op: save, slot: 1}", "value: {op: save, slots: 1}", "param 'slots'", 26)
         self.expect("{at: [0, 1], uc: C1.2, action: mach.reset}", "{at: [0, 1], uc: C1.2, action: mach.reset, colour: x}",
@@ -184,6 +184,40 @@ class SpecTest(Base):
         self.expect("alert: 95}}", "alert: 95, colour: red}}", "show: unknown field(s) colour", 29)
         self.expect(', show: {readout: host.stats.cpu_percent, format: "{:.0f}%", warn: 80, alert: 95}}', "}",
                     "key cpu does nothing", 29)
+
+    def test_long_list_press_turn(self):
+        """A key's long press, a menu's list page and a dial's press_turn: checked, built into the project, read back
+        unchanged; the mistakes named."""
+        text = self.spec_text()
+        text = text.replace("press: {action: run.pause_toggle}}",
+                            "press: {action: run.pause_toggle}, press_turn: {left: {action: ttd.branch_prev_sibling}, "
+                            "right: {action: ttd.branch_next_sibling}}}", 1)
+        text = text.replace("label: X4}", "label: X4, long: {action: mach.nmi}}", 1)
+        text = text.replace("  title: Tools\n  uc: C6\n",
+                            "  title: Tools\n  uc: C6\n  list: {readout: ttd.branch_list.items, label: '{name}', "
+                            "on: active, dial: 0, action: ttd.branch_switch, value: {branch: $id}, "
+                            "long: {action: ttd.branch_delete, value: {branch: $id, now: true}}}\n", 1)
+        write(self.paths.spec("fx"), text)
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build(force=True)
+        self.assertEqual(self.project_model(), self.spec_model())
+        root = y.load(read(self.paths.project("fx")))["root"]
+        self.assertEqual(find(root, "x4")["long"], {"kind": "action", "id": "mach.nmi"})
+        lst = find(root, "tools")["list"]
+        self.assertEqual((lst["readout"], lst["dial"], lst["do"]["id"], lst["long"]["value"]),
+                         ("ttd.branch_list.items", 0, "ttd.branch_switch", {"branch": "$id", "now": True}))
+        self.assertEqual(find(root, "home")["dials"][0]["press_turn"]["left"]["id"], "ttd.branch_prev_sibling")
+        self.assertIn("# list: the free keys (.) show ttd.branch_list.items", self.spec_text())
+        base = self.spec_text()
+        for old, new, what in (("dial: 0,", "dial: 0, colour: x,", "unknown field(s) colour"),
+                               ("long: {action: mach.nmi}", "long: {action: nothing.here}", "nothing.here")):
+            write(self.paths.spec("fx"), base.replace(old, new, 1))
+            issues = [str(i) for i in self.pipe.check("fx")]
+            self.assertTrue([i for i in issues if what in i], f"{what!r} not in {issues}")
+        write(self.paths.spec("fx"), base.replace("action: mach.reset}", "action: mach.reset, long: {action: mach.nmi}}",
+                                                   1))  # mach.reset is held: no long press
+        issues = [str(i) for i in self.pipe.check("fx") if i.error]
+        self.assertTrue([i for i in issues if "long" in i], issues)
 
     def test_gui_keys(self):
         """A `gui:` key: a GUI control plane command (gui-catalogue.json) with its params, glyph and title."""

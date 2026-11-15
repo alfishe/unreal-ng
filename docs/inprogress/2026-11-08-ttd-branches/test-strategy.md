@@ -103,8 +103,8 @@ branch's recorded positions and hashes, the expected active branch and position.
 | T-A2 | replies without branches are byte-identical to master's (golden) |
 | T-A3 | `ttd.branches` topic events in order: created, switched, updated, deleted; `ttd.position` carries the branch |
 | T-A4 | MCP text answers: the branch named, list summarised past 20 rows, budgets kept (`*Mcp*` unit tests + `tools/verification/mcp/` live block) |
-| T-A5 | surface readouts `ttd.branch.*` through REST and WebSocket the same shape (`ttd-surface-contract`, includes the F-2 case) |
-| T-A6 | actions `ttd.branch_*` dispatch from deck, ShuttlePRO and pad profiles (action tests) |
+| T-A5 | surface readouts `ttd.branch.*` through REST and WebSocket the same shape (`ttd-surface-contract`, includes the F-2 case). Built: `branch_navigation` in `ttd_surface_contract.py` (readouts over REST and the surface topic, the relative switch on WebAPI, CLI, Lua, Python) |
+| T-A6 | actions `ttd.branch_*` dispatch from deck, ShuttlePRO and pad profiles (action tests). Built: `BranchBindings_Test` (keyboard, ShuttlePRO, pad), `TTDControl_BranchNavigation_Test.ActionsDriveTheVerbs` |
 
 ## 3. Concurrency
 

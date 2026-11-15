@@ -6700,6 +6700,22 @@ namespace PythonBindings
                "active lineage and pinned branches stay: {dry_run, would_delete | deleted, kept, frames, file_bytes, "
                "text}")
 
+            .def("ttd_branch_switch_to", [](Emulator& self, const std::string& to) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-switch", {{"to", to}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["switched"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Switch relative to the active branch: to='previous' (the branch left last; again: further back), "
+               "'next_sibling' / 'prev_sibling' (the next / previous branch at the nearest fork, by creation): "
+               "{switched, branch, arrived_at, state, text} or {switched: False, error}",
+               py::arg("to"))
+
             .def("ttd_branch_switch", [](Emulator& self, py::object branch, py::object frameObj,
                                           uint32_t tInFrame) -> py::object {
                 std::map<std::string, std::string> options{{"branch", TtdOptionTextPy(branch)}};

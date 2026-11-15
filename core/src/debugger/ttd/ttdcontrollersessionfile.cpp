@@ -655,6 +655,7 @@ void TimeTravelController::CommitLoadedBranches(const std::function<void(const s
         tip = kTTDTrunk;
     _tip = tip;
     _lastVisited.assign(_lines.size(), std::nullopt);
+    _branchTrail.clear();
     _engine->ViewLine(tip);
     _line = _lines[tip].get();
     _viewId = tip;
