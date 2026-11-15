@@ -1,4 +1,4 @@
-"""SCL reading lays the files out as TR-DOS does (found by tools/verification/disk/sector-parity.py, R-08)."""
+"""SCL reading lays the files out as TR-DOS does (found by the sector-table parity check, R-08; now covered by tools/verification/disk/parity.py)."""
 
 from __future__ import annotations
 

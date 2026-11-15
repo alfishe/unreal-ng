@@ -3,12 +3,13 @@
 
     diskcompare.py <image> <reference> [--image-format FMT] [--reference-format FMT] [--json] [-v]
 
-Reads every format tools/diskconverter reads (SCL, TRD, FDI, UDI, uncompressed TD0) through
+Reads every format tools/diskconverter reads (SCL, TRD, FDI, UDI, TD0) through
 its `diskconverter` package. For each physical track (cylinder, head) the sectors are compared
 in stream order: C, H, R, raw N, data bytes, deleted mark, ID-only state, ID CRC (validity and
 value) and data CRC (validity and value). A CRC value is compared only when both sides know it:
-a valid CRC is the computed one, a broken one is known only from formats that store the raw
-bytes (UDI); FDI/TRD/TD0 keep just a flag, so for them only the validity is compared. When one
+a valid CRC is the computed one; a broken one is known only from formats that store the raw
+bytes (UDI). FDI/TD0 keep just a flag (the loader writes the computed CRC inverted, as unreal-disk
+does), so for them only the validity is compared. When one
 track's sector list is a rotation of the other's (the dump started at another index position)
 the rotation is undone first.
 
@@ -27,14 +28,13 @@ could not be read.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "diskconverter"))
 
-from diskconverter import formats, mfm  # noqa: E402
+from diskconverter import formats  # noqa: E402
 from diskconverter.disk_image import DiskConversionError, DiskImage, Sector, Track  # noqa: E402
 
 MATCH = "match"
@@ -43,20 +43,27 @@ UNRELIABLE = "unreliable-dump"
 EXTRA = "extra"
 
 
-def id_crc(sector: Sector) -> bytes | None:
+RAW_CRC_FORMATS = (None, "udi")  # formats whose broken CRCs are the bytes of the original medium
+
+
+def keeps_raw_crcs(disk: DiskImage) -> bool:
+    """True when a broken CRC in this image is the original medium's value (UDI, or built in memory)"""
+    return getattr(disk, "format", None) in RAW_CRC_FORMATS
+
+
+def id_crc(sector: Sector, raw: bool = True) -> bytes | None:
     """The ID CRC bytes as they are on the disk, or None when the source format does not know them."""
-    if sector.id_crc_valid:
-        return mfm.crc_bytes(mfm.crc_wd1793(bytes([mfm.IDAM, sector.cylinder, sector.head, sector.number, sector.size_code])))
-    return sector.id_crc_stored
+    if sector.id_crc_valid or raw:
+        return sector.id_crc_stored
+    return None
 
 
-def data_crc(sector: Sector) -> bytes | None:
+def data_crc(sector: Sector, raw: bool = True) -> bytes | None:
     if sector.no_data:
         return None
-    if sector.crc_valid:
-        dam = mfm.DAM_DELETED if sector.deleted else mfm.DAM_NORMAL
-        return mfm.crc_bytes(mfm.crc_wd1793(bytes([dam]) + sector.data))
-    return sector.data_crc_stored
+    if sector.crc_valid or raw:
+        return sector.data_crc_stored
+    return None
 
 
 def sector_key(sector: Sector) -> tuple:
@@ -75,7 +82,7 @@ def _num(value: int) -> str:
     return f"#{value:02X}" if value > 9 else str(value)
 
 
-def compare_sectors(image: Sector, reference: Sector) -> list[str]:
+def compare_sectors(image: Sector, reference: Sector, image_raw: bool = True, reference_raw: bool = True) -> list[str]:
     """Differences between two sectors, each a short `field image=X reference=Y` text."""
     diffs: list[str] = []
     for name, a, b in (
@@ -92,7 +99,7 @@ def compare_sectors(image: Sector, reference: Sector) -> list[str]:
             f"id-crc image={'ok' if image.id_crc_valid else 'bad'} reference={'ok' if reference.id_crc_valid else 'bad'}"
         )
     else:
-        a, b = id_crc(image), id_crc(reference)
+        a, b = id_crc(image, image_raw), id_crc(reference, reference_raw)
         if a is not None and b is not None and a != b:
             diffs.append(f"id-crc value image={_hex(a)} reference={_hex(b)}")
 
@@ -118,7 +125,7 @@ def compare_sectors(image: Sector, reference: Sector) -> list[str]:
         )
     elif image.data == reference.data and image.deleted == reference.deleted:
         # With different data both CRCs differ trivially; only compare values over the same bytes
-        a, b = data_crc(image), data_crc(reference)
+        a, b = data_crc(image, image_raw), data_crc(reference, reference_raw)
         if a is not None and b is not None and a != b:
             diffs.append(f"data-crc value image={_hex(a)} reference={_hex(b)}")
     return diffs
@@ -138,7 +145,8 @@ def _align(image: list[Sector], reference: list[Sector]) -> list[Sector]:
     return image
 
 
-def compare_tracks(image: Track | None, reference: Track | None) -> list[str]:
+def compare_tracks(image: Track | None, reference: Track | None, image_raw: bool = True,
+                   reference_raw: bool = True) -> list[str]:
     img = list(image.sectors) if image else []
     ref = list(reference.sectors) if reference else []
     if not img and not ref:
@@ -153,7 +161,7 @@ def compare_tracks(image: Track | None, reference: Track | None) -> list[str]:
         diffs.append(f"sector count image={len(img)} reference={len(ref)}")
     img = _align(img, ref)
     for index, (a, b) in enumerate(zip(img, ref), 1):
-        for diff in compare_sectors(a, b):
+        for diff in compare_sectors(a, b, image_raw, reference_raw):
             diffs.append(f"sector {index} (R={_num(b.number)}): {diff}")
     for index, sector in enumerate(img[len(ref):], len(ref) + 1):
         diffs.append(f"sector {index} (R={_num(sector.number)}): only in image")
@@ -179,6 +187,7 @@ def unreliable_reference_tracks(reference: DiskImage) -> set[tuple[int, int]]:
 
 def compare_disks(image: DiskImage, reference: DiskImage) -> dict:
     unreliable = unreliable_reference_tracks(reference)
+    image_raw, reference_raw = keeps_raw_crcs(image), keeps_raw_crcs(reference)
     cylinders = max(image.cylinders, reference.cylinders)
     heads = max(image.heads, reference.heads)
     tracks = []
@@ -193,7 +202,8 @@ def compare_disks(image: DiskImage, reference: DiskImage) -> dict:
             elif (cyl, head) in unreliable:
                 entry["status"] = UNRELIABLE
             else:
-                entry["differences"] = compare_tracks(img_trk, reference.get_track(cyl, head))
+                entry["differences"] = compare_tracks(img_trk, reference.get_track(cyl, head), image_raw,
+                                                      reference_raw)
                 entry["status"] = MISMATCH if entry["differences"] else MATCH
             counts[entry["status"]] += 1
             tracks.append(entry)
@@ -231,9 +241,10 @@ def print_report(result: dict, image_path: str, reference_path: str, verbose: bo
 
 def load(path: str, explicit: str | None) -> DiskImage:
     module = formats.resolve_input(path, explicit)
-    # Readers print their warnings to stdout; keep stdout for the report (and clean JSON)
-    with contextlib.redirect_stdout(sys.stderr):
-        return module.read(path)
+    disk = module.read(path)
+    for warning in disk.warnings:
+        print(f"warning: {path}: {warning}", file=sys.stderr)
+    return disk
 
 
 def main(argv: list[str] | None = None) -> int:

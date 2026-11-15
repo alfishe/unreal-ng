@@ -66,22 +66,22 @@ def test_dc05_bad_id_crc_detected_and_kept(scratch, capsys):
     assert [s.number for s in again if not s.id_crc_valid] == [5]
 
     # UDI -> FDI warns: FDI has no place for it
-    fdi.write(disk, str(scratch / "out.fdi"))
-    assert "ID CRC error is not representable in FDI" in capsys.readouterr().out
+    warnings = fdi.write(disk, str(scratch / "out.fdi"))
+    assert any("sector 5: ID CRC error cannot be stored" in w for w in warnings)
 
 
-def test_dc05_trd_refuses_bad_id_crc(scratch):
-    import pytest
-
-    from diskconverter.disk_image import DiskConversionError
+def test_dc05_trd_drops_bad_id_crc_like_cpp(scratch):
+    """LoaderTRD::isTrdosGeometry checks sector numbers, data fields and sizes only: a broken ID CRC is not a
+    refusal (C++ writes the TRD and the error is lost; see the parity report)"""
     from diskconverter.formats import trd
 
     raw, clocks = _bad_id_crc_track()
     (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
     disk = udi.read(str(scratch / "bad.udi"))
     assert not disk.get_track(0, 0).is_standard_trdos()
-    with pytest.raises(DiskConversionError):
-        trd.write(disk, str(scratch / "bad.trd"))
+    assert trd.write(disk, str(scratch / "bad.trd")) == []
+    data = (scratch / "bad.trd").read_bytes()
+    assert data == b"".join(bytes([r]) * 256 for r in range(1, 17))
 
 
 def test_dc08_marks_inside_data_are_no_sectors(scratch):
@@ -126,9 +126,9 @@ def test_r03_udi_round_trip_keeps_broken_crc_bytes(scratch):
     assert again.data == bytes(range(256))
 
 
-def test_r03_broken_crc_without_raw_bytes_falls_back_to_flipped_bit(scratch):
-    """From a format that keeps only a flag (here: a Sector built without stored bytes) the writer
-    still produces a wrong CRC: the computed value with bit 0 flipped"""
+def test_r03_broken_crc_without_raw_bytes_falls_back_to_inverted_crc(scratch):
+    """From a format that keeps only a flag (here: a Sector built without stored bytes) the track gets a wrong
+    CRC the way the C++ FDI / TD0 loaders write one: the computed value with both bytes inverted"""
     from diskconverter import mfm
     from diskconverter.disk_image import DiskImage, Sector
 
@@ -139,5 +139,5 @@ def test_r03_broken_crc_without_raw_bytes_falls_back_to_flipped_bit(scratch):
     udi.write(disk, str(scratch / "out.udi"))
     sector = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
     assert not sector.id_crc_valid and not sector.crc_valid
-    assert sector.id_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFE, 0, 0, 1, 1])) ^ 1)
-    assert sector.data_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFB]) + bytes(256)) ^ 1)
+    assert sector.id_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFE, 0, 0, 1, 1])) ^ 0xFFFF)
+    assert sector.data_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFB]) + bytes(256)) ^ 0xFFFF)

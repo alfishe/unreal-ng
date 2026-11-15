@@ -26,6 +26,12 @@
 //   zxdisk label <image> <name> [-o out-image] [--volume id]
 //       the FAT volume label ("" removes it), the TR-DOS disk title, the iS-DOS device name, the MB-02 or MDOS disk
 //       name
+//   zxdisk dump <image>
+//       a floppy as unreal-disk holds it, as JSON: the format, the geometry, the loader's warnings and every track's
+//       encoding, raw bytes, clock-mark and weak-byte bitmaps (hex) with the sectors indexed in it (C, H, R, raw N,
+//       offsets, flags, the stored CRCs). The reference the Python tools (tools/diskconverter) are compared with
+//   zxdisk convert <image> <out-image>
+//       a floppy written in the format the out-image's extension names (FloppyFormats::Save, no retargeting)
 //   put, rm, mv, mkdir, attrib and label write the image back (or to -o, a floppy's extension picking the format); a
 //   hard disk image is changed in place, or copied to -o first and the copy changed
 //
@@ -75,6 +81,8 @@ int Usage()
                  "       zxdisk mkdir <image> <dir> [-p] [--continuous] [--blocks n] [-o out-image] [--volume id]\n"
                  "       zxdisk attrib <image> <file> [+R-H|RA] [--time t] [-o out-image] [--volume id]\n"
                  "       zxdisk label <image> <name> [-o out-image] [--volume id]\n"
+                 "       zxdisk dump <image>\n"
+                 "       zxdisk convert <image> <out-image>\n"
                  "       (hard disk images: --offset n skips a header)\n";
     return 2;
 }
@@ -195,6 +203,123 @@ bool Open(const std::string& path, uint64_t offset, const std::string& edit, Ope
     }
     out.fs = std::make_unique<DiskFs>(*out.device);
     return true;
+}
+
+std::string Hex(const uint8_t* data, size_t size)
+{
+    static const char kDigits[] = "0123456789abcdef";
+    std::string text;
+    text.reserve(size * 2);
+    for (size_t i = 0; i < size; i++)
+    {
+        text.push_back(kDigits[data[i] >> 4]);
+        text.push_back(kDigits[data[i] & 15]);
+    }
+    return text;
+}
+
+std::string JsonString(const std::string& text)
+{
+    std::string out = "\"";
+    for (const char c : text)
+    {
+        if (c == '"' || c == '\\')
+            out += '\\', out += c;
+        else if (static_cast<unsigned char>(c) < 0x20)
+        {
+            char escaped[8];
+            std::snprintf(escaped, sizeof(escaped), "\\u%04x", static_cast<unsigned char>(c));
+            out += escaped;
+        }
+        else
+            out += c;
+    }
+    return out + "\"";
+}
+
+/// zxdisk dump: the floppy as DiskImage holds it, one JSON object on stdout
+int Dump(const std::string& path)
+{
+    std::unique_ptr<DiskImage> disk;
+    std::string format;
+    const FormatResult loaded = FloppyFormats::Load({}, path, disk, format);
+    if (!loaded.Ok() || !disk)
+    {
+        std::cerr << "zxdisk: " << (loaded.message.empty() ? "cannot read " + path : loaded.message) << "\n";
+        return 1;
+    }
+    std::string out = "{\"format\":" + JsonString(format) + ",\"cylinders\":" + std::to_string(disk->getCylinders()) +
+                      ",\"sides\":" + std::to_string(disk->getSides()) + ",\"warnings\":[";
+    for (size_t i = 0; i < loaded.report.size(); i++)
+        out += (i ? "," : "") + JsonString(loaded.report[i]);
+    out += "],\"tracks\":[";
+    bool firstTrack = true;
+    for (uint8_t cylinder = 0; cylinder < disk->getCylinders(); cylinder++)
+        for (uint8_t side = 0; side < disk->getSides(); side++)
+        {
+            DiskImage::Track* track = disk->getTrackForCylinderAndSide(cylinder, side);
+            if (!track)
+                continue;
+            const auto noOffset = [](uint32_t offset) { return offset == DiskImage::Sector::NO_OFFSET ? -1L : long(offset); };
+            out += std::string(firstTrack ? "" : ",") + "\n{\"c\":" + std::to_string(cylinder) + ",\"h\":" +
+                   std::to_string(side) + ",\"encoding\":\"" +
+                   (track->encoding() == DiskImage::Encoding::FM ? "fm" : "mfm") + "\",\"length\":" +
+                   std::to_string(track->rawSize()) + ",\"raw\":\"" + Hex(track->rawData(), track->rawSize()) +
+                   "\",\"clock\":\"" + Hex(track->clockBitmap().data(), track->clockBitmap().size()) + "\",\"weak\":\"";
+            if (track->hasWeakBits())
+            {
+                std::vector<uint8_t> weak((track->rawSize() + 7) / 8, 0);
+                for (size_t i = 0; i < track->rawSize(); i++)
+                    if (track->weakByte(i))
+                        weak[i >> 3] = static_cast<uint8_t>(weak[i >> 3] | (1u << (i & 7)));
+                out += Hex(weak.data(), weak.size());
+            }
+            out += "\",\"sectors\":[";
+            firstTrack = false;
+            bool firstSector = true;
+            for (DiskImage::Sector& sector : track->sectors())
+            {
+                char line[320];
+                std::snprintf(line, sizeof(line),
+                              "%s{\"c\":%u,\"h\":%u,\"r\":%u,\"n\":%u,\"idam\":%ld,\"dam\":%ld,\"data\":%ld,"
+                              "\"size\":%u,\"has_data\":%s,\"deleted\":%s,\"id_crc_valid\":%s,\"data_crc_valid\":%s,"
+                              "\"id_crc\":%u,\"data_crc\":%u}",
+                              firstSector ? "" : ",", sector.cylinder(), sector.head(), sector.number(), sector.sizeCode(),
+                              noOffset(sector.idamOffset), noOffset(sector.damOffset), noOffset(sector.dataOffset),
+                              sector.dataSize, sector.hasData ? "true" : "false", sector.deleted ? "true" : "false",
+                              sector.isIDCRCValid() ? "true" : "false",
+                              sector.hasData && sector.isDataCRCValid() ? "true" : "false",
+                              sector.id ? unsigned(sector.id->id_crc) : 0u, sector.hasData ? unsigned(sector.dataCRC()) : 0u);
+                out += line;
+                firstSector = false;
+            }
+            out += "]}";
+        }
+    out += "\n]}\n";
+    std::cout << out;
+    return 0;
+}
+
+/// zxdisk convert: load, then save in the format of the output's extension
+int Convert(const std::string& path, const std::string& output)
+{
+    std::unique_ptr<DiskImage> disk;
+    std::string format;
+    const FormatResult loaded = FloppyFormats::Load({}, path, disk, format);
+    if (!loaded.Ok() || !disk)
+    {
+        std::cerr << "zxdisk: " << (loaded.message.empty() ? "cannot read " + path : loaded.message) << "\n";
+        return 1;
+    }
+    const FloppySaveResult saved = FloppyFormats::Save({}, *disk, output, false);
+    if (!saved.saved)
+    {
+        std::cerr << "zxdisk: " << (saved.reason.empty() ? "cannot write " + output : saved.reason) << "\n";
+        return 1;
+    }
+    if (!saved.reason.empty())
+        std::cerr << "zxdisk: warning: " << saved.reason << "\n";
+    return 0;
 }
 
 bool ReadHostFile(const std::string& path, std::vector<uint8_t>& out)
@@ -354,6 +479,10 @@ int main(int argc, char** argv)
     if (args.size() < 2)
         return Usage();
     const std::string& verb = args[0];
+    if (verb == "dump")
+        return args.size() == 2 ? Dump(args[1]) : Usage();
+    if (verb == "convert")
+        return args.size() == 3 ? Convert(args[1], args[2]) : Usage();
     directory.mtime = Now();
     const bool editing = verb == "put" || verb == "rm" || verb == "mv" || verb == "mkdir" || verb == "attrib" || verb == "label";
     Opened image;

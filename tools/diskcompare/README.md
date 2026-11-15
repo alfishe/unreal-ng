@@ -1,7 +1,7 @@
 # diskcompare.py
 
 Compares a disk image (typically one the emulator exported after mastering a disk) with a reference dump, track by
-track. Reads every format the sibling `tools/diskconverter` reads (**SCL, TRD, FDI, UDI, uncompressed TD0**) through
+track. Reads every format the sibling `tools/diskconverter` reads (**SCL, TRD, FDI, UDI, TD0**) through
 its `diskconverter` package, so the two images may be in different formats.
 
 ```
@@ -20,8 +20,9 @@ Per physical track (cylinder, head) the sectors are compared in stream order:
 | ID CRC | validity, and the two bytes on the disk when both sides know them |
 | data CRC | validity, and the bytes when both sides know them and the data is the same |
 
-A valid CRC is the computed one. A broken CRC is known only from formats that store the raw bytes (UDI); FDI, TRD
-and TD0 keep just a flag, so for them only the validity is compared. When one track's sector list is a rotation of the
+A valid CRC is the computed one. A broken CRC is known only from formats that store the raw bytes (UDI); FDI and TD0
+keep just a flag (their readers write the computed CRC inverted, as unreal-disk does), so for them only the validity
+is compared. When one track's sector list is a rotation of the
 other's (the dump started at another index position) the rotation is undone before comparing.
 
 ## Unreliable reference tracks
