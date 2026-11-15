@@ -46,6 +46,9 @@ class TrdosFileEntry:
         return self.name.rstrip(" ")
 
 
+FIRST_DATA_TRACK = 1  # logical: the first track after the catalog (cylinder 0 head 1 on a double-sided disk)
+
+
 def logical_track(cylinder: int, head: int, heads: int) -> int:
     return cylinder * heads + head
 
@@ -86,13 +89,15 @@ def blank_trdos_disk(cylinders: int = 80, heads: int = 2, label: str = "") -> Di
     # and matches what real TR-DOS FORMAT produces: first free = track 1, sector 0).
     info = bytearray(SECTOR_SIZE)
     info[0xE1] = 0  # first free sector (0-based)
-    info[0xE2] = logical_track(1, 0, heads) if cylinders > 1 else 0  # first free track
+    # Logical track 1 (cylinder 0 head 1 on a double-sided disk), not cylinder 1: TR-DOS counts tracks logically
+    info[0xE2] = 1 if cylinders * heads > 1 else 0  # first free track
     info[0xE3] = _DISK_TYPE_BY_GEOMETRY[(cylinders, heads)]
     info[0xE4] = 0  # file count
     free = (cylinders * heads - 1) * 16  # all sectors except track 0
     info[0xE5] = free & 0xFF
     info[0xE6] = (free >> 8) & 0xFF
     info[0xE7] = 0x10  # TR-DOS id
+    info[0xEA:0xF3] = b" " * 9  # TR-DOS FORMAT fills these with spaces (password field), as trdos.h's volume sector
     label_bytes = label.encode("ascii", errors="replace")[:8].ljust(8)
     info[0xF5:0xFD] = label_bytes
 
@@ -168,7 +173,7 @@ def write_catalog_and_files(disk: DiskImage, files: list[tuple[TrdosFileEntry, b
     """Injects files sequentially starting at logical track 1, sector 1 (mirrors
     loader_scl.cpp), writing both the catalog (track 0) and each file's data sectors."""
     heads = disk.heads
-    logical = logical_track(1, 0, heads)
+    logical = FIRST_DATA_TRACK
     sector_no = 1
 
     catalog_bytes = bytearray(SECTOR_SIZE * 8)
@@ -214,7 +219,7 @@ def write_catalog_and_files(disk: DiskImage, files: list[tuple[TrdosFileEntry, b
         cyl, head = 0, 0
         disk.track(cyl, head).sectors[s] = _make_sector(cyl, head, s + 1, bytes(catalog_bytes[s * 256 : s * 256 + 256]))
 
-    used_sectors = (logical - logical_track(1, 0, heads)) * 16 + (sector_no - 1)
+    used_sectors = (logical - FIRST_DATA_TRACK) * 16 + (sector_no - 1)
     total_data_sectors = (disk.cylinders * heads - 1) * 16
     free = total_data_sectors - used_sectors
     info = bytearray(disk.sector_bytes(0, 0, 9))

@@ -36,6 +36,11 @@ class Sector:
     deleted: bool = False
     no_data: bool = False
     id_crc_valid: bool = True  # ID field CRC (computed over A1 A1 A1 FE C H R N with the raw N)
+    # The two CRC bytes exactly as stored on the disk (on-disk order), when the source format carries
+    # them (UDI). A writer reproduces a broken CRC from these verbatim; without them (FDI/TRD/TD0) it can
+    # only invent a wrong value (the computed CRC with bit 0 flipped).
+    id_crc_stored: bytes | None = None
+    data_crc_stored: bytes | None = None
 
     @property
     def data_size(self) -> int:

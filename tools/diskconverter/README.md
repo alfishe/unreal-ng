@@ -55,6 +55,9 @@ them as ordinary sectors.
   advanced TD0 fails with a clear error rather than guessing. Uncompressed ("TD") TD0 is
   fully supported for reading. Writing TD0 is not implemented at all (nothing in this
   project needs it as an output format) — convert to FDI or UDI instead.
+- **Broken CRCs.** UDI stores the two CRC bytes of every ID and data field, so a broken CRC (a protection may check
+  its exact value) is kept byte for byte through UDI -> UDI. FDI, TRD and TD0 keep only a flag (FDI cannot even flag
+  a broken ID CRC: it warns); writing such a sector to UDI invents a wrong CRC, the computed one with bit 0 flipped.
 - Description/comment text (FDI's free-form description field, TD0's comment block) is not
   preserved across conversions.
 
@@ -86,6 +89,8 @@ testdata/loaders/udi/Zvezdnoe Nasledie.udi (real copy-protected dump)     -> fdi
 testdata/loaders/td0/trdos-sample.td0     -> fdi -> udi -> trd            (reads correctly)
 testdata/loaders/td0/trdos-sample-adv.td0 (compressed)                    -> correctly refused with a clear error
 ```
+
+To compare an image with a reference dump track by track, see [`tools/diskcompare`](../diskcompare/README.md).
 
 Automated tests: `python3 -m pytest tools/diskconverter/tests` (synthetic images built in the tests; artifacts go to
 `scratch/diskconverter-tests/`). The size code is kept raw: an ID field with N = #F7 (a protection trick) stays #F7

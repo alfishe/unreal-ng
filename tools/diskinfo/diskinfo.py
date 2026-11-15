@@ -555,7 +555,12 @@ def idam_line(sec: Sector) -> str:
     a sector whose stored ID CRC differs is marked ERROR."""
     fields = bytes([mfm.IDAM, sec.cylinder, sec.head, sec.number, sec.size_code])
     crc = mfm.crc_wd1793(fields)
-    state = "ok" if sec.id_crc_valid else "ERROR (stored CRC differs)"
+    if sec.id_crc_valid:
+        state = "ok"
+    elif sec.id_crc_stored is not None:
+        state = f"ERROR (stored {sec.id_crc_stored.hex().upper()})"
+    else:
+        state = "ERROR (stored CRC differs)"
     return (
         f"C={sec.cylinder} H={sec.head} R={sec.number} {fmt_size_code(sec.size_code)}, "
         f"id-crc {crc & 0xFF:02X}{(crc >> 8) & 0xFF:02X} {state}"

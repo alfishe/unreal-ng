@@ -102,3 +102,42 @@ def test_udi_without_clock_marks_still_decodes(scratch):
     (raw, _clocks), _ = _key_track()
     (scratch / "noclk.udi").write_bytes(build_udi([(raw, [])], cylinders=1, heads=1))
     assert len(udi.read(str(scratch / "noclk.udi")).get_track(0, 0).sectors) == 1
+
+
+def _raw_crc_track(id_crc: bytes, data_crc: bytes):
+    """One 256-byte sector whose ID CRC and data CRC are replaced by the given on-disk bytes"""
+    id_bytes, id_clocks = mfm_field(bytes([0xFE, 0, 0, 1, 1]), gap=80)
+    data_bytes, data_clocks = mfm_field(bytes([0xFB]) + bytes(range(256)))
+    return mfm_track([(id_bytes[:-2] + id_crc, id_clocks), (data_bytes[:-2] + data_crc, data_clocks)])
+
+
+def test_r03_udi_round_trip_keeps_broken_crc_bytes(scratch):
+    """R-03: a broken CRC is written back with its original bytes, not as `crc ^ 1`"""
+    raw, clocks = _raw_crc_track(b"\x12\x34", b"\x56\x78")
+    (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
+    sector = udi.read(str(scratch / "bad.udi")).get_track(0, 0).sectors[0]
+    assert (sector.id_crc_valid, sector.id_crc_stored) == (False, b"\x12\x34")
+    assert (sector.crc_valid, sector.data_crc_stored) == (False, b"\x56\x78")
+
+    udi.write(udi.read(str(scratch / "bad.udi")), str(scratch / "out.udi"))
+    again = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
+    assert (again.id_crc_valid, again.id_crc_stored) == (False, b"\x12\x34")
+    assert (again.crc_valid, again.data_crc_stored) == (False, b"\x56\x78")
+    assert again.data == bytes(range(256))
+
+
+def test_r03_broken_crc_without_raw_bytes_falls_back_to_flipped_bit(scratch):
+    """From a format that keeps only a flag (here: a Sector built without stored bytes) the writer
+    still produces a wrong CRC: the computed value with bit 0 flipped"""
+    from diskconverter import mfm
+    from diskconverter.disk_image import DiskImage, Sector
+
+    disk = DiskImage(cylinders=1, heads=1)
+    disk.track(0, 0).sectors = [
+        Sector(cylinder=0, head=0, number=1, size_code=1, data=bytes(256), crc_valid=False, id_crc_valid=False)
+    ]
+    udi.write(disk, str(scratch / "out.udi"))
+    sector = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
+    assert not sector.id_crc_valid and not sector.crc_valid
+    assert sector.id_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFE, 0, 0, 1, 1])) ^ 1)
+    assert sector.data_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFB]) + bytes(256)) ^ 1)

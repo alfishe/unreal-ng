@@ -9,6 +9,7 @@ others), which the DSK loader rejected and which then hung in a READ ID loop.
 | [`dsk-tracks.py`](dsk-tracks.py) | the file only | which tracks are not a plain format; for one track, the sectors, the marks inside the long dumps and the layout on the disk |
 | [`disk-boot-check.py`](disk-boot-check.py) | unreal-qt | does each image insert, and what is on the screen after N frames (results table, screenshots, contact sheet) |
 | [`fdc-probe.py`](fdc-probe.py) | unreal-qt | where a hanging load spins: registers and floppy controller per frame, the stack and the code it returns to |
+| [`sector-parity.py`](sector-parity.py) | unreal-qt | do the C++ loaders (unreal-disk) and `tools/diskconverter` see the same sector tables (C/H/R/raw N/length/deleted/ID CRC/data CRC) for every image under `testdata/` |
 
 `disklib.py` holds the shared WebAPI client.
 
@@ -66,3 +67,20 @@ blank-screen test and the contact sheet need Pillow.
 The loader side is `core/src/3rdparty/unreal-disk/src/loaders/loader_dsk.cpp` (`layOutOverlappingFields`, the cut
 fallback after it, the CPDRead slots in `parseTrack`), with tests in `core/tests/loaders/disk/loader_dsk_test.cpp`
 (`Load_OverlappingLongFields_*`, `Load_CpdreadSlots_*`).
+
+## Sector-table parity
+
+`sector-parity.py` loads each image twice: in the emulator (drive A of a paused Pentagon, per track the WebAPI track
+summary and raw stream) and with `tools/diskconverter`. Per track it compares, in stream order, C, H, R, raw N, data
+length, the deleted mark and both CRCs (validity, and the two bytes where both sides know them: FDI/TRD/TD0 keep only
+a flag for a broken CRC). Images both sides refuse count as `unreadable`, not as discrepancies.
+
+```bash
+python3 tools/verification/disk/sector-parity.py --launch                         # all of testdata/ (81 images, ~11 min)
+python3 tools/verification/disk/sector-parity.py --launch testdata/loaders/udi --json
+python3 tools/verification/disk/sector-parity.py --cpp-dump 'zxdisk sectors {image} --json' testdata/loaders
+```
+
+`--cpp-dump` takes the C++ table from any command printing it as JSON (shape in the script's docstring); `zxdisk` has
+no sector-table verb yet, so the WebAPI is the C++ source today. The report goes to `scratch/sector-parity/report.json`;
+exit 1 on any discrepancy or an image only one side reads.

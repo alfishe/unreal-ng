@@ -143,6 +143,8 @@ def read(path: str) -> DiskImage:
         sector_count = data[offset]
         cylinder = data[offset + 1]
         head = data[offset + 2] & 0x7F
+        if data[offset + 2] & 0x80 and not data_rate & RATE_FM:
+            print(f"warning: {path}: cyl={cylinder} head={head}: single-density (FM) track - treated as MFM byte content")
         offset += TRACK_HEADER_SIZE
         max_cyl = max(max_cyl, cylinder)
 

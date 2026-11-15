@@ -56,9 +56,23 @@ def crc_wd1793(data: bytes) -> int:
     return ((crc & 0xFF) << 8) | (crc >> 8)
 
 
-def _put_crc(buf: bytearray, value: int) -> None:
-    buf.append(value & 0xFF)
-    buf.append((value >> 8) & 0xFF)
+def crc_bytes(value: int) -> bytes:
+    """The on-disk byte order of a crc_wd1793 value (see the note there)."""
+    return bytes([value & 0xFF, (value >> 8) & 0xFF])
+
+
+def _put_crc(buf: bytearray, computed: int, valid: bool, stored: bytes | None) -> None:
+    """A valid CRC is the computed one. A broken CRC is part of the disk (protections may check
+    its exact value): the stored bytes are written verbatim when the source carried them; only
+    when it did not (FDI/TRD/TD0 keep just a flag) is a wrong value invented by flipping bit 0,
+    mirroring loader-fdi.md's "flip one CRC bit" convention."""
+    good = crc_bytes(computed)
+    if valid:
+        buf += good
+    elif stored is not None and len(stored) == 2 and bytes(stored) != good:
+        buf += bytes(stored)
+    else:
+        buf += crc_bytes(computed ^ 0x0001)
 
 
 @dataclass
@@ -95,10 +109,7 @@ def encode_track(sectors: list[Sector]) -> EncodedTrack:
 
         idam_fields = bytes([IDAM, sector.cylinder, sector.head, sector.number, sector.size_code])
         raw += idam_fields
-        id_crc = crc_wd1793(idam_fields)
-        if not sector.id_crc_valid:
-            id_crc ^= 0x0001  # an ID CRC error is part of the disk (protections): reproduce it
-        _put_crc(raw, id_crc)
+        _put_crc(raw, crc_wd1793(idam_fields), sector.id_crc_valid, sector.id_crc_stored)
 
         raw += bytes([0x4E] * GAP_POST_ID)
 
@@ -113,10 +124,7 @@ def encode_track(sectors: list[Sector]) -> EncodedTrack:
         dam = DAM_DELETED if sector.deleted else DAM_NORMAL
         raw.append(dam)
         raw += sector.data
-        crc = crc_wd1793(bytes([dam]) + sector.data)
-        if not sector.crc_valid:
-            crc ^= 0x0001  # deliberately wrong, mirrors loader-fdi.md's "flip one CRC bit" convention
-        _put_crc(raw, crc)
+        _put_crc(raw, crc_wd1793(bytes([dam]) + sector.data), sector.crc_valid, sector.data_crc_stored)
 
         raw += bytes([0x4E] * gap_post_data)
 
@@ -160,13 +168,13 @@ def decode_track(raw: bytes, clock_bitmap: bytes | None = None) -> list[Sector]:
             if len(fields) < 5:
                 break
             _, cyl, head, number, size_code = fields  # raw N: only the data length below uses N & 3
-            idam_crc_stored = raw[i + 8 : i + 10]
-            idam_crc = crc_wd1793(bytes(fields))
-            id_crc_valid = bytes([idam_crc & 0xFF, (idam_crc >> 8) & 0xFF]) == bytes(idam_crc_stored)
+            idam_crc_stored = bytes(raw[i + 8 : i + 10])
+            id_crc_valid = crc_bytes(crc_wd1793(bytes(fields))) == idam_crc_stored
             idam_end = i + 10
 
             data = b""
             crc_valid = True
+            data_crc_stored = None
             deleted = False
             no_data = True
 
@@ -181,9 +189,9 @@ def decode_track(raw: bytes, clock_bitmap: bytes | None = None) -> list[Sector]:
                     if len(data) == size:
                         no_data = False
                         deleted = dam == DAM_DELETED
-                        stored_crc = raw[data_start + size : data_start + size + 2]
-                        computed = crc_wd1793(bytes([dam]) + data)
-                        crc_valid = bytes([computed & 0xFF, (computed >> 8) & 0xFF]) == bytes(stored_crc)
+                        stored_crc = bytes(raw[data_start + size : data_start + size + 2])
+                        crc_valid = crc_bytes(crc_wd1793(bytes([dam]) + data)) == stored_crc
+                        data_crc_stored = stored_crc if len(stored_crc) == 2 else None
                         i = data_start + size + 2
                     break
                 j += 1
@@ -203,6 +211,8 @@ def decode_track(raw: bytes, clock_bitmap: bytes | None = None) -> list[Sector]:
                     deleted=deleted,
                     no_data=no_data,
                     id_crc_valid=id_crc_valid,
+                    id_crc_stored=idam_crc_stored if len(idam_crc_stored) == 2 else None,
+                    data_crc_stored=data_crc_stored,
                 )
             )
             continue
