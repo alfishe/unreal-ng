@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
+#include "emulator/io/fdc/floppydriveslot.h"
 
 /// region <Constructors / destructors>
 FDD::FDD(EmulatorContext* context) : _context(context)
@@ -85,7 +86,10 @@ DiskImage::Track* FDD::trackUnderHeadForWrite(uint8_t side)
             return nullptr;
         cylinder = static_cast<uint8_t>(_track / 2);
     }
-    if (cylinder >= MAX_CYLINDERS || !_diskImage->growCylinders(static_cast<uint8_t>(cylinder + 1)))
+    if (cylinder >= MAX_CYLINDERS)
+        return nullptr;
+    FloppyDriveSlot::BeforeImageGrow(_context, _driveID, *_diskImage);  // the undo log (TTD) keeps the size first
+    if (!_diskImage->growCylinders(static_cast<uint8_t>(cylinder + 1)))
         return nullptr;
     return _diskImage->getTrackForCylinderAndSide(cylinder, side);
 }

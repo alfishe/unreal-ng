@@ -1,9 +1,9 @@
 # diskinfo.py
 
 Standalone Python CLI to inspect ZX-Spectrum/TR-DOS disk images: a brief geometry
-summary plus full dumps (sector data, sectors with ID fields, raw MFM tracks).
+summary plus full dumps (sector data, sectors with ID fields, raw tracks).
 Reads every format the sibling `tools/diskconverter` reads — **SCL, TRD, FDI, UDI
-and uncompressed TD0** — by importing its `diskconverter` package directly, so the
+and TD0** (both "TD" and the compressed "td") — by importing its `diskconverter` package directly, so the
 two tools always agree on parsing.
 
 ```
@@ -69,13 +69,13 @@ mismatch, plain TR-DOS/SCL/TD0 disks come out clean.
 |---|---|
 | `sectors` | Sector data only, hexdumped in track stream order |
 | `idam` | Each sector preceded by its decoded ID field (CHRN, size, the CRC-16 bytes the ID/data fields carry, deleted/no-data flags) |
-| `raw` | The raw MFM byte stream of each track with IDAM/DAM marker offsets listed ahead of the hexdump |
+| `raw` | The raw byte stream of each track with IDAM/DAM marker offsets listed ahead of the hexdump |
 
-`raw` uses the **original** per-track byte stream when the input is UDI (the only
-format that stores one); for every other format it synthesizes the stream with
-`diskconverter.mfm.encode_track` — gaps rebuilt to the nominal 6250-byte
-revolution — and says so in the header line. Note that sector gaps, interleave
-timing and weak bits of the *original* floppy only survive in UDI input.
+`raw` prints the stream each track holds in the `diskconverter` model, which is the
+stream unreal-disk builds: the **original** one when the input is UDI (the only format
+that stores one), for every other format the layout its loader writes (TR-DOS gaps, FM
+tracks of TD0 in the IBM 3740 layout) — the header line says which. Sector gaps,
+interleave timing and weak bits of the *original* floppy only survive in UDI input.
 
 ## Selection
 

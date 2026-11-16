@@ -1005,6 +1005,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
         info.branches = _branchesView;
     }
     info.branchEvent = _branchEvent;
+    info.previousBranch = PreviousOnTrail();
 
     PublishCursor();
     PublishSessionInfo(info);
@@ -1163,7 +1164,8 @@ void TimeTravelController::PublishSessionInfo(const TTDSessionInfo& info) const
         std::lock_guard<std::mutex> lock(_publishedMutex);
         // The branch topics (ttd.branches, ttd.position's branch) read the published copy: told once it changed
         branchesChanged = _published.branches != info.branches || _published.activeBranch != info.activeBranch ||
-                          _published.branchEvent.seq != info.branchEvent.seq;
+                          _published.branchEvent.seq != info.branchEvent.seq ||
+                          _published.previousBranch != info.previousBranch;
         _published = info;
         _publishedAt = std::chrono::steady_clock::now();
     }

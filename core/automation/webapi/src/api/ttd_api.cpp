@@ -502,6 +502,21 @@ void EmulatorAPI::pruneTTDBranches(const HttpRequestPtr& req,
     RespondTTD(id, "branch-prune", std::move(options), callback);
 }
 
+/// @brief POST /api/v1/emulator/{id}/ttd/branches/switch
+///
+/// Body: {"to": "previous" | "next_sibling" | "prev_sibling"}: the branch left last (repeated calls walk the trail
+/// back), or the next / previous branch at the nearest fork of the active lineage, by creation. 200 as a switch
+/// ({switched, branch, arrived_at, state; siblings: fork_frame, siblings}); 404 when there is none to go to
+void EmulatorAPI::switchTTDBranchRelative(const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback,
+                                          const std::string& id) const
+{
+    std::map<std::string, std::string> options;
+    if (!OptionsFromJson(req, options, callback))
+        return;
+    RespondTTD(id, "branch-switch", std::move(options), callback);
+}
+
 /// @brief PATCH /api/v1/emulator/{id}/ttd/branches/{branch} (only the fields given change)
 ///
 /// Body: { "name": "...", "note": "...", "tags": [...] or "a,b" (replace), "add_tags": [...], "remove_tags": [...],

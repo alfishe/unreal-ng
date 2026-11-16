@@ -606,6 +606,14 @@
                     "repeats": false
                 },
                 {
+                    "description": "Open the TTD panel with its Branches row.",
+                    "label": "TTD branch tree",
+                    "method": "unrealqt.ttd_branches",
+                    "params": [
+                    ],
+                    "repeats": false
+                },
+                {
                     "description": "The learn wizard for a device the controller database does not know.",
                     "label": "Learn a controller",
                     "method": "unrealqt.controllers_learn",

@@ -62,6 +62,12 @@ ProgramControl::ProgramControl(guicontrol::Host& host, Hooks hooks, QObject* par
         self->_hooks.showControllers();
         return Result::Success();
     });
+    root.SetCommand(QStringLiteral("unrealqt.ttd_branches"), [self](const Call&) {
+        if (!self || !self->_hooks.showTtdBranches)
+            return Result::Failure(errors::kNotFound, QStringLiteral("the TTD panel is not available"));
+        self->_hooks.showTtdBranches();
+        return Result::Success();
+    });
     root.SetCommand(QStringLiteral("unrealqt.controllers_learn"), [self](const Call& call) {
         if (!self || !self->_hooks.learn)
             return Result::Failure(errors::kNotFound, QStringLiteral("the Controllers window is not available"));

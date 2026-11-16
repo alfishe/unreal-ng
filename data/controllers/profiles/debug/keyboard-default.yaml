@@ -16,3 +16,5 @@ layers:
     key.ctrl.left:  { action: ttd.step_back_instruction }
     key.ctrl.right: { action: ttd.step_forward_instruction }
     key.ctrl.b:     { action: ttd.bookmark_add }
+    key.ctrl.alt.b: { action: ttd.branch_prev }
+    key.ctrl.alt.shift.b: { action: unrealqt.ttd_branches }

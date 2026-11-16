@@ -316,6 +316,9 @@ TEST_F(TTDControl_BranchCreate_Test, PokesRegistersAndJoystickDriveTheBranch)
     EXPECT_EQ(Run("branch-create", {{"run_frames", "2"}, {"input", "0:joy.nosuch"}}).error,
               ttd::TTDControlError::BadRequest);
     EXPECT_EQ(_ttd->ReadSessionInfo().branches, nullptr) << "nothing forked";
+    // The trunk's own bytes there: random RAM plus what the loop folded in, #5A one time in 256
+    const uint8_t trunk7F00 = _context->pMemory->DirectReadFromZ80Memory(0x7F00);
+    const uint8_t trunk7F01 = _context->pMemory->DirectReadFromZ80Memory(0x7F01);
 
     // #7F00 lies past what the loop has folded by then: the poke survives the run
     const ttd::TTDReply created = Run("branch-create", {{"name", "edited"},
@@ -334,7 +337,8 @@ TEST_F(TTDControl_BranchCreate_Test, PokesRegistersAndJoystickDriveTheBranch)
     EXPECT_EQ(bytes.items[0].i, 0x5A);
     EXPECT_EQ(bytes.items[1].i, 7);
     EXPECT_EQ(_ttd->ReadSessionInfo().activeBranch, ttd::kTTDTrunk);
-    EXPECT_NE(_context->pMemory->DirectReadFromZ80Memory(0x7F00), 0x5A) << "the trunk is not poked";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x7F00), trunk7F00) << "the trunk is not poked";
+    EXPECT_EQ(_context->pMemory->DirectReadFromZ80Memory(0x7F01), trunk7F01);
 
     // The branch replays the edit: a moment on it after the fork has the bytes
     ASSERT_TRUE(Run("branch-switch", {{"branch", "edited"}, {"frame", std::to_string(_start + 12)}}).Ok());

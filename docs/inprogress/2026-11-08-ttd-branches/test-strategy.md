@@ -103,8 +103,8 @@ branch's recorded positions and hashes, the expected active branch and position.
 | T-A2 | replies without branches are byte-identical to master's (golden) |
 | T-A3 | `ttd.branches` topic events in order: created, switched, updated, deleted; `ttd.position` carries the branch |
 | T-A4 | MCP text answers: the branch named, list summarised past 20 rows, budgets kept (`*Mcp*` unit tests + `tools/verification/mcp/` live block) |
-| T-A5 | surface readouts `ttd.branch.*` through REST and WebSocket the same shape (`ttd-surface-contract`, includes the F-2 case) |
-| T-A6 | actions `ttd.branch_*` dispatch from deck, ShuttlePRO and pad profiles (action tests) |
+| T-A5 | surface readouts `ttd.branch.*` through REST and WebSocket the same shape (`ttd-surface-contract`, includes the F-2 case). Built: `branch_navigation` in `ttd_surface_contract.py` (readouts over REST and the surface topic, the relative switch on WebAPI, CLI, Lua, Python) |
+| T-A6 | actions `ttd.branch_*` dispatch from deck, ShuttlePRO and pad profiles (action tests). Built: `BranchBindings_Test` (keyboard, ShuttlePRO, pad), `TTDControl_BranchNavigation_Test.ActionsDriveTheVerbs` |
 
 ## 3. Concurrency
 
@@ -125,7 +125,7 @@ assert the race happened.
 | F-1 | session file reader with branches | extend `ttdsessionfile_fuzz_test.cpp` to branched fixtures: flipped bits, cuts, size fields 0xFFFFFFFF, garbage, plus branch-table records damaged (§2.5 T-F4 kinds) | thousands of loads in about 1 s; long tier 100x |
 | F-2 | operation sequences (model-based) | seeded random programs over a small machine (Pentagon 128K, turbo): record n frames, seek, step, resume, edit, switch, create with run, update, pin, delete, prune, evict, read back, save, load, media writes; after every op the invariants of §4.1 | 200 ops in under 1 s per seed in the default tier; the long tier runs many seeds for 60 s; a failure prints the seed and the shortest failing prefix (delta reduction) |
 | F-3 | folder crash | F-2 programs with a kill point at a random writer record; recovery checked against the model's complete parts | default 20 kill points, long tier 1000 |
-| F-4 | Python tools | `tools/ttd` pytest with the same damaged fixtures: never a traceback, the same verdict as the C++ reader (`expected.json`) | seconds |
+| F-4 | Python tools | `tools/python/ttd` pytest (`tests/test_fuzz.py`, `tests/test_reader.py`): seeded bit flips and cuts of every branched fixture never raise anything but `TtdError`, every one is reported damaged, and what loads is a prefix of each original line with the same content CRCs; the fixed damaged copies give the C++ reader's verdict (`testdata/ttd/branches/expected.json`). Built 2026-11-15 | about 30 s |
 | F-5 | sanitizers | F-2 and F-3 under ASan + UBSan and TSan (`tools/sanitize/configure.sh`) | the long tier, before landing each phase |
 
 ### 4.1 Invariants checked by F-2

@@ -29,6 +29,7 @@ void DeclareUnrealQtInterface()
                 "picture id of the same matrix (zx48k, pentagon, ...)"}},
               "The keyboard shown whatever the model, kept in the settings."},
              {"unrealqt.controllers_open", "Controllers window", {}, "Open Tools > Controllers."},
+             {"unrealqt.ttd_branches", "TTD branch tree", {}, "Open the TTD panel with its Branches row."},
              {"unrealqt.controllers_learn",
               "Learn a controller",
               {{"device", ParamKind::String, false, "a host device id (controllers devices lists them)"}},

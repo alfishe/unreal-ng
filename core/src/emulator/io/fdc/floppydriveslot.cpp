@@ -59,6 +59,12 @@ void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, uint8_t drive, 
         context->pMediaManager->BeforeTrackWrite(IdFor(drive), *track);
 }
 
+void FloppyDriveSlot::BeforeImageGrow(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage& disk)
+{
+    if (context && context->pMediaManager)
+        context->pMediaManager->BeforeImageGrow(IdFor(drive), disk);
+}
+
 void FloppyDriveSlot::Attach(Medium& medium)
 {
     FDD* fdd = _context->coreState.diskDrives[_drive];
