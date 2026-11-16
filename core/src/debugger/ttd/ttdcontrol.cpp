@@ -2520,7 +2520,8 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
                                                "it can)");
     const uint32_t newId = created->id;
     const TTDTimePoint forkAt = _manager->CurrentPosition();
-    const TTDBranchInfo* parent = info.branches->Find(created->parent);
+    const uint32_t parentId = created->parent;
+    const TTDBranchInfo* parent = info.branches->Find(parentId);
     std::string text = "Created branch '" + created->meta.name + "' at frame " + std::to_string(forkAt.frame) +
                        (parent ? " of '" + parent->meta.name + "'" : std::string()) + "\n";
 
@@ -2679,12 +2680,13 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
             after.push_back(returnBranch);
         _manager->SetBranchTrail(std::move(after));
     }
+    // A new published copy: the pointers into the old one (created, parent) dangle from here on, look up again
     info = _manager->ReadSessionInfo();
     reply.body["created"] = true;
     if (const TTDBranchInfo* b = info.branches ? info.branches->Find(newId) : nullptr)
         reply.body["branch"] = BranchNode(*b, info);
-    if (parent)
-        reply.body["parent"] = BranchRefNode(*parent);
+    if (const TTDBranchInfo* p = info.branches ? info.branches->Find(parentId) : nullptr)
+        reply.body["parent"] = BranchRefNode(*p);
     reply.body["at"] = TimePointNode(forkAt);
     if (const StateNode* media = resumed.body.find("media"))
         reply.body["media"] = *media;
