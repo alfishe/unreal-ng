@@ -174,7 +174,7 @@ protected:
 
 TEST_F(MemoryContendedFuse_Test, NothingWaitsInUncontendedPages)
 {
-    auto cases = FuseVectors::LoadCases();
+    auto cases = FuseVectors::LoadMainCoreCases();
     ASSERT_GT(cases.size(), 1000u) << "FUSE vectors not found";
     Layout(0);
     ASSERT_FALSE(_memory->IsBank0ROM()) << "all-RAM layout expected";
@@ -205,7 +205,7 @@ TEST_F(MemoryContendedFuse_Test, NothingWaitsInUncontendedPages)
 
 TEST_F(MemoryContendedFuse_Test, EveryMemoryCycleWaitsTheGateArrayPattern)
 {
-    auto cases = FuseVectors::LoadCases();
+    auto cases = FuseVectors::LoadMainCoreCases();
     ASSERT_GT(cases.size(), 1000u) << "FUSE vectors not found";
 
     int checked = 0;
@@ -267,7 +267,7 @@ TEST_F(MemoryContendedFuse_Test, EveryMemoryCycleWaitsTheGateArrayPattern)
 /// patterns: every high byte is contended on this map, so C:1, C:3 on even ports and C:1 x4 on odd ones
 TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
 {
-    auto cases = FuseVectors::LoadCases();
+    auto cases = FuseVectors::LoadMainCoreCases();
     ASSERT_GT(cases.size(), 1000u) << "FUSE vectors not found";
     Layout(1);  // RAM everywhere; the contention map is set by UlaEverywhere
 
@@ -350,7 +350,7 @@ TEST_F(MemoryContendedFuse_Test, EveryCycleWaitsTheUlaPattern)
 
 TEST_F(MemoryContendedFuse_Test, SwitchOffRunsTheContendedLayoutUncontended)
 {
-    auto cases = FuseVectors::LoadCases();
+    auto cases = FuseVectors::LoadMainCoreCases();
     ASSERT_GT(cases.size(), 1000u) << "FUSE vectors not found";
     Layout(1);
     ASSERT_TRUE(_context->pFeatureManager->setFeature(Features::kContention, false));

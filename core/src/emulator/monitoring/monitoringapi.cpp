@@ -550,6 +550,12 @@ StateNode TtdStatus(Emulator& emulator)
         sizes["write_journal_records"] = static_cast<int64_t>(info.writeJournalRecords);
         sizes["input_events"] = static_cast<int64_t>(info.inputEventCount);
         sizes["evicted_checkpoints"] = static_cast<int64_t>(info.evictedCheckpoints);
+        sizes["evicted_to_disk_segments"] = static_cast<int64_t>(info.evictedToDiskSegments);
+        sizes["evicted_to_disk_checkpoints"] = static_cast<int64_t>(info.evictedToDiskCheckpoints);
+        sizes["read_back_segments"] = static_cast<int64_t>(info.readBackSegments);
+        sizes["read_back_bytes"] = static_cast<int64_t>(info.readBackBytes);
+        sizes["read_back_loads"] = static_cast<int64_t>(info.readBackLoads);
+        sizes["read_back_hits"] = static_cast<int64_t>(info.readBackHits);
         return sizes;
     });
     for (const auto& [name, value] : session.members)
@@ -753,6 +759,9 @@ StateNode Buffers(Emulator& emulator)
             t["checkpoints"] = static_cast<int64_t>(info.checkpointCount);
             t["write_journal_records"] = static_cast<int64_t>(info.writeJournalRecords);
             t["write_journal_bytes"] = static_cast<int64_t>(info.writeJournalBytes);
+            t["evicted_to_disk_segments"] = static_cast<int64_t>(info.evictedToDiskSegments);
+            t["read_back_segments"] = static_cast<int64_t>(info.readBackSegments);
+            t["read_back_bytes"] = static_cast<int64_t>(info.readBackBytes);
             node["ttd"] = t;
         }
         return node;

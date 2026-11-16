@@ -758,7 +758,33 @@
     schemas["TTDStatusResponse"]["properties"]["history_bytes"]["description"] =
         "Checkpoint data held now: page-store slots plus device blobs (what the byte limit bounds)";
     schemas["TTDStatusResponse"]["properties"]["evicted_checkpoints"]["description"] =
-        "Oldest checkpoints released by the history limit in this session";
+        "Oldest checkpoints released by the history limit in this session (no recording folder)";
+    // Two tiers (P3): with a recording folder the limit moves segments to disk; a restore reads one back
+    for (const char* name : {"evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                             "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                             "read_back_failures"})
+    {
+        schemas["TTDStatusResponse"]["properties"][name]["type"] = "integer";
+        schemas["TTDStatusResponse"]["properties"][name]["format"] = "uint64";
+    }
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["description"] =
+        "The history limit evicts segments to the recording folder's files (nothing is released)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_segments"]["description"] =
+        "Segments held on disk only now (still seekable)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_checkpoints"]["description"] =
+        "Checkpoints of the segments on disk only";
+    schemas["TTDStatusResponse"]["properties"]["read_back_segments"]["description"] =
+        "The read-back cache: evicted segments in memory again for a restore";
+    schemas["TTDStatusResponse"]["properties"]["read_back_bytes"]["description"] = "Payload bytes of the read-back cache";
+    schemas["TTDStatusResponse"]["properties"]["read_back_capacity"]["description"] =
+        "The read-back cache's capacity in segments (least recently used goes first)";
+    schemas["TTDStatusResponse"]["properties"]["read_back_loads"]["description"] =
+        "Segments read back from their files in this session";
+    schemas["TTDStatusResponse"]["properties"]["read_back_hits"]["description"] =
+        "Restores that moved to a segment the read-back cache already held (no file read)";
+    schemas["TTDStatusResponse"]["properties"]["read_back_failures"]["description"] =
+        "Read backs that failed (the restore reported the segment)";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";
@@ -1414,6 +1440,10 @@
     schemas["TTDBranchesResponse"]["properties"]["branches"]["items"]["$ref"] = "#/components/schemas/TTDBranch";
     for (const char* name : {"total", "count", "active", "viewed"})
         schemas["TTDBranchesResponse"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["nullable"] = true;
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["description"] =
+        "The branch POST /ttd/branches/switch {to: previous} goes to (the branch left last); null: none";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
         "#/components/schemas/TTDBranchLineageSpan";
@@ -1453,11 +1483,24 @@
     schemas["TTDBranchSwitchRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDBranchSwitchRequest"]["properties"]["tinframe"]["type"] = "integer";
 
+    schemas["TTDBranchSwitchRelativeRequest"]["type"] = "object";
+    schemas["TTDBranchSwitchRelativeRequest"]["description"] = "Request body for POST /ttd/branches/switch.";
+    schemas["TTDBranchSwitchRelativeRequest"]["required"].append("to");
+    schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["type"] = "string";
+    for (const char* to : {"previous", "next_sibling", "prev_sibling"})
+        schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["enum"].append(to);
+
     schemas["TTDBranchSwitchResponse"]["type"] = "object";
     schemas["TTDBranchSwitchResponse"]["description"] = "Response from POST /ttd/branches/{branch}/switch.";
     schemas["TTDBranchSwitchResponse"]["properties"]["switched"]["type"] = "boolean";
     schemas["TTDBranchSwitchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
     schemas["TTDBranchSwitchResponse"]["properties"]["arrived_at"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["description"] =
+        "to=next_sibling / prev_sibling: the frame of the fork the siblings leave from";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["description"] =
+        "to=next_sibling / prev_sibling: how many branches leave that fork, the lineage's own included";
     schemas["TTDBranchSwitchResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDBranchSwitchResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDBranchSwitchResponse"]["properties"]["text"]["type"] = "string";

@@ -1474,7 +1474,8 @@ TEST_F(TimeTravelController_Test, RunningFromAMidFrameFirstCheckpointIsExact)
 /// Step 3c: a recording is written as it records into a folder of its own under
 /// the recording root. The folder lives as long as its session: a new session,
 /// a discard and a clean close of the instance delete it (a crash would leave it
-/// to the startup cleanup). A black box keeps only its window's segment files
+/// to the startup cleanup). A black box keeps every segment file: its window
+/// only bounds memory (the two tiers, P3)
 /// ~150 ms: the fixture boots two machines (~100 ms in every test here)
 TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
 {
@@ -1501,7 +1502,7 @@ TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
     _controller->InvalidateSession("test discard");
     EXPECT_FALSE(FileHelper::IsFolder(second)) << "a discarded session's folder goes";
 
-    // A black box with a small window: its oldest segment files go as it moves on
+    // A black box with a small window: the segments outside it leave memory, their files stay
     _controller->SetBlackBox(true, 1);
     ASSERT_TRUE(_controller->StartRecording());
     _controller->SetHistoryLimit(8, 0);   // segments of a frame
@@ -1512,7 +1513,10 @@ TEST_F(TimeTravelController_Test, RecordingFoldersLiveAsLongAsTheirSession)
     for (const auto& entry : std::filesystem::directory_iterator(FileHelper::ToFsPath(third)))
         files += entry.path().extension() == ".ttd";
     EXPECT_GT(files, 0u);
-    EXPECT_LE(files, _controller->GetEngine().Segments().size() + 1) << "only the window's segments stay on disk";
+    EXPECT_EQ(files, _controller->GetEngine().Segments().size()) << "every segment keeps its file";
+    const ttd::TTDSessionInfo info = _controller->GetSessionInfo();
+    EXPECT_GT(info.evictedToDiskSegments, 0u) << "the window bounds memory";
+    EXPECT_EQ(info.evictedCheckpoints, 0u) << "nothing is released";
 
     // A clean close of the instance
     _controller.reset();

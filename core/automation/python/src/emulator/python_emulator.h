@@ -205,9 +205,9 @@ inline DebugCpuId PythonCpu(Emulator& self, const std::string& name)
 
 inline pybind11::object StateNodeToPy(const StateNode& node);
 
-/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = True, or
-/// ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
-inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count)
+/// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = True,
+/// or ok = False and error. The machine runs until the card ends it, then is paused; the GIL is free meanwhile
+inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0)
 {
     py::dict d;
     std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(self.GetId());
@@ -223,7 +223,7 @@ inline py::dict PythonCardStep(Emulator& self, DebugCpuId cpu, const char* kind,
     execution::RunReply reply;
     {
         py::gil_scoped_release release;  // the card runs until its step ends (up to 5 s)
-        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count);
+        reply = execution::RunControl(shared).CardStep(requester, cpu, kind, count, address);
     }
     if (reply.status == execution::RunReply::Status::Revoked)
         throw std::runtime_error(reply.message);
@@ -6715,6 +6715,22 @@ namespace PythonBindings
                "active lineage and pinned branches stay: {dry_run, would_delete | deleted, kept, frames, file_bytes, "
                "text}")
 
+            .def("ttd_branch_switch_to", [](Emulator& self, const std::string& to) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "branch-switch", {{"to", to}});
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                {
+                    value["switched"] = false;
+                    value["error"] = reply.message;
+                }
+                return StateNodeToPy(value);
+            }, "Switch relative to the active branch: to='previous' (the branch left last; again: further back), "
+               "'next_sibling' / 'prev_sibling' (the next / previous branch at the nearest fork, by creation): "
+               "{switched, branch, arrived_at, state, text} or {switched: False, error}",
+               py::arg("to"))
+
             .def("ttd_branch_switch", [](Emulator& self, py::object branch, py::object frameObj,
                                           uint32_t tInFrame) -> py::object {
                 std::map<std::string, std::string> options{{"branch", TtdOptionTextPy(branch)}};
@@ -7322,7 +7338,7 @@ namespace PythonBindings
         }, "Step out of the current subroutine (emulation ends paused); cpu='gs' / 'ms': the sound card CPU's",
            py::arg("cpu") = "")
 
-        .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates) -> py::dict {
+        .def("skip_until", [](Emulator& self, py::object pcValue, unsigned maxTStates, const std::string& cpu) -> py::dict {
             py::dict d;
             uint32_t target32 = 0;
             if (py::isinstance<std::string>(pcValue))
@@ -7337,6 +7353,8 @@ namespace PythonBindings
 
             if (target32 > 0xFFFF) { d["error"] = "pc out of 16-bit range"; return d; }
             const uint16_t target = static_cast<uint16_t>(target32);
+            if (const DebugCpuId card = PythonCpu(self, cpu); IsCardCpu(card))
+                return PythonCardStep(self, card, "to", 1, target);
 
             // Safety budget: default 100 frames of emulated time, hard cap 200 s
             EmulatorContext* context = self.GetContext();
@@ -7358,8 +7376,9 @@ namespace PythonBindings
                 d["sp"] = z80->sp;
             }
             return d;
-        }, "Fast-forward until PC reaches the target (breakpoints skipped)",
-           py::arg("pc"), py::arg("max_tstates") = 0)
+        }, "Fast-forward until PC reaches the target (breakpoints skipped); cpu='gs' / 'ms': the sound card CPU runs "
+           "to the cursor (a breakpoint on the way ends it; max_tstates not used)",
+           py::arg("pc"), py::arg("max_tstates") = 0, py::arg("cpu") = "")
 
         .def("mem_find",
              [](Emulator& self, py::object patternValue, uint32_t start, py::object endValue, unsigned alignment,

@@ -138,6 +138,8 @@ std::vector<scn::Issue> Check(const scn::Scenario& s, const Catalogue& c)
                 step(a[f], node, false, depth + 1);  // dir sides run once per detent: a press each
     };
     std::function<void(const scn::Node&)> walk = [&](const scn::Node& n) {
+        if (n.longPress)
+            step(n.longPress->spec, n.id, false, 0);
         if (n.IsMenu())
         {
             for (const auto& d : n.dials)
@@ -146,6 +148,15 @@ std::vector<scn::Issue> Check(const scn::Scenario& s, const Catalogue& c)
                     step(d.turn->spec, n.id, true, 0);
                 if (d.press)
                     step(d.press->spec, n.id, false, 0);
+                if (d.pressTurn)
+                    step(d.pressTurn->spec, n.id, true, 0);
+            }
+            if (n.list)
+            {
+                if (n.list->press)
+                    step(n.list->press->spec, n.id, false, 0);
+                if (n.list->longPress)
+                    step(n.list->longPress->spec, n.id, false, 0);
             }
             for (const auto& c2 : n.items)
                 walk(c2);

@@ -1350,12 +1350,13 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_*, set_register, the steps and select_cpu: whose breakpoints / register / step, main (default), gs (the CPU of the "
+        "For bp_*, set_register, the steps, run_until_pc and select_cpu: whose breakpoints / register / step, main (default), gs (the CPU of the "
         "General Sound / NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait "
         "reports the card instruction) or ms (the General Sound on a MultiSound card, the same way). A card CPU's "
         "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
         "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
-        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout";
+        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout. run_until_pc with a card CPU runs that "
+        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s)";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -2123,11 +2124,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                 // steps through the same routes with ?cpu=, and its registers follow
                 const bool cardCpu = args.isMember("cpu") && args["cpu"].asString() != "main";
                 const bool stepAction =
-                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out";
+                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out" ||
+                    action == "run_until_pc";
                 if (cardCpu && !stepAction)
                 {
                     done(ToolResult::Error("cpu " + args["cpu"].asString() + ": a card CPU takes step, step_n, "
-                                           "step_over and step_out; '" + action + "' runs the machine's CPU"));
+                                           "step_over, step_out and run_until_pc; '" + action + "' runs the machine's CPU"));
                     return;
                 }
                 auto execute = [action, &args, &caller, id, done, cardCpu, cpuQuery]() {
@@ -2420,6 +2422,17 @@ std::string FormatTtdStatus(const Json::Value& status)
             out << " " << status["history_limit_bytes"].asUInt64() / (1024 * 1024) << " MB";
         out << " (" << status["history_bytes"].asUInt64() / (1024 * 1024) << " MB held, "
             << status["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released)";
+    }
+    if (status["disk_tier_active"].asBool() || status["evicted_to_disk_segments"].asUInt64() != 0 ||
+        status["read_back_loads"].asUInt64() != 0)
+    {
+        // Two tiers: segments on disk stay seekable; a restore reads one back into the cache
+        out << ", on disk " << status["evicted_to_disk_segments"].asUInt64() << " segment(s) ("
+            << status["evicted_to_disk_checkpoints"].asUInt64() << " checkpoints, still seekable), read-back cache "
+            << status["read_back_segments"].asUInt64() << "/" << status["read_back_capacity"].asUInt64()
+            << " segment(s) " << status["read_back_bytes"].asUInt64() / 1024 << " KB, "
+            << status["read_back_loads"].asUInt64() << " load(s) " << status["read_back_hits"].asUInt64()
+            << " hit(s) " << status["read_back_failures"].asUInt64() << " failure(s)";
     }
     if (status["port_journal_active"].asBool())
     {
@@ -5883,15 +5896,17 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "current moment - or on 'branch', default its end; it stays even while empty; with run_frames it runs that many "
         "frames there pressing the keys of 'input', reads the bytes of 'read' and with go_back=true returns where it "
         "was: one call per what-if probe instead of seek + resume + key presses + run + memory reads), 'branch_switch' "
-        "(continue on a branch at frame / tinframe on it, default its end; not while recording), 'branch_update' "
+        "(continue on a branch at frame / tinframe on it, default its end; or to=previous: the branch left last, "
+        "to=next_sibling / prev_sibling: the next / previous branch at the nearest fork), 'branch_update' "
         "(rename, note, tags / add_tags / remove_tags, pinned), 'branch_delete' (the branch and its descendants; not "
         "the trunk or the active lineage; force=true deletes pinned ones), 'branch_prune' (delete the branches a filter "
         "selects - run, created_by, tag, name_prefix, min_length / max_length, created_after / created_before - "
         "keeping the active lineage and pinned ones; dry_run defaults to true: it lists what would go). 'dump' saves every branch; lineage=true "
         "saves only the active lineage as one linear history. "
         "History limit: 'history_limit' sets (history_frames / history_bytes, 0 = none, a missing one is kept) or "
-        "reports the bound on the recorded history - while recording, the oldest frames are released beyond it and "
-        "the session start moves forward; a file saved afterwards replays its remaining frames exactly. 'start' "
+        "reports the bound on the recorded history in memory - with a recording folder older segments move to disk and "
+        "stay seekable (read back on a seek); without one, while recording, the oldest frames are released beyond it, "
+        "the session start moves forward and a file saved afterwards replays its remaining frames exactly. 'start' "
         "takes the same two fields. "
         "Coverage index: 'coverage_probe' (did frame X touch an address range), 'coverage_scan' (which frames did: the "
         "list, oldest first or order=newest, ranges=true for runs of frames, next_from_frame / next_to_frame page on; "
@@ -6008,6 +6023,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["branch"]["description"] =
         "branch_info / branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or "
         "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* to : {"previous", "next_sibling", "prev_sibling"})
+        schema["properties"]["to"]["enum"].append(to);
+    schema["properties"]["to"]["description"] =
+        "branch_switch without 'branch': previous = the branch left last (repeated calls walk further back), "
+        "next_sibling / prev_sibling = the next / previous branch at the nearest fork of the active lineage, by creation";
     schema["properties"]["scope"]["type"] = "string";
     schema["properties"]["scope"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["scope"]["enum"].append("all");
@@ -6376,14 +6398,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "branch_info" || action == "branch_switch" || action == "branch_update" ||
-                action == "branch_delete")
+            const bool relativeSwitch = action == "branch_switch" && args["to"].isString() && !args["to"].asString().empty();
+            if (!relativeSwitch && (action == "branch_info" || action == "branch_switch" || action == "branch_update" ||
+                                    action == "branch_delete"))
             {
                 const Json::Value& branch = args["branch"];
                 if (!(branch.isIntegral() && !branch.isBool()) && !(branch.isString() && !branch.asString().empty()))
                 {
                     done(ToolResult::Error("Action '" + action +
-                                           "' requires 'branch' (an id, a GUID or a name; branch_list lists them)"));
+                                           "' requires 'branch' (an id, a GUID or a name; branch_list lists them)" +
+                                           (action == "branch_switch" ? std::string(", or 'to'") : std::string())));
                     return;
                 }
             }
@@ -6753,8 +6777,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             text << bytes << " bytes ";
                         text << "- history frames " << b["session_start_frame"].asUInt64() << ".."
                              << b["current_end_frame"].asUInt64() << ", " << b["history_bytes"].asUInt64() << " bytes held, "
-                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released (state "
-                             << b["state"].asString() << ")";
+                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released, "
+                             << b["evicted_to_disk_segments"].asUInt64() << " segment(s) ("
+                             << b["evicted_to_disk_checkpoints"].asUInt64()
+                             << " checkpoints) on disk only, read-back cache " << b["read_back_segments"].asUInt64()
+                             << "/" << b["read_back_capacity"].asUInt64() << " (state " << b["state"].asString()
+                             << ")";
                         return text.str();
                     }, done);
                 }
@@ -7269,15 +7297,22 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "branch_switch")
                 {
                     Json::Value body(Json::objectValue);
+                    const bool relative = args["to"].isString() && !args["to"].asString().empty();
+                    if (relative)
+                    {
+                        body["to"] = args["to"];
+                    }
                     for (const char* key : {"frame", "tinframe"})
                     {
-                        if (args.isMember(key))
+                        if (!relative && args.isMember(key))
                         {
                             body[key] = args[key];
                         }
                     }
-                    CallAndSummarize("POST", Endpoint(id, "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString()) +
-                                                              "/switch"),
+                    const std::string path =
+                        relative ? std::string("/ttd/branches/switch")
+                                 : "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString()) + "/switch";
+                    CallAndSummarize("POST", Endpoint(id, path),
                                      &body, caller, [id](const Json::Value& b) {
                                          std::string text = b["text"].asString();
                                          while (!text.empty() && text.back() == '\n')

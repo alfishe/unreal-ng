@@ -1113,8 +1113,10 @@ ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_b
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
-ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
-                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history in memory
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields;
+                                       --   with a recording folder the rest stays seekable on disk:
+                                       --   evicted_to_disk_*, read_back_* fields; without one it is released)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
@@ -1335,6 +1337,8 @@ local b = ttd_branches()                    -- or ttd_branches{scope = "lineage"
 for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
 ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
 -- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_switch_to("previous")            -- the branch left last (again: further back); "next_sibling" / "prev_sibling":
+-- the next / previous branch at the nearest fork (the reply adds fork_frame, siblings); error for another word
 ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
 -- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
 ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
@@ -1493,6 +1497,7 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+emu.skip_until(0x4010, "gs")         -- the sound card CPU to the cursor (a breakpoint ends it; the card step's table + hit)
 
 -- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
 run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}

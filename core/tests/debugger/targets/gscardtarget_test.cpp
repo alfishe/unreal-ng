@@ -766,7 +766,8 @@ uint16_t CardSp(GeneralSoundCard& card)
 
 // A step parks at an instruction boundary (gs-debugger design §5.3). Without a machine the card runs on past the
 // park, so each step starts from the routine's entry: in after one instruction, in 3 after three, over at the
-// instruction after the CALL with the entry SP, out after the taken RET (RET Z not taken does not end it)
+// instruction after the CALL with the entry SP, out after the taken RET (RET Z not taken does not end it), to at the
+// cursor (a cursor at PC: the instruction's next run, once round the loop)
 TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
 {
     Card card;
@@ -782,7 +783,9 @@ TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
                           Case{GSCardTarget::StepKind::In, 3, kCall, kRoutine + 2},
                           Case{GSCardTarget::StepKind::Over, 1, kCall, kAfterCall},
                           Case{GSCardTarget::StepKind::Over, 1, kAfterCall, kLoop},
-                          Case{GSCardTarget::StepKind::Out, 1, kRoutine, kAfterCall}})
+                          Case{GSCardTarget::StepKind::Out, 1, kRoutine, kAfterCall},
+                          Case{GSCardTarget::StepKind::To, 1, kCall, kRoutine + 3},
+                          Case{GSCardTarget::StepKind::To, 1, kCall, kCall}})
     {
         LoadRoutine(*card.chip);
         Z80CpuRegisters regs{};
@@ -796,7 +799,7 @@ TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
             card.chip->pokeCardMemory(kStack - 1, kAfterCall >> 8);
         }
         card.chip->setCardRegisters(regs);
-        ASSERT_EQ(card.target->ArmStep(c.kind, c.count), "");
+        ASSERT_EQ(card.target->ArmStep(c.kind, c.count, c.boundary), "");  // the cursor for To
         EXPECT_TRUE(card.target->HooksAttached()) << "an armed step runs the debug loop";
         ASSERT_TRUE(card.runUntilStop(1)) << "start #" << std::hex << c.start;
         const GSCardTarget::Stop stop = card.target->LastStop();
@@ -849,8 +852,8 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
     ASSERT_NE(shared, nullptr);
     execution::RunControl control(shared);
     const execution::Requester requester{execution::Origin::WebApi, {}};
-    auto step = [&](const char* kind, unsigned count, const char* reason, uint16_t pc) {
-        const execution::RunReply reply = control.CardStep(requester, DebugCpuId::GS, kind, count);
+    auto step = [&](const char* kind, unsigned count, const char* reason, uint16_t pc, uint16_t cursor = 0) {
+        const execution::RunReply reply = control.CardStep(requester, DebugCpuId::GS, kind, count, cursor);
         EXPECT_TRUE(reply.Ok()) << kind << ": " << reply.message;
         const StateNode* stop = reply.body.find("stop");
         EXPECT_NE(stop, nullptr) << kind;
@@ -868,6 +871,8 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
             EXPECT_GE(main->find("gap_t")->i, 0) << kind;
         EXPECT_EQ(reply.body.find("state")->s, "paused") << kind;
         EXPECT_TRUE(emulator->IsPaused());
+        if (std::string(kind) == "to")
+            EXPECT_EQ(reply.body.find("hit")->b, std::string(reason) == "step") << "to #" << std::hex << cursor;
     };
     step("in", 1, "step", kRoutine);  // paused between frames: the first boundary is the CALL's own
     step("in", 2, "step", kRoutine + 2);
@@ -883,6 +888,14 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
     step("over", 1, "breakpoint", kRoutine + 1);
     breakpoints->RemoveBreakpointByID(id);
     step("out", 1, "step", kAfterCall);
+
+    // Run to the cursor: round the loop into the routine; a breakpoint on the way ends it first
+    step("to", 1, "step", kRoutine + 1, kRoutine + 1);
+    step("to", 1, "step", kRoutine + 1, kRoutine + 1);  // at the cursor: its next run
+    const uint16_t before = breakpoints->AddBreakpoint(Exec(kCall), error);
+    ASSERT_NE(before, BRK_INVALID) << error;
+    step("to", 1, "breakpoint", kCall, kRoutine);
+    breakpoints->RemoveBreakpointByID(before);
 
     const execution::RunReply refused = control.CardStep(requester, DebugCpuId::MultiSoundGS, "in", 1);
     EXPECT_FALSE(refused.Ok()) << "no MultiSound in this machine";

@@ -13,13 +13,14 @@ constexpr std::array<std::string_view, 7> kBase = {"ttd.position", "run.state", 
                                                    "media.disk",   "audio.mute", "debug.mode"};
 
 // readouts.h's table, in its order (toggle.<id> and audio.source.<key> are prefixes)
-constexpr std::array<std::string_view, 30> kKnown = {
+constexpr std::array<std::string_view, 32> kKnown = {
     "ttd.position",    "run.state",         "machine",          "media.tape",       "media.disk",
     "audio.mute",      "debug.mode",        "audio.mixer",      "host.stats",       "host.clients",
     "emulator.stats",  "debug.breakpoints", "media.slots",      "recording.state",  "debug.labels",
     "ttd.status",      "debug.analyzers",   "controllers.state", "video.window",    "video.crt_params",
     "video.viewport",  "video.temporal",    "machine.previous", "machine.switches", "media.recent",     "media.rzx",
-    "input.connectors", "cap.record",       "actions.unavailable", "debug.buffers"};
+    "input.connectors", "cap.record",       "actions.unavailable", "debug.buffers",
+    "ttd.branch",       "ttd.branch_list"};
 
 // The fields of ttd.position as the core publishes it (core/automation/webapi/src/ws-hub.cpp, the topic and
 // GET /api/v1/surfaces/readouts): a path into it names one of them
@@ -67,6 +68,19 @@ void Collect(const Node& n, std::set<std::string>& readouts, std::set<std::strin
     AddValue(n.face, readouts, paths);
     if (n.faceOn)
         AddValue(*n.faceOn, readouts, paths);
+    if ((n.longPress && n.longPress->kind == "action") ||
+        (n.list && ((n.list->press && n.list->press->kind == "action") ||
+                    (n.list->longPress && n.list->longPress->kind == "action"))))
+    {
+        paths.insert("actions.unavailable");
+        readouts.insert("actions.unavailable");
+    }
+    if (n.list && !n.list->readout.empty())
+    {
+        // a list page: its items' array, as a path (the runtime reads it like a face's value)
+        paths.insert(n.list->readout);
+        readouts.insert(SplitReadoutPath(n.list->readout).name);
+    }
     if (n.IsMenu())
     {
         const std::string& status = n.strip.status;
@@ -191,7 +205,10 @@ SurfaceNeeds NeedsOf(const Scenario& s)
     SurfaceNeeds needs;
     Collect(s.root, readouts, paths, needs.timeline);
     if (needs.timeline)
+    {
         readouts.insert("ttd.position");
+        readouts.insert("ttd.branch");  // the timeline's fork ticks and the branch name
+    }
     needs.readouts.assign(readouts.begin(), readouts.end());
     needs.paths.assign(paths.begin(), paths.end());
     needs.target = s.settings.target;

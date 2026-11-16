@@ -2,14 +2,19 @@
 // ScreenOCR. Unlike Z80TestVerification (the vectors driven straight through Z80Step on a Pentagon),
 // this runs the whole program on the machine: real port reads, ULA contention, interrupts.
 //
-// A run is ~16,500 frames (about 5 s per model in turbo), so the tests are DISABLED_ and run on demand:
+// Z80TestSuite_Test runs every variant of the suite on the 48K (the machine the reference values come from):
+// z80full, z80doc, z80flags, z80docflags, z80ccf (SCF / CCF after every instruction: the Q latch) and z80memptr
+// (BIT n,(HL) after every instruction: MEMPTR), each to its "Result:" line: 8,500-16,800 frames, so in the long
+// tier only (UNREAL_LONG_TESTS=1, CI).
+// Z80TestProgram_Test runs z80full on every model; ~5 s per model, so it is DISABLED_ and runs on demand:
 //   cmake-build-agent-release/bin/core-tests --gtest_also_run_disabled_tests --gtest_filter='*Z80TestProgram_Test*'
-// Recipe: docs/inprogress/2026-10-08-z80test-in-ear/README.md
+// Recipe: docs/inprogress/2026-10-08-z80test-in-ear/README.md. The snapshots: testdata/cpu/z80test/README.md
 
 #include <gtest/gtest.h>
 
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "debugger/analyzers/rom-print/screenocr.h"
 #include "emulator/emulator.h"
 
@@ -28,6 +33,7 @@ struct ProgramResult
     int frames = 0;
     std::string resultLine;              // "Result: ..." as printed by the program
     std::vector<std::string> failures;   // every screen line with "FAILED", the CRC line after it
+    std::set<std::string> passed;        // every screen line ending in "OK" ("013 DAA ... OK")
     std::string lastScreen;
 };
 
@@ -83,6 +89,8 @@ ProgramResult RunProgram(const std::string& model, const std::string& snapshot, 
 
         for (const std::string& row : rows)
         {
+            if (row.size() > 2 && row.compare(row.size() - 2, 2, "OK") == 0 && row.find('?') == std::string::npos)
+                result.passed.insert(row);
             if (row.rfind("Result:", 0) == 0)
             {
                 result.resultLine = row;
@@ -128,6 +136,35 @@ TEST_P(Z80TestProgram_Test, DISABLED_Z80Full)
 //   ATM3                - bit 5 of #FE reads 0 (zports.v)
 //   ATM450              - bit 7 of #FE is the PAL marker, a function of the T-state since INT
 //   SPRINTER            - refuses snapshots
+// Every variant of z80test 1.2a on the 48K
+class Z80TestSuite_Test : public ::testing::TestWithParam<std::string>
+{
+};
+
+TEST_P(Z80TestSuite_Test, PassesOn48K)
+{
+    // 8,500-16,800 frames, 11-30 s per variant: the long tier only. The default run covers the same ground per
+    // instruction in QRegister_Test (Q) and Z80TestVerification (z80full's vectors)
+    if (!TestTier::Long())
+        GTEST_SKIP() << "the whole z80test program: UNREAL_LONG_TESTS=1";
+
+    const std::string variant = GetParam();
+    ProgramResult r = RunProgram("48K", "cpu/z80test/" + variant + ".sna", 50 * 60 * 40);
+
+    std::cout << "[" << variant << "@48K] frames=" << r.frames << " passed=" << r.passed.size() << " " << r.resultLine
+              << "\n";
+    for (const std::string& f : r.failures)
+        std::cout << "  " << f << "\n";
+
+    ASSERT_TRUE(r.finished) << "no Result: line after " << r.frames << " frames; last screen:\n" << r.lastScreen;
+    EXPECT_TRUE(r.failures.empty()) << r.resultLine << "\nlast screen:\n" << r.lastScreen;
+    EXPECT_NE(r.resultLine.find("all tests passed"), std::string::npos) << r.resultLine;
+}
+
+INSTANTIATE_TEST_SUITE_P(Variants, Z80TestSuite_Test,
+                         ::testing::Values("z80full", "z80doc", "z80flags", "z80docflags", "z80ccf", "z80memptr"),
+                         [](const ::testing::TestParamInfo<std::string>& info) { return info.param; });
+
 INSTANTIATE_TEST_SUITE_P(Models, Z80TestProgram_Test,
                          ::testing::Values("48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "ATM710", "SCORPION",
                                            "PROFSCORP", "PROFI", "PROFI3", "TSL"),
