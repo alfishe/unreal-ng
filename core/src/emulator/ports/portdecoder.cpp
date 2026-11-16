@@ -774,9 +774,9 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
         case MM_SCORP:
         case MM_PROFSCORP:
             // IsPort_7FFD / IsPort_1FFD / IsPort_7EFD (PortDecoder_Scorpion256)
-            entries.push_back({0x7FFD, 0xD027, 0x5025, "Memory paging (incl. extended RAM bits)", nullptr,
+            entries.push_back({0x7FFD, 0xC027, 0x4025, "Memory paging (incl. extended RAM bits)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
-            entries.push_back({0x1FFD, 0xD027, 0x1025, "Window latch / Shadow Monitor (bit 1)", nullptr,
+            entries.push_back({0x1FFD, 0xC027, 0x0025, "Window latch / Shadow Monitor (bit 1)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P1FFD});
             entries.push_back({0xFF1F, 0xFFFF, 0xFF1F, "Kempston joystick interface",
                                "gives #1F up while TR-DOS selected / Shadow Monitor paged",
@@ -789,7 +789,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
             }
             if (model == MM_PROFSCORP)
             {
-                entries.push_back({0x7EFD, 0xD127, 0x5025, "ProfROM service-window latch", nullptr,
+                entries.push_back({0x7EFD, 0xC127, 0x4025, "ProfROM service-window latch", nullptr,
                                    Tags(PortTag::Memory) | PortTag::Rom | PortTag::System, PagingLatch::P7EFD});
                 entries.push_back({0x00BA, 0x00FE, 0x00BA, "SMUC board (EEPROM / RTC / PIC / IDE window)", nullptr,
                                    Tags(PortTag::System)});
@@ -812,7 +812,7 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                PagingLatch::P7EFD});
             entries.push_back({0xDFFD, 0xFF27, 0xDF25, "GMX RAM page bits 4-6 at #C000", nullptr, Tags(PortTag::Memory),
                                PagingLatch::PDFFD});
-            entries.push_back({0x7FFD, 0xD027, 0x5025, "Memory paging (host Scorpion, after the GMX file)", nullptr,
+            entries.push_back({0x7FFD, 0xC027, 0x4025, "Memory paging (host Scorpion, after the GMX file)", nullptr,
                                Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
             entries.push_back({0x1FFD, 0xD027, 0x1025, "RAM 0 at #0000, Shadow Monitor, RAM page bit 3, TR-DOS page",
                                nullptr, Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P1FFD});

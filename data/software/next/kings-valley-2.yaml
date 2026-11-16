@@ -1,0 +1,95 @@
+# Kings Valley 2 (In Part) (ZX Spectrum Next, zxspeccykid; a port of Konami's "King's Valley II: The Seal of El Giza"),
+# KingsValley.nex, 328192 bytes. It loads standalone, no SD card needed. Controls: Q up, A down, O left, P right, Space
+# fires the weapon / uses the tool / jumps (the same key: a dagger in hand throws, a pickaxe in hand digs, with nothing
+# in hand it jumps); 1 pause, 2 music, 3 mute, 4 restart game, 5 restart level. 30 chambers, each reachable from the
+# stage menu (title: GAME, then START / STAGE). No score and no lives: one touch of a mummy is the death, and the game
+# goes back to "HIT FIRE TO START" for the same chamber. A chamber is won by taking every gem and walking into the
+# door.
+#
+# Haptics (haptics.md section 13 H5). Found with per-frame coverage around each action, then the code read. The game
+# asks for each sound through one routine (#8E28: A = the effect number, B = the channel, `ld a,N / ld b,0 / call
+# #8E28`; the AY player of the three channels lives at #8D2A-#8E27), so the 13 callers are a map of the events:
+#   page 2 (CPU #8000-#BFFF, always mapped by the game) and the code module of the 8K MMU page #1D, which the game maps at
+#   #C000 and keeps there (slots 6 and 7 stay #1D and #01 in play). #1D is the upper half of the 16K RAM page 14, so
+#   the #C000 addresses are written as page 14 with the offset +#2000 (`page:14:0xE427` = CPU #C427). The page form is
+#   used because the coverage map is by CPU address and the #C000 window shows other code too (see Left out).
+# Events (each seen to fire by real-time play over the WebAPI, the game.events monitor, counted from a trial that was
+# cleared before the run; keys were pressed and released by wall-clock timers and the hero's position (#9683 x, #9685
+# y, object table #9680) was read to line him up with the ladder):
+#   jump      #C427  (sound 12) the jump start, once per Space tap with nothing in hand: 2 jumps = 2 fires in the route
+#             below. A tool or dagger in hand turns the same key into dig / throw, no jump.
+#   throw     #8977  (sound 8) a dagger leaves the hand: one fire per throw. The dagger is picked up by walking over it
+#             (first chamber: bottom right).
+#   dagger    #D341  (sound 1) a dagger is picked up: walking right from the start for about a second = 1 fire.
+#   tool      #D479  (sound 3) a tool is picked up (the pickaxe of the first chamber; the red tool on the right of it
+#             is the same list): 1 fire at the pickaxe.
+#   gem       #D3AF  (sound 2, or 0 for the last gem) a gem is taken: the yellow gem of the first chamber by a jump from
+#             the stairs = 1 fire. The byte #A46F counts the gems left (4 at the start of the first chamber).
+#   allGems   #D3A3  the last gem was taken (#A46F reached 0, the door flag #A472 cleared, the palette entry of the door
+#             changes through `call #91BA`).
+#   exit      #DA7B  the hero is on the door tile with every gem taken (`#802B = #0A`, the chamber-won sequence,
+#             its jingle is sound 4 at #D9CC about 40 frames later; the next screen is "TOMB 02").
+#   enemy     #848F  (sound 5) a mummy rises out of the tomb (about 5 s after the start of the first chamber; its
+#             walk-off is sound 6 at #84A6, 52 frames later, not used): 1 fire per mummy.
+#   hitEnemy  #D418  (sound 9) a thrown dagger hits an enemy: the mummy falls (state #0E). Seen once in real time, the
+#             dagger thrown at the mummy walking along the floor towards the hero.
+#   died      #C544  the death sequence starts (called from the state dispatcher at #8083; the hero falls red, then
+#             "HIT FIRE TO START"). Its sound
+#             10 is the call at #C566 (same code, not a separate event) and the follow-up sound 11 at #C582 72 frames
+#             later. The mummy reached the idle hero about 12 s after the start: enemy 1, died 1.
+# Checked by real-time play (WebAPI key presses, hold and release timed by wall clock, the position byte used to line up
+# on the ladder): start, walk right 1 s: dagger 1; Space: throw 1; walk left to the ladder (x = #88), climb to y = #90,
+# walk to x = #78, Space + O twice: jump 2, gem 1, tool 1 (two jumps pick the gem and then the pickaxe); idle: enemy 1
+# then died 1; the dagger thrown at the mummy on the floor: hitEnemy 1. Two events were seen only with the memory
+# forced, in real time: with the gems-left byte #A46F set to 1 the same jump gave allGems 1 and gem 1, and with the hero
+# put on the door tile (x = #98, y = 68) exit fired once and the screen changed to "TOMB 02". The other three gems of
+# the first chamber (right pyramid) were not walked to.
+# Known limits: there is no landing sound, so no `land` event; `jump` fires also when the jump is cut short by a wall.
+# Probes need the real-time run: the frame-stepped run_frames API does not tell exec probes.
+#
+# Left out (named so nobody repeats them):
+#   #C0DA and #C18C (sound 7) the dig of the pickaxe (rate-limited: one sound per 3 digging steps; the module checks a
+#             "diggable" tile flag, #20, in front of the hero). Not reached: with the pickaxe in hand Space in the first
+#             and the third chamber started the swing but dug nothing, the tiles in front were not diggable.
+#   #C566 / #C582 as coverage hits every 16 frames in frame-stepped runs: another bank's code shows at the same CPU
+#             address; the page-qualified probes at #C566 / #C582 fire only in the death sequence. The probe for death
+#             is the start of the sequence, #C544.
+#   #D9CC (sound 4) the jingle of the won chamber, #84A6 (sound 6) the mummy leaving the tomb: follow-ups of `exit` and
+#             `enemy`.
+#   the music player (#8D81, every frame) is not an event.
+schema: 1
+kind: play
+id: builtin/game/kings-valley-2
+label: Kings Valley 2 (In Part)
+extends: [scheme/qaop-space]
+match:
+  machines: [NEXT]
+  file_sha256: ["43bf01b1177eb05076fdef212a0a93a4bde7ca25f95ffbdf250b9dda53041aad"]
+layers:
+  play:
+    south:        { key: SPACE, label: Jump / throw / dig }
+    menu:         { key: "1", label: Pause }
+    view:         { key: "5", label: Restart level }
+events:
+  jump:     { probe: exec, address: "page:14:0xE427" }
+  throw:    { probe: exec, address: "page:2:0x8977" }
+  dagger:   { probe: exec, address: "page:14:0xF341" }
+  tool:     { probe: exec, address: "page:14:0xF479" }
+  gem:      { probe: exec, address: "page:14:0xF3AF" }
+  allGems:  { probe: exec, address: "page:14:0xF3A3" }
+  exit:     { probe: exec, address: "page:14:0xFA7B" }
+  enemy:    { probe: exec, address: "page:2:0x848F" }
+  hitEnemy: { probe: exec, address: "page:14:0xF418" }
+  died:     { probe: exec, address: "page:14:0xE544" }
+haptics:
+  rules:
+    - { on: jump, play: tick, target: handle.high }
+    - { on: throw, play: shot, target: handle.high }
+    - { on: dagger, play: pickup }
+    - { on: tool, play: pickup }
+    - { on: gem, play: pickup, scale: 1.7 }
+    - { on: allGems, play: knock, target: handle.low }
+    - { on: exit, play: thump }
+    - { on: enemy, play: knock, target: handle.low }
+    - { on: hitEnemy, play: impact }
+    - { on: died, play: life-lost }

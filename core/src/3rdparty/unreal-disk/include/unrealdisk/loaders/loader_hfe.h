@@ -94,12 +94,21 @@ public:
 
     /// endregion </Accessors>
 
-private:
-    /// De-interleave track data (256-byte blocks alternating between sides)
-    static void deinterleave(const uint8_t* src, size_t srcLen, std::vector<uint8_t>& side0, std::vector<uint8_t>& side1);
+protected:
+    /// The cell rate this loader writes: 250 kbit/s (2 us cells, double density MFM); FM tracks go at double rate,
+    /// each FM cell as two ("0c"), the HFE convention (HxC, Greaseweazle)
+    static constexpr uint16_t WRITE_BIT_RATE = 250;
+    /// SETBITRATE argument for it: 36 MHz / cells per second (72 for 500 000 cells/s)
+    static constexpr uint8_t WRITE_RATE_OPCODE_VALUE = 72;
 
-    /// Interleave track data for saving
-    static void interleave(const std::vector<uint8_t>& side0, const std::vector<uint8_t>& side1, std::vector<uint8_t>& out);
+    /// One track's sides from its LUT entry: trackLength / 2 bytes a side, in 512-byte blocks of 256 bytes of side 0
+    /// then 256 of side 1 (the last block's unused part is padding). `available` bounds the reads to the file
+    static void deinterleave(const uint8_t* src, size_t available, size_t trackLength, std::vector<uint8_t>& side0,
+                             std::vector<uint8_t>& side1);
+
+    /// The blocks of one track; the LUT length is 2 x the longer side (padding bytes `pad` are not counted)
+    static void interleave(const std::vector<uint8_t>& side0, const std::vector<uint8_t>& side1, uint8_t pad,
+                           std::vector<uint8_t>& out);
 
     /// Bit-reverse a byte (v3 stores bits in reverse order compared to v1)
     static uint8_t bitReverse(uint8_t b);
@@ -110,9 +119,27 @@ private:
     /// Pack bit vector back to bytes
     static void packBits(const std::vector<uint8_t>& bits, std::vector<uint8_t>& out, bool lsbFirst = true);
 
-    /// Process v3 opcodes and extract actual bit cells + weak regions
+    /// The v3 opcode stream (bytes in transmission order, first cell in bit 7) to cells and a weak flag per cell:
+    /// NOP, SETINDEX: nothing; SETBITRATE n: one argument byte; SKIPBITS n, x: the low 8 - n bits of x (x = RAND:
+    /// 8 - n weak cells); RAND: 8 weak cells
     static void processV3Opcodes(const std::vector<uint8_t>& raw, std::vector<uint8_t>& bits,
-                                  std::vector<std::pair<size_t, size_t>>& weakRanges);
+                                 std::vector<uint8_t>& weakCells);
+
+    /// The cells of one track at the write rate (FM doubled) and a weak flag per cell (16 per weak byte, 32 in FM)
+    static void encodeSide(DiskImage::Track& track, std::vector<uint8_t>& cells, std::vector<uint8_t>& weakCells);
+
+    /// v3 opcode stream of one side: SETBITRATE, then the cells 8 at a time (RAND for weak ones, SKIPBITS for a
+    /// short last group or a group that would read as an opcode); transmission order, not yet bit-reversed
+    static void emitV3(const std::vector<uint8_t>& cells, const std::vector<uint8_t>& weakCells,
+                       std::vector<uint8_t>& out);
+
+    /// Decode one side into the track: MFM, or FM at double or single rate, whichever finds the most sectors (a tie
+    /// goes to the header's encoding). An empty side keeps a blank track
+    static void decodeSide(const std::vector<uint8_t>& cells, const std::vector<uint8_t>& weakCells, bool headerFm,
+                           bool singleRateFm, DiskImage::Track& track);
+
+    bool serializeVersion(DiskImage* diskImage, std::vector<uint8_t>& out, std::vector<std::string>& warnings,
+                          int version) const;
 
     LoaderOptions _options;
     std::string _filepath;
@@ -125,6 +152,15 @@ private:
     uint16_t _rpm = 300;
     uint8_t _interfaceMode = 7;
     bool _writeAllowed = true;
-    bool _singleStep = false;
+    bool _singleStep = true;  // header 0xFF: single step (0 is double step)
 };
+#ifdef _CODE_UNDER_TEST
+
+class LoaderHFECUT : public LoaderHFE
+{
+public:
+    using LoaderHFE::processV3Opcodes;
+    using LoaderHFE::emitV3;
+};
+#endif  // _CODE_UNDER_TEST
 }  // namespace unrealdisk

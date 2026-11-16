@@ -246,6 +246,9 @@ public:
     TTDCursor PublishedCursor() const override;
     /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
     bool IsRecordingPaused() const { return _recordingPaused; }
+    /// A start asked while the machine stood inside another CPU's run (Emulator::IsParkedInsideCardRun): the
+    /// recording begins at the next frame boundary, its baseline the frame's start (debuggers.md §7)
+    bool IsStartPending() const { return _startPending.load(std::memory_order_acquire); }
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
@@ -1061,16 +1064,16 @@ public:
     // the emulator (existing pause discipline — same as RestoreCheckpoint-
     // ForTesting / SeekTo).
 
-    /// @brief Resume recording from a historical position, truncating future.
+    /// @brief Resume recording from a historical position; the old future is kept.
     ///
-    /// Algorithm (parent TDD §8.3):
+    /// Algorithm (parent TDD §8.3, TTD branches architecture.md §4.5):
     ///   1. Validate preconditions (state, bounds).
     ///   2. SeekTo(from) — ensures the emulator is positioned at `from`.
     ///      No-op-equivalent if already there (re-restore is deterministic).
-    ///   3. Release page refs for every checkpoint cp where cp.time > from.
-    ///   4. Erase those checkpoints from _line->timeline.
-    ///   5. _line->inputJournal.DropAfter(from).
-    ///   6. _state = Recording.
+    ///   3. History after `from`: a new branch forks there (ForkBranchAt), the old future stays on its parent.
+    ///      At the active branch's end: the line is cut at the resume point (its partial last frame) and goes on.
+    ///   4. The new line's journals, markers, bookmarks and coverage after the resume point are dropped.
+    ///   5. _state = Recording.
     ///
     /// @param from  Position to resume from. Must be within the current
     ///              recorded timeline bounds (<= SessionEndPosition()).
@@ -1090,9 +1093,31 @@ public:
     /// Make @p branch active and stand at @p at on its lineage (default: its last visited moment, else its end).
     /// A recording pauses for browsing first
     bool SwitchBranch(uint32_t branch, const std::optional<TTDTimePoint>& at, std::string& error);
+    /// Make the branch left last active again (ttd.branch_prev, surfaces.md §2): every change of the active branch
+    /// (a switch, a fork) leaves the old one on a trail; each call walks it back one step, at that branch's last
+    /// visited moment. False with @p error when the trail holds no live branch
+    bool SwitchToPreviousBranch(uint32_t& switchedTo, std::string& error);
+    /// The trail SwitchToPreviousBranch walks, oldest first; a verb whose moves are one step for the user
+    /// (branch-create: a switch to the fork's branch, the fork, the way back) puts it back afterwards
+    std::vector<uint32_t> BranchTrail() const;
+    void SetBranchTrail(std::vector<uint32_t> trail);
     /// Delete @p branch and its descendants (TTDBranchTable::Delete: never the trunk or the active lineage, pinned
     /// ones only with @p force); their history leaves memory. @p removed: the ids deleted
     bool DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed, std::string& error);
+    /// One refusal of DeleteBranches: the branch asked for and why it stays
+    struct BranchDeleteRefusal
+    {
+        uint32_t branch = 0;
+        std::string error;
+    };
+    /// Delete several branches with their descendants in one operation (a prune): each by DeleteBranch's rules,
+    /// the refused ones in @p refused, the rest gone together - one delete batch in the recording folder (one sync,
+    /// one sweep of the files), one session publish, one `deleted` event counting them all. @p removed: every id
+    /// deleted. False only when none was
+    bool DeleteBranches(const std::vector<uint32_t>& branches, bool force, std::vector<uint32_t>& removed,
+                        std::vector<BranchDeleteRefusal>& refused);
+    /// Edit @p branch's name, note, tags or pin (the table's rules: a name stays unique among the live branches)
+    bool UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error);
     /// Who asks for the next fork and why (createdBy, run, tags, note, name; reason when empty: resume): taken by
     /// the next fork only
     void SetNextBranchMeta(TTDBranchMeta meta)
@@ -1100,8 +1125,22 @@ public:
         _nextBranchMeta = std::move(meta);
         _nextBranchMetaSet = true;
     }
+    /// branch-create (surfaces.md §5.1): the next resume forks a branch with @p meta even at the active branch's
+    /// end, where a resume only goes on. Taken by the next resume; CancelBranchCreate drops it when none came
+    void PrepareBranchCreate(TTDBranchMeta meta)
+    {
+        SetNextBranchMeta(std::move(meta));
+        _forceFork = true;
+    }
+    void CancelBranchCreate()
+    {
+        _forceFork = false;
+        _nextBranchMetaSet = false;
+    }
     /// The lineage spans of the active branch (trunk first)
     std::vector<TTDLineageSpan> ActiveLineage() const { return _branches.Lineage(_tip); }
+    /// The branches as last published (no fresh publish asked)
+    TTDBranchesPublished PublishedBranches() const override;
 
     /// endregion </Branches>
     /// The media a recording continued from @p from could not set back there (M5, F11): another medium in the
@@ -1437,6 +1476,13 @@ public:
     /// from the current position. Returns false when at or past the session
     /// end (no further history).
     bool StepForwardInstruction();
+
+    /// @brief Step back over (the debuggers' Shift+F8): one instruction back, but when that instruction is a return
+    /// (RET, RET cc taken, RETI, RETN) that brought the stack up to where it is now, back past the whole routine to
+    /// the instruction at this stack level before it: the CALL / RST that entered it, or the instruction an interrupt
+    /// came after. The routine is found by the stack level of each instruction's start (SP), so nested calls,
+    /// interrupts inside it and recursion are passed over too. There is no reverse step out (owner 2026-11-12).
+    ttd::TTDReverseStepOverResult ReverseStepOver();
 
     // -----------------------------------------------------------------------
     // Phase 4 reverse execution (extends single-opcode step helpers with
@@ -1846,12 +1892,27 @@ private:
     uint32_t _viewId = 0;   ///< the line read and written now (an ancestor's while standing in its part)
     TTDBranchMeta _nextBranchMeta;
     bool _nextBranchMetaSet = false;
+    bool _forceFork = false;   ///< PrepareBranchCreate: the next resume forks at the end too
+    /// The table's last change (the ttd.branches topic); NoteBranchEvent numbers them
+    TTDBranchEvent _branchEvent;
+    void NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed = 0);
     /// Per branch id: where it was last visited (SwitchBranch's default)
     std::vector<std::optional<TTDTimePoint>> _lastVisited = {std::nullopt};
+    /// The branches the active one left, oldest first (SwitchToPreviousBranch walks it back); bounded
+    std::vector<uint32_t> _branchTrail;
+    /// SwitchBranch called by SwitchToPreviousBranch: the branch left is not added to the trail
+    bool _walkingTrailBack = false;
+    /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
+    void LeaveBranch(uint32_t left);
+    /// The trail's last live branch other than the active one; kTTDNoBranch: none
+    uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
     /// does not park the machine (GetBookmarks); empty = the trunk alone
     mutable std::mutex _lineageViewLock;
     std::vector<TTDLineageSpan> _lineageView;
+    /// GetSessionInfo's branch list: rebuilt when the table's revision or the active branch moved
+    mutable std::shared_ptr<const TTDBranchesView> _branchesView;
+    mutable uint32_t _branchesViewTip = kTTDTrunk;
     /// The trunk alone (a new session, a load, an invalidation): the active line's state stays the trunk's
     void ResetBranches();
     /// A resume at @p from (cut @p cut) on the viewed line, which has recorded history after it: a new branch
@@ -2634,6 +2695,7 @@ private:
     void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
+    std::atomic<bool> _startPending{false};  // StartRecording inside a card's run: the machine starts it at the next boundary
     bool _restartPending = false;           // the session ended (reset, snapshot load, machine change): a new one at the next frame boundary
     /// The one rule (D42): the recording session ends, @p keepHistory = the machine is still the one the history belongs to.
     /// A new session starts at the next frame boundary for a black box, or when the `ttdrestart` feature is on

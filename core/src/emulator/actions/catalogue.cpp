@@ -46,6 +46,7 @@ const Descriptions& DescriptionTable()
         {"ttd.step_back_instruction", "Go back one instruction in the history."},
         {"ttd.step_forward_instruction", "Go forward one instruction in the history."},
         {"ttd.reverse_step", "Step back over the last instruction, as a debugger's reverse step."},
+        {"ttd.reverse_step_over", "Step back over a routine whose return comes before, else one instruction back."},
         {"ttd.reverse_continue", "Run backwards to the previous breakpoint in the history."},
         {"ttd.bookmark_add", "Bookmark the current position of the history."},
         {"ttd.resume_live", "Leave the history and continue the live machine."},
@@ -93,10 +94,19 @@ const Descriptions& DescriptionTable()
         {"ttd.journal_build", "Build the write journal over the history (params from_frame, to_frame)."},
         {"ttd.journal_build_cancel", "Cancel a running write-journal build."},
         {"ttd.export_clip", "Export a range of the history as a lossless clip (params path, from, to)."},
+        // TTD branches (branchactions.cpp)
+        {"ttd.branch_prev", "Go back to the branch left last; repeated presses walk further back."},
+        {"ttd.branch_next_sibling", "Switch to the next branch at the nearest fork of the lineage (by creation)."},
+        {"ttd.branch_prev_sibling", "Switch to the previous branch at the nearest fork of the lineage (by creation)."},
+        {"ttd.branch_switch", "Switch to a branch (param branch: an id, a GUID or a name; frame, tinframe: a moment on it)."},
+        {"ttd.branch_menu", "List the branches for a menu: the active lineage first, newest first (the ttd.branch_list readout)."},
+        {"ttd.branch_pin", "Pin the active branch, or unpin it (a pinned branch is never pruned or dropped as empty)."},
+        {"ttd.branch_delete", "Delete a branch off the active lineage (param branch) after a 1 s hold; now: at the press."},
         // Context
         {"ctx.set", "Set the instance's surface context (play, ttd, ttd.timecode, debug.disasm); \"\" returns to the default."},
         // Machine and capture
-        {"mach.reset", "Reset the machine; hold the control for a second."},
+        {"mach.reset",
+         "Reset the machine; hold the control for a second, or at once with now (a UI that confirms first)."},
         {"mach.nmi", "Send a non-maskable interrupt (the Magic button)."},
         {"mach.turbo_toggle", "Switch the turbo rate on or off."},
         {"mach.start", "Start a machine of a model (param model); with replace it takes the place of the target."},
@@ -133,7 +143,9 @@ const Descriptions& DescriptionTable()
         {"media.protect", "Write-protect a disk, or allow writes (param drive)."},
         {"media.save", "Save a changed medium back to its file."},
         {"media.create", "Insert a new blank disk."},
-        {"snapshot.quick", "Save or load the quick snapshot (param op)."},
+        {"snapshot.quick",
+         "Save, load, list or delete the quick snapshots (params op, slot 1..9, dir); a save keeps the presented "
+         "frame as quick-<n>.png beside it."},
         {"snapshot.save", "Save a snapshot to a file (param path)."},
         // Video
         {"video.overscan_toggle", "Show the border's overscan, or hide it."},

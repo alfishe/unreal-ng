@@ -42,6 +42,8 @@ install(DIRECTORY "${DATA_PATH}/fonts" "${DATA_PATH}/rom" "${DATA_PATH}/midi"
     "${DATA_PATH}/boot" "${DATA_PATH}/configs"
     DESTINATION lib/unreal-ng COMPONENT Suite)
 install(DIRECTORY "${DATA_PATH}/testrom/" DESTINATION lib/unreal-ng/rom COMPONENT Suite)
+# The Next SD card the shipped configs/next names (cmake/ExtractConfigImages.cmake does the same for the other packages)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/testdata/machines/zxnext/card" DESTINATION lib/unreal-ng/configs/next COMPONENT Suite)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/core/automation/webapi/resources/html"
     DESTINATION lib/unreal-ng/resources COMPONENT Suite)
 install(FILES

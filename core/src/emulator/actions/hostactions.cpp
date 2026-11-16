@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -513,6 +516,65 @@ std::string QuickSnapshotPath(const ActionValue& value, int64_t slot)
         folder = FileHelper::PathCombine(user, "snapshots");
     }
     return FileHelper::PathCombine(folder, "quick-" + std::to_string(slot) + ".szx");
+}
+
+/// snapshot.quick: slots 1..9
+constexpr int64_t kQuickSlots = 9;
+
+/// The picture of a quick snapshot: quick-<n>.png beside quick-<n>.szx
+std::string QuickPicturePath(const std::string& snapshotPath)
+{
+    const size_t dot = snapshotPath.find_last_of('.');
+    return (dot == std::string::npos ? snapshotPath : snapshotPath.substr(0, dot)) + ".png";
+}
+
+/// The presented frame as the slot's picture (a slot list shows it); "" when none could be written
+std::string SaveQuickPicture(const std::string& instanceId, const std::string& picturePath)
+{
+    ScreenshotOptions options;
+    options.area = ScreenshotArea::Full;
+    options.format = ScreenshotFormat::Png;
+    options.source = ScreenshotSource::Presented;
+    options.saveTo = picturePath;
+    const ScreenshotResult shot = Screenshotter::Take(instanceId, options);
+    return shot.ok ? shot.savedFile : std::string();
+}
+
+/// A file's modification time in Unix seconds; 0 when it has none
+int64_t FileUnixTime(const std::string& path)
+{
+    std::error_code error;
+    const std::filesystem::file_time_type written = std::filesystem::last_write_time(FileHelper::ToFsPath(path), error);
+    if (error)
+        return 0;
+    // file_clock to system_clock without clock_cast (not in every standard library yet)
+    const auto system = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        written - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+    return std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
+}
+
+/// snapshot.quick op list: every slot with its file, time and picture (a handheld menu's slot grid)
+ActionResult ListQuickSnapshots(const ActionValue& value)
+{
+    StateNode slots = StateNode::Array();
+    for (int64_t slot = 1; slot <= kQuickSlots; slot++)
+    {
+        const std::string path = QuickSnapshotPath(value, slot);
+        if (path.empty())
+            return Conflict("no user data folder for quick snapshots: give dir");
+        StateNode entry = StateNode::Object();
+        entry["slot"] = static_cast<int>(slot);
+        const bool used = FileHelper::FileExists(path);
+        entry["used"] = used;
+        entry["path"] = path;
+        entry["time"] = used ? FileUnixTime(path) : int64_t{0};
+        const std::string picture = QuickPicturePath(path);
+        entry["picture"] = used && FileHelper::FileExists(picture) ? picture : std::string();
+        slots.push(std::move(entry));
+    }
+    StateNode body = StateNode::Object();
+    body["slots"] = std::move(slots);
+    return ActionResult::Success(std::move(body));
 }
 
 ActionResult SaveSnapshotTo(Emulator& emulator, const std::string& path)
@@ -1419,26 +1481,43 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         "sides? (1|2), size? (IDE / SD: bytes, or 64M, 2G), save? / discard? / export? (the disk it replaces)",
         CreateMedium, RouteRules("POST", "/media/A/create"));
     add(
-        "snapshot.quick", "Quick snapshot", media, ValueKind::Press, "op (save|load), slot? (1..9, 1), dir?",
+        "snapshot.quick", "Quick snapshot", media, ValueKind::Press,
+        "op (save|load|list|delete), slot? (1..9, 1), dir?",
         [](const ActionCall& call) {
             std::string error;
             const std::string op = Lower(TextParam(call.value, "op").value_or(""));
             const int64_t slot = IntParam(call.value, "slot", error).value_or(1);
             if (!error.empty())
                 return BadRequest(error);
-            if (op != "save" && op != "load")
-                return BadRequest("op: save or load");
-            if (slot < 1 || slot > 9)
+            if (op != "save" && op != "load" && op != "list" && op != "delete")
+                return BadRequest("op: save, load, list or delete");
+            if (slot < 1 || slot > kQuickSlots)
                 return BadRequest("slot: 1..9");
+            if (op == "list")
+                return ListQuickSnapshots(call.value);
             const std::string path = QuickSnapshotPath(call.value, slot);
             if (path.empty())
                 return Conflict("no user data folder for quick snapshots: give dir");
+            const std::string picture = QuickPicturePath(path);
+            if (op == "delete")
+            {
+                std::error_code ignored;
+                const bool removed = std::filesystem::remove(FileHelper::ToFsPath(path), ignored);
+                std::filesystem::remove(FileHelper::ToFsPath(picture), ignored);
+                StateNode body = StateNode::Object();
+                body["slot"] = static_cast<int>(slot);
+                body["removed"] = removed;
+                return ActionResult::Success(std::move(body), removed ? "Quick snapshot deleted" : "Slot was empty");
+            }
             if (op == "save")
             {
                 const std::string folder = path.substr(0, path.find_last_of("/\\"));
                 if (!FileHelper::FolderExists(folder) && !FileHelper::CreateFolders(folder))
                     return Conflict("cannot create " + folder);
-                return SaveSnapshotTo(*call.emulator, path);
+                ActionResult saved = SaveSnapshotTo(*call.emulator, path);
+                if (saved.ok)
+                    saved.body["picture"] = SaveQuickPicture(call.instanceId, picture);
+                return saved;
             }
             if (!FileHelper::FileExists(path))
                 return Conflict("quick snapshot " + std::to_string(slot) + " is empty (save it first)");
@@ -1447,9 +1526,12 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         },
         [] {
             ActionRules rules;
-            rules.scope = [](Emulator&, const ActionValue& value) {
-                return Lower(TextParam(value, "op").value_or("")) == "save" ? RouteScope("POST", "/snapshot/save")
-                                                                            : RouteScope("POST", "/snapshot/load");
+            rules.scope = [](Emulator&, const ActionValue& value) -> uint32_t {
+                const std::string op = Lower(TextParam(value, "op").value_or(""));
+                if (op == "list")
+                    return 0;  // reads the folder, changes nothing
+                return op == "save" || op == "delete" ? RouteScope("POST", "/snapshot/save")
+                                                      : RouteScope("POST", "/snapshot/load");
             };
             return rules;
         }());

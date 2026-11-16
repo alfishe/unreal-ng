@@ -154,6 +154,23 @@ void FeatureManager::setBreakpointDebugHold(bool on)
     applyDebugMode();
 }
 
+void FeatureManager::setCardTightHold(bool on)
+{
+    {
+        std::lock_guard<std::recursive_mutex> lock(_mutex);
+        if (_cardTightHold == on)
+            return;
+        _cardTightHold = on;
+    }
+    applyDebugMode();
+}
+
+bool FeatureManager::cardTightHold() const
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    return _cardTightHold;
+}
+
 bool FeatureManager::breakpointDebugHold() const
 {
     std::lock_guard<std::recursive_mutex> lock(_mutex);
@@ -171,6 +188,7 @@ void FeatureManager::applyDebugMode()
     if (_context->pEmulator)
         hold.emplace(*_context->pEmulator, "debug mode");
     _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
+    _context->pCore->GetZ80()->cardTight = cardTightHold();
     _context->pCore->SelectMemoryInterface();  // the debug path, contended where the machine is
     if (Memory* memory = _context->pCore->GetMemory())
         memory->UpdateFeatureCache();
@@ -842,6 +860,7 @@ void FeatureManager::onFeatureChanged(const std::string& changedFeatureId)
 
         // Synchronize master switch with feature changes (a replay's hold stays: debugModeInEffect)
         _context->pCore->GetZ80()->isDebugMode = debugModeInEffect();
+    _context->pCore->GetZ80()->cardTight = cardTightHold();
 
         // Switch memory interface based on debug mode and the machine's contention (with its switch)
         _context->pCore->SetContentionSwitch(isEnabled(Features::kContention));  // re-selects the interface

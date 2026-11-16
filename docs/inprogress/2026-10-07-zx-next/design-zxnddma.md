@@ -69,7 +69,7 @@ no core-version switch (we emulate 3.02.03; the guide says "every core > 3.02.16
 
 | # | Phase | Content | Done when |
 |:--|:--|:--|:--|
-| 0 | RTL | fetch `new_dma.vhd`, `zxnext.vhd` of the core 3.03.00 into the RTL collection (`zx-next/fpga`, checksums), read, list differences from this document | this document corrected; open questions closed or marked |
+| 0 | RTL (checked 2026-11-11: the official repo `SpectrumNext/ZX_Spectrum_Next_FPGA`, branches `master`, `30204`, `30205` hold no `new_dma.vhd`; their `dma.vhd` is byte-identical to our 3.02.03 copy, so the RTL of core 3.03.00 is not public and the guide is the only source) | fetch `new_dma.vhd`, `zxnext.vhd` of the core 3.03.00 into the RTL collection (`zx-next/fpga`, checksums), read, list differences from this document | this document corrected; open questions closed or marked |
 | 1 | Physical memory path | `Bus` gains `readPhysical(uint32_t)` / `writePhysical`; Next memory exposes the 4 MB SRAM (issue-dependent wrap: bit 21 on issue 4, 20 on issue 2 without the expansion), banks 5/7 as BRAM (writes do not reach the ULA screen) | unit tests: bank addresses `$40000+bank*$4000`, wrap per issue, bank 5/7 |
 | 2 | Command decode | `$D7 $DB $DF $E3 $E7 $EB $EF $F3 $F7 $FB` + follow bytes in the sequencer; port `$0B` ignores them (follow bytes then fall through as registers); `$C3`/`$CF` extended; state in the codec (version bump), the history entry and the status/report (`portdecoder_next_reports.cpp`) | tests: every command's follow bytes on `$6B` and the drop on `$0B` and on 3.02.03 mode; reset/load tables of the guide 2.6 |
 | 3 | Engine | physical addressing with carry; 2D rows with strides; transparent; fill; Layer 2 X,Y destination from NR `$12/$13/$70` for the three modes; hidden screen; fixed-address and burst/prescaler interplay; WR5 restart | unit tests from the guide's formulas (all three Layer 2 modes, clipping edge cases, row length/rows 0 = one byte) |
@@ -108,3 +108,32 @@ no core-version switch (we emulate 3.02.03; the guide says "every core > 3.02.16
 Phase 0 (a day of reading), 1-3 together (the core of the work, one branch, a few hundred lines plus tests), 4 and 5 next,
 6 with the automation planes, 7 batched. The 2D/Layer 2 engine is data-parallel and free of timing: it can be written and
 tested before the timing phase.
+
+## 8. Timing status (2026-11-11, first version in the branch `zxnddma`)
+
+`zxnddma_compare` at 28 MHz, ours against the guide (issue 5), 32 balls of 16x16, measured in video lines of 64 us:
+
+| Way | Ours | Guide | Note |
+|:--|:--|:--|:--|
+| 1 CPU, LDIR | 8.3 ms | 7.2 ms | CPU part, +15% |
+| 2 CPU, skip `$E3` | 18.9 ms | 15.6 ms | CPU part, +21% |
+| 3 zxnDMA, per column | 9.3 ms | 8.2 ms | mostly CPU code (OTIR set-up), +1.1 ms like way 1 (9.7 with the DMA SRAM wait on) |
+| 4/5 zxnDDMA, opaque / transparent | 2.2 ms | 2.1 ms | the new engine, +5% (2.5 ms with the DMA SRAM wait on) |
+
+- The new engine's own timing is inside the 64 us measuring step. The CPU ways are slower than the board: our LDIR costs 24.0 clocks
+  a byte at 28 MHz (21 + one SRAM read wait for each of its three reads: two opcode bytes and `(HL)`; measured on 2026-11-11), while the
+  guide's 7.2 ms, after the program's own loop overhead (about 2.6 clocks a byte), says the board's LDIR costs 21-22. The board seems not
+  to pay the three waits.
+- The rule we have is `zxnext.vhd` (core 3.02.03) 3171-3181: `sram_wait_n` is low for every read cycle that reaches the SRAM at 28 MHz
+  (`cpu_rd_n` is the DMA's own read while it holds the bus, `dma_wait_n` includes `sram_wait_n`, lines 1830 and 1844). The commented-out
+  line above it limits the wait to M1 and DMA reads. Core 3.03.00 may have changed it: its RTL is not public (phase 0). Pinned by
+  `NextSkeleton_Test.At28MHzSramReadsWaitOneClockAndBank7DoesNot` and the RTL timing cases, so it stays as it is.
+- **Settled per core (2026-11-12, measured on a board by the owner):** core 3.02.03 waits a clock on each CPU and DMA read of the SRAM
+  at 28 MHz (a DMA read with cycle length 2 takes 2 + 1 clocks, a write 2); core 3.03 has no such wait for either (a DMA read takes its
+  cycle length, the Z80 no +1). The emulator follows the core: `SetSramWait28` in `PortDecoder_Next::UpdateContention` is on only for the
+  plain `NEXT` (3.02.03), off for `NEXT-DDMA` (3.03), and the DMA's reads in `BindDma()` take it from there (the 2026-11-11 constant
+  `kDmaSramWait` is gone). The guide's numbers fit: without the waits way 4/5 takes 2.2 ms (guide 2.1), way 3 9.3 ms (8.2), and the CPU
+  ways should lose most of their +15-21% (the LDIR's three read waits; not re-measured yet). Pinned by `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Physical-mode
+  accesses skip `contend` (the video logic decodes contention from the CPU address, which a physical access does not carry).
+- Fill mode costs one write cycle set a byte (the guide: twice as fast as a fixed source); not measured against a number.
+- Not checked: the IM2 + DI hold, 2D with auto restart, the burst/prescaler interplay with 2D.

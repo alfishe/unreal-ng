@@ -41,6 +41,19 @@ emulator_manage {"action":"create","model":"NEXT","ram_power_on":"zero"}
 NextZXOS reaches its menu **about 6 seconds** after the reset at normal speed (measured: `reset` to the key-wait loop `#0C8F`
 5.6 s). Do not enable `turbo`: it only makes the picture stutter.
 
+**Two resets.** A **soft** reset (the default everywhere) is the board's reset button: NextZXOS restarts at once, the
+boot ROM and the firmware are not run again. A **hard** reset is a power cycle: the boot ROM, the logo and the
+firmware run from the start, as at power-on (NR `#02` reads `power_on`). Ask for it explicitly:
+
+```text
+emulator_manage {"action":"reset","hard":true}          # MCP; {"action":"reset"} is soft
+POST /api/v1/emulator/{id}/reset {"hard": true}          # REST / WebSocket call; or ?hard=true
+reset hard                                               # CLI; emu.reset(hard=True) in Python, emu:reset{hard = true} in Lua
+#   → {"status":"success","reset":"hard", ...}
+```
+
+The Qt menu has both: Run > Reset (soft) and Run > Hard Reset (Power Cycle).
+
 ```text
 invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/state/next"}
 #   → machine {"cpu_clock_hz":28000000,"speed_ratio":8,"machine_type":3,"timing":"+3", ...}, divmmc {...}, mmu {...}, spi {...}
@@ -358,7 +371,7 @@ The record is **on by default** (ini `[NEXT] LayerCapture=on|off`; it costs abou
 machine answers from its last frame.
 
 ```text
-capture_media {"action":"screenshot","layer":"tilemap"}                     # PNG, alpha 0 where the tilemap paints nothing; 640 x 512 like the screenshot
+capture_media {"action":"screenshot","layer":"tilemap"}                     # PNG, alpha 0 where the tilemap paints nothing; 640 x 512, the grid of the 720 x 576 screenshot at (32, 32)
 capture_media {"action":"screenshot","layer":"ids","filename":"scratch/ids.png"}   # every pixel coloured by the layer that won it (the legend is in the answer)
 inspect_state {"aspects":["next_pixel"],"nr_x":"50","nr_y":"50"}             # which layer draws pixel (50, 50), and why
 invoke_api {"method":"GET","path":"/api/v1/emulator/{id}/capture/next-layers"}         # ula, layer2, tilemap, sprites and ids of the SAME frame

@@ -1,6 +1,6 @@
 # TTD branches: storage
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Format reference: `core/src/debugger/ttd/ttd.ksy`
+Part of [TTD branches](README.md). Status: **built** (P2, `e0ac62a53`, 2026-11-10) except the disk tier read back (P3) and media in the stream (P4). Format reference: `core/src/debugger/ttd/ttd.ksy`
 (schema 2), container `engine/ttdcontainer.*`, session `engine/ttdsessionfile.*`, folder `ttdrecordingfolders.*`,
 writer `engine/ttdrecordingwriter.*`.
 

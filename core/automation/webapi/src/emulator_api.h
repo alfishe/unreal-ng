@@ -299,6 +299,8 @@ public:
     ADD_METHOD_TO(EmulatorAPI::audioCapture, "/api/v1/emulator/{id}/audio/capture", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureStatus, "/api/v1/emulator/{id}/audio/capture/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::audioCaptureResult, "/api/v1/emulator/{id}/audio/capture/result", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::sectionTimer, "/api/v1/emulator/{id}/section-timer", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSectionTimer, "/api/v1/emulator/{id}/section-timer", drogon::Get);
     // Per-device mixer (implementation: api/state_audio_api.cpp; core AudioMixer, DeviceState::AudioMixer)
     ADD_METHOD_TO(EmulatorAPI::getAudioMixer, "/api/v1/emulator/{id}/audio/mixer", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setAudioMixer, "/api/v1/emulator/{id}/audio/mixer/{source}", drogon::Put, drogon::Post);
@@ -614,6 +616,8 @@ public:
     // PC history with pages (debugger additions tdd §7)
     ADD_METHOD_TO(EmulatorAPI::getPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::postPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::putSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -756,6 +760,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::portEventsTTD, "/api/v1/emulator/{id}/ttd/port-events", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::stepInstructionTTD, "/api/v1/emulator/{id}/ttd/step-instruction", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseStepTTD, "/api/v1/emulator/{id}/ttd/reverse-step", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::reverseStepOverTTD, "/api/v1/emulator/{id}/ttd/reverse-step-over", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::reverseContinueTTD, "/api/v1/emulator/{id}/ttd/reverse-continue", drogon::Post);
     // Feedback item 7: the frames a game profile's probes fired in (a replay of the window)
     ADD_METHOD_TO(EmulatorAPI::probeFramesTTD, "/api/v1/emulator/{id}/ttd/probe-frames", drogon::Post);
@@ -766,6 +771,15 @@ public:
     ADD_METHOD_TO(EmulatorAPI::exportTTDBookmarks, "/api/v1/emulator/{id}/ttd/export-bookmarks", drogon::Get, drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::deleteTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Delete);
     ADD_METHOD_TO(EmulatorAPI::putTTDBookmark, "/api/v1/emulator/{id}/ttd/bookmarks/{label}", drogon::Put);
+    // TTD branches: a resume in the past keeps the old future as a branch; {branch} is an id, a GUID or a name
+    ADD_METHOD_TO(EmulatorAPI::getTTDBranches, "/api/v1/emulator/{id}/ttd/branches", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::createTTDBranch, "/api/v1/emulator/{id}/ttd/branches", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::pruneTTDBranches, "/api/v1/emulator/{id}/ttd/branches/prune", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::switchTTDBranchRelative, "/api/v1/emulator/{id}/ttd/branches/switch", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::patchTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Patch);
+    ADD_METHOD_TO(EmulatorAPI::deleteTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}", drogon::Delete);
+    ADD_METHOD_TO(EmulatorAPI::switchTTDBranch, "/api/v1/emulator/{id}/ttd/branches/{branch}/switch", drogon::Post);
     // TD-7 — coverage index queries
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageProbe, "/api/v1/emulator/{id}/ttd/coverage/probe", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getTTDCoverageScan, "/api/v1/emulator/{id}/ttd/coverage/scan", drogon::Get);
@@ -1317,6 +1331,14 @@ public:
     /// @brief GET /api/v1/emulator/{id}/audio/capture/result?wav=true
     void audioCaptureResult(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+
+    /// @brief POST /api/v1/emulator/{id}/section-timer - start (sections, extra, break_if, recursive, frame_t,
+    /// capacity), stop or clear the section timer (SectionTimerAnalyzer); answers the results without the passes
+    void sectionTimer(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                      const std::string& id) const;
+    /// @brief GET /api/v1/emulator/{id}/section-timer?offset&limit&text - the statistics, the kept passes, the stop
+    void getSectionTimer(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     // endregion Analyzer Management Methods
 
     // region Video Recording Methods (implementation: api/recording_api.cpp)
@@ -2010,6 +2032,11 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
     void postPcHistory(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                        const std::string& id) const;
+    /// GET / PUT /debug/selected_cpu - the CPU the front-ends show (core CpuView::Selected / SetSelected)
+    void getSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void putSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,
@@ -2391,6 +2418,8 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseStepTTD(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void reverseStepOverTTD(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void reverseContinueTTD(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
     void probeFramesTTD(const drogon::HttpRequestPtr& req,
@@ -2409,6 +2438,28 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void deleteTTDBookmark(const drogon::HttpRequestPtr& req,
                            std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
                            const std::string& label) const;
+    // TTD branches (a resume in the past keeps the old future as a branch)
+    void getTTDBranches(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void createTTDBranch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void pruneTTDBranches(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    void switchTTDBranchRelative(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const;
+    void getTTDBranch(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                      const std::string& branch) const;
+    void patchTTDBranch(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                        const std::string& branch) const;
+    void deleteTTDBranch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                         const std::string& branch) const;
+    void switchTTDBranch(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id,
+                         const std::string& branch) const;
     // TD-7 — coverage index queries
     void getTTDCoverageProbe(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;

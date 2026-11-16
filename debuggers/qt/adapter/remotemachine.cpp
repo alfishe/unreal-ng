@@ -28,6 +28,7 @@
 #include <QNetworkRequest>
 #include <QPointer>
 #include <QSettings>
+#include <QStringList>
 #include <QTcpSocket>
 #include <QThread>
 #include <QUrl>
@@ -195,6 +196,7 @@ struct Snapshot {
     QString state;          // running | paused | stopped
     QString reason;         // none | pause | breakpoint | step
     QString stop_cpu;       // the CPU of the stop: main, gs, ms
+    QString stop_main;      // a card's stop: where the main CPU stood (pause.main.text)
     QJsonObject regs;
     QByteArray memory;      // the CPU's 64 KB
     struct Bank { QString kind; unsigned int page = 0; bool writable = false; } banks[4];
@@ -713,6 +715,65 @@ public:
     QString endpoint() const { return QString("http://%1:%2").arg(m_host).arg(m_port); }
 
     bool debug_online() const override { return m_online.load(); }
+    // Time travel over the WebAPI: the reads are GETs, the branch commands the branch routes, every other verb
+    // POST /ttd/<verb> with its options as the JSON body. ok: a 2xx answer
+    bool ttd_supported() const override { return true; }
+    TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options) override
+    {
+        if (!m_online.load()) return {false, R"({"error":"Service Unavailable","message":"The emulator is not connected"})"};
+        std::map<std::string, std::string> rest = options;
+        auto take = [&rest](const char * key) {
+            const auto it = rest.find(key);
+            if (it == rest.end()) return QString();
+            const QString value = QString::fromStdString(it->second);
+            rest.erase(it);
+            return value;
+        };
+        // A branch name may hold spaces or '+' ("resume 1", "+00:00:25.150"): one path segment, percent-encoded
+        auto segment = [](const QString &value) { return QString::fromUtf8(QUrl::toPercentEncoding(value)); };
+        const char * method = "POST";
+        QString path = m_base + "/ttd/";
+        if (verb == "status" || verb == "position" || verb == "branches") {
+            method = "GET";
+            path += QString::fromStdString(verb);
+        } else if (verb == "branch-info") {
+            method = "GET";
+            path += "branches/" + segment(take("branch"));
+        } else if (verb == "branch-create") {
+            path += "branches";
+        } else if (verb == "branch-prune") {
+            path += "branches/prune";
+        } else if (verb == "branch-switch") {
+            path += "branches/" + segment(take("branch")) + "/switch";
+        } else if (verb == "branch-update") {
+            method = "PATCH";
+            path += "branches/" + segment(take("branch"));
+        } else if (verb == "branch-delete") {
+            method = "DELETE";
+            path += "branches/" + segment(take("branch"));
+        } else {
+            path += QString::fromStdString(verb);
+        }
+        QJsonObject body;
+        QStringList query;
+        const bool in_query = strcmp(method, "GET") == 0 || strcmp(method, "DELETE") == 0;
+        for (const auto &[key, value] : rest) {
+            if (in_query)
+                query << QString::fromStdString(key) + "=" +
+                             QString::fromUtf8(QUrl::toPercentEncoding(QString::fromStdString(value)));
+            else
+                body.insert(QString::fromStdString(key), QString::fromStdString(value));
+        }
+        if (!query.isEmpty()) path += "?" + query.join('&');
+        int status = 0;
+        // A move in time replays up to a frame and a reverse-continue searches the history: as long as a step over
+        const QJsonObject answer = m_http.json(method, path, body, &status, in_query ? 5000 : 15000);
+        if (!in_query) changed();
+        const bool ok = status >= 200 && status < 300;
+        if (status == 0)
+            return {false, R"({"error":"Service Unavailable","message":"The emulator did not answer"})"};
+        return {ok, QJsonDocument(answer).toJson(QJsonDocument::Compact).toStdString()};
+    }
     std::string debug_offline_text() const override
     {
         return QString("Waiting for %1 at %2:%3")
@@ -741,6 +802,7 @@ public:
         m_snap.state = s.value("state").toString();
         m_snap.reason = s.value("pause").toObject().value("reason").toString();
         m_snap.stop_cpu = s.value("pause").toObject().value("cpu").toString();
+        m_snap.stop_main = s.value("pause").toObject().value("main").toObject().value("text").toString();
         m_snap.regs = s.value("regs").toObject();
         const QJsonArray mem = s.value("memory").toArray();
         m_snap.memory = mem.isEmpty() ? QByteArray(0x10000, '\xFF')
@@ -859,6 +921,7 @@ public:
     void debug_detach() override
     {
         clear_run_to();
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", "main"}});
         if (debug_paused()) m_http.json("POST", m_base + "/resume");
         changed();
     }
@@ -905,6 +968,12 @@ public:
         m_http.json("POST", m_base + "/stepout" + step_query(c), QJsonObject(), nullptr, 15000);
         changed();
     }
+    // The tab's CPU shown (GET / PUT /debug/selected_cpu): a card's follows the main CPU's steps of the paused machine
+    void debug_select(ecatshim::CPU * c) override
+    {
+        auto * card = dynamic_cast<RemoteCardZ80 *>(c);
+        m_http.json("PUT", m_base + "/debug/selected_cpu", QJsonObject{{"cpu", card ? card->cpu() : QString("main")}});
+    }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
         // A breakpoint of its own group (of the CPU of the tab) that goes away at the next stop. The WebAPI keeps one
@@ -935,6 +1004,10 @@ public:
         // A card's breakpoint or step: its tab
         RemoteCardZ80 * c = card(const_cast<RemoteMachine *>(this)->snap().stop_cpu);
         return c ? static_cast<ecatshim::CPU *>(c) : m_cpu.get();
+    }
+    std::string debug_stop_main_text() const override
+    {
+        return const_cast<RemoteMachine *>(this)->snap().stop_main.toStdString();
     }
     int debug_stop_reason() const override
     {

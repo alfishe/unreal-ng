@@ -10,6 +10,7 @@
 #include "debugger/analyzers/analysis/analysisjobs.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
 #include "debugger/analyzers/analysis/l3experiment.h"
+#include "debugger/analyzers/analysis/l3experimentbranch.h"
 #include "debugger/analyzers/analysis/l3review.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
@@ -815,13 +816,27 @@ Reply ExperimentAction(Emulator& emulator, const Options& options)
     for (const ExperimentSpec& spec : specs)
         if (!spec.finding.empty() && FindById(findings, spec.finding) == nullptr)
             return Refuse(Error::NotFound, "no finding " + spec.finding + " (experiment " + spec.id + ")");
+    KeepBranches keep = KeepBranches::Asked;
+    if (!ParseKeepBranches(Lower(Option(options, "keep_branches")), keep))
+        return Refuse(Error::BadRequest, "keep_branches: asked (default: the specs with keep_branch), observed or all");
+    std::string branchRun = Option(options, "run");
+    if (branchRun.empty())
+        branchRun = NextExperimentRun();
+    else if (branchRun.size() > 63 || std::any_of(branchRun.begin(), branchRun.end(), [](unsigned char c) {
+                 return !std::isalnum(c) && c != '_' && c != '.' && c != '-';
+             }))
+        return Refuse(Error::BadRequest, "run: 1..63 of A-Z a-z 0-9 _ . -");
     ExperimentRunOptions run;
     if (!ParseParallel(options, run.parallel, refusal))
         return refusal;
     run.l1 = built.l1.get();
-    const ExperimentBatch batch = RunExperiments(*built.bundle, specs, run);
+    ExperimentBatch batch = RunExperiments(*built.bundle, specs, run);
     if (!batch.error.empty())
         return Refuse(Error::Conflict, batch.error);
+    // Kept as branches of the source's session, only as asked (the source is untouched otherwise)
+    const bool anyKept = keep != KeepBranches::Asked ||
+                         std::any_of(specs.begin(), specs.end(), [](const ExperimentSpec& s) { return s.keepBranch; });
+    const uint32_t kept = anyKept ? KeepExperimentBranches(emulator, specs, batch, keep, branchRun) : 0;
     Record(id, findings, specs, batch);
 
     Reply reply;
@@ -844,8 +859,16 @@ Reply ExperimentAction(Emulator& emulator, const Options& options)
     reply.body["peak_concurrency"] = static_cast<uint64_t>(batch.peakConcurrency);
     reply.body["seeks"] = static_cast<uint64_t>(batch.seeks);
     reply.body["micros"] = batch.micros;
+    if (anyKept)
+    {
+        reply.body["branches_kept"] = static_cast<uint64_t>(kept);
+        reply.body["branch_run"] = branchRun;
+    }
     reply.text = "Experiments: " + std::to_string(specs.size()) + " on " + std::to_string(batch.workers) +
-                 (batch.workers == 1 ? " worker" : " workers") + " (analysis instances; the source untouched): " +
+                 (batch.workers == 1 ? " worker" : " workers") +
+                 (anyKept ? " (analysis instances; " + std::to_string(kept) + " kept as branches of run " + branchRun +
+                                ", ttd branch prune --run " + branchRun + " --apply removes them): "
+                          : std::string(" (analysis instances; the source untouched): ")) +
                  std::to_string(observed) + " observed, " + std::to_string(refuted) + " refuted" +
                  (failed != 0 ? ", " + std::to_string(failed) + " failed" : "") + ", " +
                  std::to_string(batch.micros / 1000) + " ms\n" + lines;

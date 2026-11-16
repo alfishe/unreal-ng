@@ -29,7 +29,14 @@ below. Common material for all ATM models (creating, ports, video modes, CP/M mo
     old tree (readback on `#xxBE`) for the older `rom/zxevo.rom` image.
   - **ROM**: the shipped image is the official `rom/zxevo-fe.rom`; its EVO
     Reset Service idles in the main menu at PC `#6117` about 60 frames after
-    reset.
+    reset. Keys `1`-`4` choose the TR-DOS drive and keep it in the CMOS (a stray digit moves the boot drive).
+  - **TRD/SCL autostart** (opening a disk image, `autostart` on any plane): the disk goes into drive A, the machine
+    resets, and the service menu is driven by keys, one at each idle at `#6117`, 25 frames apart: `1` (drive A),
+    `ENTER` ("2.TR-DOS boot" lists the disk with `boot` selected), `ENTER` (runs it). After about 2 s `CF_TRDOS` is set
+    and the program runs. A disk without `boot` or BASIC files is only mounted.
+  - **Pad in the service menu**: the ERS reads the Kempston mouse and the whole keyboard. The auto decision plugs
+    the mouse (the pad's fire = left click, the stick or the trackpad move the pointer). The pad's directions hold
+    the cursor keys (`keyboardScan`) and fire holds no ENTER there. A reset starts the decision again.
   - **`#BF` bits** (shadow ports): bit 2 = every memory write also writes the
     text-mode **font RAM** (`A & #7FF`, address `code * 8 + row`; read the byte
     under the beam on `#0EBD`; the font survives a reset); bit 5 = **4:4:4
@@ -135,9 +142,14 @@ type_input {"action":"tap","key":"f1"}                                          
 
 Three things in the ERS look like faults and are not (checked 2026-10-04):
 
-- **A real floppy needs the virtual drive moved away from A.** The ERS makes drive A a virtual
-  drive by default; "TR-DOS boot" then reports "Virtual drive not formatted or image not loaded"
-  (or NEO-DOS shows `Virtual Drive: A`) whatever is in `fdd.a`. Press `Y` once (virtual drive B).
+- **The virtual drive sits on D, so a disk in A boots.** With no saved NVRAM the machine starts
+  with the ERS settings `[EVO] ErsNvram=FLOPPY`: the ERS defaults with its virtual drive (the RAM
+  disk the FPGA traps a drive letter to) on D, CMOS `#EB` = 3 with a valid CRC. On blank cells
+  (`ErsNvram=BLANK`, a board out of the box) the ERS writes its own defaults, `#EB` = 0: the
+  virtual drive is A, and "TR-DOS boot" reports "Virtual drive not formatted or image not loaded"
+  (NEO-DOS shows `Virtual Drive: A`) whatever is in `fdd.a`; `Y` moves it to the next letter.
+  The desktop app keeps the NVRAM in `~/.unreal-ng/nvram/<config>.nvram`, so a `Y` stays chosen;
+  headless instances keep it for the session only.
 - **"TR-DOS boot" takes two `Enter` presses.** The first lists the disk's BASIC files in a
   window (`boot` highlighted), the second runs it. NedoOS `osatm3.trd` then reaches `A:/>`.
 - **"HDD boot" needs a boot block on the disk.** The ERS reads 24 KB from LBA 2 and jumps to it.
@@ -150,7 +162,6 @@ Three things in the ERS look like faults and are not (checked 2026-10-04):
 
 ```text
 media {"action":"insert","slot":"fdd.a","path":"scratch/osatm3.trd"}
-type_input {"action":"tap","key":"y"}            # virtual drive A -> B
 type_input {"action":"tap","key":"enter"}        # 2. TR-DOS boot: the list of BASIC files
 type_input {"action":"tap","key":"enter"}        # run "boot"; the prompt is "A:/>"
 ```

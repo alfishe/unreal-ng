@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 
@@ -35,6 +36,13 @@ void AddBreakpointFields(Json::Value& event, uint16_t breakpointId, uint16_t add
     event["access"] = BreakpointHitKindName(kind);
     if (cpu != "main")
         event["cpu_pc"] = cpuPc;
+}
+
+/// A card's stop: where the main CPU parked with it (gs-debugger design §5.2)
+void AddMainPosition(Json::Value& event, const MainPosition& main)
+{
+    if (main.known)
+        event["main"] = StateNodeToJson(execution::MainPositionNode(main));
 }
 }  // namespace
 
@@ -76,6 +84,20 @@ void DebugEventHub::Start()
                             }));
     _observers.emplace_back(NC_FRAME_WATCH,
                             messageCenter.AddObserver(NC_FRAME_WATCH, [this](int, Message* message) { OnFrameWatch(message); }));
+    _observers.emplace_back(NC_SECTION_TIMER, messageCenter.AddObserver(NC_SECTION_TIMER, [this](int, Message* message) {
+                                OnSectionTimer(message);
+                            }));
+    _observers.emplace_back(NC_DEBUG_EDITED,
+                            messageCenter.AddObserver(NC_DEBUG_EDITED, [this](int, Message* message) { OnEdited(message); }));
+    _observers.emplace_back(NC_RUN_CONTROL_CHANGED,
+                            messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED,
+                                                      [this](int, Message* message) { OnRunControl(message); }));
+    _observers.emplace_back(NC_LABEL_CHANGED,
+                            messageCenter.AddObserver(NC_LABEL_CHANGED,
+                                                      [this](int, Message* message) { OnLabelsChanged(message); }));
+    _observers.emplace_back(NC_DEBUG_TARGETS_CHANGED,
+                            messageCenter.AddObserver(NC_DEBUG_TARGETS_CHANGED,
+                                                      [this](int, Message* message) { OnTargetsChanged(message); }));
     _observers.emplace_back(NC_ASM_SYNC,
                             messageCenter.AddObserver(NC_ASM_SYNC, [this](int, Message* message) { OnAsmSync(message); }));
 }
@@ -257,6 +279,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 event["reason"] = "breakpoint";
                 AddBreakpointFields(event, payload->breakpointId, payload->address, payload->hitKind, payload->cpu,
                                     payload->cpuPc);
+                AddMainPosition(event, payload->main);
             }
             else if (payload->pauseCause == PauseCause::Step)
             {
@@ -264,6 +287,7 @@ void DebugEventHub::OnStateChange(Message* message)
                 event["reason"] = "step";
                 event["cpu"] = payload->cpu;
                 event["cpu_pc"] = payload->cpuPc;
+                AddMainPosition(event, payload->main);
             }
             else
                 event["reason"] = "pause";
@@ -334,6 +358,27 @@ void DebugEventHub::OnFrameWatch(Message* message)
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 
+void DebugEventHub::OnSectionTimer(Message* message)
+{
+    auto* payload = message ? dynamic_cast<SectionTimerPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // section_timer_started / _stopped / _cleared; section_timer_break: the pass a condition stopped the machine at
+    Json::Value event;
+    event["event"] = "section_timer_" + payload->event;
+    if (payload->event == "break")
+    {
+        event["condition"] = payload->condition;
+        event["section"] = payload->section;
+        event["frame"] = static_cast<Json::UInt64>(payload->frame);
+        event["t"] = payload->t;
+        event["elapsed"] = static_cast<Json::UInt64>(payload->elapsed);
+        event["net"] = static_cast<Json::UInt64>(payload->net);
+        event["interrupts"] = payload->interrupts;
+    }
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
 void DebugEventHub::OnScriptCallbacksChanged(Message* message)
 {
     auto* payload = message ? dynamic_cast<ScriptCallbacksChangedPayload*>(message->obj) : nullptr;
@@ -361,6 +406,84 @@ void DebugEventHub::OnScriptCallbacksChanged(Message* message)
     else if (callbacks)
         event["removed"] = true;
     Publish(emulatorId, kTopicDebug, event);
+}
+
+void DebugEventHub::OnEdited(Message* message)
+{
+    auto* payload = message ? dynamic_cast<DebugEditedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // A tool changed the machine (registers, memory, a page, a port, other state): views re-read what they show.
+    // The edits since the last event come merged: a script writing byte by byte is a few events with counts
+    const std::string emulatorId = payload->emulatorId.toString();
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::shared_ptr<Emulator> emulator = manager ? manager->GetEmulator(emulatorId) : nullptr;
+    if (!emulator)
+        return;
+    const ToolEditSummary edits = emulator->TakeToolEdits();
+    if (edits.count == 0)
+        return;  // an earlier event took them
+    Json::Value event;
+    event["event"] = "edited";
+    event["source"] = edits.source;
+    event["cpu"] = edits.cpu.empty() ? std::string("main") : edits.cpu;
+    event["what"] = edits.what;
+    event["count"] = edits.count;
+    if (!edits.page.empty())
+        event["page"] = edits.page;
+    if (edits.address >= 0)
+        event["address"] = edits.address;
+    if (edits.length > 0)
+        event["length"] = edits.length;
+    Publish(emulatorId, kTopicDebug, event);
+}
+
+void DebugEventHub::OnRunControl(Message* message)
+{
+    auto* payload = message ? dynamic_cast<RunControlChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    // The run-control claim changed: taken, released, revoked, expired, retake_refused, superseded
+    Json::Value event;
+    event["event"] = "run_control";
+    event["change"] = payload->event;
+    event["surface"] = payload->surfaceLabel;
+    if (!payload->client.empty())
+        event["client"] = payload->client;
+    if (!payload->ownerUuid.empty())
+        event["owner"] = payload->ownerUuid;
+    if (!payload->by.empty())
+        event["by"] = payload->by;
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnLabelsChanged(Message* message)
+{
+    // A label manager without an instance (a standalone one in a tool) has nothing to name
+    auto* payload = message ? dynamic_cast<LabelsChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->emulatorId.isNil())
+        return;
+    Json::Value event;
+    event["event"] = "labels_changed";
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
+}
+
+void DebugEventHub::OnTargetsChanged(Message* message)
+{
+    auto* payload = message ? dynamic_cast<DebugTargetsChangedPayload*>(message->obj) : nullptr;
+    if (!payload)
+        return;
+    Json::Value event;
+    event["event"] = "targets_changed";
+    event["targets"] = Json::Value(Json::arrayValue);
+    for (const auto& [cpu, available] : payload->targets)
+    {
+        Json::Value target;
+        target["cpu"] = cpu;
+        target["available"] = available;
+        event["targets"].append(target);
+    }
+    Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 
 void DebugEventHub::OnAsmSync(Message* message)

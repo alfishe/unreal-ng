@@ -3,7 +3,10 @@
 Reads Unreal-NG `.ttd` session files without an emulator: the time-travel engine's format (schema 2), records in
 parts, every record checked by CRC32C, one file per segment of history
 ([container format](../../../docs/emulator/design/debugger/time-travel-debug/ttd-container-format.md),
-`core/src/debugger/ttd/ttd.ksy`; `src/ttdcontainer.py` reads it).
+`core/src/debugger/ttd/ttd.ksy`). The reader is the shared `ttdlib` in
+[tools/python/ttd](../../python/ttd/README.md) (`ttdlib/ttdcontainer.py`, moved there from `src/` in 2026-11 for the
+branch maintenance tools); `src/__init__.py` puts it on `sys.path`. It reads a branched file's trunk and skips the
+branch parts; `tools/python/ttd/ttdtool.py` reads and maintains the branches.
 
 v1's files (schema 1) are refused: v1's reader and the analyses built on it (render, heatmap, anomaly report, port
 search) went with v1 (Phase 6 of the [TTD v2 migration](../../../docs/inprogress/2026-09-25-ttd-v2-migration/README.md),
@@ -25,7 +28,7 @@ part 0: frames 0+8, 4 records, depends on nothing, ok [file start]
 part 1: frames 8+8, 4 records, depends on [0], ok
 ```
 
-`validate` checks what the emulator's reader checks (header, index and trailer, every record, complete parts, unknown required streams) and more: it decodes every piece version through its chain and compares its content CRC, and checks each part's dependency list against the parts it really needs. The fixtures in `testdata/ttd/v2/` are written by the C++ writer (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`); `tests/test_ttdcontainer.py` finds in them the counts the C++ reader found (`expected.json`).
+`validate` checks what the emulator's reader checks (header, index and trailer, every record, complete parts, unknown required streams) and more: it decodes every piece version through its chain and compares its content CRC, and checks each part's dependency list against the parts it really needs. The fixtures in `testdata/ttd/v2/` are written by the C++ writer (`TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures`); `tests/test_ttdcontainer.py` (over `ttdlib`) finds in them the counts the C++ reader found (`expected.json`).
 
 `info` prints the write journal's spans when the session holds it only for part of its history (D40):
 

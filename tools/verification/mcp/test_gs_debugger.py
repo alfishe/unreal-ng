@@ -47,6 +47,16 @@ def test_card_breakpoint_parks_the_machine(s):
     expect('at breakpoint' in text and 'of the gs CPU' in text, 'the wait names the card CPU', text)
     expect(pause.get('cpu') == 'gs' and pause.get('address') == pc and pause.get('cpu_pc') == pc,
            'the pause carries cpu and the card instruction', pause)
+    # Where the main CPU stood at the card's moment (design §5.4): a card breakpoint holds tight mode, so main finished
+    # the instruction the moment is in; the text says it, the pause's main has the numbers and the bus cycles
+    main_pos = pause.get('main', {})
+    expect(re.search(r'main #[0-9A-F]{4}', text), "the wait's text says where main stood", text)
+    expect(main_pos.get('on_boundary') is True and 0 <= main_pos.get('gap_t', -1) < 24,
+           'tight mode: main at the next instruction start, within an instruction of the card', main_pos)
+    cycles = main_pos.get('bus_cycles', [])
+    expect(cycles and sum(c.get('t', 0) for c in cycles) == main_pos.get('total_t')
+           and main_pos.get('elapsed_t', -1) == main_pos.get('t_in_instruction', 0) - main_pos.get('gap_t', 0),
+           "the instruction's progress and its machine cycles", main_pos)
     expect(s.call('inspect_state', {'aspects': ['registers']}).text, 'the machine answers while parked')
     hits = s.call('control_execution', {'action': 'bp_list', 'cpu': 'gs'}).text
     expect(re.search(r'hits [1-9]', hits), 'counted on the card', hits)
@@ -277,6 +287,58 @@ def test_the_card_cpu_steps(s):
         expect('card-step True step gs' in output, 'Python steps the card', output)
     r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
     expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'MCP still holds the machine', r.text)
+    clear(s)
+
+
+def test_the_selected_card_follows_main_steps(s):
+    """select_cpu (design §5.2): the card a front-end shows follows the main CPU's steps of the paused machine; the
+    choice is one per machine, the scripts see it, main ends it, a card that is not there is refused"""
+    clear(s)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'gs'})
+    expect(r.structured.get('cpu') == 'gs' and r.structured.get('follows') is True and 'follows' in r.text,
+           'the card shown follows', (r.text, r.structured))
+    r = s.call('control_execution', {'action': 'step_n', 'count': 20})
+    expect(not r.is_error, 'the main CPU steps with the card shown', r.text)
+    code = 'local c = selected_cpu() print("shown", c.cpu, c.follows)'
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('shown\tgs\ttrue' in output or 'shown gs true' in output, 'Lua sees the choice', output)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'ms'}, ok=False)
+    expect(r.is_error and 'not available' in r.text, 'no MultiSound card', r.text)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'main'})
+    expect(r.structured.get('cpu') == 'main' and r.structured.get('follows') is False, 'main ends it', r.structured)
+    r = s.call('control_execution', {'action': 'select_cpu'})
+    expect(r.text.startswith('Selected cpu: main'), 'no cpu: the report', r.text)
+    clear(s)
+
+
+def test_the_card_cpu_runs_to_the_cursor(s):
+    """run_until_pc with cpu gs (design §5.3): the card CPU runs to the cursor and the machine is paused there; the
+    reply says hit; Lua runs it there too"""
+    clear(s)
+    # A place the card comes back to: the first instruction its loop runs again
+    seen = [card_pc(s)]
+    looped = False
+    for _ in range(500):
+        pc = s.call('control_execution', {'action': 'step', 'cpu': 'gs'}).structured.get('pc')
+        looped = pc in seen
+        if looped:
+            break
+        seen.append(pc)
+    expect(looped, 'the card comes back to an instruction within 500 steps', seen[-10:])
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') == 'step' and stop.get('cpu_pc') == pc and r.structured.get('hit') is True,
+           'the card at the cursor', r.structured)
+    expect(('Ran cpu gs to #%04X' % pc) in r.text, 'said in the text', r.text)
+    expect(card_pc(s) == pc and r.structured.get('state') == 'paused', 'paused there', r.structured)
+
+    code = 'local r = skip_until(%d, "gs") print("to", r.ok, r.hit, r.pc == %d)' % (pc, pc)
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('to\ttrue\ttrue\ttrue' in output or 'to true true true' in output, 'Lua runs the card to it', output)
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'ms'}, ok=False)
+    expect(r.is_error, 'no MultiSound card', r.text)
     clear(s)
 
 

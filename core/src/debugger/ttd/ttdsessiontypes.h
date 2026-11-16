@@ -6,9 +6,12 @@
 /// export options and frames, performance and heap counters, kept apart from
 /// the controller's header; TTDControl and the surfaces use them by these names.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <string>
@@ -22,6 +25,7 @@
 #include "ttdphyspage.h"
 #include "ttdprobe.h"
 #include "ttdwritejournal.h"
+#include "engine/ttdbranchtable.h"
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
 
@@ -130,6 +134,118 @@ struct TTDJournalBuildResult
 /// Called after each frame of a build: (frames done, frames to build). Return
 /// false to stop; what is built so far is kept
 using TTDJournalBuildProgress = std::function<bool(uint64_t done, uint64_t total)>;
+
+/// The session's branches as an observer sees them (TTD branches, surfaces.md §1): the live branches by id, the
+/// active branch's lineage. Published with the session info and shared by its copies until the table changes
+struct TTDBranchesView
+{
+    std::vector<TTDBranchInfo> branches;   ///< live ones, the trunk first, by id
+    std::vector<TTDLineageSpan> lineage;   ///< the active branch's, trunk first
+    uint64_t revision = 0;                 ///< TTDBranchTable::Revision() it was taken at
+
+    const TTDBranchInfo* Find(uint32_t id) const
+    {
+        for (const TTDBranchInfo& b : branches)
+            if (b.id == id)
+                return &b;
+        return nullptr;
+    }
+};
+
+/// A branch that leaves the shown timeline at a frame (TTDForkPoints)
+struct TTDForkLeave
+{
+    uint32_t branch = kTTDTrunk;
+    std::string name;
+    uint64_t frames = 0;   ///< its length past the fork
+};
+
+/// Every frame of the lineage where another future goes on (the TTD panel's slider marks, the debuggers' "fork here",
+/// TTD branches debuggers.md §4.2): a branch off the lineage forks from the part its parent holds (the part's last
+/// frame included: siblings forking where the lineage's branch forks), or the lineage leaves a parent that has frames
+/// past the fork (the future a resume kept on the parent). end: the timeline's last frame
+inline std::map<uint64_t, std::vector<TTDForkLeave>> TTDForkPoints(const TTDBranchesView& view, uint64_t end)
+{
+    std::map<uint64_t, std::vector<TTDForkLeave>> points;
+    auto onLineage = [&view](uint32_t id) {
+        for (const TTDLineageSpan& span : view.lineage)
+            if (span.branch == id)
+                return true;
+        return false;
+    };
+    for (size_t i = 0; i < view.lineage.size(); ++i)
+    {
+        const uint64_t from = view.lineage[i].from.frame;
+        const uint64_t to = i + 1 < view.lineage.size() ? view.lineage[i + 1].from.frame : end;
+        for (const TTDBranchInfo& b : view.branches)
+            if (!onLineage(b.id) && b.parent == view.lineage[i].branch && b.fork.frame >= from && b.fork.frame <= to)
+                points[b.fork.frame].push_back({b.id, b.meta.name, b.Length()});
+        if (i + 1 < view.lineage.size())
+            if (const TTDBranchInfo* parent = view.Find(view.lineage[i].branch); parent && parent->end.frame > to)
+                points[to].push_back({parent->id, parent->meta.name, parent->end.frame - to});
+    }
+    return points;
+}
+
+/// The branches at the fork nearest @p frame on the active lineage (ttd.branch_next_sibling / _prev_sibling, TTD
+/// branches surfaces.md §2): the last fork at or before the frame, else the first after it. The lineage's own branch
+/// past the fork and the ones leaving there, by creation; @p self indexes the lineage's, @p at is the fork's frame.
+/// @p end: the timeline's last frame. Empty: no fork on the lineage
+inline std::vector<uint32_t> TTDSiblingsAtNearestFork(const TTDBranchesView* view, uint64_t end, uint64_t frame,
+                                                      size_t& self, uint64_t& at)
+{
+    std::vector<uint32_t> out;
+    self = 0;
+    at = 0;
+    if (view == nullptr || view->branches.size() < 2)
+        return out;
+    const auto points = TTDForkPoints(*view, end);
+    if (points.empty())
+        return out;
+    auto it = points.upper_bound(frame);
+    if (it != points.begin())
+        --it;
+    at = it->first;
+    // The lineage's branch past the fork: the last span starting at or before it
+    uint32_t own = view->lineage.empty() ? kTTDTrunk : view->lineage.front().branch;
+    for (const TTDLineageSpan& span : view->lineage)
+        if (span.from.frame <= at)
+            own = span.branch;
+    out.push_back(own);
+    for (const TTDForkLeave& leave : it->second)
+        if (std::find(out.begin(), out.end(), leave.branch) == out.end())
+            out.push_back(leave.branch);
+    auto created = [view](uint32_t id) {
+        const TTDBranchInfo* b = view->Find(id);
+        return std::make_pair(b != nullptr ? b->meta.createdHostMicros : 0, id);
+    };
+    std::sort(out.begin(), out.end(), [&created](uint32_t a, uint32_t b) { return created(a) < created(b); });
+    self = static_cast<size_t>(std::find(out.begin(), out.end(), own) - out.begin());
+    return out;
+}
+
+/// The last change of the branch table (TTD branches surfaces.md §5.2: the `ttd.branches` topic). `seq` grows with
+/// every change of the session (0: none yet), so a reader that saw a gap lists the branches again
+struct TTDBranchEvent
+{
+    uint64_t seq = 0;
+    std::string event;                 ///< created, updated, deleted, switched
+    uint32_t branch = kTTDTrunk;       ///< the branch it concerns (a delete: the one asked for; its descendants went too)
+    TTDGuid guid{};
+    std::string name;
+    uint32_t removed = 0;              ///< deleted: the branches removed with it (itself included)
+};
+
+/// The branches as last published (ITimeTravelHooks::PublishedBranches): what the `ttd.position` and
+/// `ttd.branches` topics read, without asking the machine for a fresh publish
+struct TTDBranchesPublished
+{
+    std::shared_ptr<const TTDBranchesView> view;   ///< null: the trunk alone
+    uint32_t active = kTTDTrunk;
+    uint32_t viewed = kTTDTrunk;
+    uint32_t previous = kTTDNoBranch;   ///< the branch ttd.branch_prev goes to; none: kTTDNoBranch
+    TTDBranchEvent event;
+};
 
 struct TTDSessionInfo
 {
@@ -271,6 +387,10 @@ struct TTDSessionInfo
     /// into it, continues the same recording
     bool recordingPaused = false;
 
+    /// A start was asked while the machine stood inside another CPU's run (a General Sound breakpoint): the
+    /// recording begins at the next frame boundary; state stays idle until then
+    bool startPending = false;
+
     /// Why time travel is not available for this instance at all (for example
     /// a member of a ZX-Poly machine); empty when it is available.
     std::string unavailableReason;
@@ -285,6 +405,17 @@ struct TTDSessionInfo
     uint64_t seekChecks = 0;            ///< seeks whose frame was checked
     uint64_t seekCheckDivergences = 0;  ///< ... and diverged
     std::string lastSeekDivergence;     ///< the last diverged check's text; empty when none diverged
+
+    // --- Branches (TTD branches) -------------------------------------------
+
+    /// Null while the session has the trunk alone: nothing about branches shows then (surfaces.md, the rule).
+    /// The active branch's end in it is where its recording stood at the last change of the table; it goes on
+    /// to currentEndFrame
+    std::shared_ptr<const TTDBranchesView> branches;
+    uint32_t activeBranch = kTTDTrunk;   ///< continued at its end; the lineage shown ends with it
+    uint32_t viewedBranch = kTTDTrunk;   ///< the one the current moment belongs to (on the active lineage)
+    TTDBranchEvent branchEvent;          ///< the table's last change
+    uint32_t previousBranch = kTTDNoBranch;   ///< where ttd.branch_prev goes (the branch left last); none: kTTDNoBranch
 };
 
 /// @brief String conversion for TTDCoverageKind.
@@ -587,5 +718,22 @@ struct TTDReverseContinueResult
     TTDSearchWindow  window{};           ///< Part of history the scan examined (TD-8).
     std::vector<TTDReverseHit> hits;     ///< Newest first; single mode: the one hit
     bool truncated = false;              ///< all: the walk stopped at the limit, older hits may exist
+};
+
+/// @brief What a reverse step over did (TimeTravelController::ReverseStepOver).
+struct TTDReverseStepOverResult
+{
+    bool moved = false;               ///< The machine went back (false: no earlier instruction, nothing changed)
+    /// The instruction stepped back over was the return of a routine (or of an interrupt handler): the machine went
+    /// back past the whole routine, to the instruction at this stack level before it (the CALL / RST, or the one an
+    /// interrupt came after)
+    bool overCall = false;
+    /// overCall wanted but the routine's start is out of reach (older than the history, or behind a barrier): the
+    /// machine stays one instruction back, on the return
+    bool callOutOfReach = false;
+    uint32_t skipped = 0;             ///< overCall: the instructions of the routine passed over
+    uint16_t pc = 0;                  ///< moved: PC where the machine stands now
+    TTDTimePoint arrivedAt{};         ///< moved: the moment it stands at
+    TTDExternalEvent blockingMarker{};   ///< callOutOfReach because of a barrier: the marker
 };
 }  // namespace ttd

@@ -68,7 +68,7 @@ Legend of structural elements:
 - **Header/status row** — session state (`⏺ REC` / `⏸ STOPPED` / `⏪ DETACHED @ frame`), memory budget usage, current position in frame + t-state. Clicking the DETACHED chip jumps back to "now".
 - **Transport row** — from left: jump-to-session-start, step back frame, step back instruction, pause/play, step forward instruction, step forward frame, jump-to-now. Zoom slider morphs the panel between session zoom and frame zoom (Section 3.3). `🔖` drops a bookmark at the current position; `🔍` opens Reverse Search (Section 5).
 - **Lanes** — horizontally scrollable, vertically collapsible tracks (Section 4). The set of visible lanes is a per-user setting; right-click on the lane gutter toggles lanes.
-- **Scrubber + ruler** — the position handle `●` with a solid line for recorded-and-dense history, and `░` for the not-yet-recorded future (or, when detached, the truncatable future rendered hollow `━`).
+- **Scrubber + ruler** — the position handle `●` with a solid line for recorded-and-dense history, and `░` for the not-yet-recorded future (or, when detached, the recorded future past the handle rendered hollow `━`; a resume there keeps it on its own branch).
 - **Density strip** — visualizes checkpoint thinning tiers (TDD §6.5): `█` every-frame, `▒` 1/10, `░` 1/50. Tooltip explains expected seek latency in each tier. This is Principle 2 made visible.
 
 ### 3.2 Scrubbing Behavior
@@ -108,7 +108,8 @@ While detached (position < end):
 
 - All panels show a persistent slim banner: `⏪ Viewing frame 11,802 — 543 frames before present. [Back to now] [Resume from here]`.
 - State-editing controls (memory poke, register edit) are disabled with a tooltip "Read-only while viewing history — Resume from here to branch".
-- **Resume from here**: if the future being discarded is longer than a threshold (default 5 s), a confirmation dialog appears with a one-click escape hatch: *"Discard 543 frames of future history? [Save snapshot of 'now' first] [Discard & resume] [Cancel]"*. The snapshot option covers the branching use case rejected from the engine (TDD §4.2) at pure-UI cost.
+- **Resume from here**: (as designed) if the future being discarded is longer than a threshold (default 5 s), a confirmation dialog appears with a one-click escape hatch: *"Discard 543 frames of future history? [Save snapshot of 'now' first] [Discard & resume] [Cancel]"*. The snapshot option covered the branching use case rejected from v1 (TDD §4.2) at pure-UI cost.
+- **As built with branches (2026-11-12):** nothing is discarded, so there is no confirmation. *Branch Here* forks a new branch at the current moment (the old future stays on its parent) and *Continue Rec* goes back to the end of a stopped recording; branch lanes under the scrubber show the tree. See [TTD branches surfaces.md §1](../../../../inprogress/2026-11-08-ttd-branches/surfaces.md).
 
 ### 3.4a The recording options and the write journal in the TTD panel (built, D40)
 

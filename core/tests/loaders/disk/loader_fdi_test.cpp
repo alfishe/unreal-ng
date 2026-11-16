@@ -625,6 +625,96 @@ TEST_F(LoaderFDI_Test, Save_WarnsOnContentFdiCannotStore)
     EXPECT_TRUE(udiWarnings.empty());
 }
 
+/// DC-05c (ZF6 mastering, DISK-07): a broken ID CRC is named in the save warnings, so the CLI / MCP answer says why
+TEST_F(LoaderFDI_Test, Save_NamesIdCrcErrors)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->getRawSector(4)->id->id_crc ^= 0xFFFF;
+    track->reindex();
+    ASSERT_FALSE(track->getRawSector(4)->idCrcValid);
+
+    LoaderFDI fdi(_context, "");
+    std::vector<uint8_t> out;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(fdi.serialize(&image, out, warnings));
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings[0].find("sector 5: ID CRC error cannot be stored"), std::string::npos) << warnings[0];
+}
+
+/// DC-11 (ZF6 mastering, DISK-06): N = #F7 stays in the ID field, the data is 1K, and the file round-trips
+TEST_F(LoaderFDI_Test, Load_SizeCodeF7_KeptInId_RoundTrips)
+{
+    FdiBuilder b;
+    std::vector<uint8_t> payload(1024);
+    for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i);
+    b.tracks.push_back({{0xA4, 0x42, 0xF7, 0xF7, 0x08, payload}});
+    std::vector<uint8_t> data = b.build();
+
+    LoaderFDI loader(_context, "");
+    std::vector<std::string> warnings;
+    DiskImage* image = loader.parse(data.data(), data.size(), warnings);
+    ASSERT_NE(image, nullptr);
+    ASSERT_EQ(warnings.size(), 1u);
+    EXPECT_NE(warnings[0].find("N=247 kept in ID, data length 1024"), std::string::npos) << warnings[0];
+
+    DiskImage::Sector* sector = image->getTrack(0)->getRawSector(0);
+    ASSERT_NE(sector, nullptr);
+    EXPECT_EQ(sector->sizeCode(), 0xF7);
+    EXPECT_EQ(sector->dataSize, 1024);
+    EXPECT_TRUE(sector->idCrcValid);
+    EXPECT_TRUE(sector->dataCrcValid);
+    EXPECT_EQ(std::memcmp(sector->data, payload.data(), payload.size()), 0);
+
+    std::vector<uint8_t> out;
+    std::vector<std::string> saveWarnings;
+    ASSERT_TRUE(loader.serialize(image, out, saveWarnings));
+    EXPECT_EQ(out, data);
+    delete image;
+}
+
+/// DC-09 / DC-10: 83 and 86 cylinders load and save with their geometry, empty tracks stay empty; 87 is refused
+TEST_F(LoaderFDI_Test, Load_OverlongGeometry_And_EmptyTracks_RoundTrip)
+{
+    for (uint16_t cylinders : {83, 86})
+    {
+        FdiBuilder b;
+        b.cylinders = cylinders;
+        b.heads = 2;
+        for (size_t t = 0; t < cylinders * 2u; t++)
+        {
+            if (t == 0)
+                b.tracks.push_back({{0, 0, 1, 1, 0x02, std::vector<uint8_t>(256, 0x01)}});
+            else
+                b.tracks.push_back({});
+        }
+        std::vector<uint8_t> data = b.build();
+
+        LoaderFDI loader(_context, "");
+        std::vector<std::string> warnings;
+        DiskImage* image = loader.parse(data.data(), data.size(), warnings);
+        ASSERT_NE(image, nullptr) << cylinders;
+        EXPECT_EQ(image->getCylinders(), cylinders);
+        EXPECT_EQ(image->getTrackForCylinderAndSide(static_cast<uint8_t>(cylinders - 1), 1)->sectorCount(), 0u);
+
+        std::vector<uint8_t> out;
+        std::vector<std::string> saveWarnings;
+        ASSERT_TRUE(loader.serialize(image, out, saveWarnings));
+        EXPECT_EQ(out, data) << cylinders;
+        delete image;
+    }
+
+    FdiBuilder tooMany;
+    tooMany.cylinders = 87;
+    for (size_t t = 0; t < 87; t++) tooMany.tracks.push_back({});
+    std::vector<uint8_t> data = tooMany.build();
+    LoaderFDI loader(_context, "");
+    std::vector<std::string> warnings;
+    EXPECT_EQ(loader.parse(data.data(), data.size(), warnings), nullptr);
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings[0].find("supported range is 1..86"), std::string::npos) << warnings[0];
+}
+
 TEST_F(LoaderFDI_Test, Negative_Truncated_And_BadOffsets)
 {
     std::vector<uint8_t> d = readFile(fixture("loaders/fdi/VORON1.FDI"));

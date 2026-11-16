@@ -133,7 +133,9 @@ void GSCardTarget::OnBreakpointDemand(const BreakpointTapDemand& demand)
 {
     // Every active breakpoint of the card (a stop or a tap) needs the debug loop
     _wanted = demand.stop || demand.exec || demand.read || demand.write || demand.other;
+    _stopWanted.store(demand.stop, std::memory_order_release);
     Attach();
+    UpdateTight();
 }
 
 void GSCardTarget::Note(uint16_t id, uint16_t address, uint8_t value, BreakpointHitKind kind, uint16_t pc)
@@ -168,7 +170,7 @@ void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
     _parkedInside.store(false, std::memory_order_release);
 }
 
-std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
+std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target)
 {
     GeneralSoundCard* card = Card();
     Z80CpuRegisters regs{};
@@ -216,14 +218,28 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
         _stepReturning = inside && IsReturnAt(card, pc);
         _stepReturnSp = regs.sp;
     }
+    else if (kind == StepKind::To)
+    {
+        // The boundary of the instruction at PC is passed: a cursor at PC means its next run
+        _stepTarget = target;
+        _stepSkip = inside ? 0u : 1u;
+    }
     _stepKind.store(kind, std::memory_order_release);
     Attach();
+    UpdateTight();
     return {};
 }
 
 void GSCardTarget::CancelStep()
 {
     _stepKind.store(StepKind::None, std::memory_order_release);
+    UpdateTight();  // a step that ended inside the card's run left tight mode on for this call
+}
+
+void GSCardTarget::UpdateTight()
+{
+    if (_context && _context->pDebugManager)
+        _context->pDebugManager->UpdateCardTight();
 }
 
 bool GSCardTarget::IsReturnAt(GeneralSoundCard* card, uint16_t pc) const
@@ -276,6 +292,15 @@ bool GSCardTarget::StepBoundary(uint16_t pc)
             _stepReturning = regs.sp >= _stepSp && IsReturnAt(card, pc);
             _stepReturnSp = regs.sp;
             return false;
+        case StepKind::To:
+            if (_stepSkip > 0)
+            {
+                _stepSkip--;
+                return false;
+            }
+            if (pc != _stepTarget)
+                return false;
+            break;
         default:
             return false;
     }

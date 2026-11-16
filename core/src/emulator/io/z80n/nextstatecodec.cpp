@@ -27,7 +27,7 @@
 
 namespace
 {
-constexpr uint8_t kImageVersion = 17;  // 17: + the audio render clock; 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
+constexpr uint8_t kImageVersion = 18;  // 18: + the zxnDDMA state (24-bit DMA addresses, physical / 2D / transparent / fill / Layer 2 X,Y); 17: + the audio render clock; 16: + the esxDOS mode (handles, working directory, caps); 15: + the board issue, the DNA / XADC; 14: + the NR #08 contention switch waiting for hc(8); 13: + the sprite flags' pending events and last read, the membrane scan; 12: + the membrane's extended keys; 11: + the key joystick map and its address; 10: + the AY address and hold flag; 9: the CTC's run start and pending pulses, the UARTs' break state; 7: ULA+ select; 6: the UARTs
 
 /// Plain values and arrays, in declaration order, little-endian as the host stores them (an image is read by the build that wrote it)
 class Writer
@@ -369,6 +369,27 @@ static void SaveDma(Writer& w, const NextDma& d)
     w.Put(static_cast<uint8_t>(d._seq));
     w.Put(d._readSeq);
     w.Put(d._regTemp);
+    w.Put(d._extended);
+    w.Put(d._extA);
+    w.Put(d._extB);
+    w.Put(d._phys);
+    w.Put(d._2d);
+    w.Put(d._transparent);
+    w.Put(d._fill);
+    w.Put(d._l2xy);
+    w.Put(d._hidden);
+    w.Put(d._l2x);
+    w.Put(d._l2y);
+    w.Put(d._rowLen);
+    w.Put(d._rows);
+    w.Put(d._strideA);
+    w.Put(d._strideB);
+    w.Put(d._transValue);
+    w.Put(d._fillValue);
+    w.Put(d._row);
+    w.Put(d._col);
+    w.Put(d._rowSrc);
+    w.Put(d._rowDst);
 }
 static void LoadDma(Reader& r, NextDma& d)
 {
@@ -402,6 +423,27 @@ static void LoadDma(Reader& r, NextDma& d)
     d._seq = static_cast<NextDma::Seq>(seq);
     r.Get(d._readSeq);
     r.Get(d._regTemp);
+    r.Get(d._extended);
+    r.Get(d._extA);
+    r.Get(d._extB);
+    r.Get(d._phys);
+    r.Get(d._2d);
+    r.Get(d._transparent);
+    r.Get(d._fill);
+    r.Get(d._l2xy);
+    r.Get(d._hidden);
+    r.Get(d._l2x);
+    r.Get(d._l2y);
+    r.Get(d._rowLen);
+    r.Get(d._rows);
+    r.Get(d._strideA);
+    r.Get(d._strideB);
+    r.Get(d._transValue);
+    r.Get(d._fillValue);
+    r.Get(d._row);
+    r.Get(d._col);
+    r.Get(d._rowSrc);
+    r.Get(d._rowDst);
 }
 
 static void SaveCtc(Writer& w, const NextCtc& c)

@@ -97,8 +97,8 @@ namespace ttd
     ///
     /// With branches (storage.md §4) each file holds one line: a branch's files are named "-b<line>", numbered in
     /// capture order with the trunk's; branches.tdx (from the first fork on) lists the branch events and the closed
-    /// segments, append-only, each record synced. A deleted branch gets a delete record first, then its files go: a
-    /// crash between leaves files that Segments() skips and Open() deletes.
+    /// segments, append-only, each record synced. A deleted branch gets a delete record first (a prune's share one
+    /// part), then its files go: a crash between leaves files that Segments() skips and Open() deletes.
     class TTDRecordingFolder
     {
     public:
@@ -157,7 +157,10 @@ namespace ttd
         /// The files SaveAs joins: the source's (checked: there, the same size and UUID), then the segments
         bool JoinList(std::vector<std::string>& out, std::string& error, int depth) const;
         bool OpenIndex(const TTDBranchIndex& content, std::string* error);
+        /// The files of every line with a delete record (a folder opened after a delete that did not finish)
         void FinishDeletions();
+        /// The segment files of @p lines: one listing of the folder
+        void RemoveLineFiles(const std::set<uint32_t>& lines);
         uint32_t NextNumber() const;
 
         std::string _path;

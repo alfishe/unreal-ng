@@ -96,9 +96,19 @@ struct HapticProbeEvent
     uint8_t value = 0;
 };
 
+/// The floppy drive's mechanics this frame (the WD1793 of Beta 128 / Profi / Sprinter, the +3's uPD765): what a real
+/// drive does under the hand: the stepper's pulses
+struct HapticDriveFrame
+{
+    bool present = false;  ///< the machine has a floppy controller
+    uint16_t steps = 0;    ///< step pulses this frame (fast disk mode packs many into one)
+    uint8_t stepMs = 0;    ///< the step period the controller was told (3..30 ms): the drive's own pace
+};
+
 struct HapticFrame
 {
     uint64_t frame = 0;
+    HapticDriveFrame drive;
     static constexpr unsigned kMaxAy = 3;  ///< TurboSound 2, the Next 3
     std::array<HapticAyFrame, kMaxAy> ay{};
     unsigned ayCount = 0;

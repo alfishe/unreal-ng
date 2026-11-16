@@ -35,7 +35,7 @@ time_travel {"action":"step_forward_frame"}
 time_travel {"action":"step_back_instruction"}
 time_travel {"action":"step_forward_instruction"}
 time_travel {"action":"markers"}                               # replay barriers
-time_travel {"action":"resume"}                                # needs detached (seek/step first); truncates the future
+time_travel {"action":"resume"}                                # needs detached (seek/step first); before the end a new branch forks there, the old future stays
 
 # bookmarks
 time_travel {"action":"bookmark_add","label":"before-crash"}   # at the current position
@@ -411,7 +411,7 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   (`media_version_differs`) only for another medium in the slot or a version
   past the slot's undo log (64 MB per slot). A write after a seek back drops
   the old future of that medium, as the recording's own.
-- **Rec From Here / `POST /ttd/resume`** sets every medium back too. One
+- **Branch Here / Continue Rec (formerly Rec From Here) / `POST /ttd/resume`** sets every medium back too. One
   that cannot go back (another disk in the drive, past the undo log) is
   decided by `media`: `empty` (default) ejects it (an event of the
   recording), `keep` leaves it, `ask` resumes nothing and answers

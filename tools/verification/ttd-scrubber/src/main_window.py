@@ -267,7 +267,7 @@ class MainWindow(QMainWindow):
     #
     # The previous design labelled the transport button "Resume from here"
     # and dispatched it to /ttd/resume (ResumeRecordingFrom). That had two
-    # problems: (1) the engine truncates the future timeline and flips
+    # problems: (1) the engine forks a branch there (it truncated the future before branches) and flips
     # state Detached→Recording, which disabled every scrub control, and
     # (2) the word "Resume" made the UI feel like it was creating a new
     # recording. Both are fixed here: the button is now "Play" and hits
@@ -551,8 +551,8 @@ class MainWindow(QMainWindow):
         # boundary and the user can keep scrubbing.
         #
         # There is intentionally NO path from this UI to /ttd/resume
-        # (ResumeRecordingFrom). That endpoint truncates the future
-        # timeline and transitions Detached→Recording, which is a
+        # (ResumeRecordingFrom). That endpoint forks a branch (it truncated the future
+        # before branches) and transitions Detached→Recording, which is a
         # RECORDING-flow operation. Per the UX spec, playback and
         # recording flows are fully disconnected in this tool — the only
         # way to start a new recording is via the Start button in the

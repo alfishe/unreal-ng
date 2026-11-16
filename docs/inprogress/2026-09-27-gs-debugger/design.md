@@ -568,7 +568,19 @@ at cycle 60,000, which is main T 17,500.
 When all three are false, tight mode is off. The card then simply stays
 behind until the next port access or frame end, as today.
 
+> **As built (2026-11-14), the third trigger:** the selection is one per machine (`DebugManager::SelectCpu`, the last
+> front-end's choice). Tight mode comes with a direct run of the paused machine (`Emulator::DirectStepScope`: a step,
+> steps, a run of T or frames), plus one catch-up at the run's end, rather than with the pause itself: switching tight
+> mode takes a `CpuHold` (`FeatureManager::applyDebugMode`), and a pause edge comes from inside the execution arbiter.
+> The main CPU only runs while paused in a direct run, so the effect is the same. The card does not catch up at the
+> selection itself, only with the next step.
+
 ### 5.3 The stepping coordinator
+
+> **As built (2026-11-15), run to the cursor:** no coordinator object; a card's step in / over / out / to arms a
+> one-shot park in `GSCardTarget` (`ArmStep`), `RunControl::CardStep` resumes the machine and waits for the pause. The
+> cursor is the step kind `to`, not a hidden breakpoint, so it never shows in the breakpoint lists; the planes reach it
+> as the main CPU's run until PC with a card `cpu` (`/skip_until?cpu=gs`).
 
 All run and step requests from all front-ends go to one object,
 `StepCoordinator`. It executes them **on the emulation thread**, at the park
@@ -625,6 +637,13 @@ precise T. So main's clock may be slightly past the card's time. That
 difference is the **gap** in S2, and it is shown.
 
 ### 5.4 Instruction progress for the main CPU
+
+> **As built (2026-11-14):** `Z80::instrStartT` (T, not `tt`), set at each instruction start while the start-of-
+> instruction debug work runs; tight mode catches the card up before it moves, so `m1_pc` and `instrStartT` name the
+> finished instruction the card's moment is in. The machine cycles come from `Z80MCycleDecoder` (no table in the
+> opcode records), checked against the FUSE vectors. Contention: the measured T (`t_in_instruction`) beside the
+> table's, `contended` when they differ; no contention counter. The payload is `MainPosition` / the `main` node, not
+> `CpuTimePosition`.
 
 - **Start T.** A new field `Z80::instrStartTT` (same scale as `tt`) is set
   next to `m1_pc` in `RecordInstructionStart`, which runs once per
@@ -1352,7 +1371,7 @@ flowchart LR
 
 | # | Point | Handling |
 |---|---|---|
-| 1 | Tight-mode cost (flush at every main memory access) | Measured in phase 1. If too high, flush only at instruction start. The card can then be one whole main instruction behind (still meets S4's "within one instruction"). |
+| 1 | Tight-mode cost (flush at every main memory access) | Measured in phase 1. If too high, flush only at instruction start. The card can then be one whole main instruction behind (still meets S4's "within one instruction"). **Taken in phase 2:** at every memory access (the debug memory path) it cost +44 % over lazy; at the instruction start (`Z80::cardTight`, the memory keeps its path) +24 %. |
 | 2 | Contention makes the table total wrong on 48K / 128K | Progress uses the table total plus contention so far (§5.4); marked "contended" |
 | 3 | Labels that cannot be placed on an older binary (routine rewritten, not just patched) | Listed as missing in the mark-up report; named by hand if needed, in the same `.map` (§6.2) |
 | 4 | NeoGS sources | A local git-svn mirror of NedoPC `ngs` exists (synced 2026-09-19); imported from it with the revision recorded |

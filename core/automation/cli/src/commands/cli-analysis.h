@@ -15,7 +15,8 @@
 ///   analysis findings [list|add] [kind=<k>] [status=<s>] [range=<r>] [format=table|markdown|jsonl] [path=<file>]
 ///   analysis review [next|list|show|resolve] [<id>] [ok|wrong|skip] [label=<l>] [title=<t>] [comment=<c>]
 ///                   [kind=<region kind>] [names=<json>] [experiment=<json>] [reason=<r>] [offset=<n>] [limit=<n>]
-///   analysis experiment <spec.json | {json}> [finding=<id>] [parallel=<n>]   (L3 experiments, l3experiment.h)
+///   analysis experiment <spec.json | {json}> [finding=<id>] [parallel=<n>] [keep_branches=asked|observed|all] [run=<id>]
+///                   (L3 experiments, l3experiment.h; kept ones become TTD branches, l3experimentbranch.h)
 ///   analysis cover [<budget>] [frames=<n>] [ranges=<r,...>]                 (L3 directed coverage)
 ///   analysis trace <path> [from_frame=<f>] [from_tinframe=<t>] [to_frame=<f>] [to_tinframe=<t>] [max_cycles=<n>]
 ///                                                             (the CPU access trace of a window, accesstrace.h)
@@ -33,8 +34,8 @@ inline constexpr const char* kUsage =
     "[scale=N] [limit=N] | findings [list|add] [kind=K] [status=S] [format=table|markdown|jsonl] [path=F] | review "
     "[next|list|show|resolve] [id] [ok|wrong|skip] [label=L] [title=T] [comment=C] [kind=K] [names={json}] "
     "[reason=R] [offset=N] | experiment <spec.json|{json}> "
-    "[finding=ID] | cover [budget] [frames=N] | trace <path> [from_frame=F] [from_tinframe=T] [to_frame=F] "
-    "[to_tinframe=T] [max_cycles=N] [--json]";
+    "[finding=ID] [keep_branches=asked|observed|all] [run=R] | cover [budget] [frames=N] | trace <path> "
+    "[from_frame=F] [from_tinframe=T] [to_frame=F] [to_tinframe=T] [max_cycles=N] [--json]";
 
 /// False with the reason in error. The first word is the action (none: status); name=value words set an option by name
 inline bool ParseArgs(const std::vector<std::string>& args, std::string& action, std::map<std::string, std::string>& options,

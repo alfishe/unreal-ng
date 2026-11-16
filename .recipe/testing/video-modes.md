@@ -56,7 +56,7 @@ the pages first (TS-Conf V_PAGE 0: pages 0-2) when the picture is to be looked a
 | ATM-Turbo 710, ATM3 | `ATM16` / `ATMHR` / `ATMTX` / `ATMTL` / `ZX` | 320x288 / 640x288 / 640x288 / 640x288 / 352x288 | 320x200 / 640x200 / 640x200 | `#FF77` bits 0-2: 0 EGA, 2 HWMC, 3 ZX, 6 text, 7 linear text (ATM3 only); on ATM3 `#xx77` answers only in shadow: `OUT (#BF),1` first; see [atm/README.md](../machines/atm/README.md) | checked on ATM3 (all five); ATM710 by `#BE` only: its `#FF77` answers inside a TR-DOS session (code in ROM at `#3Dxx`) or with `CPM` clear (`aFF77` bit 9), so code injected into RAM cannot write it (portdecoder_atm710.cpp, `IsDosPortsEnabled`) |
 | TS-Conf, TSL-VDAC2 | `TS16` / `TS256` / `TSTX` / `TSZX` | 720x288 | the graphics window of `V_CONFIG` (512x192, 640x200, 640x240, 720x288 pixels) | `OUT (#00AF)` = V_CONFIG: bits 1:0 mode (0 ZX, 1 16C, 2 256C, 3 TXT), bits 7:6 the window (0 256x192, 1 320x200, 2 320x240, 3 360x288); the first write after boot is lost to the BIOS | checked, all four modes and four windows |
 | Sprinter | `Sprinter` | 736x288 | 640x256 | per-8x8-square mode table, see [sprinter.md](../machines/sprinter.md) | boot mode checked |
-| ZX Spectrum Next | `Next` | 640x512 | 512x384 | NR registers / Timex port, `next_video` aspect | boot mode checked |
+| ZX Spectrum Next | `Next` | 720x576 | 512x384 | NR registers / Timex port, `next_video` aspect | boot mode checked |
 | ZX-Poly (all three) | the module's (`ZX`, `ZX128`, `Pentagon128K`) | 704x576 (the group's composed frame, `source: composed`); a recording is the same composed frame | 512x384 | the master's mode | checked |
 
 Reaching a mode with code (what the script does): pause, write the code at `#8000` in RAM page 2
@@ -88,7 +88,7 @@ Known limits, so they are not taken for bugs:
 
 - Most families' `state/screen/mode` has no `framebuffer` (only Sprinter and Profi report it); the script says so and
   checks the screenshot against the raster table instead.
-- The Next reports `resolution: 512x384` and `video_mode: Next`: its working picture, not its 640x512 frame.
+- The Next reports `resolution: 512x384` and `video_mode: Next`: its working picture, not its 720x576 frame (the 360x288 HDMI picture doubled, the 320x256 grid inside its outer border).
 - An active automation session shows the remote-control bar in the unreal-qt window; its toolbar needs about 790 px,
   so the window cannot go below that width and the window check prints a note instead of a mismatch.
 - Overscan: `state/screen/mode` reports `framebuffer` 384x304 and the viewport's crop is in the screenshot's `crop`; the script drives it with `--switch` (symmetric, full, off).

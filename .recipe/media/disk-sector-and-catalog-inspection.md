@@ -183,7 +183,8 @@ reads are WebAPI/MCP (`invoke_api`) only.
   print it.
 - **Create while running** can be refused with `409` (the handler returns
   the refusal text, for instance during a TTD recording); `format` is
-  `auto`, `unformatted` or `plus3`, `cylinders` 40 or 80, `sides` 1 or 2,
+  `auto`, `unformatted`, `trdos` or `plus3`, `cylinders` 1..86 for `unformatted` (40 or 80
+  for `trdos` / `plus3`), `sides` 1 or 2,
   otherwise `400`. Eject of a drive the machine lacks fails (status unconfirmed).
 - **Live FDC state is a different endpoint.** These calls read the image;
   what the controller is doing right now (phase, last command, motor) is

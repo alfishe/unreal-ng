@@ -90,6 +90,9 @@ The slot ids of a machine: `inspect_state slots` lists its buses; `<bus>.next` m
 `auto` (or no `slot`) lets the planner choose. `slots_catalog` says for each card whether it `fits`, `needs-replace`
 (and which cards it would remove) or is `refused` here, and with which fit: `real`, `adapter` (behind a bus adapter),
 `unrealistic` (the bus lacks a signal the card needs; allowed with the replace flag, and every report says so).
+`slots_catalog {"slot": "zxbus.1"}` (WebAPI `?slot=`) answers the same for a plug into that one slot: the cards of
+another bus are `refused`, the card in it now has `thisMachine.inSlot`. Show `label` (plain text), not `name`
+(markdown: "Covox `#FB`").
 
 ## WebAPI
 

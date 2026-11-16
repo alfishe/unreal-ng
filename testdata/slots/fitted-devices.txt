@@ -42,7 +42,7 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 61:32 notRecorded 0
+ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:56 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 61:32 notRecorded 0
 == atm450
 model 7
 mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -124,7 +124,7 @@ port 78FD FF27/7825 GMX #8000 RAM page (stored XOR 2); IN: page, BRD1, magic bit
 port 7AFD FF27/7A25 GMX scroll start low (bits 7-4); IN: paging status, BRD0
 port 7CFD FF27/7C25 GMX scroll start high (bits 13-8)
 port 7EFD FF27/7E25 GMX turbo, ROM plane, 640x200, MagEnable; IN: status
-port 7FFD D027/5025 Memory paging (host Scorpion, after the GMX file)
+port 7FFD C027/4025 Memory paging (host Scorpion, after the GMX file)
 port BFFD C002/8000 AY / TurboSound data
 port DFFD FF27/DF25 GMX RAM page bits 4-6 at #C000
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
@@ -319,9 +319,9 @@ port 00BA 00FE/00BA SMUC board (EEPROM / RTC / PIC / IDE window)
 port 00DD 0023/0001 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
-port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
-port 7EFD D127/5025 ProfROM service-window latch
-port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port 1FFD C027/0025 Window latch / Shadow Monitor (bit 1)
+port 7EFD C127/4025 ProfROM service-window latch
+port 7FFD C027/4025 Memory paging (incl. extended RAM bits)
 port BFFD C002/8000 AY / TurboSound data
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
@@ -352,8 +352,8 @@ port 00BB FFFF/00BB Registered peripheral device
 port 00DD 0027/0005 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
-port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
-port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port 1FFD C027/0025 Window latch / Shadow Monitor (bit 1)
+port 7FFD C027/4025 Memory paging (incl. extended RAM bits)
 port BFFD C002/8000 AY / TurboSound data
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis

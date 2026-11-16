@@ -2,7 +2,11 @@
 #include "debugger/pchistory/pchistory.h"
 #include "debugger/asm/sync/asmsyncservice.h"
 #include "debugger/callbacks/scriptcallbacks.h"
+#include "3rdparty/message-center/messagecenter.h"
 #include "debugger/targets/gscardtarget.h"
+#include "emulator/emulator.h"
+#include "emulator/notifications.h"
+#include "emulator/platform.h"
 #include "emulator/slots/card.h"
 #include "emulator/slots/slotmanager.h"
 
@@ -16,6 +20,7 @@
 #include "debugger/analyzers/coverage/coverageanalyzer.h"
 #include "debugger/analyzers/profile/profileanalyzer.h"
 #include "debugger/analyzers/dss/dssanalyzer.h"
+#include "debugger/analyzers/sectiontimer/sectiontimeranalyzer.h"
 #include "debugger/analyzers/nedoos/nedoosanalyzer.h"
 #include "debugger/analyzers/trdos/trdosanalyzer.h"
 #include "debugger/joystick/debugjoystickmanager.h"
@@ -51,6 +56,8 @@ DebugManager::DebugManager(EmulatorContext* context)
                 return gs;
         return nullptr;
     });
+    // The cards built with the machine are its first state, not a change: the slot cards come before this manager
+    _targetsMask = TargetsMask();
     
     // Keyboard injection manager for automation
     _keyboardManager = new DebugKeyboardManager(_context);
@@ -70,6 +77,7 @@ DebugManager::DebugManager(EmulatorContext* context)
     _analyzerManager->registerAnalyzer("audiocapture", std::make_unique<AudioCaptureAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("nedoos", std::make_unique<NedoOsAnalyzer>(_context));
     _analyzerManager->registerAnalyzer("dss", std::make_unique<DssAnalyzer>(_context));
+    _analyzerManager->registerAnalyzer(SectionTimerAnalyzer::kId, std::make_unique<SectionTimerAnalyzer>(_context));
 
     // Editor control points for verified command input (input-verification.md)
     auto editorMonitor = std::make_unique<EditorMonitor>(_context);
@@ -120,12 +128,86 @@ void DebugManager::OnGeneralSoundCardCreated()
 {
     if (_gsTarget)
         _gsTarget->OnCardCreated();
+    PublishTargetsIfChanged();
 }
 
 void DebugManager::OnSlotCardsChanged()
 {
     if (_msTarget)
         _msTarget->OnCardCreated();
+    PublishTargetsIfChanged();
+}
+
+std::vector<std::pair<std::string, bool>> DebugManager::DebugTargets() const
+{
+    return {{DebugCpuName(DebugCpuId::Main), true},
+            {DebugCpuName(DebugCpuId::GS), _gsTarget && _gsTarget->Available()},
+            {DebugCpuName(DebugCpuId::MultiSoundGS), _msTarget && _msTarget->Available()}};
+}
+
+void DebugManager::UpdateCardTight()
+{
+    if (_shuttingDown || !_context || !_context->pFeatureManager)
+        return;
+    _context->pFeatureManager->setCardTightHold(CardTight(_gsTarget.get()) || CardTight(_msTarget.get()));
+}
+
+bool DebugManager::CardTight(const GSCardTarget* target) const
+{
+    if (!target)
+        return false;
+    return target->WantsTight() || (_directRun.load(std::memory_order_acquire) && SelectedCpu() == target->Id());
+}
+
+void DebugManager::SelectCpu(DebugCpuId cpu)
+{
+    if (_selectedCpu.exchange(static_cast<uint8_t>(cpu), std::memory_order_acq_rel) != static_cast<uint8_t>(cpu))
+        UpdateCardTight();
+}
+
+void DebugManager::OnDirectRun(bool running)
+{
+    if (SelectedCpu() == DebugCpuId::Main)
+    {
+        _directRun.store(running, std::memory_order_release);
+        return;
+    }
+    // The run's last instruction start caught the card up to that instruction: up to its end now, where the main CPU
+    // stands while paused
+    if (!running)
+        CatchUpCards();
+    _directRun.store(running, std::memory_order_release);
+    UpdateCardTight();
+}
+
+void DebugManager::CatchUpCards()
+{
+    if (_catchingUp)
+        return;
+    _catchingUp = true;
+    for (GSCardTarget* target : {_gsTarget.get(), _msTarget.get()})
+    {
+        if (!target || !CardTight(target) || target->ParkedInside())
+            continue;
+        if (GeneralSoundCard* card = target->Card())
+            card->catchUpToHost();
+    }
+    _catchingUp = false;
+}
+
+int DebugManager::TargetsMask() const
+{
+    return (_gsTarget && _gsTarget->Available() ? 1 : 0) | (_msTarget && _msTarget->Available() ? 2 : 0);
+}
+
+void DebugManager::PublishTargetsIfChanged()
+{
+    const int mask = TargetsMask();
+    if (_targetsMask.exchange(mask) == mask || !_context || !_context->pEmulator)
+        return;
+    auto* payload = new DebugTargetsChangedPayload(_context->pEmulator->GetId());
+    payload->targets = DebugTargets();
+    MessageCenter::DefaultMessageCenter().Post(NC_DEBUG_TARGETS_CHANGED, payload, true);
 }
 
 DebugManager::~DebugManager()
@@ -136,6 +218,7 @@ DebugManager::~DebugManager()
     _asmSync.reset();   // its worker publishes into _labels: stopped first
     _scriptCallbacks.reset();  // its taps go before the breakpoints
     _frameWatches.reset();
+    _shuttingDown = true;      // the targets' breakpoints going away leave the features as they are
     _msTarget.reset();
     _gsTarget.reset();         // its hooks leave the card (the sound manager outlives this one)
     _commandTyper.reset();

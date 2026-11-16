@@ -1,6 +1,6 @@
 # TTD branches: architecture
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08), from the owner's decisions in
+Part of [TTD branches](README.md). Status: **built** except the disk tier (P3) and media (P4): P1 landed 2026-11-10 (`e0ac62a53`); [README](README.md#phases) tracks the phases. Design 2026-11-08, from the owner's decisions in
 [use-cases.md](use-cases.md) §5. Storage: [storage.md](storage.md). Surfaces: [surfaces.md](surfaces.md). Tests and
 benchmarks: [test-strategy.md](test-strategy.md). Maintenance tools: [tools.md](tools.md).
 
@@ -189,7 +189,8 @@ Detached and Replaying modes as "forks a branch" instead of refusing.
 ### 4.6 Empty branches
 
 A branch exists from the moment it records an event or a checkpoint. A resume in the past followed by a seek
-elsewhere before anything was recorded leaves nothing: the branch is removed at once, without a notice. Otherwise
+elsewhere before anything was recorded leaves nothing: the branch is removed at once, without a notice. A branch
+asked for explicitly (`branch-create`, reason `create` / `create: ...`) or pinned stays while empty. Otherwise
 branches are never removed automatically (no age or length threshold: Q-3 keeps all history on disk).
 
 ### 4.7 Lineage queries

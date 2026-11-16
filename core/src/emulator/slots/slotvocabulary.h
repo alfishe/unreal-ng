@@ -15,6 +15,8 @@
 #undef signals
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace slots
 {
@@ -243,6 +245,10 @@ EnumInfo Describe(Opt value);
 EnumInfo Describe(OptionKind value);
 /// Outcome: id = the matrix code ("✓", "D", ...), description = its meaning
 EnumInfo Describe(Outcome value);
+
+/// A reference-data name as plain text: the names are markdown for the matrix tables and the docs ("Covox `#FB`");
+/// a surface that draws text (a menu, a list) shows "Covox #FB"
+std::string PlainLabel(std::string_view name);
 
 /// The BusSignal with bit index `index` (0 .. kBusSignalCount - 1)
 constexpr BusSignal SignalAt(int index)

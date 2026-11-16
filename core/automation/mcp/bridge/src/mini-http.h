@@ -23,6 +23,7 @@ struct HttpResult
     std::string body;   // response body (may be empty, e.g. 202 notifications)
     std::string contentType; // lowercased response Content-Type ("" when absent)
     std::string error;  // human-readable transport error when !ok
+    bool connected = false; // the TCP connection was made (a failure after it: the server went away mid-call)
 };
 
 /// endregion </HttpResult>

@@ -1,6 +1,6 @@
 // The sound card's CPU on the CLI (gs-debugger design §7.1): `--cpu gs|ms` on registers, memory and disasm, through
-// core CpuView (cpuview.h), and on step, steps, stepover and stepout through RunControl::CardStep, as every other
-// surface.
+// core CpuView (cpuview.h), and on step, steps, stepover, stepout and skip_until through RunControl::CardStep, as every
+// other surface.
 
 #include "cli-processor.h"
 
@@ -207,10 +207,17 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
         return true;
     }
 
-    if (what == "step" || what == "steps" || what == "stepover" || what == "stepout")
+    if (what == "step" || what == "steps" || what == "stepover" || what == "stepout" || what == "skip_until")
     {
-        // step [count] / steps <count> / stepover / stepout --cpu gs: the machine runs until the card's step ends
+        // step [count] / steps <count> / stepover / stepout / skip_until <pc> --cpu gs: the machine runs until the
+        // card's step ends (skip_until: the card runs to the cursor)
         unsigned count = 1;
+        uint16_t cursor = 0;
+        if (what == "skip_until" && (rest.empty() || !ParseAddress(rest[0], cursor)))
+        {
+            session.SendResponse("Usage: skip_until <pc> --cpu " + name + NEWLINE);
+            return true;
+        }
         if (what == "step" || what == "steps")
         {
             uint16_t parsed = 1;
@@ -229,9 +236,9 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
             session.SendResponse("Error: the emulator is gone" + std::string(NEWLINE));
             return true;
         }
-        const char* kind = what == "stepover" ? "over" : what == "stepout" ? "out" : "in";
+        const char* kind = what == "stepover" ? "over" : what == "stepout" ? "out" : what == "skip_until" ? "to" : "in";
         const execution::RunReply reply =
-            execution::RunControl(shared).CardStep(CliRequester(context), cpu, kind, count);
+            execution::RunControl(shared).CardStep(CliRequester(context), cpu, kind, count, cursor);
         if (!reply.Ok())
         {
             session.SendResponse("Error: " + reply.message + NEWLINE);
@@ -275,4 +282,28 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
     }
     session.SendResponse(out.str());
     return true;
+}
+
+// selected-cpu [main|gs|ms]: the CPU the front-ends show (gs-debugger design §5.2, core CpuView::SetSelected, the
+// WebAPI GET / PUT /debug/selected_cpu); a card shown follows the main CPU's steps of the paused machine
+void CLIProcessor::HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args)
+{
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse(std::string("No emulator selected.") + NEWLINE);
+        return;
+    }
+    EmulatorContext* context = emulator->GetContext();
+    if (!args.empty())
+    {
+        if (const std::string error = CpuView::SetSelected(context, args[0]); !error.empty())
+        {
+            session.SendResponse("Error: " + error + NEWLINE);
+            return;
+        }
+    }
+    StateNode selected = CpuView::Selected(context);
+    session.SendResponse("Selected cpu: " + selected["cpu"].s +
+                         (selected["follows"].b ? " (follows the main CPU's steps)" : "") + NEWLINE);
 }

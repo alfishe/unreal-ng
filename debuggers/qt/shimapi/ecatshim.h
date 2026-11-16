@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -238,9 +239,15 @@ public:
     virtual void debug_step_over(CPU * c) = 0;
     virtual void debug_step_out(CPU * c) = 0;
     virtual void debug_run_to(CPU * c, unsigned int address) = 0;
+    // The CPU of the tab shown: a card's follows the main CPU's steps of the paused machine (its state at the main
+    // CPU's moment); the main CPU's ends that
+    virtual void debug_select(CPU * c) { (void)c; }
     virtual unsigned int debug_serial() const = 0;
     virtual CPU * debug_stop_cpu() const = 0;
     virtual int debug_stop_reason() const = 0;
+    // A card CPU's stop: where the main CPU stood at the card's moment, its instruction's progress
+    // ("main #8123: T 9 of 11, port write; 2 T past the card"); empty for any other stop
+    virtual std::string debug_stop_main_text() const { return std::string(); }
     virtual void set_debug_listener(const std::function<void()> &fn) = 0;
     // A remote machine's connection: false while its emulator is gone and it waits for a suitable one (it reattaches
     // by itself, the listener tells both). The last state stays readable; nothing runs, steps or changes
@@ -256,6 +263,20 @@ public:
     // The machine's character set: a ZX Spectrum shows ASCII, 7F the copyright sign
     virtual std::string translate_char(unsigned int code) = 0;
     virtual int char_code(const std::string &text) = 0;
+
+    // The machine's time travel (not in ecat; TTD branches debuggers.md §4): a TTDControl verb with its options as
+    // text, the answer as JSON text (the verb's body, or {error, message}); ok false on a refusal
+    struct TtdAnswer {
+        bool ok = false;
+        std::string json;
+    };
+    virtual bool ttd_supported() const { return false; }
+    virtual TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options)
+    {
+        (void)verb;
+        (void)options;
+        return {false, R"({"error":"Not Implemented","message":"This machine has no time travel"})"};
+    }
 };
 
 } // namespace ecatshim

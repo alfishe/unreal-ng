@@ -183,6 +183,37 @@ void NextMemory::DmaWrite(uint16_t addr, uint8_t value)
         _state->video_memory_changed = true;
 }
 
+uint8_t NextMemory::PhysicalRead(uint32_t address)
+{
+    address &= 0x3FFFFF;
+    constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
+    if (address < kSystemBytes)
+        return ROMPageHostAddress(static_cast<uint8_t>(address / PAGE_SIZE))[address % PAGE_SIZE];
+    const uint32_t offset = address - kSystemBytes;
+    const unsigned bank = offset / PAGE_SIZE;
+    if (bank >= InstalledRamPages() || bank == 5 || bank == 7)
+        return 0xFF;
+    return RAMPageAddress(static_cast<uint16_t>(bank))[offset % PAGE_SIZE];
+}
+
+void NextMemory::PhysicalWrite(uint32_t address, uint8_t value)
+{
+    address &= 0x3FFFFF;
+    constexpr uint32_t kSystemBytes = static_cast<uint32_t>(kSystemAreaPages) * PAGE_SIZE;
+    if (address < kSystemBytes)
+    {
+        ROMPageHostAddress(static_cast<uint8_t>(address / PAGE_SIZE))[address % PAGE_SIZE] = value;
+        return;
+    }
+    const uint32_t offset = address - kSystemBytes;
+    const unsigned bank = offset / PAGE_SIZE;
+    if (bank >= InstalledRamPages() || bank == 5 || bank == 7)
+        return;
+    RAMPageAddress(static_cast<uint16_t>(bank))[offset % PAGE_SIZE] = value;
+    if (_feature_ttd_enabled && _ttdDirtyTracker != nullptr)
+        _ttdDirtyTracker->MarkDirty(static_cast<ttd::PhysPage>(bank));
+}
+
 void NextMemory::PokeSlot(uint16_t addr, uint8_t value)
 {
     const unsigned slot = addr >> 13;

@@ -74,6 +74,9 @@ TEST(AutomationGate_Test, CliCommandsByTheirChangingForms)
     EXPECT_FALSE(CliCommandChangesMachine("tape", {"info"}));
     EXPECT_TRUE(CliCommandChangesMachine("ttd", {"seek", "100"}));
     EXPECT_FALSE(CliCommandChangesMachine("ttd", {"status"}));
+    EXPECT_TRUE(CliCommandChangesMachine("ttd", {"branch", "switch", "1"}));
+    EXPECT_FALSE(CliCommandChangesMachine("ttd", {"branches"}));
+    EXPECT_FALSE(CliCommandChangesMachine("ttd", {"branch", "update", "1", "--pin"}));
     EXPECT_TRUE(CliCommandChangesMachine("r", {"pc", "8000"}));
     EXPECT_FALSE(CliCommandChangesMachine("r", {}));
     EXPECT_FALSE(CliCommandChangesMachine("pause", {}));
@@ -142,7 +145,7 @@ TEST(AutomationGate_Test, EveryOtherActionIsDebugOrConfiguration)
 TEST(AutomationGate_Test, SteppingNeedsAPause)
 {
     for (const char* path : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_frames", "/run_tstates",
-                             "/registers/pc", "/ttd/reverse-step", "/listing/step_line"})
+                             "/registers/pc", "/ttd/reverse-step", "/ttd/reverse-step-over", "/listing/step_line"})
         EXPECT_TRUE(CompanionNeedsPause(path)) << path;
     for (const char* path : {"/resume", "/memory/write", "/breakpoints", "/ttd/seek", "/stepping"})
         EXPECT_FALSE(CompanionNeedsPause(path)) << path;

@@ -36,7 +36,10 @@ The same handler as the REST route: same scopes, body and errors. Calls with dif
 order. The sound card CPU's registers, memory and code are the REST routes with `?cpu=gs`
 (`{"op":"call","method":"GET","path":"/api/v1/emulator/{id}/registers?cpu=gs"}`;
 [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), its steps `POST /step?cpu=gs`
-and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu` and `cpu_pc`.
+and the others; the `debug` topic's `paused` event after one has `reason` `step`, `cpu`, `cpu_pc` and `main` (where
+the main CPU parked with the card: `pc`, `t_in_instruction`, `gap_t`, `frame_end`, `on_boundary`, and its
+instruction's progress `elapsed_t`, `total_t`, `total_t_alt`, `bus_cycles`, `bus_cycle`, `bus_cycle_index`,
+`contended`; [instruction progress](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)).
 An answer budget works the same way: `?max_chars=2000` in the path fits the result's `body` (a JSON object gets
 `truncated`; [answer budgets](webapi-interface.md#answer-budgets-max_chars)).
 
@@ -62,6 +65,22 @@ Example, a host action ([command-interface.md §16](./command-interface.md#16-ho
 ```json
 → {"op":"call","rid":1,"method":"POST","path":"/api/v1/controllers/actions/run.pause_toggle","body":{}}
 ← {"op":"result","t":"call","rid":1,"status":200,"body":{"ok":true,"action":"run.pause_toggle","message":"Emulator paused","result":{…}}}
+```
+
+The TTD branch routes are calls like any other (`PATCH` included), for example a switch to another branch of the
+history ([webapi-interface.md](./webapi-interface.md), TTD branches):
+
+```json
+→ {"op":"call","rid":5,"method":"POST","path":"/api/v1/emulator/0f3a…/ttd/branches/resume%201/switch","body":{}}
+← {"op":"result","t":"call","rid":5,"status":200,"body":{"switched":true,"branch":{"id":1,"name":"+00:00:37.040",…},"arrived_at":{"frame":1852,"tinframe":0},"state":"detached",…}}
+```
+
+Once the session has more than the trunk, `ttd.position` names the branch the cursor is on (`branch {id, guid, name}`,
+`branch_count`); the `ttd.branches` topic pushes the table's summary and its last change when a branch is created,
+switched to, updated or deleted (never per frame; the list itself is `GET …/ttd/branches`):
+
+```json
+← {"op":"state","t":"ttd.branches","instance":"0f3a…","value":{"available":true,"count":3,"revision":7,"active":{"id":2,"guid":"…","name":"probe"},"viewed":{"id":2,"guid":"…","name":"probe"},"last":{"seq":4,"event":"created","branch":{"id":2,"guid":"…","name":"probe"},"removed":0}}}
 ```
 
 A dial's seek and the surface context (control surfaces S2) are calls too; their pushes (`ctx`, the `ttd.position`
@@ -118,7 +137,8 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | Topic | Pushes | Scope | Status |
 |:--|:--|:--|:--|
 | `run.state` | per instance `{state: running \| paused \| stopped, speed, turbo, pace: {preset, label, unit, count, interval_ms, effective_ms, running, stop_reason}}` (`speed`: the host setting 1..16, as the `run.state` readout; the composed clock with the machine's own turbo is `emulator.stats` cpu.multiplier; `pace`: the paced run, `GET /run_pace` without its tick count) | none (a read) | implemented (`pace` 2026-10-21) |
-| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps, unit, unit_count}` (the `ttd position` verb's bounds; `unit`: the scrub unit of `ttd.seek_by`, `ttd.scrub_unit`) | none | implemented (`unit` 2026-10-21) |
+| `ttd.position` | per instance the TTD published cursor `{frame, tinframe, first, end, end_tinframe, state, history, paused, fps, unit, unit_count}` (the `ttd position` verb's bounds; `unit`: the scrub unit of `ttd.seek_by`, `ttd.scrub_unit`); with more than the trunk also `branch {id, guid, name}` (the branch the cursor is on) and `branch_count` | none | implemented (`unit` 2026-10-21, `branch` 2026-11-13) |
+| `ttd.branches` | per instance the branch table's summary: `{available, count, revision, active {id, guid, name}, viewed {id, guid, name}, previous {id, guid, name} | null (the branch `to=previous` goes to), last: {seq, event: created \| switched \| updated \| deleted, branch {id, guid, name}, removed} \| null}` (`removed`: how many branches a delete took; a prune is one delete event naming its first branch; the rows are `GET /ttd/branches`, [TTD branches](../../../inprogress/2026-11-08-ttd-branches/surfaces.md)) | none | implemented (2026-11-13) |
 | `surfaces.context` | per instance the surface context `{context, set, by, default}` (`GET /api/v1/surfaces/context`) | none | implemented |
 | `streamdeck.status` | the Stream Deck daemon as unreal-qt supervises it, once for the process (no `instance`): `{attached, state, mode, activity, own, pid, deck_attached, restarts, error, version, decks, viewers, surface, pairing: {state, code, paired, companion_id, error}, pack: {serial: a pack or scenario}}` (the fields of `GET /api/v1/streamdeck` that change with events, [command-interface.md §16.2](./command-interface.md#162-the-stream-deck-daemon)) | none | implemented (SD7) |
 | `audio.mixer` | per instance the mixer's levels and mute / solo: `{master: {muted}, solo, devices: [{source, muted, solo, audible, volume, peak, active, channels?: [{key, muted, solo, audible, volume?, peak?}]}]}` (`GET /audio/levels`, the readout `audio.mixer`; [mixer channels](../audio/mixer-channels-and-settings.md)); a meter that moves sends at `max_hz` | none | implemented |
@@ -131,7 +151,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `analysis.ready` | per instance the L1 the last build made `{ready, job, routines, blocks, loops, instructions, frames, checked, diverged, path}` | none | implemented (P2, 2026-10-26) |
 | `surface` | control surfaces: opened by `join` (not by `subscribe`): `action`, `result`, `ctx`, readouts, `target`, `revoked` ([below](#31-the-surface-topic)) | per action | implemented (S4); `activity`, `catalogue`, the readout vocabulary and views: Stream Deck SD4 |
 | `instances` | the companion's live view of the instances (`hello`, `emulator`, `emulator_gone`, `snapshot`): `/api/v1/companions/events` on this socket ([§3.2](#32-the-instances-topic)) | none (a companion's own view) | implemented |
-| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
+| `debug.events` | debugger events: `paused`, `resumed`, `step_done`, `breakpoints_changed`, `callbacks_changed`, `watch_hit` / `watch_added` / `watch_removed` / `watch_error`, `section_timer_started` / `_stopped` / `_cleared` / `_break`, `edited`, `run_control`, `labels_changed`, `targets_changed` (the `debug` topic of `/api/v1/websocket`, [§3.3](#33-the-debug-topics)) | none; no token needed from this host | implemented |
 | `host.stats` | the host process, once for the process (no `instance`): `{cpu_percent, cpu_percent_host, cores, rss_bytes, peak_rss_bytes, virtual_bytes, threads, cpu_time_s, uptime_s, …}`, sampled at most twice a second (`GET /api/v1/monitor/host.stats`, [command-interface.md §17](./command-interface.md#17-monitoring)) | none | implemented |
 | `host.clients` | the process: per plane (`rest`, `ws`, `events`, `debug_ws`, `mcp`, `cli`) `{connections, opened, requests}`, `companions`, `instances` (`GET /api/v1/monitor/host.clients`) | none | implemented |
 | `video.present` | the process: the GUI window's way to the screen, `available` (false headless), `emulator`, `presenter` (metal / dxgi / gl / software), `present_policy`, `fixed_display`, `vrr`, `sync` {`mode` off / vrr / display_rate / interpolate (View > Video Synchronization's step in effect), `reason`}, `refresh_hz` {`min`, `max`}, `smooth` {`setting`, `mode` in effect, `device`, `game`}, `display` {`setting` keep / match, `state` keep / matched / unchanged, `reason`, `hz`, `original_hz`, `machine_hz`}; a message when the presenter turns to VRR or back, the display rate switch acts or a setting changes, never per frame (`GET /api/v1/monitor/video.present`) | none | implemented |
@@ -272,8 +292,44 @@ DebugEventHub's events ([debugger protocol §5](../../../inprogress/2026-09-28-d
   (`debug/wait` wakes); with `then: pause` the machine is paused at that frame end and a `paused` event with
   `reason: "watch"` follows.
 
+- `section_timer_started`, `section_timer_stopped`, `section_timer_cleared` (no fields) and `section_timer_break`
+  (`{condition, section, frame, t, elapsed, net, interrupts}`): the [section timer](command-interface.md#55c-section-timer)
+  was armed, disarmed or its results dropped, or a break condition stopped the machine at the exit of a slow pass
+  (the pass that met it; the `paused` with `reason: "breakpoint"` follows). Only a stop that took place is sent: a
+  run that skips breakpoints (`run_frames`) sends none.
+
+```json
+← {"t":"debug.events","op":"event","event":"section_timer_break","condition":"Work>834","section":"Work","frame":19,"t":52998,"elapsed":871,"net":834,"interrupts":1,"seq":52,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
 ```json
 ← {"t":"debug.events","op":"event","event":"watch_hit","id":1,"label":"over","frame":4521,"reasons":["text"],"text_line":"GAME OVER","paused":true,"removed":true,"seq":51,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+```
+
+- `edited` (`{source, cpu, what, count, page?, address?, length?}`): tool edits of the machine went through (any
+  surface: WebAPI, CLI, MCP, Lua, Python, the debugger views). `what`: `registers`, `memory` (the CPU's view:
+  `address`, `length`), `page` (a physical page: `page` as `RAM5` / `ROM2` / `CACHE0`, `address` the offset in it),
+  `port` (`address` the port; a tool's port read is an access too), `state` (anything else: media, a clock, a
+  device). A refused edit (the recorded past) sends none. Views that show the machine re-read on it.
+  - Merged under load: one notification per instance waits in the core's message queue at a time, and the event
+    carries every edit since the last one (`count`; `source` the last edit's). Memory or page edits of one CPU and
+    page give one range (`address`, `length` spanning them all); edits of different kinds give `what: "mixed"` (and
+    `cpu: "mixed"` across CPUs) without an address. A script writing 20 000 bytes one at a time is a handful of
+    events. With no WebAPI the core posts at most ten notifications a second.
+- `run_control` (`{change, surface, client?, owner?, by?}`): the run-control claim changed. `change`: `taken`,
+  `released`, `revoked` (the user took control back: `by`), `expired` (an HTTP session's lease ran out),
+  `retake_refused`, `superseded` (an explicit take took over an implicit session: `by`). `surface`: `gdb`, `webapi`,
+  `mcp`, `cli`, `lua`, `python`.
+- `labels_changed` (no fields): the instance's labels were added, removed, changed, loaded or cleared; re-read
+  `GET /labels`.
+- `targets_changed` (`{targets: [{cpu, available}]}`): a card CPU came or went (a General Sound card fitted or
+  switched, a MultiSound inserted or removed); every CPU a debugger can name (`main`, `gs`, `ms`) with whether it
+  is there now. Sent only when the set changes while the machine runs (not for the cards it was built with).
+
+```json
+← {"t":"debug.events","op":"event","event":"edited","source":"WebAPI memory write","cpu":"main","what":"memory","count":1,"address":32768,"length":16,"seq":61,"instance":"0f3a…","emulator":"0f3a…"}
+← {"t":"debug.events","op":"event","event":"run_control","change":"revoked","surface":"mcp","client":"agent","by":"gui","seq":62,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
+← {"t":"debug.events","op":"event","event":"targets_changed","targets":[{"cpu":"main","available":true},{"cpu":"gs","available":false},{"cpu":"ms","available":true}],"seq":63,"instance":"0f3a…","emulator":"0f3a…","cpu":"main"}
 ```
 
 ## 4. Delivery and threads
@@ -316,7 +372,7 @@ stale. Every readout and state topic has a cadence (`ReadoutCadence`, `ws-hub.cp
 
 | Cadence | Read when | Names |
 |---------|-----------|-------|
-| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `controllers.devices` (`NC_CONTROLLER_DEVICES_CHANGED`), `toggle.*` |
+| Events | the instance's state changed: a notification (`NC_EMULATOR_STATE_CHANGE`, `NC_SPEED_CHANGED`, `NC_BREAKPOINT_CHANGED`, the media, TTD and surface ones, ...), `NC_READOUTS_CHANGED` (state with no notification of its own: the mixer, TTD bookmarks, the tape transport, write protect, the profilers, the analysis jobs, the GUI's window settings, a setting set from the CLI, ...), or an action run on it (the activity feed) | `run.state`, `machine`, `audio.mute`, `debug.*` state, `media.recent`, `machine.*`, `input.connectors`, `video.*`, `surfaces.context`, `actions.unavailable`, `analysis.*`, `controllers.devices` (`NC_CONTROLLER_DEVICES_CHANGED`), `ttd.branches` (`NC_READOUTS_CHANGED` `ttd.branches`), `toggle.*` |
 | Frames | the events above, and every emulated frame or CPU step of that instance (`NC_VIDEO_FRAME_REFRESH`, `NC_EXECUTION_CPU_STEP`, and `NC_READOUTS_CHANGED` `frame` once the TTD cursor of the frame is written: the frame refresh is posted before it) | everything that moves with emulated time: `ttd.position`, `emulator.stats`, `audio.mixer`, `media.tape`, `game.events`, ... (the default) |
 | Meter | on time, at the subscriber's `max_hz` | `host.stats`, `host.clients`, `streamdeck.status` |
 

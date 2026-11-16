@@ -4,6 +4,7 @@
 
 #include "unrealdisk/detail/helpers.h"
 #include "unrealdisk/fdc.h"
+#include "unrealdisk/layoutmutex.h"
 #include "unrealdisk/trdos.h"
 #include <algorithm>
 #include <cstdint>
@@ -448,7 +449,11 @@ public:
         void setWeakByte(size_t offset, bool on)
         {
             if (offset >= _raw.size()) return;
-            if (_weak.empty()) _weak.assign(_clock.size(), 0);
+            if (_weak.empty())
+            {
+                if (!on) return;  // nothing to clear: a write of a sector must not allocate (FDD::SnapshotDisk)
+                _weak.assign(_clock.size(), 0);
+            }
             uint8_t& byte = _weak[offset >> 3];
             const uint8_t mask = static_cast<uint8_t>(1u << (offset & 7));
             if (on) byte |= mask; else byte &= static_cast<uint8_t>(~mask);
@@ -591,6 +596,7 @@ public:
         /// blank tracks of a new image from one formatted template.
         void restampFrom(const Track& tmpl, uint8_t cylinder, uint8_t side)
         {
+            LayoutLock lock(_diskImage);
             _raw = tmpl._raw;
             _clock = tmpl._clock;
             _weak = tmpl._weak;
@@ -763,6 +769,7 @@ public:
         /// Reallocate the stream (gap filled), clear bitmaps and index
         void resizeRaw(size_t newSize, Encoding enc = Encoding::MFM, uint8_t fill = 0x4E)
         {
+            LayoutLock lock(_diskImage);
             allocateRaw(newSize, enc, fill);
             reindex();
         }
@@ -770,14 +777,24 @@ public:
         /// Replace the stream with a copy of data (clock bitmap cleared - call setClockBitmap afterwards)
         void setRaw(const uint8_t* data, size_t len, Encoding enc = Encoding::MFM)
         {
+            LayoutLock lock(_diskImage);
             allocateRaw(len, enc, 0x4E);
             std::memcpy(_raw.data(), data, std::min(len, _raw.size()));
+            reindex();
+        }
+
+        /// Put back a stream taken earlier (an undo log, a snapshot) and rebuild the index, as one layout change
+        void restoreRaw(const RawTrack& raw)
+        {
+            LayoutLock lock(_diskImage);
+            static_cast<RawTrack&>(*this) = raw;
             reindex();
         }
 
         /// Replace the clock bitmap (bit i == byte i carries a missing-clock mark) and rebuild the index
         void setClockBitmap(const uint8_t* bitmap, size_t len)
         {
+            LayoutLock lock(_diskImage);
             std::fill(_clock.begin(), _clock.end(), uint8_t{0});
             std::memcpy(_clock.data(), bitmap, std::min(len, _clock.size()));
             reindex();
@@ -796,6 +813,7 @@ public:
         /// every sync / address mark byte gets its clock mark, index is rebuilt.
         void formatTrack(uint8_t cylinder, uint8_t side, const TrackFormatSpec& spec)
         {
+            LayoutLock lock(_diskImage);
             const bool mfm = (spec.encoding == Encoding::MFM);
             allocateRaw(spec.trackLength, spec.encoding, spec.gapFill);
             const size_t len = _raw.size();
@@ -906,6 +924,7 @@ public:
         /// and must fit entirely before the end of the stream, otherwise the sector is indexed as ID-only.
         void reindex()
         {
+            LayoutLock lock(_diskImage);
             _sectors.clear();
             _indexMarkOffset = Sector::NO_OFFSET;
 
@@ -1014,6 +1033,7 @@ protected:
     std::vector<Track> _tracks;
     std::string _filePath;  // Source file path (set during load, used for tracking)
     bool _fortyTrack = false;  // 48 tpi medium (see isFortyTrack)
+    std::atomic<LayoutMutex*> _layoutMutex{nullptr};  // The drive's, while the image is in one (LayoutLock)
 
     uint8_t _cylinders;
     uint8_t _sides;
@@ -1142,8 +1162,8 @@ public:
     bool isFortyTrack() const { return _fortyTrack; }
     void setFortyTrack(bool fortyTrack) { _fortyTrack = fortyTrack; }
     void setFilePath(const std::string& path) { _filePath = path; }
-    uint8_t getCylinders() { return _cylinders; }
-    uint8_t getSides() { return _sides; }
+    uint8_t getCylinders() const { return _cylinders; }
+    uint8_t getSides() const { return _sides; }
 
     bool getLoaded() { return _loaded; }
     void setLoaded(bool loaded) { _loaded = loaded; }
@@ -1217,10 +1237,117 @@ public:
     {
         releaseMemory();
     }
+
+    /// The streams of every track with the geometry and the dirty flags: what a copy needs, taken as plain memory
+    /// copies under the layout lock (no sector index is built while a writer waits). FromRaw makes the image of it
+    struct RawCopy
+    {
+        uint8_t cylinders = 0;
+        uint8_t sides = 0;
+        bool loaded = false;
+        bool fortyTrack = false;
+        std::vector<RawTrack> tracks;
+        DirtyState dirty;
+    };
+    RawCopy CopyRaw() const;
+    static std::unique_ptr<DiskImage> FromRaw(RawCopy&& copy);
+    /// CopyRaw in pieces, for a caller that holds the layout lock per piece (FDD::SnapshotDisk keeps each hold to
+    /// one track): the geometry and image flags, then one track at a time. False past the last track
+    void CopyRawHeader(RawCopy& copy) const;
+    bool CopyRawTrack(size_t index, RawCopy& copy) const;
     /// endregion </Constructors / destructors>
+
+    /// region <Layout lock>
+public:
+    /// Another thread may copy this image while the emulation runs (FDD::SnapshotDisk). The drive the image is in
+    /// lends it its LayoutMutex (the owner's side never sleeps); every change of the layout - a stream reallocated, a sector index rebuilt, cylinders
+    /// added - holds it, so the copy never meets a vector in the middle of a reallocation. Byte writes into the
+    /// streams (a sector being written) do not take it. Null while the image is in no drive: no reader reaches it
+    void setLayoutMutex(LayoutMutex* mutex) { _layoutMutex.store(mutex, std::memory_order_release); }
+    LayoutMutex* layoutMutex() const { return _layoutMutex.load(std::memory_order_acquire); }
+
+    class LayoutLock
+    {
+    public:
+        explicit LayoutLock(const DiskImage* image) : _mutex(image ? image->layoutMutex() : nullptr)
+        {
+            if (_mutex)
+                _mutex->lock();
+        }
+        ~LayoutLock()
+        {
+            if (_mutex)
+                _mutex->unlock();
+        }
+        LayoutLock(const LayoutLock&) = delete;
+        LayoutLock& operator=(const LayoutLock&) = delete;
+
+    private:
+        LayoutMutex* _mutex;
+    };
+    /// endregion </Layout lock>
 
     /// region <Helper methods>
 public:
+    /// Erase every track: a gap-filled stream of the default MFM length with no address marks, which is what a
+    /// never-formatted disk reads as (READ ADDRESS: Record Not Found). Dirty flags cleared
+    void eraseAll()
+    {
+        for (Track& track : _tracks)
+        {
+            track.resizeRaw(RawTrack::DEFAULT_TRACK_SIZE_MFM);
+            track.markClean();
+        }
+        _dirty = false;
+    }
+
+    /// Grow the image to `cylinders` (at most MAX_CYLINDERS) with erased tracks, as WRITE TRACK finds them past the
+    /// last cylinder of an image of a real disk. Track storage is reserved for MAX_CYLINDERS up front, so pointers
+    /// to existing tracks stay valid. The image is marked dirty when it grows. False when out of range
+    bool growCylinders(uint8_t cylinders)
+    {
+        if (cylinders <= _cylinders)
+            return true;
+        if (cylinders > MAX_CYLINDERS || _tracks.capacity() < static_cast<size_t>(cylinders) * _sides)
+            return false;
+
+        LayoutLock lock(this);
+
+        const size_t first = _tracks.size();
+        _tracks.resize(static_cast<size_t>(cylinders) * _sides);
+        for (size_t i = first; i < _tracks.size(); i++)
+        {
+            Track& track = _tracks[i];
+            track._diskImage = this;
+            track._cylinder = static_cast<uint8_t>(i / _sides);
+            track._side = static_cast<uint8_t>(i % _sides);
+            track.resizeRaw(RawTrack::DEFAULT_TRACK_SIZE_MFM);
+            track.markClean();
+        }
+        _cylinders = cylinders;
+        _dirty = true;
+        return true;
+    }
+
+    /// Back to `cylinders` (at least 1): the tracks above go - the undo of growCylinders (a TTD seek before the WRITE
+    /// TRACK that grew the image). Pointers into the removed tracks dangle: the caller drops them (a seek restores
+    /// the controllers, which keep none across a restore). False when out of range
+    bool shrinkCylinders(uint8_t cylinders)
+    {
+        if (cylinders >= _cylinders)
+            return cylinders == _cylinders;
+        if (cylinders == 0)
+            return false;
+
+        LayoutLock lock(this);
+        _tracks.resize(static_cast<size_t>(cylinders) * _sides);
+        _cylinders = cylinders;
+        return true;
+    }
+
+    /// The image-level dirty flag alone (the tracks' own flags stay): an undo sets it back to what it was
+    void setImageDirty(bool dirty) { _dirty = dirty; }
+
     /// Low-level format of every track with the given layout (data cleared, dirty flags cleared)
     void formatAll(const TrackFormatSpec& spec)
     {

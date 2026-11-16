@@ -105,6 +105,7 @@ void TTDBranchTable::Reset(const TTDGuid& trunkGuid)
     _byName = {};
     _counters.clear();
     _indexed = false;
+    ++_revision;
     TTDBranchInfo trunk;
     trunk.id = kTTDTrunk;
     trunk.guid = trunkGuid;
@@ -122,6 +123,7 @@ const TTDBranchInfo* TTDBranchTable::Get(uint32_t id) const
 
 TTDBranchInfo* TTDBranchTable::Mutable(uint32_t id)
 {
+    ++_revision;   // every change goes through here (or Reset, Create, SkipId)
     return const_cast<TTDBranchInfo*>(Get(id));
 }
 
@@ -244,6 +246,7 @@ std::optional<uint32_t> TTDBranchTable::Create(uint32_t parentId, const TTDPosit
     IndexName(added);
     InsertChild(_branches[parentId], added.id);
     ++_live;
+    ++_revision;
     return added.id;
 }
 
@@ -253,6 +256,7 @@ uint32_t TTDBranchTable::SkipId()
     b.id = static_cast<uint32_t>(_branches.size());
     b.live = false;
     _branches.push_back(std::move(b));
+    ++_revision;
     return _branches.back().id;
 }
 
@@ -393,6 +397,7 @@ bool TTDBranchTable::Delete(uint32_t id, const std::vector<uint32_t>& protect, b
         info.children.clear();
         --_live;
     }
+    ++_revision;
     removed = subtree;
     return true;
 }

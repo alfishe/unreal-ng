@@ -41,14 +41,26 @@ or on the Deck: `tar xzf UnrealNG-SteamDeck-x86_64.tar.gz && UnrealNG-SteamDeck/
 step:
 
 ```
-app: /home/deck/Applications/unreal-ng (20261108.121658)
+app: /home/deck/Applications/unreal-ng (<version>)
 launcher: /home/deck/.local/share/applications/unreal-ng.desktop
-Steam library: up to date                       # or: Unreal NG (3357196967) with its artwork in ...
+Steam library: Unreal NG (3357196967) with its artwork in ...
+Steam: started again
+Steam library: Unreal NG registered
 Stream Deck udev rule: installed
 ```
 
-- The library entry and its artwork are written while Steam is stopped; the installer stops and starts Steam only when
-  something changes, and leaves it alone while a game runs ("a game is running, not changed": close it, run again).
+Every deploy is a full bundle install that re-registers the Steam entry; see
+[deploy guidelines](../../docs/guidelines/deploy-guidelines.md). Never copy binaries or an AppDir over an install
+for the user: the Steam entry, the launcher and the extracted config images (`configs/*/*.img`) are then missing.
+
+- The installer always stops Steam, rewrites the entry "Unreal NG" and its artwork (same app id, so the Game Mode tile
+  and `steam://rungameid/...` stay), starts Steam again and checks the entry. An older entry with the same name but
+  another executable is replaced.
+- Game Mode: Steam runs as the user unit `steam-launcher.service`, which `gamescope-session.target` upholds (systemd
+  restarts it at once after `steam -shutdown`). The installer masks the unit in `/run` for the moment of the write and
+  unmasks and starts it afterwards (also on any failure, through a trap). The screen is black for a few seconds.
+- A running game blocks the change ("a game is running, not changed"): close it and run the installer again.
+- The last line must be `Steam library: Unreal NG registered`; `NOT registered` is a failed deploy.
 - The udev rule needs sudo: `ssh -t deck@<host> /home/deck/Applications/unreal-ng/install.sh --udev`. Write the full
   path: a `~` in the command expands on the machine you type it on, not on the Deck.
 - Never edit `shortcuts.vdf` while Steam runs (it writes the file back on exit): use `steam-library.py`, which refuses.
@@ -69,11 +81,33 @@ scp deck@<host>:/tmp/deck.png scratch/
 ```
 
 - `steam://nav/games/details/<appid>` opens the entry's library page (check the artwork).
-- `GAMESCOPE_FOCUSED_APP` 769 is Steam's own UI: the game runs but the user is in the Steam menu.
+- `GAMESCOPE_FOCUSED_APP` 769 is Steam's own UI: the game runs but the user is in the Steam menu or the Quick
+  Access menu ("…"). Read it on Steam's X display `:0`; the game runs on `:1`, whose root has no such property.
+  unreal-qt checks it every 50 ms (`platform/linux/steamoverlay.h`): while it is 769 the app is not the controllers'
+  owner, so neither the machine nor the handheld menu / on-screen keyboard read the pads (they reach every reader
+  of the device, Steam's menu included). The log says "Steam's menu is over the window, the controllers are Steam's".
+- Watch the focus while someone opens the menus: `DISPLAY=:0 xprop -root -spy GAMESCOPE_FOCUSED_APP`.
 - Mute what you start: `PUT /api/v1/emulator/<id>/audio/mixer/master {"muted":true}`.
 - Processes started over SSH die with the session (`KillUserProcesses`): start through Steam as above, or with
   `systemd-run --user`.
 - In Game Mode the window has no menu: everything goes through the WebAPI / MCP (or the Stream Deck).
+
+## Load a game, show the border
+
+```bash
+ssh deck@<host> '
+  I=$(curl -s 127.0.0.1:8090/api/v1/emulator | python3 -c "import sys,json; print(json.load(sys.stdin)[\"emulators\"][0][\"id\"])")
+  # a disk / tape / snapshot with autostart (the reply carries automation_session.id: send it as X-Unreal-Session)
+  curl -s -X POST 127.0.0.1:8090/api/v1/controllers/actions/media.open -H "Content-Type: application/json" \
+    -d "{\"instance\":\"$I\",\"params\":{\"path\":\"/home/deck/Documents/UnrealNG/Games/<game>.trd\",\"autostart\":true}}"
+  # the border: the WINDOW view, full / screen / content (the Deck starts in content: the picture, no border)
+  curl -s -X PUT 127.0.0.1:8090/api/v1/emulator/$I/video/window -H "Content-Type: application/json" -d "{\"view\":\"full\"}"
+  # end the implicit session the action opened
+  curl -s -X DELETE 127.0.0.1:8090/api/v1/emulator/$I/control/session -H "X-Unreal-Session: <session>"'
+```
+
+- The border is the window view, not `video.viewport`: [media/window-view-border.md](../media/window-view-border.md).
+- Games go in `~/Documents/UnrealNG/Games/<name>/` (the handheld menu's Library root); copy them with `scp`.
 
 ## Check the Stream Deck
 

@@ -3,10 +3,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
@@ -15,6 +18,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/flakysectoremulator.h"
+#include "unrealdisk/floppyformats.h"
 
 /// WD1793 on the universal track model
 /// (docs/inprogress/2026-09-02-universal-track-model/test-plan.md, section 3):
@@ -551,6 +555,574 @@ TEST_F(WD1793_UniversalTrack_Test, WriteTrack_StopsAtTrackLength)
 
 /// endregion </READ TRACK / WRITE TRACK>
 
+/// region <WRITE TRACK control-byte language: the byte after F7 (ZF6 mastering, FDC-01)>
+/// WD177x / WD179x write the byte that follows an F7 literally: no A1 / C2 translation, no clock mark, no CRC
+/// preset, and it joins the running CRC. "F7 F7 F7" after an ID field start therefore gives CRC, literal F7, CRC:
+/// ID C=#A4 H=#42 R=#F7 N=#F7 with a valid CRC (the ZF6 / ZF7 key track 119, reference ZXF61_O.FDI).
+
+namespace
+{
+    /// Gap, sync and the three F5 that start an address field
+    void appendFieldStart(std::vector<uint8_t>& out, size_t gap)
+    {
+        out.insert(out.end(), gap, 0x4E);
+        out.insert(out.end(), 12, 0x00);
+        out.insert(out.end(), 3, 0xF5);
+    }
+
+    /// Pad a WRITE TRACK source past the end of the revolution (the controller stops at the track length)
+    void padTrack(std::vector<uint8_t>& out)
+    {
+        while (out.size() < 6400) out.push_back(0x4E);
+    }
+
+    /// Offset of the first ID address mark byte (FE) in the streams below: 80 gap + 12 sync + 3 A1
+    constexpr size_t kFirstIdam = 95;
+
+    /// The ZF6 key track: "FE A4 F7 F7 F7", then a 1K data field
+    std::vector<uint8_t> f7TrickStream(uint8_t fill)
+    {
+        std::vector<uint8_t> out;
+        appendFieldStart(out, 80);
+        out.insert(out.end(), {0xFE, 0xA4, 0xF7, 0xF7, 0xF7});
+        appendFieldStart(out, 22);
+        out.push_back(0xFB);
+        out.insert(out.end(), 1024, fill);
+        out.push_back(0xF7);
+        padTrack(out);
+        return out;
+    }
+}
+
+/// WT-02: "FE A4 F7 F7 F7" writes FE A4 42 F7 F7 9F F8 - a readable ID with N = #F7 and a valid CRC
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7F7_WritesLiteralF7_AndValidIdCrc)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, f7TrickStream(0x5A), 1000);
+    waitIdle(fdc);
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+
+    const uint8_t expected[] = {0xFE, 0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+    EXPECT_EQ(std::memcmp(track->rawData() + kFirstIdam, expected, sizeof(expected)), 0)
+        << "raw ID field: " << StringHelper::Format("%02X %02X %02X %02X %02X %02X %02X", track->rawData()[95],
+                                                    track->rawData()[96], track->rawData()[97], track->rawData()[98],
+                                                    track->rawData()[99], track->rawData()[100], track->rawData()[101]);
+    for (size_t i = kFirstIdam; i < kFirstIdam + sizeof(expected); i++)
+        EXPECT_FALSE(track->clockMark(i)) << "no missing clock inside the ID field at " << i;
+
+    ASSERT_EQ(track->sectorCount(), 1u);
+    DiskImage::Sector* sector = track->getRawSector(0);
+    EXPECT_EQ(sector->cylinder(), 0xA4);
+    EXPECT_EQ(sector->head(), 0x42);
+    EXPECT_EQ(sector->number(), 0xF7);
+    EXPECT_EQ(sector->sizeCode(), 0xF7) << "the raw N stays in the ID field";
+    EXPECT_TRUE(sector->idCrcValid);
+    EXPECT_EQ(sector->dataSize, 1024) << "data length 128 << (N & 3)";
+    EXPECT_TRUE(sector->hasData);
+    EXPECT_TRUE(sector->dataCrcValid);
+}
+
+/// WT-02 / WT-14 / WT-15: the key sector reads back through the controller - READ ADDRESS returns the raw ID
+/// without CRC ERROR; READ SECTOR finds it only with the track register at #A4 (not the physical cylinder)
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7F7_SectorReadsBack)
+{
+    DiskImage image(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, f7TrickStream(0x5A), 1000);
+    waitIdle(fdc);
+
+    issue(fdc, 0xC0);
+    std::vector<uint8_t> id = runReadUntilIdle(fdc, fdc._time + 100);
+    ASSERT_EQ(id.size(), 6u);
+    EXPECT_EQ(id, (std::vector<uint8_t>{0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8}));
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_CRCERR);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+
+    // Track register on the physical cylinder: the ID says #A4, so the sector is not found
+    fdc._trackRegister = 0;
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0x80);
+    std::vector<uint8_t> miss = runReadUntilIdle(fdc, fdc._time + 100);
+    EXPECT_TRUE(miss.empty());
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+
+    // Track register loaded with #A4 (no seek): found, 1024 bytes, no CRC error
+    fdc._trackRegister = 0xA4;
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0x80);
+    std::vector<uint8_t> data = runReadUntilIdle(fdc, fdc._time + 100);
+    ASSERT_EQ(data.size(), 1024u);
+    EXPECT_TRUE(std::all_of(data.begin(), data.end(), [](uint8_t b) { return b == 0x5A; }));
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_CRCERR | WD1793::WDS_NOTFOUND));
+
+    // WRITE SECTOR into it: 1024 bytes and a valid data CRC; a second read returns them
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0xA0);
+    std::vector<uint8_t> payload(1024);
+    for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i * 7);
+    EXPECT_EQ(runWriteUntilIdle(fdc, payload, fdc._time + 100), 1024u);
+    waitIdle(fdc);
+    EXPECT_TRUE(image.getTrack(0)->getRawSector(0)->dataCrcValid);
+
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0x80);
+    std::vector<uint8_t> again = runReadUntilIdle(fdc, fdc._time + 100);
+    EXPECT_EQ(again, payload);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_CRCERR);
+}
+
+/// WT-03: an F5 right after F7 is a literal F5 - no A1, no clock mark, the CRC start does not move
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F5AfterF7_IsLiteral)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    std::vector<uint8_t> stream;
+    appendFieldStart(stream, 80);
+    stream.insert(stream.end(), {0xFE, 0x01, 0x00, 0x01, 0x01, 0xF7, 0xF5, 0xF7});
+    padTrack(stream);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+
+    const uint8_t* raw = track->rawData();
+    const size_t literal = kFirstIdam + 7;  // FE C H R N + 2 CRC bytes
+    EXPECT_EQ(raw[kFirstIdam + 5], 0x8C);
+    EXPECT_EQ(raw[kFirstIdam + 6], 0xB8);
+    EXPECT_EQ(raw[literal], 0xF5) << "F5 after F7 is written as is";
+    EXPECT_FALSE(track->clockMark(literal));
+
+    // The second F7 covers FE..CRC..F5: the CRC start stayed at the FE
+    const uint16_t crc = CRCHelper::crcWD1793(const_cast<uint8_t*>(raw + kFirstIdam), 8);
+    EXPECT_EQ(raw[literal + 1], static_cast<uint8_t>(crc & 0xFF));
+    EXPECT_EQ(raw[literal + 2], static_cast<uint8_t>(crc >> 8));
+    EXPECT_EQ(track->sectorCount(), 1u);
+    EXPECT_TRUE(track->getRawSector(0)->idCrcValid);
+}
+
+/// WT-04: FE / FB right after F7 are plain bytes - they still look like marks to a parser that only reads bytes,
+/// but here no A1 sync precedes them, so the index gains no phantom sector
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_MarksAfterF7_AddNoSectors)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    std::vector<uint8_t> stream;
+    appendFieldStart(stream, 80);
+    stream.insert(stream.end(), {0xFE, 0x01, 0x00, 0x01, 0x01, 0xF7, 0xFE});
+    appendFieldStart(stream, 22);
+    stream.push_back(0xFB);
+    stream.insert(stream.end(), 256, 0xE5);
+    stream.insert(stream.end(), {0xF7, 0xFB});
+    padTrack(stream);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+
+    EXPECT_EQ(track->rawData()[kFirstIdam + 7], 0xFE);
+    ASSERT_EQ(track->sectorCount(), 1u);
+    EXPECT_TRUE(track->getRawSector(0)->idCrcValid);
+    EXPECT_TRUE(track->getRawSector(0)->dataCrcValid);
+}
+
+/// WT-05: F7 x 4 alternates - CRC, literal F7, CRC (covering the literal), literal F7
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7x4_Alternates)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    std::vector<uint8_t> stream;
+    appendFieldStart(stream, 80);
+    stream.insert(stream.end(), {0xFE, 0xA4, 0xF7, 0xF7, 0xF7, 0xF7, 0x4E});
+    padTrack(stream);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+
+    const uint8_t expected[] = {0xFE, 0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8, 0xF7, 0x4E};
+    EXPECT_EQ(std::memcmp(track->rawData() + kFirstIdam, expected, sizeof(expected)), 0);
+}
+
+/// WT-06: the escape does not outlive its command - a new WRITE TRACK starts with F5 translated to A1;
+/// the transfer context (TTD) carries the flag between F7 and the next byte
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_EscapeState_ResetAndSaved)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    // Escape pending, as after an F7 when a Force Interrupt stopped the command
+    fdc._writeTrackEscapeNext = true;
+    issue(fdc, 0xF0);
+    EXPECT_FALSE(fdc._writeTrackEscapeNext) << "a new WRITE TRACK starts with the control language active";
+
+    std::vector<uint8_t> stream = {0xF5, 0xF5, 0xF5, 0xFE, 0x00, 0x00, 0x01, 0x01, 0xF7};
+    padTrack(stream);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+    EXPECT_EQ(track->rawData()[0], 0xA1);
+    EXPECT_TRUE(track->clockMark(0));
+    EXPECT_FALSE(fdc._writeTrackEscapeNext) << "cleared at the end of the command";
+
+    std::vector<uint8_t> context(WD1793::kTransferContextSize, 0);
+    fdc._writeTrackEscapeNext = true;
+    fdc.SaveTransferContext(context.data());
+    fdc._writeTrackEscapeNext = false;
+    fdc.LoadTransferContext(context.data());
+    EXPECT_TRUE(fdc._writeTrackEscapeNext);
+
+    // A context saved before the flag existed has 0 there
+    std::fill(context.begin() + 99, context.end(), 0);
+    fdc.LoadTransferContext(context.data());
+    EXPECT_FALSE(fdc._writeTrackEscapeNext);
+}
+
+/// WT-07: the CRC is preset by the last F5 - one, three or five F5 give the same ID CRC
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_CrcPresetByLastF5)
+{
+    std::vector<uint16_t> crcs;
+    for (size_t syncCount : {1u, 3u, 5u})
+    {
+        DiskImage image(1, 1);
+        std::vector<uint8_t> stream(80, 0x4E);
+        stream.insert(stream.end(), 12, 0x00);
+        stream.insert(stream.end(), syncCount, 0xF5);
+        stream.insert(stream.end(), {0xFE, 0x01, 0x00, 0x01, 0x01, 0xF7});
+        padTrack(stream);
+
+        WD1793TestCUT fdc(_context);
+        prepare(fdc, image, 0);
+        fdc.getDrive()->setMotor(true);
+        issue(fdc, 0xF0);
+        runWriteUntilIdle(fdc, stream, 1000);
+        waitIdle(fdc);
+
+        const uint8_t* crc = image.getTrack(0)->rawData() + 92 + syncCount + 5;
+        crcs.push_back(static_cast<uint16_t>((crc[0] << 8) | crc[1]));
+    }
+    EXPECT_EQ(crcs[0], 0x8CB8);
+    EXPECT_EQ(crcs[1], 0x8CB8);
+    EXPECT_EQ(crcs[2], 0x8CB8);
+}
+
+/// WT-12: READ TRACK after the trick returns the written stream - A1 for F5, the CRC pairs, the literal F7
+TEST_F(WD1793_UniversalTrack_Test, ReadTrack_AfterF7Trick_ReturnsWrittenStream)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, f7TrickStream(0x5A), 1000);
+    waitIdle(fdc);
+
+    issue(fdc, 0xE0);
+    std::vector<uint8_t> read = runReadUntilIdle(fdc, fdc._time + 100);
+    ASSERT_EQ(read.size(), track->rawSize());
+    const uint8_t expected[] = {0xA1, 0xA1, 0xA1, 0xFE, 0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+    EXPECT_EQ(std::memcmp(read.data() + kFirstIdam - 3, expected, sizeof(expected)), 0);
+}
+
+/// WT-09 (FDC-02): an F7 puts two CRC bytes on the disk, two byte cells: the host bytes of a TR-DOS track
+/// (32 F7) are spread over the whole revolution - 6250 - 32 DRQs, the last one a revolution after the first
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7TakesTwoByteCells)
+{
+    DiskImage image(1, 1);
+    const std::vector<uint8_t> stream = formatStream(Spec::trdos(), 0, 0, 0x00);
+    ASSERT_EQ(std::count(stream.begin(), stream.end(), 0xF7), 32);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+
+    // One t-state steps: a coarser poll rounds every byte's DRQ up to the next poll and stretches the span
+    std::vector<size_t> served;
+    for (size_t clk = 1000; clk < 1000 + TEST_DURATION_TSTATES && fdc._state != WD1793::S_IDLE; clk++)
+    {
+        fdc._time = clk;
+        fdc.process();
+        if ((fdc._beta128status & WD1793::DRQ) && served.size() < stream.size())
+        {
+            fdc.writeDataRegister(stream[served.size()]);
+            served.push_back(clk);
+        }
+    }
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_LOSTDATA);
+    EXPECT_EQ(served.size(), 6250u - 32u);
+
+    // served[0] is the byte loaded before the index; served[1] follows raw byte 0, the last one raw byte 6248
+    const size_t cell = fdc._tstatesPerByte;
+    const double span = static_cast<double>(served.back() - served[1]);
+    EXPECT_NEAR(span, 6248.0 * cell, 3.0 * cell);
+}
+
+/// An F7 before any F5 starts its CRC at the index, not where the previous WRITE TRACK left it: an MFM format ends
+/// with its last F5 near byte 6000, then an FM format of a 3125-byte track sends F7 first. The old start lay past
+/// the new stream (an out-of-bounds read of up to 64K), the CRC now covers the bytes written so far
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_F7BeforeF5_StartsCrcAtIndex)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    // MFM format whose last F5 sits at byte 6000
+    std::vector<uint8_t> mfm(6000, 0x4E);
+    mfm.insert(mfm.end(), {0xF5, 0xF5, 0xF5, 0xFE, 0x00, 0x00, 0x01, 0x01, 0xF7});
+    padTrack(mfm);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, mfm, 1000);
+    waitIdle(fdc);
+    ASSERT_GT(fdc._crcStartPosition, 3125u);
+
+    // FM (single density) format: a few gap bytes, then F7 without any mark before it
+    fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    std::vector<uint8_t> fm = {0xFF, 0xFF, 0xFF, 0xF7};
+    fm.resize(3300, 0xFF);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, fm, fdc._time + 100);
+    waitIdle(fdc);
+    ASSERT_EQ(fdc._state, WD1793::S_IDLE);
+    ASSERT_EQ(track->rawSize(), 3125u);
+
+    const uint16_t crc = CRCHelper::crcWD1793FM(const_cast<uint8_t*>(track->rawData()), 3);
+    EXPECT_EQ(track->rawData()[3], static_cast<uint8_t>(crc & 0xFF));
+    EXPECT_EQ(track->rawData()[4], static_cast<uint8_t>(crc >> 8));
+}
+
+/// endregion </WRITE TRACK control-byte language>
+
+/// region <Pointers into a stream a command replaces (found by WD1793_Fuzz_Test)>
+
+/// READ ADDRESS leaves its sector in hand; a WRITE TRACK in the other density replaces the stream and empties the
+/// index. The sector must not survive into the new command: a TTD save in the middle of the format followed it
+/// (container-overflow under ASan, a crash on a freed index in a release build)
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_OtherDensity_DropsPreviousSector)
+{
+    DiskImage image(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xC0);
+    ASSERT_EQ(runReadUntilIdle(fdc, 1000).size(), 6u);
+    ASSERT_NE(fdc._currentSector, nullptr);
+
+    // FM format: the MFM stream is replaced (3125 bytes), the index rebuilt only when the format ends
+    fdc._beta128Register |= WD1793CUT::BETA128_COMMAND_BITS::BETA_CMD_DENSITY;
+    issue(fdc, 0xF0);
+    std::vector<uint8_t> fm(40, 0xFF);
+    runWriteUntilIdle(fdc, fm, fdc._time + 100);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE) << "the format is still running";
+    EXPECT_EQ(image.getTrack(0)->sectorCount(), 0u);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+
+    std::vector<uint8_t> context(WD1793::kTransferContextSize);
+    fdc.SaveTransferContext(context.data());
+    EXPECT_EQ(context[23], 0xFF) << "no sector in the saved context (byte 23: its drive)";
+}
+
+/// Force Interrupt in the middle of WRITE TRACK: what was written stays on the disk and is indexed (the index no
+/// longer describes the old layout), the track is dirty, the controller holds no pointer into it
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_ForceInterrupt_KeepsAndIndexesWrittenPart)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->markClean();
+
+    // One 256-byte sector numbered #42, then gap: the interrupt comes after it
+    std::vector<uint8_t> stream;
+    appendFieldStart(stream, 80);
+    stream.insert(stream.end(), {0xFE, 0x00, 0x00, 0x42, 0x01, 0xF7});
+    appendFieldStart(stream, 22);
+    stream.push_back(0xFB);
+    stream.insert(stream.end(), 256, 0x77);
+    stream.push_back(0xF7);
+    stream.insert(stream.end(), 40, 0x4E);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+
+    fdc.cmdForceInterrupt(0xD0);
+
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_TRUE(track->isDirty());
+    ASSERT_GE(track->sectorCount(), 1u);
+    EXPECT_EQ(track->getRawSector(0)->number(), 0x42) << "the index describes the written part";
+    EXPECT_TRUE(track->getRawSector(0)->dataCrcValid);
+}
+
+/// Force Interrupt in the middle of WRITE SECTOR: the bytes written so far are on the disk without their CRC
+TEST_F(WD1793_UniversalTrack_Test, WriteSector_ForceInterrupt_LeavesDataCrcError)
+{
+    DiskImage image(1, 1);
+    DiskImage::Track* track = image.getTrack(0);
+    track->markClean();
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc._sectorRegister = 1;
+    issue(fdc, 0xA0);
+    runWriteUntilIdle(fdc, std::vector<uint8_t>(100, 0x99), 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE) << "the sector is half written";
+
+    DiskImage::Sector* sector = fdc._currentSector;
+    ASSERT_NE(sector, nullptr);
+    fdc.cmdForceInterrupt(0xD0);
+
+    EXPECT_EQ(fdc._currentSector, nullptr);
+    EXPECT_FALSE(sector->dataCrcValid) << "the CRC was never written";
+    EXPECT_EQ(sector->data[0], 0x99);
+    EXPECT_TRUE(track->isDirty());
+}
+
+/// A format runs on drive A, the program selects drive B, the disk in A is replaced and freed (a media change lands
+/// at a frame boundary whatever the controller does). The controller must let go of A's stream: the format went on
+/// writing into the freed image (heap use after free; on Windows a heap fail-fast kills the process without a dump)
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InCommandDrive_NotSelected_DropsPointers)
+{
+    auto first = std::make_unique<DiskImage>(1, 1);
+    DiskImage second(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, *first, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);  // through the dispatcher: it notes the command's drive
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._state, WD1793::S_IDLE);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    fdc.selectDrive(1);
+    FDD* driveA = _context->coreState.diskDrives[0];
+    driveA->insertDisk(&second);
+    first.reset();
+
+    EXPECT_EQ(fdc._rawDataBuffer, nullptr);
+    EXPECT_EQ(fdc._writeTrackTarget, nullptr);
+    EXPECT_EQ(fdc._currentSector, nullptr);
+
+    // The command ends on its next steps without touching the freed stream
+    waitIdle(fdc);
+    EXPECT_EQ(fdc._state, WD1793::S_IDLE);
+}
+
+/// A change in a drive no command used keeps the running command's pointers
+TEST_F(WD1793_UniversalTrack_Test, DiskChange_InOtherDrive_KeepsRunningCommand)
+{
+    DiskImage image(1, 1);
+    DiskImage other(1, 1);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+    fdc.processWD93Command(0xF0);
+    std::vector<uint8_t> gap(40, 0x4E);
+    runWriteUntilIdle(fdc, gap, 1000);
+    ASSERT_NE(fdc._rawDataBuffer, nullptr);
+
+    _context->coreState.diskDrives[2]->insertDisk(&other);
+    EXPECT_NE(fdc._rawDataBuffer, nullptr);
+    _context->coreState.diskDrives[2]->ejectDisk();
+}
+
+/// endregion </Pointers into a stream a command replaces>
+
+/// region <WRITE TRACK past the image geometry (ZF6 mastering, FDC-03)>
+
+/// WT-11: WRITE TRACK on a cylinder the image does not have grows the image instead of reporting Record Not Found
+/// (bit 4 is always 0 for WRITE TRACK; a real disk has a track there). Tracks in between come out erased,
+/// existing tracks keep their address, and the drive's mechanical end (86) is the limit
+TEST_F(WD1793_UniversalTrack_Test, WriteTrack_PastLastCylinder_GrowsImage)
+{
+    DiskImage image(80, 2);
+    DiskImage::Track* first = image.getTrack(0);
+    const std::vector<uint8_t> stream = formatStream(Spec::trdos(), 80, 0, 0x00);
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 80);
+    fdc.getDrive()->setMotor(true);
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, stream, 1000);
+    waitIdle(fdc);
+
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTRDY);
+    EXPECT_EQ(image.getCylinders(), 81);
+    EXPECT_TRUE(image.isDirty());
+    EXPECT_EQ(image.getTrack(0), first) << "existing tracks do not move";
+    ASSERT_NE(image.getTrackForCylinderAndSide(80, 0), nullptr);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(80, 0)->sectorCount(), 16u);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(80, 1)->sectorCount(), 0u) << "the other side is erased";
+
+    // Cylinder 85: 81..84 come out erased - READ ADDRESS on 83 finds nothing
+    fdc._selectedDrive->setTrack(85);
+    fdc._trackRegister = 85;
+    issue(fdc, 0xF0);
+    runWriteUntilIdle(fdc, formatStream(Spec::trdos(), 85, 0, 0x00), fdc._time + 100);
+    waitIdle(fdc);
+    EXPECT_EQ(image.getCylinders(), 86);
+    EXPECT_EQ(image.getTrackForCylinderAndSide(85, 0)->sectorCount(), 16u);
+    for (uint8_t c = 81; c < 85; c++)
+        EXPECT_EQ(image.getTrackForCylinderAndSide(c, 0)->sectorCount(), 0u) << int(c);
+
+    fdc._selectedDrive->setTrack(83);
+    fdc._trackRegister = 83;
+    issue(fdc, 0xC0);
+    EXPECT_TRUE(runReadUntilIdle(fdc, fdc._time + 100).empty());
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+
+    // Position 86 is the drive's mechanical end, past any cylinder: no track, the image stays at 86
+    fdc._selectedDrive->setTrack(86);
+    fdc._trackRegister = 86;
+    issue(fdc, 0xF0);
+    waitIdle(fdc);
+    EXPECT_FALSE(fdc._statusRegister & WD1793::WDS_NOTFOUND);
+    EXPECT_TRUE(fdc._statusRegister & WD1793::WDS_NOTRDY);
+    EXPECT_EQ(image.getCylinders(), 86);
+}
+
+/// endregion </WRITE TRACK past the image geometry>
+
+
 /// region <READ ADDRESS>
 
 /// READ ADDRESS returns the next ID field under the head (rotational position) and copies its
@@ -920,3 +1492,251 @@ TEST_F(WD1793_UniversalTrack_Test, FlakySector_ReadThroughController_BytesDiffer
 
 /// endregion </Flaky sectors (FlakySectorEmulator)>
 
+
+
+/// region <ZX Format 6 mastering, end to end (R-06)>
+/// The mastering programs (FORMATZF, F43, F1, PF7) are not available: the test replays what they leave on the disk,
+/// command by command through the controller, and checks the result against the sector tables of the original
+/// diskette dump ZXF61_O.FDI (not in the repository; its figures are below). The layout of every track there:
+/// 10 x 4E, then per sector 12 x 00, A1 A1 A1 (F5), the ID field, 22 x 4E, 12 x 00, A1 A1 A1, FB, data, CRC,
+/// 70 x 4E; 6250 bytes per revolution. Track 0: TR-DOS 16 x 256. Tracks 2..118: 5 x 1K, R = 0..4 (some rotated).
+/// Tracks 1 and 119: 4 x 1K, R = 0..3, then the key sector C=#A4 H=#42 R=#F7 N=#F7 written by "FE A4 F7 F7 F7"
+/// (CRC, literal F7, CRC). The dump's tracks 120..159 repeat track 119 (the dumper ran past the laid-out part).
+
+namespace
+{
+    constexpr size_t kZxfTracks = 120;                            // Physical tracks the mastering lays out
+    constexpr uint8_t kZxfCylinders = 83;                         // Geometry of the original dump
+    constexpr size_t kZxfIdam1K[5] = {25, 1181, 2337, 3493, 4649};
+    constexpr uint8_t kZxfKeyFill = 0xAA;                         // The key sector's data on track 119
+
+    /// First sector number on the 5 x 1K tracks whose order is rotated in ZXF61_O.FDI (0 elsewhere)
+    uint8_t ZxfFirstSector(size_t track)
+    {
+        switch (track)
+        {
+            case 3: case 24: case 28: case 38: case 39: case 59: case 63: case 64: case 72: case 75: case 100: case 108:
+                return 1;
+            case 30: return 2;
+            case 90: return 3;
+            default: return 0;
+        }
+    }
+
+    bool ZxfKeyTrack(size_t track) { return track == 1 || track == kZxfTracks - 1; }
+
+    /// One sector the way the mastering stream writes it: sync, ID (or the raw key ID bytes), gap 2, data, gap 3
+    void ZxfAppendSector(std::vector<uint8_t>& out, const std::vector<uint8_t>& id, size_t size, uint8_t fill)
+    {
+        out.insert(out.end(), 12, 0x00);
+        out.insert(out.end(), 3, 0xF5);
+        out.insert(out.end(), id.begin(), id.end());
+        out.insert(out.end(), 22, 0x4E);
+        out.insert(out.end(), 12, 0x00);
+        out.insert(out.end(), 3, 0xF5);
+        out.push_back(0xFB);
+        out.insert(out.end(), size, fill);
+        out.push_back(0xF7);
+        out.insert(out.end(), 70, 0x4E);
+    }
+
+    /// WRITE TRACK source of physical track @p track (cylinder track / 2, side track % 2)
+    std::vector<uint8_t> ZxfTrackStream(size_t track)
+    {
+        const uint8_t c = static_cast<uint8_t>(track / 2);
+        const uint8_t h = static_cast<uint8_t>(track % 2);
+        const uint8_t fill = track == kZxfTracks - 1 ? 0x00 : static_cast<uint8_t>(track);
+        std::vector<uint8_t> out(10, 0x4E);
+        if (track == 0)
+        {
+            for (uint8_t r = 1; r <= 16; r++)
+                ZxfAppendSector(out, {0xFE, c, h, r, 0x01, 0xF7}, 256, 0x00);
+        }
+        else if (ZxfKeyTrack(track))
+        {
+            for (uint8_t r = 0; r < 4; r++)
+                ZxfAppendSector(out, {0xFE, c, h, r, 0x03, 0xF7}, 1024, fill);
+            ZxfAppendSector(out, {0xFE, 0xA4, 0xF7, 0xF7, 0xF7}, 1024, track == 1 ? fill : kZxfKeyFill);
+        }
+        else
+        {
+            for (uint8_t i = 0; i < 5; i++)
+                ZxfAppendSector(out, {0xFE, c, h, static_cast<uint8_t>((ZxfFirstSector(track) + i) % 5), 0x03, 0xF7},
+                                1024, fill);
+        }
+        while (out.size() < 6400) out.push_back(0x4E);
+        return out;
+    }
+
+    /// The sector table of a track as the dump comparison sees it
+    struct ZxfSector
+    {
+        uint8_t c, h, r, n;
+        size_t idam;
+        size_t size;
+        bool idCrcValid, dataCrcValid, deleted;
+        uint16_t dataCrc;
+        bool operator==(const ZxfSector&) const = default;
+    };
+
+    std::vector<ZxfSector> ZxfTable(DiskImage::Track* track)
+    {
+        std::vector<ZxfSector> table;
+        for (size_t i = 0; track && i < track->sectorCount(); i++)
+        {
+            const DiskImage::Sector* s = track->getRawSector(i);
+            table.push_back({s->cylinder(), s->head(), s->number(), s->sizeCode(), s->idamOffset, s->dataSize,
+                             s->idCrcValid, s->dataCrcValid, s->deleted, s->dataCRC()});
+        }
+        return table;
+    }
+
+    /// ZXF61_O.FDI's layout of physical track @p track: C H R raw-N, IDAM offset, size, both CRCs valid
+    void ExpectZxfReferenceLayout(DiskImage& image, size_t track, const char* where)
+    {
+        const uint8_t c = static_cast<uint8_t>(track / 2);
+        const uint8_t h = static_cast<uint8_t>(track % 2);
+        const std::vector<ZxfSector> table = ZxfTable(image.getTrackForCylinderAndSide(c, h));
+        SCOPED_TRACE(StringHelper::Format("%s, track %zu", where, track));
+        ASSERT_EQ(table.size(), track == 0 ? 16u : 5u);
+        for (size_t i = 0; i < table.size(); i++)
+        {
+            const ZxfSector& s = table[i];
+            const bool key = ZxfKeyTrack(track) && i == 4;
+            EXPECT_EQ(s.c, key ? 0xA4 : c) << i;
+            EXPECT_EQ(s.h, key ? 0x42 : h) << i;
+            EXPECT_EQ(s.r, track == 0 ? i + 1 : key ? 0xF7 : ZxfKeyTrack(track) ? i : (ZxfFirstSector(track) + i) % 5) << i;
+            EXPECT_EQ(s.n, track == 0 ? 0x01 : key ? 0xF7 : 0x03) << i;
+            EXPECT_EQ(s.idam, track == 0 ? 25 + 388 * i : kZxfIdam1K[i]) << i;
+            EXPECT_EQ(s.size, track == 0 ? 256u : 1024u) << i;
+            EXPECT_TRUE(s.idCrcValid) << i;
+            EXPECT_TRUE(s.dataCrcValid) << i;
+            EXPECT_FALSE(s.deleted) << i;
+        }
+    }
+}
+
+/// E2E-01: an unformatted 83-cylinder disk, every track laid out through WRITE TRACK (FORMATZF + F43), the disk
+/// exported to UDI and FDI and read back; then F1 (track 1 rewritten) and PF7 (WRITE SECTOR into the key sector
+/// and READ SECTOR back). Each step's sector tables equal the original dump's
+TEST_F(WD1793_UniversalTrack_Test, ZxFormat6Mastering_EndToEnd_MatchesOriginalDump)
+{
+    unrealdisk::BlankFloppySpec blank;
+    blank.format = "unformatted";
+    blank.cylinders = kZxfCylinders;
+    blank.sides = 2;
+    std::unique_ptr<DiskImage> created;
+    ASSERT_TRUE(unrealdisk::FloppyFormats::CreateBlank(false, blank, created).Ok());
+    DiskImage& image = *created;
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    auto seek = [&](size_t track) {
+        const uint8_t cylinder = static_cast<uint8_t>(track / 2);
+        fdc._selectedDrive->setTrack(cylinder);
+        fdc._trackRegister = cylinder;
+        fdc._sideUp = (track % 2) != 0;
+    };
+    auto writeTrack = [&](size_t track) {
+        seek(track);
+        issue(fdc, 0xF0);
+        runWriteUntilIdle(fdc, ZxfTrackStream(track), fdc._time + 100);
+        waitIdle(fdc);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTRDY | WD1793::WDS_WRITEPROTECTED)) << track;
+    };
+
+    // FORMATZF + F43: the whole laid-out part in the long tier; otherwise the system track, both key tracks, the
+    // rotated orders and the neighbours of the key track
+    std::vector<size_t> tracks;
+    for (size_t track = 0; track < kZxfTracks; track++)
+        if (TestTier::Long() || track <= 3 || track == 30 || track == 90 || track >= kZxfTracks - 2)
+            tracks.push_back(track);
+    for (size_t track : tracks)
+        writeTrack(track);
+    ASSERT_EQ(image.getCylinders(), kZxfCylinders);
+    for (size_t track : tracks)
+    {
+        ExpectZxfReferenceLayout(image, track, "after WRITE TRACK");
+        EXPECT_EQ(image.getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), track % 2)->rawSize(), 6250u);
+    }
+    for (uint8_t c = kZxfTracks / 2; c < kZxfCylinders; c++)
+        for (uint8_t h = 0; h < 2; h++)
+            EXPECT_EQ(image.getTrackForCylinderAndSide(c, h)->sectorCount(), 0u) << "unformatted past the layout";
+
+    // Track 119 as dumped: raw key ID bytes, data CRCs of the zero sectors and of the key sector
+    {
+        DiskImage::Track* key = image.getTrackForCylinderAndSide(59, 1);
+        const uint8_t expected[] = {0xFE, 0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+        EXPECT_EQ(std::memcmp(key->rawData() + kZxfIdam1K[4], expected, sizeof(expected)), 0);
+        for (size_t i = 0; i < 4; i++)
+            EXPECT_EQ(key->getRawSector(i)->dataCRC(), 0x2227) << i;
+        EXPECT_EQ(key->getRawSector(4)->dataCRC(), 0xDAA7);
+    }
+
+    // Export and read back: UDI keeps the stream, FDI the sector tables
+    for (const char* name : {"zxf6-mastering.udi", "zxf6-mastering.fdi"})
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        const unrealdisk::FloppySaveResult saved = unrealdisk::FloppyFormats::Save({}, image, path, false);
+        ASSERT_TRUE(saved.saved) << name << ": " << saved.reason;
+        EXPECT_FALSE(saved.retargeted) << name;
+        std::unique_ptr<DiskImage> loaded;
+        std::string format;
+        ASSERT_TRUE(unrealdisk::FloppyFormats::Load({}, path, loaded, format).Ok()) << name;
+        EXPECT_EQ(loaded->getCylinders(), kZxfCylinders) << name;
+        for (size_t track = 0; track < kZxfCylinders * 2u; track++)
+        {
+            const uint8_t c = static_cast<uint8_t>(track / 2);
+            const uint8_t h = static_cast<uint8_t>(track % 2);
+            EXPECT_EQ(ZxfTable(loaded->getTrackForCylinderAndSide(c, h)), ZxfTable(image.getTrackForCylinderAndSide(c, h)))
+                << name << ", track " << track;
+        }
+        ExpectZxfReferenceLayout(*loaded, kZxfTracks - 1, name);
+    }
+
+    // F1: track 1 laid out again, then its four 1K sectors written through WRITE SECTOR
+    writeTrack(1);
+    for (uint8_t r = 0; r < 4; r++)
+    {
+        fdc._trackRegister = 0;
+        fdc._sectorRegister = r;
+        issue(fdc, 0xA0);
+        std::vector<uint8_t> payload(1024);
+        for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i * 13 + r);
+        EXPECT_EQ(runWriteUntilIdle(fdc, payload, fdc._time + 100), 1024u) << int(r);
+        waitIdle(fdc);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR)) << int(r);
+    }
+    ExpectZxfReferenceLayout(image, 1, "after F1");
+
+    // PF7 on track 119: READ ADDRESS sees the key ID; WRITE SECTOR with the track register at #A4, READ SECTOR back
+    seek(kZxfTracks - 1);
+    bool keyIdSeen = false;
+    for (size_t i = 0; i < 5 && !keyIdSeen; i++)
+    {
+        issue(fdc, 0xC0);
+        const std::vector<uint8_t> id = runReadUntilIdle(fdc, fdc._time + 100);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_CRCERR | WD1793::WDS_NOTFOUND));
+        keyIdSeen = id == std::vector<uint8_t>{0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+    }
+    EXPECT_TRUE(keyIdSeen) << "READ ADDRESS over one revolution returns the key ID with its CRC";
+
+    fdc._trackRegister = 0xA4;
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0xA0);
+    std::vector<uint8_t> payload(1024);
+    for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i ^ 0x5A);
+    EXPECT_EQ(runWriteUntilIdle(fdc, payload, fdc._time + 100), 1024u);
+    waitIdle(fdc);
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR));
+
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0x80);
+    EXPECT_EQ(runReadUntilIdle(fdc, fdc._time + 100), payload);
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR));
+    ExpectZxfReferenceLayout(image, kZxfTracks - 1, "after PF7");
+}
+
+/// endregion </ZX Format 6 mastering, end to end (R-06)>

@@ -1,5 +1,7 @@
 #include "z80.h"
 
+#include "emulator/cpu/qregister.h"
+
 #include <algorithm>
 #include <iterator>
 #include <numeric>
@@ -264,15 +266,20 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
 
     // Let debugger process step event. A run that skips breakpoints still tells the execution taps (haptic probes,
     // analyzers, script callbacks): they never stop (breakpoint-taps §3)
-    if ((cpu.isDebugMode || cpu.execTapHold) && _context->pDebugManager != nullptr)
+    if ((cpu.isDebugMode || cpu.execTapHold || cpu.cardTight) && _context->pDebugManager != nullptr)
     {
+        // Tight mode: a debugged card first runs to this instant, so its stop parks the machine here. Before the
+        // new start is taken: a card stopping inside sees m1_pc and instrStartT of the instruction its moment is in
+        if (cpu.cardTight)
+            _context->pDebugManager->CatchUpCards();
+        cpu.instrStartT = cpu.t;
         BreakpointManager& brk = *_context->pDebugManager->GetBreakpointsManager();
         if (skipBreakpoints)
         {
             if (cpu.execTapHold)
                 brk.HandlePCTaps(pc);
         }
-        else
+        else if (cpu.isDebugMode || cpu.execTapHold)  // tight mode alone: no breakpoint work
         {
             // Taps (analyzers, haptic probes) are told inside and never stop: an id here is a breakpoint that stops
             uint16_t breakpointID = brk.HandlePCChange(pc);
@@ -348,6 +355,16 @@ __forceinline bool Z80::RunInstructionStartHooks(bool skipBreakpoints)
         }
     }
 
+    // ZX-Evo disk autostart: the service ROM's menu waits for a key here; the next key of the boot sequence (a
+    // replay has the keys in its journal and never runs the hook)
+    if (pc == DiskAutostart::SERVICE_MENU_IDLE && _context->pDiskAutostart != nullptr &&
+        _context->pDiskAutostart->IsServiceMenuBootPending())
+    {
+        ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+        if (!ttd || !ttd->IsReplayActive())
+            _context->pDiskAutostart->HandleServiceMenuIdle();
+    }
+
     // Fast disk loading trap (Layer B ROM $3FEC INI sector drain loop trap).
     // Drains pending sector bytes directly into memory via Z80::wd() when armed.
     if (pc == 0x3FEC && _context->pDiskFastLoad != nullptr)
@@ -389,6 +406,9 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     // (RunHaltedIdle learns the fetch length by one). Debug mode and the exec taps (haptic probes, script callbacks,
     // analyzers) are none while no breakpoint or tap sees the HALT
     if (busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
+        return false;
+    // Tight mode catches a debugged card up at every instruction start: an idle stretch would leave it behind
+    if (cardTight)
         return false;
     if (isDebugMode || execTapHold)
     {
@@ -773,8 +793,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
     else
     {
-        // Save F register before opcode execution (for Q register update)
-        uint8_t prev_f = cpu.f;
         cpu.prefix = 0x0000;
 
         if (prefixPending)
@@ -833,8 +851,9 @@ void Z80::Z80Step(bool skipBreakpoints)
             }
         }
 
-        // 2. Emulate fetched Z80 opcode
-        (normal_opcode[opcode])(&cpu);
+        // 2. Emulate fetched Z80 opcode (the handler may move cpu.opcode to the byte after a prefix)
+        const uint8_t firstOpcode = cpu.opcode;
+        (normal_opcode[firstOpcode])(&cpu);
 
         // 2a. Opcode profiling hook (after opcode execution)
         // CPU-LIBRARY-MIGRATION(opcode-profiler): prefix / opcode come from the engine's decoded opcode word
@@ -843,22 +862,11 @@ void Z80::Z80Step(bool skipBreakpoints)
             _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
         }
 
-        // 3. Update Q register based on whether flags were modified
-        // CPU-LIBRARY-MIGRATION(q-register): the engine keeps Q per instruction class
-        // Q captures YF/XF from flag-modifying instructions only
-        // SCF/CCF update Q internally even if F doesn't numerically change
-        if (cpu.f != prev_f)
-        {
-            cpu.q = cpu.f & 0x28;  // Flags changed: capture YF/XF
-        }
-        else if (cpu.opcode == 0x37 || cpu.opcode == 0x3F)
-        {
-            // SCF/CCF set Q internally, preserve their value
-        }
-        else
-        {
-            cpu.q = 0;  // Non-flag-modifying instruction: Q=0
-        }
+        // 3. Q: F & 0x28 after an instruction that writes F, 0 after any other (qregister.h). A prefix byte keeps
+        // the Q its handler set from the prefixed map
+        const uint8_t qMask = z80q::kBase[firstOpcode];
+        if (qMask != z80q::kPrefixed) [[likely]]
+            cpu.q = cpu.f & qMask;
     }
 
     /// region <Debug trace capture>
@@ -1597,7 +1605,7 @@ void Z80::NotifyInstructionStart()
             const auto& st = _context->emulatorState;
             const ttd::TTDTimePoint tp{st.frame_counter, st.TtdTInFrame(t)};
             _context->ttdProbe.RecordHit(tp, m1_pc, m1_pc, /*value=*/0, execPhysPage,
-                                          ttd::TTDAccessType::Execute, flip);
+                                          ttd::TTDAccessType::Execute, flip, sp);
         }
     }
 }

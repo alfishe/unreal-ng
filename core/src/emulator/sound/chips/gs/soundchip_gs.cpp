@@ -263,21 +263,51 @@ uint64_t SoundChip_GeneralSound::hostTactsNow(uint64_t fallback) const
     return GSHostClock::currentZxTacts(_context, fallback);
 }
 
-void SoundChip_GeneralSound::flush()
+bool SoundChip_GeneralSound::hostTarget(int64_t& target) const
 {
-    int64_t target = 0;
     if (const IGSHostClock* clock = _profile.hostClock)
     {
         // The board's axis (a pointer test per host port access, never per instruction)
         const uint64_t now = clock->GsHostTacts();
         if (now < _frameStartZxTacts)
-            return;
+            return false;
         target = _frameStartGsCycles +
                  static_cast<int64_t>(std::llround(static_cast<double>(now - _frameStartZxTacts) * _unitsPerZxTact));
+        return true;
     }
-    else if (!GSHostClock::targetUnits(_context, _unitsPerSecond, _frameStartZxTacts, _frameStartGsCycles, target))
-        return; // ZX reset rewound the clock; wait for the next frame base
-    runTo(target);
+    // ZX reset rewound the clock: wait for the next frame base
+    return GSHostClock::targetUnits(_context, _unitsPerSecond, _frameStartZxTacts, _frameStartGsCycles, target);
+}
+
+void SoundChip_GeneralSound::flush()
+{
+    int64_t target = 0;
+    if (hostTarget(target))
+        runTo(target);
+}
+
+void SoundChip_GeneralSound::catchUpToHost()
+{
+    // Never past the frame's end: the main CPU's instruction that crosses it would take the card into the next
+    // frame before the frame start re-bases it, ahead of that frame's first host access. No frame yet: no base
+    // Asked per host instruction: a card already at the target costs a test
+    if (_frameGsCycles <= 0)
+        return;
+    int64_t target = 0;
+    const bool based = _profile.hostClock ? hostTarget(target)
+                                          : GSHostClock::targetUnits(_context, _unitsPerSecond, _frameStartZxTacts,
+                                                                     _frameStartGsCycles, _tightRate, target);
+    if (!based)
+        return;
+    target = std::min(target, _frameStartGsCycles + _frameGsCycles);
+    if (target > totalGsCycles())
+        runTo(target);
+}
+
+int64_t SoundChip_GeneralSound::hostLead() const
+{
+    int64_t target = 0;
+    return hostTarget(target) ? target - totalGsCycles() : 0;
 }
 
 // Catch-up loop: GSCardRunner (gscardrunner.h), Unreal z80loop order. The

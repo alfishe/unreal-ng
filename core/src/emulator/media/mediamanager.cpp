@@ -1220,6 +1220,14 @@ public:
             case MediaUndoLog::Unit::Protect:
                 out = _state.writeProtect;
                 return true;
+            case MediaUndoLog::Unit::Geometry:
+            {
+                const DiskImage* disk = _state.attached ? _state.attached->Floppy() : nullptr;
+                if (!disk)
+                    return false;
+                out = MediaUndoLog::Geometry{disk->getCylinders(), disk->isDirty()};
+                return true;
+            }
         }
         return false;
     }
@@ -1241,8 +1249,7 @@ public:
                 const auto* raw = std::get_if<DiskImage::RawTrack>(&image);
                 if (!track || !raw)
                     return false;
-                static_cast<DiskImage::RawTrack&>(*track) = *raw;
-                track->reindex();  // the sector index points into the stream
+                track->restoreRaw(*raw);  // the sector index points into the stream: rebuilt with it
                 track->markDirty();
                 return true;
             }
@@ -1255,6 +1262,19 @@ public:
                 if (_state.attached && !_state.heldForReplay)
                     _state.slot->SetWriteProtectSwitch(*on);
                 return true;
+            }
+            case MediaUndoLog::Unit::Geometry:
+            {
+                DiskImage* disk = _state.attached ? _state.attached->Floppy() : nullptr;
+                const auto* geometry = std::get_if<MediaUndoLog::Geometry>(&image);
+                if (!disk || !geometry)
+                    return false;
+                // Back: the tracks the WRITE TRACK added go (their own entries, newer, were set back first).
+                // Forward: they come back blank, and their entries, newer, fill them next
+                const bool sized = geometry->cylinders < disk->getCylinders() ? disk->shrinkCylinders(geometry->cylinders)
+                                                                               : disk->growCylinders(geometry->cylinders);
+                disk->setImageDirty(geometry->dirty);
+                return sized;
             }
         }
         return false;
@@ -1396,6 +1416,21 @@ void MediaManager::BeforeTrackWrite(const std::string& slotId, const DiskImage::
     const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
     state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Track, index,
                     static_cast<const DiskImage::RawTrack&>(track));
+}
+
+void MediaManager::BeforeImageGrow(const std::string& slotId, const DiskImage& disk)
+{
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _slots.find(slotId);
+    if (it == _slots.end())
+        return;
+    SlotState& state = it->second;
+    MarkWrite(state);
+    if (!KeepsVersions() || state.undo.Has(state.writtenFrames, MediaUndoLog::Unit::Geometry, 0))
+        return;
+    const uint64_t frame = _context ? _context->emulatorState.frame_counter : 0;
+    state.undo.Keep(state.writtenFrames, frame, MediaUndoLog::Unit::Geometry, 0,
+                    MediaUndoLog::Geometry{disk.getCylinders(), disk.isDirty()});
 }
 
 void MediaManager::ToSessionAccess(const std::string& slotId, SlotState& state)

@@ -15,6 +15,11 @@
 ///   ttd markers                — list external-event markers (replay barriers)
 ///   ttd bookmark [add|note|export|del|list] — agent bookmarks with notes (advisory, never barriers)
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
+///   ttd branches [...]         — the branches of the history (a resume keeps the old future as a branch)
+///   ttd branch switch|update|delete|info <branch> — continue on a branch, rename / tag / pin it, delete it, show it
+///   ttd branch back | sibling [next|prev] — the branch left last; the next / previous one at the nearest fork
+///   ttd branch create [name] [...]  — a branch at a moment, optionally run headless with scripted input
+///   ttd branch prune [filters] [--apply] — delete the branches a filter picks (a dry run without --apply)
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
 ///   ttd event <kind> ...       — find event: when a value, the screen, a run, a port, the border or a key changed
 ///   ttd explain [F]            — explain frame: what one frame did (time, routines, ports, memory, screen, keys)
@@ -281,6 +286,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     {
         HandleTTDBookmark(session, context, args);
     }
+    else if (subcommand == "branches" || subcommand == "branch" || subcommand == "br")
+    {
+        HandleTTDBranch(session, context, args);
+    }
     else if (subcommand == "dump" || subcommand == "save")
     {
         HandleTTDDump(session, context, args);
@@ -306,6 +315,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
              subcommand == "si-forward")
     {
         HandleTTDStepInstruction(session, context, args);
+    }
+    else if (subcommand == "reverse-step-over" || subcommand == "rso")
+    {
+        HandleTTDReverseStepOver(session, context);
     }
     else if (subcommand == "reverse-step"   ||
              subcommand == "reverse-continue" ||
@@ -415,8 +428,30 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd bookmark del <label>         Remove a bookmark by label" << NEWLINE;
     ss << "  ttd seek --bookmark <label>      Seek to a bookmarked position" << NEWLINE;
     ss << NEWLINE;
+    ss << "Branches (a resume in the past keeps the old future as a branch; <branch>: an id, a GUID or a name):" << NEWLINE;
+    ss << "  ttd branches                     List the branches ('*' the active one): [--scope all|lineage]" << NEWLINE;
+    ss << "        [--created-by P] [--run ID] [--tag a,b] [--name-prefix P] [--pinned true|false]" << NEWLINE;
+    ss << "        [--min-length F] [--max-length F] [--created-after US] [--created-before US] [--limit N] [--offset N]"
+       << NEWLINE;
+    ss << "  ttd branch info <b>              The branch: its fork, children, ancestors and files" << NEWLINE;
+    ss << "  ttd branch create [name]         A branch here (--frame F [--tinframe T], --on <b>: on that branch's" << NEWLINE;
+    ss << "        lineage), --reason R, --tags a,b, --note TEXT, --pin, --run ID; --frames N runs it headless N" << NEWLINE;
+    ss << "        frames, --input 0:a,10:caps+5:4 feeds keys (frame:key[+key][:hold|:down|:up], joy.fire for a" << NEWLINE;
+    ss << "        joystick button, frame:release_all), --poke #8100=5 / --regs pc=#8000 edit the fork first," << NEWLINE;
+    ss << "        --read #5C00:16 reads memory at the end, --return goes back where you stood; --media ask|empty|keep"
+       << NEWLINE;
+    ss << "  ttd branch prune [filters]       What the --created-by/--run/--tag/... filter picks (a dry run);" << NEWLINE;
+    ss << "        --apply deletes them (the active lineage and pinned branches stay)" << NEWLINE;
+    ss << "  ttd branch switch <b> [f] [t]    Continue on branch <b>, at frame/tinframe (default: its end)" << NEWLINE;
+    ss << "  ttd branch back                  The branch left last (again: further back; alias prev)" << NEWLINE;
+    ss << "  ttd branch sibling [next|prev]   The next / previous branch at the nearest fork (by creation)" << NEWLINE;
+    ss << "  ttd branch update <b>            Edit: --name N, --note TEXT, --tags a,b, --add-tags, --remove-tags," << NEWLINE;
+    ss << "        --pin | --unpin" << NEWLINE;
+    ss << "  ttd branch del <b> [--force]     Delete a branch and its descendants (--force: pinned ones too)" << NEWLINE;
+    ss << NEWLINE;
     ss << "Phase 4 — Reverse Search + Automation:" << NEWLINE;
-    ss << "  ttd dump <path>                  Serialize session to .ttd file" << NEWLINE;
+    ss << "  ttd dump <path> [--lineage]      Serialize session to .ttd file (--lineage: only the active branch's" << NEWLINE;
+    ss << "                                   lineage, as one linear history; default: every branch)" << NEWLINE;
     ss << "  ttd load <path>                  Load a .ttd session for playback (alias: open)" << NEWLINE;
     ss << "  ttd export-clip <from> <to> <dir|file.gif|.mp4|...> [--chunk N]" << NEWLINE;
     ss << "                                   Write frames from..to as a lossless clip into dir (alias: clip)" << NEWLINE;
@@ -447,6 +482,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
+    ss << "  ttd reverse-step-over            Step back over a routine (its return before): back to its CALL" << NEWLINE;
     ss << "    [--tstates T]                     Step back T t-states (aligns to M1)" << NEWLINE;
     ss << "    [--scanlines L]                   Step back L scanlines (the machine's line length each)" << NEWLINE;
     ss << "  ttd reverse-continue --pc <A>    Run backward until any PC matches" << NEWLINE;
@@ -479,7 +515,7 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd replay-check [F [G]] [--stride N] [--limit N]   Replay frames F..G (default: all) from their checkpoints" << NEWLINE;
     ss << "      and compare each with the next checkpoint: what diverged (cpu, chipset, ram, device, region)" << NEWLINE;
     ss << "  ttd seek-check [on|off]   Every seek also replay-checks the frame it lands in (off by default); the counts" << NEWLINE;
-    ss << "  Aliases: rs=reverse-step, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
+    ss << "  Aliases: rs=reverse-step, rso=reverse-step-over, rc=reverse-continue, pf=probe-frames, tl=timeline, cause-chain=cause, "
           "backtrace=bt, find-event=event, explain-frame=explain" << NEWLINE;
     ss << NEWLINE;
     ss << "Notes:" << NEWLINE;
@@ -552,6 +588,17 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
            << NEWLINE;
     }
     ss << "  Bookmarks:              " << info.bookmarkCount << " (advisory, never barriers)" << NEWLINE;
+    if (info.branches)
+    {
+        // Only a session with branches says anything about them
+        const ttd::TTDBranchInfo* active = info.branches->Find(info.activeBranch);
+        const ttd::TTDBranchInfo* viewed = info.branches->Find(info.viewedBranch);
+        ss << "  Branches:               " << info.branches->branches.size() << ", active '"
+           << (active ? active->meta.name : std::string("trunk")) << "'";
+        if (viewed && info.viewedBranch != info.activeBranch)
+            ss << ", viewing '" << viewed->meta.name << "'";
+        ss << " (ttd branches lists them)" << NEWLINE;
+    }
     ss << "  Input events:           " << info.inputEventCount << NEWLINE;
     ss << "  Replay barriers:        " << info.externalEventCount << NEWLINE;
     if (!info.inputHistoryComplete)
@@ -571,6 +618,8 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
         ss << "  Last session dropped:   " << info.lastDropReason << NEWLINE;
     if (!info.lastStopReason.empty())
         ss << "  Recording stopped by:   " << info.lastStopReason << NEWLINE;
+    if (info.startPending)
+        ss << "  Recording starts:       at the next frame boundary (asked inside the sound card's run)" << NEWLINE;
     if (info.recordingPaused)
         ss << "  Recording paused:       yes (browsing; resume at its end goes on, stop ends it)" << NEWLINE;
     if (!info.unavailableReason.empty())
@@ -613,6 +662,8 @@ void CLIProcessor::HandleTTDStart(const ClientSession& session, EmulatorContext*
     {
         std::string text = options["journal"] == "true" ? "TTD: Recording started (with the write journal)"
                                                         : "TTD: Recording started";
+        if (reply.body.find("start_pending")->b)
+            text += " at the next frame boundary (the machine is stopped inside the sound card's run)";
         if (options.count("black_box"))
             text += std::string(" as the black box: the last ") +
                     (options.count("minutes") ? options["minutes"] : std::string("5")) +
@@ -1017,6 +1068,181 @@ void CLIProcessor::HandleTTDBookmark(const ClientSession& session, EmulatorConte
                          "Usage: ttd bookmark [list|add|note|export|del]" + NEWLINE);
 }
 
+// -------------------------------------------------------------------------
+// TTD branches: a resume in the past keeps the old future as a branch. A branch is named by its id, its GUID or its
+// name; the trunk is id 0.
+// -------------------------------------------------------------------------
+
+void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext* context,
+                                    const std::vector<std::string>& args)
+{
+    // `ttd branches [--options]` and `ttd branch [list]` list; `ttd branch switch|update|delete <branch> ...` act
+    std::string action = "list";
+    size_t first = 1;
+    if (args.size() > 1 && args[1].rfind("--", 0) != 0)
+    {
+        action = args[1];
+        first = 2;
+    }
+
+    // The options after the positional arguments: --scope S, --created-by P, --tag T, --name-prefix P, --pinned B,
+    // --limit N, --offset N (list); --name N, --note TEXT, --tags a,b, --add-tags, --remove-tags, --pin, --unpin
+    // (update); --force (delete)
+    std::map<std::string, std::string> options;
+    std::vector<std::string> positional;
+    for (size_t i = first; i < args.size(); ++i)
+    {
+        static const std::map<std::string, std::string> valued = {
+            {"--scope", "scope"},     {"--created-by", "created_by"}, {"--tag", "tag"},
+            {"--name-prefix", "name_prefix"}, {"--pinned", "pinned"}, {"--limit", "limit"},
+            {"--offset", "offset"},   {"--name", "name"},             {"--note", "note"},
+            {"--tags", "tags"},       {"--add-tags", "add_tags"},     {"--remove-tags", "remove_tags"},
+            {"--run", "run"},         {"--min-length", "min_length"}, {"--max-length", "max_length"},
+            {"--created-after", "created_after"}, {"--created-before", "created_before"},
+            {"--reason", "reason"},   {"--frame", "frame"},           {"--tinframe", "tinframe"},
+            {"--on", "branch"},       {"--frames", "run_frames"},     {"--input", "input"},
+            {"--read", "read"},       {"--media", "media"},           {"--poke", "poke"},
+            {"--regs", "regs"}};
+        if (const auto it = valued.find(args[i]); it != valued.end())
+        {
+            if (i + 1 >= args.size())
+            {
+                session.SendResponse("Error: " + args[i] + " needs a value" + NEWLINE);
+                return;
+            }
+            options[it->second] = args[++i];
+        }
+        else if (args[i] == "--pin" || args[i] == "--unpin")
+            options["pinned"] = args[i] == "--pin" ? "true" : "false";
+        else if (args[i] == "--force")
+            options["force"] = "true";
+        else if (args[i] == "--return")
+            options["go_back"] = "true";
+        else if (args[i] == "--apply")
+            options["dry_run"] = "false";
+        else if (args[i].rfind("--", 0) == 0)
+        {
+            session.SendResponse("Error: unknown option " + args[i] + NEWLINE);
+            return;
+        }
+        else
+            positional.push_back(args[i]);
+    }
+    auto run = [&](const char* verb) {
+        const ttd::TTDReply reply = ttd::TTDControl(context).Execute({verb, options});
+        if (!reply.Ok())
+        {
+            session.SendResponse("Error: " + reply.message + NEWLINE);
+            return;
+        }
+        const StateNode* text = reply.body.find("text");
+        std::string out = text ? text->s : std::string();
+        // A page of a longer list says how much is left
+        const StateNode* total = reply.body.find("total");
+        const StateNode* list = reply.body.find("branches");
+        if (total && list && static_cast<uint64_t>(total->i) > list->size())
+            out += std::to_string(list->size()) + " of " + std::to_string(total->i) +
+                   " branches shown (--offset N --limit N pages on)\n";
+        if (!out.empty() && out.back() != '\n')
+            out += "\n";
+        session.SendResponse(out);
+    };
+    auto needsBranch = [&](const char* usage) {
+        if (!positional.empty())
+        {
+            options["branch"] = positional[0];
+            return true;
+        }
+        session.SendResponse(std::string("Error: Missing branch argument (an id, a GUID or a name)") + NEWLINE +
+                             "Usage: " + usage + NEWLINE);
+        return false;
+    };
+
+    if (action == "list" || action == "ls")
+    {
+        run("branches");
+        return;
+    }
+
+    // The branch left last (repeated calls walk further back); the next / previous branch at the nearest fork
+    if (action == "back" || action == "prev" || action == "previous")
+    {
+        options["to"] = "previous";
+        run("branch-switch");
+        return;
+    }
+    if (action == "sibling" || action == "sib")
+    {
+        const std::string dir = positional.empty() ? std::string("next") : positional[0];
+        if (dir != "next" && dir != "prev")
+        {
+            session.SendResponse(std::string("Error: Usage: ttd branch sibling [next|prev]") + NEWLINE);
+            return;
+        }
+        options["to"] = dir == "next" ? "next_sibling" : "prev_sibling";
+        run("branch-switch");
+        return;
+    }
+
+    if (action == "switch" || action == "sw" || action == "checkout")
+    {
+        if (!needsBranch("ttd branch switch <branch> [frame] [tinframe]"))
+            return;
+        // Optional position on the branch; omitted: the branch's end
+        if (positional.size() > 1)
+        {
+            options["frame"] = positional[1];
+            options["tinframe"] = positional.size() > 2 ? positional[2] : "0";
+        }
+        run("branch-switch");
+        return;
+    }
+
+    if (action == "update" || action == "edit" || action == "note")
+    {
+        if (!needsBranch("ttd branch update <branch> [--name N] [--note TEXT] [--tags a,b] [--add-tags a] "
+                         "[--remove-tags a] [--pin|--unpin]"))
+            return;
+        run("branch-update");
+        return;
+    }
+
+    if (action == "del" || action == "delete" || action == "remove" || action == "rm")
+    {
+        if (!needsBranch("ttd branch del <branch> [--force]"))
+            return;
+        run("branch-delete");
+        return;
+    }
+
+    if (action == "info" || action == "show")
+    {
+        if (!needsBranch("ttd branch info <branch>"))
+            return;
+        run("branch-info");
+        return;
+    }
+
+    if (action == "create" || action == "new" || action == "fork")
+    {
+        // The positional argument is the new branch's name; --on names the branch whose lineage holds the moment
+        if (!positional.empty())
+            options["name"] = positional[0];
+        // --pin makes the new branch pinned (the list's --pinned filter has no meaning here)
+        run("branch-create");
+        return;
+    }
+
+    if (action == "prune")
+    {
+        run("branch-prune");
+        return;
+    }
+
+    session.SendResponse(std::string("Error: Unknown branch action '") + action + "'" + NEWLINE +
+                         "Usage: ttd branch [list|info|create|switch|back|sibling|update|del|prune]" + NEWLINE);
+}
+
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)
 {
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"step-back", {}});
@@ -1191,13 +1417,31 @@ void CLIProcessor::HandleTTDMarkers(const ClientSession& session, EmulatorContex
 void CLIProcessor::HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                                   const std::vector<std::string>& args)
 {
-    if (args.size() < 2)
+    // ttd dump <path> [--lineage]: the flag may stand before or after the path
+    std::string path;
+    bool lineage = false;
+    for (size_t i = 1; i < args.size(); ++i)
     {
-        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE + "Usage: ttd dump <path>" + NEWLINE);
+        if (args[i] == "--lineage")
+            lineage = true;
+        else if (args[i].rfind("--", 0) == 0)
+        {
+            session.SendResponse("Error: unknown option " + args[i] + NEWLINE);
+            return;
+        }
+        else if (path.empty())
+            path = args[i];
+    }
+    if (path.empty())
+    {
+        session.SendResponse(std::string("Error: Missing path argument") + NEWLINE + "Usage: ttd dump <path> [--lineage]" +
+                             NEWLINE);
         return;
     }
-    const std::string& path = args[1];
-    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"dump", {{"path", path}}});
+    std::map<std::string, std::string> options{{"path", path}};
+    if (lineage)
+        options["lineage"] = "true";
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"dump", options});
     if (!reply.Ok())
     {
         session.SendResponse(std::string(reply.message.rfind("Cannot open", 0) == 0 ? "Error: " : "TTD: Dump failed: ") +
@@ -1205,7 +1449,8 @@ void CLIProcessor::HandleTTDDump(const ClientSession& session, EmulatorContext* 
         return;
     }
     std::stringstream ss;
-    ss << "TTD: Session dumped to '" << path << "' (" << reply.body.find("bytes")->i << " bytes)" << NEWLINE;
+    ss << "TTD: Session dumped to '" << path << "' (" << reply.body.find("bytes")->i << " bytes"
+       << (lineage ? ", the active lineage only" : "") << ")" << NEWLINE;
     session.SendResponse(ss.str());
 }
 
@@ -1528,6 +1773,23 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
     {
         session.SendResponse(std::string("TTD: Reverse-step failed (at session start or out of history)") + NEWLINE);
     }
+}
+
+void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context)
+{
+    // Back over a routine when the instruction before is its return, else one instruction back
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step-over", {}});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE);
+        return;
+    }
+    std::stringstream ss;
+    ss << "TTD: " << reply.body.find("text")->s;
+    if (reply.body.find("stepped")->b)
+        ss << " (frame=" << reply.body.find("frame")->i << ", tInFrame=" << reply.body.find("tinframe")->i << ")";
+    ss << NEWLINE << FormatCheck(reply.body);
+    session.SendResponse(ss.str());
 }
 
 void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,

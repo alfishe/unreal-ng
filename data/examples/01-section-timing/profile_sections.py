@@ -25,6 +25,10 @@ section-report.md and section-report.json in the current directory, or --out PRE
 How it works: the machine stays paused; POST /steps runs it until the next marker breakpoint, GET
 /debug/snapshot reads the time (and the registers) there. Two requests per marker, so a marker hit thousands of
 times per frame makes it slow: it measures, it does not run in real time.
+
+With --native the emulator's own section timer does the measuring (POST /section-timer): the markers are taps, the
+CPU reports the interrupts, the machine runs at full speed and the script only reads the passes every few frames.
+The same report; --group-by, --show-regs, --log and --interrupt are stepping-mode only.
 """
 
 import argparse
@@ -414,6 +418,9 @@ def main():
     ap.add_argument("--log", action="store_true", help="print every interrupt that lands inside a section")
     ap.add_argument("--out", default="section-report", metavar="PREFIX",
                     help="report files: PREFIX.md and PREFIX.json (default section-report)")
+    ap.add_argument("--native", action="store_true",
+                    help="measure with the emulator's section timer at full speed (taps, the CPU's interrupt "
+                         "events) instead of stepping from marker to marker")
     ap.add_argument("--keep", action="store_true", help="keep the new instance after the run")
     ap.add_argument("--no-take-control", action="store_true",
                     help="do not take control (to see the automation gate: the emulator opens a session by itself "
@@ -437,6 +444,8 @@ def main():
         if name not in by_name:
             raise SystemExit("--break-if: no section {}".format(name))
     show_regs = [r.strip().lower() for r in args.show_regs.split(",")] if args.show_regs else []
+    if args.native and (args.group_by or show_regs or args.log or args.interrupt != "auto"):
+        raise SystemExit("--native: --group-by, --show-regs, --log and --interrupt need the stepping mode")
     stop_at = resolve(args.stop_at, symbols) if args.stop_at else None
 
     created = args.attach is None
@@ -459,6 +468,7 @@ def main():
     exit_code = 0
     breakpoints = []
     returns = {}             # interrupted address -> [breakpoint id, uses]: where the CPU comes back
+    timer_on = False
     try:
         emu.mute()
         emu.pause()
@@ -469,24 +479,40 @@ def main():
             emu.post("/run_frames", {"count": args.warmup})   # let the program set itself up
         emu.enable_breakpoints()
 
-        # address -> what happens there; exits first, so that an address that ends one section and
-        # starts the next closes the old pass before it opens the new one
-        events = {}
-        for s in sections:
-            for e in s.exits:
-                events.setdefault(e, []).append(("exit", s))
-        for s in sections:
-            events.setdefault(s.entry, []).append(("entry", s))
-        if stop_at is not None:
-            events.setdefault(stop_at, []).append(("stop", None))
-        landing = interrupt_entry(emu, emu.snapshot(), args.interrupt, symbols, by_name)
-        if landing is not None:
-            events.setdefault(landing, [])
-        for address in events:
-            breakpoints.append(emu.add_breakpoint(address, note="profile_sections", group="profile_sections"))
-        pending = []             # accepted interrupts not returned from yet, innermost last
-        print("interrupts: {}".format("land at " + key_name(landing, labels) if landing is not None
-                                      else "not followed"))
+        if args.native:
+            # The emulator's section timer: the markers are taps, the CPU tells the interrupts (no landing address)
+            spec = {"action": "start", "recursive": args.recursive, "capacity": 10000000,
+                    "sections": ["{}={}:{}".format(s.name, s.entry, ",".join(str(e) for e in s.exits))
+                                 for s in sections],
+                    "break_if": ["{}>{}".format(name, value) for name, value in thresholds.items()]}
+            if args.break_on_mismatch:
+                spec["break_if"] += ["net:{}!={}".format(s.name, s.expected) for s in sections
+                                     if s.expected is not None]
+            emu.post("/section-timer", spec)
+            timer_on = True
+            if stop_at is not None:
+                breakpoints.append(emu.add_breakpoint(stop_at, note="profile_sections", group="profile_sections"))
+            landing = None
+            print("interrupts: the CPU's own events (int_accept / int_return)")
+        else:
+            # address -> what happens there; exits first, so that an address that ends one section and
+            # starts the next closes the old pass before it opens the new one
+            events = {}
+            for s in sections:
+                for e in s.exits:
+                    events.setdefault(e, []).append(("exit", s))
+            for s in sections:
+                events.setdefault(s.entry, []).append(("entry", s))
+            if stop_at is not None:
+                events.setdefault(stop_at, []).append(("stop", None))
+            landing = interrupt_entry(emu, emu.snapshot(), args.interrupt, symbols, by_name)
+            if landing is not None:
+                events.setdefault(landing, [])
+            for address in events:
+                breakpoints.append(emu.add_breakpoint(address, note="profile_sections", group="profile_sections"))
+            pending = []             # accepted interrupts not returned from yet, innermost last
+            print("interrupts: {}".format("land at " + key_name(landing, labels) if landing is not None
+                                          else "not followed"))
 
         if emu.implicit_session:
             print("the emulator opened a session for us by itself (the automation gate): {}".format(
@@ -514,96 +540,126 @@ def main():
                 panel.print("  " + text)
 
         try:
-            while stop_reason is None:
-                reply = emu.steps(100000)
-                snap = emu.snapshot()
-                frame, t, frame_t = snap["time"]["frame"], snap["time"]["t"], snap["time"]["frame_t"]
-                now = frame * frame_t + t
-                if frame >= end_frame:
-                    break
-                stop = reply.get("stop", {})
-                if stop.get("reason") != "breakpoint":
-                    continue
-                hits += 1
-                panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t,
-                                     recent))
-                pc = stop.get("address")
-
-                # back from an interrupt: its whole cost goes to the passes that were open when it came
-                while pending and pending[-1].ret == pc and pending[-1].sp == register_value(snap["regs"], "sp"):
-                    p = pending.pop()
-                    cost = now - p.start
-                    for o in p.inside:
-                        o.interrupt_t += cost
-                    p.event["cost"] = cost
-                    returns[pc][1] -= 1
-                    if not returns[pc][1]:
-                        emu.remove_breakpoint(returns.pop(pc)[0])
-
-                # an accepted interrupt lands here: it was accepted one acknowledge earlier, at the return address
-                if pc == landing:
-                    sp = register_value(snap["regs"], "sp")
-                    low, high = bytearray(emu.read_memory(sp, 2))
-                    ret = low | high << 8
-                    boundary = now - ACKNOWLEDGE[snap["regs"]["interrupt"]["im"]]
-                    ev = {"frame": frame, "t": t, "at": ret,
-                          "section": ", ".join(o.section.name for o in stack),
-                          "into": boundary - stack[-1].start if stack else 0}
-                    for o in stack:
-                        o.interrupts += 1
-                    if stack:
-                        interrupt_events.append(ev)
-                        event("frame {:>5} t {:>5}: interrupt at {} inside {} (+{} t-states into it)".format(
-                            frame, t, key_name(ret, labels), ev["section"], ev["into"]))
-                    pending.append(Interrupt(ret, sp + 2, boundary, list(stack), ev))
-                    if ret in returns:
-                        returns[ret][1] += 1
-                    else:
-                        returns[ret] = [emu.add_breakpoint(ret, note="profile_sections", group="profile_sections"), 1]
-
-                for kind, s in events.get(pc, []):
-                    if kind == "stop":
+            if args.native:
+                kept = 0
+                while frame < end_frame and stop_reason is None:
+                    # run_until honours the breakpoints (run_frames skips them): a break_if or --stop-at ends it
+                    target = min(frame + 10, end_frame)
+                    reply = emu.post("/run_until", {"if": "FRAME >= {}".format(target), "breakpoints": True,
+                                                    "max_frames": target - frame + 1})
+                    result = emu.get("/section-timer?offset={}&limit=1000000".format(kept))
+                    for name, f, pass_t, elapsed, net, inside in result["passes"]:
+                        by_name[name].add(f, pass_t, elapsed, net, inside, None, {})
+                    kept += len(result["passes"])
+                    hits, orphan_exits, dropped = result["hits"], result["orphan"], result["dropped"] + result["open"]
+                    frame, t, frame_t = emu.time()
+                    panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t,
+                                         recent))
+                    stopped = result.get("stopped")
+                    if stopped:
+                        stop_reason = "{} took {} t-states, {} net, {} interrupt(s) inside (frame {}): {}".format(
+                            stopped["section"], stopped["elapsed"], stopped["net"], stopped["interrupts"],
+                            stopped["frame"], stopped["condition"])
+                    elif reply.get("outcome") == "breakpoint":
                         stop_reason = "stopped at {} (frame {}, t {})".format(args.stop_at, frame, t)
-                    elif kind == "entry":
-                        # entered again while still open: the open pass left without its exit (a JR elsewhere),
-                        # so it and whatever opened inside it are dropped, unless the code really recurses
-                        if not args.recursive:
-                            depth = next((i for i, o in enumerate(stack) if o.section is s), None)
-                            if depth is not None:
-                                dropped += len(stack) - depth
-                                del stack[depth:]
-                        key = register_value(snap["regs"], args.group_by) if args.group_by else None
-                        noted = {r: register_value(snap["regs"], r) for r in show_regs}
-                        stack.append(Open(s, now, frame, t, key, noted))
-                        entered.add(s)
-                    else:
-                        depth = next((i for i in range(len(stack) - 1, -1, -1) if stack[i].section is s), None)
-                        if depth is None:
-                            if s in entered:
-                                orphan_exits += 1
-                            # else: the measurement started inside this section, not an error
-                            continue
-                        dropped += len(stack) - 1 - depth     # entered and never left: the coder's business
-                        o = stack[depth]
-                        del stack[depth:]
-                        elapsed = now - o.start
-                        s.add(o.frame, o.t, elapsed, elapsed - o.interrupt_t, o.interrupts, o.key, o.regs)
-                        if args.passes and sum(len(x.passes) for x in sections) >= args.passes:
-                            end_frame = frame
-                        where = "frame {}{}{}".format(o.frame, ", {} = {}".format(
-                            args.group_by.upper(), key_name(o.key, labels)) if args.group_by else "",
-                            "".join(", {} = {}".format(reg_title(r), reg_text(v, r)) for r, v in o.regs.items()))
-                        net = elapsed - o.interrupt_t
-                        if s.expected is not None and net != s.expected:
-                            event("frame {:>5}: {} took {} net ({:+d}; {})".format(
-                                o.frame, s.name, net, net - s.expected, where))
-                        limit = thresholds.get(s.name)
-                        if limit is not None and elapsed > limit:
-                            stop_reason = "{} took {} t-states > {} ({}, {} interrupt(s) inside, {} net)".format(
-                                s.name, elapsed, limit, where, o.interrupts, elapsed - o.interrupt_t)
-                        if args.break_on_mismatch and s.expected is not None and net != s.expected:
-                            stop_reason = "{} took {} t-states, {} net, expected {} ({:+d}; {})".format(
-                                s.name, elapsed, net, s.expected, net - s.expected, where)
+                    elif args.passes and kept >= args.passes:
+                        break
+            else:
+                while stop_reason is None:
+                    reply = emu.steps(100000)
+                    snap = emu.snapshot()
+                    frame, t, frame_t = snap["time"]["frame"], snap["time"]["t"], snap["time"]["frame_t"]
+                    now = frame * frame_t + t
+                    if frame >= end_frame:
+                        break
+                    stop = reply.get("stop", {})
+                    if stop.get("reason") != "breakpoint":
+                        continue
+                    hits += 1
+                    panel.draw(dashboard(title, frame - start_frame, args.frames, hits, started, sections, frame_t,
+                                         recent))
+                    pc = stop.get("address")
+
+                    # back from an interrupt: its whole cost goes to the passes that were open when it came
+                    while pending and pending[-1].ret == pc and pending[-1].sp == register_value(snap["regs"], "sp"):
+                        p = pending.pop()
+                        cost = now - p.start
+                        for o in p.inside:
+                            o.interrupt_t += cost
+                        p.event["cost"] = cost
+                        returns[pc][1] -= 1
+                        if not returns[pc][1]:
+                            bp = returns.pop(pc)[0]
+                            if bp is not None:
+                                emu.remove_breakpoint(bp)
+
+                    # an accepted interrupt lands here: it was accepted one acknowledge earlier, at the return address
+                    if pc == landing:
+                        sp = register_value(snap["regs"], "sp")
+                        low, high = bytearray(emu.read_memory(sp, 2))
+                        ret = low | high << 8
+                        boundary = now - ACKNOWLEDGE[snap["regs"]["interrupt"]["im"]]
+                        ev = {"frame": frame, "t": t, "at": ret,
+                              "section": ", ".join(o.section.name for o in stack),
+                              "into": boundary - stack[-1].start if stack else 0}
+                        for o in stack:
+                            o.interrupts += 1
+                        if stack:
+                            interrupt_events.append(ev)
+                            event("frame {:>5} t {:>5}: interrupt at {} inside {} (+{} t-states into it)".format(
+                                frame, t, key_name(ret, labels), ev["section"], ev["into"]))
+                        pending.append(Interrupt(ret, sp + 2, boundary, list(stack), ev))
+                        if ret in returns:
+                            returns[ret][1] += 1
+                        elif ret in events:
+                            # a marker already stops there (the interrupt came just before an exit): keep its breakpoint
+                            returns[ret] = [None, 1]
+                        else:
+                            returns[ret] = [emu.add_breakpoint(ret, note="profile_sections", group="profile_sections"), 1]
+
+                    for kind, s in events.get(pc, []):
+                        if kind == "stop":
+                            stop_reason = "stopped at {} (frame {}, t {})".format(args.stop_at, frame, t)
+                        elif kind == "entry":
+                            # entered again while still open: the open pass left without its exit (a JR elsewhere),
+                            # so it and whatever opened inside it are dropped, unless the code really recurses
+                            if not args.recursive:
+                                depth = next((i for i, o in enumerate(stack) if o.section is s), None)
+                                if depth is not None:
+                                    dropped += len(stack) - depth
+                                    del stack[depth:]
+                            key = register_value(snap["regs"], args.group_by) if args.group_by else None
+                            noted = {r: register_value(snap["regs"], r) for r in show_regs}
+                            stack.append(Open(s, now, frame, t, key, noted))
+                            entered.add(s)
+                        else:
+                            depth = next((i for i in range(len(stack) - 1, -1, -1) if stack[i].section is s), None)
+                            if depth is None:
+                                if s in entered:
+                                    orphan_exits += 1
+                                # else: the measurement started inside this section, not an error
+                                continue
+                            dropped += len(stack) - 1 - depth     # entered and never left: the coder's business
+                            o = stack[depth]
+                            del stack[depth:]
+                            elapsed = now - o.start
+                            s.add(o.frame, o.t, elapsed, elapsed - o.interrupt_t, o.interrupts, o.key, o.regs)
+                            if args.passes and sum(len(x.passes) for x in sections) >= args.passes:
+                                end_frame = frame
+                            where = "frame {}{}{}".format(o.frame, ", {} = {}".format(
+                                args.group_by.upper(), key_name(o.key, labels)) if args.group_by else "",
+                                "".join(", {} = {}".format(reg_title(r), reg_text(v, r)) for r, v in o.regs.items()))
+                            net = elapsed - o.interrupt_t
+                            if s.expected is not None and net != s.expected:
+                                event("frame {:>5}: {} took {} net ({:+d}; {})".format(
+                                    o.frame, s.name, net, net - s.expected, where))
+                            limit = thresholds.get(s.name)
+                            if limit is not None and elapsed > limit:
+                                stop_reason = "{} took {} t-states > {} ({}, {} interrupt(s) inside, {} net)".format(
+                                    s.name, elapsed, limit, where, o.interrupts, elapsed - o.interrupt_t)
+                            if args.break_on_mismatch and s.expected is not None and net != s.expected:
+                                stop_reason = "{} took {} t-states, {} net, expected {} ({:+d}; {})".format(
+                                    s.name, elapsed, net, s.expected, net - s.expected, where)
         except (ConnectionLost, InstanceGone) as e:
             lost = str(e)
             stop_reason = "lost the emulator at frame {}: {}".format(frame - start_frame, e)
@@ -693,8 +749,10 @@ def main():
     finally:
         if not lost:
             try:
-                for b in breakpoints + [r[0] for r in returns.values()]:
+                for b in breakpoints + [r[0] for r in returns.values() if r[0] is not None]:
                     emu.remove_breakpoint(b)
+                if timer_on:
+                    emu.post("/section-timer", {"action": "stop"})
                 if created and not args.keep and not paused_for_user:
                     emu.remove()
                 elif not paused_for_user and not created and not revoked:

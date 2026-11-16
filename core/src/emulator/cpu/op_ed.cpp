@@ -2,6 +2,7 @@
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/qregister.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/cputables.h"
 #include "op_noprefix.h"
@@ -1435,6 +1436,7 @@ Z80OPCODE op_ED(Z80 *cpu)
 
 	uint8_t opcode = cpu->m1_cycle();
 	(ext_opcode[opcode])(cpu);
+	cpu->q = cpu->f & z80q::kEd[opcode];
 
 	// Finalize opcode
 	cpu->opcode = opcode;

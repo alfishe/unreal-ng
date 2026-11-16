@@ -234,6 +234,7 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
     _context->histories.Add(&_copperHistory);
     _context->histories.Add(&_dmaHistory);
     _context->histories.Add(&_uartHistory);
+    _dma.SetExtended(_context->config.next_zxnddma != 0);  // [NEXT] ZxnDdma / the variant NEXT-DDMA
     _dma.SetBlockListener([this](const NextDma& dma) {
         if (!_dmaHistory.On() || _context->ttdReplayActive) [[likely]]
             return;
@@ -321,8 +322,19 @@ PortDecoder_Next::~PortDecoder_Next()
     _engine.reset();  // gives the CPU back to the native interpreter
 }
 
+void PortDecoder_Next::PowerCycle()
+{
+    _poweredOn = false;
+    reset();
+}
+
 void PortDecoder_Next::reset()
 {
+    // zxnext.vhd 4619-4628: only reset_hard clears nr_03 / nr_04 and turns the boot ROM on again (outside config mode); the board's
+    // soft reset (the button, F4, NR #02 bit 0) keeps them, so after the firmware it restarts NextZXOS without the logo
+    const bool powerOn = !_poweredOn;
+    _poweredOn = true;
+    _programStarted = false;
     EmulatorState& state = _context->emulatorState;
     state.p7FFD = 0x00;
     state.p1FFD = 0x00;
@@ -335,9 +347,11 @@ void PortDecoder_Next::reset()
     Mem().ResetMmu();
     Mem().ApplyClassicPaging(0, 0);
     InsertConfiguredCard();
-    _board->Reset(true);
+    _board->Reset(powerOn);
+    if (!powerOn)
+        _board->NoteSoftReset();
     _ctc.Reset();
-    _uart.Reset(true);
+    _uart.Reset(powerOn);
     _audio->Reset();
     AudioConfigChanged();
     _dma.Reset();
@@ -1046,6 +1060,7 @@ void PortDecoder_Next::DecodePortOut(uint16_t port, uint8_t value, uint16_t pc)
             if (_context->pScreen)
                 _context->pScreen->UpdateScreen();
             _board->Video().WritePortFf(value);
+            _interrupts->SetUlaInterruptDisabled((value & 0x40) != 0);  // bit 6: the ULA interrupt off (zxnext.vhd 3616, 3635)
         }
     }  // the Timex screen mode (NR #69 bits 5:0 alias it)
     else if (port == 0x123B)
@@ -1171,6 +1186,10 @@ void PortDecoder_Next::BindDma()
     // In debug mode the accesses go through the main CPU's watchpoints (the DMA drives the CPU's address bus)
     bus.readMemory = [this](uint16_t address) {
         const uint8_t value = _context->pMemory->DirectReadFromZ80Memory(address);
+        // zxnext.vhd 3.02.03 3171-3181: at 28 MHz a read that reaches the SRAM waits a clock; cpu_rd_n is the DMA's own read while it holds
+        // the bus and dma_wait_n includes sram_wait_n (1830, 1844). Core 3.03 has no such wait (UpdateContention: SramWait28 is off there)
+        if (Mem().SramWait28() && Mem().SlotWaitsAt28(address >> 13))
+            _context->pCore->GetZ80()->InsertWaitStates(1);
         if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
             ReportDmaAccess(false, address, value);
         return value;
@@ -1179,6 +1198,18 @@ void PortDecoder_Next::BindDma()
         Mem().DmaWrite(address, value);
         if (_context->pCore->GetZ80()->isDebugMode) [[unlikely]]
             ReportDmaAccess(true, address, value);
+    };
+    // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
+    bus.readPhysical = [this](uint32_t address) {
+        // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
+        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+            _context->pCore->GetZ80()->InsertWaitStates(1);
+        return Mem().PhysicalRead(address);
+    };
+    bus.writePhysical = [this](uint32_t address, uint8_t value) { Mem().PhysicalWrite(address, value); };
+    bus.layer2 = [this](bool hidden, uint8_t& bank, uint8_t& resolution) {
+        bank = _board->Stored(hidden ? 0x13 : 0x12);
+        resolution = static_cast<uint8_t>((_board->Stored(0x70) >> 4) & 3);
     };
     // the DMA's own cycles do not reach its ports ("allow dma to program itself? no", zxnext.vhd port_dma_rd / port_dma_wr)
     // dma_wait_n includes spi_wait_n (zxnext.vhd 1844): a byte to or from the SD card's data port waits until the card's 16 clocks passed
@@ -1432,16 +1463,41 @@ void PortDecoder_Next::WatchCopper(BreakpointManager& manager)
         FireBreakpoint(found, 0, BreakpointHitKind::Beam);
 }
 
+/// True for an opcode (the first byte) whose instruction reads a data byte from memory or the stack, or is a prefix
+static bool NextInstructionReadsMemory(uint8_t op)
+{
+    switch (op)
+    {
+        case 0x0A: case 0x1A: case 0x2A: case 0x3A:                                  // LD A,(BC) (DE) / LD HL,(nn) / LD A,(nn)
+        case 0x34: case 0x35:                                                        // INC / DEC (HL)
+        case 0x46: case 0x4E: case 0x56: case 0x5E: case 0x66: case 0x6E: case 0x7E:  // LD r,(HL)
+        case 0x86: case 0x8E: case 0x96: case 0x9E: case 0xA6: case 0xAE: case 0xB6: case 0xBE:  // ALU (HL)
+        case 0xC0: case 0xC8: case 0xC9: case 0xD0: case 0xD8: case 0xE0: case 0xE8: case 0xF0: case 0xF8:  // RET
+        case 0xC1: case 0xD1: case 0xE1: case 0xF1: case 0xE3:                       // POP, EX (SP),HL
+        case 0xCB: case 0xDD: case 0xED: case 0xFD:                                  // prefixes
+            return true;
+        default:
+            return false;
+    }
+}
+
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
         return;
     if (_dmaRequestLate)
     {
-        // the enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end
-        // of the next cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first)
+        // The enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end of the next
+        // cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first). The transfer is then done before that
+        // instruction's own data cycles, which an instruction that reads memory sees (zxnddma_compare probes the target with the very next
+        // instruction): ours cannot split an instruction, so such an instruction waits for the transfer, the others keep the measured order
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+        {
+            _dmaRequestLate = false;
+            return;
+        }
         _dmaRequestLate = false;
-        return;
     }
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
     if (_interrupts->DmaDelay(_divMmc->NmiHold() || _multiface->NmiHold()))
@@ -1958,7 +2014,10 @@ void PortDecoder_Next::UpdateContention()
     const bool off = _ratio > 1 || _nr08NoContention;
     _state->hw_contention_disabled = off ? 1 : 0;
     Mem().SetContentionRule(timing);
-    Mem().SetSramWait28(_ratio == 8);
+    // The SRAM read wait at 28 MHz (zxnext.vhd 3.02.03 3171-3181: a clock for each CPU and DMA read of the SRAM) is gone in core 3.03:
+    // measured on a board (2026-11-12, owner), the Z80 at 28 MHz reads without it and the DMA reads in its cycle length (2 + 1 on 3.02.03,
+    // 2 on 3.03); the zxnDDMA guide's times (design-zxnddma.md section 8) fit too. The zxnDDMA variant is the 3.03 core
+    Mem().SetSramWait28(_ratio == 8 && _context->config.next_zxnddma == 0);
     if (UlaContention* ula = _context->pUlaContention)
     {
         ula->SetContentionEnabled(family && !off);

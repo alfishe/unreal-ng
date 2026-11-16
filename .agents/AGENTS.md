@@ -149,4 +149,5 @@ Models list: `GET /api/v1/emulator/models`. Per-machine recipes: [`.recipe/machi
 - **Cross-platform**: Zero warnings on gcc/clang/mingw/msvc. See `docs/guidelines/cross-platform-compatibility.md`
 - **Coding**: See `docs/guidelines/coding-guidelines.md`
 - **POCs**: every POC in `tools/poc/NNN-name/`, registered in the index of `tools/poc/README.md` (next free number), charter (goals, requirements, constraints, acceptance criteria) before measuring. See `docs/guidelines/poc-guidelines.md`
+- **Deploys**: a full bundle install that re-registers the app (Steam entry) every time; no IPs or accounts in the repo. See `docs/guidelines/deploy-guidelines.md`
 - **Environment variables**: all of them in [`docs/emulator/environment-variables.md`](docs/emulator/environment-variables.md); a new variable gets a row there

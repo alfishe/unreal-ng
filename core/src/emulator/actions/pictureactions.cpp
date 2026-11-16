@@ -454,6 +454,23 @@ std::vector<RegistrationHandle> RegisterPictureActions(ActionRegistry& registry)
             return FromWindow(r, "Scale " + target + "x" + got);
         },
         WindowRules());
+    add(
+        "view.picture", "Picture", view, ValueKind::Press, "view? (full|screen|content|next|prev; next)",
+        "Show the whole frame with its border, the screen alone (no border) or the content the program draws.",
+        [](const ActionCall& call) {
+            ActionResult failure;
+            const std::optional<WindowDisplaySettings> now = Current(failure);
+            if (!now)
+                return failure;
+            const std::vector<std::string> views = {"full", "screen", "content"};
+            const std::string target = Cycle(views, now->view, TextParam(call.value, "view").value_or(""));
+            Change change;
+            std::string error;
+            if (!WindowDisplay::ApplyWord(change, "view", target, error))
+                return BadRequest(error);
+            return FromWindow(WindowDisplay::Set(change), "Picture " + target);
+        },
+        WindowRules());
     add("view.toolbar", "Toolbar", view, ValueKind::Press, "on? (else flips)", "Show or hide the window's toolbar.",
         Switch("Toolbar", &Change::toolbar, [](const WindowDisplaySettings& s) { return s.toolbar; }),
         WindowToggle([](const WindowDisplaySettings& s) { return s.toolbar; }));

@@ -169,7 +169,7 @@ window published (`WindowView::Publish`). The table with params:
 | `video.crt_params_reset` | P | `name?` | `SetCrtParameters` reset |
 | `video.viewport` | P | `viewport?` (name, next, prev) | `VideoViewport::SetViewport` |
 | `view.fullscreen`, `view.toolbar`, `view.status_bar`, `view.next_layers` | P | `on?` | `fullscreen`, `toolbar`, `status_bar`, `next_layers` |
-| `view.scale`, `view.next_layers_mode` | P | `scale?` 1..4 / `mode?` (name, next, prev) | `scale`, `next_layers_mode` |
+| `view.scale`, `view.picture`, `view.next_layers_mode` | P | `scale?` 1..4 / `view?` (full, screen, content, next, prev) / `mode?` (name, next, prev) | `scale`, `view`, `next_layers_mode` |
 | `view.next_layer`, `hud.notice` | P | `name`, `on?` | `next_layer.<name>`, `hud_notice.<id>` (toggles `toggle.view.next_layer.<name>`, `toggle.hud.notice.<id>`) |
 | `hud.toggle`, `hud.theme`, `osd.keyboard_picture`, `osd.keyboard_style` | P | `on?` / `theme?` / `picture?` / `style?` | `hud`, `hud_theme`, `osd_keyboard_picture`, `osd_keyboard_style` |
 

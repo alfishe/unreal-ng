@@ -873,7 +873,7 @@ StateNode SlotControl::CarryValue(const SlotManager::CarryReport& carry)
     return node;
 }
 
-StateNode SlotControl::Catalog(const SlotManager::Result& current)
+StateNode SlotControl::Catalog(const SlotManager::Result& current, const std::string& slot)
 {
     StateNode cards = StateNode::Array();
     const SlotSet fitted = current.Fitted();
@@ -882,6 +882,7 @@ StateNode SlotControl::Catalog(const SlotManager::Result& current)
         StateNode c = StateNode::Object();
         c["id"] = card.id;
         c["name"] = card.name;
+        c["label"] = PlainLabel(card.name);
         c["bus"] = Describe(card.bus).id;
         c["needs"] = Signals(card.needs);
         c["detection"] = Describe(card.detection).id;
@@ -937,21 +938,28 @@ StateNode SlotControl::Catalog(const SlotManager::Result& current)
         }
         c["media"] = std::move(media);
 
-        // How it would fit this machine now: the plan of a plug into the slot the planner suggests
+        // How it would fit this machine now: the plan of a plug into the slot asked for, else the one the planner suggests
         StateNode here = StateNode::Object();
         std::string fittedIn;
+        bool inSlot = false;
         for (const SlotEntry& entry : fitted)
         {
             if (entry.card == card.id)
             {
                 fittedIn += (fittedIn.empty() ? "" : ",") + entry.slot;
+                inSlot = inSlot || (!slot.empty() && entry.slot == slot);
             }
         }
         here["fittedIn"] = fittedIn;
+        if (!slot.empty())
+        {
+            here["inSlot"] = inSlot;
+        }
         if (current.machine != nullptr)
         {
             SlotRequest request;
             request.op = SlotRequest::Op::Plug;
+            request.slot = slot;
             request.card = card.id;
             request.dryRun = true;
             const SlotPlan plan = Planner().Plan(current.model, fitted, request);
@@ -1093,7 +1101,11 @@ SlotControlReply SlotControl::Execute(const SlotControlRequest& request)
     {
         reply.body["emulatorId"] = emulatorId;
         reply.body["model"] = current.machine->name;
-        reply.body["cards"] = Catalog(current);
+        if (!request.slot.empty())
+        {
+            reply.body["slot"] = request.slot;
+        }
+        reply.body["cards"] = Catalog(current, request.slot);
         return reply;
     }
 

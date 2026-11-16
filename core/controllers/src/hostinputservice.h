@@ -116,6 +116,14 @@ public:
     bool EndLearn(const HostDeviceId& device);
     /// endregion </Unknown devices>
 
+    /// region <UI grab>
+    /// The app's own screens (the handheld menu, the on-screen keyboard) read the pads themselves: every canonical
+    /// event goes first to @p tap (on the backend's thread); one it returns true for reaches no machine. An empty
+    /// @p tap: everything goes to the router again. Not the owner (SetOwner): the tap sees nothing. A screen taking
+    /// the pads whole calls InputRouter::ReleaseHeld
+    void SetUiTap(std::function<bool(const ControlEvent&)> tap);
+    /// endregion </UI grab>
+
     /// region <Haptics (haptics.md §3; host output only, H-4)>
     /// The device has motors its backend can drive
     bool HasRumble(const HostDeviceId& device) const;
@@ -125,6 +133,9 @@ public:
     void PlayEffect(const HostDeviceId& device, const HapticEffect& effect);
     /// Play a test effect (haptics.md §10): a clicker's clicks straight to its backend, an envelope as PlayEffect
     void PlayTest(const HostDeviceId& device, const TestEffect& test);
+    /// A game's train of clicks (the floppy drive's steps, DriveHaptics): played only while the service owns the pads
+    /// and the haptics gate is open (H-5), unlike a test's
+    void PlayGameClicks(const HostDeviceId& device, const HapticClicks& clicks);
     /// What Identify did
     struct Identified
     {
@@ -145,6 +156,9 @@ public:
     void SetHapticsStrength(float strength);
     /// The generic sound haptics of one instance (haptics.md §4) for its ControllerManager::SetHapticFeed: they
     /// play on the devices with motors that drive the instance
+    /// The floppy drive's mechanics on the pads of @p instance (haptics.md §4.4) over @p inner (the profile's or the sound
+    /// feed; may be null)
+    std::shared_ptr<IHapticFeed> DriveHapticFeedFor(const std::string& instance, std::shared_ptr<IHapticFeed> inner);
     std::shared_ptr<IHapticFeed> HapticFeedFor(const std::string& instance);
     /// The DSP defaults of haptics.md §4 (`lowband(mix)`, `onset(mix)`) in the generic feeds made from now on (Advanced,
     /// off by default)
@@ -236,6 +250,7 @@ private:
     mutable std::mutex _mapMutex;
     std::map<HostDeviceId, std::vector<MappedControl>> _maps;          ///< under _mapMutex
     std::map<HostDeviceId, LearnSession> _learn;                       ///< under _mapMutex
+    std::function<bool(const ControlEvent&)> _uiTap;                   ///< under _mapMutex
     std::map<HostDeviceId, HostDeviceInfo> _connected;                 ///< under _mapMutex: for the user maps
     std::map<HostDeviceId, LightColor> _lights;                        ///< under _mutex: the colour each light has
     /// under _tickMutex: the lights Identify blinked, back to their colour at the steady time (ns)

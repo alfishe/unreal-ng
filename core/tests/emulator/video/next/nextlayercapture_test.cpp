@@ -302,6 +302,8 @@ protected:
     }
     uint8_t* Page(unsigned p) { return _context->pMemory->RAMPageAddress(p); }
     const uint32_t* Framebuffer() const { return reinterpret_cast<const uint32_t*>(_context->pScreen->GetFramebufferDescriptor().memoryBuffer); }
+    /// Grid line y in the frame, from the grid's first pixel: the 720 x 576 HDMI frame has the grid at (32, 32) in the 128K family
+    const uint32_t* GridRow(unsigned y) const { return Framebuffer() + static_cast<size_t>((16 + y) * 2) * 720u + 32u; }
 };
 
 TEST_F(NextLayerCaptureMachine_Test, OnByDefaultFromTheConfig)
@@ -492,7 +494,6 @@ TEST_F(NextLayerCaptureMachine_Test, CopperChangesAreCapturedPerSegment)
     EXPECT_EQ(frame->SegmentAt(y1, x1)->Reg(0x68), 0x80);
     EXPECT_EQ(frame->SegmentAt(y1 + 1, 0)->Reg(0x68), 0x80);
     EXPECT_EQ(frame->SegmentAt(kHeight, 0), nullptr);
-    const uint32_t* fb = Framebuffer();
     for (int i = 0; i < static_cast<int>(kWidth * kHeight); i++)
     {
         const unsigned y = static_cast<unsigned>(i) / kWidth, x = static_cast<unsigned>(i) % kWidth;
@@ -506,11 +507,11 @@ TEST_F(NextLayerCaptureMachine_Test, CopperChangesAreCapturedPerSegment)
         {
             ASSERT_TRUE(frame->ids[i] == kIdUla || frame->ids[i] == kIdBorder) << "y=" << y << " x=" << x;
             ASSERT_TRUE(ula.opaque);
-            ASSERT_EQ(fb[(y * 2) * kWidth + x], NextVideoRenderer::Rgba(ula.colour & 0x1FF)) << "y=" << y << " x=" << x;
+            ASSERT_EQ(GridRow(y)[x], NextVideoRenderer::Rgba(ula.colour & 0x1FF)) << "y=" << y << " x=" << x;
         }
     }
     // the composed frame changes at the same pixels
-    EXPECT_NE(fb[(start / kWidth) * 2 * kWidth + start % kWidth], fb[(start / kWidth) * 2 * kWidth + start % kWidth - 1])
+    EXPECT_NE(GridRow(static_cast<unsigned>(start / kWidth))[start % kWidth], GridRow(static_cast<unsigned>(start / kWidth))[start % kWidth - 1])
         << "the composed row changes where the record does";
     // a re-render from the registers of the end of the frame (the ULA on) draws the whole stretch wrong
     NextVideoInputs in;
@@ -526,7 +527,7 @@ TEST_F(NextLayerCaptureMachine_Test, CopperChangesAreCapturedPerSegment)
     ASSERT_GT(middle, static_cast<unsigned>(start / kWidth));
     std::vector<uint32_t> again(kWidth);
     NextVideoRenderer::RenderLine(in, middle, again.data());
-    EXPECT_NE(std::memcmp(again.data(), fb + middle * 2 * kWidth, kWidth * sizeof(uint32_t)), 0)
+    EXPECT_NE(std::memcmp(again.data(), GridRow(middle), kWidth * sizeof(uint32_t)), 0)
         << "the registers of the frame's end do not explain a line in the middle of the stretch; only the capture does";
 }
 
@@ -556,13 +557,12 @@ TEST_F(NextLayerCaptureMachine_Test, AFallbackColourMoveShowsAtTheOutputAfterThe
     }
     Nr(0x62, 0xC0);  // run, restarting every frame
     Frames(4);
-    const uint32_t* fb = Framebuffer();
     constexpr unsigned kQuietRow = 40;  // after the first MOVE (copper line 0 is grid row 32) and before the WAIT line 60 (grid row 92)
-    const uint32_t before = fb[(kQuietRow * 2) * kWidth];
+    const uint32_t before = GridRow(kQuietRow)[0];
     int row = -1, x = -1;
     for (unsigned y = kQuietRow; y < kHeight && row < 0; y++)
         for (unsigned i = 1; i < kWidth; i++)
-            if (fb[(y * 2) * kWidth + i] != before)
+            if (GridRow(y)[i] != before)
             {
                 row = static_cast<int>(y);
                 x = static_cast<int>(i);
@@ -570,7 +570,7 @@ TEST_F(NextLayerCaptureMachine_Test, AFallbackColourMoveShowsAtTheOutputAfterThe
             }
     ASSERT_GE(row, 0) << "the fallback colour changed inside a line";
     EXPECT_EQ(static_cast<unsigned>(x), kFirstChangedImagePixel) << "row " << row;
-    EXPECT_NE(fb[(static_cast<unsigned>(row + 1) * 2) * kWidth], before) << "the next row is the changed colour from its start";
+    EXPECT_NE(GridRow(static_cast<unsigned>(row + 1))[0], before) << "the next row is the changed colour from its start";
 }
 
 // The ULA enable (NR #68 bit 7) travels the same registers as the fallback colour (ula_en_0, _1a, _1, _2, then the output chain): a MOVE
@@ -591,12 +591,11 @@ TEST_F(NextLayerCaptureMachine_Test, AUlaEnableMoveShowsAtTheOutputAfterTheRtlPi
     }
     Nr(0x62, 0xC0);
     Frames(4);
-    const uint32_t* fb = Framebuffer();
     constexpr unsigned kQuietRow = 40;
     int row = -1, x = -1;
     for (unsigned y = kQuietRow + 1; y < kHeight && row < 0; y++)
         for (unsigned i = 0; i < kWidth; i++)
-            if (fb[(y * 2) * kWidth + i] != fb[(kQuietRow * 2) * kWidth + i])
+            if (GridRow(y)[i] != GridRow(kQuietRow)[i])
             {
                 row = static_cast<int>(y);
                 x = static_cast<int>(i);
@@ -674,12 +673,11 @@ TEST_F(NextLayerCaptureMachine_Test, AUlaScrollMoveTakesEffectAtTheNextCell)
     }
     Nr(0x62, 0xC0);
     Frames(4);
-    const uint32_t* fb = Framebuffer();
     constexpr unsigned kQuietRow = 40;
     int row = -1, x = -1;
     for (unsigned y = kQuietRow + 1; y < kHeight && row < 0; y++)
         for (unsigned i = 0; i < kWidth; i++)
-            if (fb[(y * 2) * kWidth + i] != fb[(kQuietRow * 2) * kWidth + i])
+            if (GridRow(y)[i] != GridRow(kQuietRow)[i])
             {
                 row = static_cast<int>(y);
                 x = static_cast<int>(i);
@@ -696,7 +694,7 @@ class NextSpriteFill_Test : public NextLayerCaptureMachine_Test
 protected:
     static constexpr unsigned kSpriteTop = 40, kSpriteX = 200, kLine = 45;  // paper rows 40-55; the copper's line; a framebuffer column
     static constexpr unsigned kLastX = 330;  // the framebuffer column of the last sprite when it stands apart (x = 160)
-    uint32_t RowPixel(unsigned paperRow, unsigned column = kSpriteX) const { return Framebuffer()[((32 + paperRow) * 2) * kWidth + column]; }
+    uint32_t RowPixel(unsigned paperRow, unsigned column = kSpriteX) const { return GridRow(32 + paperRow)[column]; }
     void Run(unsigned hpos, unsigned sprites, bool lastApart = false)
     {
         // one pattern of solid #21, `sprites` sprites on top of each other above the ULA at paper row 40, x = 64: the engine's fill of a

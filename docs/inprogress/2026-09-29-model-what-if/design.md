@@ -1,6 +1,12 @@
 # Model what-if and branched history — design
 
 **Status:** design, 2026-09-29. Tracking: [TODO.md](TODO.md).
+
+> **Superseded for branches (2026-11-08):** branches inside a session are redesigned and built in
+> [TTD branches](../2026-11-08-ttd-branches/README.md) (P1-P2 landed 2026-11-10). Stale here: v1 names, W1 "after
+> Phase 1", linked memory blocks (D41), loads as timeline events and branch points (D42: a load ends the session),
+> stream ids 10-13 (branch streams are 0x0200-0x02FF), parent-link forks (no linked sessions, owner 2026-10-05).
+> Forks to other machines (§5-6) remain this document's open subject.
 **Builds on:** machine state transfer (landed: `6f5759f3`, `570ca3ce`, `7ddbef11`),
 TTD v2 ([2026-09-25-ttd-v2-migration](../2026-09-25-ttd-v2-migration/)),
 the model what-if scene in

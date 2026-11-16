@@ -23,6 +23,19 @@ RETROARCH = '\n'.join([
 ])
 
 
+def test_bindings_text_tells_the_machine_and_each_rule(s):
+    # An agent may read only the text: the machine's input state and each binding's rule are in it, as in the JSON
+    r = s.call('controllers', {'action': 'bindings'})
+    expect('Bindings of every device' in r.text, 'the scope line', r.text)
+    expect('menu keys ' in r.text and 'mouse buttons ' in r.text, 'the menu keys and mouse buttons with their rules',
+           r.text)
+    expect('dpad.*' in r.text and 'the default of every pad' in r.text, 'a binding with its rule', r.text)
+    rest = get(s, '/api/v1/controllers/bindings')
+    expect(rest['machine'] is not None and 'menu_keys' in rest['machine'], 'REST has the machine block', rest)
+    expect(all('rule' in b and 'resolved' in b for b in rest['bindings']), 'every binding has its rule and outputs',
+           rest['bindings'][:2])
+
+
 def test_devices_in_text(s):
     r = s.call('controllers', {'action': 'devices'})
     expect(r.text.strip() != '', 'the devices (or "none connected") in the text', r.text)

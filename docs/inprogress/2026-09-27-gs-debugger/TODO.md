@@ -83,6 +83,55 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
 - [x] Test: `LuaGSCardHook_Test.ALogicCardHookIsRecordedAndReplayedWithoutRunningIt` (record a substitution, a poke
   and a register, seek back, replay: the same card state, the hook not called).
 
+## Design §5 (one time line) — phase 2, branch `gs-phase2` (2026-11-13)
+
+- [x] Tight mode (§5.2): a stopping card breakpoint or an armed card step sets `Z80::cardTight`
+  (`FeatureManager::setCardTightHold`, `GSCardTarget::WantsTight`, `DebugManager::UpdateCardTight`); every main
+  instruction start catches the card up (`DebugManager::CatchUpCards` -> `GeneralSoundCard::catchUpToHost`), never
+  past the frame's end, never inside the card's own parked run. The main CPU keeps its memory path and debug mode
+  (risk 1's fallback: at every memory access, which needed the debug memory path, it cost +44 % over lazy).
+  Test: `GSCardTarget_Test.ACardBreakpointParksTheMainCpuNearby` (tight: main within an
+  instruction of the card's stop; lazy: up to a frame).
+- [x] Main position in a card's pause (§5.4, first part): `MainPosition` (`pc`, `t_in_instruction` from
+  `Z80::instrStartT`, `gap_t` from `GeneralSoundCard::hostLead`, `frame_end`) in `Emulator::BreakpointStop`, the
+  pause payload, the `debug` topic's `paused` event and the card step's `stop` (`main`).
+- [x] A card step never runs ahead of main (§5.3): an armed step turns tight mode on; the stop's `gap_t` is never
+  negative (`TheMachinesCardStepsThroughRunControl`). Paused mid-frame, the card is still lazily behind: the steps walk
+  it towards main.
+- [x] Determinism (§5.6): `GSCardTarget_Test.TightModeRunsTheCardAsLazyDoes`, the machine's NeoGS through its loader's
+  clock switch, every card-side event identical lazy and tight.
+- [x] A/B benchmark: `BM_HostFrame_NeoGS_Idle_CardLazy` / `_CardTight` beside `_Idle_Fast` (hostbusoverlay_benchmark).
+  M-series Mac, 8 interleaved rounds, CPU time per host frame (median): all off 648 us, main debug path 766 us, card
+  breakpoint lazy 715 us, card breakpoint tight 889 us (+24 % over lazy). The profile splits the rest about evenly:
+  the catch-up calls (`CatchUpCards`, `catchUpToHost`, `endRun`, about 7 %) and the cost of running both CPUs in
+  ~7000 short pieces per frame (cache and branch history, main and card loops alike). A cached card rate and an early
+  return when the card is already at the target are in. Only while a stopping card breakpoint or a card step is
+  active; with none the instruction start tests one more flag (Pentagon fast 458 us, unchanged).
+- [x] The rest of §5.4 (branch `gs-progress`, 2026-11-14): `Z80MCycleDecoder` (debugger/disassembler/z80mcycles)
+  gives an instruction's machine cycles, both ways of a conditional; checked against every FUSE vector's bus trace
+  (`Z80MCycles_Test`, 1341 cases one instruction, 15 compared to the instruction's end). Tight mode's catch-up runs
+  before the next instruction start is taken, so a card's stop sees the instruction its moment is in (`on_boundary`).
+  `main` gains `on_boundary`, `elapsed_t`, `total_t`, `total_t_alt`, `contended`, `bus_cycles`, `bus_cycle`,
+  `bus_cycle_index` and `text` (`execution::MainPositionNode` / `MainPositionText`, one source for the card step's
+  `stop`, the `debug` topic's `paused` event and the snapshot's and `wait`'s `pause`). MCP `wait` adds the text; the
+  debugger's status line shows it after a card's stop (`ecatshim::Emulator::debug_stop_main_text`, both adapters).
+  Contention: the measured T beside the table's (`contended`), the cycle is the uncontended one.
+- [x] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger, 2026-11-14):
+  `DebugManager::SelectCpu` (one per machine, the last front-end's), tight mode for a direct run of the paused machine
+  (`Emulator::DirectStepScope` -> `DebugManager::OnDirectRun`) and a catch-up at its end, so the card stands at the
+  main CPU's moment after each step. Not on pause edges: `applyDebugMode` takes a `CpuHold`, the edge comes from inside
+  the arbiter. Planes: `CpuView::SetSelected` / `Selected`; REST `GET` / `PUT /debug/selected_cpu`, CLI
+  `selected-cpu`, Lua / Python `select_cpu` / `selected_cpu`, MCP `control_execution` `select_cpu`; the Qt debugger's
+  CPU tab (`ecatshim::Emulator::debug_select`, both adapters; main again at detach). Tests:
+  `GSCardTarget_Test.TheSelectedCardFollowsTheMainCpusSteps`, live `test_gs_debugger.py`.
+- [x] Card run-to (§5.3) on the automation planes (2026-11-15): a step kind `to` (`GSCardTarget::StepKind::To`, the
+  cursor as the step's target; at the card's PC: its next run) through `RunControl::CardStep(..., "to", 1, address)`,
+  the reply adds `hit`. Planes: the main CPU's run until PC with a card CPU: REST / WebSocket `POST /skip_until?cpu=gs`,
+  CLI `skip_until <pc> --cpu gs`, Lua `skip_until(pc, "gs")`, Python `skip_until(pc, cpu="gs")`, MCP
+  `control_execution` `run_until_pc` `cpu`. A breakpoint on the way always ends it; no t-state budget (5 s). The Qt
+  debugger keeps its own breakpoint. Tests: `GSCardTarget_Test.AStepParksAtItsBoundary` (to),
+  `TheMachinesCardStepsThroughRunControl` (to, to at the cursor, a breakpoint first), live `test_gs_debugger.py`.
+
 ### Later
 
 - [x] Card breakpoint conditions (2026-10-27): the card's registers, memory and pages through `IDebugTarget::Registers`

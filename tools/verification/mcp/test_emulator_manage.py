@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""emulator_manage: instances (list, create, destroy, status, reset), models, the server, target resolution"""
+"""emulator_manage: instances (list, create, destroy, status, reset soft / hard), models, the server, target resolution"""
 
 import re
 import sys
@@ -31,9 +31,19 @@ def test_server_fingerprint(s):
 
 
 def test_reset_puts_pc_at_zero(s):
-    s.call('emulator_manage', {'action': 'reset'})
+    soft = s.call('emulator_manage', {'action': 'reset'})
+    expect(soft.structured.get('reset') == 'soft', 'a plain reset is soft', soft.structured)
+    expect('Soft reset' in soft.text, 'the text says soft', soft.text)
     r = s.call('inspect_state', {'aspects': ['registers']})
     expect(re.search(r'PC=0x000[0-9]', r.text), 'PC near 0 after reset', r.text)
+
+
+def test_hard_reset_is_a_power_cycle(s):
+    hard = s.call('emulator_manage', {'action': 'reset', 'hard': True})
+    expect(hard.structured.get('reset') == 'hard', 'hard: true is a hard reset', hard.structured)
+    expect('Hard reset' in hard.text, 'the text says hard', hard.text)
+    r = s.call('inspect_state', {'aspects': ['registers']})
+    expect(re.search(r'PC=0x000[0-9]', r.text), 'PC near 0 after a hard reset', r.text)
 
 
 def test_switches_say_none_on_a_machine_without_them(s):

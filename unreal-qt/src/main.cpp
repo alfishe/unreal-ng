@@ -18,6 +18,7 @@
 #include <QDebug>
 #include <QDir>
 #include <common/filehelper.h>
+#include <emulator/config.h>
 #include <common/threadhelper.h>
 #include <emulator/startupcleanup.h>
 #include "debugger/ttd/ttdrecordingfolders.h"
@@ -129,6 +130,11 @@ int main(int argc, char *argv[])
     if (QGuiApplication::platformName() == QLatin1String("offscreen") || QGuiApplication::platformName() == QLatin1String("minimal"))
         MacOSPlatform::runAsBackgroundProcess();
 #endif
+
+    // ZX-Evo NVRAM (the ERS / TS-BIOS settings) outlives the app like the board's battery; headless instances
+    // (agents, tests) keep theirs for the session only, so they never change the user's settings
+    if (QGuiApplication::platformName() != QLatin1String("offscreen") && QGuiApplication::platformName() != QLatin1String("minimal"))
+        Config::SetDefaultNvramFolder(FileHelper::GetUserDataFolder("nvram"));
 
     // Housekeeping (crashed TTD recordings, ...) in the background: start-up never waits for it
     StartStartupCleanup();

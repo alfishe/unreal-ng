@@ -2,6 +2,7 @@
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/qregister.h"
 #include "emulator/cpu/cputables.h"
 #include "emulator/cpu/z80.h"
 
@@ -1349,6 +1350,7 @@ Z80OPCODE op_CB(Z80 *cpu)
 
     // Execute CB-prefixed opcode
     (logic_opcode[opcode])(cpu);
+    cpu->q = cpu->f & z80q::CbMask(opcode);
 
     // Finalize opcode
     cpu->opcode = opcode;

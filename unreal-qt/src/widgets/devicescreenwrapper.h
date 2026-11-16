@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QEvent>
 #include <QWidget>
 #include <QPointer>
 #include <QImage>
@@ -13,6 +14,8 @@
 #include "crtprofiles.h"
 #include "framesource.h"
 #include "slangpresetrunner.h"
+
+class QPainter;
 
 class Emulator;
 class DeviceScreen;
@@ -88,6 +91,13 @@ public:
 
     /// @brief Associate HUD overlay for GPU/software rendering
     void setHudOverlay(class HudOverlay* overlay);
+    /// Draw over the picture and the HUD (handheld mode: the on-screen keyboard); the GPU screen only, false on the
+    /// software one
+    bool setOverlayPainter(std::function<void(QPainter&, int width, int height)> painter);
+    /// The pointer goes to the overlay first (see DeviceScreenGLWindow::setOverlayPointer)
+    void setOverlayPointer(std::function<bool(QEvent::Type, const QPointF&, int width, int height)> pointer);
+    /// The overlay changed: draw again (a paused machine sends no frames)
+    void updateOverlay();
 
     /// @brief Clear display viewport (show full frame)
     void clearDisplayViewport();

@@ -6,6 +6,7 @@
 
 #include <QOffscreenSurface>
 #include <QOpenGLContext>
+#include <QEvent>
 #include <QWindow>
 #include <QOpenGLFunctions>
 #include <QOpenGLTexture>
@@ -39,6 +40,7 @@ class Emulator;
 class NativePresenter;
 class DisplayModeSwitch;
 class QTimer;
+class QPainter;
 
 /// GPU renderer of the emulator's screen (CRT composition, beam models, presets, HUD), on a window of its own with
 /// its own GL context. Two ways to the screen (frame presenter design, docs/inprogress/2026-10-26-frame-presenter):
@@ -393,6 +395,26 @@ private:
 public:
     void setHudOverlay(class HudOverlay* overlay) { _hudOverlay = overlay; }
     class HudOverlay* hudOverlay() const { return _hudOverlay; }
+    /// Something the program draws over the picture and the HUD (handheld mode: the on-screen keyboard), in logical
+    /// pixels of the window; empty: nothing
+    void setOverlayPainter(std::function<void(QPainter&, int width, int height)> painter)
+    {
+        _overlayPainter = std::move(painter);
+    }
+
+    /// The pointer goes to the overlay first (the on-screen keyboard's keys under a finger): true takes the event,
+    /// the machine's mouse does not see it and the cursor is hidden while it does
+    void setOverlayPointer(std::function<bool(QEvent::Type, const QPointF&, int width, int height)> pointer)
+    {
+        _overlayPointer = std::move(pointer);
+    }
+
+private:
+    bool overlayTakesPointer(QMouseEvent* event);
+
+    std::function<void(QPainter&, int, int)> _overlayPainter;
+    std::function<bool(QEvent::Type, const QPointF&, int, int)> _overlayPointer;
+    bool _overlayHidCursor = false;
 };
 
 #endif // DEVICESCREEN_GL_WINDOW_H

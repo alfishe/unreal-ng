@@ -230,6 +230,7 @@ user guide [docs/features/slots.md](../../../features/slots.md)).
 ```lua
 r = slots_state()          -- buses, slots (card, options, adapter, fit, state), built-ins, plan log
 c = slots_catalog()        -- every card: options, functions, ports, media, thisMachine {slot, fit, outcome, removes}
+c = slots_catalog("zxbus.1")  -- the same, each card planned into that slot (thisMachine.inSlot: the card there now)
 m = slots_matrix("cards")  -- the compatibility tables as markdown (all without an argument)
 
 r = slots_plug("zxbus.next", "multisound", {dry_run = true})                -- the plan only
@@ -618,6 +619,15 @@ lv = audio_levels()                           -- every row's and channel's peak,
 -- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 r = audio_capture_start(600, "", "out.wav")       -- a WAV file written while the samples come (up to 86400 s; closes at the target; status: file_closed)
+r, err = section_timer_start{sections = {"Plasma", "spark=#8000:#8010,#8020"}, break_if = {"net:Plasma>53400"}}
+                                                  -- section timing at full speed (command-interface 5.5c): the results
+                                                  -- without the passes, or nil and the reason; extra, recursive,
+                                                  -- frame_t, capacity too; no sections = every X with an X.End
+r = section_timer_result()                        -- active, sections {name, entry, exits, count, min, max, avg, net_*,
+                                                  -- interrupted, last, max_frame, max_t}, passes {name, frame, t,
+                                                  -- elapsed, net, interrupts}, hits, orphan, dropped, open, stopped
+print(section_timer_text())                       -- the table; section_timer_json([offset [, limit]]) the JSON
+section_timer_stop()                              -- results stay; section_timer_clear() drops them
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
 take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place
@@ -673,7 +683,8 @@ emu = Emulator.new("symbolic_id")
 success = emu:init()
 
 -- Control
-emu:reset()
+emu:reset()                -- soft: the reset button (the ZX Next restarts NextZXOS at once)
+emu:reset{hard = true}     -- hard: a power cycle (the ZX Next runs its boot ROM and firmware); emu:reset(true) too
 emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
@@ -698,6 +709,8 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
+c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 
 -- Properties
 id = emu:get_id()
@@ -1187,7 +1200,7 @@ ttd_step_instruction_back()      --> bool
 ttd_step_instruction_forward()   --> bool
 
 ttd_resume()                     --> bool  -- record again from the exact current position (frame and tinframe)
-ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
+ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); a new branch forks there, the old future stays
                                             -- fails from idle: seek first
 
 ttd_position()   -- current, session_end, first_frame, history, state, paused, fps; never parks the machine
@@ -1201,6 +1214,8 @@ ttd_reverse_step()               --> bool  -- one instruction back
 ttd_reverse_step(10)             --> bool  -- ten instructions back
 ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
 ttd_reverse_step_scanlines(2)    --> bool  -- back 2 scanlines of the machine (t_line each)
+ttd_reverse_step_over()          --> bool  -- back over a routine when the instruction before is its return,
+                                          --    otherwise one instruction back (the debuggers' Shift+F8)
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
@@ -1306,10 +1321,43 @@ ttd_seek_bookmark("umt entry")
 
 Bookmarks are advisory and never stop a seek; markers do.
 
+**Branches** (a resume in the past records on a new branch, named by its time from the trunk start such as
+`+00:01:25.150`, and the old future stays on the parent; the first history is the
+`trunk`, id 0; a branch is named by its id, its GUID or its name):
+
+```lua
+local b = ttd_branches()                    -- or ttd_branches{scope = "lineage", tag = "boss", pinned = true, limit = 20, offset = 0}
+-- more filters: run = "r1", created_by = "lua", name_prefix = "p", min_length = 5, max_length = 100,
+--   created_after = <unix s>, created_before = <unix s>
+-- --> { branches = { {id, guid, name, parent, fork = {frame, tinframe} | nil, ["end"] = {...}, length, created_by,
+--       reason, tags, note, pinned, children, active, on_lineage}, ... }, total, count, active, viewed,
+--       lineage = { {branch, from = {frame, tinframe}}, ... }, text }   (no branches: an empty list)
+for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
+ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
+-- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_switch_to("previous")            -- the branch left last (again: further back); "next_sibling" / "prev_sibling":
+-- the next / previous branch at the nearest fork (the reply adds fork_frame, siblings); error for another word
+ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
+-- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
+ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
+-- --> { deleted = true, removed = {ids}, removed_names = {...}, text }  or  { deleted = false, error = "..." }
+ttd_branch_info("probe")                    -- --> {branch, children, ancestors, files, file_bytes, folder, active, text}
+-- An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by "lua"):
+local p = ttd_branch_create{name = "probe", frame = 4823, run = "r1", run_frames = 50,
+                            input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}
+-- input: "frame:key[+key][:hold|:down|:up]" from the branch start (hold default 2 frames, 1..1000), "5:joy.fire:down",
+-- "9:release_all"; read: "addr[:len]"; poke = {"#8100=5"} and regs = {"a=1"} change the branch first (tool edits)
+-- --> {created, branch, parent, at, ran_frames, aborted, end, reads = {{address, length, bytes, hex}}, returned_to,
+--      media, state, text}  or  {created = false, error = "..."}  (media = "ask": needs_decision with the media)
+ttd_branch_prune{run = "r1"}                -- a dry run: {dry_run, would_delete, kept, frames, file_bytes, text}
+ttd_branch_prune{run = "r1", dry_run = false}   -- deletes; the active lineage and pinned ones stay (kept, with why)
+```
+
 **Sessions on disk:**
 
 ```lua
-ttd_dump("/tmp/session.ttd")               --> bool
+ttd_dump("/tmp/session.ttd")               --> bool; every branch
+ttd_dump("/tmp/line.ttd", true)            --> bool; only the active branch's lineage, one linear history
 ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
@@ -1447,6 +1495,7 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+emu.skip_until(0x4010, "gs")         -- the sound card CPU to the cursor (a breakpoint ends it; the card step's table + hit)
 
 -- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
 run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
@@ -1693,6 +1742,8 @@ emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind,
 local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
 emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
 emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+-- keep_branch: replayed as a TTD branch of this machine afterwards (result.branch {created, guid, reproduced})
+emu.analysis("experiment", {spec = '{"poke": {"$8100": 5}, "frames": 50, "keep_branch": "mode 5"}', run = "r7"})
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 

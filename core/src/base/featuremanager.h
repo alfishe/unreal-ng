@@ -248,6 +248,11 @@ public:
     /// CPU runs the debug path whatever 'debugmode' says, so the breakpoint fires (a hidden debugger window switching
     /// 'debugmode' off cannot leave it accepted and inert). No breakpoints: 'debugmode' alone decides
     void setBreakpointDebugHold(bool on);
+    /// A card CPU is debugged with a stop (its stopping breakpoints, an armed step): the card catches up at every
+    /// instruction start of the main CPU (Z80::cardTight; tight mode, GS debugger design §5.2). The debug mode and
+    /// the memory interface stay as they are
+    void setCardTightHold(bool on);
+    bool cardTightHold() const;
     bool breakpointDebugHold() const;
 
     EmulatorContext* context() const
@@ -283,6 +288,7 @@ private:
     bool _replayDebugHold = false;  ///< the machine replays: debug mode on (OnModeChanged)
     bool _tapDebugHold = false;     ///< taps need the debug path (setTapDebugHold)
     bool _breakpointDebugHold = false;  ///< stopping breakpoints exist (setBreakpointDebugHold)
+    bool _cardTightHold = false;        ///< a card CPU is debugged with a stop (setCardTightHold)
 
     EmulatorContext* _context;
     std::unordered_map<std::string, FeatureInfo> _features;  // id -> FeatureInfo

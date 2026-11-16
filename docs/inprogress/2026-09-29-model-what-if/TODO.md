@@ -7,8 +7,8 @@ Scene and requirements OR-30 … OR-37:
 
 - [x] W0: machine state transfer (`MachineStateTransfer`), WebAPI `POST /snapshot/transfer`, MCP `transfer_state`; floppies and tape as in-memory copies with postfixed paths; SD / HDD / CD explicitly not moved; invariant tests over every model (`6f5759f3`, `570ca3ce`, `7ddbef11`)
 - [ ] W0b: transfer on CLI, Lua, Python, Qt (parity)
-- [ ] W1: in-memory branches (timeline tree, fork on divergence, switch / rename / delete / pin / promote, `resume` starts a branch (no truncation on any route), history lanes, distance to branch end, reverse playback) — after TTD v2 Phase 1
-- [ ] W2: history across snapshot / tape / disk loads — with TTD v2 Phase 3 external events
+- [x] W1: in-memory branches — redesigned and built as [TTD branches](../2026-11-08-ttd-branches/README.md) (P1-P2 `e0ac62a53` 2026-11-10, panel `66f6811ae`, debuggers `0744664bb`); its README tracks what is left
+- [ ] W2: history across snapshot / tape / disk loads — dropped: a load ends the session (D42, owner 2026-10-06, final)
 - [ ] W3: forks to other models (`RestoreInto`, lockstep fork runner, input events from the parent, parent link, per-target report); `switch_model` with state — needs W1 and O-1
 - [ ] W4: capture, grid, scores, verdict; batch mode
 - [ ] W5: branches and session family in the TTD v2 container (streams 10-13) — with Phase 5

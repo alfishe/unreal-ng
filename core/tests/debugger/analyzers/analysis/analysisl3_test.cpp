@@ -28,6 +28,7 @@
 #include "debugger/analyzers/analysis/detectors/detectors.h"
 #include "debugger/analyzers/analysis/l3coverage.h"
 #include "debugger/analyzers/analysis/l3experiment.h"
+#include "debugger/analyzers/analysis/l3experimentbranch.h"
 #include "debugger/analyzers/analysis/l2export.h"
 #include "debugger/analyzers/analysis/l3findings.h"
 #include "debugger/analyzers/analysis/l3naming.h"
@@ -35,6 +36,8 @@
 #include "debugger/analyzers/analysis/replaytracer.h"
 #include "debugger/assembler/z80textassembler.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdsessiontypes.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -1264,4 +1267,86 @@ TEST_F(AnalysisL3_Test, OverlayConflictByPhysicalKeys)
     ASSERT_EQ(l2.store.Conflicts().size(), 1u);
     for (const Finding& f : BaseFindings(l1, l2))
         EXPECT_NE(f.kind, FindingKind::Conflict) << "the text laid over code that ran is no conflict: " << f.claim;
+}
+
+/// An experiment kept as a branch (TTD branches surfaces.md §5.3): it runs on analysis instances, then the chosen ones
+/// replay in the source's TTD session as branches created by the analyzer under one run id, their memory checks read
+/// back on the branch (reproduced), the machine back where it stood; keep_branches=observed adds the observed ones
+/// and leaves the refuted; branch-prune by the run removes them
+TEST_F(AnalysisL3_Test, ExperimentKeptAsABranchReproducesInTheSourceSession)
+{
+    Source source;
+    ASSERT_TRUE(source.Make("key-test.asm")) << source.assembled.error.message;
+    Built b;
+    ASSERT_TRUE(Build(source, 3, b));
+    ttd::TimeTravelController* ttd = source.emulator->GetContext()->pTimeTravelController;
+    ttd->StopRecording();
+
+    char json[768];
+    std::snprintf(json, sizeof(json),
+                  R"([{"id": "q", "input": [{"frame": 0, "key": "q"}], "frames": 2, "keep_branch": "held q",
+                       "watch": [{"pc": "$%04X", "as": "pressed"}], "expect": {"pressed": "reached", "mem:$%04X": "$55"}},
+                      {"id": "none", "frames": 2, "watch": [{"pc": "$%04X", "as": "pressed"}],
+                       "expect": {"pressed": "reached"}},
+                      {"id": "o", "input": [{"frame": 0, "key": "o"}], "frames": 2,
+                       "expect": {"mem:$%04X": "$00"}}])",
+                  b.symbols.at("pressed"), b.symbols.at("hits"), b.symbols.at("pressed"), b.symbols.at("hits"));
+    std::vector<ExperimentSpec> specs;
+    std::string error;
+    ASSERT_TRUE(ParseExperiments(json, specs, error)) << error;
+    ExperimentRunOptions options;
+    options.parallel = 1;
+    options.l1 = &b.l1;
+    ExperimentBatch batch = RunExperiments(*b.bundle, specs, options);
+    ASSERT_TRUE(batch.error.empty()) << batch.error;
+    ASSERT_EQ(batch.results.size(), 3u);
+    ASSERT_EQ(batch.results[0].verdict, "observed") << ExperimentResultLine(batch.results[0]);
+    ASSERT_EQ(batch.results[1].verdict, "refuted") << ExperimentResultLine(batch.results[1]);
+    ASSERT_EQ(batch.results[2].verdict, "observed") << ExperimentResultLine(batch.results[2]);
+    const ttd::TTDTimePoint before = ttd->CurrentPosition();
+
+    EXPECT_EQ(KeepExperimentBranches(*source.emulator, specs, batch, KeepBranches::Observed, "exp-test"), 2u);
+    const ExperimentResult::KeptBranch& q = batch.results[0].kept;
+    EXPECT_TRUE(q.created) << q.error;
+    EXPECT_EQ(q.name, "held q");
+    EXPECT_EQ(q.run, "exp-test");
+    EXPECT_EQ(q.reproduced, 1) << q.mismatch;
+    EXPECT_FALSE(batch.results[1].kept.asked) << "a refuted experiment is not kept under observed";
+    EXPECT_TRUE(batch.results[2].kept.created) << batch.results[2].kept.error;
+    EXPECT_EQ(batch.results[2].kept.reproduced, 1) << batch.results[2].kept.mismatch;
+    EXPECT_NE(ExperimentResultLine(batch.results[0]).find("kept as branch 'held q'"), std::string::npos)
+        << ExperimentResultLine(batch.results[0]);
+    EXPECT_EQ(ttd->CurrentPosition(), before) << "back where the machine stood";
+
+    const ttd::TTDSessionInfo info = ttd->ReadSessionInfo();
+    ASSERT_NE(info.branches, nullptr);
+    const ttd::TTDBranchInfo* kept = info.branches->Find(q.id);
+    ASSERT_NE(kept, nullptr);
+    EXPECT_EQ(kept->meta.createdBy, "analyzer");
+    EXPECT_EQ(kept->meta.run, "exp-test");
+    EXPECT_EQ(kept->fork.frame, batch.results[0].fromFrame);
+    EXPECT_EQ(info.activeBranch, ttd::kTTDTrunk);
+
+    ttd::TTDControl control(source.emulator->GetContext());
+    const ttd::TTDReply pruned = control.Execute({"branch-prune", {{"run", "exp-test"}, {"dry_run", "false"}}});
+    ASSERT_TRUE(pruned.Ok()) << pruned.message;
+    EXPECT_EQ(pruned.body.find("deleted")->items.size(), 2u);
+}
+
+/// A coverage pin cannot replay as a branch: refused with the reason, nothing forked
+TEST_F(AnalysisL3_Test, ExperimentWithPinsIsNotKept)
+{
+    ExperimentSpec spec;
+    spec.id = "pinned";
+    spec.keepBranch = true;
+    spec.pins.push_back({});
+    ExperimentBatch batch;
+    batch.results.resize(1);
+    batch.results[0].verdict = "observed";
+    Source source;
+    ASSERT_TRUE(source.Make("key-test.asm"));
+    EXPECT_EQ(KeepExperimentBranches(*source.emulator, {spec}, batch, KeepBranches::Asked, "r"), 0u);
+    EXPECT_TRUE(batch.results[0].kept.asked);
+    EXPECT_FALSE(batch.results[0].kept.created);
+    EXPECT_NE(batch.results[0].kept.error.find("coverage"), std::string::npos);
 }

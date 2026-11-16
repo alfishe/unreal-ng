@@ -365,14 +365,15 @@ StateNode DrivesNode(EmulatorContext* context, int count)
         drive["side"] = fdd->getSide() ? 1 : 0;
         drive["motor_on"] = fdd->getMotor();
         drive["write_protected"] = fdd->isWriteProtect();
-        DiskImage* image = fdd->getDiskImage();
-        if (image && fdd->isDiskInserted())
-        {
-            StateNode geo = StateNode::Object();
-            geo["cylinders"] = int(image->getCylinders());
-            geo["sides"] = int(image->getSides());
-            drive["image"] = geo;
-        }
+        fdd->WithDisk([&](const DiskImage* image) {  // read from any thread: the image may change meanwhile
+            if (image && fdd->isDiskInserted())
+            {
+                StateNode geo = StateNode::Object();
+                geo["cylinders"] = int(image->getCylinders());
+                geo["sides"] = int(image->getSides());
+                drive["image"] = geo;
+            }
+        });
         drives.push(drive);
     }
     return drives;

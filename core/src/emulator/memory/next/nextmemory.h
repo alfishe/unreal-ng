@@ -168,6 +168,10 @@ public:
     /// slots take nothing, Layer 2's write mapping and the DivMMC / Multiface views apply, and the odd and even 8K slots of a 16K
     /// window may show unrelated pages. Breakpoints do not see it; the TTD dirty pages and the video flag are kept
     void DmaWrite(uint16_t addr, uint8_t value);
+    /// zxnDDMA physical mode (no MMU): a byte of the 4 MB SRAM, #000000-#03FFFF the system area (ROM pages), #040000 + 16K x bank the RAM.
+    /// A RAM bank the board does not have, and banks 5 and 7 (block RAM: the SRAM behind them is not what the ULA shows), read #FF and ignore writes
+    uint8_t PhysicalRead(uint32_t address);
+    void PhysicalWrite(uint32_t address, uint8_t value);
 
     /// Debugger / test pokes into the slot an address falls in (the base DirectWrite sees the 16K windows)
     void PokeSlot(uint16_t addr, uint8_t value);

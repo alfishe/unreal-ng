@@ -29,6 +29,7 @@
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 #include "ttdcheckpoint.h"
 #include "ttdinputapply.h"
@@ -201,6 +202,21 @@ bool TimeTravelController::StartRecording()
         _lastStartError = _unavailableReason;
         return false;
     }
+
+    // The machine stands inside another CPU's run (a General Sound breakpoint at the frame end or in a host port
+    // access): the main CPU is not at a moment a checkpoint can hold (at the frame end its counter has moved, the
+    // frame's boundary work is not done; a baseline there is refused again by the first boundary). The recording
+    // begins at the next frame boundary, on the machine's thread
+    if (emu && emu->IsParkedInsideCardRun() && !OnMachineThread())
+    {
+        _startPending.store(true, std::memory_order_release);
+        _lastStopReason.clear();
+        PublishSessionInfo();
+        MLOGINFO("TimeTravelController::StartRecording — the machine is inside a card's run: "
+                 "the recording starts at the next frame boundary");
+        return true;
+    }
+    _startPending.store(false, std::memory_order_release);
 
     // Leaving the replay/browse scope for live recording: free the decode cache.
     ClearFrameCache();
@@ -429,6 +445,9 @@ bool TimeTravelController::StartRecording()
 void TimeTravelController::StopRecording()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // A start still waiting for its frame boundary is cancelled
+    if (_startPending.exchange(false, std::memory_order_acq_rel))
+        PublishSessionInfo();
     if (_state != TTDSessionState::Recording)
     {
         // Compress whatever coverage is still accumulating, so size reporting
@@ -545,6 +564,7 @@ void TimeTravelController::ReleaseBackgroundRecording()
 void TimeTravelController::InvalidateSession(const char* reason)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _startPending.store(false, std::memory_order_release);
     _stoppedEndValid = false;
     ClearFrameCache();
 
@@ -933,6 +953,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.lastDropReason = _lastDropReason;
     info.lastStopReason = _lastStopReason;
     info.recordingPaused = _recordingPaused;
+    info.startPending = _startPending.load(std::memory_order_acquire);
     info.unavailableReason = _unavailableReason;
 
     // Phase 5 codec telemetry — useful for the UI / WebAPI status surface
@@ -963,6 +984,28 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     for (const TTDJournalSegment& s : info.writeJournalSegments)
         info.writeJournalSpans.emplace_back(TimePointAt(s.from), TimePointAt(s.to));
     info.writeJournalComplete = JournalCoversSession(info.writeJournalSegments);
+
+    info.activeBranch = _tip;
+    info.viewedBranch = _viewId;
+    if (!_branches.HasBranches())
+        _branchesView.reset();
+    else
+    {
+        if (!_branchesView || _branchesView->revision != _branches.Revision() || _branchesViewTip != _tip)
+        {
+            auto view = std::make_shared<TTDBranchesView>();
+            view->revision = _branches.Revision();
+            for (uint32_t id = 0; id < _branches.Ids(); ++id)
+                if (const TTDBranchInfo* b = _branches.Get(id))
+                    view->branches.push_back(*b);
+            view->lineage = _branches.Lineage(_tip);
+            _branchesView = std::move(view);
+            _branchesViewTip = _tip;
+        }
+        info.branches = _branchesView;
+    }
+    info.branchEvent = _branchEvent;
+    info.previousBranch = PreviousOnTrail();
 
     PublishCursor();
     PublishSessionInfo(info);
@@ -1116,12 +1159,19 @@ TTDSessionInfo TimeTravelController::GetPublishedSessionInfo() const
 
 void TimeTravelController::PublishSessionInfo(const TTDSessionInfo& info) const
 {
+    bool branchesChanged = false;
     {
         std::lock_guard<std::mutex> lock(_publishedMutex);
+        // The branch topics (ttd.branches, ttd.position's branch) read the published copy: told once it changed
+        branchesChanged = _published.branches != info.branches || _published.activeBranch != info.activeBranch ||
+                          _published.branchEvent.seq != info.branchEvent.seq ||
+                          _published.previousBranch != info.previousBranch;
         _published = info;
         _publishedAt = std::chrono::steady_clock::now();
     }
     _publishedCv.notify_all();
+    if (branchesChanged)
+        NotifyReadoutsChanged(_context, "ttd.branches");
 }
 
 TTDSessionInfo TimeTravelController::FreshPublishedSessionInfo() const
@@ -1324,6 +1374,17 @@ void TimeTravelController::OnFrameBoundary()
             InvalidateSession(reason);
             return;
         }
+    }
+
+    // A start asked inside a card's run (StartRecording): the frame's start is the baseline. Not a throwaway replay's
+    // boundary (a query while the machine still stands there)
+    if (!_inReplayMode && _startPending.load(std::memory_order_acquire))
+    {
+        _startPending.store(false, std::memory_order_release);
+        if (_state != TTDSessionState::Recording && !StartRecording())
+            MLOGWARNING("TimeTravelController: the recording asked inside a card's run did not start: %s",
+                        _lastStartError.c_str());
+        return;
     }
 
     // The session ended (a reset, a snapshot load, a machine change) and a new one is due (a black box, or the
@@ -1586,6 +1647,7 @@ void TimeTravelController::EndSessionImpl(const char* reason, bool keepHistory)
         InvalidateSession(reason);
     _lastStopReason = keepHistory ? reason : "machine-change";
     _blackBoxSuspended = false;
+    _startPending.store(false, std::memory_order_release);   // the start asked before the end ends with it (D42)
     // A second end before the restart (a disk autostart: the disk load, then its reset) keeps it due
     _restartPending = _restartPending || (blackBoxRecorded && BackgroundWanted()) || (wasRecording && RestartFeatureOn());
     if (_restartPending)
@@ -4149,8 +4211,11 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
         return false;
     }
 
-    // A paused recording reaches to where it paused, inside the last frame
-    const TTDTimePoint sessionEnd = _recordingPaused ? _pausedEnd : _line->timeline.back().time;
+    // A paused recording reaches to where it paused, inside the last frame; a stopped one to where it stopped
+    // (TimelineEnd: the history goes on past the last checkpoint, and a seek to the end lands there)
+    const TTDTimePoint sessionEnd = _recordingPaused              ? _pausedEnd
+                                    : _line == _lines[_tip].get() ? TimelineEnd()
+                                                                  : _line->timeline.back().time;
     if (sessionEnd < from)
     {
         MLOGWARNING("TimeTravelController::ResumeRecordingFrom — target "
@@ -4190,9 +4255,9 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
     const size_t preMarkerCount   = _line->externalEvents.Size();
 
     // ------------------------------------------------------------------
-    // Step 2: truncate timeline + page refs after `from`. Page refs held
-    // by dropped checkpoints are released back to the page store; the
-    // slots become eligible for reuse by future Intern calls (TDD §6.3).
+    // Step 2: history after `from` forks a branch (below), the old future stays; at the active branch's end the
+    // line is cut at the resume point. Page refs held by checkpoints a cut drops are released back to the page store
+    // (TDD §6.3).
     // ------------------------------------------------------------------
     // The resume point is where the machine actually stands: a frame-aligned
     // `from` restores the checkpoint's CPU at its overshoot past the frame
@@ -4203,7 +4268,9 @@ bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
 
     // History after the resume point (the active branch's own past, or an ancestor's part of the lineage) stays:
     // a new branch forks there and records (§4.5). At the active branch's end the recording just goes on
-    if (HasHistoryAfter(cut) && ForkBranchAt(from, cut))
+    // branch-create forks at the end too (PrepareBranchCreate)
+    const bool forceFork = std::exchange(_forceFork, false);
+    if ((forceFork || HasHistoryAfter(cut)) && ForkBranchAt(from, cut))
     {
         EngageCaptureFeatures();
         SetState(TTDSessionState::Recording);
@@ -6727,6 +6794,100 @@ bool TimeTravelController::StepForwardInstruction()
     return true;
 }
 
+namespace
+{
+// RET, RET cc, and RETN / RETI with their undocumented ED duplicates
+bool IsReturnOpcode(uint8_t op, uint8_t next)
+{
+    if (op == 0xC9 || (op & 0xC7) == 0xC0)
+        return true;
+    return op == 0xED && (next & 0xC7) == 0x45;
+}
+
+// a is at the stack level of b or above it (a stack that grew less); the difference is taken modulo 64K
+bool StackAtOrAbove(uint16_t a, uint16_t b)
+{
+    return static_cast<int16_t>(static_cast<uint16_t>(a - b)) >= 0;
+}
+}  // namespace
+
+ttd::TTDReverseStepOverResult TimeTravelController::ReverseStepOver()
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    TTDReverseStepOverResult result;
+    Z80* cpu = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    if (!cpu || !_context->pMemory)
+        return result;
+    // The stack level the step back over returns to: where the machine stands now
+    const uint16_t level = cpu->sp;
+    if (!StepBackInstruction())
+        return result;
+    result.moved = true;
+    const TTDTimePoint ret = CurrentPosition();
+    result.arrivedAt = ret;
+    result.pc = cpu->pc;
+    const uint8_t opcode = _context->pMemory->DirectReadFromZ80Memory(cpu->pc);
+    const uint8_t next = _context->pMemory->DirectReadFromZ80Memory(static_cast<uint16_t>(cpu->pc + 1));
+    // Only a return that lifted the stack to this level closes a routine; any other instruction is the step back
+    if (!IsReturnOpcode(opcode, next) || StackAtOrAbove(cpu->sp, level))
+        return result;
+    result.overCall = true;
+
+    // Walk back a frame at a time, newest instruction first: the routine's instructions run below this level; the
+    // first one at it or above is the CALL / RST that entered the routine, or the instruction an interrupt came after
+    const uint64_t retT = GlobalT(ret);
+    const TTDTimePoint start = _lines.front()->timeline.empty() ? _line->timeline.front().time
+                                                                : _lines.front()->timeline.front().time;
+    const uint64_t floorT = GlobalT(start);
+    std::optional<TTDM1Record> found;
+    uint32_t skipped = 1;   // the return itself
+    TTDExternalEvent barrier;
+    std::vector<TTDM1Record> m1s;
+    for (uint64_t endT = retT; !found && endT > floorT;)
+    {
+        const TTDTimePoint at = TimePointAt(endT - 1);
+        const uint64_t fromT = std::max(floorT, GlobalT(TTDTimePoint{at.frame, 0}));
+        EnumerateM1InRange(fromT, endT, m1s, &barrier);
+        for (auto it = m1s.rbegin(); it != m1s.rend(); ++it)
+        {
+            if (it->globalT >= retT)
+                continue;
+            if (StackAtOrAbove(it->sp, level))
+            {
+                found = *it;
+                break;
+            }
+            ++skipped;
+        }
+        if (barrier.reason[0] != '\0')
+            break;
+        endT = fromT;
+    }
+
+    if (!found)
+    {
+        // Out of reach: the machine stays on the return, one instruction back
+        result.callOutOfReach = true;
+        if (barrier.reason[0] != '\0')
+            result.blockingMarker = barrier;
+        SeekTo(ret);
+        return result;
+    }
+    result.skipped = skipped;
+    result.arrivedAt = TimePointAt(found->globalT);
+    if (!SeekTo(result.arrivedAt))
+    {
+        MLOGWARNING("TimeTravelController::ReverseStepOver — SeekTo the routine's caller failed");
+        result.callOutOfReach = true;
+        SeekTo(ret);
+        result.arrivedAt = ret;
+        result.overCall = true;
+        return result;
+    }
+    result.pc = cpu->pc;
+    return result;
+}
+
 // ===========================================================================
 // Phase 4 reverse execution: M1 enumeration + ReverseStep / ReverseContinue
 // ===========================================================================
@@ -6895,6 +7056,7 @@ TimeTravelController::EnumerateM1InRangeOnLine(uint64_t startGlobalT, uint64_t e
             m1.globalT  = GlobalT(h.time);
             m1.pc       = h.pc;
             m1.physPage = h.physPage;
+            m1.sp       = h.sp;
             intervalM1s.push_back(m1);
         }
 

@@ -264,6 +264,140 @@ TEST_F(InputRouter_Test, Roles_InstancesAndTheAutoConnector)
     EXPECT_EQ(Kempston("emu-3"), kFire);
 }
 
+TEST_F(InputRouter_Test, MenuKeys_AutoTargetsHoldTheCursorKeysWhileTheProgramReadsTheKeyboard)
+{
+    // The 128K menu and BASIC read the keyboard, not a joystick: with menu keys on, a pad's `auto:` directions hold
+    // CAPS SHIFT with 5 6 7 8 and its fire ENTER, besides the player's connector; a fixed connector's binding does not
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad"), Bind({"south"}, "auto:fire"), Bind({"east"}, "kempston:fire2")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    auto keysOf = [](const char* name) {
+        std::vector<uint8_t> keys;
+        EXPECT_TRUE(ZxKeysFromName(name, keys));
+        std::sort(keys.begin(), keys.end());
+        return keys;
+    };
+    auto held = [this] {
+        std::vector<uint8_t> keys = _last.keys;
+        std::sort(keys.begin(), keys.end());
+        return keys;
+    };
+
+    Set("fake:1", "dpad.down", 1);
+    EXPECT_EQ(Kempston(), kDown);
+    EXPECT_TRUE(_last.keys.empty()) << "menu keys off: the joystick alone";
+
+    _router.SetMenuKeys("emu-1", true);
+    EXPECT_TRUE(_router.MenuKeys("emu-1"));
+    EXPECT_FALSE(_router.MenuKeys("emu-2")) << "per instance";
+    EXPECT_EQ(Kempston(), kDown) << "the joystick still sees it";
+    EXPECT_EQ(held(), keysOf("down")) << "CAPS SHIFT + 6";
+    Set("fake:1", "dpad.down", 0);
+    Set("fake:1", "dpad.up", 1);
+    Sample();
+    EXPECT_EQ(held(), keysOf("up"));
+    Set("fake:1", "dpad.up", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(held(), keysOf("enter")) << "fire selects";
+    Set("fake:1", "south", 0);
+    Set("fake:1", "east", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty()) << "a fixed connector's binding holds no menu key";
+
+    _router.SetMenuKeys("emu-1", false);
+    Set("fake:1", "east", 0);
+    Set("fake:1", "dpad.left", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty());
+}
+
+TEST_F(InputRouter_Test, MouseButtons_AutoFireClicksTheLeftButtonAsHeld)
+{
+    // A program reading a mouse (the ZiFi client): the pad's fire buttons are its left button, held as long as the
+    // control is, not in the turbo's pulses; a fixed connector's fire clicks nothing
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"south"}, "auto:fire"), To({"rt.click"}, Retro("auto:fire")), Bind({"east"}, "kempston:fire2")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0) << "mouse buttons off: the joystick alone";
+
+    _router.SetMouseButtons("emu-1", true);
+    EXPECT_TRUE(_router.MouseButtons("emu-1"));
+    EXPECT_FALSE(_router.MouseButtons("emu-2")) << "per instance";
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "A clicks the left button";
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "held";
+    Set("fake:1", "south", 0);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0);
+    Set("fake:1", "east", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0) << "a fixed connector's fire clicks nothing";
+
+    _router.SetMouseButtons("emu-1", false);
+    Set("fake:1", "east", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_EQ(_last.mouse.buttons, 0);
+}
+
+TEST_F(InputRouter_Test, MenuKeys_WithMouseButtonsFireClicksAndTheDirectionsMoveTheCursor)
+{
+    // A pointer menu reads the mouse and the whole keyboard (the ZX-Evo service ROM): the directions hold the cursor
+    // keys, fire clicks the left button and holds no ENTER (one press is not a click and a selection at once)
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad"), Bind({"south"}, "auto:fire")});
+    _router.SetPlayerConnector("fake:1", "kempston");
+    _router.SetMenuKeys("emu-1", true);
+    _router.SetMouseButtons("emu-1", true);
+    std::vector<uint8_t> down;
+    ASSERT_TRUE(ZxKeysFromName("down", down));
+    std::sort(down.begin(), down.end());
+
+    Set("fake:1", "dpad.down", 1);
+    Sample();
+    std::vector<uint8_t> held = _last.keys;
+    std::sort(held.begin(), held.end());
+    EXPECT_EQ(held, down) << "CAPS SHIFT + 6 moves the cursor";
+    Set("fake:1", "dpad.down", 0);
+    Set("fake:1", "south", 1);
+    Sample();
+    EXPECT_TRUE(_last.keys.empty()) << "fire holds no ENTER";
+    EXPECT_EQ(_last.mouse.buttons, 0x01) << "fire clicks";
+
+    _router.SetMouseButtons("emu-1", false);
+    Sample();
+    std::vector<uint8_t> enter;
+    ASSERT_TRUE(ZxKeysFromName("enter", enter));
+    EXPECT_EQ(_last.keys, enter) << "no mouse: fire selects with ENTER again";
+}
+
+TEST_F(InputRouter_Test, MenuKeys_ReplaceAKeyboardJoystickOfThePlayer)
+{
+    // A game profile kept a Sinclair joystick on keyjoy.1; after a reset the 128K menu reads the keyboard: the
+    // digits held with the cursor keys would be two keys at once, so the menu keys alone are held
+    _router.OnDeviceAdded(kPad);
+    SetBindings({Bind({"dpad.*"}, "auto:dpad")});
+    _router.SetPlayerConnector("fake:1", "keyjoy.1");
+    Set("fake:1", "dpad.down", 1);
+    auto masks = Sample();
+    ASSERT_TRUE(masks.count("keyjoy.1") != 0);
+    EXPECT_EQ(masks["keyjoy.1"], kDown) << "menu keys off: the joystick";
+
+    _router.SetMenuKeys("emu-1", true);
+    masks = Sample();
+    EXPECT_EQ(masks.count("keyjoy.1") != 0 ? masks["keyjoy.1"] : 0, 0) << "menu keys on: no digit of the keyboard joystick";
+    std::vector<uint8_t> keys;
+    ASSERT_TRUE(ZxKeysFromName("down", keys));
+    std::sort(keys.begin(), keys.end());
+    std::vector<uint8_t> held = _last.keys;
+    std::sort(held.begin(), held.end());
+    EXPECT_EQ(held, keys);
+}
+
 TEST_F(InputRouter_Test, Connectors_ThePatchCordsOfADevice)
 {
     // The dialog's cords (ui-ux.md §2.3): the connectors a player's bindings drive, `auto` as its player connector,

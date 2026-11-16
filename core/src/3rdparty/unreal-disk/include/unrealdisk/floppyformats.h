@@ -46,11 +46,17 @@ struct FloppySaveResult
     std::string reason;       ///< why a save was refused, or the first warning of a successful one
 };
 
-/// A blank floppy: "unformatted" (no sectors: for the machine's own FORMAT),
+/// A blank floppy: "unformatted" (no sectors: for the machine's own FORMAT), "trdos" (TR-DOS FORMAT done),
 /// "plus3" (+3DOS: 9 x 512, formatted) or "auto" (plus3 on a +3, else unformatted).
-/// Zero cylinders / sides take the format's default (unformatted 80 x 2, plus3 40 x 1)
+/// Zero cylinders / sides take the format's default (unformatted / trdos 80 x 2, plus3 40 x 1).
+/// Cylinders: 1..MAX_CYLINDERS (86) unformatted - mastering programs lay out 82 or more; 40 or 80 for trdos and
+/// plus3, the only geometries their system sectors describe. A disk of at most 42 cylinders is a 40-track medium
 struct BlankFloppySpec
 {
+    /// The accepted geometry in words, for every front end's error and help texts
+    static constexpr const char* GeometryHelp =
+        "cylinders 1..86 (unformatted) or 40 / 80 (trdos, plus3), sides 1 or 2";
+
     std::string format = "auto";
     uint8_t cylinders = 0;
     uint8_t sides = 0;

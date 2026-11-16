@@ -2,7 +2,7 @@
 """time_travel: record, stop, the history in status, seek back, the machine state follows, rare coverage,
 port events with their context, reverse-continue first per PC, memory-at the machine now, probe frames, the
 timeline, the cause chain, find event, explain frame, diff of two moments, the replay check and the seek check,
-bookmarks with notes and export"""
+bookmarks with notes and export, branches: list, rename and pin, switch, delete, create with a run, info, prune"""
 
 import re
 import sys
@@ -48,6 +48,10 @@ def test_reverse_step_by_scanlines_and_the_build_cancel(s):
     expect(r.is_error, 'one unit only', r.text)
     r = s.call('time_travel', {'action': 'journal_build_cancel'})
     expect(not r.is_error and 'journal' in r.text, 'nothing to cancel, said so', r.text)
+    # Reverse step over: one instruction back (or back over a routine); the text says which and where
+    r = s.call('time_travel', {'action': 'reverse_step_over'})
+    expect(not r.is_error and 'Stepped back' in r.text and 'frame' in r.text, 'stepped back over', r.text)
+    expect(r.structured.get('stepped') is True and 'over_call' in r.structured, 'the result fields', r.structured)
 
 
 def test_coverage_rare_lists_blocks_in_the_text(s):
@@ -349,6 +353,88 @@ def test_bookmarks_keep_notes_context_and_export(s):
     expect(r.is_error and 'tag' in r.text, 'a bad tag refused', r.text)
     s.call('time_travel', {'action': 'bookmark_delete', 'label': 'mcp-frames'})
 
+
+def test_branches_list_update_switch_delete(s):
+    # The history of test_record_stop_seek: a resume in its past records on a new branch named by the fork's time
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'branch_list'})
+    expect(not r.is_error and 'No branches' in r.text, 'one line before the resume', r.text)
+    s.call('time_travel', {'action': 'seek', 'frame': first + 8, 'tinframe': 0})
+    r = s.call('time_travel', {'action': 'resume', 'frame': first + 8, 'tinframe': 0})
+    expect(not r.is_error and 'kept as a branch' in r.text, 'the resume keeps the future', r.text)
+    s.call('control_execution', {'action': 'run_frames', 'frames': 6})
+    s.call('time_travel', {'action': 'stop'})
+    r = s.call('time_travel', {'action': 'branch_list'})
+    names = [b.get('name') for b in r.structured.get('branches', [])]
+    forked = names[1] if len(names) > 1 else ''
+    expect(not r.is_error and names[:1] == ['trunk'] and forked.startswith('+00:'), 'the trunk and the new branch',
+           r.structured)
+    expect("'trunk' (id 0)" in r.text and f"'{forked}'" in r.text and 'active' in r.text, 'both in the text', r.text)
+    r = s.call('time_travel', {'action': 'status'})
+    expect("on branch '" in r.text and '2 branches' in r.text, 'the status names the branch', r.text)
+
+    r = s.call('time_travel', {'action': 'branch_update', 'branch': forked, 'rename': 'mcp-old', 'pinned': True,
+                               'add_tags': ['mcp']})
+    b = r.structured.get('branch', {})
+    expect(not r.is_error and b.get('name') == 'mcp-old' and b.get('pinned') and b.get('tags') == ['mcp'],
+           'renamed, pinned, tagged', r.structured)
+    expect("'mcp-old'" in r.text and 'pinned' in r.text, 'the text names the branch', r.text)
+    r = s.call('time_travel', {'action': 'branch_list', 'tag': 'mcp'})
+    expect(not r.is_error and [x.get('name') for x in r.structured.get('branches', [])] == ['mcp-old'],
+           'the tag filters', r.structured)
+
+    r = s.call('time_travel', {'action': 'branch_switch', 'branch': 'mcp-old'})
+    expect(not r.is_error and "Switched to branch 'mcp-old'" in r.text, 'switched, the branch named', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch', 'branch': 0})
+    expect(not r.is_error and "'trunk'" in r.text, 'back on the trunk', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch', 'to': 'previous'})
+    expect(not r.is_error and "'mcp-old'" in r.text, 'to=previous: the branch left last', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch', 'to': 'next_sibling'})
+    expect(not r.is_error and "'trunk'" in r.text and r.structured.get('siblings') == 2,
+           'to=next_sibling wraps to the trunk at the fork', r.structured)
+
+    r = s.call('time_travel', {'action': 'branch_delete', 'branch': 'mcp-old'}, ok=False)
+    expect(r.is_error and 'pinned' in r.text.lower(), 'a pinned branch stays without force', r.text)
+    r = s.call('time_travel', {'action': 'branch_delete', 'branch': 'mcp-old', 'force': True})
+    expect(not r.is_error and "Deleted 'mcp-old'" in r.text, 'force deletes it', r.text)
+    r = s.call('time_travel', {'action': 'branch_update', 'branch': 'nosuch', 'note': 'x'}, ok=False)
+    expect(r.is_error and 'nosuch' in r.text, 'an unknown branch named', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch'}, ok=False)
+    expect(r.is_error and "'branch'" in r.text, 'the branch is required', r.text)
+
+
+
+def test_branch_create_info_prune(s):
+    # An explicit what-if probe on the history of test_record_stop_seek: fork, run with a key, read, come back
+    before = s.call('time_travel', {'action': 'status'}).text
+    first = int(re.search(r'frames (\d+)\.\.', before).group(1))
+    r = s.call('time_travel', {'action': 'branch_create', 'name': 'mcp-probe', 'frame': first + 4, 'run': 'mcp-run',
+                               'run_frames': 3, 'input': ['0:a:2', '2:release_all'], 'read': ['0x5C78:2', '0xC000'],
+                               'poke': ['#C000=171'], 'regs': ['bc=4660'], 'go_back': True})
+    c = r.structured
+    expect(not r.is_error and c.get('created') and c.get('ran_frames') == 3, 'created and ran', r.text)
+    expect(c.get('poked') == 1 and c.get('registers_set') == 1 and 'Poked 1 byte' in r.text,
+           'the poke and the register on the branch', r.text)
+    expect(len(c.get('reads', [])) == 2 and c['reads'][1].get('bytes') == [171], 'the poked byte read back', c)
+    expect(c.get('branch', {}).get('created_by') == 'mcp' and c.get('returned_to') is not None,
+           'created by mcp, back where it was', c)
+    expect('Read' in r.text, 'the read in the answer', r.text)
+    r = s.call('time_travel', {'action': 'branch_info', 'branch': 'mcp-probe'})
+    expect(not r.is_error and r.structured.get('branch', {}).get('name') == 'mcp-probe' and
+           r.structured.get('ancestors'), 'the info names its ancestors', r.structured)
+    r = s.call('time_travel', {'action': 'branch_list', 'run': 'mcp-run'})
+    expect(not r.is_error and [x.get('name') for x in r.structured.get('branches', [])] == ['mcp-probe'],
+           'the run filters', r.structured)
+    r = s.call('time_travel', {'action': 'branch_prune', 'run': 'mcp-run'})
+    expect(not r.is_error and r.structured.get('dry_run') and "Would delete 'mcp-probe'" in r.text,
+           'a dry run by default', r.text)
+    r = s.call('time_travel', {'action': 'branch_prune', 'run': 'mcp-run', 'dry_run': False})
+    expect(not r.is_error and "Deleted 'mcp-probe'" in r.text, 'the run pruned', r.text)
+    r = s.call('time_travel', {'action': 'branch_prune'}, ok=False)
+    expect(r.is_error and 'filter' in r.text.lower(), 'prune needs a filter', r.text)
+    r = s.call('time_travel', {'action': 'branch_create', 'run_frames': 3, 'input': ['x:nosuch']}, ok=False)
+    expect(r.is_error, 'a bad input refused', r.text)
 
 if __name__ == '__main__':
     sys.exit(main(globals()))

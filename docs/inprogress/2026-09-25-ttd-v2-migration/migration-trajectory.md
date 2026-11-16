@@ -407,6 +407,8 @@ and where this plan handles them:
    budget and status counted in memory, never in time; spill to disk and / or
    memory-mapped blocks ([target-architecture.md §6.1](target-architecture.md#61-memory-as-linked-blocks-direction-2026-09-29)).
    Open: the default limit, the spill trigger and mechanism.
+   *Superseded:* D41 (2026-10-04) replaced linked blocks with minute segments; the disk tier is
+   [TTD branches](../2026-11-08-ttd-branches/README.md) P3.
 4. **Integrity and versioning mechanism** (before Phase 4 starts): open
    investigation, [integrity-and-versioning.md](integrity-and-versioning.md).
 5. **Switching storage mode during a session** (Phases 4/5): fixed at session start,

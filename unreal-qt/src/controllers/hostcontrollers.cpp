@@ -32,6 +32,9 @@
 #include "emulator/actions/contextstate.h"
 #include "emulator/keyboardmanager.h"
 #include "platform/windowlesssession.h"
+#ifdef __linux__
+#include "platform/linux/steamoverlay.h"
+#endif
 #include "platform/windows/wheelmenu_windows.h"
 
 #ifdef ENABLE_CONTROLLERS
@@ -42,6 +45,7 @@
 #include "emulator/config.h"
 #include "emulator/io/controllers/controllercontrol.h"
 #include "emulator/io/controllers/controllermanager.h"
+#include "router/zxkeys.h"
 #include "emulator/monitoring/hostdevices.h"
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
@@ -181,6 +185,10 @@ public:
     {
         return _host.HapticsUnderTrial();
     }
+    JsonValue MachineInputs() const override
+    {
+        return _host.MachineInputs();
+    }
     bool SignaturesOf(const std::string& path, ProfileContext& context, std::string& error) override
     {
         return ProgramSignatures(path, context, error);
@@ -197,6 +205,7 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
     _debugLayer = QSettings().value("Controllers/DebugLayer", false).toBool();
     _soundHaptics = QSettings().value("Controllers/SoundHaptics", false).toBool();
     _soundHapticsDsp = QSettings().value("Controllers/SoundHapticsDsp", false).toBool();
+    _driveHaptics = QSettings().value("Controllers/DriveHaptics", true).toBool();
     _globalShortcuts = QSettings().value("Controllers/GlobalShortcuts", false).toBool();
     _pauseOnDisconnect = QSettings().value("Controllers/PauseOnDisconnect", false).toBool();
 #ifdef ENABLE_CONTROLLERS
@@ -259,6 +268,15 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
             claimControllers();
         else
             updateOwner();
+#ifdef __linux__
+        if (auto overlay = std::make_shared<gamescope::SteamOverlay>(); overlay->Available())
+        {
+            _steamOverlay = overlay;
+            _steamOverlayTimer = new QTimer(this);
+            connect(_steamOverlayTimer, &QTimer::timeout, this, &HostControllers::checkSteamOverlay);
+            _steamOverlayTimer->start(50);
+        }
+#endif
     }
     // The host verbs of the automation surfaces run here, on the GUI thread
     _controlOwner = std::make_unique<ControlOwner>(*this);
@@ -303,6 +321,11 @@ HostControllers::HostControllers(EmulatorBinding* binding, QObject* parent) : QO
         QMetaObject::invokeMethod(this, [this, id, path, bytes] { onGuestProgram(id, path, bytes); },
                                   Qt::QueuedConnection);
     });
+    // The machine reset: its ROM runs as a new program (the ZX-Evo service menu reads the mouse, a game before it
+    // the joystick), so the auto decision starts again with the program's profile kept
+    _resetObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SYSTEM_RESET, [this](int, Message*) {
+        QMetaObject::invokeMethod(this, [this] { onMachineReset(); }, Qt::QueuedConnection);
+    });
     // The context of an instance changed (ctx.set on any plane, the GUI's own panes): the router follows it
     _contextObserver = MessageCenter::DefaultMessageCenter().AddObserver(NC_SURFACE_CONTEXT, [this](int, Message*) {
         QMetaObject::invokeMethod(this, [this] { followContext(); }, Qt::QueuedConnection);
@@ -336,6 +359,7 @@ HostControllers::~HostControllers()
     monitoring::HostDevices::Instance().Withdraw();
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_FILE_LOADED, _fileObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_GUEST_PROGRAM, _guestObserver);
+    MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SYSTEM_RESET, _resetObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_SURFACE_CONTEXT, _contextObserver);
     MessageCenter::DefaultMessageCenter().RemoveObserverById(NC_EXECUTION_BREAKPOINT, _breakpointObserver);
     releaseWheelMenu();
@@ -356,6 +380,29 @@ void HostControllers::SetSoundHapticsDsp(bool on)
     _service->SetHapticsDspDefaults(on);
     if (_attached)
         attachHaptics();  // the key below names the filters: the sound feed is made again
+#endif
+}
+
+void HostControllers::SetDriveHaptics(bool on)
+{
+    if (on == _driveHaptics)
+        return;
+    _driveHaptics = on;
+    QSettings().setValue("Controllers/DriveHaptics", on);
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
+#endif
+}
+
+void HostControllers::SetDriveHapticsAllowed(bool allowed)
+{
+    if (allowed == _driveHapticsAllowed)
+        return;
+    _driveHapticsAllowed = allowed;
+#ifdef ENABLE_CONTROLLERS
+    if (_attached)
+        attachHaptics();
 #endif
 }
 
@@ -804,13 +851,26 @@ void HostControllers::updateOwner()
         if (again.open(QIODevice::ReadOnly))
             owner = ClientQueue::Owner(ClientQueue::Parse(again.readAll().toStdString()), ClientAlive);
     }
-    const bool owns = owner == self;
+    const bool owns = owner == self && !_steamOverlayUp;
     if (owns == _service->Owner())
         return;
-    qInfo("controllers: %s", owns ? "this window owns the controllers again"
-                                  : qPrintable(QString("another unreal-ng (pid %1) owns the controllers").arg(owner)));
+    qInfo("controllers: %s",
+          owns              ? "this window owns the controllers again"
+          : _steamOverlayUp ? "Steam's menu is over the window, the controllers are Steam's"
+                            : qPrintable(QString("another unreal-ng (pid %1) owns the controllers").arg(owner)));
     _service->SetOwner(owns);
     emit changed();
+}
+
+void HostControllers::checkSteamOverlay()
+{
+#ifdef __linux__
+    const bool up = _steamOverlay != nullptr && _steamOverlay->Up();
+    if (up == _steamOverlayUp)
+        return;
+    _steamOverlayUp = up;
+    updateOwner();
+#endif
 }
 #endif
 
@@ -1257,9 +1317,11 @@ void HostControllers::attachHaptics()
     const bool game = !_resolved.haptics.IsNull() && ParseHapticProfile(_resolved.haptics, profile, error);
     if (!error.empty())
         qWarning("controllers: %s: %s", _resolved.hapticsProfile.c_str(), error.c_str());
-    const std::string key = game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
-                                 : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
-                                                  : std::string());
+    const bool drive = _driveHaptics && _driveHapticsAllowed;
+    const std::string key = (game ? "profile:" + _resolved.hapticsProfile + ":" + _resolved.haptics.Dump()
+                                  : (_soundHaptics ? std::string(_soundHapticsDsp ? "sound+dsp" : "sound")
+                                                   : std::string())) +
+                            (drive ? "+drive" : "");
     if (key == _hapticsKey && (key.empty() || _hapticFeed))
         return;
     _hapticsKey = key;
@@ -1269,6 +1331,9 @@ void HostControllers::attachHaptics()
         _hapticFeed = _service->HapticFeedFor(_attached->GetId());
     else
         _hapticFeed.reset();
+    // The floppy drive over whichever feed plays the game (or alone)
+    if (drive)
+        _hapticFeed = _service->DriveHapticFeedFor(_attached->GetId(), _hapticFeed);
     context->pControllerManager->SetHapticFeed(_hapticFeed);
 }
 
@@ -1551,6 +1616,9 @@ void HostControllers::onFileLoaded(const QString& emulatorId, const QString& pat
     _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
     Reapply();
 }
 
@@ -1569,6 +1637,29 @@ void HostControllers::onGuestProgram(const QString& emulatorId, const QString& p
     _cardNoticed = false;
     _autoConnector.clear();
     _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the new program decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
+    Reapply();
+}
+
+void HostControllers::onMachineReset()
+{
+    // The reset carries no instance: the bound one's reset armed its port watch again (Emulator::Reset), another
+    // instance's leaves it as it was
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr ||
+        !context->pControllerManager->PortReads().active || !_autoDone)
+        return;
+    _autoDone = false;
+    _keyboardNoticed = false;
+    _cardNoticed = false;
+    _autoConnector.clear();
+    _decision = {};
+    _service->Router().SetMouseButtons(emulator->GetId(), false);  // the ROM decides again
+    _mouseButtonsRule = "off: the program decides again";
+    _autoReport = {};
     Reapply();
 }
 
@@ -1600,20 +1691,133 @@ void HostControllers::applyConnectorPlans()
     {
         _autoDone = true;
         manager->WatchPortReads(false);
+        _autoReport = JsonValue::Object({{"device", JsonValue()},
+                                         {"reason", JsonValue::String("the game profile holds the connectors")}});
     }
+}
+
+JsonValue HostControllers::MachineInputs() const
+{
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr)
+        return {};
+    const ControllerManager* manager = context->pControllerManager;
+    const std::string instance = emulator->GetId();
+    const InputRouter& router = _service->Router();
+    static const std::pair<const char*, uint16_t> kControls[] = {
+        {"right", kRight}, {"left", kLeft}, {"down", kDown}, {"up", kUp},
+        {"fire", kFire},   {"fire2", kFire2}, {"fire3", kFire3}, {"fire4", kFire4}};
+    std::vector<JsonValue> connectors;
+    for (size_t index = 0; index < manager->Count(); index++)
+    {
+        const Connector connector = manager->At(index);
+        if (connector.id.empty())
+            continue;
+        JsonValue value = JsonValue::Object(
+            {{"id", JsonValue::String(connector.id)},
+             {"device", connector.device == RetroDeviceKind::None
+                            ? JsonValue()
+                            : JsonValue::String(RetroDeviceKindName(connector.device))},
+             {"fixed", JsonValue::Bool(connector.fixed)}});
+        if (connector.kind == ConnectorKind::KeyboardJoystick && connector.device != RetroDeviceKind::None)
+        {
+            JsonValue keys = JsonValue::Object();
+            for (const auto& [name, bit] : kControls)
+            {
+                std::vector<uint8_t> chord;
+                for (ZXKeysEnum key : ControllerManager::WiredKeys(connector, bit))
+                    chord.push_back(static_cast<uint8_t>(key));
+                if (!chord.empty())
+                    keys.Set(name, JsonValue::String(ZxChordName(chord)));
+            }
+            value.Set("keys", std::move(keys));
+        }
+        connectors.push_back(std::move(value));
+    }
+    // The recorded reason when it agrees with the router's state (another path may have switched it)
+    auto ruleOf = [](bool on, const std::string& rule) {
+        return rule.rfind(on ? "on" : "off", 0) == 0 ? rule : std::string(on ? "on" : "off");
+    };
+    const bool menuKeys = router.MenuKeys(instance);
+    const bool mouseButtons = router.MouseButtons(instance);
+    return JsonValue::Object(
+        {{"instance", JsonValue::String(instance)},
+         {"machine", JsonValue::String(Context().machine)},
+         {"ps2", JsonValue::Bool(manager->HostKeysReachPs2())},
+         {"auto", _autoReport},
+         {"menu_keys", JsonValue::Object({{"on", JsonValue::Bool(menuKeys)},
+                                          {"rule", JsonValue::String(ruleOf(menuKeys, _menuKeysRule))}})},
+         {"mouse_buttons", JsonValue::Object({{"on", JsonValue::Bool(mouseButtons)},
+                                              {"rule", JsonValue::String(ruleOf(mouseButtons, _mouseButtonsRule))}})},
+         {"connectors", JsonValue::Array(std::move(connectors))}});
 }
 
 void HostControllers::checkAuto()
 {
+    EmulatorContext* context = _binding->context();
+    Emulator* emulator = _binding->emulator();
+    if (context == nullptr || context->pControllerManager == nullptr || emulator == nullptr)
+        return;
+    ControllerManager* manager = context->pControllerManager;
+    const DeviceAccessEvidence evidence = manager->PortReads();
+    const std::string instance = emulator->GetId();
+    InputRouter& router = _service->Router();
+    if (!evidence.active)
+    {
+        // Menu keys keep the watch on: a program started from the menu (TR-DOS, the 128K menu's Tape Loader) turns
+        // them off once it stops reading the whole keyboard. A new window decides nothing for its first frames
+        if (router.MenuKeys(instance))
+            manager->WatchPortReads(true);
+        return;
+    }
+    const AutoDecision decision = DecideAuto(evidence);
+    // A program that takes the PC keys from the machine's PS/2 controller (Wild Commander pops the ZX-Evo AVR's log
+    // through #BFF7) reads the keyboard too, though no half-row: read since the last poll, with no joystick decided
+    bool keyBuffer = false;
+    if (IPs2KeySink* sink = context->pKeyboard != nullptr ? context->pKeyboard->GetPs2Sink() : nullptr)
+    {
+        const uint64_t reads = sink->KeyBufferReads();
+        keyBuffer = reads != _keyBufferReads && _keyBufferReads != 0 && !decision.decisive;
+        _keyBufferReads = reads;
+    }
+    // A pointer menu reads the mouse and the whole keyboard (the ZX-Evo service ROM): the mouse decides, the pad's
+    // directions still move its cursor (decision.keyboardScan)
+    const bool keyScan = decision.keyboard || decision.keyboardScan || keyBuffer;
+    // The pad drives a menu with the cursor keys while the program reads the whole keyboard (the 128K menu, BASIC, a
+    // text prompt), over the rolling window, whatever the auto plug decided before. On at once; off only after a whole
+    // window without the key scan, and until then no joystick is plugged (a reset's first moments look like one)
+    if (evidence.window >= DeviceAccessWatch::kWindow)
+    {
+        const bool menuKeys = router.MenuKeys(instance);
+        const auto frame = static_cast<int64_t>(evidence.framesObserved);
+        if (keyScan)
+        {
+            _keyScanLostAt = -1;
+            _menuKeysRule = decision.keyboard       ? "on: the program scans the whole keyboard"
+                            : decision.keyboardScan ? "on: a pointer menu scans the whole keyboard beside the " +
+                                                          decision.label
+                                                    : "on: the program reads the PS/2 controller's keys";
+            if (!menuKeys)
+            {
+                router.SetMenuKeys(instance, true);
+                emit menuKeysChanged(true);
+            }
+        }
+        else if (menuKeys)
+        {
+            if (_keyScanLostAt < 0 || frame < _keyScanLostAt)  // a new watch counts from 0 again
+                _keyScanLostAt = frame;
+            if (frame - _keyScanLostAt < static_cast<int64_t>(DeviceAccessWatch::kWindow))
+                return;
+            _keyScanLostAt = -1;
+            _menuKeysRule = "off: the program stopped scanning the whole keyboard";
+            router.SetMenuKeys(instance, false);
+            emit menuKeysChanged(false);
+        }
+    }
     if (_autoDone)
         return;
-    EmulatorContext* context = _binding->context();
-    if (context == nullptr || context->pControllerManager == nullptr)
-        return;
-    const DeviceAccessEvidence evidence = context->pControllerManager->PortReads();
-    if (!evidence.active)
-        return;
-    const AutoDecision decision = DecideAuto(evidence);
     if (decision.keyboard)
     {
         // A menu or a text prompt reads every key: say so once and keep watching, the joystick comes later
@@ -1652,6 +1856,14 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
     manager->WatchPortReads(false);
     if (decision.device == "kempston-mouse" || decision.device == "amx-mouse")
     {
+        // The pad's fire buttons click: the pointer moves with the trackpad or the stick already
+        if (Emulator* emulator = _binding->emulator())
+            _service->Router().SetMouseButtons(emulator->GetId(), true);
+        _mouseButtonsRule = "on: the auto decision " + decision.label + " (" + decision.reason + ")";
+        _autoReport = JsonValue::Object({{"device", JsonValue::String(decision.device)},
+                                         {"label", JsonValue::String(decision.label)},
+                                         {"connector", JsonValue()},
+                                         {"reason", JsonValue::String(decision.reason)}});
         emit notice(tr("This program reads the %1 (%2)")
                         .arg(QString::fromStdString(decision.label), QString::fromStdString(decision.reason)));
         return;
@@ -1691,6 +1903,10 @@ void HostControllers::applyAuto(const AutoDecision& chosen)
     }
     _decision = decision;
     _autoConnector = connector;
+    _autoReport = JsonValue::Object({{"device", JsonValue::String(decision.device)},
+                                     {"label", JsonValue::String(decision.label)},
+                                     {"connector", JsonValue::String(connector)},
+                                     {"reason", JsonValue::String(decision.reason)}});
     Reapply();
     emit autoDecided(tr("%1 on %2 (port reads: %3)")
                          .arg(QString::fromStdString(decision.label), QString::fromStdString(connector),

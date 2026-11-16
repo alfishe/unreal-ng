@@ -77,10 +77,12 @@ namespace
     }
 
     template <typename Loader>
-    bool WriteFlux(Loader& loader, DiskImage& disk)
+    bool WriteFlux(Loader& loader, DiskImage& disk, std::vector<std::string>& warnings)
     {
         loader.setDiskImage(&disk);
-        return loader.writeImage();
+        const bool saved = loader.writeImage();
+        warnings = loader.getWarnings();
+        return saved;
     }
 
     bool WriteByExtension(const LoaderOptions& options, DiskImage& disk, const std::string& path,
@@ -142,12 +144,12 @@ namespace
         if (ext == "hfe")
         {
             LoaderHFE loader(options, path);
-            return WriteFlux(loader, disk);
+            return WriteFlux(loader, disk, warnings);
         }
         if (ext == "scp")
         {
             LoaderSCP loader(options, path);
-            return WriteFlux(loader, disk);
+            return WriteFlux(loader, disk, warnings);
         }
         LoaderTRD loader(options, path);
         return WriteWith(loader, disk, warnings);
@@ -515,14 +517,21 @@ FormatResult FloppyFormats::CreateBlank(bool plus3Machine, BlankFloppySpec& spec
     const bool plus3 = format == "plus3";
     const uint8_t cylinders = spec.cylinders ? spec.cylinders : (plus3 ? 40 : 80);
     const uint8_t sides = spec.sides ? spec.sides : (plus3 ? 1 : 2);
-    if (cylinders != 40 && cylinders != 80)
-        return FormatResult::Fail(FormatResult::Error::BadRequest, "cylinders must be 40 or 80");
+    if (format == "unformatted" ? (cylinders < 1 || cylinders > MAX_CYLINDERS) : (cylinders != 40 && cylinders != 80))
+        return FormatResult::Fail(FormatResult::Error::BadRequest,
+                                  StringHelper::Format("cylinders %u for a %s disk: expected %s", cylinders,
+                                                       format.c_str(), BlankFloppySpec::GeometryHelp));
     if (sides != 1 && sides != 2)
-        return FormatResult::Fail(FormatResult::Error::BadRequest, "sides must be 1 or 2");
+        return FormatResult::Fail(FormatResult::Error::BadRequest,
+                                  StringHelper::Format("sides %u: expected %s", sides, BlankFloppySpec::GeometryHelp));
 
     disk = plus3 ? std::make_unique<DiskImage>(cylinders, sides, DiskImage::TrackFormatSpec::plus3())
                  : std::make_unique<DiskImage>(cylinders, sides);
-    disk->setFortyTrack(cylinders == 40);
+    disk->setFortyTrack(cylinders <= 42);
+    // Unformatted means no address marks at all: READ ADDRESS finds nothing until the machine formats the disk
+    // (DiskImage(c, s) itself lays out TR-DOS tracks)
+    if (format == "unformatted")
+        disk->eraseAll();
     // A TR-DOS disk as FORMAT leaves it: 16 x 256-byte sectors on every track, an empty catalogue and the system
     // sector (track 0, sector 9) naming the geometry and the free space
     if (format == "trdos")

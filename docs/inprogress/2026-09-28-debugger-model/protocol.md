@@ -8,8 +8,12 @@
   `{kind, page}` (CLI `--page ram5`) are on every surface. The `Breakpoint` fields `address_end`, `page`
   (physical: any slot that shows the page; `slot_only` for one slot), `port_mask`, `hit_count` and the hit
   policy (`hit_target` + `hit_mode` = always / equal / at_least / multiple) are built (2026-10-04,
-  [hotpath-matching-design.md](../2026-08-17-conditional-breakpoints/hotpath-matching-design.md)). Not yet: `cpu` other than main, `positions`, `edited`, `targets_changed`,
-  `run_control`, the other topics.
+  [hotpath-matching-design.md](../2026-08-17-conditional-breakpoints/hotpath-matching-design.md)). Phase 3 as built
+  (2026-11-12, stage 1): the `debug` events `edited`, `run_control`, `labels_changed` and `targets_changed` (§5.2).
+  Phase 3 follows what was built instead of §1's `DebugService` / serializer: the reads and commands are StateNode
+  builders shared by every surface, run control is the `*control` namespaces, and the CPU is a per-call `cpu`
+  argument (no target object). Not built: `DebugService`, `debugjson`, the target object, the `timeline` and
+  `cmdlog` topics, `positions`.
 - **Part of:** [the debugger model](README.md). It carries the fields of
   [widget-catalog.md](widget-catalog.md) under the rules of
   [rules.md](rules.md).
@@ -476,11 +480,11 @@ subscription channel (it is a stub today).
 | `debug` | `paused` | `PauseEvent` | every pause |
 | `debug` | `resumed` | `{seq}` | Continue |
 | `debug` | `step_done` | `PauseEvent` (reason `step`) | every step |
-| `debug` | `edited` | `{cpu, what: regs \| memory \| port, address?}` | every state edit |
+| `debug` | `edited` | `{source, cpu, what: registers \| memory \| page \| port \| state \| mixed, count, page?, address?, length?}` | tool edits that went through, merged: one waiting per instance |
 | `debug` | `breakpoints_changed` | `{cpu, ids[]}` | add, remove, update |
-| `debug` | `labels_changed` | `{cpu}` | a label set changed |
-| `debug` | `targets_changed` | `DebugTarget[]` | a card fitted, switched or removed |
-| `debug` | `run_control` | `{held_by}` | run control taken or released |
+| `debug` | `labels_changed` | `{}` (the instance) | a label set changed |
+| `debug` | `targets_changed` | `{targets: [{cpu, available}]}` | a card CPU came or went (sent on a change only) |
+| `debug` | `run_control` | `{change, surface, client?, owner?, by?}` | run control taken, released, revoked, expired, re-take refused, superseded |
 | `timeline` | `timeline` | `Timeline` | after every pause and step; ≤ 10 Hz density while running |
 | `cmdlog` | `log_append` | `LogEntry[]` (batched, ≤ 10 Hz) | new entries |
 | `stats` | `stats` | `Stats` (≤ 2 Hz) | while subscribed (this also marks the stats as wanted, nad §5.2) |
@@ -501,8 +505,9 @@ The bridge turns the core notifications into model events:
 - `NC_EXECUTION_BREAKPOINT`, which gains a `cpu` field;
 - `NC_EXECUTION_CPU_STEP`, which gains a payload;
 - `NC_EMULATOR_STATE_CHANGE`;
-- the new `NC_DEBUG_TIMELINE`, `NC_DEBUG_EDITED` and
-  `NC_DEBUG_TARGETS_CHANGED`.
+- `NC_DEBUG_EDITED` (posted by `Emulator::EditMemoryFromTool`, the one way a tool edits the machine),
+  `NC_DEBUG_TARGETS_CHANGED` (DebugManager, when the set of available card CPUs changes),
+  `NC_LABEL_CHANGED` (with the instance) and `NC_RUN_CONTROL_CHANGED`. `NC_DEBUG_TIMELINE` is not built.
 
 ## 6. Surface bindings
 

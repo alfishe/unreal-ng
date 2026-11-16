@@ -421,6 +421,8 @@ zxbus.3 = gs                     ; would clash with zxbus.1's gs: the machine is
 - **Model switch:** `ModelSwitch::Run` today rebuilds everything from the target model's INI. New: the current slot set
   is carried as the request list and planned against the new machine; non-fitting cards are reported in the switch
   result (R-OP-9), exactly as stranded media are reported today.
+- **Changed 2026-11-14 (owner):** the cards are carried only on request (`ModelSwitchRequest::carryCards`, no caller
+  today); a model switch takes the new model's configured cards, a cold reset the instance's own (R-OP-9).
 - **As built (SL-6,** [tdd.md](tdd.md) §14**):** `SlotManager::Carry` in the new machine's config override. The carried
   cards keep their slot where the new machine has that bus, else go where the planner puts them behind the adapter that
   connects them; the ones the new machine cannot take are dropped first, with the reason; the new machine's own

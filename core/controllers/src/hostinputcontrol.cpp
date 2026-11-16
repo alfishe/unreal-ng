@@ -19,6 +19,7 @@
 #include "hostcontrols.h"
 #include "hostinputservice.h"
 #include "profiles/yaml.h"
+#include "router/zxkeys.h"
 
 namespace controllers
 {
@@ -1550,39 +1551,287 @@ HostReply HostInputControl::Apply(const HostRequest& request)
     return reply;
 }
 
+namespace
+{
+/// The retro control names of the bits in @p mask (the Kempston order, then the MD pad's extra buttons)
+std::vector<std::string> RetroControlsOf(uint16_t mask)
+{
+    static const char* const kNames[] = {"right", "left", "down", "up", "fire", "fire2", "fire3", "fire4",
+                                         "y",     "z",    "x",    "mode"};
+    std::vector<std::string> names;
+    for (unsigned bit = 0; bit < std::size(kNames); bit++)
+        if (mask & (1u << bit))
+            names.emplace_back(kNames[bit]);
+    return names;
+}
+
+std::string StringMember(const JsonValue* object, const std::string& key)
+{
+    const JsonValue* value = object != nullptr ? object->Find(key) : nullptr;
+    return value != nullptr && value->IsString() ? value->AsString() : std::string();
+}
+
+bool BoolMember(const JsonValue* object, const std::string& key)
+{
+    const JsonValue* value = object != nullptr ? object->Find(key) : nullptr;
+    return value != nullptr && value->IsBool() && value->AsBool();
+}
+
+/// The machine's connector @p id in MachineInputs's list
+const JsonValue* FindConnector(const JsonValue& machine, const std::string& id)
+{
+    const JsonValue* connectors = machine.Find("connectors");
+    if (connectors == nullptr || !connectors->IsArray())
+        return nullptr;
+    for (const JsonValue& connector : connectors->Items())
+        if (StringMember(&connector, "id") == id)
+            return &connector;
+    return nullptr;
+}
+
+/// The menu key chord of one retro control (InputRouter::MenuKeysOf): the 128 keyboard's cursor keys, fire ENTER
+std::string MenuChordOf(const std::string& control)
+{
+    if (control == "right" || control == "left" || control == "down" || control == "up")
+        return control == "right" ? "caps+8" : control == "left" ? "caps+5" : control == "down" ? "caps+6" : "caps+7";
+    return control == "fire" ? "enter" : std::string();
+}
+}  // namespace
+
+std::string HostInputControl::BindingRule(const std::string& profile) const
+{
+    const ResolvedProfiles& resolved = _owner.Resolved();
+    for (const auto& [id, how] : resolved.gameMatches)
+        if (id == profile)
+            return "game profile " + id + " (" + how + ")";
+    const ProfileContext context = _owner.Context();
+    if (std::find(context.manual.begin(), context.manual.end(), profile) != context.manual.end())
+        return "profile " + profile + " chosen by hand";
+    if (profile.rfind("user/", 0) == 0)
+        return "user profile " + profile;
+    if (profile == "builtin/play/pad-default")
+        return "the default of every pad (" + profile + ")";
+    if (profile.rfind("builtin/", 0) == 0)
+        return "built-in profile " + profile + (context.machine.empty() ? "" : " (machine " + context.machine + ")");
+    return "profile " + profile;
+}
+
+JsonValue HostInputControl::ResolveBinding(const EffectiveBinding& effective, const HostDeviceId& device,
+                                           const JsonValue& machine) const
+{
+    // What the binding drives for @p device now: the connector its `auto:` names, the matrix keys a keyboard joystick
+    // holds, the menu keys and the mouse button the auto decision adds, each with the rule that put it there
+    std::vector<JsonValue> outputs;
+    Binding binding;
+    std::string error;
+    if (!CompileBinding(effective.control, effective.spec, JsonValue::Object(), RouterLayer(effective.layer), binding,
+                        error))
+        return JsonValue::Array({JsonValue::Object({{"to", JsonValue::String("nothing")},
+                                                    {"rule", JsonValue::String("does not compile: " + error)}})});
+    HostInputService* input = const_cast<IHostInputOwner&>(_owner).Input();
+    const Target& target = binding.target;
+    const bool ps2 = BoolMember(&machine, "ps2");
+    auto keysOutput = [ps2](JsonValue keys, const std::string& rule) {
+        JsonValue output = JsonValue::Object({{"to", JsonValue::String("keys")}, {"keys", std::move(keys)}});
+        if (ps2)
+            output.Set("ps2", JsonValue::Bool(true));  // also as PC keys to the PS/2 controller
+        output.Set("rule", JsonValue::String(rule));
+        return output;
+    };
+    switch (target.kind)
+    {
+        case TargetKind::Retro:
+        {
+            const bool isAuto = target.retro.connector == "auto";
+            const std::string player = input != nullptr ? input->Router().PlayerConnector(device) : std::string();
+            const std::string connectorId = isAuto ? player : target.retro.connector;
+            const std::vector<std::string> controls = RetroControlsOf(target.retro.mask);
+            const JsonValue* menu = machine.Find("menu_keys");
+            const JsonValue* mouse = machine.Find("mouse_buttons");
+            const bool menuKeys = isAuto && BoolMember(menu, "on");
+            const bool mouseButtons = isAuto && BoolMember(mouse, "on");
+            const bool keyjoy = connectorId.rfind("keyjoy.", 0) == 0;
+            if (!connectorId.empty() && !(menuKeys && keyjoy))
+            {
+                JsonValue output = JsonValue::Object({{"to", JsonValue::String("connector")},
+                                                      {"connector", JsonValue::String(connectorId)},
+                                                      {"controls", Strings(controls)}});
+                const JsonValue* connector = FindConnector(machine, connectorId);
+                if (connector != nullptr)
+                {
+                    const JsonValue* plugged = connector->Find("device");
+                    output.Set("device", plugged != nullptr ? *plugged : JsonValue());
+                    // A keyboard joystick ends on the matrix: the keys of each control
+                    if (const JsonValue* wired = connector->Find("keys"); wired != nullptr && wired->IsObject())
+                    {
+                        JsonValue keys = JsonValue::Object();
+                        for (const std::string& control : controls)
+                            if (const JsonValue* chord = wired->Find(control))
+                                keys.Set(control, *chord);
+                        output.Set("keys", std::move(keys));
+                    }
+                }
+                else if (!machine.IsNull())
+                {
+                    output.Set("device", JsonValue());
+                }
+                std::string rule;
+                if (!isAuto)
+                    rule = "the binding names the connector";
+                else if (input != nullptr && !const_cast<IHostInputOwner&>(_owner).PlayerChoice(device).empty())
+                    rule = "auto: the player connector the user chose for " + device;
+                else
+                    rule = "auto: the player connector of " + device + " (automatic choice)";
+                output.Set("rule", JsonValue::String(rule));
+                outputs.push_back(std::move(output));
+            }
+            else if (connectorId.empty())
+            {
+                outputs.push_back(JsonValue::Object(
+                    {{"to", JsonValue::String("nothing")},
+                     {"rule", JsonValue::String("auto: " + device + " has no player connector")}}));
+            }
+            if (menuKeys)
+            {
+                // InputRouter: fire clicks instead of ENTER while the mouse buttons are on
+                JsonValue keys = JsonValue::Object();
+                for (const std::string& control : controls)
+                {
+                    const std::string chord = MenuChordOf(control);
+                    if (!chord.empty() && !(mouseButtons && control == "fire"))
+                        keys.Set(control, JsonValue::String(chord));
+                }
+                if (!keys.GetMembers().empty())
+                    outputs.push_back(keysOutput(std::move(keys), "menu keys: " + StringMember(menu, "rule") +
+                                                                      (keyjoy ? " (they replace " + connectorId + ")" : "")));
+            }
+            if (mouseButtons && (target.retro.mask & kFire) != 0)
+                outputs.push_back(JsonValue::Object({{"to", JsonValue::String("mouse")},
+                                                     {"button", JsonValue::String("left")},
+                                                     {"rule", JsonValue::String("mouse buttons: " +
+                                                                                StringMember(mouse, "rule"))}}));
+            break;
+        }
+        case TargetKind::Keys:
+            outputs.push_back(keysOutput(JsonValue::String(ZxChordName(target.keys)), "key target"));
+            break;
+        case TargetKind::Macro:
+        {
+            std::vector<std::string> steps;
+            for (const std::vector<uint8_t>& step : target.steps)
+                steps.push_back(ZxChordName(step));
+            JsonValue output = keysOutput(Strings(steps), "macro: each step held one frame, released one");
+            outputs.push_back(std::move(output));
+            break;
+        }
+        case TargetKind::Mouse:
+        {
+            static const char* const kMouse[] = {"left", "right", "middle", "dx", "dy", "wheel"};
+            const auto index = static_cast<size_t>(target.mouse);
+            const bool button = index <= static_cast<size_t>(MouseControl::Middle);
+            JsonValue output = JsonValue::Object({{"to", JsonValue::String("mouse")},
+                                                  {button ? "button" : "axis", JsonValue::String(kMouse[index])}});
+            if (!button)
+                output.Set("scale", JsonValue::Number(target.scale));
+            output.Set("rule", JsonValue::String("mouse target (the machine's mouse)"));
+            outputs.push_back(std::move(output));
+            break;
+        }
+        case TargetKind::Action:
+            outputs.push_back(JsonValue::Object({{"to", JsonValue::String("action")},
+                                                 {"action", JsonValue::String(target.name)},
+                                                 {"rule", JsonValue::String("host command, never journaled")}}));
+            break;
+        case TargetKind::Layer:
+            outputs.push_back(JsonValue::Object({{"to", JsonValue::String("layer")},
+                                                 {"layer", JsonValue::String(target.name.empty() ? "play" : target.name)},
+                                                 {"rule", JsonValue::String("switches layers")}}));
+            break;
+        case TargetKind::None:
+            outputs.push_back(JsonValue::Object({{"to", JsonValue::String("nothing")},
+                                                 {"rule", JsonValue::String("unbound here (none: true)")}}));
+            break;
+    }
+    return JsonValue::Array(std::move(outputs));
+}
+
 HostReply HostInputControl::Bindings(const HostRequest& request)
 {
     const std::string device = Option(request, "device");
     const std::string layer = Option(request, "layer");
     const ResolvedProfiles& resolved = _owner.Resolved();
-    // A device's scope, else its family's, else every device's
+    const ProfileContext context = _owner.Context();
+    // The scope of a device: its own, else its family's, else every device's ("")
+    auto scopeOf = [&resolved](const HostDeviceInfo& info) {
+        for (const std::string& candidate : {info.id, "family:" + info.family})
+            if (std::any_of(resolved.effective.begin(), resolved.effective.end(),
+                            [&candidate](const auto& entry) { return entry.first == candidate; }))
+                return candidate;
+        return std::string();
+    };
     std::string scope;
+    std::vector<HostDeviceInfo> devices;  // the devices these bindings drive
     if (!device.empty())
     {
-        const ProfileContext context = _owner.Context();
         const auto it = std::find_if(context.devices.begin(), context.devices.end(),
                                      [&device](const HostDeviceInfo& info) { return info.id == device; });
         if (it == context.devices.end())
             return Fail("unknown-device", "no connected device '" + device + "' (devices lists them)");
-        for (const std::string& candidate : {it->id, "family:" + it->family})
-            if (scope.empty() && std::any_of(resolved.effective.begin(), resolved.effective.end(),
-                                             [&candidate](const auto& entry) { return entry.first == candidate; }))
-                scope = candidate;
+        scope = scopeOf(*it);
+        devices.push_back(*it);
     }
+    else
+    {
+        for (const HostDeviceInfo& info : context.devices)
+            if (scopeOf(info).empty())
+                devices.push_back(info);
+    }
+    const JsonValue machine = _owner.MachineInputs();
+    HostInputService* input = _owner.Input();
     std::vector<JsonValue> bindings;
     for (const auto& [name, effective] : resolved.effective)
     {
         if (name != scope)
             continue;
         for (const EffectiveBinding& binding : effective)
-            if (layer.empty() || binding.layer == layer)
-                bindings.push_back(JsonValue::Object({{"layer", JsonValue::String(binding.layer)},
-                                                      {"control", JsonValue::String(binding.control)},
-                                                      {"spec", binding.spec},
-                                                      {"profile", JsonValue::String(binding.profile)}}));
+        {
+            if (!layer.empty() && binding.layer != layer)
+                continue;
+            JsonValue entry = JsonValue::Object({{"layer", JsonValue::String(binding.layer)},
+                                                 {"control", JsonValue::String(binding.control)},
+                                                 {"spec", binding.spec},
+                                                 {"profile", JsonValue::String(binding.profile)},
+                                                 {"rule", JsonValue::String(BindingRule(binding.profile))}});
+            std::vector<JsonValue> perDevice;
+            for (const HostDeviceInfo& info : devices)
+                perDevice.push_back(JsonValue::Object({{"device", JsonValue::String(info.id)},
+                                                       {"outputs", ResolveBinding(binding, info.id, machine)}}));
+            entry.Set("resolved", JsonValue::Array(std::move(perDevice)));
+            bindings.push_back(std::move(entry));
+        }
+    }
+    std::vector<JsonValue> deviceStates;
+    for (const HostDeviceInfo& info : devices)
+    {
+        JsonValue state = JsonValue::Object({{"id", JsonValue::String(info.id)}});
+        if (input != nullptr)
+        {
+            InputRouter& router = input->Router();
+            const std::string choice = _owner.PlayerChoice(info.id);
+            state.Set("player_connector", JsonValue::String(router.PlayerConnector(info.id)));
+            state.Set("player_rule", JsonValue::String(choice.empty() ? "automatic choice" : "chosen by the user"));
+            std::vector<std::string> layers;
+            for (const std::string& up : router.Layers(info.id))
+                layers.push_back(up.empty() ? "play" : up);
+            state.Set("layers", Strings(layers));
+        }
+        deviceStates.push_back(std::move(state));
     }
     HostReply reply;
     reply.body.Set("scope", JsonValue::String(scope.empty() ? "every device" : scope));
+    reply.body.Set("applied", Strings(resolved.applied));
+    reply.body.Set("devices", JsonValue::Array(std::move(deviceStates)));
+    reply.body.Set("machine", machine);
     reply.body.Set("bindings", JsonValue::Array(std::move(bindings)));
     return reply;
 }

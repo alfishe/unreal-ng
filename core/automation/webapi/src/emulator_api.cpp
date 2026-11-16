@@ -23,7 +23,7 @@ namespace v1
 void addCorsHeaders(HttpResponsePtr& resp)
 {
     resp->addHeader("Access-Control-Allow-Origin", "*");
-    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
 }
 

@@ -2,8 +2,8 @@
     //
     // Phase 2 surface (10 endpoints) + Phase 4 reverse-search (3 endpoints)
     // + Phase 4 reverse-execution (2 endpoints) + session restore via load
-    // (1 endpoint) + TD-4 agent bookmarks (5 endpoints) = 21 endpoints total,
-    // all exposed by core/automation/webapi/src/api/ttd_api.cpp.
+    // (1 endpoint) + TD-4 agent bookmarks (5 endpoints) + TTD branches (5
+    // endpoints), among others, all exposed by core/automation/webapi/src/api/ttd_api.cpp.
     // The status endpoint also serves as a capability probe: it returns 200
     // with state="idle" and ttd_available=false when the TTD engine is not
     // compiled in. All other endpoints return 501 in that case.
@@ -370,7 +370,8 @@
         "Resume recording from a past point (parent TDD §10.4)";
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["tags"].append("Time-Travel Debug");
     paths["/api/v1/emulator/{id}/ttd/resume"]["post"]["description"] =
-        "Truncates the timeline at the resume point and resumes recording. "
+        "Resumes recording at the resume point: before the end of the active branch a new branch forks there and "
+        "the old future stays on its parent (the reply names both); at the end the recording goes on. "
         "If the request body is omitted, resumes from the current position. "
         "On success the session transitions to state=\"recording\". Used "
         "to continue past an external-event marker that blocked a seek. Every medium "
@@ -584,6 +585,204 @@
         "TTD engine not available in this build";
 
     // =====================================================================
+    // TTD branches: a resume in the past keeps the old future as a branch.
+    // {branch} is an id, a GUID or a name; the trunk is id 0.
+    // =====================================================================
+    {
+        auto idParam = []() {
+            Json::Value p;
+            p["name"] = "id";
+            p["in"] = "path";
+            p["required"] = true;
+            p["description"] = "Emulator UUID or index";
+            p["schema"]["type"] = "string";
+            return p;
+        };
+        auto branchParam = []() {
+            Json::Value p;
+            p["name"] = "branch";
+            p["in"] = "path";
+            p["required"] = true;
+            p["description"] = "The branch: its id (0 = the trunk), its GUID or its name (URL-encoded)";
+            p["schema"]["type"] = "string";
+            return p;
+        };
+
+        Json::Value& list = paths["/api/v1/emulator/{id}/ttd/branches"]["get"];
+        list["summary"] = "List the TTD branches: the tree, the active branch and its lineage";
+        list["tags"].append("Time-Travel Debug");
+        list["description"] =
+            "A resume in the past keeps the old future as a branch (named 'resume N'); the first line is the trunk. "
+            "Each branch carries its GUID, local id, name, parent, fork and end moments, length, creator, tags, note "
+            "and pin; active is the branch recording continues on, lineage the spans the history shown is made of. "
+            "Without branches the list is empty and text says so. A published copy: the machine never parks for it.";
+        list["parameters"].append(idParam());
+        // The filter `branches` and `branch-prune` share (surfaces.md §5.1)
+        static const std::vector<std::pair<const char*, const char*>> filter = {
+            {"scope", "all (default) or lineage: only the active branch's lineage"},
+            {"created_by", "Only the branches whose creator starts with it (user, webapi, mcp, analyzer, ...)"},
+            {"run", "Only the branches of this run id (an analyzer's or a script's)"},
+            {"tag", "Only the branches with these tags (a, b: every one)"},
+            {"name_prefix", "Only the branches whose name starts with it"},
+            {"pinned", "true / false: only the pinned (unpinned) ones"},
+            {"min_length", "Only the branches at least this many frames long"},
+            {"max_length", "Only the branches at most this many frames long"},
+            {"created_after", "Only the branches created at or after this host time (microseconds)"},
+            {"created_before", "Only the branches created at or before this host time (microseconds)"}};
+        for (const auto& [name, text] : filter)
+        {
+            Json::Value p;
+            p["name"] = name;
+            p["in"] = "query";
+            p["description"] = text;
+            const std::string n = name;
+            const bool number = n == "min_length" || n == "max_length" || n == "created_after" || n == "created_before";
+            p["schema"]["type"] = number ? "integer" : "string";
+            list["parameters"].append(p);
+        }
+        for (const auto& [name, text] : std::vector<std::pair<const char*, const char*>>{
+                 {"limit", "At most this many rows (default 1000); total counts every match"}, {"offset", "Rows to skip"}})
+        {
+            Json::Value p;
+            p["name"] = name;
+            p["in"] = "query";
+            p["description"] = text;
+            p["schema"]["type"] = "integer";
+            list["parameters"].append(p);
+        }
+        list["responses"]["200"]["description"] = "The branches";
+        list["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchesResponse";
+        list["responses"]["400"]["description"] = "A bad scope, pinned, limit or offset";
+        list["responses"]["404"]["description"] = "Emulator instance not found";
+        list["responses"]["501"]["description"] = "TTD engine not available in this build";
+
+        Json::Value& create = paths["/api/v1/emulator/{id}/ttd/branches"]["post"];
+        create["summary"] = "Create a TTD branch at a moment, optionally run it headless with scripted input";
+        create["tags"].append("Time-Travel Debug");
+        create["description"] =
+            "A branch forks at the moment (frame / tinframe, default where the machine stands; branch: on that "
+            "branch's lineage), at the active branch's end too; whatever lay after the moment stays on its parent. "
+            "With run_frames the machine runs the new branch headless that many frames, fed by the input script, "
+            "and the branch records it (owner decision Q-6); read returns memory where the run ended; go_back puts "
+            "the machine back where it stood. A branch created this way stays even before it records anything. "
+            "Answers from the long-call pool: a run does not hold the HTTP workers.";
+        create["parameters"].append(idParam());
+        create["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchCreateRequest";
+        create["responses"]["200"]["description"] = "Created (or created false with needs_decision for media=ask)";
+        create["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchCreateResponse";
+        create["responses"]["400"]["description"] = "A bad option: run_frames, input, read, tinframe without frame";
+        create["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+        create["responses"]["409"]["description"] = "No recorded history, a moment outside it, or no room for a branch";
+
+        Json::Value& prune = paths["/api/v1/emulator/{id}/ttd/branches/prune"]["post"];
+        prune["summary"] = "Delete the TTD branches a filter picks (a dry run by default)";
+        prune["tags"].append("Time-Travel Debug");
+        prune["description"] =
+            "The filter of GET /ttd/branches (at least one criterion) picks branches; each goes with its "
+            "descendants. The active lineage and pinned branches (or a branch with one under it) stay and are named "
+            "in kept. dry_run (default true) lists what would go and changes nothing.";
+        prune["parameters"].append(idParam());
+        prune["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchPruneRequest";
+        prune["responses"]["200"]["description"] = "What went (or would go) and what stayed";
+        prune["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchPruneResponse";
+        prune["responses"]["400"]["description"] = "No filter, or a bad value";
+        prune["responses"]["404"]["description"] = "Emulator instance not found";
+
+        Json::Value& one = paths["/api/v1/emulator/{id}/ttd/branches/{branch}"]["get"];
+        one["summary"] = "One TTD branch with its children, ancestors and files";
+        one["tags"].append("Time-Travel Debug");
+        one["description"] =
+            "The branch as the list shows it, its children (fork, length), its ancestors from the trunk, and its "
+            "files in the recording's folder. A published copy: the machine never parks for it.";
+        one["parameters"].append(idParam());
+        one["parameters"].append(branchParam());
+        one["responses"]["200"]["description"] = "The branch";
+        one["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchInfoResponse";
+        one["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+
+        Json::Value& patch = paths["/api/v1/emulator/{id}/ttd/branches/{branch}"]["patch"];
+        patch["summary"] = "Edit a TTD branch: name, note, tags, pin";
+        patch["tags"].append("Time-Travel Debug");
+        patch["description"] =
+            "Only the fields given change. The history does not move; a pinned branch survives a prune and a delete "
+            "without force.";
+        patch["parameters"].append(idParam());
+        patch["parameters"].append(branchParam());
+        patch["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchUpdateRequest";
+        patch["responses"]["200"]["description"] = "The branch as it is now (updated, branch, text)";
+        patch["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchResponse";
+        patch["responses"]["400"]["description"] = "Nothing to change, or a bound broken";
+        patch["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+        patch["responses"]["409"]["description"] = "Another branch has that name";
+
+        Json::Value& del = paths["/api/v1/emulator/{id}/ttd/branches/{branch}"]["delete"];
+        del["summary"] = "Delete a TTD branch and its descendants";
+        del["tags"].append("Time-Travel Debug");
+        del["description"] =
+            "The branch goes with every branch forked from it. The trunk and the branches of the active lineage "
+            "cannot go; a pinned one only with force=true.";
+        del["parameters"].append(idParam());
+        del["parameters"].append(branchParam());
+        {
+            Json::Value p;
+            p["name"] = "force";
+            p["in"] = "query";
+            p["description"] = "true: pinned branches go too";
+            p["schema"]["type"] = "boolean";
+            del["parameters"].append(p);
+        }
+        del["responses"]["200"]["description"] = "Deleted";
+        del["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchDeletedResponse";
+        del["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+        del["responses"]["409"]["description"] = "The trunk, the active lineage, or a pinned branch without force";
+
+        Json::Value& sw = paths["/api/v1/emulator/{id}/ttd/branches/{branch}/switch"]["post"];
+        sw["summary"] = "Switch to a TTD branch";
+        sw["tags"].append("Time-Travel Debug");
+        sw["description"] =
+            "The machine goes onto the branch, at frame / tinframe on it (default: its end); it becomes the active "
+            "branch, the history shown becomes its lineage, and a later resume continues it. Not while recording.";
+        sw["parameters"].append(idParam());
+        sw["parameters"].append(branchParam());
+        sw["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchRequest";
+        sw["responses"]["200"]["description"] = "Switched";
+        sw["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchResponse";
+        sw["responses"]["400"]["description"] = "frame / tinframe not integers, or tinframe without frame";
+        sw["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
+        sw["responses"]["409"]["description"] = "The switch was refused (recording, a moment off the branch)";
+
+        Json::Value& rel = paths["/api/v1/emulator/{id}/ttd/branches/switch"]["post"];
+        rel["summary"] = "Switch to the previous branch or a sibling at the nearest fork";
+        rel["tags"].append("Time-Travel Debug");
+        rel["description"] =
+            "to=previous: the branch left last (every switch and fork leaves one on a trail; repeated calls walk it "
+            "back), at its last visited moment. to=next_sibling / prev_sibling: the next / previous branch at the "
+            "nearest fork of the active lineage (the last fork at or before the moment, else the first after it), "
+            "the lineage's own branch past the fork included, by creation.";
+        rel["parameters"].append(idParam());
+        rel["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchRelativeRequest";
+        rel["responses"]["200"]["description"] = "Switched";
+        rel["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchResponse";
+        rel["responses"]["400"]["description"] = "to missing or not previous / next_sibling / prev_sibling";
+        rel["responses"]["404"]["description"] =
+            "Emulator instance not found, no branch left before this one, or no other branch at a fork";
+        rel["responses"]["409"]["description"] = "The switch was refused";
+    }
+
+    // =====================================================================
     // POST /ttd/dump — serialize session to .ttd file (Phase 4)
     // =====================================================================
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["summary"] =
@@ -592,7 +791,8 @@
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["description"] =
         "Serializes the current TTD session to a .ttd binary file at the "
         "given filesystem path: the engine's session file (schema 2, Kaitai "
-        "schema core/src/debugger/ttd/ttd.ksy).";
+        "schema core/src/debugger/ttd/ttd.ksy). Every branch is saved; "
+        "lineage=true saves only the active branch's lineage as one linear history.";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/dump"]["post"]["parameters"][0]["required"] = true;
@@ -837,6 +1037,28 @@
         "Emulator instance not found";
     paths["/api/v1/emulator/{id}/ttd/reverse-step"]["post"]["responses"]["501"]["description"] =
         "TTD engine not available in this build";
+
+    // =====================================================================
+    // POST /ttd/reverse-step-over — back over a routine (the debuggers' Shift+F8)
+    // =====================================================================
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["summary"] = "Step back over a routine whose return comes before, else one instruction";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["tags"].append("Time-Travel Debug");
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["description"] =
+        "One instruction back; when that instruction is the return (RET, RET cc, RETI, RETN) that lifted the stack to "
+        "where it is now, back past the whole routine to the instruction at this stack level before it: the CALL / RST "
+        "that entered it, or the instruction an interrupt came after. Nested calls and interrupts inside are passed "
+        "over. call_out_of_reach: the routine started before the history (or behind a barrier), the machine stays on "
+        "the return.";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["name"] = "id";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["in"] = "path";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["required"] = true;
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["schema"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["200"]["description"] = "Step attempted (check stepped / over_call)";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+        "#/components/schemas/TTDReverseStepOverResponse";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["404"]["description"] = "Emulator instance not found";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["409"]["description"] = "No time travel session to step in";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["responses"]["501"]["description"] = "TTD engine not available in this build";
 
     // =====================================================================
     // POST /ttd/reverse-continue — run backward until PC matches (Phase 4)

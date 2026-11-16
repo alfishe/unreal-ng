@@ -479,6 +479,13 @@ struct Z80State : public Z80Registers, public Z80DecodedOperation
     /// Exec breakpoints are checked at each instruction start without the debug mode while exec taps are armed
     /// (BreakpointManager::ApplyTapDemand): the memory keeps the fast interface
     bool execTapHold = false;
+    /// Tight mode (FeatureManager::setCardTightHold): the debugged card CPUs catch up to this CPU at each instruction
+    /// start, so a card's stop parks this CPU at the boundary of the instruction it fell in. The memory keeps the fast
+    /// interface
+    bool cardTight = false;
+    /// `t` at the current instruction's start, set while the instruction-start debug work runs (debug mode, exec
+    /// taps, tight mode): how far a main CPU parked inside an instruction is into it
+    uint32_t instrStartT = 0;
 
     int cycles_to_capture = 0;  // [NEW] Number of cycles to capture after trigger
 

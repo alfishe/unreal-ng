@@ -441,7 +441,8 @@ TEST(TTD_CoverageIndex_Test, CorruptBlockSizesAreRefusedBeforeAllocating)
 }
 
 // ---------------------------------------------------------------------------
-// DropFramesFrom: a resume from the past discards the future. The index must
+// DropFramesFrom: the line a resume from the past records on drops the frames after the resume point (the old
+// future stays on its own branch). The index must
 // forget it - including inside a sealed or open block that straddles the cut -
 // and must never prove an absence for the partial frame of a mid-frame resume.
 // ---------------------------------------------------------------------------

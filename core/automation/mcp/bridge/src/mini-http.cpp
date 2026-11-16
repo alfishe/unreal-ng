@@ -338,6 +338,7 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
         result.error = connectError.empty() ? "connection refused" : connectError;
         return result;
     }
+    result.connected = true;
 
     // Bound a wedged server so the daemon never hangs forever. Receive is deliberately generous:
     // MCP tool calls (run_frames, recordings, searches) can take minutes, and a non-SSE response
@@ -391,6 +392,7 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
     std::string raw;
     char buffer[8192];
     bool complete = false;
+    bool framed = false;  // the headers named Content-Length or chunked: EOF before the end is a broken answer
     while (!complete)
     {
         int received = static_cast<int>(recv(sock, buffer, sizeof(buffer), 0));
@@ -418,6 +420,8 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
         }
 
         const std::string framing = ToLower(raw.substr(0, headerEnd));
+        framed = framing.find("transfer-encoding: chunked") != std::string::npos ||
+                 framing.find("content-length:") != std::string::npos;
         if (framing.find("transfer-encoding: chunked") != std::string::npos)
         {
             // Terminal chunk "0\r\n\r\n" (drogon sends no trailers); a recv()
@@ -444,6 +448,14 @@ HttpResult Post(const std::string& host, int port, const std::string& path, cons
         }
     }
     BRIDGE_CLOSE(sock);
+
+    // The server closed the connection before its answer was whole: it went away during the call (an emulator that
+    // exited or crashed) - not an answer to pass on
+    if (!complete && (raw.empty() || framed))
+    {
+        result.error = raw.empty() ? "connection closed before any answer" : "connection closed in the middle of the answer";
+        return result;
+    }
 
     // Status line: "HTTP/1.1 200 OK"
     size_t lineEnd = raw.find("\r\n");

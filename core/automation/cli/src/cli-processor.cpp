@@ -126,6 +126,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
+                        {"selected-cpu", &CLIProcessor::HandleSelectedCpu},  // The CPU front-ends show (CpuView::SetSelected)
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -190,6 +191,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"cpuprofile", &CLIProcessor::HandleCpuProfile},      // CPU time profile: start/stop/report/frames/export
                         {"aylog", &CLIProcessor::HandleAyLog},                // AY register-write logging
                         {"audiocapture", &CLIProcessor::HandleAudioCapture},  // Buffered stereo capture
+                        {"sectiontimer", &CLIProcessor::HandleSectionTimer},  // Section timing (entry / exit markers)
                         {"mixer", &CLIProcessor::HandleMixer},                // Per-device mixer (mute, solo, volume)
                         {"videorecord", &CLIProcessor::HandleVideoRecord},    // Video recording control
                         {"recent", &CLIProcessor::HandleRecent},              // Files opened lately (RecentFiles)
@@ -689,7 +691,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
     oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
-    oss << "  reset [id|index]    - Reset the emulator (auto-select if only one, or by ID/index)" << NEWLINE;
+    oss << "  reset [hard] [id|index] - Reset the emulator: soft (the reset button); hard = power cycle (Next: boot ROM + firmware)" << NEWLINE;
     oss << "  ops [n|all] | ops since <seq> [n] - Operation log: reset, snapshot, media changes, refusals (newest 20)" << NEWLINE;
     oss << "  pause [id|index]    - Pause emulation (auto-select if only one, or by ID/index)" << NEWLINE;
     oss << "  switch [turbo|cpm [on|off]] - Front-panel switches (Profi TURBO, v5 CP/M; recorded by TTD like a key)" << NEWLINE;
@@ -702,6 +704,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  ... --cpu gs|ms - step [count] / steps / stepover / stepout of the sound card CPU: the machine runs" << NEWLINE;
     oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  skip_until <pc> --cpu gs|ms   - Run the sound card CPU to <pc> (a breakpoint on the way ends it)" << NEWLINE;
     oss << "  run_until key=value ...       - Frames until if= / text= / screen= / event= holds ('run_until help')" << NEWLINE;
     oss << "  watch add|list|del            - Armed frame watches: a hit pauses and is pushed as watch_hit" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
@@ -711,6 +714,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  next nextreg <reg> <value> [nextreg|port|internal] - ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it); `next dma|video|palette|ports|nextreg|copper|sprites` read the reports; `next pixel <x> <y> [sx]` says which layer draws a pixel of the last frame and why; `next layer-capture [on|off]` switches the per-layer record (images: `capture screen --layer=ula|layer2|tilemap|sprites|ids`)" << NEWLINE;
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
+    oss << "  selected-cpu [main|gs|ms] - The CPU the front-ends show; a card shown follows the main CPU's steps" << NEWLINE;
     oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;
@@ -840,6 +844,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  markup [show] [range] | layers | mark <range> <kind> [title] | unmark <range> | comment <addr> [text] | clear [layer] | save [profile] [keep] - Memory markup" << NEWLINE;
     oss << "  aylog start [cap]|stop|clear|status|dump [N]  - AY register-write log" << NEWLINE;
     oss << "  audiocapture start <s>|stop|clear|status|result|save <wav> - Audio" << NEWLINE;
+    oss << "  sectiontimer start [SECTION..] [break-if NAME>T]|stop|clear|status|result - Section timing" << NEWLINE;
     oss << "  videorecord start|stop|pause|resume|toggle|status|presets [opts] - Video (--preset gameplay, --mode audio, --audio aac, --profile 4k)" << NEWLINE;
     oss << "  recent [kind] | recent clear [kind]                     - Files opened lately (open: action run media.open_recent index=N)" << NEWLINE;
     oss << NEWLINE;

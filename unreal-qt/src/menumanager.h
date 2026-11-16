@@ -153,6 +153,7 @@ signals:
     void pauseRequested();
     void resumeRequested();
     void resetRequested();
+    void hardResetRequested();  // Power cycle (Emulator::Reset(true))
     void stopRequested();
 
     // Machine control signals
@@ -339,6 +340,7 @@ private:
     QAction* _resumeAction;
     QAction* _stopAction;
     QAction* _resetAction;
+    QAction* _hardResetAction;
     QMenu* _speedMenu;
     QActionGroup* _speedGroup;
     QAction* _speed1xAction;

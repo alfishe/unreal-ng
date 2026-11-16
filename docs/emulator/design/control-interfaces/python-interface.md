@@ -111,8 +111,8 @@ class Emulator:
     def release(self):
         """Cleanup and release resources"""
         
-    def reset(self):
-        """Hardware reset (equivalent to pressing reset button)"""
+    def reset(self, hard: bool = False):
+        """Soft reset (the reset button); hard=True is a power cycle (the ZX Next runs its boot ROM and firmware)"""
 
     # Device state reports - the same trees the WebAPI, Lua, CLI and MCP
     # return (command-interface.md section 3.3); dicts/lists/scalars
@@ -324,7 +324,7 @@ class Emulator:
 
     def capture_screen_layer(self, layer, format="png", alpha=None, path="") -> dict:
         """ONE LAYER of the last completed frame of a Next: 'ula' 'layer2' 'tilemap' 'sprites' (alpha 0 where the layer does not paint,
-        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512; format 'png' or 'rgba';
+        alpha=False flattens onto the fallback colour) or 'ids' (the winner of every pixel, with a legend); 640 x 512, the 640x512 grid of the screenshot (at (32, 32) of its 720x576 frame; (40, 48) on the Pentagon timing); format 'png' or 'rgba';
         a dict like capture_screen (base64 'data' or 'file'), success=False with kind 'not-next' / 'layer-capture-off' / 'no-frame' / 'bad-parameter'"""
 
     def sprinter_pld_journal(self, kinds=None, since=None, from_frame=None, to_frame=None, limit=None, source="live") -> dict:
@@ -370,6 +370,11 @@ class Emulator:
     # neogs_stereo, covox_dc_removal, fir_filter ("unavailable" where the machine has no such part)
     # audio_capture_start(seconds=1.0, source="", file="") records one mixer device's own buffer; file="out.wav"
     # writes the WAV while the samples come (seconds up to 86400, closes at the target; status: file_closed)
+    # section_timer_start(sections=[], break_if=[], extra=[], recursive=False, frame_t=0, capacity=100000):
+    # section timing at full speed (command-interface 5.5c); sections "NAME" (labels NAME, NAME.End) or
+    # "name=ENTRY:EXIT[,EXIT]", none = every X with an X.End; break_if "[net:]NAME<op>T" pauses at that pass's exit;
+    # ValueError with the reason. section_timer_result(offset=0, limit=1000, text=False) -> dict (or the table),
+    # section_timer_stop() (results stay), section_timer_clear()
 
     def tsconf_tsu(self) -> dict:
         """TS-Conf TSU objects and palette for debug views: t_config, tilemap_page,
@@ -587,6 +592,8 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     # cpu="gs" on step, steps, stepover and step_out steps the card CPU: the machine runs until the card's step
     # ends, then is paused; the answer {ok, stop: {cpu, reason, cpu_pc, ...}, pc, sp, main_pc, main_sp, state}
     # or {ok: False, error}
+    # select_cpu("gs") / selected_cpu(): the CPU the front-ends show, {cpu, follows}; a card shown follows the main
+    # CPU's steps of the paused machine (its state at the main CPU's moment); "main" ends it
         
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
@@ -719,6 +726,7 @@ and return the reply dict) - the same verbs, options and replies as the CLI `slo
 import unreal_emulator as unreal
 unreal.slots_state()                      # buses, slots (card, options, adapter, fit, state), built-ins, plan log
 unreal.slots_catalog()                    # every card: options, functions, ports, media, thisMachine {slot, fit, outcome}
+unreal.slots_catalog(slot="zxbus.1")      # each card planned into that slot (thisMachine.inSlot: the card there now)
 unreal.slots_matrix("cards")              # the compatibility tables as markdown ("" = all)
 
 r = unreal.slots_plug("zxbus.next", "multisound", dry_run=True)          # the plan only
@@ -1632,7 +1640,7 @@ emu.ttd_step_instruction_back()             # -> bool
 emu.ttd_step_instruction_forward()          # -> bool
 
 emu.ttd_resume()                            # -> bool; record again from the exact current position (frame and tinframe)
-emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; the future is discarded
+emu.ttd_resume(frame=4823, tinframe=0)      # ...or from a given point; a new branch forks there, the old future stays
                                             # fails from idle: seek first
 
 emu.ttd_position()   # current, session_end, first_frame, history, state, paused, fps; never parks the machine
@@ -1646,6 +1654,8 @@ emu.ttd_reverse_step()                      # -> bool; one instruction back
 emu.ttd_reverse_step(count=10)              # ten instructions back
 emu.ttd_reverse_step_tstates(tstates=5000)  # back 5000 t-states (nearest instruction start)
 emu.ttd_reverse_step_scanlines(scanlines=2) # back 2 scanlines of the machine (t_line each)
+emu.ttd_reverse_step_over()                 # -> bool; back over a routine when the instruction before is its
+                                            # return, otherwise one instruction back (debuggers' Shift+F8)
 
 hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 # -> {'matched': True, 'pc': 0x8000, 'frame': 4700, 'tinframe': 812}
@@ -1764,10 +1774,43 @@ emu.ttd_seek_bookmark('umt entry')          # same dict as ttd_seek (blocking_ma
 
 Bookmarks are advisory and never stop a seek; markers do.
 
+**Branches** (a resume in the past records on a new branch, named by its time from the trunk start such as
+`+00:01:25.150`, and the old future stays on the parent; the first history is the
+`trunk`, id 0; a branch is named by its id, its GUID or its name):
+
+```python
+b = emu.ttd_branches()                      # also scope='lineage', created_by=, tag=, name_prefix=, pinned=, limit=, offset=,
+                                            # run=, min_length=, max_length=, created_after=, created_before=
+# -> {'branches': [{'id', 'guid', 'name', 'parent', 'fork': {'frame', 'tinframe'} or None, 'end', 'length',
+#     'created_by', 'reason', 'tags', 'note', 'pinned', 'children', 'active', 'on_lineage'}, ...], 'total', 'count',
+#     'active', 'viewed', 'lineage': [{'branch', 'from'}], 'text'}   (no branches: an empty list); ValueError for a bad filter
+emu.ttd_branch_switch('+00:00:25.150')           # at its end; emu.ttd_branch_switch(1, frame=4830, tinframe=0)
+# -> {'switched': True, 'branch': {...}, 'arrived_at': {...}, 'state': ..., 'check': {...}, 'text': ...}
+#    or {'switched': False, 'error': '...'}
+emu.ttd_branch_switch_to('previous')             # the branch left last (again: further back); 'next_sibling' /
+# 'prev_sibling': the next / previous branch at the nearest fork (adds 'fork_frame', 'siblings'); ValueError for another word
+emu.ttd_branch_update('+00:00:25.150', name='boss fight', note='...', add_tags=['boss'], pinned=True)
+# also tags=[...] (replace), remove_tags=[...]; -> {'updated': True, 'branch': {...}, 'text': ...};
+# ValueError for nothing to change or a bound broken, {'updated': False, 'error': ...} otherwise
+emu.ttd_branch_delete('boss fight', force=True)   # force: pinned ones too; its descendants go with it
+# -> {'deleted': True, 'removed': [ids], 'removed_names': [...], 'text': ...} or {'deleted': False, 'error': ...}
+emu.ttd_branch_info('probe')                # -> {'branch', 'children', 'ancestors', 'files', 'file_bytes', 'folder', 'active', 'text'}
+# An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by 'python'):
+p = emu.ttd_branch_create(name='probe', frame=4823, run='r1', run_frames=50,
+                          input=['0:a', '10:caps+5:4'], read=['#5C00:16'], go_back=True)
+# input: 'frame:key[+key][:hold|:down|:up]' from the branch start (hold default 2 frames, 1..1000), '5:joy.fire:down',
+# '9:release_all'; read: 'addr[:len]'; poke=['#8100=5'] and regs=['a=1'] change the branch first (tool edits)
+# -> {'created', 'branch', 'parent', 'at', 'ran_frames', 'aborted', 'end', 'reads': [{'address', 'length', 'bytes',
+#    'hex'}], 'returned_to', 'media', 'state', 'text'}; ValueError for a bad option, {'created': False, 'error'} otherwise
+emu.ttd_branch_prune(run='r1')              # a dry run: {'dry_run', 'would_delete', 'kept', 'frames', 'file_bytes', 'text'}
+emu.ttd_branch_prune(run='r1', dry_run=False)   # deletes; the active lineage and pinned ones stay ('kept', with why)
+```
+
 **Sessions on disk:**
 
 ```python
-emu.ttd_dump('/tmp/session.ttd')            # -> bool
+emu.ttd_dump('/tmp/session.ttd')            # -> bool; every branch
+emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> bool; only the active branch's lineage, one linear history
 emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)
@@ -1901,6 +1944,7 @@ return a dict; on failure the dict carries an `error` string.
 emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+emu.skip_until(0x4010, cpu="gs")     # the sound card CPU to the cursor (a breakpoint ends it; the card step's dict + hit)
 
 # Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
 # condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs
@@ -2058,6 +2102,13 @@ emu.audio_capture_status()
 emu.audio_capture_result()           # sample stats + per-channel peak/RMS
 emu.audio_capture_result("out.wav")  # additionally export a 16-bit WAV file
 
+# Section timing (command-interface 5.5c): the machine at full speed, interrupts accounted
+emu.section_timer_start(sections=["Plasma", "Sparkles"], break_if=["Frame>69888"])
+emu.resume()                         # break_if stops a run that honours breakpoints (run_frames skips them)
+r = emu.section_timer_result()       # sections (count, min, avg, max, net_*), passes, stopped
+print(emu.section_timer_result(text=True))
+emu.section_timer_stop()
+
 # Core audio rate (same switch as CLI 'setting audio_rate' and WebAPI
 # PUT settings/audio_rate): pin 44100..192000 for this run - never persisted.
 # 0 = auto: follow the resolution chain device rate > [SOUND] CoreRate >
@@ -2144,6 +2195,7 @@ item = emu.analysis("review")                          # the next item: {item, s
 emu.analysis("review", op="resolve", id=item["item"]["id"], verdict="ok", label="MainLoop", title="The main loop")
 emu.analysis("experiment", finding="F12", spec={"poke": {"$8100": 5}, "frames": 50,
              "watch": [{"pc": "$8130", "as": "rare"}], "expect": {"rare": "reached"}})  # a dict or a list of dicts
+emu.analysis("experiment", keep_branches="observed", run="r7", spec=[...])  # observed ones become TTD branches
 emu.analysis("cover", budget=32)                       # {candidates, tried, flipped, new_code, branches [...], text}
 ```
 

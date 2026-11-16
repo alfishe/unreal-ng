@@ -38,6 +38,7 @@
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/ide/cdaudiocontrol.h>
+#include <emulator/media/floppyformats.h>
 #include <emulator/media/mediacontrol.h>
 #include <emulator/media/recentfiles.h>
 #include <emulator/capture/recordingcontrol.h>
@@ -105,6 +106,7 @@
 #include <debugger/analyzers/analyzermanager.h>
 #include <debugger/analyzers/audiocapture/audiocaptureanalyzer.h>
 #include <debugger/analyzers/aylog/ayloganalyzer.h>
+#include <debugger/analyzers/sectiontimer/sectiontimeranalyzer.h>
 #include <debugger/analyzers/coverage/coverageanalyzer.h>
 #include <debugger/analyzers/coverage/coverageexport.h>
 #include <debugger/analyzers/osaware/osaware_event.h>
@@ -539,9 +541,9 @@ protected:
         return cpu;
     }
 
-    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = true, or
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = true, or
     /// ok = false and error. The machine runs until the card ends it, then is paused
-    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count) const
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
     {
         sol::table result = lua.create_table();
         Emulator* emulator = effectiveEmulator();
@@ -556,7 +558,7 @@ protected:
         // The automation gate as every step of a script: its session, or an implicit one
         execution::script::Check(*emulator, execution::Origin::Lua);
         const execution::RunReply reply = execution::RunControl(shared).CardStep(
-            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count);
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count, address);
         if (reply.status == execution::RunReply::Status::Revoked)
             throw std::runtime_error(reply.message);
         if (!reply.Ok())
@@ -1074,7 +1076,19 @@ public:
                 execution::script::Check(self, execution::Origin::Lua);
                 self.Resume(execution::script::RequesterOf(self, execution::Origin::Lua));
             },
-            "reset", &Emulator::Reset,
+            // emu:reset() is soft (the reset button); emu:reset(true) or emu:reset{hard = true} is a power cycle
+            "reset", [](Emulator& self, sol::variadic_args va) {
+                bool hard = false;
+                if (va.size() > 0)
+                {
+                    const sol::object arg = va.get<sol::object>(0);
+                    if (arg.get_type() == sol::type::boolean)
+                        hard = arg.as<bool>();
+                    else if (arg.get_type() == sol::type::table)
+                        hard = arg.as<sol::table>().get_or("hard", false);
+                }
+                self.Reset(hard);
+            },
             "request_nmi", &Emulator::RequestNMI,
             "request_mni", &Emulator::RequestMNI,
             // Front-panel switches (Profi "turbo"): get -> true/false, nil when absent; set -> true when done
@@ -1374,7 +1388,8 @@ public:
             }
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] { mem->ToolWriteToZ80Memory(addr, value); });
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, 1),
+                                                           [&] { mem->ToolWriteToZ80Memory(addr, value); });
         });
 
         lua.set_function("mem_read_word", [this](uint16_t addr) -> uint16_t {
@@ -1388,7 +1403,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, 2), [&] {
                 mem->ToolWriteToZ80Memory(addr, value & 0xFF);
                 mem->ToolWriteToZ80Memory(static_cast<uint16_t>(addr + 1), (value >> 8) & 0xFF);
             });
@@ -1712,7 +1727,7 @@ public:
             if (!effectiveEmulator()) return;
             Memory* mem = effectiveEmulator()->GetMemory();
             if (!mem) return;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua memory write", [&] {
+            effectiveEmulator()->EditMemoryFromToolOrThrow(Emulator::ToolEdit::Of("Lua memory write", "memory", addr, data.size()), [&] {
                 for (auto& pair : data) {
                     int idx = pair.first.as<int>() - 1;  // Lua tables start at 1
                     uint8_t val = pair.second.as<uint8_t>();
@@ -1753,7 +1768,9 @@ public:
                 pagePtr = mem->CacheBase() + (page * PAGE_SIZE);
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
+            Emulator::ToolEdit what = Emulator::ToolEdit::Of("Lua page write", "page", static_cast<int32_t>(offset), 1);
+            what.page = type + std::to_string(page);
+            effectiveEmulator()->EditMemoryFromToolOrThrow(what, [&] {
                 pagePtr[offset] = value;
                 if (type == "ram")
                     mem->MarkRamPageEdited(static_cast<uint16_t>(page));
@@ -1800,7 +1817,9 @@ public:
             else
                 pagePtr = mem->MiscBase() + (page * PAGE_SIZE);
             int maxLen = PAGE_SIZE - offset;
-            effectiveEmulator()->EditMemoryFromToolOrThrow("Lua page write", [&] {
+            Emulator::ToolEdit what = Emulator::ToolEdit::Of("Lua page write", "page", static_cast<int32_t>(offset), data.size());
+            what.page = type + std::to_string(page);
+            effectiveEmulator()->EditMemoryFromToolOrThrow(what, [&] {
                 int idx = 0;
                 for (auto& pair : data) {
                     if (idx >= maxLen) break;
@@ -1922,7 +1941,7 @@ public:
         });
         // capture_screen_layer(layer [, {format = "png"|"rgba", alpha = true|false, path = "file"}]): ONE LAYER of the last completed frame of a ZX
         // Spectrum Next (design-layer-capture.md): "ula" (with the border and LoRes), "layer2", "tilemap", "sprites" - alpha 0 where the layer
-        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the geometry of screenshot(). Returns
+        // does not paint - or "ids" (every pixel coloured by the layer that won it). 640 x 512, the grid of screenshot()'s 720 x 576 frame at (32, 32). Returns
         // {layer, format, alpha, width, height, size, frame = {sequence, frame_number}, data = the PNG (or the raw RGBA bytes) as a string,
         // or `file`, legend = {{id, name, colour}...} for ids}; nil, error when the machine is not a Next, the capture is off
         // (next_layer_capture_control{enabled = true}) or no frame was completed yet
@@ -2133,7 +2152,7 @@ public:
         });
 
         // region <ZX-bus slots through SlotControl (ZX-bus slots architecture.md §9)>
-        // slots_state(), slots_catalog(), slots_matrix([table]),
+        // slots_state(), slots_catalog([slot]), slots_matrix([table]),
         // slots_plug(slot, card [, opts]), slots_remove(slot [, opts]), slots_set(slot, opts), slots_gs(card [, opts]).
         // slot: zxbus.1, zxbus.next, ay-socket ("" or "auto" for plug: the planner's choice).
         // opts: {options = "dip=ym,saa" | {dip = "ym,saa"}, replace = true, dry_run = true, media = "save" | "discard",
@@ -2146,9 +2165,10 @@ public:
             request.verb = "list";
             return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
         });
-        lua.set_function("slots_catalog", [this](sol::this_state s) {
+        lua.set_function("slots_catalog", [this](sol::this_state s, sol::optional<std::string> slot) {
             SlotControlRequest request;
             request.verb = "catalog";
+            request.slot = slot.value_or("");  // every card planned into that slot
             return StateNodeToLua(s, slotsCall(request, sol::nullopt, false).ToValue());
         });
         lua.set_function("slots_matrix", [this](sol::this_state s, sol::optional<std::string> table) {
@@ -2798,7 +2818,7 @@ public:
             const int cylinders = cyl.value_or(0);
             const int numSides = sides.value_or(0);
             if (cylinders < 0 || cylinders > 255 || numSides < 0 || numSides > 255)
-                return {false, "cylinders must be 40 or 80, sides 1 or 2"};
+                return {false, std::string("expected ") + BlankFloppySpec::GeometryHelp};
             std::string error;  // carries the TTD refusal while recording
             const bool ok = effectiveEmulator()->CreateBlankDisk(static_cast<uint8_t>(drive), parsed,
                                                                  static_cast<uint8_t>(cylinders),
@@ -2930,6 +2950,21 @@ public:
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
             effectiveEmulator()->StepOver();
             return sol::lua_nil;
+        });
+
+        // select_cpu(cpu) / selected_cpu(): the CPU the front-ends show (CpuView::SetSelected), {cpu, follows}; a card
+        // shown follows the main CPU's steps of the paused machine in tight mode
+        lua.set_function("select_cpu", [this](const std::string& cpuName, sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            if (const std::string error = CpuView::SetSelected(emulator->GetContext(), cpuName); !error.empty())
+                throw std::runtime_error(error);
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
+        });
+        lua.set_function("selected_cpu", [this](sol::this_state ts) -> sol::object {
+            Emulator* emulator = effectiveEmulator();
+            if (!emulator) return sol::lua_nil;
+            return StateNodeToLua(ts, CpuView::Selected(emulator->GetContext()));
         });
 
         // Frame stepping methods
@@ -3121,14 +3156,19 @@ public:
             return keyboard && keyboard->HasPs2Sink() ? keyboard->GetPs2Sink()->ControllerName() : std::string();
         });
 
-        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames) -> bool {
+        // key_tap(key [, frames [, count [, gap_frames]]]): count taps in a row (1..100), gap_frames after each release
+        lua.set_function("key_tap", [this](const std::string& keyName, sol::optional<uint16_t> holdFrames,
+                                           sol::optional<uint16_t> count, sol::optional<uint16_t> gapFrames) -> bool {
             Emulator* emulator = effectiveEmulator();
             EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
             if (!ctx || !ctx->pDebugManager->GetKeyboardManager())
                 return false;
             if (!DebugKeyboardManager::IsKnownKeyName(keyName))
                 return false;  // an unknown name fails, not a silent no-op
-            ctx->pDebugManager->GetKeyboardManager()->TapKey(keyName, holdFrames.value_or(2));
+            const uint16_t taps = count.value_or(1);
+            if (taps < 1 || taps > DebugKeyboardManager::MAX_TAP_COUNT)
+                return false;
+            ctx->pDebugManager->GetKeyboardManager()->TapKeyRepeated(keyName, holdFrames.value_or(2), taps, gapFrames.value_or(0));
             return true;
         });
 
@@ -6009,7 +6049,8 @@ public:
             if (!ctx) return info;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return info;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return info;
             info["cylinders"] = disk->getCylinders();
             info["sides"] = disk->getSides();
@@ -6030,7 +6071,8 @@ public:
             if (!ctx) return data;
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return data;
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return data;
             auto* track = disk->getTrackForCylinderAndSide(cyl, side);
             if (!track) return data;
@@ -6085,7 +6127,8 @@ public:
             if (!ctx) return "";
             FDD* fdd = ctx->coreState.diskDrives[drive];
             if (!fdd) return "";
-            DiskImage* disk = fdd->getDiskImage();
+            std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();  // the drive's image may change meanwhile
+            DiskImage* disk = snapshot.get();
             if (!disk) return "";
             return disk->DumpSectorHex(trackNo, sector);
         });
@@ -6307,11 +6350,150 @@ public:
         });
 
         // -----------------------------------------------------------------
+        // TTD branches: a resume in the past keeps the old future as a branch.
+        // A branch is named by its id (0 = the trunk), its GUID or its name.
+        // -----------------------------------------------------------------
+
+        // ttd_branches([{scope = "all" | "lineage", created_by = "...", run = "...", tag = "..." or {...},
+        // name_prefix = "...", pinned = true, min_length = F, max_length = F, created_after = US, created_before = US,
+        // limit = N, offset = N}]): {branches = {...}, total, count, active, viewed, lineage, text}
+        lua.set_function("ttd_branches", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                             -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("branches", options)));
+        });
+
+        // ttd_branch_switch_to(to): "previous" (the branch left last; again: further back), "next_sibling" /
+        // "prev_sibling" (the next / previous branch at the nearest fork, by creation); as ttd_branch_switch
+        lua.set_function("ttd_branch_switch_to", [this](sol::this_state ts, const std::string& to) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("branch-switch", {{"to", to}});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["switched"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_switch(branch [, frame [, tinframe]]): continue on the branch, at the moment on it (default: its
+        // end); {switched, branch, arrived_at, state, check, text} or {switched = false, error = ...}
+        lua.set_function("ttd_branch_switch", [this](sol::this_state ts, sol::object branch,
+                                                      sol::optional<uint64_t> frame,
+                                                      sol::optional<uint32_t> tinframe) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            if (frame)
+            {
+                options["frame"] = std::to_string(*frame);
+                options["tinframe"] = std::to_string(tinframe.value_or(0));
+            }
+            const ttd::TTDReply reply = TtdRun("branch-switch", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["switched"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_update(branch, {name = "...", note = "...", tags = {...}, add_tags = {...}, remove_tags = {...},
+        // pinned = true}): the branch as it is now, or {updated = false, error = ...}
+        lua.set_function("ttd_branch_update", [this](sol::this_state ts, sol::object branch,
+                                                      sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-update", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["updated"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_info(branch): {branch, children = {...}, ancestors = {...}, files = {...}, file_bytes, folder,
+        // text} or {error = ...}
+        lua.set_function("ttd_branch_info", [this](sol::this_state ts, sol::object branch) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("branch-info", {{"branch", TtdOptionText(branch)}});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+                value["error"] = reply.message;
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_create([{name = "...", frame = F, tinframe = T, branch = <b>, reason = "...", tags = {...},
+        // note = "...", pinned = true, run = "<run id>", created_by = "...", media = "ask"|"empty"|"keep",
+        // run_frames = N, input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}]): a branch at the
+        // moment (default: here); with run_frames the machine runs it headless N frames fed by the input and records
+        // it. {created, branch, parent, at, ran_frames, aborted, end, reads, returned_to, state, text} or
+        // {created = false, error = ...}
+        lua.set_function("ttd_branch_create", [this](sol::this_state ts, sol::optional<sol::table> argsTable)
+                                                   -> sol::object {
+            std::map<std::string, std::string> options;
+            if (argsTable)
+                for (const auto& [key, value] : *argsTable)
+                    if (key.is<std::string>())
+                        options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-create", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["created"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_prune({run = "...", created_by = "...", tag = ..., ... [, dry_run = false]}): the branches the
+        // filter picks, deleted with dry_run = false (default: a dry run). {dry_run, would_delete | deleted = {...},
+        // kept = {...}, frames, file_bytes, text} or {error = ...}
+        lua.set_function("ttd_branch_prune", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                if (key.is<std::string>())
+                    options[key.as<std::string>()] = TtdOptionText(value);
+            const ttd::TTDReply reply = TtdRun("branch-prune", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+                value["error"] = reply.message;
+            return StateNodeToLua(ts, value);
+        });
+
+        // ttd_branch_delete(branch [, force]): the branch and its descendants (force: pinned ones too);
+        // {deleted, removed = {ids}, removed_names = {...}, text} or {deleted = false, error = ...}
+        lua.set_function("ttd_branch_delete", [this](sol::this_state ts, sol::object branch,
+                                                      sol::optional<bool> force) -> sol::object {
+            std::map<std::string, std::string> options{{"branch", TtdOptionText(branch)}};
+            if (force && *force)
+                options["force"] = "true";
+            const ttd::TTDReply reply = TtdRun("branch-delete", options);
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["deleted"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
+        // -----------------------------------------------------------------
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
-        lua.set_function("ttd_dump", [this](const std::string& path) -> bool {
-            return TtdRun("dump", {{"path", path}}).Ok();
+        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history
+        lua.set_function("ttd_dump", [this](const std::string& path, sol::optional<bool> lineage) -> bool {
+            std::map<std::string, std::string> options{{"path", path}};
+            if (lineage && *lineage)
+                options["lineage"] = "true";
+            return TtdRun("dump", options).Ok();
         });
 
         // Loading refuses a session recorded on a different machine model: a
@@ -6443,6 +6625,12 @@ public:
         lua.set_function("ttd_reverse_step_scanlines", [this](uint64_t scanlines) -> bool {
             const ttd::TTDReply reply = TtdRun("reverse-step", {{"scanlines", std::to_string(scanlines)}});
             return reply.Ok() && reply.body.find("reached")->b;
+        });
+
+        // ttd_reverse_step_over(): back over a routine when the instruction before is its return, else one instruction
+        lua.set_function("ttd_reverse_step_over", [this]() -> bool {
+            const ttd::TTDReply reply = TtdRun("reverse-step-over", {});
+            return reply.Ok() && reply.body.find("stepped")->b;
         });
 
         // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
@@ -6658,9 +6846,16 @@ public:
             return result;
         });
 
-        // Fast-forward until PC reaches the target (breakpoints skipped)
-        lua.set_function("skip_until", [this](sol::object pcValue, sol::optional<unsigned> maxTStatesOpt) -> sol::table {
+        // Fast-forward until PC reaches the target (breakpoints skipped). skip_until(pc, [max_tstates], [cpu]) or
+        // skip_until(pc, cpu): "gs" / "ms" runs that sound card CPU to the cursor (CardStep "to"; breakpoints end it)
+        lua.set_function("skip_until", [this](sol::object pcValue, sol::object second,
+                                              sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
             sol::state_view lua_view(*_lua);
+            sol::optional<unsigned> maxTStatesOpt;
+            if (second.is<std::string>() && !cpuName)
+                cpuName = second.as<std::string>();
+            else if (second.is<unsigned>())
+                maxTStatesOpt = second.as<unsigned>();
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) { result["error"] = "no emulator"; return result; }
@@ -6683,6 +6878,8 @@ public:
 
             if (target32 > 0xFFFF) { result["error"] = "pc out of 16-bit range"; return result; }
             const uint16_t target = static_cast<uint16_t>(target32);
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "to", 1, target);
 
             // Safety budget: default 100 frames of emulated time, hard cap 200 s
             EmulatorContext* context = emulator->GetContext();
@@ -7756,6 +7953,139 @@ public:
             result["gaps"] = gaps;
             result["count"] = index;
             return result;
+        });
+
+        // Section timing (SectionTimerAnalyzer): section_timer_start{sections = {"Plasma", "spark=#8000:#8010"},
+        // break_if = {"Frame>69888"}, extra = {...}, recursive = false, frame_t = 0, capacity = N} -> the results
+        // without the passes, or nil and the reason; section_timer_stop(), section_timer_clear(),
+        // section_timer_result([offset [, limit]]) -> a table, section_timer_text() -> a table as text
+        auto sectionTimer = [this]() -> SectionTimerAnalyzer* {
+            Emulator* emulator = effectiveEmulator();
+            return SectionTimerAnalyzer::Find(emulator ? emulator->GetContext() : nullptr);
+        };
+        auto sectionTimerTable = [](sol::state_view view, const SectionTimerAnalyzer::Result& r) -> sol::table {
+            sol::table t = view.create_table();
+            t["active"] = r.active;
+            t["frame_t"] = r.frameT;
+            sol::table sections = view.create_table();
+            for (size_t i = 0; i < r.sections.size(); i++)
+            {
+                const auto& section = r.sections[i];
+                const auto x = i < r.stats.size() ? r.stats[i] : SectionTimerAnalyzer::Stats{};
+                sol::table one = view.create_table();
+                one["name"] = section.name;
+                one["entry"] = section.entry;
+                sol::table exits = view.create_table();
+                for (size_t e = 0; e < section.exits.size(); e++)
+                    exits[e + 1] = section.exits[e];
+                one["exits"] = exits;
+                one["count"] = x.count;
+                one["min"] = x.min;
+                one["max"] = x.max;
+                one["avg"] = x.count ? x.sum / x.count : 0;
+                one["net_min"] = x.netMin;
+                one["net_max"] = x.netMax;
+                one["net_avg"] = x.count ? x.netSum / x.count : 0;
+                one["interrupted"] = x.interrupted;
+                one["last"] = x.last;
+                one["max_frame"] = x.maxFrame;
+                one["max_t"] = x.maxT;
+                sections[i + 1] = one;
+            }
+            t["sections"] = sections;
+            auto name = [&](uint16_t section) {
+                return section < r.sections.size() ? r.sections[section].name : std::string();
+            };
+            sol::table passes = view.create_table();
+            for (size_t i = 0; i < r.passes.size(); i++)
+            {
+                const auto& p = r.passes[i];
+                passes[i + 1] = view.create_table_with("name", name(p.section), "frame", p.frame, "t", p.t, "elapsed",
+                                                       p.elapsed, "net", p.net, "interrupts", p.interrupts);
+            }
+            t["passes"] = passes;
+            t["passes_total"] = r.passesTotal;
+            t["passes_kept"] = r.passesKept;
+            t["hits"] = r.hits;
+            t["orphan"] = r.orphans;
+            t["dropped"] = r.dropped;
+            t["open"] = r.open;
+            if (r.stop.hit)
+            {
+                const auto& p = r.stop.pass;
+                t["stopped"] = view.create_table_with("condition", r.stop.condition, "section", name(p.section), "frame",
+                                                      p.frame, "t", p.t, "elapsed", p.elapsed, "net", p.net,
+                                                      "interrupts", p.interrupts);
+            }
+            return t;
+        };
+        auto strings = [](const sol::table& spec, const char* key) {
+            std::vector<std::string> out;
+            sol::object value = spec[key];
+            if (value.is<std::string>())
+                out.push_back(value.as<std::string>());
+            else if (value.get_type() == sol::type::number)
+                out.push_back(std::to_string(value.as<uint32_t>()));
+            else if (value.is<sol::table>())
+            {
+                sol::table list = value.as<sol::table>();
+                for (size_t i = 1; i <= list.size(); i++)
+                {
+                    sol::object one = list[i];
+                    out.push_back(one.get_type() == sol::type::number ? std::to_string(one.as<uint32_t>())
+                                                                       : one.as<std::string>());
+                }
+            }
+            return out;
+        };
+        lua.set_function("section_timer_start", [sectionTimer, sectionTimerTable, strings](
+                                                     sol::optional<sol::table> specOpt, sol::this_state ts)
+                                                     -> std::tuple<sol::object, sol::object> {
+            sol::state_view view(ts);
+            SectionTimerAnalyzer* timer = sectionTimer();
+            if (!timer)
+                return {sol::lua_nil, sol::make_object(view, std::string("section timer not available"))};
+            SectionTimerAnalyzer::Spec spec;
+            if (specOpt)
+            {
+                const sol::table& t = *specOpt;
+                spec.sections = strings(t, "sections");
+                spec.breakIf = strings(t, "break_if");
+                spec.extra = strings(t, "extra");
+                spec.recursive = t.get_or("recursive", false);
+                spec.frameT = t.get_or("frame_t", 0u);
+                spec.capacity = t.get_or("capacity", SectionTimerAnalyzer::kDefaultCapacity);
+            }
+            std::string error;
+            if (!timer->Start(spec, error))
+                return {sol::lua_nil, sol::make_object(view, error)};
+            return {sectionTimerTable(view, timer->GetResult(0, 0)), sol::lua_nil};
+        });
+        lua.set_function("section_timer_stop", [sectionTimer]() -> bool {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer && timer->Stop();
+        });
+        lua.set_function("section_timer_clear", [sectionTimer]() {
+            if (SectionTimerAnalyzer* timer = sectionTimer())
+                timer->Clear();
+        });
+        lua.set_function("section_timer_result", [sectionTimer, sectionTimerTable](sol::optional<size_t> offset,
+                                                                                   sol::optional<size_t> limit,
+                                                                                   sol::this_state ts) -> sol::object {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            if (!timer)
+                return sol::lua_nil;
+            return sectionTimerTable(sol::state_view(ts), timer->GetResult(offset.value_or(0), limit.value_or(1000)));
+        });
+        lua.set_function("section_timer_text", [sectionTimer]() -> std::string {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer ? SectionTimerAnalyzer::ToText(timer->GetResult(0, 0)) : std::string();
+        });
+        lua.set_function("section_timer_json", [sectionTimer](sol::optional<size_t> offset,
+                                                              sol::optional<size_t> limit) -> std::string {
+            SectionTimerAnalyzer* timer = sectionTimer();
+            return timer ? SectionTimerAnalyzer::ToJson(timer->GetResult(offset.value_or(0), limit.value_or(SIZE_MAX)))
+                         : std::string();
         });
 
         // AY register-write logging

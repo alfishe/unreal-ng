@@ -387,6 +387,27 @@ void DeviceScreenWrapper::setHudOverlay(HudOverlay* overlay)
     }
 }
 
+bool DeviceScreenWrapper::setOverlayPainter(std::function<void(QPainter&, int width, int height)> painter)
+{
+    if (!_useGPU || !_gpuWindow)
+        return false;
+    _gpuWindow->setOverlayPainter(std::move(painter));
+    _gpuWindow->requestUpdate();
+    return true;
+}
+
+void DeviceScreenWrapper::setOverlayPointer(std::function<bool(QEvent::Type, const QPointF&, int, int)> pointer)
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setOverlayPointer(std::move(pointer));
+}
+
+void DeviceScreenWrapper::updateOverlay()
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->requestUpdate();
+}
+
 void DeviceScreenWrapper::clearDisplayViewport()
 {
     _hasViewport = false;

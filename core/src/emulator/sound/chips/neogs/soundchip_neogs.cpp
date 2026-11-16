@@ -987,6 +987,27 @@ void SoundChip_NeoGS::flush()
     runTo(target);
 }
 
+void SoundChip_NeoGS::catchUpToHost()
+{
+    // Never past the frame's end (SoundChip_GeneralSound::catchUpToHost); no frame yet: no base. Asked per host
+    // instruction: a card already at the target costs a test
+    int64_t target = 0;
+    if (_frameTicks <= 0 ||
+        !GSHostClock::targetUnits(_context, TICKS_PER_SECOND, _frameStartZxTacts, _frameStartTicks, _tightRate, target))
+        return;
+    target = std::min(target, _frameStartTicks + _frameTicks);
+    if (target > _runner.now())
+        runTo(target);
+}
+
+int64_t SoundChip_NeoGS::hostLead() const
+{
+    int64_t target = 0;
+    return GSHostClock::targetUnits(_context, TICKS_PER_SECOND, _frameStartZxTacts, _frameStartTicks, target)
+               ? target - _runner.now()
+               : 0;
+}
+
 void SoundChip_NeoGS::handleFrameStart()
 {
     _frameHadActivity = false;

@@ -11,6 +11,9 @@
 //        own files (b + c) (pass: b + c no slower than a)
 //   B-9  save all branches / load / save lineage of a 30-minute session with 100 branches (pass: measured; the
 //        load <= 1 s, PR-8)
+//   B-4  analyzer workload: 1000 experiments of 200 frames from one point, each a branch-create with a poke, an
+//        input script, a run, a read and go_back (the analyzer's kept experiment, l3experimentbranch.h), then one
+//        prune by the run id (pass: measured - throughput, memory, disk bytes and files per branch)
 //
 // Run with:  ./core-benchmarks --benchmark_filter="TTD_Branch"
 
@@ -22,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -31,6 +35,7 @@
 #include "debugger/ttd/engine/ttdbranchtable.h"
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -590,5 +595,119 @@ void BM_TTD_Branch_SaveLoad(benchmark::State& state)
     Percentiles(state, us);
 }
 BENCHMARK(BM_TTD_Branch_SaveLoad)->Arg(0)->Arg(2)->Arg(1)->Iterations(3)->Unit(benchmark::kMillisecond);
+
+// ---- B-4 --------------------------------------------------------------------------------------------------------
+
+/// Bytes and files under @p dir (recursive)
+void FolderSize(const std::string& dir, uint64_t& bytes, size_t& files)
+{
+    bytes = 0;
+    files = 0;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(FileHelper::ToFsPath(dir), ec); !ec && it != fs::end(it);
+         it.increment(ec))
+        if (it->is_regular_file(ec))
+        {
+            ++files;
+            bytes += it->file_size(ec);
+        }
+}
+
+/// range(0) experiments, each 200 frames from the same point of a 300-frame trunk, recorded into a session folder
+/// (the shadow recording: the disk a session with kept experiments costs). One iteration: create them all, prune
+void BM_TTD_Branch_AnalyzerWorkload(benchmark::State& state)
+{
+    if (!EnsureFixture())
+    {
+        state.SkipWithError("fixture");
+        return;
+    }
+    BranchFixture& f = g_fixture;
+    const auto experiments = static_cast<uint32_t>(state.range(0));
+    constexpr uint32_t kFrames = 200;
+    const std::string root = BenchScratch("bench-ttd-branch-analyzer");
+    std::vector<double> us;
+    double createSeconds = 0;
+    double pruneMs = 0;
+    uint64_t historyBefore = 0;
+    uint64_t historyAfter = 0;
+    uint64_t historyPruned = 0;
+    uint64_t diskBefore = 0;
+    uint64_t diskAfter = 0;
+    uint64_t diskPruned = 0;
+    size_t filesBefore = 0;
+    size_t filesAfter = 0;
+    size_t filesPruned = 0;
+    for (auto _ : state)
+    {
+        state.PauseTiming();
+        f.ttd->InvalidateSession("benchmark reset");
+        f.ttd->SetShadowRecordingRoot(root);
+        f.ttd->StartRecording();
+        const uint64_t start = f.Frame();
+        f.emulator->RunNFrames(300, /*skipBreakpoints=*/true);
+        f.ttd->StopRecording();
+        historyBefore = f.ttd->HistoryBytes();
+        const std::string folder = f.ttd->ShadowRecordingFolder();
+        FolderSize(folder, diskBefore, filesBefore);
+        ttd::TTDControl control(f.emulator->GetContext());
+        state.ResumeTiming();
+
+        const auto t0 = std::chrono::steady_clock::now();
+        for (uint32_t k = 0; k < experiments; ++k)
+        {
+            const std::map<std::string, std::string> options = {
+                {"frame", std::to_string(start + 50)},
+                {"tinframe", "0"},
+                {"name", "exp " + std::to_string(k)},
+                {"run", "b4"},
+                {"created_by", "analyzer"},
+                {"tags", "analyzer,experiment"},
+                {"poke", "#C000=" + std::to_string(k & 0xFF)},
+                {"run_frames", std::to_string(kFrames)},
+                {"input", "0:q:down,100:q:up"},
+                {"read", "#C000"},
+                {"go_back", "true"}};
+            ttd::TTDReply reply;
+            us.push_back(TimeUs([&] { reply = control.Execute({"branch-create", options}); }));
+            if (!reply.Ok())
+            {
+                state.SkipWithError(reply.message.c_str());
+                return;
+            }
+        }
+        createSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+        state.PauseTiming();
+        historyAfter = f.ttd->HistoryBytes();
+        FolderSize(folder, diskAfter, filesAfter);
+        state.ResumeTiming();
+        ttd::TTDReply pruned;
+        pruneMs = TimeUs([&] { pruned = control.Execute({"branch-prune", {{"run", "b4"}, {"dry_run", "false"}}}); }) /
+                  1000.0;
+        state.PauseTiming();
+        if (!pruned.Ok() || pruned.body.find("deleted")->items.size() != experiments)
+        {
+            state.SkipWithError("prune");
+            return;
+        }
+        historyPruned = f.ttd->HistoryBytes();
+        FolderSize(folder, diskPruned, filesPruned);
+        state.ResumeTiming();
+    }
+    f.ttd->InvalidateSession("benchmark reset");
+    f.ttd->SetShadowRecordingRoot(std::string());
+    const double n = experiments;
+    state.counters["experiments_per_s"] = n / createSeconds;
+    state.counters["prune_ms"] = pruneMs;
+    state.counters["mem_kb_per_branch"] = (static_cast<double>(historyAfter) - historyBefore) / n / 1024.0;
+    state.counters["mem_kb_left_after_prune"] = (static_cast<double>(historyPruned) - historyBefore) / 1024.0;
+    state.counters["disk_kb_per_branch"] = (static_cast<double>(diskAfter) - diskBefore) / n / 1024.0;
+    state.counters["disk_mb_left_after_prune"] = (static_cast<double>(diskPruned) - diskBefore) / (1024.0 * 1024.0);
+    state.counters["files_per_branch"] = (static_cast<double>(filesAfter) - filesBefore) / n;
+    state.counters["files_left_after_prune"] = static_cast<double>(filesPruned) - static_cast<double>(filesBefore);
+    Percentiles(state, us);
+}
+BENCHMARK(BM_TTD_Branch_AnalyzerWorkload)->Arg(1000)->Iterations(1)->Unit(benchmark::kSecond);
 
 }  // namespace

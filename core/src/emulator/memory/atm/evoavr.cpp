@@ -364,6 +364,7 @@ uint8_t EvoAvr::PeekPs2Log() const
 /// ps2.c ps2keyboard_from_log: pops the byte; reading the overflow #FF resets the log
 uint8_t EvoAvr::PopPs2Log()
 {
+    _ps2LogPops.fetch_add(1, std::memory_order_relaxed);
     const uint8_t byte = PeekPs2Log();
     if (_ps2.logStart == 0xFF)
         return byte;

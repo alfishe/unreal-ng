@@ -170,6 +170,9 @@ protected:
     EvoAvr _evoAvr;
     bool _nvramLoaded = false;  // [EVO] NvramFile read once, on the first reset
 
+    /// The ERS settings with the virtual drive on D when no NVRAM file gave any ([EVO] ErsNvram=FLOPPY)
+    void ApplyErsFloppyBootNvram();
+
     // Z-Controller SD slot: the card outlives Core::Reset() like the NVRAM
     class EvoSdSlot : public IMediaSlot
     {

@@ -83,6 +83,18 @@ class FloppyDriveSlots;
 enum class FrontPanelSwitch : uint8_t;  // emulator/ports/portdecoder.h
 class TapeSlot;
 
+/// The tool edits an `edited` event reports (Emulator::TakeToolEdits)
+struct ToolEditSummary
+{
+    std::string source;  ///< the last edit's
+    std::string cpu;
+    std::string what;
+    std::string page;
+    int32_t address = -1;  ///< -1: none
+    uint32_t length = 0;
+    uint32_t count = 0;
+};
+
 class Emulator : public ISoftResetSink
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -154,6 +166,14 @@ protected:
     snapshot::Report _lastSnapshotReport;
     mutable std::mutex _snapshotPathMutex;   ///< guards coreState.snapshotFilePath
 
+    // The tool edits not yet taken by an `edited` event (TakeToolEdits): one NC_DEBUG_EDITED in the message queue per
+    // instance at a time, whatever the edit rate (a script writing byte by byte); re-posted after kToolEditsRepost
+    // when nobody took the last one (no WebAPI), so the queue sees at most ten a second
+    std::mutex _toolEditsMutex;
+    ToolEditSummary _toolEdits;
+    bool _toolEditsPosted = false;
+    std::chrono::steady_clock::time_point _toolEditsPostedAt{};
+
     // The machine state coordinator (docs/inprogress/2026-10-09-machine-state-coordinator/): every operation on the
     // whole machine goes through it. Created with the emulator, before every participant; WireCoordinator links it
     class CoordinatorPorts;   ///< the emulator's ports: the machine thread, the clock, the owner of its own operations
@@ -178,6 +198,8 @@ protected:
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
+    /// The machine's thread is parked inside another CPU's run (OnTargetBreakpointHit / OnTargetStep)
+    std::atomic<bool> _parkedInsideCardRun{false};
     /// The outermost direct run's CPU hold and its thread: at each frame boundary it lends the CPU to the holds
     /// queued behind it (ExecutionArbiter::LendCpu) - a TTD stop, a save, a reader do not wait for a long run_frames
     const execution::HoldToken* _lendingHold = nullptr;
@@ -204,6 +226,8 @@ public:
         uint16_t cpuPc = 0;
         /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
         bool step = false;
+        /// Another CPU's stop in the emulator's own run: where the main CPU parked with it
+        MainPosition main;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -472,8 +496,41 @@ public:
     /// Refused in the recorded past (a replay, a point of a stopped session's history; owner 2026-10-11): the edit
     /// does not run, the reason comes back (empty: done) for the surface to report
     std::string EditMemoryFromTool(const char* source, const std::function<void()>& edit);
+    /// What a tool edits, for the NC_DEBUG_EDITED an edit that went through posts (DebugEditedPayload): `what` is
+    /// "registers", "memory" (the CPU's view), "page" (a physical page, `address` the offset), "port" or "state"
+    struct ToolEdit
+    {
+        const char* source = nullptr;
+        const char* cpu = "main";
+        const char* what = "state";
+        int32_t address = -1;  ///< -1: none
+        uint32_t length = 0;
+        std::string page;      ///< "page": the page ("RAM5")
+
+        static ToolEdit Of(const char* source, const char* what, int32_t address = -1, size_t length = 0,
+                           const char* cpu = "main")
+        {
+            ToolEdit e;
+            e.source = source;
+            e.what = what;
+            e.address = address;
+            e.length = static_cast<uint32_t>(length);
+            e.cpu = cpu;
+            return e;
+        }
+    };
+    /// The tool edits since the last call, merged: `count` edits; `what` / `cpu` are "mixed" when they differ, the
+    /// address range spans every memory or page edit of one kind (none when they cannot be spanned). The `edited`
+    /// event takes them on its NC_DEBUG_EDITED (DebugEventHub); count 0: another event took them already
+    ToolEditSummary TakeToolEdits();
+    /// EditMemoryFromTool with what it edits (the edited event's fields)
+    std::string EditMemoryFromTool(const ToolEdit& what, const std::function<void()>& edit);
     /// EditMemoryFromTool for a script: a refusal throws (std::runtime_error, the reason), so it is a script error
     void EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit);
+    void EditMemoryFromToolOrThrow(const ToolEdit& what, const std::function<void()>& edit);
+private:
+    void NoteToolEdit(const ToolEdit& what);  ///< an edit that went through: merged, NC_DEBUG_EDITED when none waits
+public:
     /// A CPU register set by a tool (EditMemoryFromTool): false, with nothing changed or recorded, for an unknown
     /// register or a value above its maximum (Z80::SetRegisterValue), or refused (@p refusal: why)
     bool SetRegisterFromTool(const char* source, const std::string& name, uint16_t value,
@@ -698,7 +755,7 @@ public:
 
     /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
     /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
-    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
+    /// @param cylinders 1..86 Unformatted, 40 or 80 Trdos / Plus3; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
     /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
@@ -944,6 +1001,11 @@ public:
     bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
+    /// The machine is stopped inside another CPU's run (a General Sound breakpoint or step): the main CPU stands
+    /// inside a host port access or inside the frame end (its frame counter already moved, the frame's boundary work
+    /// not done). Neither is a moment time travel can capture or restore at: a recording starts at the next frame
+    /// boundary, a move in time waits until the machine leaves it (TTD branches debuggers.md §7)
+    bool IsParkedInsideCardRun() const { return _parkedInsideCardRun.load(std::memory_order_acquire); }
 
     /// The debugger snapshot's `seq`: grows at every stop, run start and tool edit of this emulator (equal = nothing
     /// changed for a debugger view)
@@ -994,6 +1056,12 @@ public:
     /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
     /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
     void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
+    /// WaitWhilePaused, marked as parked inside another CPU's run (IsParkedInsideCardRun)
+    void ParkInsideCardRun();
+    /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)
+    MainPosition MainPositionAt(DebugCpuId cpu) const;
+    /// MainPositionAt's instruction progress: elapsed and total T, the machine cycle under way (design §5.4)
+    void FillInstructionProgress(MainPosition& position) const;
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

@@ -128,6 +128,13 @@ python3 slice_memory.py memory.bin -o my_pages
 python3 slice_memory.py memory.bin --skip-empty-pages no
 ```
 
+### 4. TTD session tools (`ttd/`)
+
+Maintenance of time-travel sessions and recording folders without an emulator: inspect, validate, extract a
+branch's lineage, prune branches, join or recover a crashed recording folder, rebuild `branches.tdx`, clean up old
+crashed folders. It has its own requirements (`zstandard`) and README: [ttd/README.md](ttd/README.md). The shared
+reader `ttd/ttdlib` is also what the session analyzer (`tools/verification/ttd-analyzer`) uses.
+
 ## Emulator Integration
 
 For these tools to work, the Unreal-NG emulator must be compiled with shared memory support enabled. This is controlled by the `SHARED_MEMORY_ENABLED` CMake option.

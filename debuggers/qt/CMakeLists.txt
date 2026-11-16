@@ -22,6 +22,7 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/pagedmemory.cpp
     ${ECAT_DIR}/dialogs/debugger/registersview.cpp
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp
+    ${ECAT_DIR}/dialogs/debugger/ttdcontrols.cpp
     ${ECAT_DIR}/emulator/disasm_buffer.cpp
 )
 set_target_properties(unreal-debugger-views PROPERTIES AUTOMOC ON)

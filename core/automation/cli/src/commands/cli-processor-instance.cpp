@@ -493,11 +493,24 @@ void CLIProcessor::InitializeProcessor()
     }
 }
 
-// HandleReset - lines 784-804
+// HandleReset - reset [hard|soft|--hard] [id|index]: soft by default (the reset button), hard = power cycle
 void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<std::string>& args)
 {
+    // The mode word may come before or after the id; what is left selects the emulator
+    bool hard = false;
+    std::vector<std::string> idArgs;
+    for (const std::string& arg : args)
+    {
+        if (arg == "hard" || arg == "--hard")
+            hard = true;
+        else if (arg == "soft" || arg == "--soft")
+            hard = false;
+        else
+            idArgs.push_back(arg);
+    }
+
     std::string errorMessage;
-    auto emulator = ResolveEmulator(session, args, errorMessage);
+    auto emulator = ResolveEmulator(session, idArgs, errorMessage);
 
     if (!emulator)
     {
@@ -512,8 +525,8 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
         return;
     }
 
-    emulator->Reset();
-    session.SendResponse("Emulator reset\n");
+    emulator->Reset(hard);
+    session.SendResponse(hard ? "Emulator reset (hard)\n" : "Emulator reset (soft)\n");
 }
 
 // HandleNmi - pulse the Z80 NMI line (accepted at the next instruction boundary)

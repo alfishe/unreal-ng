@@ -27,6 +27,12 @@ namespace CpuView
 /// no card with a CPU in its slot")
 std::string Select(EmulatorContext* context, const std::string& name, DebugCpuId& cpu);
 
+/// The CPU the front-ends show (DebugManager::SelectCpu, gs-debugger design §5.2), `name` as Select takes it: a card
+/// shown follows the main CPU's steps of the paused machine. "" on success, else why not
+std::string SetSelected(EmulatorContext* context, const std::string& name);
+/// {cpu, follows}: the CPU shown, and whether a card follows the main CPU's steps (a card is shown and is there)
+StateNode Selected(EmulatorContext* context);
+
 /// The card whose CPU `cpu` is, while it has one (null: main, or no such card now)
 GeneralSoundCard* Card(EmulatorContext* context, DebugCpuId cpu);
 

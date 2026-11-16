@@ -97,9 +97,20 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
     if (command == "snapshot")
         return any({"load"});
     if (command == "ttd")
+    {
+        // `ttd branch switch <b>` moves the machine onto another branch, as a seek does
+        if (any({"branch", "branches", "br"}) && args.size() >= 2)
+        {
+            for (const char* moving : {"switch", "sw", "checkout", "back", "prev", "previous", "sibling", "sib"})
+                if (args[1] == moving)
+                    return true;
+            return false;
+        }
         return any({"back", "forward", "goto", "seek", "sb", "sf", "si-back", "si-forward", "step-back",
-                    "step-forward", "step-instruction", "reverse-step", "rs", "reverse-continue", "rc", "resume",
+                    "step-forward", "step-instruction", "reverse-step", "rs", "reverse-step-over", "rso",
+                    "reverse-continue", "rc", "resume",
                     "load", "open"});
+    }
     if (command == "disk")
         return any({"create", "eject", "insert", "write"});
     if (command == "basic")
@@ -271,7 +282,8 @@ bool CompanionNeedsPause(const std::string& subpath)
     for (std::string_view stepping : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_until", "/run_frame",
                                       "/run_frames", "/run_tstates", "/run_scanlines", "/run_to_scanline",
                                       "/run_to_pixel", "/run_to_interrupt", "/listing/step_line", "/listing/run_to_line",
-                                      "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-continue"})
+                                      "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-step-over",
+                                      "/ttd/reverse-continue"})
         if (path == stepping)
             return true;
     return StartsWith(path, "/registers/");
@@ -287,7 +299,7 @@ bool CompanionCliNeedsPause(const std::string& command, const std::vector<std::s
         return args.size() >= 2;
     const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
     return command == "ttd" && OneOf(verb, {"si-back", "si-forward", "step-instruction", "reverse-step", "rs",
-                                            "reverse-continue", "rc"});
+                                            "reverse-step-over", "rso", "reverse-continue", "rc"});
 }
 
 std::string CompanionScopeName(uint32_t scope)

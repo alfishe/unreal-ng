@@ -678,7 +678,17 @@ uint8_t Tape::handlePortIn([[maybe_unused]] uint16_t port)
         //   CD4069 amplifier with no pull-up, its idle level set by no part.
         //   The ProfROM's #FFBE reads are the SMUC IDE status (bit 6 = DRDY,
         //   error #61 = DRDY timeout), not the tape port.
-        switch (config.mem_model)
+        // - A tape that ran out (state Ended) holds the level its last edge
+        //   left. The last pulse toggles the level and stops playback in the
+        //   same step, before the loader's next IN: falling back to the board
+        //   level there would undo that edge whenever the board level equals
+        //   the level before it, and a loader counting the final edge of a
+        //   block with pause 0 (Deflektor's turbo block) would time out.
+        if (GetPlaybackState() == TapePlaybackState::Ended)
+        {
+            result = _tapeBitState ? 0b0100'0000 : 0;
+        }
+        else switch (config.mem_model)
         {
             case MM_SPECTRUM48:
             case MM_SPECTRUM128:

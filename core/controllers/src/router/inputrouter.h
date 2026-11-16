@@ -132,6 +132,16 @@ public:
     void Promote(const HostDeviceId& from, const HostDeviceId& to);
     /// The instance whose window has focus: what follow-focus devices drive. Empty (the default) = every instance
     void SetFocus(const std::string& instance);
+    /// Menu keys for an instance (its program reads the whole keyboard: the 128K menu, BASIC, a text prompt): the
+    /// `auto:` targets also hold the cursor keys, CAPS SHIFT with 5 6 7 8 for left down up right, and ENTER for fire,
+    /// besides the player's connector
+    void SetMenuKeys(const std::string& instance, bool on);
+    bool MenuKeys(const std::string& instance) const;
+    /// Mouse buttons for an instance (its program reads a mouse: a Kempston or AMX mouse decided): an `auto:` target's
+    /// fire also holds the mouse's left button, as long as the control is held (no turbo), so the pad's fire buttons
+    /// click where the pointer is
+    void SetMouseButtons(const std::string& instance, bool on);
+    bool MouseButtons(const std::string& instance) const;
     /// The device drives that instance now (a player that follows the focus, is pinned to it, or drives all)
     bool Drives(const HostDeviceId& device, const std::string& instance) const;
 
@@ -168,6 +178,9 @@ public:
     /// feel is followed but not sent. Back to false: each device's feel goes to it again (the other client set its own)
     void SetSuspended(bool suspended);
     bool Suspended() const;
+    /// Let go of every control now (its held actions released, a raised layer down): the app's own screen took the
+    /// pads (HostInputService::SetUiTap) and the router will not see their releases
+    void ReleaseHeld();
     /// The context of the instance a device acts on (its pinned one, else the focused one); "" when none was pushed
     std::string Context(const HostDeviceId& device) const;
     /// What a scope's devices feel per layer (a debug profile's `haptics`); set and cleared with the bindings
@@ -333,11 +346,15 @@ private:
     {
         std::map<std::pair<HostDeviceId, size_t>, Phase> phases;
         std::set<std::string> held;  ///< connectors with bits at the last sample
+        bool menuKeys = false;        ///< SetMenuKeys
+        bool mouseButtons = false;    ///< SetMouseButtons
     };
 
     using ValueOf = std::function<float(const std::string&)>;
 
     static bool Compile(const Binding& binding, CompiledBinding& out, std::string& error);
+    /// The keys menu keys hold for retro bits (SetMenuKeys)
+    static std::vector<uint8_t> MenuKeysOf(uint16_t bits);
     const CompiledSet* BindingsForLocked(const Device& device) const;
     static float Value(const Device& device, const std::string& control);
     DeviceRole RoleLocked(const HostDeviceId& device) const;

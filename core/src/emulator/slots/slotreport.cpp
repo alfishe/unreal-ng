@@ -75,11 +75,13 @@ StateNode SlotNode(const SlotManager::Slot& slot, const SlotPlanner& planner, bo
     if (card != nullptr)
     {
         node["name"] = card->name;
+        node["label"] = PlainLabel(card->name);
         node["options"] = FormatCardOptions(*card, slot.entry.options);
     }
     else if (slot.entry.card == kEmptySocket)
     {
         node["name"] = "empty AY socket";
+        node["label"] = "empty AY socket";
     }
     node["adapter"] = slot.entry.adapter;
     // The bus the card sits on: the slot's bus, or - behind an adapter - the adapter's own bus, hosted by the slot
@@ -220,6 +222,7 @@ StateNode Slots(EmulatorContext* context)
         m["bus"] = machineSlot.bus;
         m["card"] = machineSlot.card;
         m["name"] = machineSlot.name;
+        m["label"] = PlainLabel(machineSlot.name);
         m["source"] = machineSlot.source;
         m["details"] = machineSlot.details;
         if (!machineSlot.hosts.empty())
@@ -246,6 +249,7 @@ StateNode Slots(EmulatorContext* context)
         StateNode b = StateNode::Object();
         b["id"] = builtIn.id;
         b["name"] = builtIn.name;
+        b["label"] = PlainLabel(builtIn.name);
         b["kind"] = Describe(builtIn.kind).id;
         b["state"] = builtIn.state;
         if (builtIn.removed)

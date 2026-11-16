@@ -145,6 +145,7 @@ private:
     void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
     bool RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
@@ -216,6 +217,7 @@ private:
     void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSectionTimer(const ClientSession& session, const std::vector<std::string>& args);  // section timing (sectiontimeranalyzer.h)
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);
@@ -485,6 +487,8 @@ private:
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
     void HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDBranch(const ClientSession& session, EmulatorContext* context,
+                         const std::vector<std::string>& args);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
@@ -497,6 +501,7 @@ private:
                              const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,

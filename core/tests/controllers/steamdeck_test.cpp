@@ -254,7 +254,7 @@ TEST(SteamDeck_Test, Profiles)
     ASSERT_NE(mouse, nullptr);
     EXPECT_EQ(mouse->target.kind, TargetKind::Mouse);
     EXPECT_EQ(mouse->target.mouse, MouseControl::Dx);
-    EXPECT_FLOAT_EQ(mouse->target.scale, 72.0f) << "counts per pad unit: the pad points, it is not a stick";
+    EXPECT_FLOAT_EQ(mouse->target.scale, 92.0f) << "counts per pad unit: the pad points, it is not a stick";
     const Binding* click = find(resolved, "", "rtouchpad.click");
     ASSERT_NE(click, nullptr);
     EXPECT_EQ(click->target.mouse, MouseControl::Left);

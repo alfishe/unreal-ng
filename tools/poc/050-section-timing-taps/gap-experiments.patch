@@ -1,0 +1,61 @@
+diff --git a/core/automation/lua/src/hooks/luahookhost.cpp b/core/automation/lua/src/hooks/luahookhost.cpp
+index af482b1da..2ea660292 100644
+--- a/core/automation/lua/src/hooks/luahookhost.cpp
++++ b/core/automation/lua/src/hooks/luahookhost.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <cctype>
+ #include <cstdio>
++#include <cstdlib>
+ #include <stdexcept>
+ 
+ #include "../bindings/lua_callbackhit.h"
+@@ -87,6 +88,9 @@ LuaHookHost::LuaHookHost(EmulatorContext* context) : _context(context)
+         seed(*value);
+     };
+     RegisterApi();
++    // POC 050 (temporary, not for master)
++    if (const char* pocGc = std::getenv("UNREAL_POC050_HOOK_GC"); pocGc != nullptr && std::string(pocGc) == "gen")
++        lua_gc(_lua->lua_state(), LUA_GCGEN, 0, 0);
+ }
+ 
+ LuaHookHost::~LuaHookHost()
+@@ -294,7 +298,10 @@ HookCallResult LuaHookHost::Call(uint32_t id, const CallbackHit& hit, const std:
+     _edits = nullptr;
+     _card = false;
+     // A hook's garbage is the hook state's: a step per call keeps it small without a pause anywhere
+-    lua_gc(L, LUA_GCSTEP, 0);
++    // POC 050 (temporary, not for master): UNREAL_POC050_HOOK_GC=none|gen skips the per-call step
++    static const char* pocGc = std::getenv("UNREAL_POC050_HOOK_GC");
++    if (pocGc == nullptr || std::string(pocGc) == "step")
++        lua_gc(L, LUA_GCSTEP, 0);
+     return outcome;
+ }
+ 
+diff --git a/core/src/emulator/cpu/z80.cpp b/core/src/emulator/cpu/z80.cpp
+index 79357302d..2edf5d8cf 100644
+--- a/core/src/emulator/cpu/z80.cpp
++++ b/core/src/emulator/cpu/z80.cpp
+@@ -1,6 +1,7 @@
+ #include "z80.h"
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <iterator>
+ #include <numeric>
+ 
+@@ -385,9 +386,12 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
+     // The instruction-start work (RunInstructionStartHooks, EngineStep) and the bus observers. TTD coverage is no
+     // observer of an idle stretch: its per-frame set already holds the HALT from the stretch's first real fetch
+     // (RunHaltedIdle learns the fetch length by one). Debug mode is none while no breakpoint or tap sees the HALT
+-    if (execTapHold || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() || cycles_to_capture > 0)
++    // POC 050 (temporary, not for master): UNREAL_POC050_TAP_IDLE=1 lets an exec tap elsewhere keep the idle
++    static const bool pocTapIdle = std::getenv("UNREAL_POC050_TAP_IDLE") != nullptr;
++    if ((execTapHold && !pocTapIdle) || busTraceHook || m1TraceHook || _context->ttdProbe.IsArmed() ||
++        cycles_to_capture > 0)
+         return false;
+-    if (isDebugMode)
++    if (isDebugMode || execTapHold)
+     {
+         DebugManager* debug = _context->pDebugManager;
+         if (debug && !debug->GetBreakpointsManager()->ExecIsInertAt(pc))

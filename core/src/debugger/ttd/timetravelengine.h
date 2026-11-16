@@ -461,8 +461,8 @@ public:
     /// lies in @p index's frame. Live memory is unknown afterwards (the next
     /// RestoreToMemory writes every piece). The write journal is the holder's
     /// to rebuild (Writes()). A session loaded from a file continues the same
-    /// way (it is no longer read-only). Branches that keep the old future come
-    /// with Phase 5, Step 2
+    /// way (it is no longer read-only). A resume with history after it does not
+    /// cut: it forks a branch line (ForkAt), the old future stays
     bool TruncateAfter(size_t index, const TTDPosition& cut, std::string& error);
 
     /// region <Branch lines>

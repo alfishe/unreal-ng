@@ -214,6 +214,6 @@ protected:
     void Flush() const;
     /// Of the labels at a shared address the last placed one of the page mapped at its window now (or of no page)
     std::shared_ptr<Label> MappedAt(const std::vector<View::Paged>& labels, uint16_t address) const;
-    static void Notify();
+    void Notify() const;
     /// endregion </Methods>
 };

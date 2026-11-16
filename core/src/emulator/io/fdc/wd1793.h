@@ -687,6 +687,9 @@ protected:
     bool _chipAttachedToPortDecoder = false;
 
     FDD* _selectedDrive = nullptr;
+    /// The drive selected when the last command started: its transfer pointers point into that drive's disk even
+    /// after the program selects another one (onDiskChanged). Null = not known (after a TTD restore): any change clears
+    FDD* _commandDrive = nullptr;
 
     // New WD93 state to migrate to
     WD93State _wd93State;
@@ -743,6 +746,7 @@ protected:
     bool _loadHead = false;  // Determines if load should be loaded or unloaded during Type1 command
     bool _verifySeek =
         false;  // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
+    uint16_t _hapticSteps = 0;  // step pulses since TakeHapticSteps
     uint8_t _steppingMotorRate =
         6;  // Step period in ms of the current Type I command: STEP_TIMINGS_MS_1MHZ / STEP_TIMINGS_MS_2MHZ
             // by the r1r0 bits and the controller clock at the time of the step pulse
@@ -787,6 +791,7 @@ protected:
     size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
     size_t _rotationalDelayTStates = 0;             // Byte cells between the head and the data field of the matched sector
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
+    bool _writeTrackEscapeNext = false;  // WRITE TRACK: the byte after an F7 is written literally and joins the next CRC
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
@@ -1362,6 +1367,15 @@ public:
     /// Asleep: handleStep returns at once. Awake and inert, it still stamps its time on every step (handleStepAwake)
     bool IsAsleep() const { return _sleeping; }
     void handleFrameEnd();
+    /// The head's step pulses since the last call (haptics: the drive's mechanics, HapticDriveFrame), with the step
+    /// period of the last one in ms; counted always, one increment per pulse
+    uint16_t TakeHapticSteps(uint8_t& stepMs)
+    {
+        const uint16_t steps = _hapticSteps;
+        _hapticSteps = 0;
+        stepMs = _steppingMotorRate;
+        return steps;
+    }
     /// handleStep's work while the controller is awake
     void handleStepAwake();
     /// endregion </Emulation events>
@@ -1518,6 +1532,7 @@ public:
     using WD1793::isType3Command;
     using WD1793::isType4Command;
     using WD1793::processWD93Command;
+    using WD1793::selectDrive;
 
     using WD1793::cmdForceInterrupt;
     using WD1793::cmdReadAddress;
@@ -1569,6 +1584,7 @@ public:
     using WD1793::_rawDataBuffer;
     using WD1793::_rawDataBufferIndex;
     using WD1793::_crcStartPosition;
+    using WD1793::_writeTrackEscapeNext;
     using WD1793::_writeTrackLength;
     using WD1793::_currentSector;
     using WD1793::_currentReadTrack;

@@ -115,6 +115,13 @@
    "held": false
   },
   {
+   "id": "ttd.reverse_step_over",
+   "label": "Reverse step over",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
    "id": "ttd.reverse_continue",
    "label": "Reverse continue",
    "group": "Time travel",
@@ -168,7 +175,8 @@
    "label": "Reset (hold 1 s)",
    "group": "Capture and machine",
    "kind": "press",
-   "held": true
+   "held": true,
+   "params": "now? (false: hold the control 1 s)"
   },
   {
    "id": "mach.nmi",
@@ -441,7 +449,7 @@
    "group": "Media",
    "kind": "press",
    "held": false,
-   "params": "op (save|load), slot? (1..9, 1), dir?"
+   "params": "op (save|load|list|delete), slot? (1..9, 1), dir?"
   },
   {
    "id": "snapshot.save",
@@ -818,6 +826,14 @@
    "kind": "press",
    "held": false,
    "params": "scale? (1..4, next, prev; next)"
+  },
+  {
+   "id": "view.picture",
+   "label": "Picture",
+   "group": "View",
+   "kind": "press",
+   "held": false,
+   "params": "view? (full|screen|content|next|prev; next)"
   },
   {
    "id": "view.toolbar",
@@ -1275,6 +1291,57 @@
    "kind": "press",
    "held": false,
    "params": "name (trdos, coverage, aylog, audiocapture)"
+  },
+  {
+   "id": "ttd.branch_prev",
+   "label": "Previous branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_next_sibling",
+   "label": "Next branch at the fork",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_prev_sibling",
+   "label": "Previous branch at the fork",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_switch",
+   "label": "Switch to a branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "params": "branch, frame? + tinframe?"
+  },
+  {
+   "id": "ttd.branch_menu",
+   "label": "Branches",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_pin",
+   "label": "Pin the branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_delete",
+   "label": "Delete a branch (hold 1 s)",
+   "group": "Time travel",
+   "kind": "press",
+   "held": true,
+   "params": "branch, now? (false: hold the control 1 s)"
   },
   {
    "id": "ttd.scrub_back",

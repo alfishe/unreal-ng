@@ -1,7 +1,7 @@
 # TTD branches: history that keeps every future
 
-Status: **design** (2026-11-08): use cases decided by the owner, architecture, storage, surfaces, test strategy
-and tools drafted; nothing built. PLAN #76 (branch part), the TTD v2 migration's deferred Phase 5, Step 2b.
+Status: **in progress**: P0, P1, P2, P5, P6, P7 and P8 done; P3, P4 open (table below). Use cases decided
+by the owner 2026-11-08. PLAN #76 (branch part), the TTD v2 migration's deferred Phase 5, Step 2b.
 
 Acting in the past (continuing a recording from an earlier moment, editing memory or registers there) today cuts
 the recorded future away. A branch keeps it: the new line of history starts next to the old one, both stay
@@ -20,21 +20,21 @@ This folder restarts the design from what was decided and built since the first 
 | [tools.md](tools.md) | Python maintenance tools: tree, validate, extract, prune, join, reindex, gc, stats |
 | This README | Scope, decisions in force, what exists, findings, stale texts, phases |
 
-## Phases (proposal)
+## Phases
 
 Each phase: tests first, then code; lands when its tests, B-0 (zero overhead) and its own benchmarks pass.
 
-| Phase | Content | Proves |
-|---|---|---|
-| P0 | Fix F-1 (a resume no longer deletes the folder) and F-2 (deck readout shape); benchmark baselines B-0 / B-1 on master | independent of branches |
-| P1 | Branch table, GUIDs, metadata, lineage, per-branch engine lines, fork at boundary and mid-frame, switch, delete; resume and edit in the past fork | T-B*, T-E*, T-C1-C7, F-2 (memory only), B-0, B-2, B-6, B-7 |
-| P2 | Storage: branch streams, folder (b)+(c), save all / lineage, load, old-reader compatibility | T-F*, F-1, F-3, B-5, B-9 |
-| P3 | Two tiers: eviction to disk, read back, history limit without trimming | T-C8-C10, B-3 |
-| P4 | Media in the stream, version tree, write-through following the active moment | T-M*, B-8 |
-| P5 | Automation planes, `branch-create` with run, prune, the analyzer's loop | T-A*, T-C12-C13, B-4, MCP live block |
-| P6 | Qt, actions, Stream Deck, controllers | T-A5-A6, surface contract |
-| P7 | Python tools | tools tests, F-4 |
-| P8 | Stale texts updated (§5), recipes, command-interface | docs |
+| Phase | Content | Proves | State |
+|---|---|---|---|
+| P0 | Fix F-1 (a resume no longer deletes the folder) and F-2 (deck readout shape); benchmark baselines B-0 / B-1 on master | independent of branches | ✅ with P1 (`e0ac62a53`) |
+| P1 | Branch table, GUIDs, metadata, lineage, per-branch engine lines, fork at boundary and mid-frame, switch, delete; resume and edit in the past fork | T-B*, T-E*, T-C1-C7, F-2 (memory only), B-0, B-2, B-6, B-7 | ✅ 2026-11-10 (`e0ac62a53`) |
+| P2 | Storage: branch streams, folder (b)+(c), save all / lineage, load, old-reader compatibility | T-F*, F-1, F-3, B-5, B-9 | ✅ 2026-11-10 (`e0ac62a53`) |
+| P3 | Two tiers: eviction to disk, read back, history limit without trimming | T-C8-C10, B-3 | open |
+| P4 | Media in the stream, version tree, write-through following the active moment | T-M*, B-8 | open (media changes in the recorded past are refused with a hint) |
+| P5 | Automation planes, `branch-create` with run, prune, the analyzer's loop | T-A*, T-C12-C13, B-4, MCP live block | done 2026-11-13: every verb (`branches` with the full filter, `branch-info`, `branch-create` with a run, input script (keys, joystick, release all), pokes, registers and reads, `branch-switch`, `branch-update`, `branch-delete`, `branch-prune`) on every plane, `forks_here`, the `ttd.branches` topic and `branch` in `ttd.position`; the analyzer's loop (§5.3 of [surfaces.md](surfaces.md): experiments on clones, a branch on request with `keep_branch` / `keep_branches`); B-4 measured, prune of 1000 branches 16 s → 0.43 s ([test-strategy.md](test-strategy.md#5-benchmarks)) |
+| P6 | Qt, actions, Stream Deck, controllers | T-A5-A6, surface contract | done: the Qt TTD panel (`66f6811ae`), the Embedded and eCat debuggers (`0744664bb`, [debuggers.md](debuggers.md)); actions `ttd.branch_*`, readouts `ttd.branch` (with fork frames) / `ttd.branch_list`, relative switch `to` on all planes, keyboard / pad / ShuttlePRO bindings, the Stream Deck BRANCH key, branch menu, sibling dial and strip fork ticks (2026-11-15, [surfaces.md §1-§4](surfaces.md)). Not built: Surface Dial bindings (§4) |
+| P7 | Python tools | tools tests, F-4 | done 2026-11-15: `tools/python/ttd` (shared `ttdlib`, `ttdtool.py` info/tree/validate/extract/prune/join/reindex/recover/gc/stats/flatten), C++-written fixtures in `testdata/ttd/branches`, tool outputs restored by core-tests ([tools.md](tools.md)) |
+| P8 | Stale texts updated (§5), recipes, command-interface | docs | ✅ 2026-11-13 |
 
 ## 1. Scope
 
@@ -66,7 +66,9 @@ merging are all for later; the first design stays simple.
 | Continuing live from the past of a session loaded from a file is postponed | coordinator §12, owner 2026-10-10 | A branch in a loaded session hits this; to be revisited with branches |
 | What-if decisions of 2026-09-29: automatic two-word names, no truncation anywhere, frame-boundary fork | what-if design §12 | Still the owner's words; the fork point needs a second look (D8 pauses mid-frame, phase-5 TDD forks at `{frame, T}`) |
 
-## 3. What exists today
+## 3. What existed at the design (2026-11-08)
+
+Before P1; kept as the starting point. What is built since: the phase table above.
 
 - **Engine type** `TTDPosition {branch, frame, tInFrame}` (`core/src/debugger/ttd/engine/ttdtime.h:23-34`); the
   engine refuses any branch but 0 (`CaptureFrame`, `CheckpointIndexOf`, `TruncateAfter`).
@@ -88,6 +90,9 @@ merging are all for later; the first design stays simple.
 
 ## 4. Findings while surveying (outside branches, to fix apart)
 
+Both fixed with P1 (`e0ac62a53`): a resume rewinds the folder's writer to its last segment and keeps the files before
+the cut (`TruncateTimelineAfter`); the deck's readout paths are checked by the surface contract.
+
 - **F-1. The recording folder loses its past at a resume from the past.** `TruncateTimelineAfter` calls
   `DiscardShadowFiles()`, which deletes the whole folder, including the history before the cut; the next capture
   opens a new folder whose writer starts at the current last segment (`TTDRecordingWriter::Begin`), so the segments
@@ -97,6 +102,9 @@ merging are all for later; the first design stays simple.
   the `ttd.position` readout; the WebSocket topic carries `frame` at the top level, without `current`.
 
 ## 5. Stale texts this work will update
+
+Done 2026-11-13 (P8): the texts below say what is built, the dated design documents carry a pointer here. The list,
+as it was:
 
 When branches land (not before: they describe today's behavior correctly): command-interface.md `ttd resume`,
 time-travel-debugging-tdd.md §0 / §4.2 / §8.3 / Q3, time-travel-ux.md §3.4, the TTD recipes ("truncates the

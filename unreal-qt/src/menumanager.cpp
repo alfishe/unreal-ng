@@ -727,6 +727,11 @@ void MenuManager::createRunMenu()
     _resetAction->setStatusTip(tr("Reset emulator"));
     connect(_resetAction, &QAction::triggered, this, &MenuManager::resetRequested);
 
+    // Hard reset: a power cycle (the ZX Next runs its boot ROM and firmware again; Reset above is the reset button)
+    _hardResetAction = _runMenu->addAction(tr("&Hard Reset (Power Cycle)"));
+    _hardResetAction->setStatusTip(tr("Power-cycle the machine: the board's power-on state, firmware boot included"));
+    connect(_hardResetAction, &QAction::triggered, this, &MenuManager::hardResetRequested);
+
     _runMenu->addSeparator();
 
     // Speed submenu
@@ -1570,11 +1575,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (context && context->pBetaDisk)
         {
             FDD* drive = context->pBetaDisk->getDrive();
-            if (drive && drive->getDiskImage())
-            {
-                hasDiskLoaded = true;
-                isDiskDirty = drive->getDiskImage()->isDirty();
-            }
+            if (drive)
+                drive->WithDisk([&](const DiskImage* image) {  // the image may be released meanwhile
+                    hasDiskLoaded = image != nullptr;
+                    isDiskDirty = image && image->isDirty();
+                });
         }
     }
     
@@ -1617,6 +1622,7 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
     _resumeAction->setEnabled(isPaused);               // Resume when paused (even if IsRunning() is false)
     _stopAction->setEnabled(emulatorExists);           // Stop when emulator exists
     _resetAction->setEnabled(emulatorExists);          // Reset when emulator exists
+    _hardResetAction->setEnabled(emulatorExists);      // Hard reset (power cycle) likewise
 
     // Speed menu - enabled when emulator exists
     _speedMenu->setEnabled(emulatorExists);

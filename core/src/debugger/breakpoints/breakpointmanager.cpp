@@ -2797,6 +2797,12 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
                     if ((kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN) && !_replayWalk)
                         hit.replace = _replace;
                     sink->OnTap(hit);
+                    if (_tapStop) [[unlikely]]
+                    {
+                        _tapStop = false;
+                        if (!_replayWalk && !_tapsOnlyWalk && first == BRK_INVALID)
+                            first = bp->breakpointID;
+                    }
                 }
             continue;
         }
