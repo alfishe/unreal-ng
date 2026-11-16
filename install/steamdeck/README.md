@@ -75,7 +75,7 @@ When started from the library in Game Mode (the gamescope session, `XDG_CURRENT_
 - scales the picture to the panel's height with its aspect ratio kept;
 - turns the `lowlatency` feature on for the machine it shows: each frame goes to the screen as soon as it is made,
   not when its sound is heard, so the picture comes about 50 ms sooner and leads the sound by as much. `feature
-  lowlatency off` (CLI, WebAPI, MCP) gives back picture and sound in step until the window shows another machine.
+  lowlatency off` (CLI, WebAPI, MCP; Machine > Low Latency (Game Mode) in the menu) gives back picture and sound in step until the window shows another machine.
 
 The code is in [`unreal-qt/src/platform/linux/steamdeckgamemode.h`](../../unreal-qt/src/platform/linux/steamdeckgamemode.h)
 and is built on Linux only. Desktop Mode gets the usual window with its menu. gamescope never confirms the fullscreen

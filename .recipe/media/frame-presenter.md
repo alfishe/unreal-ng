@@ -25,7 +25,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   | `display_rate` | `keep`, `match` | switch the display to a rate fitting the machine (50 / 100 Hz) while the window shows it |
   | `lip_sync_offset_ms` | -200..200 | moves the frames' target times against the sound |
 
-- **Low latency** is a machine feature, not a window setting: `feature lowlatency on` (CLI; WebAPI / MCP features)
+- **Low latency** is a machine feature, not a window setting: `feature lowlatency on` (CLI; WebAPI / MCP features; Qt Machine > Low Latency (Game Mode))
   makes each frame due at its latch, so the newest finished frame is shown at once, and shortens the sound path
   (audio ring target from 10 ms, 15 ms on Windows, adapted to the host; a 128-frame device period on macOS): the sound follows ~20-30 ms later
   (~55 ms on Windows). Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock`

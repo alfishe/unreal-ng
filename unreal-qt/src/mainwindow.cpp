@@ -621,6 +621,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
+    connect(_menuManager, &MenuManager::lowLatencyToggled, this, &MainWindow::handleLowLatencyToggled);
     connect(_menuManager, &MenuManager::frontPanelTurboToggled, this, &MainWindow::handleFrontPanelTurboToggled);
     connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
     // The bound instance can be removed by automation at any moment (the UI
@@ -3968,6 +3969,18 @@ void MainWindow::handleContentionToggled(bool enabled)
             qDebug() << "Memory contention switch refused (TTD timeline bound)";
     }
     _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
+}
+
+void MainWindow::handleLowLatencyToggled(bool enabled)
+{
+    // The feature change reaches the audio device and the screen through NC_FEATURE_CHANGED
+    if (_emulator)
+    {
+        EmulatorContext* context = _emulator->GetContext();
+        if (FeatureManager* featureManager = context ? context->pFeatureManager : nullptr)
+            featureManager->setFeature(Features::kLowLatency, enabled);
+    }
+    _menuManager->updateMenuStates(_emulator);
 }
 
 void MainWindow::handleFrontPanelTurboToggled(bool on)

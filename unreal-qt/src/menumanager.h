@@ -159,6 +159,7 @@ signals:
     void fastDiskToggled(bool enabled);
     void autostartDisksToggled(bool enabled);
     void contentionToggled(bool enabled);
+    void lowLatencyToggled(bool enabled);
     /// Machine > TURBO Switch: the Profi front-panel switch
     void frontPanelTurboToggled(bool on);
     /// Machine > CP/M Switch: the Profi v5 front-panel switch
@@ -360,6 +361,7 @@ private:
     QAction* _fastDiskAction = nullptr;
     QAction* _autostartDisksAction = nullptr;
     QAction* _contentionAction = nullptr;
+    QAction* _lowLatencyAction = nullptr;  ///< mirrors the feature lowlatency of the active machine
     QAction* _frontPanelTurboAction = nullptr;
     QAction* _frontPanelCpmAction = nullptr;
     QMenu* _hostKeyboardMenu = nullptr;

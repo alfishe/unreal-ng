@@ -204,6 +204,7 @@ private slots:
     void handleFastDiskToggled(bool enabled);
     void handleAutostartDisksToggled(bool enabled);
     void handleContentionToggled(bool enabled);
+    void handleLowLatencyToggled(bool enabled);
     void handleFrontPanelTurboToggled(bool on);
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
