@@ -77,10 +77,12 @@ namespace
     }
 
     template <typename Loader>
-    bool WriteFlux(Loader& loader, DiskImage& disk)
+    bool WriteFlux(Loader& loader, DiskImage& disk, std::vector<std::string>& warnings)
     {
         loader.setDiskImage(&disk);
-        return loader.writeImage();
+        const bool saved = loader.writeImage();
+        warnings = loader.getWarnings();
+        return saved;
     }
 
     bool WriteByExtension(const LoaderOptions& options, DiskImage& disk, const std::string& path,
@@ -142,12 +144,12 @@ namespace
         if (ext == "hfe")
         {
             LoaderHFE loader(options, path);
-            return WriteFlux(loader, disk);
+            return WriteFlux(loader, disk, warnings);
         }
         if (ext == "scp")
         {
             LoaderSCP loader(options, path);
-            return WriteFlux(loader, disk);
+            return WriteFlux(loader, disk, warnings);
         }
         LoaderTRD loader(options, path);
         return WriteWith(loader, disk, warnings);

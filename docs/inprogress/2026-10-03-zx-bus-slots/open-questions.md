@@ -141,6 +141,9 @@ builds). A user who wants it writes the line into a config that has no conflicti
 
 **Owner decision (2026-10-05): A, merge** (as built in SL-6).
 
+**Superseded 2026-11-14 (owner):** a model switch from a menu loads the new model's configured cards, nothing
+migrates; the cards are carried only on request (`carryCards`, no caller today) (R-OP-9). The text below is the earlier decision.
+
 A model switch carries the old machine's cards (Q6, R-OP-9). The new machine's config also names cards: the shipped
 Pentagon fits a TurboSound FM, a NeoGS, a MoonSound and a SounDrive; the shipped 48K only a TurboSound FM.
 

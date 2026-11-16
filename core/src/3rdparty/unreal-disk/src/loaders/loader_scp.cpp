@@ -55,7 +55,7 @@ bool LoaderSCP::detect(const uint8_t* data, size_t len)
 }
 
 bool LoaderSCP::parseFluxData(const uint8_t* data, size_t offset, uint32_t count,
-                               std::vector<uint32_t>& intervalsNs)
+                               std::vector<uint32_t>& intervalsNs, uint32_t nsPerTick)
 {
     intervalsNs.clear();
     intervalsNs.reserve(count);
@@ -71,7 +71,7 @@ bool LoaderSCP::parseFluxData(const uint8_t* data, size_t offset, uint32_t count
         else
         {
             const uint32_t totalTicks = accumulated + ticks;
-            intervalsNs.push_back(totalTicks * NS_PER_TICK);
+            intervalsNs.push_back(totalTicks * nsPerTick);
             accumulated = 0;
         }
     }
@@ -79,7 +79,7 @@ bool LoaderSCP::parseFluxData(const uint8_t* data, size_t offset, uint32_t count
     return true;
 }
 
-void LoaderSCP::decodeTrack(const std::vector<uint32_t>& intervalsNs, bool fm,
+void LoaderSCP::decodeTrack(const std::vector<uint32_t>& intervalsNs, bool fm, uint64_t indexTimeNs,
                             std::vector<uint8_t>& bytes, std::vector<uint8_t>& clockBitmap)
 {
     bytes.clear();
@@ -89,6 +89,9 @@ void LoaderSCP::decodeTrack(const std::vector<uint32_t>& intervalsNs, bool fm,
 
     fdc::flux::FluxPll pll{fm ? fdc::flux::FluxPll::Mode::FM : fdc::flux::FluxPll::Mode::MFM};
     pll.addIntervals(intervalsNs);
+    uint64_t fluxNs = 0;
+    for (uint32_t ns : intervalsNs) fluxNs += ns;
+    if (indexTimeNs > fluxNs) pll.addTrailingTime(static_cast<uint32_t>(std::min<uint64_t>(indexTimeNs - fluxNs, 0xFFFFFFFFu)));
 
     if (fm)
     {
@@ -172,10 +175,30 @@ void LoaderSCP::mergeRevolutions(const std::vector<std::vector<uint8_t>>& revByt
     }
 }
 
+std::vector<uint8_t> LoaderSCP::mergeClockMarks(const std::vector<std::vector<uint8_t>>& revBytes,
+                                                const std::vector<std::vector<uint8_t>>& revClocks,
+                                                const std::vector<uint8_t>& merged)
+{
+    std::vector<uint8_t> clock((merged.size() + 7) / 8, 0);
+    for (size_t i = 0; i < merged.size(); i++)
+    {
+        for (size_t r = 0; r < revBytes.size() && r < revClocks.size(); r++)
+        {
+            if (i >= revBytes[r].size() || revBytes[r][i] != merged[i])
+                continue;
+            if ((i >> 3) < revClocks[r].size() && (revClocks[r][i >> 3] & (1u << (i & 7))))
+                clock[i >> 3] |= static_cast<uint8_t>(1u << (i & 7));
+            break;
+        }
+    }
+    return clock;
+}
+
 void LoaderSCP::encodeTrack(const uint8_t* bytes, size_t count, const uint8_t* clockBitmap,
-                            bool fm, std::vector<uint16_t>& fluxTicks)
+                            bool fm, std::vector<uint16_t>& fluxTicks, uint32_t& trailingTicks)
 {
     fluxTicks.clear();
+    trailingTicks = 0;
 
     std::vector<uint8_t> bitCells;
     if (fm)
@@ -214,19 +237,8 @@ void LoaderSCP::encodeTrack(const uint8_t* bytes, size_t count, const uint8_t* c
         }
     }
 
-    if (cellsSinceTransition > 0)
-    {
-        uint32_t totalTicks = cellsSinceTransition * ticksPerCell;
-        while (totalTicks >= 65536)
-        {
-            fluxTicks.push_back(0);
-            totalTicks -= 65536;
-        }
-        if (totalTicks > 0)
-        {
-            fluxTicks.push_back(static_cast<uint16_t>(totalTicks));
-        }
-    }
+    // No transition after the last one: those cells are only time to the index
+    trailingTicks = cellsSinceTransition * ticksPerCell;
 }
 
 /// endregion </Static helpers>
@@ -274,6 +286,16 @@ DiskImage* LoaderSCP::parse(const uint8_t* data, size_t len, std::vector<std::st
     }
 
     const bool is96tpi = (_flags & FLAG_96TPI) != 0;
+    const uint32_t nsPerTick = NS_PER_TICK * (static_cast<uint32_t>(_resolution) + 1);
+    // The track table has 168 entries (84 cylinders x 2 sides): numbers past it have no entry
+    int lastTrack = endTrack;
+    if (lastTrack >= static_cast<int>(TRACK_TABLE_ENTRIES))
+    {
+        warnings.push_back(StringHelper::Format("SCP end track %d is past the %d-entry track table, read up to %d",
+                                                endTrack, static_cast<int>(TRACK_TABLE_ENTRIES),
+                                                static_cast<int>(TRACK_TABLE_ENTRIES) - 1));
+        lastTrack = static_cast<int>(TRACK_TABLE_ENTRIES) - 1;
+    }
     /// endregion </Header>
 
     uint8_t maxCylinder = 0;
@@ -281,7 +303,7 @@ DiskImage* LoaderSCP::parse(const uint8_t* data, size_t len, std::vector<std::st
     std::vector<TrackData> tracks;
 
     /// region <Track parsing>
-    for (uint8_t t = startTrack; t <= endTrack; t++)
+    for (int t = startTrack; t <= lastTrack; t++)
     {
         const uint32_t trackOffset = readU32LE(data + TRACK_TABLE_OFFSET + t * 4);
         if (trackOffset == 0) continue;
@@ -330,8 +352,8 @@ DiskImage* LoaderSCP::parse(const uint8_t* data, size_t len, std::vector<std::st
             }
 
             RevolutionData rd;
-            rd.indexTimeNs = indexTime * NS_PER_TICK;
-            parseFluxData(data, fluxStart, fluxCount, rd.fluxIntervalsNs);
+            rd.indexTimeNs = static_cast<uint64_t>(indexTime) * nsPerTick;
+            parseFluxData(data, fluxStart, fluxCount, rd.fluxIntervalsNs, nsPerTick);
             td.revolutions.push_back(std::move(rd));
         }
 
@@ -386,7 +408,7 @@ DiskImage* LoaderSCP::parse(const uint8_t* data, size_t len, std::vector<std::st
         for (const RevolutionData& rd : td.revolutions)
         {
             std::vector<uint8_t> bytes, clockBitmap;
-            decodeTrack(rd.fluxIntervalsNs, isFM, bytes, clockBitmap);
+            decodeTrack(rd.fluxIntervalsNs, isFM, rd.indexTimeNs, bytes, clockBitmap);
             revBytes.push_back(std::move(bytes));
             revClocks.push_back(std::move(clockBitmap));
         }
@@ -414,9 +436,11 @@ DiskImage* LoaderSCP::parse(const uint8_t* data, size_t len, std::vector<std::st
             track->setRaw(merged.data(), merged.size(),
                           isFM ? DiskImage::Encoding::FM : DiskImage::Encoding::MFM);
 
-            if (!revClocks.empty() && !revClocks[0].empty())
+            const std::vector<uint8_t> clock =
+                revBytes.size() == 1 ? revClocks[0] : mergeClockMarks(revBytes, revClocks, merged);
+            if (!clock.empty())
             {
-                track->setClockBitmap(revClocks[0].data(), revClocks[0].size());
+                track->setClockBitmap(clock.data(), clock.size());
             }
 
             for (size_t i = 0; i < weakBits.size() && i < merged.size(); i++)
@@ -464,8 +488,16 @@ bool LoaderSCP::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
         return false;
     }
 
+    // Track number = cylinder x 2 + side, single-sided images included; the table has an entry for 84 cylinders
+    if (cylinders > TRACK_TABLE_ENTRIES / 2)
+    {
+        warnings.push_back(StringHelper::Format("SCP save refused: %d cylinders, the SCP track table holds %d",
+                                                cylinders, static_cast<int>(TRACK_TABLE_ENTRIES / 2)));
+        return false;
+    }
+
     const uint8_t startTrack = 0;
-    const uint8_t endTrack = static_cast<uint8_t>(cylinders * sides - 1);
+    const uint8_t endTrack = static_cast<uint8_t>((cylinders - 1) * 2 + (sides - 1));
     const bool is80track = (cylinders >= 70);
 
     /// region <Header>
@@ -480,7 +512,7 @@ bool LoaderSCP::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
     out.push_back(static_cast<uint8_t>(_flags | (is80track ? FLAG_96TPI : 0)));
     out.push_back(_bitCellWidth);
     out.push_back(sides == 1 ? HEADS_SIDE0 : HEADS_BOTH);
-    out.push_back(_resolution);
+    out.push_back(static_cast<uint8_t>(RESOLUTION_25NS));  // encodeTrack counts 25 ns ticks, whatever the loaded image used
     putU32LE(out, 0);
     /// endregion </Header>
 
@@ -520,17 +552,18 @@ bool LoaderSCP::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
 
             const bool isFM = (track->encoding() == DiskImage::Encoding::FM);
             std::vector<uint16_t> fluxTicks;
-            encodeTrack(track->rawData(), track->rawSize(), track->clockBitmap().data(), isFM, fluxTicks);
+            uint32_t trailingTicks = 0;
+            encodeTrack(track->rawData(), track->rawSize(), track->clockBitmap().data(), isFM, fluxTicks,
+                        trailingTicks);
 
-            const uint32_t nominalCellNs = isFM ? 4000 : 2000;
-            const uint32_t bytesPerRev = isFM ? DiskImage::RawTrack::DEFAULT_TRACK_SIZE_FM
-                                               : DiskImage::RawTrack::DEFAULT_TRACK_SIZE_MFM;
-            const uint32_t indexTimeNs = bytesPerRev * 8 * nominalCellNs;
-            const uint32_t indexTimeTicks = indexTimeNs / NS_PER_TICK;
+            // The revolution lasts as long as its cells: 16 per byte (6250 MFM bytes x 32 us = 200 ms)
+            uint32_t indexTimeTicks = trailingTicks;
+            for (uint16_t tick : fluxTicks)
+                indexTimeTicks += tick == 0 ? 65536u : tick;
 
             putU32LE(out, indexTimeTicks);
             putU32LE(out, static_cast<uint32_t>(fluxTicks.size()));
-            putU32LE(out, REV_HEADER_SIZE);
+            putU32LE(out, TRACK_HEADER_SIZE + REV_HEADER_SIZE);  // from "TRK": the flux follows the one revolution header
 
             for (uint16_t tick : fluxTicks)
             {

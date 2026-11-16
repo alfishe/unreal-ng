@@ -10,6 +10,9 @@ difference here is a mapping bug in one surface. Run it against a running app:
     python3 tools/verification/ttd-surface-contract/ttd_surface_contract.py \\
         --base-url http://localhost:8197 --cli-port 8797
 
+The WebSocket surface readout checks need a companion token of all scopes: start the app with
+UNREAL_COMPANION_TOKENS=contract:unc_<secret>:all and pass --companion-token unc_<secret>.
+
 It creates one instance of its own and removes it at the end; other instances
 are left alone. Exit status 0: every check passed.
 """
@@ -74,6 +77,7 @@ class Cli:
 
 class Contract:
     python = True  # False when the app was built without Python automation
+    companion_token = ""  # the WebSocket surface topic needs one (--companion-token)
 
     def __init__(self, api: EmulatorApi, cli: Cli, emu_id: str):
         self.api = api
@@ -407,6 +411,8 @@ def run_contract(c: Contract) -> None:
     status, web = c.web("POST", "/ttd/branches/0/switch", {})
     c.check(status == 200 and web.get("branch", {}).get("name") == "trunk", f"WebAPI switches back to the trunk ({status})")
 
+    branch_navigation(c, "contract-old")
+
     status, web = c.web("DELETE", "/ttd/branches/contract-old")
     message = web.get("message", "")
     c.check(status == 409 and "pinned" in message, f"WebAPI refuses a pinned branch with 409 ({status}, {message!r})")
@@ -559,10 +565,92 @@ def run_contract(c: Contract) -> None:
     c.web("POST", "/ttd/stop")
 
 
+
+def ws_surface_readouts(base_url: str, token: str, instance: str, names: List[str]) -> Dict[str, Any]:
+    """The readouts as the WebSocket surface topic sends them: join pinned to the instance, subscribe, the first values"""
+    import websocket  # websocket-client
+    sock = websocket.create_connection(base_url.replace("http", "ws", 1) + "/api/v1/ws", timeout=10,
+                                       header=[f"Authorization: Bearer {token}"])
+    try:
+        sock.send(json.dumps({"op": "join", "v": 1, "name": "ttd-surface-contract", "model": "test",
+                              "target": {"instance": instance}}))
+        values: Dict[str, Any] = {}
+        deadline = time.time() + 10
+        subscribed = False
+        while time.time() < deadline and not all(n in values for n in names):
+            message = json.loads(sock.recv())
+            if message.get("op") == "welcome" and not subscribed:
+                sock.send(json.dumps({"op": "subscribe", "readouts": names, "max_hz": 10}))
+                subscribed = True
+            elif message.get("op") == "readout":
+                values.update(message.get("values", {}))
+            elif message.get("op") == "error":
+                return {"error": message}
+        sock.send(json.dumps({"op": "bye"}))
+        return values
+    finally:
+        sock.close()
+
+
+def branch_navigation(c: "Contract", other: str) -> None:
+    """T-A5 (TTD branches test-strategy.md): the branch readouts the same over REST and the WebSocket surface topic,
+    and the relative switch (to: previous / next_sibling / prev_sibling) the same on every surface. Expects two
+    branches, the trunk active, @p other left last"""
+    print("[branch readouts and the relative switch on every surface]")
+    instance = c.base.rsplit("/", 1)[1]
+    names = ["ttd.branch", "ttd.branch_list"]
+    rest = c.api._request("GET", "/surfaces/readouts?names=" + ",".join(names) + "&instance=" + instance) or {}
+    rest = rest.get("values", {})
+    branch = rest.get("ttd.branch", {})
+    c.check(branch.get("name") == "trunk" and branch.get("count") == 2 and branch.get("depth") == 0 and
+            (branch.get("previous") or {}).get("name") == other and branch.get("siblings") == 2,
+            f"REST ttd.branch: the trunk, two branches, {other} left last ({branch})")
+    items = [i.get("name") for i in rest.get("ttd.branch_list", {}).get("items", [])]
+    c.check(items[:1] == ["trunk"] and other in items, f"REST ttd.branch_list: the lineage first ({items})")
+    if not c.companion_token:
+        print("  skip WebSocket readouts: no --companion-token")
+    else:
+        ws = ws_surface_readouts(c.api.base_url, c.companion_token, instance, names)
+        stable = lambda v: {k: x for k, x in (v or {}).items() if k not in ("created_ago", "age")}  # noqa: E731
+        c.check(stable(ws.get("ttd.branch")) == stable(branch),
+                f"WebSocket ttd.branch has the REST shape ({ws.get('ttd.branch', ws)})")
+        c.check(sorted(ws.get("ttd.branch_list", {}).keys()) == sorted(rest.get("ttd.branch_list", {}).keys()) and
+                [i.get("name") for i in ws.get("ttd.branch_list", {}).get("items", [])] == items,
+                f"WebSocket ttd.branch_list has the REST shape ({ws.get('ttd.branch_list', ws)})")
+    _, listed = c.web("GET", "/ttd/branches")
+    c.check(listed.get("previous") is not None, f"GET /ttd/branches names the previous branch ({listed.get('previous')})")
+
+    status, web = c.web("POST", "/ttd/branches/switch", {"to": "previous"})
+    c.check(status == 200 and web.get("branch", {}).get("name") == other, f"WebAPI to=previous goes to {other} ({status})")
+    cli = c.cli.run("ttd branch back")
+    _, status_web = c.web("GET", "/ttd/status")
+    c.check(status_web.get("branch", {}).get("name") == "trunk", f"CLI back returns to the trunk ({cli.strip()!r})")
+    lua = c.lua("local r = ttd_branch_switch_to('next_sibling'); print(tostring(r.switched) .. '|' .. r.branch.name "
+                ".. '|' .. tostring(r.siblings))")
+    c.check(lua == f"true|{other}|2", f"Lua next_sibling: the other branch at the fork ({lua!r})")
+    if c.python:
+        py = c.py_json("emu.ttd_branch_switch_to('prev_sibling')")
+        c.check(isinstance(py, dict) and py.get("branch", {}).get("name") == "trunk",
+                f"Python prev_sibling: back to the trunk ({py})")
+    else:
+        c.web("POST", "/ttd/branches/switch", {"to": "prev_sibling"})
+    status, web = c.web("POST", "/ttd/branches/switch", {"to": "sideways"})
+    message = web.get("message", "")
+    c.check(status == 400 and "to must be" in message, f"WebAPI refuses another to with 400 ({status}, {message!r})")
+    lua = c.lua("local ok, e = pcall(ttd_branch_switch_to, 'sideways'); local r = ok and e or {}; "
+                "print(tostring(r.switched) .. '|' .. tostring(r.error or e))")
+    c.check(message in lua, f"Lua refuses with the same message ({lua!r})")
+    _, status_web = c.web("GET", "/ttd/status")
+    c.check(status_web.get("branch", {}).get("name") == "trunk", "the trunk is active again")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base-url", default="http://localhost:8090")
     parser.add_argument("--cli-port", type=int, default=8765)
+    parser.add_argument("--companion-token", default=os.environ.get("UNREAL_CONTRACT_COMPANION_TOKEN", ""),
+                        help="a companion token with all scopes (UNREAL_COMPANION_TOKENS) for the WebSocket surface "
+                             "topic's readout checks; without one they are skipped")
     args = parser.parse_args()
 
     api = EmulatorApi(args.base_url, timeout=60.0)
@@ -572,6 +660,7 @@ def main() -> int:
         api._request("PUT", f"/emulator/{emu_id}/audio/mixer/master", {"muted": True})
         cli.run("select " + emu_id)
         c = Contract(api, cli, emu_id)
+        c.companion_token = args.companion_token
         c.python = "not available" not in cli.run("python exec print(1)")
         if not c.python:
             print("(this build has no Python automation: Python checks skipped)")

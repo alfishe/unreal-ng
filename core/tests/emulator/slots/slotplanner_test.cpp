@@ -393,9 +393,18 @@ TEST(SlotPlanner_Test, RemovalListsOnlyFunctionsThatDisappear)
 TEST(SlotPlanner_Test, BusFitNeedsAdapterOrOverride)
 {
     // 48K: the edge carries /IORQULA, so a GS behind the edge adapter really works (fit: adapter)
+    // No adapter named: the one that connects the buses is taken (a GUI has no adapter to pick)
     const SlotPlan bare = Planner().Plan(MM_SPECTRUM48, {}, Plug("edge.1", "gs"));
-    EXPECT_EQ(bare.fit, Fit::Unrealistic);
-    EXPECT_FALSE(bare.allowed) << "automation refuses an unrealistic fit without the flag";
+    EXPECT_EQ(bare.fit, Fit::Adapter) << ToText(bare);
+    EXPECT_EQ(bare.adapter, "zxbus-to-sinclair-edge");
+    EXPECT_TRUE(bare.allowed);
+    ASSERT_EQ(bare.resultingSlots.size(), 1u);
+    EXPECT_EQ(bare.resultingSlots[0].adapter, "zxbus-to-sinclair-edge");
+    // ATM 7.10: a NeoGS into the CPU socket goes behind its ZX-bus adapter without being asked for one
+    const SlotPlan atmGs = Planner().Plan(MM_ATM710, {}, Plug("cpu-socket.1", "neogs"));
+    EXPECT_EQ(atmGs.fit, Fit::Adapter) << ToText(atmGs);
+    EXPECT_EQ(atmGs.adapter, "atm-cpu-socket-zxbus");
+    EXPECT_TRUE(atmGs.allowed);
     SlotRequest withAdapter = Plug("edge.1", "gs");
     withAdapter.adapter = "zxbus-to-sinclair-edge";
     const SlotPlan adapted = Planner().Plan(MM_SPECTRUM48, {}, withAdapter);

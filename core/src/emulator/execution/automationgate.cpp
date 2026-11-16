@@ -100,7 +100,12 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
     {
         // `ttd branch switch <b>` moves the machine onto another branch, as a seek does
         if (any({"branch", "branches", "br"}) && args.size() >= 2)
-            return args[1] == "switch" || args[1] == "sw" || args[1] == "checkout";
+        {
+            for (const char* moving : {"switch", "sw", "checkout", "back", "prev", "previous", "sibling", "sib"})
+                if (args[1] == moving)
+                    return true;
+            return false;
+        }
         return any({"back", "forward", "goto", "seek", "sb", "sf", "si-back", "si-forward", "step-back",
                     "step-forward", "step-instruction", "reverse-step", "rs", "reverse-step-over", "rso",
                     "reverse-continue", "rc", "resume",

@@ -1093,6 +1093,14 @@ public:
     /// Make @p branch active and stand at @p at on its lineage (default: its last visited moment, else its end).
     /// A recording pauses for browsing first
     bool SwitchBranch(uint32_t branch, const std::optional<TTDTimePoint>& at, std::string& error);
+    /// Make the branch left last active again (ttd.branch_prev, surfaces.md §2): every change of the active branch
+    /// (a switch, a fork) leaves the old one on a trail; each call walks it back one step, at that branch's last
+    /// visited moment. False with @p error when the trail holds no live branch
+    bool SwitchToPreviousBranch(uint32_t& switchedTo, std::string& error);
+    /// The trail SwitchToPreviousBranch walks, oldest first; a verb whose moves are one step for the user
+    /// (branch-create: a switch to the fork's branch, the fork, the way back) puts it back afterwards
+    std::vector<uint32_t> BranchTrail() const;
+    void SetBranchTrail(std::vector<uint32_t> trail);
     /// Delete @p branch and its descendants (TTDBranchTable::Delete: never the trunk or the active lineage, pinned
     /// ones only with @p force); their history leaves memory. @p removed: the ids deleted
     bool DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed, std::string& error);
@@ -1890,6 +1898,14 @@ private:
     void NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed = 0);
     /// Per branch id: where it was last visited (SwitchBranch's default)
     std::vector<std::optional<TTDTimePoint>> _lastVisited = {std::nullopt};
+    /// The branches the active one left, oldest first (SwitchToPreviousBranch walks it back); bounded
+    std::vector<uint32_t> _branchTrail;
+    /// SwitchBranch called by SwitchToPreviousBranch: the branch left is not added to the trail
+    bool _walkingTrailBack = false;
+    /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
+    void LeaveBranch(uint32_t left);
+    /// The trail's last live branch other than the active one; kTTDNoBranch: none
+    uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
     /// does not park the machine (GetBookmarks); empty = the trunk alone
     mutable std::mutex _lineageViewLock;

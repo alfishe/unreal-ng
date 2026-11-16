@@ -5828,6 +5828,10 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
         _controllersDialog->raise();
         _controllersDialog->activateWindow();
     };
+    programHooks.showTtdBranches = [this] {
+        handleTtdToggled(true);
+        _ttdWidget->showBranches();
+    };
     programHooks.learn = [this](const std::string& device) {
         _controllersDialog->show();
         _controllersDialog->raise();

@@ -5883,7 +5883,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "current moment - or on 'branch', default its end; it stays even while empty; with run_frames it runs that many "
         "frames there pressing the keys of 'input', reads the bytes of 'read' and with go_back=true returns where it "
         "was: one call per what-if probe instead of seek + resume + key presses + run + memory reads), 'branch_switch' "
-        "(continue on a branch at frame / tinframe on it, default its end; not while recording), 'branch_update' "
+        "(continue on a branch at frame / tinframe on it, default its end; or to=previous: the branch left last, "
+        "to=next_sibling / prev_sibling: the next / previous branch at the nearest fork), 'branch_update' "
         "(rename, note, tags / add_tags / remove_tags, pinned), 'branch_delete' (the branch and its descendants; not "
         "the trunk or the active lineage; force=true deletes pinned ones), 'branch_prune' (delete the branches a filter "
         "selects - run, created_by, tag, name_prefix, min_length / max_length, created_after / created_before - "
@@ -6008,6 +6009,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["branch"]["description"] =
         "branch_info / branch_switch / branch_update / branch_delete: the branch - its id (0 = the trunk), its GUID or "
         "its name; branch_create: fork on this branch (at frame / tinframe on it, default its end)";
+    schema["properties"]["to"]["type"] = "string";
+    schema["properties"]["to"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* to : {"previous", "next_sibling", "prev_sibling"})
+        schema["properties"]["to"]["enum"].append(to);
+    schema["properties"]["to"]["description"] =
+        "branch_switch without 'branch': previous = the branch left last (repeated calls walk further back), "
+        "next_sibling / prev_sibling = the next / previous branch at the nearest fork of the active lineage, by creation";
     schema["properties"]["scope"]["type"] = "string";
     schema["properties"]["scope"]["enum"] = Json::Value(Json::arrayValue);
     schema["properties"]["scope"]["enum"].append("all");
@@ -6376,14 +6384,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 return;
             }
 
-            if (action == "branch_info" || action == "branch_switch" || action == "branch_update" ||
-                action == "branch_delete")
+            const bool relativeSwitch = action == "branch_switch" && args["to"].isString() && !args["to"].asString().empty();
+            if (!relativeSwitch && (action == "branch_info" || action == "branch_switch" || action == "branch_update" ||
+                                    action == "branch_delete"))
             {
                 const Json::Value& branch = args["branch"];
                 if (!(branch.isIntegral() && !branch.isBool()) && !(branch.isString() && !branch.asString().empty()))
                 {
                     done(ToolResult::Error("Action '" + action +
-                                           "' requires 'branch' (an id, a GUID or a name; branch_list lists them)"));
+                                           "' requires 'branch' (an id, a GUID or a name; branch_list lists them)" +
+                                           (action == "branch_switch" ? std::string(", or 'to'") : std::string())));
                     return;
                 }
             }
@@ -7269,15 +7279,22 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 else if (action == "branch_switch")
                 {
                     Json::Value body(Json::objectValue);
+                    const bool relative = args["to"].isString() && !args["to"].asString().empty();
+                    if (relative)
+                    {
+                        body["to"] = args["to"];
+                    }
                     for (const char* key : {"frame", "tinframe"})
                     {
-                        if (args.isMember(key))
+                        if (!relative && args.isMember(key))
                         {
                             body[key] = args[key];
                         }
                     }
-                    CallAndSummarize("POST", Endpoint(id, "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString()) +
-                                                              "/switch"),
+                    const std::string path =
+                        relative ? std::string("/ttd/branches/switch")
+                                 : "/ttd/branches/" + UrlEncodeSegment(args["branch"].asString()) + "/switch";
+                    CallAndSummarize("POST", Endpoint(id, path),
                                      &body, caller, [id](const Json::Value& b) {
                                          std::string text = b["text"].asString();
                                          while (!text.empty() && text.back() == '\n')

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .disk_image import DiskImage, Sector, Track, DiskConversionError
+from .disk_image import DiskImage, DiskConversionError
 
 MAX_FILES = 128
 SECTOR_SIZE = 256
@@ -57,51 +57,30 @@ def physical_track(logical: int, heads: int) -> tuple[int, int]:
     return divmod(logical, heads)
 
 
-def _make_sector(cylinder: int, head: int, number: int, data: bytes) -> Sector:
-    return Sector(cylinder=cylinder, head=head, number=number, size_code=1, data=data)
+def _put_sector(disk: DiskImage, cylinder: int, head: int, number: int, data: bytes) -> None:
+    """Overwrite a formatted sector's data field (CRC recalculated), as the C++ loaders' writeData"""
+    sector = disk.track(cylinder, head).find_index(number)
+    if sector is None or not sector.has_data:
+        raise DiskConversionError(f"cylinder {cylinder} head {head}: sector {number} is not formatted")
+    sector.write_data(data.ljust(SECTOR_SIZE, b"\0")[:SECTOR_SIZE], recalculate_crc=True)
 
 
 def blank_trdos_disk(cylinders: int = 80, heads: int = 2, label: str = "") -> DiskImage:
-    """An empty, formatted TR-DOS disk: every track has standard 16x256 sectors, the
-    catalog (track 0, sectors 1-8) is all zero (= no files), and the disk-info sector
-    (track 0, sector 9) is filled in. Matches loader_scl.cpp's "creates a blank TR-DOS
-    disk" starting point."""
+    """An empty, formatted TR-DOS disk, as LoaderTRD::format builds it (every track laid out with 16 x 256-byte
+    sectors, the catalogue empty, the volume sector filled in), with an optional disk label."""
+    from .formats import trd
+
     if (cylinders, heads) not in _DISK_TYPE_BY_GEOMETRY:
         raise DiskConversionError(
             f"TR-DOS only defines geometries {sorted(_DISK_TYPE_BY_GEOMETRY)}, got "
             f"({cylinders}, {heads})"
         )
-
     disk = DiskImage(cylinders=cylinders, heads=heads)
-    total_sectors = cylinders * heads * 16
-    data_sectors = total_sectors - 16  # track 0 (both heads' worth counted per side) reserved... see below
-
-    for cyl in range(cylinders):
-        for head in range(heads):
-            trk = disk.track(cyl, head)
-            trk.sectors = [_make_sector(cyl, head, r, bytes(SECTOR_SIZE)) for r in range(1, 17)]
-
-    # Track 0 sector 9 (index 8, sector number 9): disk-info fields at 0xE1-0xE7.
-    # First free sector/track = right after the catalog, i.e. logical track 1 sector 1
-    # (catalog occupies logical track 0 entirely: 8 sectors of entries + 1 info sector,
-    # the remaining 7 sectors of track 0 are conventionally left unused/free-listed as
-    # part of track 0 too - mirroring the emulator's own FORMAT routine keeps this simple
-    # and matches what real TR-DOS FORMAT produces: first free = track 1, sector 0).
-    info = bytearray(SECTOR_SIZE)
-    info[0xE1] = 0  # first free sector (0-based)
-    # Logical track 1 (cylinder 0 head 1 on a double-sided disk), not cylinder 1: TR-DOS counts tracks logically
-    info[0xE2] = 1 if cylinders * heads > 1 else 0  # first free track
-    info[0xE3] = _DISK_TYPE_BY_GEOMETRY[(cylinders, heads)]
-    info[0xE4] = 0  # file count
-    free = (cylinders * heads - 1) * 16  # all sectors except track 0
-    info[0xE5] = free & 0xFF
-    info[0xE6] = (free >> 8) & 0xFF
-    info[0xE7] = 0x10  # TR-DOS id
-    info[0xEA:0xF3] = b" " * 9  # TR-DOS FORMAT fills these with spaces (password field), as trdos.h's volume sector
-    label_bytes = label.encode("ascii", errors="replace")[:8].ljust(8)
-    info[0xF5:0xFD] = label_bytes
-
-    disk.track(0, 0).sectors[8] = _make_sector(0, 0, 9, bytes(info))
+    trd.format_disk(disk)
+    if label:
+        info = bytearray(disk.sector_bytes(0, 0, 9))
+        info[0xF5:0xFD] = label.encode("ascii", errors="replace")[:8].ljust(8)
+        _put_sector(disk, 0, 0, 9, bytes(info))
     return disk
 
 
@@ -197,7 +176,7 @@ def write_catalog_and_files(disk: DiskImage, files: list[tuple[TrdosFileEntry, b
             chunk = data[pos : pos + SECTOR_SIZE]
             if len(chunk) < SECTOR_SIZE:
                 chunk = chunk + bytes(SECTOR_SIZE - len(chunk))
-            disk.track(cyl, head).sectors[cur_sector - 1] = _make_sector(cyl, head, cur_sector, chunk)
+            _put_sector(disk, cyl, head, cur_sector, chunk)
             pos += SECTOR_SIZE
             cur_sector += 1
             if cur_sector > 16:
@@ -216,8 +195,7 @@ def write_catalog_and_files(disk: DiskImage, files: list[tuple[TrdosFileEntry, b
         catalog_bytes[slot * 16 : slot * 16 + 16] = entry_bytes
 
     for s in range(8):
-        cyl, head = 0, 0
-        disk.track(cyl, head).sectors[s] = _make_sector(cyl, head, s + 1, bytes(catalog_bytes[s * 256 : s * 256 + 256]))
+        _put_sector(disk, 0, 0, s + 1, bytes(catalog_bytes[s * 256 : s * 256 + 256]))
 
     used_sectors = (logical - FIRST_DATA_TRACK) * 16 + (sector_no - 1)
     total_data_sectors = (disk.cylinders * heads - 1) * 16
@@ -228,4 +206,4 @@ def write_catalog_and_files(disk: DiskImage, files: list[tuple[TrdosFileEntry, b
     info[0xE4] = len(files) & 0xFF
     info[0xE5] = free & 0xFF
     info[0xE6] = (free >> 8) & 0xFF
-    disk.track(0, 0).sectors[8] = _make_sector(0, 0, 9, bytes(info))
+    _put_sector(disk, 0, 0, 9, bytes(info))

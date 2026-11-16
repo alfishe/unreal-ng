@@ -6,6 +6,7 @@
 /// export options and frames, performance and heap counters, kept apart from
 /// the controller's header; TTDControl and the surfaces use them by these names.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -186,6 +187,43 @@ inline std::map<uint64_t, std::vector<TTDForkLeave>> TTDForkPoints(const TTDBran
     return points;
 }
 
+/// The branches at the fork nearest @p frame on the active lineage (ttd.branch_next_sibling / _prev_sibling, TTD
+/// branches surfaces.md §2): the last fork at or before the frame, else the first after it. The lineage's own branch
+/// past the fork and the ones leaving there, by creation; @p self indexes the lineage's, @p at is the fork's frame.
+/// @p end: the timeline's last frame. Empty: no fork on the lineage
+inline std::vector<uint32_t> TTDSiblingsAtNearestFork(const TTDBranchesView* view, uint64_t end, uint64_t frame,
+                                                      size_t& self, uint64_t& at)
+{
+    std::vector<uint32_t> out;
+    self = 0;
+    at = 0;
+    if (view == nullptr || view->branches.size() < 2)
+        return out;
+    const auto points = TTDForkPoints(*view, end);
+    if (points.empty())
+        return out;
+    auto it = points.upper_bound(frame);
+    if (it != points.begin())
+        --it;
+    at = it->first;
+    // The lineage's branch past the fork: the last span starting at or before it
+    uint32_t own = view->lineage.empty() ? kTTDTrunk : view->lineage.front().branch;
+    for (const TTDLineageSpan& span : view->lineage)
+        if (span.from.frame <= at)
+            own = span.branch;
+    out.push_back(own);
+    for (const TTDForkLeave& leave : it->second)
+        if (std::find(out.begin(), out.end(), leave.branch) == out.end())
+            out.push_back(leave.branch);
+    auto created = [view](uint32_t id) {
+        const TTDBranchInfo* b = view->Find(id);
+        return std::make_pair(b != nullptr ? b->meta.createdHostMicros : 0, id);
+    };
+    std::sort(out.begin(), out.end(), [&created](uint32_t a, uint32_t b) { return created(a) < created(b); });
+    self = static_cast<size_t>(std::find(out.begin(), out.end(), own) - out.begin());
+    return out;
+}
+
 /// The last change of the branch table (TTD branches surfaces.md §5.2: the `ttd.branches` topic). `seq` grows with
 /// every change of the session (0: none yet), so a reader that saw a gap lists the branches again
 struct TTDBranchEvent
@@ -205,6 +243,7 @@ struct TTDBranchesPublished
     std::shared_ptr<const TTDBranchesView> view;   ///< null: the trunk alone
     uint32_t active = kTTDTrunk;
     uint32_t viewed = kTTDTrunk;
+    uint32_t previous = kTTDNoBranch;   ///< the branch ttd.branch_prev goes to; none: kTTDNoBranch
     TTDBranchEvent event;
 };
 
@@ -376,6 +415,7 @@ struct TTDSessionInfo
     uint32_t activeBranch = kTTDTrunk;   ///< continued at its end; the lineage shown ends with it
     uint32_t viewedBranch = kTTDTrunk;   ///< the one the current moment belongs to (on the active lineage)
     TTDBranchEvent branchEvent;          ///< the table's last change
+    uint32_t previousBranch = kTTDNoBranch;   ///< where ttd.branch_prev goes (the branch left last); none: kTTDNoBranch
 };
 
 /// @brief String conversion for TTDCoverageKind.

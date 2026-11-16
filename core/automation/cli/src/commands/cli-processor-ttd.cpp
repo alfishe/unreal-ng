@@ -17,6 +17,7 @@
 ///   ttd seek --bookmark <label> — seek to a bookmarked position
 ///   ttd branches [...]         — the branches of the history (a resume keeps the old future as a branch)
 ///   ttd branch switch|update|delete|info <branch> — continue on a branch, rename / tag / pin it, delete it, show it
+///   ttd branch back | sibling [next|prev] — the branch left last; the next / previous one at the nearest fork
 ///   ttd branch create [name] [...]  — a branch at a moment, optionally run headless with scripted input
 ///   ttd branch prune [filters] [--apply] — delete the branches a filter picks (a dry run without --apply)
 ///   ttd cause <addr>|<reg>     — the cause chain: where a byte or a register got its value
@@ -442,6 +443,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd branch prune [filters]       What the --created-by/--run/--tag/... filter picks (a dry run);" << NEWLINE;
     ss << "        --apply deletes them (the active lineage and pinned branches stay)" << NEWLINE;
     ss << "  ttd branch switch <b> [f] [t]    Continue on branch <b>, at frame/tinframe (default: its end)" << NEWLINE;
+    ss << "  ttd branch back                  The branch left last (again: further back; alias prev)" << NEWLINE;
+    ss << "  ttd branch sibling [next|prev]   The next / previous branch at the nearest fork (by creation)" << NEWLINE;
     ss << "  ttd branch update <b>            Edit: --name N, --note TEXT, --tags a,b, --add-tags, --remove-tags," << NEWLINE;
     ss << "        --pin | --unpin" << NEWLINE;
     ss << "  ttd branch del <b> [--force]     Delete a branch and its descendants (--force: pinned ones too)" << NEWLINE;
@@ -1161,6 +1164,26 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
         return;
     }
 
+    // The branch left last (repeated calls walk further back); the next / previous branch at the nearest fork
+    if (action == "back" || action == "prev" || action == "previous")
+    {
+        options["to"] = "previous";
+        run("branch-switch");
+        return;
+    }
+    if (action == "sibling" || action == "sib")
+    {
+        const std::string dir = positional.empty() ? std::string("next") : positional[0];
+        if (dir != "next" && dir != "prev")
+        {
+            session.SendResponse(std::string("Error: Usage: ttd branch sibling [next|prev]") + NEWLINE);
+            return;
+        }
+        options["to"] = dir == "next" ? "next_sibling" : "prev_sibling";
+        run("branch-switch");
+        return;
+    }
+
     if (action == "switch" || action == "sw" || action == "checkout")
     {
         if (!needsBranch("ttd branch switch <branch> [frame] [tinframe]"))
@@ -1217,7 +1240,7 @@ void CLIProcessor::HandleTTDBranch(const ClientSession& session, EmulatorContext
     }
 
     session.SendResponse(std::string("Error: Unknown branch action '") + action + "'" + NEWLINE +
-                         "Usage: ttd branch [list|info|create|switch|update|del|prune]" + NEWLINE);
+                         "Usage: ttd branch [list|info|create|switch|back|sibling|update|del|prune]" + NEWLINE);
 }
 
 void CLIProcessor::HandleTTDStepBack(const ClientSession& session, EmulatorContext* context)

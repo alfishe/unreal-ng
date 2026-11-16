@@ -100,6 +100,32 @@ jobs:
       - name: GUI instance reads ratchet
         run: tools/verification/gui-instance-reads.sh
 
+  # The Python disk tools (tools/diskconverter) against the C++ library (unreal-disk, standalone: no core build):
+  # `zxdisk dump` / `zxdisk convert` are the reference, tools/verification/disk/parity.py compares every disk fixture
+  # in testdata/ (dump and conversion into every format, refusals included); 0 differences or the job fails
+  disk-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build zxdisk
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
+          cmake -S core/src/3rdparty/unreal-disk -B build-disk -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$GITHUB_WORKSPACE/build-disk/bin"
+          cmake --build build-disk --target zxdisk --parallel
+
+      - name: diskconverter tests
+        env:
+          ZXDISK: ${{ github.workspace }}/build-disk/bin/zxdisk
+        run: |
+          python3 -m pip install --quiet pytest
+          cd tools/diskconverter && python3 -m pytest -q tests
+
+      - name: C++ / Python parity over testdata
+        run: python3 tools/verification/disk/parity.py --zxdisk build-disk/bin/zxdisk -j 4
+
   build-linux:
     needs: throttle
     runs-on: ubuntu-latest # <--- The VM that runs Docker

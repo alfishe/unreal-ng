@@ -39,6 +39,7 @@ void TimeTravelController::ResetBranches()
     _tip = 0;
     _viewId = 0;
     _lastVisited.assign(1, std::nullopt);
+    _branchTrail.clear();
     _nextBranchMetaSet = false;
     _forceFork = false;
     PublishLineage();
@@ -413,6 +414,7 @@ bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimeP
     _lastVisited[parent] = from;
     _line = _lines[line].get();
     _viewId = line;
+    LeaveBranch(_tip);
     _tip = line;
     PublishLineage();
     if (const TTDBranchInfo* created = _branches.Get(line))
@@ -519,9 +521,69 @@ bool TimeTravelController::SwitchBranch(uint32_t branch, const std::optional<TTD
     }
     _lastVisited.resize(_lines.size());
     _lastVisited[branch] = target;
+    if (!_walkingTrailBack && oldTip != branch)
+        LeaveBranch(oldTip);
     if (const TTDBranchInfo* switched = _branches.Get(branch))
         NoteBranchEvent("switched", *switched);
     return true;
+}
+
+void TimeTravelController::LeaveBranch(uint32_t left)
+{
+    constexpr size_t kBranchTrailMax = 64;
+    if (!_branchTrail.empty() && _branchTrail.back() == left)
+        return;
+    _branchTrail.push_back(left);
+    if (_branchTrail.size() > kBranchTrailMax)
+        _branchTrail.erase(_branchTrail.begin());
+}
+
+uint32_t TimeTravelController::PreviousOnTrail() const
+{
+    for (auto it = _branchTrail.rbegin(); it != _branchTrail.rend(); ++it)
+        if (*it != _tip && _branches.Get(*it) && *it < _lines.size() && _lines[*it])
+            return *it;
+    return kTTDNoBranch;
+}
+
+std::vector<uint32_t> TimeTravelController::BranchTrail() const
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
+    return _branchTrail;
+}
+
+void TimeTravelController::SetBranchTrail(std::vector<uint32_t> trail)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    trail.erase(std::remove_if(trail.begin(), trail.end(),
+                               [this](uint32_t id) { return !_branches.Get(id) || id >= _lines.size() || !_lines[id]; }),
+                trail.end());
+    _branchTrail = std::move(trail);
+}
+
+bool TimeTravelController::SwitchToPreviousBranch(uint32_t& switchedTo, std::string& error)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    const uint32_t target = PreviousOnTrail();
+    if (target == kTTDNoBranch)
+    {
+        error = "no branch was left before this one";
+        return false;
+    }
+    // The steps walked back leave the trail: repeated calls go further back (restored when the switch fails)
+    const std::vector<uint32_t> trail = _branchTrail;
+    while (!_branchTrail.empty() && _branchTrail.back() != target)
+        _branchTrail.pop_back();
+    if (!_branchTrail.empty())
+        _branchTrail.pop_back();
+    _walkingTrailBack = true;
+    const bool ok = SwitchBranch(target, std::nullopt, error);
+    _walkingTrailBack = false;
+    if (ok)
+        switchedTo = target;
+    else
+        _branchTrail = trail;
+    return ok;
 }
 
 bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed,
@@ -635,6 +697,11 @@ void TimeTravelController::ReleaseBranchLines(const std::vector<uint32_t>& remov
         if (id < _lastVisited.size())
             _lastVisited[id].reset();
     }
+    _branchTrail.erase(std::remove_if(_branchTrail.begin(), _branchTrail.end(),
+                                      [&removed](uint32_t id) {
+                                          return std::find(removed.begin(), removed.end(), id) != removed.end();
+                                      }),
+                       _branchTrail.end());
     if (_bookmarks.RemoveOnBranches(removed) != 0)
         NotifyReadoutsChanged(_context, "ttd.bookmarks");
 }
@@ -713,6 +780,7 @@ TTDBranchesPublished TimeTravelController::PublishedBranches() const
     out.view = _published.branches;
     out.active = _published.activeBranch;
     out.viewed = _published.viewedBranch;
+    out.previous = _published.previousBranch;
     out.event = _published.branchEvent;
     return out;
 }

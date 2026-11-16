@@ -388,6 +388,11 @@ def test_branches_list_update_switch_delete(s):
     expect(not r.is_error and "Switched to branch 'mcp-old'" in r.text, 'switched, the branch named', r.text)
     r = s.call('time_travel', {'action': 'branch_switch', 'branch': 0})
     expect(not r.is_error and "'trunk'" in r.text, 'back on the trunk', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch', 'to': 'previous'})
+    expect(not r.is_error and "'mcp-old'" in r.text, 'to=previous: the branch left last', r.text)
+    r = s.call('time_travel', {'action': 'branch_switch', 'to': 'next_sibling'})
+    expect(not r.is_error and "'trunk'" in r.text and r.structured.get('siblings') == 2,
+           'to=next_sibling wraps to the trunk at the fork', r.structured)
 
     r = s.call('time_travel', {'action': 'branch_delete', 'branch': 'mcp-old'}, ok=False)
     expect(r.is_error and 'pinned' in r.text.lower(), 'a pinned branch stays without force', r.text)

@@ -88,17 +88,19 @@ def test_cmp_id_crc_value_mismatch(scratch):
 
 def test_cmp_id_crc_validity_mismatch_and_unknown_value(scratch):
     image = _disk()
-    image.get_track(0, 1).sectors[3].id_crc_valid = False  # FDI cannot carry it: the image is UDI
+    sectors = image.get_track(0, 1).sectors
+    sectors[3].id_crc_valid = False  # FDI cannot carry it: the image is UDI
+    image.get_track(0, 1).sectors = sectors
     code, result = _run(scratch, image, _disk())
     assert code == 1
     assert _track(result, 0, 1)["differences"] == ["sector 4 (R=4): id-crc image=bad reference=ok"]
 
     # A bad ID CRC on both sides, value known only from UDI: validity matches, the value is not compared
     reference = _disk()
-    reference.get_track(0, 1).sectors[3].id_crc_valid = False
     fdi.write(reference, str(scratch / "ref.fdi"))
     disk_ref = fdi.read(str(scratch / "ref.fdi"))
-    disk_ref.get_track(0, 1).sectors[3].id_crc_valid = False  # FDI dropped the flag; as if a format kept it
+    view = disk_ref.get_track(0, 1).index[3]
+    view.set_id_crc(view.compute_id_crc() ^ 0xFFFF)  # FDI cannot store it; as if a flag-only format kept it
     result = diskcompare.compare_disks(udi.read(str(scratch / "image.udi")), disk_ref)
     assert result["summary"]["mismatch"] == 0
 

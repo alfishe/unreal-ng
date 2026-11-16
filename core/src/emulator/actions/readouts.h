@@ -23,6 +23,7 @@
 /// | `video.temporal` | {available, on, effect (blend / dlss: the one the switch runs), dlss} of the temporal effects |
 /// | `machine.previous`, `machine.switches`, `media.recent`, `media.rzx`, `input.connectors`, `cap.record` | the
 /// machine area's (machinereadouts.h) |
+/// | `ttd.branch`, `ttd.branch_list` | the active TTD branch and the branch menu's list (branchactions.h) |
 /// | `toggle.<id>` | {on} for every toggle of the catalogue (`toggle.feature.<name>` for the features) |
 ///
 /// Names are matched exactly or by prefix (`media.*`, `toggle.*`; `*` = all). The WebSocket `surface` topic (S4)
