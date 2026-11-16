@@ -590,6 +590,8 @@ public:
     size_t EvictedCheckpoints() const;
     /// The read-back cache: its segments and the payload bytes they brought in
     size_t ReadBackSegments() const;
+    /// Restores that moved to a segment the read-back cache already held (repeated use of one segment counts once)
+    uint64_t ReadBackHits() const { return _readBackHits; }
     uint64_t ReadBackBytes() const;
     /// Segments begun over all lines (changes when a segment starts)
     uint64_t SegmentSerial() const { return _segmentSerial; }
@@ -876,6 +878,7 @@ private:
     SegmentLoader _segmentLoader;
     uint64_t _segmentSerial = 0;   ///< segments begun over all lines (TTDSegmentInfo::captureSeq)
     uint64_t _useClock = 0;
+    uint64_t _readBackHits = 0;   ///< restores that moved to a segment the read-back cache already held
     /// EnsureResident: read the segment of @p index on the line read now back, or mark its use
     bool MakeResident(size_t index);
     /// A segment begins on @p line at checkpoint @p first (firstChange, frame): its capture order taken

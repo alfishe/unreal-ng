@@ -1797,8 +1797,11 @@ bool TimeTravelEngine::MakeResident(size_t index)
     TTDSegmentInfo& seg = _line->segments[s];
     if (seg.resident)
     {
-        if (seg.readBack)
-            seg.lastUse = ++_useClock;
+        if (seg.readBack && seg.lastUse != _useClock)
+        {
+            seg.lastUse = ++_useClock;   // the most recently used one keeps its stamp: one restore counts once
+            ++_readBackHits;
+        }
         return true;
     }
     // The loader reads the file into this segment (it may evict others of the cache, never this one)

@@ -182,8 +182,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate" | jq '.state'
 
 # Keep only the newest history while recording (long sessions, big machines
-# such as TSL-VDAC2 at ~0.6 MB per frame): the oldest frames are released,
-# the session start moves forward, a file saved later replays what is left.
+# such as TSL-VDAC2 at ~0.6 MB per frame). With a recording folder (unreal-qt)
+# older segments only leave memory: their files keep them and a seek reads one
+# back. Without one the oldest frames are released, the session start moves
+# forward, a file saved later replays what is left.
 # 0 = no limit; a field left out is kept. MCP: time_travel action
 # "history_limit" with history_frames / history_bytes (also on "start").
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \

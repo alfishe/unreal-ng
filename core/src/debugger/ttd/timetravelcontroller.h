@@ -2463,7 +2463,6 @@ private:
     size_t _readBackCapacity = 4;              ///< the read-back cache's segments
     bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
     uint64_t _readBackLoads = 0;               ///< segments read back from their files
-    uint64_t _readBackHits = 0;                ///< restores whose evicted segment was already read back
     uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
     bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
     std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;

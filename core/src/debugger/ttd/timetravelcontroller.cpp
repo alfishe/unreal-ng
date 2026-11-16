@@ -986,7 +986,7 @@ TTDSessionInfo TimeTravelController::GetSessionInfo() const
     info.readBackBytes = _engine->ReadBackBytes();
     info.readBackCapacity = _readBackCapacity;
     info.readBackLoads = _readBackLoads;
-    info.readBackHits = _readBackHits;
+    info.readBackHits = _engine->ReadBackHits();
     info.readBackFailures = _readBackFailures;
 
     info.writeJournalEnabled = _enableWriteJournal && _line->writeJournal != nullptr;
@@ -4664,10 +4664,7 @@ bool TimeTravelController::LoadSegmentFromFile(uint32_t line, size_t segment)
         return false;
     const TTDSegmentInfo& s = (*segments)[segment];
     if (s.resident)
-    {
-        ++_readBackHits;
         return true;
-    }
     const auto it = _segmentFiles.find({line, s.firstCheckpoint});
     std::string why = "its file is not known";
     bool ok = false;

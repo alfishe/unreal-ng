@@ -234,6 +234,15 @@ TEST_F(TimeTravelController_TwoTiers_Test, SeekAfterEvictionIsBitIdentical)
     EXPECT_EQ(info.readBackFailures, 0u);
     EXPECT_LE(info.readBackSegments, info.readBackCapacity) << "the read-back cache keeps its capacity";
     EXPECT_GT(info.readBackBytes, 0u);
+
+    // A seek back into a segment the cache still holds is a hit, not a load
+    ASSERT_TRUE(_ttd->SeekTo({_start + 2, 0}));
+    ASSERT_TRUE(_ttd->SeekTo({_start + 4, 0}));
+    const uint64_t loads = _ttd->GetSessionInfo().readBackLoads;
+    const uint64_t hits = _ttd->GetSessionInfo().readBackHits;
+    ASSERT_TRUE(_ttd->SeekTo({_start + 2, 0}));
+    EXPECT_EQ(_ttd->GetSessionInfo().readBackLoads, loads);
+    EXPECT_EQ(_ttd->GetSessionInfo().readBackHits, hits + 1);
 }
 
 /// A branch whose segments left memory: a switch to it reads them back with the states it had (segments of two

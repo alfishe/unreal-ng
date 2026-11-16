@@ -782,7 +782,7 @@
     schemas["TTDStatusResponse"]["properties"]["read_back_loads"]["description"] =
         "Segments read back from their files in this session";
     schemas["TTDStatusResponse"]["properties"]["read_back_hits"]["description"] =
-        "Read backs asked for a segment already in memory";
+        "Restores that moved to a segment the read-back cache already held (no file read)";
     schemas["TTDStatusResponse"]["properties"]["read_back_failures"]["description"] =
         "Read backs that failed (the restore reported the segment)";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";

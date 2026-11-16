@@ -150,10 +150,13 @@
         op["summary"] = "Set or read the TTD history limit";
         op["tags"].append("Time-Travel Debug");
         op["description"] =
-            "Bounds the recorded history: while recording, the oldest checkpoints (one per frame) are released "
-            "once there are more than `frames` of them or their data exceeds `bytes`. The session start moves "
-            "forward; the input, port, external-event and bookmark records before it go too, so a session saved "
-            "after a release loads and replays its remaining frames exactly. Two checkpoints always stay.\n\n"
+            "Bounds the recorded history in memory. With a recording folder nothing is released: segments outside "
+            "the window leave memory once their file is complete and a seek reads one back into the read-back "
+            "cache; the session start does not move and the journals stay. Without one, while recording, the "
+            "oldest checkpoints (one per frame) are released once there are more than `frames` of them or their "
+            "data exceeds `bytes`; the session start moves forward and the input, port, external-event and "
+            "bookmark records before it go too, so a session saved after a release loads and replays its "
+            "remaining frames exactly. Two checkpoints always stay.\n\n"
             "Body (each field optional; a missing one keeps its value; 0 = no limit; an empty body only reports): "
             "`frames` (integer), `bytes` (integer). While recording the limit applies at once, otherwise from "
             "the next recorded frame. The limit stays for later recordings of this instance. Default: no limit.";
