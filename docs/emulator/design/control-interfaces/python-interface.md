@@ -1942,6 +1942,7 @@ return a dict; on failure the dict carries an `error` string.
 emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+emu.skip_until(0x4010, cpu="gs")     # the sound card CPU to the cursor (a breakpoint ends it; the card step's dict + hit)
 
 # Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
 # condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs

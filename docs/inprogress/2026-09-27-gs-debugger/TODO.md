@@ -124,8 +124,13 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   `selected-cpu`, Lua / Python `select_cpu` / `selected_cpu`, MCP `control_execution` `select_cpu`; the Qt debugger's
   CPU tab (`ecatshim::Emulator::debug_select`, both adapters; main again at detach). Tests:
   `GSCardTarget_Test.TheSelectedCardFollowsTheMainCpusSteps`, live `test_gs_debugger.py`.
-- [ ] Card run-to (§5.3) on the automation planes. The Qt debugger already runs a card to the cursor (a breakpoint of
-  its own owner / group on the card's tab, both adapters).
+- [x] Card run-to (§5.3) on the automation planes (2026-11-15): a step kind `to` (`GSCardTarget::StepKind::To`, the
+  cursor as the step's target; at the card's PC: its next run) through `RunControl::CardStep(..., "to", 1, address)`,
+  the reply adds `hit`. Planes: the main CPU's run until PC with a card CPU: REST / WebSocket `POST /skip_until?cpu=gs`,
+  CLI `skip_until <pc> --cpu gs`, Lua `skip_until(pc, "gs")`, Python `skip_until(pc, cpu="gs")`, MCP
+  `control_execution` `run_until_pc` `cpu`. A breakpoint on the way always ends it; no t-state budget (5 s). The Qt
+  debugger keeps its own breakpoint. Tests: `GSCardTarget_Test.AStepParksAtItsBoundary` (to),
+  `TheMachinesCardStepsThroughRunControl` (to, to at the cursor, a breakpoint first), live `test_gs_debugger.py`.
 
 ### Later
 

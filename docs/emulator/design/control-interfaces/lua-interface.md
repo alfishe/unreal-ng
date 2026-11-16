@@ -1493,6 +1493,7 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+emu.skip_until(0x4010, "gs")         -- the sound card CPU to the cursor (a breakpoint ends it; the card step's table + hit)
 
 -- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
 run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}

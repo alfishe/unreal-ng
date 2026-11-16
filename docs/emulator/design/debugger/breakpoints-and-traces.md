@@ -253,11 +253,13 @@ boundary (`GSCardTarget::ArmStep`), resumes the machine and waits until it pause
 - **in** (`count` 1-10000): after that many card instructions;
 - **over**: a CALL, RST, DJNZ or block instruction runs to the next instruction with SP at or above the entry SP; any
   other instruction is a step in;
-- **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP.
+- **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP;
+- **to** (run to the cursor): at the next card instruction at the address; a cursor at the card's PC means that
+  instruction's next run. The reply adds `hit` (false when a breakpoint or a pause ended it first).
 
 The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` and `main` (the snapshot's and `wait`'s `pause`, the
 WebSocket `debug` topic's `paused` event; a card breakpoint's pause carries `main` too). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
-2 s (over / out 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
+2 s (over / out / to 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
 `breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`, the
 main CPU's `main_pc` and `main_sp`, `state`.
 
@@ -267,18 +269,19 @@ instruction start and its step parks inside that catch-up, with the main CPU at 
 (after a card step or breakpoint) the next step starts from that boundary; paused between frames, the card's first
 boundary is the instruction at its PC.
 
-| Plane | Step in | Step over / out |
-| :--- | :--- | :--- |
-| CLI | `step [count] --cpu gs`, `steps <count> --cpu gs` | `stepover --cpu gs`, `stepout --cpu gs` |
-| Lua | `step("gs")`, `step(skip_bp, "gs")`, `steps(count, skip_bp, "gs")` | `stepover("gs")`, `step_out("gs")` |
-| Python | `emu.step(cpu="gs")`, `emu.steps(count, cpu="gs")` | `emu.stepover(cpu="gs")`, `emu.step_out(cpu="gs")` |
-| MCP | `control_execution` `step` / `step_n` `cpu` | `control_execution` `step_over` / `step_out` `cpu` |
-| REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` |
-| WebSocket | the REST routes as `call`s | the same |
+| Plane | Step in | Step over / out | Run to the cursor |
+| :--- | :--- | :--- | :--- |
+| CLI | `step [count] --cpu gs`, `steps <count> --cpu gs` | `stepover --cpu gs`, `stepout --cpu gs` | `skip_until <pc> --cpu gs` |
+| Lua | `step("gs")`, `step(skip_bp, "gs")`, `steps(count, skip_bp, "gs")` | `stepover("gs")`, `step_out("gs")` | `skip_until(pc, "gs")` |
+| Python | `emu.step(cpu="gs")`, `emu.steps(count, cpu="gs")` | `emu.stepover(cpu="gs")`, `emu.step_out(cpu="gs")` | `emu.skip_until(pc, cpu="gs")` |
+| MCP | `control_execution` `step` / `step_n` `cpu` | `control_execution` `step_over` / `step_out` `cpu` | `control_execution` `run_until_pc` `pc` `cpu` |
+| REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` | `POST /skip_until?cpu=gs {pc}` |
+| WebSocket | the REST routes as `call`s | the same | the same |
 
 Lua and Python return the reply as a table / dict with `ok` (`ok` false and `error` when refused: not paused, a step
-already under way). The other runs (frames, t-states, run until PC) stay the machine's: MCP refuses a card `cpu` on
-them.
+already under way). A card's run to the cursor always stops at a breakpoint on the way and does not take a t-state
+budget (`max_tstates`, `breakpoints` are the main CPU's). The other runs (frames, t-states) stay the machine's: MCP
+refuses a card `cpu` on them. The Qt debugger runs a card to the cursor with a breakpoint of its own.
 
 The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
 `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,

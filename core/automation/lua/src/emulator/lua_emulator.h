@@ -541,9 +541,9 @@ protected:
         return cpu;
     }
 
-    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out): the reply's body and ok = true, or
+    /// A sound card CPU's step (RunControl::CardStep; `kind` in, over, out, to `address`): the reply's body and ok = true, or
     /// ok = false and error. The machine runs until the card ends it, then is paused
-    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count) const
+    sol::table CardStep(sol::state_view lua, DebugCpuId cpu, const char* kind, unsigned count, uint16_t address = 0) const
     {
         sol::table result = lua.create_table();
         Emulator* emulator = effectiveEmulator();
@@ -558,7 +558,7 @@ protected:
         // The automation gate as every step of a script: its session, or an implicit one
         execution::script::Check(*emulator, execution::Origin::Lua);
         const execution::RunReply reply = execution::RunControl(shared).CardStep(
-            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count);
+            execution::script::RequesterOf(*emulator, execution::Origin::Lua), cpu, kind, count, address);
         if (reply.status == execution::RunReply::Status::Revoked)
             throw std::runtime_error(reply.message);
         if (!reply.Ok())
@@ -6833,9 +6833,16 @@ public:
             return result;
         });
 
-        // Fast-forward until PC reaches the target (breakpoints skipped)
-        lua.set_function("skip_until", [this](sol::object pcValue, sol::optional<unsigned> maxTStatesOpt) -> sol::table {
+        // Fast-forward until PC reaches the target (breakpoints skipped). skip_until(pc, [max_tstates], [cpu]) or
+        // skip_until(pc, cpu): "gs" / "ms" runs that sound card CPU to the cursor (CardStep "to"; breakpoints end it)
+        lua.set_function("skip_until", [this](sol::object pcValue, sol::object second,
+                                              sol::optional<std::string> cpuName, sol::this_state ts) -> sol::table {
             sol::state_view lua_view(*_lua);
+            sol::optional<unsigned> maxTStatesOpt;
+            if (second.is<std::string>() && !cpuName)
+                cpuName = second.as<std::string>();
+            else if (second.is<unsigned>())
+                maxTStatesOpt = second.as<unsigned>();
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) { result["error"] = "no emulator"; return result; }
@@ -6858,6 +6865,8 @@ public:
 
             if (target32 > 0xFFFF) { result["error"] = "pc out of 16-bit range"; return result; }
             const uint16_t target = static_cast<uint16_t>(target32);
+            if (const DebugCpuId cpu = ScriptCpu(cpuName); IsCardCpu(cpu))
+                return CardStep(sol::state_view(ts), cpu, "to", 1, target);
 
             // Safety budget: default 100 frames of emulated time, hard cap 200 s
             EmulatorContext* context = emulator->GetContext();

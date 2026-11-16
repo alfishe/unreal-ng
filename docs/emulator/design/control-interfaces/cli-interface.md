@@ -168,7 +168,7 @@ Available commands:
 works on the General Sound / NeoGS card's Z80 (`registers a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `disasm --cpu gs`; [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu)), and on
 `step [count]`, `steps <count>`, `stepover` and `stepout` steps it: the machine runs until the card's step ends
-(`stepover --cpu gs`). `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
+(`stepover --cpu gs`); `skip_until <pc> --cpu gs` runs it to the cursor (a breakpoint on the way ends it). `selected-cpu [main|gs|ms]` sets or shows the CPU the front-ends show: a card shown follows
 the main CPU's steps of the paused machine.
 
 **Command Aliases**:
@@ -580,7 +580,7 @@ reference: [command-interface.md](./command-interface.md).
 | CLI Command | Description |
 | :--- | :--- |
 | `stepout` | Run until the current subroutine returns to its caller. |
-| `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). |
+| `skip_until <pc>` | Fast-forward until PC reaches the target (breakpoints skipped, bounded budget). `--cpu gs\|ms`: the sound card CPU runs to `<pc>` (a breakpoint ends it, 5 s). |
 | `run_until [N] key=value ...` | Whole frames until the rules hold at a frame end: `if="M(#5C3A)==1"`, `text="GAME OVER"`, `screen=changed\|stable`, `stable_frames=25`, `event=died`, `match=any\|all`, `breakpoints=true`; a bare N is `max_frames` (3000, at most 200000). One line: "met at frame 4521 after 312 frames (text, row \"GAME OVER\"), PC #0038, 41 ms; paused" or "not met after 3000 frames ...". |
 | `watch add key=value ...` / `watch list` / `watch del <id\|all>` | Frame watches on the running machine (the `run_until` rules plus `label=`, `then=pause\|notify`, `once=true\|false`; at most 16): a hit pauses at that frame end (stop reason `watch`) and is pushed as `watch_hit` on `debug.events`. `watches` = `watch list`. |
 | `pace [show\|presets\|set <preset> [ms]\|interval <ms>\|next\|prev\|start\|stop\|toggle\|step] [--json]` | The paced run ([command-interface.md §2.1](./command-interface.md#21-paced-run-and-runs-to-a-place-stream-deck-d1-d2)): `full`, `25fps`, `5fps`, `1fps`, `frame`, `100lines`, `10lines`, `1line`, `1op`; a frame, lines or an instruction per interval (1..5000 ms), stopping at a breakpoint. `pace` alone shows it. |

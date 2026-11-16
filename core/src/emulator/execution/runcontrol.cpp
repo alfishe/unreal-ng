@@ -293,7 +293,8 @@ RunReply RunControl::StepOut(const Requester& requester)
     return Finish("Step out completed");
 }
 
-RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count)
+RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const std::string& kind, unsigned count,
+                              uint16_t address)
 {
     if (!_emulator)
         return Missing();
@@ -316,8 +317,10 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         step = GSCardTarget::StepKind::Over;
     else if (kind == "out")
         step = GSCardTarget::StepKind::Out;
+    else if (kind == "to")
+        step = GSCardTarget::StepKind::To;
     else
-        return refuse(RunReply::Status::BadRequest, "Unknown step '" + kind + "' (in, over, out)");
+        return refuse(RunReply::Status::BadRequest, "Unknown step '" + kind + "' (in, over, out, to)");
     if (count < 1 || count > 10000)
         return refuse(RunReply::Status::BadRequest, "count must be 1-10000");
     GSCardTarget* target =
@@ -326,7 +329,7 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
         return refuse(RunReply::Status::Refused, std::string("cpu ") + DebugCpuName(cpu) + " not available");
     if (!_emulator->IsPaused())
         return refuse(RunReply::Status::Refused, "Emulator is not paused: pause it before a step");
-    if (const std::string error = target->ArmStep(step, count); !error.empty())
+    if (const std::string error = target->ArmStep(step, count, address); !error.empty())
         return refuse(RunReply::Status::Refused, error);
 
     const uint64_t stopsBefore = target->StopCount();
@@ -359,7 +362,13 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     const bool stepEnded = target->StopCount() > stopsBefore && target->LastStop().step;
     target->CancelStep();  // another cause paused it first: the step is over too
 
-    reply = Finish(timedOut    ? std::string("The step of cpu ") + DebugCpuName(cpu) + " did not end in time; paused"
+    char cursor[16];
+    std::snprintf(cursor, sizeof(cursor), "#%04X", static_cast<unsigned>(address));
+    reply = Finish(timedOut && step == GSCardTarget::StepKind::To
+                       ? std::string("cpu ") + DebugCpuName(cpu) + " did not reach " + cursor + " in time; paused"
+                   : timedOut  ? std::string("The step of cpu ") + DebugCpuName(cpu) + " did not end in time; paused"
+                   : stepEnded && step == GSCardTarget::StepKind::To
+                       ? std::string("Ran cpu ") + DebugCpuName(cpu) + " to " + cursor
                    : stepEnded ? std::string("Step ") + kind + " of cpu " + DebugCpuName(cpu) + " completed"
                                : std::string("Stopped before the step of cpu ") + DebugCpuName(cpu) + " ended");
     if (!reply.Ok())
@@ -400,6 +409,8 @@ RunReply RunControl::CardStep(const Requester& requester, DebugCpuId cpu, const 
     }
     body["stop"] = std::move(stopNode);
     body["cpu"] = DebugCpuName(cpu);
+    if (step == GSCardTarget::StepKind::To)
+        body["hit"] = stepEnded;
     if (const StateNode* pc = reply.body.find("pc"))
         body["main_pc"] = *pc;
     if (const StateNode* sp = reply.body.find("sp"))
