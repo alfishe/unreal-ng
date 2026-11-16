@@ -25,6 +25,7 @@ layers:
     north:           { action: ttd.reverse_continue }
     west:            { action: ttd.bookmark_add }
     east:            { action: ttd.resume_live }
+    view+east:       { action: ttd.branch_prev }
     menu:            { action: run.pause_toggle }
     view:            { action: debugger.focus_next }
     lstick.up:       { action: debugger.cursor_move, params: { dir: up } }

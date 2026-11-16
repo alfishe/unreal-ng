@@ -1,8 +1,7 @@
 // The on-screen keyboard (unreal-qt/src/osdkeyboard/osdkeyboardwindow.h, POC 031): every picture of
 // data/controllers/keyboards loads and names only keys the core knows; a model gets its pictures, the default first;
-// a ZX key posts the PC keys the machine's PS/2 controller takes for it, then its matrix key (KeyboardManager::
-// postVirtualKey: the route gates each side), a combination key its keys in order (up in reverse), a latched modifier
-// stays down until the next key goes up, a PC picture's key posts the PC key alone (the controller, not the matrix).
+// a ZX key posts its matrix key, a combination key its keys in order (up in reverse), a latched modifier stays down
+// until the next key goes up, a PC picture's key posts the PC key alone (the controller, not the matrix).
 
 #include <QCoreApplication>
 #include <QFile>
@@ -254,8 +253,8 @@ TEST_F(OsdKeyboardWindow_Test, ZxKeysAndALatchedModifier)
     EXPECT_EQ(window.choices(), (std::vector<std::string>{"zx48k", "zxplus", "forum"}))
         << "the 48K's own, then the Spectrum+ and the Forum";
 
-    // A ZX key goes with the PC key a PS/2 controller takes for it (pckey::FromZxKey); the route drops what the
-    // machine has no use for
+    // Each matrix key goes with the PC key the PS/2 controller takes for it (KeyboardManager::postVirtualKey): PC
+    // down before the matrix, up after it
     window.press("a");
     window.release();
     EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::A, true), Zx(ZXKEY_A, true), Zx(ZXKEY_A, false),
@@ -282,7 +281,8 @@ TEST_F(OsdKeyboardWindow_Test, ZxKeysAndALatchedModifier)
     EXPECT_EQ(recorder.Flush(),
               (std::vector<Posted>{Pc(PcKey::LeftCtrl, true), Zx(ZXKEY_SYM_SHIFT, true), Zx(ZXKEY_SYM_SHIFT, false),
                                    Pc(PcKey::LeftCtrl, false), Pc(PcKey::LeftShift, true), Zx(ZXKEY_CAPS_SHIFT, true),
-                                   Zx(ZXKEY_CAPS_SHIFT, false), Pc(PcKey::LeftShift, false)}));
+                                   Zx(ZXKEY_CAPS_SHIFT, false), Pc(PcKey::LeftShift, false)}))
+        << "Symbol Shift is Left Ctrl to the controller";
 }
 
 TEST_F(OsdKeyboardWindow_Test, ACombinationKeyPressesItsKeysTogether)
@@ -299,19 +299,15 @@ TEST_F(OsdKeyboardWindow_Test, ACombinationKeyPressesItsKeysTogether)
             combo = &key;
     ASSERT_NE(combo, nullptr) << "the 128's keyboard has its Caps Shift keys (TRUE VIDEO, the arrows)";
     const ZXKeysEnum second = combo->zx[1];
+    const std::vector<PcKey> secondPc = pckey::FromZxKey(second);
+    ASSERT_EQ(secondPc.size(), 1u);
     window.press(combo->id);
     window.release();
-    // The PC keys of both go down first, in order, and up last, in reverse
-    const std::vector<PcKey> secondPc = pckey::FromZxKey(second);
-    std::vector<Posted> want{Pc(PcKey::LeftShift, true)};
-    for (PcKey key : secondPc)
-        want.push_back(Pc(key, true));
-    want.insert(want.end(),
-                {Zx(ZXKEY_CAPS_SHIFT, true), Zx(second, true), Zx(second, false), Zx(ZXKEY_CAPS_SHIFT, false)});
-    for (auto it = secondPc.rbegin(); it != secondPc.rend(); ++it)
-        want.push_back(Pc(*it, false));
-    want.push_back(Pc(PcKey::LeftShift, false));
-    EXPECT_EQ(recorder.Flush(), want);
+    EXPECT_EQ(recorder.Flush(),
+              (std::vector<Posted>{Pc(PcKey::LeftShift, true), Pc(secondPc[0], true), Zx(ZXKEY_CAPS_SHIFT, true),
+                                   Zx(second, true), Zx(second, false), Zx(ZXKEY_CAPS_SHIFT, false),
+                                   Pc(secondPc[0], false), Pc(PcKey::LeftShift, false)}))
+        << "all the PC keys down first, then the matrix keys; up in reverse";
 }
 
 TEST_F(OsdKeyboardWindow_Test, APcPictureKeyGoesToTheControllerOnly)
@@ -342,7 +338,7 @@ TEST_F(OsdKeyboardWindow_Test, APcPictureKeyGoesToTheControllerOnly)
     window.release();
     EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::A, true), Zx(ZXKEY_A, true), Zx(ZXKEY_A, false),
                                                      Pc(PcKey::A, false)}))
-        << "a matrix key reaches the AVR's PS/2 side too (the ZX-Evo firmware reads it)";
+        << "a matrix picture's key reaches the PS/2 controller too";
     OsdKeyboardWindow again;
     again.setRoot(Root());
     again.setBinding(&_binding);
@@ -444,7 +440,7 @@ TEST_F(OsdKeyboardWindow_Test, ANextExtendedKeyIsOneKeyOfItsOwn)
     window.release();
     EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Pc(PcKey::Left, true), Zx(ZXKEY_EXT_LEFT, true),
                                                      Zx(ZXKEY_EXT_LEFT, false), Pc(PcKey::Left, false)}))
-        << "an extended key stands for itself on the PS/2 side too: Left, not Shift + 5";
+        << "an extended key stands for itself: E0 6B, not Shift + 5";
     window.press("extend-mode");
     window.release();
     EXPECT_EQ(recorder.Flush(), (std::vector<Posted>{Zx(ZXKEY_EXT_EXTEND, true), Zx(ZXKEY_EXT_EXTEND, false)}));

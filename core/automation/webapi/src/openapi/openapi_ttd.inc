@@ -761,6 +761,25 @@
         sw["responses"]["400"]["description"] = "frame / tinframe not integers, or tinframe without frame";
         sw["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
         sw["responses"]["409"]["description"] = "The switch was refused (recording, a moment off the branch)";
+
+        Json::Value& rel = paths["/api/v1/emulator/{id}/ttd/branches/switch"]["post"];
+        rel["summary"] = "Switch to the previous branch or a sibling at the nearest fork";
+        rel["tags"].append("Time-Travel Debug");
+        rel["description"] =
+            "to=previous: the branch left last (every switch and fork leaves one on a trail; repeated calls walk it "
+            "back), at its last visited moment. to=next_sibling / prev_sibling: the next / previous branch at the "
+            "nearest fork of the active lineage (the last fork at or before the moment, else the first after it), "
+            "the lineage's own branch past the fork included, by creation.";
+        rel["parameters"].append(idParam());
+        rel["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchRelativeRequest";
+        rel["responses"]["200"]["description"] = "Switched";
+        rel["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchResponse";
+        rel["responses"]["400"]["description"] = "to missing or not previous / next_sibling / prev_sibling";
+        rel["responses"]["404"]["description"] =
+            "Emulator instance not found, no branch left before this one, or no other branch at a fork";
+        rel["responses"]["409"]["description"] = "The switch was refused";
     }
 
     // =====================================================================

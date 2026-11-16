@@ -6367,6 +6367,19 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("branches", options)));
         });
 
+        // ttd_branch_switch_to(to): "previous" (the branch left last; again: further back), "next_sibling" /
+        // "prev_sibling" (the next / previous branch at the nearest fork, by creation); as ttd_branch_switch
+        lua.set_function("ttd_branch_switch_to", [this](sol::this_state ts, const std::string& to) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("branch-switch", {{"to", to}});
+            StateNode value = reply.body;
+            if (!reply.Ok())
+            {
+                value["switched"] = false;
+                value["error"] = reply.message;
+            }
+            return StateNodeToLua(ts, value);
+        });
+
         // ttd_branch_switch(branch [, frame [, tinframe]]): continue on the branch, at the moment on it (default: its
         // end); {switched, branch, arrived_at, state, check, text} or {switched = false, error = ...}
         lua.set_function("ttd_branch_switch", [this](sol::this_state ts, sol::object branch,

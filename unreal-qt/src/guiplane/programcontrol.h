@@ -29,6 +29,8 @@ public:
         std::function<bool()> keyboardShown;
         std::function<void(bool)> showKeyboard;
         std::function<void()> showControllers;
+        /// The TTD panel with its Branches row (the branch tree)
+        std::function<void()> showTtdBranches;
         /// The pad's cursor on the keyboard (the handheld pad, the automation): move it, tap the key under it (false: none)
         std::function<void(int dx, int dy)> keyboardNav;
         std::function<bool()> keyboardTap;

@@ -773,6 +773,9 @@ Json::Value WsHub::Read(const std::string& name, const std::string& instanceId, 
         value["revision"] = static_cast<Json::UInt64>(view != nullptr ? view->revision : 0);
         value["active"] = BranchRefJson(view, published.active);
         value["viewed"] = BranchRefJson(view, published.viewed);
+        // The branch a "previous branch" press goes to (TTD branches surfaces.md §2); null: none
+        value["previous"] = published.previous != ttd::kTTDNoBranch ? BranchRefJson(view, published.previous)
+                                                                     : Json::Value(Json::nullValue);
         const ttd::TTDBranchEvent& event = published.event;
         if (event.seq != 0)
         {

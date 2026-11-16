@@ -1414,6 +1414,10 @@
     schemas["TTDBranchesResponse"]["properties"]["branches"]["items"]["$ref"] = "#/components/schemas/TTDBranch";
     for (const char* name : {"total", "count", "active", "viewed"})
         schemas["TTDBranchesResponse"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["nullable"] = true;
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["description"] =
+        "The branch POST /ttd/branches/switch {to: previous} goes to (the branch left last); null: none";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
     schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
         "#/components/schemas/TTDBranchLineageSpan";
@@ -1453,11 +1457,24 @@
     schemas["TTDBranchSwitchRequest"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDBranchSwitchRequest"]["properties"]["tinframe"]["type"] = "integer";
 
+    schemas["TTDBranchSwitchRelativeRequest"]["type"] = "object";
+    schemas["TTDBranchSwitchRelativeRequest"]["description"] = "Request body for POST /ttd/branches/switch.";
+    schemas["TTDBranchSwitchRelativeRequest"]["required"].append("to");
+    schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["type"] = "string";
+    for (const char* to : {"previous", "next_sibling", "prev_sibling"})
+        schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["enum"].append(to);
+
     schemas["TTDBranchSwitchResponse"]["type"] = "object";
     schemas["TTDBranchSwitchResponse"]["description"] = "Response from POST /ttd/branches/{branch}/switch.";
     schemas["TTDBranchSwitchResponse"]["properties"]["switched"]["type"] = "boolean";
     schemas["TTDBranchSwitchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
     schemas["TTDBranchSwitchResponse"]["properties"]["arrived_at"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["description"] =
+        "to=next_sibling / prev_sibling: the frame of the fork the siblings leave from";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["description"] =
+        "to=next_sibling / prev_sibling: how many branches leave that fork, the lineage's own included";
     schemas["TTDBranchSwitchResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDBranchSwitchResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
     schemas["TTDBranchSwitchResponse"]["properties"]["text"]["type"] = "string";
