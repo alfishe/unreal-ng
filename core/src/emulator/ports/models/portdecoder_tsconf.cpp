@@ -3,12 +3,15 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4board.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4espspi.h"
 #include "emulator/slots/portowners.h"
 #include "emulator/platforms/tsconf/tsconfprogramsnapshot.h"
 #include "loaders/snapshot/snapshotcapture.h"
 
 #include "emulator/io/mouse/mousemanager.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -35,6 +38,7 @@
 #include "emulator/platforms/tsconf/tsconfcraminit.h"
 #include "emulator/platforms/tsconf/tsconfmemoryregions.h"
 #include "emulator/platforms/tsconf/vdac2card.h"
+#include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
 #include "emulator/video/screen.h"
 
 /// region <Constructors / Destructors>
@@ -104,6 +108,13 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
             constexpr uint8_t kMsel = 0x04;
             _vdac2->SetShowing((_ts.latVConfig & kMsel) != 0);
         }
+        if (_vdac4Board)
+        {
+            // The ESP's apps run on their own (DOOM draws without the Z80): bring it up to the frame's end
+            _vdac4FrameEnd = true;
+            _vdac4Board->OnFrameEnd();
+            _vdac4FrameEnd = false;
+        }
     });
     _sdCard.setWriteListener([this](uint64_t) {
         if (_context->pMediaManager)
@@ -153,7 +164,10 @@ PortDecoder_TSConf::PortDecoder_TSConf(EmulatorContext* context) : PortDecoder(c
 PortDecoder_TSConf::~PortDecoder_TSConf()
 {
     _interrupts.SetLineSource(nullptr);
+    _zc.AttachDevice(Vdac4EspSpi::kSpiSlot, nullptr, 0, false);
+    _vdac4Board.reset();
     _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+    _vdac4Tang = nullptr;
     _vdac2.reset();
 
     if (_context->pMediaManager)
@@ -232,24 +246,80 @@ void PortDecoder_TSConf::RefreshVdac2Card()
 #ifdef ENABLE_VDAC2
     // The firmware build is fixed per machine (the card is swapped with the
     // power off and the FPGA reflashed, vdac2-tdd.md §6.1); a test may change
-    // the config and reset, so the card follows the config at every reset
-    const bool wanted = VdacVersion() == 7;
-    if (wanted && !_vdac2)
+    // the config and reset, so the card follows the config at every reset.
+    // The VDAC4 board runs on the same VDAC2 build; its Tang takes the FT812's
+    // place (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4, §5)
+    const bool vdac2Build = VdacVersion() == 7;
+    const bool wantVdac4 = vdac2Build && _context->config.ts_vdac4;
+    const bool wantVdac2 = vdac2Build && !wantVdac4;
+    const bool haveVdac4 = _vdac4Tang != nullptr;
+    const bool haveVdac2 = _vdac2 != nullptr && !haveVdac4;
+    if ((haveVdac2 && !wantVdac2) || (haveVdac4 && !wantVdac4))
+    {
+        _interrupts.SetLineSource(nullptr);
+        _zc.AttachDevice(Vdac4EspSpi::kSpiSlot, nullptr, 0, false);
+        _spiTap.SetDevice(Vdac4EspSpi::kSpiSlot, "");
+        _vdac4Board.reset();
+        _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
+        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "");
+        _vdac4Tang = nullptr;
+        _vdac2.reset();
+    }
+    if ((wantVdac2 || wantVdac4) && !_vdac2)
     {
         // Time inside the frame: the engine's accounted position (the CPU's
         // tact at a port access, the DMA's while a transfer is accounted)
-        _vdac2 = std::make_unique<Vdac2Card>(_context, [this]() { return _ts.budgetRaster; });
+        auto raster = [this]() { return _ts.budgetRaster; };
+        if (wantVdac4)
+        {
+            auto tang = std::make_unique<Vdac4Tang>(_context, raster);
+            _vdac4Tang = tang.get();
+            _vdac2 = std::move(tang);
+            _spiTap.SetDevice(Vdac4Tang::kSpiSlot, "vdac4-ft");
+
+            // The board's ESP32-S3 on slot 2 (#77 D4); its LINK reaches the Tang
+            _vdac4BaseUs = 0;
+            _vdac4Frames = _context->emulatorState.frame_counter;
+            _vdac4Board = std::make_unique<Vdac4Board>(
+                _context, *_vdac4Tang,
+                [this]() {
+                    // The board's own time base: the frames the CPU closed plus the CPU's position in its frame.
+                    // Core counts a closed frame (frame_counter) where it rebases Z80::t; t_states + Z80::t is not
+                    // monotonic: the main loop adds a frame to t_states at its frame end, while the CPU rolls over
+                    // only once Z80::t reached the frame (a frame may close a few T-states early), and the engine's
+                    // rollover catches its DMA up (SPI to this ESP included) after the rebase. A machine reset
+                    // restarts frame_counter: the base keeps going
+                    const EmulatorState& state = _context->emulatorState;
+                    const uint64_t units = state.ttd_clock_units ? state.ttd_clock_units : 1;
+                    const uint64_t span = static_cast<uint64_t>(_context->config.frame) * units;
+                    const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+                    const uint64_t inFrame = z80 ? std::min<uint64_t>(state.TtdTInFrame(z80->t), span) : 0;
+                    if (state.frame_counter > _vdac4Frames)
+                        _vdac4BaseUs += (state.frame_counter - _vdac4Frames) * _context->config.frame_duration_us;
+                    _vdac4Frames = state.frame_counter;
+                    const uint64_t us = _vdac4BaseUs + (span ? inFrame * _context->config.frame_duration_us / span : 0);
+                    return us * 1000;
+                },
+                [this]() {
+                    // Not from inside the engine: its DMA's SPI bytes reach the ESP while it advances
+                    if (!_vdac4FrameEnd && !_engine.Advancing())
+                        CatchUpEngine();
+                });
+            _zc.AttachDevice(Vdac4EspSpi::kSpiSlot, &_vdac4Board->Spi(), Vdac4EspSpi::kSpiSelectMask,
+                             Vdac4EspSpi::kSpiSelectActiveHigh);
+            _spiTap.SetDevice(Vdac4EspSpi::kSpiSlot, "vdac4-esp");
+            _vdac4Board->PowerOn();
+        }
+        else
+        {
+            _vdac2 = std::make_unique<Vdac2Card>(_context, raster);
+            _spiTap.SetDevice(Vdac2Card::kSpiSlot, "ft812");
+        }
+        static_assert(Vdac4Tang::kSpiSlot == Vdac2Card::kSpiSlot && Vdac4Tang::kSpiSelectMask == Vdac2Card::kSpiSelectMask,
+                      "the VDAC4 FT812 core sits where the VDAC2 card's FT812 sits");
         _zc.AttachDevice(Vdac2Card::kSpiSlot, _vdac2.get(), Vdac2Card::kSpiSelectMask,
                          Vdac2Card::kSpiSelectActiveHigh);
-        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "ft812");
         _interrupts.SetLineSource(&_vdac2Lines);
-    }
-    else if (!wanted && _vdac2)
-    {
-        _interrupts.SetLineSource(nullptr);
-        _zc.AttachDevice(Vdac2Card::kSpiSlot, nullptr, 0, false);
-        _spiTap.SetDevice(Vdac2Card::kSpiSlot, "");
-        _vdac2.reset();
     }
 #endif
 }
@@ -1415,8 +1485,9 @@ std::vector<ttd::TTDDeviceType> PortDecoder_TSConf::GetTTDModelStateTypes() cons
                                           ttd::TTDDeviceType::Ds12887, ttd::TTDDeviceType::EvoPs2,
                                           ttd::TTDDeviceType::EvoMouse, ttd::TTDDeviceType::EvoAvrVolatile,
                                           ttd::TTDDeviceType::EvoFlash};
-    // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order)
-    if (_vdac2 && _vdac2->IsReady())
+    // The VDAC2 card's FT812: its memory first, then the card and chip state (restore order = id order).
+    // The VDAC4 board is not TTD state yet (its Tang and ESP devices come in design §11 phase 6)
+    if (_vdac2 && _vdac2->IsReady() && !_vdac4Tang)
     {
         ids.push_back(ttd::TTDDeviceType::Vdac2Memory);
         ids.push_back(ttd::TTDDeviceType::Vdac2);
@@ -1435,7 +1506,7 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoder_TSConf::CreateTTD
     serializers.push_back(std::make_unique<ttd::TTDEvoMouse>(self->_evoAvr.Ps2Mouse()));
     serializers.push_back(std::make_unique<ttd::TTDEvoAvrVolatile>(self->_evoAvr));
     serializers.push_back(std::make_unique<ttd::TTDEvoFlash>(self->_flash));
-    if (self->_vdac2 && self->_vdac2->IsReady())
+    if (self->_vdac2 && self->_vdac2->IsReady() && !self->_vdac4Tang)
     {
         serializers.push_back(std::make_unique<ttd::TTDVdac2Memory>(*self->_vdac2));
         serializers.push_back(std::make_unique<ttd::TTDVdac2>(*self->_vdac2));

@@ -154,6 +154,7 @@
 #include <debugger/history/historycontrol.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
+#include "../bindings/python_vdac4.h"
 
 namespace py = pybind11;
 
@@ -8813,5 +8814,8 @@ namespace PythonBindings
 
         // TS-Conf VDAC2 card (FT812): bus capture
         registerVdac2Bindings(emulatorClass);
+
+        // TS-Conf VDAC4 board (Tang + ESP32-S3): state
+        registerVdac4Bindings(emulatorClass);
     }
 }

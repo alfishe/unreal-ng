@@ -384,6 +384,15 @@ class Emulator:
         tile, bitmap_x, bitmap_y, palette, words), active_sprites, cram (256
         cells: value, rgb). available=False on other machines"""
 
+    def vdac4_state(self, log: int = 50) -> dict:
+        """TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3), the keys of GET /vdac4/state: tang {personality,
+        armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources,
+        clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
+        error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
+        packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
+        dropped, sound}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
+        the board"""
+
     def network_state(self) -> dict:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""

@@ -114,6 +114,12 @@ bool ScanRunning(const EveChip& chip)
 
 void Advance(EveChip& chip, uint64_t clocks)
 {
+    if (chip.vdac4 && chip.vdac4State.resetSweepLeft != 0)
+    {
+        // The reset sweep runs on the core clock, also while the chip sleeps
+        uint32_t& left = chip.vdac4State.resetSweepLeft;
+        left = clocks >= left ? 0 : left - static_cast<uint32_t>(clocks);
+    }
     if (!ClockRunning(chip))
         return;
     while (clocks > 0)
@@ -173,6 +179,8 @@ void ApplySwap(EveChip& chip)
     scan.dlswapPending = 0;
     RegSet(chip, Reg::Dlswap, 0);
     RaiseInterrupt(chip, kIntSwap);
+    if (chip.vdac4)
+        chip.vdac4State.lastSwapClock = chip.state.totalClocks + 1;
     DisplayListSwapped(chip, changed);
     CoproSwapDone(chip);
 }

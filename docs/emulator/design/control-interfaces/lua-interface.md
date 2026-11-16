@@ -557,6 +557,7 @@ r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frame
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
+v4 = vdac4_state(20)         -- TS-Conf VDAC4 board: tang {personality, ft_cfg, ...}, esp {phase, boots, last_error, clock_restarts, ...}, app {running, name, version, error, ...}, link, packets {count, recent}, audio {input_rate, underruns, ...}, log (last 20 ESP lines; default 50, max 256); {error="..."} without the board
 sp = sprinter_state()       -- Sprinter Sp2000: pld (module Standard / Game, selected_by, why, game), decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")

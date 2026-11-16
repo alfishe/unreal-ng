@@ -33,7 +33,8 @@ A row is named by its source key; a channel by `<source>.<channel>`. Keys are ca
 | `next_dac` | the Next's four-channel DAC | `a`, `b` (left), `c`, `d` (right) | `NextAudio`: per-channel gain |
 
 Rows without channels: `master` (mute only), `beeper`, `gs_mp3`, `cd0`..`cd3`, `ms_saa`, `ms_pcm`, the Sprinter's
-Covox-Blaster (`covox` on that machine).
+Covox-Blaster (`covox` on that machine), `vdac4_esp` (the TS-Conf VDAC4 board's ESP32-S3 I2S player: DOOM, R-Type
+music and effects).
 
 **Semantics.** A channel takes `muted`, `solo` and `volume` (0..1) or `gain_db` (-120..0). Solo is within the row:
 with a channel of a row soloed, only the row's soloed channels are heard (a row solo still works across rows). The

@@ -1308,6 +1308,24 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
+		// TS_VDAC4=1: the VDAC4 board. It runs on the stock VDAC2 firmware build
+		// (VDAC4.md "What the Evo needs"), so the build stays VDAC_VER 7
+		config.ts_vdac4 = inimanager.GetLongValue(misc, "TS_VDAC4", 0) != 0;
+		if (config.ts_vdac4)
+			config.ts_vdac = 7;
+	}
+	// [VDAC4] (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+	{
+		const long ramG = inimanager.GetLongValue(vdac4, "RamG", 2);
+		config.vdac4_ramg_mb = ramG == 3 ? 3 : 2;
+		config.vdac4_esp_boot_ms =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspBootMs", 400), 0, 10000));
+		config.vdac4_load_delay_ms =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "LoadDelayMs", 174), 0, 10000));
+		config.vdac4_esp_mhz =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspMhz", 240), 1, 1000));
+		CopyStringValue(inimanager.GetValue(vdac4, "EspCache", ""), config.vdac4_esp_cache, sizeof config.vdac4_esp_cache);
+		CopyStringValue(inimanager.GetValue(vdac4, "EspLog", ""), config.vdac4_esp_log, sizeof config.vdac4_esp_log);
 	}
 	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
 	// Resolved by the card like the other ROMs (working dir, executable, resources);

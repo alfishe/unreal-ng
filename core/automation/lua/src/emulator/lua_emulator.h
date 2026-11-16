@@ -34,6 +34,7 @@
 #include <loaders/snapshot/snapshotlauncher.h>
 #include "../bindings/lua_porttrace.h"
 #include "../bindings/lua_vdac2.h"
+#include "../bindings/lua_vdac4.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
@@ -8919,6 +8920,9 @@ public:
 
         // TS-Conf VDAC2 card (FT812): bus capture
         LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // TS-Conf VDAC4 board (Tang + ESP32-S3): state
+        LuaVdac4::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
 
         // Script callbacks (docs/features/script-callbacks.md): a function runs deferred, on this Lua thread, with a
         // snapshot of the hit; a string is a chunk for the hook state (frame or sync mode, on the emulation thread).

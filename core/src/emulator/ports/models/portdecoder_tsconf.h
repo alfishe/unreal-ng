@@ -24,7 +24,10 @@
 class TsConfMemory;
 class Screen;
 class ScreenTSConf;
+class EveHostCard;
 class Vdac2Card;
+class Vdac4Tang;
+class Vdac4Board;
 
 /// TS-Conf (ZX-Evo with the TS-Labs FPGA configuration) port decoder.
 ///
@@ -140,10 +143,14 @@ public:
     SdCardSpi& GetSdCard() { return _sdCard; }
     ZControllerSpi& GetZController() { return _zc; }
     BusTap& SpiTap() { return _spiTap; }
-    /// The VDAC2 card (FT812) on the IDE connector: present in the VDAC2
-    /// build ([MISC] TS_VDAC2=1) of a binary with ENABLE_VDAC2, else nullptr
-    /// (vdac2-integration-design.md §5)
-    Vdac2Card* GetVdac2Card() const { return _vdac2.get(); }
+    /// The FT812 on the IDE connector: the VDAC2 card ([MISC] TS_VDAC2=1) or
+    /// the VDAC4 board's Tang ([MISC] TS_VDAC4=1) in a binary with
+    /// ENABLE_VDAC2, else nullptr (vdac2-integration-design.md §5)
+    EveHostCard* GetEveCard() const { return _vdac2.get(); }
+    /// The VDAC4 board's Tang ([MISC] TS_VDAC4=1), else nullptr (design §5)
+    Vdac4Tang* GetVdac4Tang() const { return _vdac4Tang; }
+    /// The VDAC4 board's ESP32-S3 (SPI slot 2) with its app runtime, else nullptr (design §6, §8)
+    Vdac4Board* GetVdac4Board() const { return _vdac4Board.get(); }
     /// Insert an image file / a medium through the media manager (directly
     /// when the context has none: bare decoder tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);
@@ -368,6 +375,12 @@ private:
 
     // The VDAC2 card: slot 1 of the SPI hub (declared after _zc, so it is
     // destroyed first; the destructor detaches it)
-    std::unique_ptr<Vdac2Card> _vdac2;
+    std::unique_ptr<EveHostCard> _vdac2;
+    Vdac4Tang* _vdac4Tang = nullptr;  ///< _vdac2 when it is the VDAC4 board's Tang
+    /// The VDAC4 board's ESP (slot 2 of the hub); destroyed before the Tang it talks to
+    std::unique_ptr<Vdac4Board> _vdac4Board;
+    bool _vdac4FrameEnd = false;  ///< the ESP runs from the engine's frame end: the engine is up to date
+    uint64_t _vdac4BaseUs = 0;  ///< the VDAC4 board's time: microseconds of the frames the CPU closed
+    uint64_t _vdac4Frames = 0;  ///< frame_counter the base has counted
     Vdac2LineSource _vdac2Lines{*this};
 };

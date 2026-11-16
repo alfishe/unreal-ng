@@ -30,6 +30,7 @@
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
 #include "mcp-signature.h"
+#include "mcp-vdac4.h"
 #include "mcp-tool-utils.h"
 
 #include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
@@ -8341,6 +8342,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+    // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)
+    RegisterVdac4State(*registry);
 
     // gui_<interface>, gui_list, gui_state: the GUI control plane's methods, when the program registered them before
     // the start (gui-control-plane design §4.10)

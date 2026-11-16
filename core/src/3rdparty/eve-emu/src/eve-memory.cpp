@@ -15,6 +15,7 @@ struct RegionLayout
     uint32_t size;
 };
 
+// RAM_G's size comes from the chip table; the 3D region exists only on VDAC4.
 constexpr RegionLayout kLayout[RegionCount] = {
     {"RAM_G", kRamGSize},
     {"DL0", kRamDlSize},
@@ -23,7 +24,13 @@ constexpr RegionLayout kLayout[RegionCount] = {
     {"CMD", kRamCmdSize},
     {"SPECIAL", kSpecialSize},
     {"INFLIGHT", kInflightCapacity},
+    {"VDAC4_3D", kVdac43dRegionSize},
 };
+
+uint32_t RegionSize(const EveChip& chip, size_t index)
+{
+    return index == RegionRamG ? chip.table->ramGSize : kLayout[index].size;
+}
 
 uint32_t PageCount(uint32_t size)
 {
@@ -91,10 +98,10 @@ bool InitRegions(EveChip& chip)
 {
     size_t bytes = 0;
     size_t words = 0;
-    for (const RegionLayout& layout : kLayout)
+    for (size_t i = 0; i < chip.regionCount; ++i)
     {
-        bytes += layout.size;
-        words += DirtyWords(layout.size);
+        bytes += RegionSize(chip, i);
+        words += DirtyWords(RegionSize(chip, i));
     }
     chip.memory.reset(new (std::nothrow) uint8_t[bytes]());
     chip.dirtyBits.reset(new (std::nothrow) uint64_t[words]());
@@ -102,16 +109,17 @@ bool InitRegions(EveChip& chip)
         return false;
     uint8_t* base = chip.memory.get();
     uint64_t* dirty = chip.dirtyBits.get();
-    for (size_t i = 0; i < RegionCount; ++i)
+    for (size_t i = 0; i < chip.regionCount; ++i)
     {
+        const uint32_t size = RegionSize(chip, i);
         Region& region = chip.regions[i];
         region.name = kLayout[i].name;
         region.base = base;
-        region.size = kLayout[i].size;
+        region.size = size;
         region.dirty = dirty;
-        region.pageCount = PageCount(kLayout[i].size);
-        base += kLayout[i].size;
-        dirty += DirtyWords(kLayout[i].size);
+        region.pageCount = PageCount(size);
+        base += size;
+        dirty += DirtyWords(size);
     }
     return true;
 }
@@ -121,16 +129,46 @@ void ClearRegions(EveChip& chip)
     ++chip.ramGWrites;
     if (chip.ramGPageChanges)
     {
-        for (uint32_t page = 0; page < (kRamGSize >> kPageShift); ++page)
+        for (uint32_t page = 0; page < (chip.ramGSize >> kPageShift); ++page)
             chip.ramGPageChanges[page] = chip.ramGWrites;
-        for (uint32_t block = 0; block < (kRamGSize >> kChangeBlockShift); ++block)
+        for (uint32_t block = 0; block < (chip.ramGSize >> kChangeBlockShift); ++block)
             chip.ramGBlockChanges[block] = chip.ramGWrites;
     }
-    for (Region& region : chip.regions)
+    for (uint32_t i = 0; i < chip.regionCount; ++i)
     {
+        Region& region = chip.regions[i];
         std::memset(region.base, 0, region.size);
         region.MarkDirtyRange(0, region.size);
     }
+}
+
+void UpdateMemoryMap(EveChip& chip, bool catchUp)
+{
+    uint32_t limit = chip.ramGSize;
+    uint32_t romStart = kRomFontBase;
+    bool blank = false;
+    if (chip.vdac4)
+    {
+        limit = chip.vdac4State.ramGLimit == kVdac4RamG3Mb ? kVdac4RamG3Mb : kVdac4RamG2Mb;
+        romStart = limit;            // 2 MB: the ROM from 0x200000; 3 MB: none
+        blank = chip.vdac4State.fontsReady == 0;
+    }
+    if (limit == chip.ramGLimit && romStart == chip.romStart && blank == chip.romBlank)
+        return;
+    if (catchUp && chip.drawing && chip.lineKept)
+        CatchUp(chip);               // lines up to now see the old map
+    chip.ramGLimit = limit;
+    chip.romStart = romStart;
+    chip.romBlank = blank;
+    if (!chip.ramGPageChanges)
+        return;                      // EveCreate: nothing drawn yet
+    // Every RAM_G page may read differently now: no kept line or decoded palette holds
+    ++chip.ramGWrites;
+    for (uint32_t page = 0; page < (chip.ramGSize >> kPageShift); ++page)
+        chip.ramGPageChanges[page] = chip.ramGWrites;
+    for (uint32_t block = 0; block < (chip.ramGSize >> kChangeBlockShift); ++block)
+        chip.ramGBlockChanges[block] = chip.ramGWrites;
+    DrawingInvalidate(chip);
 }
 
 uint8_t* RamG(EveChip& chip)
@@ -165,6 +203,13 @@ const uint8_t* ActiveDl(const EveChip& chip)
 
 uint8_t RomByte(const EveChip& chip, uint32_t address)
 {
+    if (chip.romBlank)
+        return 0; // VDAC4: the font image is not copied yet
+    return RomImageByte(chip, address);
+}
+
+uint8_t RomImageByte(const EveChip& chip, uint32_t address)
+{
     if (chip.romImage != nullptr && address >= chip.romBase && address < kRomEnd)
         return chip.romImage[address - chip.romBase];
     if (address >= kRomFontRootAddress && address < kRomEnd)
@@ -175,7 +220,7 @@ uint8_t RomByte(const EveChip& chip, uint32_t address)
 void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
 {
     address &= kAddressMask;
-    if (address < kRamGSize)
+    if (address < chip.ramGLimit)
     {
         if (chip.drawing)
             CatchUp(chip);
@@ -220,9 +265,9 @@ void BusWrite(EveChip& chip, uint32_t address, uint8_t value)
 uint8_t BusPeek(const EveChip& chip, uint32_t address)
 {
     address &= kAddressMask;
-    if (address < kRamGSize)
+    if (address < chip.ramGLimit)
         return chip.regions[RegionRamG].base[address];
-    if (address >= kRomFontBase && address < kRomEnd)
+    if (address >= chip.romStart && address < kRomEnd)
         return RomByte(chip, address);
     if (address >= kRamDlBase && address < kRamDlBase + kRamDlSize)
         return chip.regions[RegionDl0 + (chip.state.scan.activeDl ^ 1)].base[address - kRamDlBase];
@@ -247,7 +292,13 @@ uint8_t BusRead(EveChip& chip, uint32_t address)
     {
         const RegInfo* info = FindRegister(chip, address);
         if (info != nullptr && (info->flags & RegClearOnRead))
-            RegSet(chip, info->reg, 0);
+        {
+            // VDAC4: a swap that lands with the read stays (ft_core.sv swap_after_read)
+            const uint64_t swap = chip.vdac4State.lastSwapClock;
+            const bool keepSwap = chip.vdac4 && info->reg == Reg::IntFlags && swap != 0 &&
+                                  chip.state.totalClocks - (swap - 1) <= kVdac4SwapAfterReadClocks;
+            RegSet(chip, info->reg, keepSwap ? 1u : 0u);
+        }
     }
     return value;
 }

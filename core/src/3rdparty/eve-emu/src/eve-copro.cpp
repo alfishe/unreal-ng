@@ -23,6 +23,7 @@ enum class CommandKind : uint8_t
     Text,      // eve-copro-text.cpp
     Media,     // eve-copro-media.cpp
     NoEffect,  // touch related: completes without effect (spec §7.5)
+    ThreeD,    // VDAC4 3D commands 0xFFFFFFA0...AF (eve-vdac4-3d.cpp)
     Hang,      // never completes (BT8XX: CMD_HAMMERAUX)
     HangInPlace // never completes, REG_CMD_READ stays on its code (BT8XX: CMD_EXECUTE)
 };
@@ -108,12 +109,34 @@ constexpr CommandTable BuildCommandTable()
 
 constexpr CommandTable kCommands = BuildCommandTable();
 
-const CommandInfo& InfoFor(uint32_t code)
+// VDAC4: the BL616 coprocessor's commands (ft_copro.c cmd_params, ft_3d.c ftc3d_params).
+// Everything outside its table faults as unknown: CMD_SETFONT2, CMD_ROMFONT, CMD_PLAYVIDEO and
+// the codes 0x04 / 0x07, which hang on the FT812.
+constexpr CommandTable BuildVdac4CommandTable()
+{
+    CommandTable t = BuildCommandTable();
+    auto set = [&t](uint32_t code, uint8_t words, CommandKind kind) { t.info[CodeIndex(code)] = {words, kind}; };
+    constexpr CommandInfo kNone{0, CommandKind::Unknown};
+    constexpr uint32_t kAbsent[] = {kCmdSetfont2, kCmdRomfont, kCmdPlayvideo, 0xFFFFFF04u, 0xFFFFFF07u};
+    for (uint32_t code : kAbsent)
+        t.info[CodeIndex(code)] = kNone;
+    set(kCmdProgress, 4, CommandKind::Text);
+    set(kCmdLoadimageBox, 4, CommandKind::Media);
+    set(kCmdImageinfo, 4, CommandKind::Core);
+    constexpr uint8_t k3dWords[16] = {3, 2, 0, 3, 3, 3, 0, 0, 2, 1, 4, 0, 2, 4, 4, 5}; // A0...AF
+    for (uint32_t i = 0; i < 16; ++i)
+        set(kCmd3dTarget + i, k3dWords[i], CommandKind::ThreeD);
+    return t;
+}
+
+constexpr CommandTable kVdac4Commands = BuildVdac4CommandTable();
+
+const CommandInfo& InfoFor(const EveChip& chip, uint32_t code)
 {
     static constexpr CommandInfo kUnknown{0, CommandKind::Unknown};
     if ((code & kCommandPrefixMask) != kCommandPrefix || CodeIndex(code) >= kCommandCodes)
         return kUnknown;
-    return kCommands.info[CodeIndex(code)];
+    return (chip.vdac4 ? kVdac4Commands : kCommands).info[CodeIndex(code)];
 }
 
 uint32_t RingWrite(const EveChip& chip)
@@ -172,6 +195,10 @@ bool CoreBegin(EveChip& chip)
     case kCmdSetrotate:
         WriteRegister32(chip, Reg::Rotate, c.params[0]);
         return true;
+    case kCmdImageinfo:
+        for (uint32_t i = 0; i < 4; ++i)
+            WriteRingResult(chip, i, chip.vdac4State.imageInfo[i]);
+        return true;
     default:
         return false; // DLSTART, INTERRUPT: planned steps
     }
@@ -218,7 +245,7 @@ void CoreApply(EveChip& chip)
 
 bool BeginCommand(EveChip& chip)
 {
-    switch (InfoFor(chip.state.copro.command).kind)
+    switch (InfoFor(chip, chip.state.copro.command).kind)
     {
     case CommandKind::Core:
         return CoreBegin(chip);
@@ -232,6 +259,13 @@ bool BeginCommand(EveChip& chip)
         return MediaBegin(chip);
     case CommandKind::NoEffect:
         return true;
+    case CommandKind::ThreeD:
+        if (!Vdac43dExecute(chip))
+        {
+            CoproFaultNow(chip, CoproFault::ThreeDParameters);
+            return false;
+        }
+        return true;
     case CommandKind::Hang:
     case CommandKind::HangInPlace:
         return false;
@@ -242,7 +276,7 @@ bool BeginCommand(EveChip& chip)
 
 StepPlan PlanBody(EveChip& chip)
 {
-    switch (InfoFor(chip.state.copro.command).kind)
+    switch (InfoFor(chip, chip.state.copro.command).kind)
     {
     case CommandKind::Core:
         return CorePlan(chip);
@@ -265,7 +299,7 @@ StepPlan PlanBody(EveChip& chip)
 
 void ApplyBody(EveChip& chip, uint32_t units)
 {
-    switch (InfoFor(chip.state.copro.command).kind)
+    switch (InfoFor(chip, chip.state.copro.command).kind)
     {
     case CommandKind::Core:
         CoreApply(chip);
@@ -309,7 +343,7 @@ StepPlan PlanNext(EveChip& chip)
         c.step = CoproStep::DisplayListWord;
         return StepPlan{true, 1, chip.costs.displayListWord};
     }
-    const CommandInfo& info = InfoFor(word);
+    const CommandInfo& info = InfoFor(chip, word);
     if (info.kind != CommandKind::Unknown && words < 1u + info.fixedWords)
     {
         c.phase = EVE_COPRO_WAITING_DATA;
@@ -339,7 +373,7 @@ void ApplyStep(EveChip& chip)
     case CoproStep::Start:
     {
         const uint32_t code = RingWordAt(chip, 0);
-        const CommandInfo& info = InfoFor(code);
+        const CommandInfo& info = InfoFor(chip, code);
         c.command = code;
         c.commandAddress = RingRead(chip);
         if (info.kind == CommandKind::Unknown)
@@ -545,6 +579,62 @@ void CoproFaultNow(EveChip& chip, CoproFault fault)
     RaiseInterrupt(chip, kIntCmdEmpty);
 }
 
+void Vdac4ImageFault(EveChip& chip, Vdac4ImageError code, uint32_t argument)
+{
+    CoproFaultNow(chip, CoproFault::InvalidImage);
+    // Word 0: 'I' 'M' 'G' + code, word 1: the argument, then the reason, NUL-terminated
+    constexpr uint32_t kReportMagic = 0x00474D49, kTextBytes = 120, kCodeShift = 24;
+    uint8_t report[2 * kRingWordBytes + kTextBytes] = {};
+    StoreLe32(report, kReportMagic | (static_cast<uint32_t>(code) << kCodeShift));
+    StoreLe32(report + kRingWordBytes, argument);
+    char* text = reinterpret_cast<char*>(report + 2 * kRingWordBytes);
+    const size_t room = kTextBytes - 1;
+    size_t n = 0;
+    const auto put = [&](const char* part) {
+        for (; *part != '\0' && n < room; ++part)
+            text[n++] = *part;
+    };
+    const auto number = [&](uint32_t value) {
+        char digits[10];
+        size_t count = 0;
+        do
+        {
+            digits[count++] = static_cast<char>('0' + value % 10);
+            value /= 10;
+        } while (value != 0);
+        while (count != 0 && n < room)
+            text[n++] = digits[--count];
+    };
+    switch (code)
+    {
+    case Vdac4ImageError::Unsupported:
+    {
+        static const char* const kWhat[] = {"?", "format", "arithmetic JPEG", "lossless JPEG", "12-bit JPEG",
+                                            "JPEG components", "PNG type", "option", "JPEG scans"};
+        put("unsupported: ");
+        put(kWhat[argument < sizeof(kWhat) / sizeof(kWhat[0]) ? argument : 0]);
+        break;
+    }
+    case Vdac4ImageError::TooBig:
+    case Vdac4ImageError::NoRoom:
+        put(code == Vdac4ImageError::TooBig ? "too big: need " : "no room: need ");
+        number(argument);
+        put(" bytes");
+        break;
+    case Vdac4ImageError::Size:
+        put("too large: ");
+        number(argument & 0xFFFF);
+        put("x");
+        number(argument >> 16);
+        break;
+    case Vdac4ImageError::Corrupt:
+        put(argument == 2 ? "corrupt PNG" : argument == 3 ? "corrupt WebP" : "corrupt JPEG");
+        break;
+    }
+    for (uint32_t i = 0; i < sizeof(report); ++i)
+        BusWrite(chip, kRamCmdBase + i, report[i]);
+}
+
 void CoproDefaults(EveChip& chip)
 {
     CoproState& c = chip.state.copro;
@@ -569,6 +659,15 @@ void CoproDefaults(EveChip& chip)
         c.fontPointers[handle] =
             handle >= kFirstFontHandle ? root + kFontMetricSize * (handle - kFirstRomFont) : 0;
         c.fontFirstChar[handle] = 0;
+    }
+    if (chip.vdac4)
+    {
+        // ft_copro.c defaults(): the font wait starts again, the 3D state is reset
+        Vdac4State& v = chip.vdac4State;
+        v.romWaitStart = chip.state.totalClocks;
+        v.textWaiting = 0;
+        v.textWaitStart = 0;
+        Vdac43dReset(chip);
     }
 }
 
@@ -699,7 +798,8 @@ void CoproSwapDone(EveChip& chip)
 void GetCoproView(const EveChip& chip, EveCoproView& out)
 {
     static const char* const kFaultText[] = {"", "unknown or unimplemented command", "display list overflow",
-                                             "invalid inflate stream", "invalid image", "operation too large"};
+                                             "invalid inflate stream", "invalid image", "operation too large",
+                                             "invalid 3D command parameters"};
     static_assert(sizeof(kFaultText) / sizeof(kFaultText[0]) == static_cast<size_t>(CoproFault::Count),
                   "fault text per CoproFault");
     const CoproState& c = chip.state.copro;

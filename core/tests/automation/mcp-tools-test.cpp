@@ -2467,6 +2467,65 @@ TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
     EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
+{
+    Json::Value reply;
+    reply["tang"]["personality"] = "ft";
+    reply["tang"]["armed"] = true;
+    reply["tang"]["esp_host"] = true;
+    reply["tang"]["ram_g_3mb"] = false;
+    reply["esp"]["phase"] = "running";
+    reply["esp"]["ms"] = 12345;
+    reply["esp"]["boots"] = 1;
+    reply["esp"]["last_error"] = "";
+    reply["app"]["running"] = true;
+    reply["app"]["module"] = "doom.zm";
+    reply["app"]["name"] = "DOOM";
+    reply["app"]["version"] = "1.2";
+    reply["app"]["error"] = "";
+    reply["packets"]["count"] = 77;
+    reply["audio"]["input_rate"] = 11025;
+    reply["audio"]["output_rate"] = 48000;
+    reply["audio"]["underruns"] = 3;
+    for (int i = 0; i < 12; ++i)
+        reply["log"].append("line " + std::to_string(i));
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/state?log=12"] = {200, reply};
+
+    Json::Value args;
+    args["log"] = 12;
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/vdac4/state?log=12"));
+    EXPECT_NE(result.text.find("Tang personality ft, armed, ESP host"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ESP: running, 12345 ms"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("running \"DOOM\" 1.2 (doom.zm)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("11025 Hz -> 48000 Hz"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("underruns 3"), std::string::npos) << result.text;
+    // the text keeps the last 10 lines, structuredContent all 12
+    EXPECT_NE(result.text.find("Log (last 10 of 12)"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("line 1\n"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("line 11"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["log"].size(), 12u);
+}
+
+TEST_F(McpTools_Test, Vdac4State_NoBoardAndBadLogAreErrors)
+{
+    Json::Value refusal;
+    refusal["error"] = "No VDAC4 Board";
+    refusal["message"] = "not a TS-Conf machine";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/state?log=50"] = {409, refusal};
+
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_state", Json::Value(Json::objectValue), *_caller);
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("No VDAC4 Board: not a TS-Conf machine"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("TSL-VDAC4"), std::string::npos) << result.text;
+
+    Json::Value bad;
+    bad["log"] = -1;
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_state", bad, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, AnalyzePerformance_MemoryCounters_ListsCellsInText)
 {
     Json::Value reply;

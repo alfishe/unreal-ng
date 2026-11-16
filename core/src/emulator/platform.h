@@ -694,6 +694,13 @@ struct CONFIG
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
+	bool ts_vdac4 = false;			// [MISC] TS_VDAC4: the VDAC4 board on the VDAC2 firmware build (ts_vdac = 7): Tang FPGA (FT812 core) + ESP32-S3 (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+	uint8_t vdac4_ramg_mb = 2;		// [VDAC4] RamG: RAM_G at power-on, 2 or 3 (MB); the ESP / apps switch it through FT_CFG
+	uint16_t vdac4_esp_boot_ms = 400;	// [VDAC4] EspBootMs: ESP boot after power-on (it arms the Tang then)
+	uint16_t vdac4_load_delay_ms = 174;	// [VDAC4] LoadDelayMs: Tang slot switch to the FT812 core
+	uint16_t vdac4_esp_mhz = 240;		// [VDAC4] EspMhz: ESP core clock (one instruction per cycle)
+	char vdac4_esp_cache[FILENAME_MAX] = {};	// [VDAC4] EspCache: ESP module cache directory; empty = <data dir>/vdac4/zm
+	char vdac4_esp_log[FILENAME_MAX] = {};		// [VDAC4] EspLog: ESP app log file; empty = off
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;

@@ -211,6 +211,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // TS-Conf VDAC2 card (FT812): bus capture
                         {"vdac2", &CLIProcessor::HandleVdac2},
+                        // TS-Conf VDAC4 board: Tang, ESP, app state and the ESP log
+                        {"vdac4", &CLIProcessor::HandleVdac4},
                         {"bus", &CLIProcessor::HandleBus},
 
                         // General Sound coprocessor triage (activity counters + port/DAC trace)
@@ -789,6 +791,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
     oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;
     oss << "                                - FT812 bus to an .evr replay stream (chip selects, bytes, clocks, frame hashes)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3):" << NEWLINE;
+    oss << "  vdac4 state [log N] | vdac4 log [N]" << NEWLINE;
+    oss << "                                - Tang personality, ESP phase, running app, link, audio, ESP log" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;
