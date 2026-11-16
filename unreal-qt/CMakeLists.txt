@@ -717,6 +717,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/surfacetargets_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.h"
+        # The handheld menu's browser: a slot that takes a host folder is offered the folder shown
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/handheldbrowser_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/handheld/handheldbrowser.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/handheld/handheldbrowser.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
