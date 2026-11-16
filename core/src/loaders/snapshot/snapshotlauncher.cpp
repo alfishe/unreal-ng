@@ -3,13 +3,17 @@
 #include "loaders/snapshot/snapshotlauncher.h"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <cctype>
 #include <cstdlib>
 
+#include "common/logger.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/modelswitch.h"
+#include "emulator/memory/next/nextmemory.h"
 #include "emulator/platform.h"
 #include "loaders/nex/loadernex.h"
 #include "loaders/snapshot/loaderspg.h"
@@ -19,6 +23,59 @@
 
 namespace
 {
+/// A NEX runs under NextZXOS (its nexload): the ROMs, the system variables and the DivMMC are the running system's. A
+/// Next with the boot chain (NEXTBOOT) that has just powered on is still in the config mode with an empty system area:
+/// the firmware fills it from the SD card. A program put there meets #FF at #0038 with its first interrupt and stays in
+/// RST 38 forever (every Next game opened on a fresh machine). The machine boots first, to the NextZXOS welcome screen
+/// (the ROM in its key wait: HALT with the text drawn), then the file loads into that system. A machine without the
+/// boot chain (the bare ROM set) is never in the config mode and loads at once, as before
+constexpr unsigned kNextBootFrames = 4500;  ///< ~90 s of machine time: the firmware and NextZXOS take ~7 s (360 frames)
+
+bool BootNextForProgram(Emulator& emulator, std::string& error)
+{
+    EmulatorContext* context = emulator.GetContext();
+    auto* memory = dynamic_cast<NextMemory*>(context->pMemory);
+    if (memory == nullptr || !memory->InConfigMode())
+        return true;
+    Z80* z80 = context->pCore->GetZ80();
+    auto welcome = [&]() {
+        if (memory->InConfigMode() || !z80->halted)
+            return false;
+        const uint8_t* screen = memory->RAMPageAddress(5);
+        int inked = 0;
+        for (int i = 0; i < 0x1800; i++)
+            inked += screen[i] != 0 ? 1 : 0;
+        return inked > 2000;  // the welcome text inks ~2700 bytes
+    };
+    const bool turbo = emulator.IsTurboMode();
+    if (!turbo)
+        emulator.EnableTurboMode();
+    bool met = false;
+    unsigned frames = 0;
+    if (emulator.IsRunning() && !emulator.IsPaused())
+    {
+        // A running machine boots in its own loop at turbo speed (a direct run steps instruction by instruction, near real
+        // time, and leaves the machine paused): this thread watches for the welcome screen. The reads race the loop; a
+        // torn look only delays the match by one poll
+        const auto start = std::chrono::steady_clock::now();
+        while (!(met = welcome()) && std::chrono::steady_clock::now() - start < std::chrono::seconds(60) && emulator.IsRunning())
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    else
+    {
+        frames = emulator.RunFramesUntil(kNextBootFrames, [] { return true; }, welcome, true, met);
+    }
+    if (!turbo)
+        emulator.DisableTurboMode();
+    if (!met)
+    {
+        error = "the Next did not boot NextZXOS (a NEX runs under it): is the SD card of the boot chain in?";
+        return false;
+    }
+    LOGINFO("SnapshotLauncher: the Next booted NextZXOS before the NEX (%u direct frames)", frames);
+    return true;
+}
+
 /// The machine for a snapshot whose plan the running machine refused for want of memory (a 128K z80 on a 48K, a
 /// Pentagon 512 sna on a Pentagon 128): the one the file says it was made on, else what the refusal needs
 /// ("model:128K", "ram:512K"). False: neither names a machine this emulator has
@@ -236,6 +293,9 @@ SnapshotLoadResult SnapshotLauncher::Load(const SnapshotLoadRequest& request)
         if (wasRunning)
             out.emulator->StartAsync();
     }
+
+    if (need.model == LoaderNex::kModel && !BootNextForProgram(*out.emulator, out.message))
+        return out;
 
     snapshot::Options options;
     options.commit = request.commit;
