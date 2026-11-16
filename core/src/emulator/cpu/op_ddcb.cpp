@@ -2,6 +2,7 @@
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/qregister.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/cputables.h"
 #include "op_ed.h"
@@ -231,8 +232,8 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
 
     // The prefix M1 is the "previous instruction" SCF/CCF read Q from, and
     // it writes no flags: Q = 0 behind any DD/FD (Tony Brewer's hardware
-    // finding; FUSE, MAME, redcode Z80 agree). Only SCF/CCF read Q; every
-    // instruction's own Q is set by Z80Step after it runs.
+    // finding; FUSE, MAME, redcode Z80 agree). Only SCF/CCF read Q; the
+    // instruction's own Q is set below from its map (qregister.h).
     cpu->q = 0;
 
     // Record used prefix BEFORE the next M1: the byte after a prefix is not
@@ -277,6 +278,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         cpuidle(cpu->pc - 1, 2);
 
         uint8_t byte = (logic_ix_opcode[opcode])(cpu, cpu->rd(ptr));  // a data read at (IX+d), not an instruction byte
+        cpu->q = cpu->f & z80q::CbMask(opcode);
 
         cpuidle(ptr, 1);
 
@@ -315,6 +317,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         opcode = cpu->m1_cycle();
 
         (ext_opcode[opcode])(cpu);
+        cpu->q = cpu->f & z80q::kEd[opcode];
 
         return;
     }
@@ -325,6 +328,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         cpu->prefix = 0x00DD;
 
         ix_opcode[opcode](cpu);
+        cpu->q = cpu->f & z80q::kBase[opcode];
 
         return;
     }
@@ -335,6 +339,7 @@ Z80INLINE void Z80FAST ddfd_prefixes(Z80 *cpu, uint8_t opcode)
         cpu->prefix = 0x00FD;
 
         iy_opcode[opcode](cpu);
+        cpu->q = cpu->f & z80q::kBase[opcode];
 
         return;
     }

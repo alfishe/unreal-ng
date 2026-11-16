@@ -15,6 +15,12 @@ every record's CRC, complete parts, unknown required streams) and more: it
 decodes every piece version through its chain and checks the content CRC, and
 checks each part's dependency list against the parts it really needs.
 
+Moved here from tools/verification/ttd-analyzer/src/ (P7 of the TTD branches,
+docs/inprogress/2026-11-08-ttd-branches/tools.md): the analyzer and the
+maintenance tools (tools/python/ttd/ttdtool.py) share it. This module reads
+a file as a reader without branch support does (the trunk); ttdlib.session
+reads every branch.
+
 Worked example:
 
     data = Path("session.ttd").read_bytes()
@@ -56,7 +62,11 @@ ENCODING_FULL, ENCODING_XOR, ENCODING_ZERO, ENCODING_RANGES = 0, 1, 2, 3
 ENCODING_NAMES = {0: "full", 1: "xor", 2: "zero", 3: "ranges"}
 
 
-class TtdContainerError(Exception):
+class TtdError(Exception):
+    """Every error the TTD library and tools raise on purpose (damaged input, a refused operation)."""
+
+
+class TtdContainerError(TtdError):
     """The file cannot be opened (not a session file, damaged header or tables)."""
 
 
@@ -292,9 +302,13 @@ def _scan(c: Container) -> None:
         while nxt >= 0 and _record_header(data, nxt) is None:
             nxt = data.find(SYNC, nxt + 1)
         if nxt < 0:
+            c.notes.append(f"cut or damaged tail: {len(data) - offset} byte(s) from {offset} hold no record")
+            offset = len(data)
             break
         c.notes.append(f"damaged bytes {offset}-{nxt} skipped")
         offset = nxt
+    if offset < len(data):
+        c.notes.append(f"cut or damaged tail: {len(data) - offset} byte(s) from {offset} hold no record")
     if pending:
         c.notes.append(f"incomplete last part dropped ({pending} record(s) without a part end)")
     found.sort(key=lambda p: p.index)
@@ -461,12 +475,14 @@ def _count_ports(payload: bytes) -> int:
 
 
 def read_session(c: Container) -> Session:
-    """The session's checkpoints and versions, part by part, up to the first
-    unreachable part (stopped_at says why)."""
+    """The trunk's checkpoints and versions, part by part, up to the first
+    unreachable part (stopped_at says why). Branch parts are skipped."""
     s = Session(c)
     _read_tables(s)
     local: List[int] = []                  # number in the current file -> global version number
     for part in c.parts:
+        if part.branch:
+            continue                       # a branch's part (session.read_branched reads those)
         if not reachable(c, part.index):
             s.stopped_at = f"part {part.index}: {part.damage or 'it depends on a damaged part'}"
             break

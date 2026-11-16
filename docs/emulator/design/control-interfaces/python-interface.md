@@ -1552,6 +1552,8 @@ emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for 
 emu.ttd_cancel_journal_build()           # stop a build that runs (another thread's call) -> {'cancelled': bool}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
+# With a recording folder the rest stays seekable on disk (ttd_status(): evicted_to_disk_*, read_back_*);
+# without one the oldest history is released (evicted_checkpoints)
 emu.ttd_get_journal_enabled()            # -> bool
 emu.ttd_stop()                   # stop recording, keep history
 emu.ttd_invalidate()             # drop all history (reason defaults to 'python invalidate')
@@ -1796,6 +1798,8 @@ b = emu.ttd_branches()                      # also scope='lineage', created_by=,
 emu.ttd_branch_switch('+00:00:25.150')           # at its end; emu.ttd_branch_switch(1, frame=4830, tinframe=0)
 # -> {'switched': True, 'branch': {...}, 'arrived_at': {...}, 'state': ..., 'check': {...}, 'text': ...}
 #    or {'switched': False, 'error': '...'}
+emu.ttd_branch_switch_to('previous')             # the branch left last (again: further back); 'next_sibling' /
+# 'prev_sibling': the next / previous branch at the nearest fork (adds 'fork_frame', 'siblings'); ValueError for another word
 emu.ttd_branch_update('+00:00:25.150', name='boss fight', note='...', add_tags=['boss'], pinned=True)
 # also tags=[...] (replace), remove_tags=[...]; -> {'updated': True, 'branch': {...}, 'text': ...};
 # ValueError for nothing to change or a bound broken, {'updated': False, 'error': ...} otherwise
@@ -1951,6 +1955,7 @@ return a dict; on failure the dict carries an `error` string.
 emu.step_out()                       # run until the current subroutine returns
 emu.skip_until(0x8000)               # fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", max_tstates=70000000)  # optional explicit t-state budget
+emu.skip_until(0x4010, cpu="gs")     # the sound card CPU to the cursor (a breakpoint ends it; the card step's dict + hit)
 
 # Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end.
 # condition= is the `if` rule (a keyword in Python); the GIL is released while the machine runs

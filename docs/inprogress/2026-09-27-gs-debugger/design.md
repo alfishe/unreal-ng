@@ -577,6 +577,11 @@ behind until the next port access or frame end, as today.
 
 ### 5.3 The stepping coordinator
 
+> **As built (2026-11-15), run to the cursor:** no coordinator object; a card's step in / over / out / to arms a
+> one-shot park in `GSCardTarget` (`ArmStep`), `RunControl::CardStep` resumes the machine and waits for the pause. The
+> cursor is the step kind `to`, not a hidden breakpoint, so it never shows in the breakpoint lists; the planes reach it
+> as the main CPU's run until PC with a card `cpu` (`/skip_until?cpu=gs`).
+
 All run and step requests from all front-ends go to one object,
 `StepCoordinator`. It executes them **on the emulation thread**, at the park
 points. This also removes a latent hazard: today `RunSingleCPUCycle` runs

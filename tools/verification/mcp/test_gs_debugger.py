@@ -312,5 +312,35 @@ def test_the_selected_card_follows_main_steps(s):
     clear(s)
 
 
+def test_the_card_cpu_runs_to_the_cursor(s):
+    """run_until_pc with cpu gs (design §5.3): the card CPU runs to the cursor and the machine is paused there; the
+    reply says hit; Lua runs it there too"""
+    clear(s)
+    # A place the card comes back to: the first instruction its loop runs again
+    seen = [card_pc(s)]
+    looped = False
+    for _ in range(500):
+        pc = s.call('control_execution', {'action': 'step', 'cpu': 'gs'}).structured.get('pc')
+        looped = pc in seen
+        if looped:
+            break
+        seen.append(pc)
+    expect(looped, 'the card comes back to an instruction within 500 steps', seen[-10:])
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') == 'step' and stop.get('cpu_pc') == pc and r.structured.get('hit') is True,
+           'the card at the cursor', r.structured)
+    expect(('Ran cpu gs to #%04X' % pc) in r.text, 'said in the text', r.text)
+    expect(card_pc(s) == pc and r.structured.get('state') == 'paused', 'paused there', r.structured)
+
+    code = 'local r = skip_until(%d, "gs") print("to", r.ok, r.hit, r.pc == %d)' % (pc, pc)
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('to\ttrue\ttrue\ttrue' in output or 'to true true true' in output, 'Lua runs the card to it', output)
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'ms'}, ok=False)
+    expect(r.is_error, 'no MultiSound card', r.text)
+    clear(s)
+
+
 if __name__ == '__main__':
     raise SystemExit(main(globals()))

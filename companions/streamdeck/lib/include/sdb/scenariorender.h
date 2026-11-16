@@ -43,7 +43,8 @@ struct Segment
 // What the surface client brings to the strip (sdb/surfaceclient.h): drawn restrained, in the UnrealNG colours, fine
 // lines. The TTD timeline is a strip readout only (never on keys).
 //   status "ttd" (or a dial scrubbing time) with ttd.position: the timeline - the recorded span as a fine track, the
-//     part up to the position, the position, a ruler of seconds and the marks of the last seek, frame and time code
+//     part up to the position, the position, a ruler of seconds and the marks of the last seek, frame and time code;
+//     with TTD branches (ttd.branch, count > 1) the active branch's name in the header and a green tick per fork
 //   status "run" (run.state), "tape" (media.tape), "target" (the target): one line of status words
 //   showTarget (strip.target, on by default): the target, small, at the top right ("RECONNECTING" when the link
 //     dropped)

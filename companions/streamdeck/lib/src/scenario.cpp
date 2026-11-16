@@ -135,6 +135,51 @@ struct Parser
         return Action{j["kind"].get<std::string>(), j};
     }
 
+    std::optional<List> ParseList(const json& j, const std::string& id)
+    {
+        if (!j.is_object() || !j.contains("readout") || !j["readout"].is_string())
+        {
+            Error(id, "list must be {readout: <path to an array>, label, show, do, long, on, dim, key, dial}");
+            return std::nullopt;
+        }
+        List l;
+        for (const auto& [k, v] : j.items())
+        {
+            if (k == "readout" || k == "key" || k == "label" || k == "show" || k == "on" || k == "dim")
+            {
+                if (!v.is_string())
+                {
+                    Error(id, "list." + k + " must be a string");
+                    continue;
+                }
+                const std::string t = v.get<std::string>();
+                (k == "readout" ? l.readout
+                 : k == "key"   ? l.key
+                 : k == "label" ? l.label
+                 : k == "show"  ? l.show
+                 : k == "on"    ? l.on
+                                : l.dim) = t;
+            }
+            else if (k == "do" || k == "long")
+            {
+                if (auto a = ParseAction(v, id))
+                    (k == "do" ? l.press : l.longPress) = std::move(*a);
+            }
+            else if (k == "dial")
+            {
+                if (v.is_number_integer() && v.get<int>() >= 0)
+                    l.dial = v.get<int>();
+                else if (!v.is_null())
+                    Error(id, "list.dial must be a dial index (0 = the first)");
+            }
+            else
+                Error(id, "list: unknown field '" + k + "' (readout, key, label, show, do, long, on, dim, dial)");
+        }
+        if (l.key.empty())
+            Error(id, "list.key must name an item field");
+        return l;
+    }
+
     Node ParseNode(const json& j, bool root)
     {
         Node n;
@@ -197,8 +242,12 @@ struct Parser
         if (!root && j.contains("at"))
             n.at = ParseSlot(j["at"]).value_or(Slot{});
         n.face = ParseFace(j.value("face", json::object()), n.id);
+        if (j.contains("long") && !j["long"].is_null() && type != "include")
+            n.longPress = ParseAction(j["long"], n.id);
         if (n.IsMenu())
         {
+            if (j.contains("list") && !j["list"].is_null())
+                n.list = ParseList(j["list"], n.id);
             if (j.contains("context"))
             {
                 if (j["context"].is_string())
@@ -224,6 +273,8 @@ struct Parser
                     dl.turn = ParseAction(d["turn"], n.id);
                 if (d.contains("press"))
                     dl.press = ParseAction(d["press"], n.id);
+                if (d.contains("press_turn") && !d["press_turn"].is_null())
+                    dl.pressTurn = ParseAction(d["press_turn"], n.id);
                 n.dials.push_back(dl);
             }
             if (const auto st = j.value("strip", json::object()); st.is_object())
@@ -556,6 +607,46 @@ struct Validator
             Error(id, "unknown action kind '" + a.kind + "'");
     }
 
+    // A key's long press: a step of its own; the key acts on its release, so its own action cannot be held
+    void CheckLong(const Node& n)
+    {
+        if (!n.longPress)
+            return;
+        CheckAction(*n.longPress, n.id, 0);
+        if (!n.IsMenu() && (n.action.kind == "action" || n.action.kind == "gui") && n.action.spec.value("hold", false))
+            Error(n.id, "a key with long acts on its release: its own action cannot be held (hold: true)");
+    }
+
+    void CheckList(const Node& n, const List& l)
+    {
+        if (!IsReadoutPath(l.readout))
+            Error(n.id, "list.readout '" + l.readout + "' is not a readout path (ttd.branch_list.items, ...)");
+        else if (!IsKnownReadoutPath(l.readout))
+            Warn(n.id, "list.readout '" + l.readout + "' is no readout the core publishes: the list stays empty");
+        for (const auto* t : {&l.label, &l.show})
+            if (const std::string e = CheckValueFormat(*t); !e.empty())
+                Error(n.id, std::string("list.") + (t == &l.label ? "label" : "show") + ": " + e);
+        if (l.press)
+            CheckAction(*l.press, n.id, 0);
+        if (l.longPress)
+            CheckAction(*l.longPress, n.id, 0);
+        if (l.press && (l.press->kind == "action" || l.press->kind == "gui") && l.press->spec.value("hold", false) &&
+            l.longPress)
+            Error(n.id, "list: an item with long acts on its release: its own step cannot be held (hold: true)");
+        if (l.dial >= 0)
+        {
+            const Model& m = *s.model;
+            if (m.dials == 0)
+                Error(n.id, std::string("list.dial on ") + std::string(m.name) + ", which has no dials");
+            else if (l.dial >= m.dials)
+                Error(n.id, sdb::Format("list.dial {} outside 0..{}", l.dial, m.dials - 1));
+            for (const auto& d : n.dials)
+                if (d.index == l.dial)
+                    Warn(n.id, sdb::Format("dial {} turns the list's pages: its own binding here does nothing",
+                                           l.dial));
+        }
+    }
+
     void Menu(const Node& n, std::vector<const Node*>& path)
     {
         path.push_back(&n);
@@ -596,7 +687,17 @@ struct Validator
                 CheckAction(*d.turn, n.id, 0);
             if (d.press)
                 CheckAction(*d.press, n.id, 0);
+            if (d.pressTurn)
+                CheckAction(*d.pressTurn, n.id, 0);
+            if (d.pressTurn && d.press && (d.press->kind == "action" || d.press->kind == "gui") &&
+                d.press->spec.value("hold", false))
+                Warn(n.id, sdb::Format("dial {}: with press_turn the press fires on the release: its hold is "
+                                       "pressed and released at once",
+                                       d.index));
         }
+        if (n.list)
+            CheckList(n, *n.list);
+        CheckLong(n);
         for (const auto& c : n.items)
         {
             if (c.IsMenu())
@@ -612,6 +713,7 @@ struct Validator
                     Error(c.id, "state '" + c.state + "' is not a readout path (run.state.paused, toggle.<id>, ...)");
                 if (!c.state.empty() && !c.faceOn)
                     Warn(c.id, "state without face_on: the face does not change");
+                CheckLong(c);
             }
         }
         path.pop_back();
@@ -911,8 +1013,28 @@ json ToJson(const Node& n)
         j["face"] = f;
     if (!n.activity)
         j["activity"] = false;
+    if (n.longPress)
+        j["long"] = n.longPress->spec;
     if (n.IsMenu())
     {
+        if (n.list)
+        {
+            const List& l = *n.list;
+            json lj{{"readout", l.readout}};
+            if (l.key != "id")
+                lj["key"] = l.key;
+            for (const auto& [name, v] : {std::pair<const char*, const std::string*>{"label", &l.label},
+                                          {"show", &l.show}, {"on", &l.on}, {"dim", &l.dim}})
+                if (!v->empty())
+                    lj[name] = *v;
+            if (l.press)
+                lj["do"] = l.press->spec;
+            if (l.longPress)
+                lj["long"] = l.longPress->spec;
+            if (l.dial >= 0)
+                lj["dial"] = l.dial;
+            j["list"] = lj;
+        }
         if (!n.context.empty())
             j["context"] = n.context;
         if (n.readonly)
@@ -959,6 +1081,8 @@ json ToJson(const Node& n)
                     dj["turn"] = d.turn->spec;
                 if (d.press)
                     dj["press"] = d.press->spec;
+                if (d.pressTurn)
+                    dj["press_turn"] = d.pressTurn->spec;
                 ds.push_back(dj);
             }
             j["dials"] = ds;

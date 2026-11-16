@@ -421,11 +421,27 @@ void TestReadoutPathsAndNeeds()
     if (s)
     {
         const scn::SurfaceNeeds n = scn::NeedsOf(*s);
-        // an action key: the actions the host cannot run now (its key greys out)
-        CHECK(n.readouts ==
-              (std::vector<std::string>{"actions.unavailable", "audio.mute", "media.tape", "ttd.position"}));
+        // an action key: the actions the host cannot run now (its key greys out); the timeline: its forks too
+        CHECK(n.readouts == (std::vector<std::string>{"actions.unavailable", "audio.mute", "media.tape", "ttd.branch",
+                                                      "ttd.position"}));
         CHECK(n.paths == (std::vector<std::string>{"actions.unavailable", "audio.mute.muted"}));
         CHECK(n.timeline && n.target["view"] == 2);
+    }
+    // a list page: its items' path is subscribed (the readout and the path), its steps' actions grey out
+    issues.clear();
+    auto l = scn::Parse(json::parse(R"({"format":"streamdeck-scenario","version":2,"model":"plusxl",
+      "root":{"id":"home","type":"menu","items":[
+        {"id":"br","type":"menu","at":[0,1],"items":[],
+         "list":{"readout":"ttd.branch_list.items","label":"{name}","do":{"kind":"action","id":"ttd.branch_switch",
+                 "value":{"branch":"$id"}}}}]}})"),
+                        issues);
+    CHECK(l.has_value());
+    if (l)
+    {
+        const scn::SurfaceNeeds n = scn::NeedsOf(*l);
+        CHECK(n.readouts == (std::vector<std::string>{"actions.unavailable", "ttd.branch_list"}));
+        CHECK(n.paths == (std::vector<std::string>{"actions.unavailable", "ttd.branch_list.items"}));
+        CHECK(!n.timeline);
     }
 }
 
@@ -512,6 +528,27 @@ void TestStripTimeline()
     const Rgb revoked = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
     CHECK(Count(revoked, {235, 215, 205}, 0, m.lcdLogicalW, 0, m.lcdLogicalH) > 100);
     CHECK(Pink(revoked) == 0);
+
+    // TTD branches: a green tick per fork of the lineage (with a "Y" above the capsule) and the active branch's name
+    // in the header; one branch draws neither
+    live.notice.clear();
+    live.link = scn::StripLive::Link::Live;
+    const std::string keyBefore = live.Key();
+    readouts["ttd.branch"] = {{"available", true}, {"name", "RESUME 2"}, {"count", 3}, {"forks", {250, 750}}};
+    CHECK(live.Key() != keyBefore);  // the picture depends on the forks
+    const Rgb forked = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
+    const draw::Color fork{90, 200, 120};
+    const int threeQ = x0 + static_cast<int>((x1 - x0 - 1) * 0.75);
+    CHECK(Count(forked, fork, threeQ - 4, threeQ + 5, barY - 10, barY + barH + 4) >= barH + 6);  // tick + Y
+    CHECK(Count(forked, fork, threeQ - 4, threeQ + 5, barY - 10, barY - 3) >= 5);                // the Y
+    CHECK(Count(forked, fork, x0, x1, 0, track - 12) > 30);  // the name in the header
+    CHECK(Count(im, fork, x0, x1, 0, m.lcdLogicalH) == 0);   // none before
+    readouts["ttd.branch"]["count"] = 1;
+    const Rgb single = scn::RenderStrip(page, m.lcdLogicalW, m.lcdLogicalH, m.dialTileW, {}, -1, {}, {}, &live);
+    CHECK(Count(single, fork, x0, x1, 0, m.lcdLogicalH) == 0);
+    const std::string keyOne = live.Key();
+    readouts["ttd.branch"]["age"] = "5m";  // what the strip does not draw changes nothing
+    CHECK(live.Key() == keyOne);
 }
 
 }  // namespace

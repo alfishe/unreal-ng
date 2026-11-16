@@ -407,7 +407,7 @@ namespace
 // amber for marks, a muted red for recording only. Fine lines (1-2 px), no fills behind the timeline.
 constexpr draw::Color kLiveText{200, 205, 220}, kLiveDim{120, 128, 158}, kLiveFaint{70, 76, 104},
     kLiveTrack{52, 58, 84}, kLivePlayed{0, 110, 200}, kLiveCounter{90, 200, 230}, kLiveMark{200, 160, 60},
-    kLiveRec{205, 70, 58}, kLivePos{235, 240, 250}, kLiveAmber{220, 170, 60};
+    kLiveRec{205, 70, 58}, kLivePos{235, 240, 250}, kLiveAmber{220, 170, 60}, kLiveFork{90, 200, 120};
 
 std::string TimeCode(long long frames, double fps)
 {
@@ -429,8 +429,11 @@ long long Num(const json& j, const char* key)
 // A header (TTD, its state, the frame counter, the time code), then the history as a capsule: a dark track with a
 // notch per ruler step, the part up to the position in a blue-to-cyan gradient lit from the top, the marks in their
 // colours (bookmarks amber, barriers violet, edges cyan), the position as a light pill (red while recording), and the
-// times of the ruler's main steps under it in cyan.
-void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks)
+// times of the ruler's main steps under it in cyan. With TTD branches (`branch`: ttd.branch, count > 1) the header
+// names the active branch after the state word, and every fork of the lineage (branch.forks: frames) is a green
+// tick through the capsule with a small fork (a "Y") above it.
+void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks,
+                  const json* branch)
 {
     const long long first = Num(t, "first"), end = std::max(first, Num(t, "end"));
     const long long frame = std::clamp(Num(t, "frame"), first, end);
@@ -466,12 +469,25 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
         draw::RoundRect(im, static_cast<float>(x), static_cast<float>(top + hs), static_cast<float>(5 * hs),
                         static_cast<float>(5 * hs), 2.5f * hs, kLiveRec),
             x += 7 * hs;
-    draw::Text(im, x, top, word, hs, wordColor);
+    x += draw::Text(im, x, top, word, hs, wordColor);
+    const bool branches = branch && branch->is_object() && Num(*branch, "count") > 1;
+    int countersX = right;  // where the counters start (the branch name ends before them)
     if (history && headerW(hs) <= right - x0)
     {
         const int codeW = draw::TextWidth(code, hs), framesW = draw::TextWidth(frames, hs);
         draw::Text(im, right - codeW, top, code, hs, kLiveAmber);
         draw::Text(im, right - codeW - 8 * hs - framesW, top, frames, hs, kLiveCounter);
+        countersX = right - codeW - 8 * hs - framesW;
+    }
+    if (branches && branch->contains("name") && (*branch)["name"].is_string())
+    {
+        // the active branch, after the state word, as much of it as fits before the counters
+        std::string name = DisplayText((*branch)["name"].get<std::string>());
+        const int nx = x + 5 * hs;
+        while (!name.empty() && nx + draw::TextWidth(name, hs) > countersX - 6 * hs)
+            name.pop_back();
+        if (!name.empty())
+            draw::Text(im, nx, top, name, hs, kLiveFork);
     }
 
     // the capsule
@@ -569,6 +585,22 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
             else
                 draw::FillRect(im, mx, barY + 2, 1, barH - 4, c);
         }
+    // the forks of the lineage: a green tick through the capsule, a small "Y" above it
+    if (branches && branch->contains("forks") && (*branch)["forks"].is_array())
+        for (const auto& f : (*branch)["forks"])
+        {
+            if (!f.is_number())
+                continue;
+            const long long ff = f.get<long long>();
+            if (ff < first || ff > end)
+                continue;
+            const int fx = std::clamp(xOf(ff), x0, x1 - 1);
+            draw::FillRect(im, fx, barY - 3, 1, barH + 6, kLiveFork);
+            for (int r = 0; r < 3; ++r)  // the arms, then the stem below them
+                draw::FillRect(im, fx - 3 + r, barY - 9 + r, 1, 1, kLiveFork),
+                    draw::FillRect(im, fx + 3 - r, barY - 9 + r, 1, 1, kLiveFork);
+            draw::FillRect(im, fx, barY - 6, 1, 3, kLiveFork);
+        }
     // the position: a light pill over the capsule, a soft glow round it
     const draw::Color head = state == "recording" ? kLiveRec : kLivePos;
     const int ph = barH + (tall ? 14 : 8);
@@ -651,6 +683,15 @@ std::string StripLive::Key() const
     for (const char* name : {"ttd.marks", "run.state", "media.tape"})
         if (const auto it = readouts->find(name); it != readouts->end())
             k += std::string(name) + it->second.dump();
+    // the branches: only what the timeline draws (the name, the count, the forks; not the ages that tick)
+    if (const auto it = readouts->find("ttd.branch"); it != readouts->end() && it->second.is_object())
+    {
+        const json& b = it->second;
+        k += "br" + std::to_string(Num(b, "count"));
+        for (const char* field : {"name", "forks"})
+            if (const auto f = b.find(field); f != b.end())
+                k += f->dump() + ",";
+    }
     return k;
 }
 
@@ -744,8 +785,10 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     if (timeline && banner.empty())
     {
         auto marks = live->readouts->find("ttd.marks");
+        auto branch = live->readouts->find("ttd.branch");
         DrawTimeline(im, TimelineSpan(page, w).first, TimelineSpan(page, w).second, areaH, w - 12 - targetW, *ttdPosition,
-                     marks != live->readouts->end() ? &marks->second : nullptr);
+                     marks != live->readouts->end() ? &marks->second : nullptr,
+                     branch != live->readouts->end() ? &branch->second : nullptr);
     }
     else if (!words.empty() && banner.empty())
     {

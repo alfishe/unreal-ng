@@ -1,5 +1,7 @@
 #include "z80.h"
 
+#include "emulator/cpu/qregister.h"
+
 #include <algorithm>
 #include <iterator>
 #include <numeric>
@@ -791,8 +793,6 @@ void Z80::Z80Step(bool skipBreakpoints)
     }
     else
     {
-        // Save F register before opcode execution (for Q register update)
-        uint8_t prev_f = cpu.f;
         cpu.prefix = 0x0000;
 
         if (prefixPending)
@@ -851,8 +851,9 @@ void Z80::Z80Step(bool skipBreakpoints)
             }
         }
 
-        // 2. Emulate fetched Z80 opcode
-        (normal_opcode[opcode])(&cpu);
+        // 2. Emulate fetched Z80 opcode (the handler may move cpu.opcode to the byte after a prefix)
+        const uint8_t firstOpcode = cpu.opcode;
+        (normal_opcode[firstOpcode])(&cpu);
 
         // 2a. Opcode profiling hook (after opcode execution)
         // CPU-LIBRARY-MIGRATION(opcode-profiler): prefix / opcode come from the engine's decoded opcode word
@@ -861,22 +862,11 @@ void Z80::Z80Step(bool skipBreakpoints)
             _opcodeProfiler->LogExecution(m1_pc, prefix, opcode, f, a, _context->emulatorState.frame_counter, t);
         }
 
-        // 3. Update Q register based on whether flags were modified
-        // CPU-LIBRARY-MIGRATION(q-register): the engine keeps Q per instruction class
-        // Q captures YF/XF from flag-modifying instructions only
-        // SCF/CCF update Q internally even if F doesn't numerically change
-        if (cpu.f != prev_f)
-        {
-            cpu.q = cpu.f & 0x28;  // Flags changed: capture YF/XF
-        }
-        else if (cpu.opcode == 0x37 || cpu.opcode == 0x3F)
-        {
-            // SCF/CCF set Q internally, preserve their value
-        }
-        else
-        {
-            cpu.q = 0;  // Non-flag-modifying instruction: Q=0
-        }
+        // 3. Q: F & 0x28 after an instruction that writes F, 0 after any other (qregister.h). A prefix byte keeps
+        // the Q its handler set from the prefixed map
+        const uint8_t qMask = z80q::kBase[firstOpcode];
+        if (qMask != z80q::kPrefixed) [[likely]]
+            cpu.q = cpu.f & qMask;
     }
 
     /// region <Debug trace capture>

@@ -450,7 +450,7 @@ void EmulatorAPI::stepOutNow(const HttpRequestPtr& req, std::function<void(const
 /// @brief t-state budget is exhausted). Breakpoints are skipped for the walk —
 /// @brief same no-trap rule as step out. Frames rendered during the skip are
 /// @brief not captured by the recording subsystem (raw CPU stepping path).
-/// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000, "breakpoints": false}
+/// @brief Request body: {"pc": "0x8000" | 32768, "max_tstates": 70000000, "breakpoints": false, "cpu": "gs"}
 void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                             const std::string& id) const
 {
@@ -500,6 +500,19 @@ void EmulatorAPI::skipUntilNow(const HttpRequestPtr& req, std::function<void(con
             return;
         }
         const uint16_t target = static_cast<uint16_t>(target32);
+
+        // ?cpu= (or the body's "cpu") gs / ms: that card CPU runs to the cursor (RunControl::CardStep "to"); a
+        // breakpoint of any CPU on the way ends it, the deadline is the card step's, max_tstates is not used
+        DebugCpuId cpu = DebugCpuId::Main;
+        if (!webapi_cpu::CpuOrError(emulator, req, callback, cpu))
+            return;
+        if (cpu != DebugCpuId::Main)
+        {
+            ReplyRun(execution::RunControl(emulator).CardStep(webapi_session::RequesterOf(req, emulator->GetContext()),
+                                                              cpu, "to", 1, target),
+                     callback);
+            return;
+        }
 
         // RunControl (core/src/emulator/execution/runcontrol.h): budget 0 = 100 frames, at most 700000000 t-states;
         // breakpoints skipped (the no-trap rule of step out) unless "breakpoints": true (run to a cursor)

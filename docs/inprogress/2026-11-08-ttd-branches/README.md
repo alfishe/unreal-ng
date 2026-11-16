@@ -1,6 +1,6 @@
 # TTD branches: history that keeps every future
 
-Status: **in progress**: P0, P1, P2, P5 and P8 done, P6 in part; P3, P4, P7 open (table below). Use cases decided
+Status: **in progress**: P0, P1, P2, P3, P5, P6, P7 and P8 done; P4 open (table below). Use cases decided
 by the owner 2026-11-08. PLAN #76 (branch part), the TTD v2 migration's deferred Phase 5, Step 2b.
 
 Acting in the past (continuing a recording from an earlier moment, editing memory or registers there) today cuts
@@ -29,11 +29,11 @@ Each phase: tests first, then code; lands when its tests, B-0 (zero overhead) an
 | P0 | Fix F-1 (a resume no longer deletes the folder) and F-2 (deck readout shape); benchmark baselines B-0 / B-1 on master | independent of branches | ✅ with P1 (`e0ac62a53`) |
 | P1 | Branch table, GUIDs, metadata, lineage, per-branch engine lines, fork at boundary and mid-frame, switch, delete; resume and edit in the past fork | T-B*, T-E*, T-C1-C7, F-2 (memory only), B-0, B-2, B-6, B-7 | ✅ 2026-11-10 (`e0ac62a53`) |
 | P2 | Storage: branch streams, folder (b)+(c), save all / lineage, load, old-reader compatibility | T-F*, F-1, F-3, B-5, B-9 | ✅ 2026-11-10 (`e0ac62a53`) |
-| P3 | Two tiers: eviction to disk, read back, history limit without trimming | T-C8-C10, B-3 | open |
+| P3 | Two tiers: eviction to disk, read back, history limit without trimming | T-C8-C10, B-3 | done, 2026-11-16: with a recording folder the history limit only evicts segments whose file is closed (the window over all branches, the active lineage's window, the capture head's segments stay; nothing trimmed, the black box keeps its files); a restore into an evicted segment reads its file back into a read-back cache (4 segments, LRU), bit-identical (T-C9); counters on every plane; B-3 p50 1.75 / 2.09 ms, p99 72 / 120 ms idle / under load; B-0 inside the A/A bias ([architecture.md §5.3-5.4](architecture.md#53-history-limit-and-memory)) |
 | P4 | Media in the stream, version tree, write-through following the active moment | T-M*, B-8 | open (media changes in the recorded past are refused with a hint) |
 | P5 | Automation planes, `branch-create` with run, prune, the analyzer's loop | T-A*, T-C12-C13, B-4, MCP live block | done 2026-11-13: every verb (`branches` with the full filter, `branch-info`, `branch-create` with a run, input script (keys, joystick, release all), pokes, registers and reads, `branch-switch`, `branch-update`, `branch-delete`, `branch-prune`) on every plane, `forks_here`, the `ttd.branches` topic and `branch` in `ttd.position`; the analyzer's loop (§5.3 of [surfaces.md](surfaces.md): experiments on clones, a branch on request with `keep_branch` / `keep_branches`); B-4 measured, prune of 1000 branches 16 s → 0.43 s ([test-strategy.md](test-strategy.md#5-benchmarks)) |
-| P6 | Qt, actions, Stream Deck, controllers | T-A5-A6, surface contract | in part: the Qt TTD panel (`66f6811ae`), the Embedded and eCat debuggers (`0744664bb`, [debuggers.md](debuggers.md)). Open: actions and readouts, Stream Deck, controllers |
-| P7 | Python tools | tools tests, F-4 | open |
+| P6 | Qt, actions, Stream Deck, controllers | T-A5-A6, surface contract | done: the Qt TTD panel (`66f6811ae`), the Embedded and eCat debuggers (`0744664bb`, [debuggers.md](debuggers.md)); actions `ttd.branch_*`, readouts `ttd.branch` (with fork frames) / `ttd.branch_list`, relative switch `to` on all planes, keyboard / pad / ShuttlePRO bindings, the Stream Deck BRANCH key, branch menu, sibling dial and strip fork ticks (2026-11-15, [surfaces.md §1-§4](surfaces.md)). Not built: Surface Dial bindings (§4) |
+| P7 | Python tools | tools tests, F-4 | done 2026-11-15: `tools/python/ttd` (shared `ttdlib`, `ttdtool.py` info/tree/validate/extract/prune/join/reindex/recover/gc/stats/flatten), C++-written fixtures in `testdata/ttd/branches`, tool outputs restored by core-tests ([tools.md](tools.md)) |
 | P8 | Stale texts updated (§5), recipes, command-interface | docs | ✅ 2026-11-13 |
 
 ## 1. Scope

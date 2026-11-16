@@ -977,6 +977,16 @@ the C++ core, lives alongside it in `z80test/python_reference/` and also passes 
 other and to the separate ZEXALL/zexdoc/zexbit/zexfix coverage in
 `tools/poc/017-z80-standalone-cpu/`.
 
+That suite feeds the vectors with Q = 0 and checks z80full's CRCs only, so it cannot see the hidden Q latch SCF / CCF
+read, nor MEMPTR. Two more layers cover them:
+
+- `QRegister_Test` (`core/tests/emulator/cpu/qregister_test.cpp`): every instruction of every map (base, CB, ED, DD,
+  FD, DDCB, FDCB) from several register states against the unreal-z80 library, an independent implementation: F, Q
+  and SCF after it must agree. Plus the cases z80ccf caught (DEC r with F unchanged, POP AF, EX AF,AF').
+- `Z80TestSuite_Test` (`core/tests/z80/z80test/z80test_program_test.cpp`): the real z80test 1.2a programs on the 48K,
+  all six variants (z80full, z80doc, z80flags, z80docflags, z80ccf, z80memptr; `testdata/cpu/z80test/`). Each program
+  runs to "all tests passed" in the long tier (11-30 s per variant).
+
 ### Placeholder Tests (Not Yet Implemented)
 
 ```cpp
