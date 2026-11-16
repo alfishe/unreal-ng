@@ -170,7 +170,7 @@ void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
     _parkedInside.store(false, std::memory_order_release);
 }
 
-std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
+std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target)
 {
     GeneralSoundCard* card = Card();
     Z80CpuRegisters regs{};
@@ -217,6 +217,12 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
         _stepSkip = 0;
         _stepReturning = inside && IsReturnAt(card, pc);
         _stepReturnSp = regs.sp;
+    }
+    else if (kind == StepKind::To)
+    {
+        // The boundary of the instruction at PC is passed: a cursor at PC means its next run
+        _stepTarget = target;
+        _stepSkip = inside ? 0u : 1u;
     }
     _stepKind.store(kind, std::memory_order_release);
     Attach();
@@ -286,6 +292,15 @@ bool GSCardTarget::StepBoundary(uint16_t pc)
             _stepReturning = regs.sp >= _stepSp && IsReturnAt(card, pc);
             _stepReturnSp = regs.sp;
             return false;
+        case StepKind::To:
+            if (_stepSkip > 0)
+            {
+                _stepSkip--;
+                return false;
+            }
+            if (pc != _stepTarget)
+                return false;
+            break;
         default:
             return false;
     }

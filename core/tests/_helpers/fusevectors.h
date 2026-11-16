@@ -276,6 +276,21 @@ inline std::map<std::string, FuseCase> LoadCases()
     return cases;
 }
 
+/// The FUSE vectors for the main core: an interrupted (repeating) INIR / INDR leaves MEMPTR = PC + 1, the
+/// instruction's own address + 1, as LDxR / CPxR do (z80test 1.2a z80memptr "INIR->NOP'" / "INDR->NOP'",
+/// hardware-verified; the FUSE vectors postdate neither and keep BC + 1 / BC - 1 from the IN)
+inline std::map<std::string, FuseCase> LoadMainCoreCases()
+{
+    auto cases = LoadCases();
+    for (const char* name : {"edb2_1", "edba_1"})
+    {
+        auto it = cases.find(name);
+        if (it != cases.end())
+            it->second.expRegs[12] = static_cast<uint16_t>(it->second.expRegs[11] + 1);
+    }
+    return cases;
+}
+
 /// Documented divergence from the FUSE vectors: interrupted block-op flags (David Banks' hardware-verified
 /// undocumented flag model postdates the vectors). AF is not compared for these four
 inline const std::set<std::string>& SkipAFCases()

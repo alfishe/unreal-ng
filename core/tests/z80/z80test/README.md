@@ -26,6 +26,13 @@ this suite reached this state, and what's still open, is tracked in
 (`z80test-verification-gaps.md` is the most current doc there; `z80_reference_status.md` is
 superseded — see the banner at its top).
 
+## What this suite does not see
+
+Each iteration starts with Q = 0 and MEMPTR = 0, and only z80full's CRCs are baked in: the hidden Q latch (z80ccf) and
+MEMPTR (z80memptr) are outside it. `Z80TestSuite_Test` (`z80test_program_test.cpp`) runs all six real programs on the
+48K, and `QRegister_Test` (`core/tests/emulator/cpu/qregister_test.cpp`) checks Q after every instruction of every map
+(see `core/tests/README.md`, CPU Hardware-Verification Suites).
+
 ## The 4 skipped vectors
 
 `SCF (NEC)`, `CCF (NEC)`, `SCF (ST)`, `CCF (ST)` are excluded via an explicit blacklist in

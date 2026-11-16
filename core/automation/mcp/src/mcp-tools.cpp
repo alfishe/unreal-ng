@@ -1350,12 +1350,13 @@ void RegisterControlExecution(ToolRegistry& registry)
         "For bp_add of chipreg: one chip of the kind (TurboSound / TS-FM 0-1, the Next's AYs 0-2); absent: any";
     schema["properties"]["cpu"]["type"] = "string";
     schema["properties"]["cpu"]["description"] =
-        "For bp_*, set_register, the steps and select_cpu: whose breakpoints / register / step, main (default), gs (the CPU of the "
+        "For bp_*, set_register, the steps, run_until_pc and select_cpu: whose breakpoints / register / step, main (default), gs (the CPU of the "
         "General Sound / NeoGS card: execution, read, write, port and card events; a gs stop parks the machine, wait "
         "reports the card instruction) or ms (the General Sound on a MultiSound card, the same way). A card CPU's "
         "step / step_n / step_over / step_out resumes the machine until the card ends it and pauses it again; the "
         "main CPU moves on to where the card catches up (a host port access or the frame end); a breakpoint of any "
-        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout";
+        "CPU ends it first, none within 2 s (over / out 5 s) answers timeout. run_until_pc with a card CPU runs that "
+        "CPU to pc (run to the cursor; breakpoints always end it, max_tstates not used, 5 s)";
     schema["properties"]["event"]["type"] = "string";
     schema["properties"]["event"]["description"] =
         "For run_until / watch_add: a game event of the profile (events:) fires. For bp_add of event: int, nmi, reset, page, card_command, card_data, card_reply, dac_fetch, clock_change, "
@@ -2123,11 +2124,12 @@ void RegisterControlExecution(ToolRegistry& registry)
                 // steps through the same routes with ?cpu=, and its registers follow
                 const bool cardCpu = args.isMember("cpu") && args["cpu"].asString() != "main";
                 const bool stepAction =
-                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out";
+                    action == "step" || action == "step_n" || action == "step_over" || action == "step_out" ||
+                    action == "run_until_pc";
                 if (cardCpu && !stepAction)
                 {
                     done(ToolResult::Error("cpu " + args["cpu"].asString() + ": a card CPU takes step, step_n, "
-                                           "step_over and step_out; '" + action + "' runs the machine's CPU"));
+                                           "step_over, step_out and run_until_pc; '" + action + "' runs the machine's CPU"));
                     return;
                 }
                 auto execute = [action, &args, &caller, id, done, cardCpu, cpuQuery]() {

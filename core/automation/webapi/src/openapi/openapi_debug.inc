@@ -535,12 +535,13 @@
         const char* step = "main (default), gs or ms: the CPU that steps. A card CPU's step resumes the machine until "
                            "the card ends it, then pauses it; the card runs as the main CPU's run takes it along (at "
                            "a host port access or the frame end), so the main CPU moves on to that point. A breakpoint "
-                           "of any CPU on the way ends it; no end within 2 s (over / out 5 s) pauses with the reason "
+                           "of any CPU on the way ends it; no end within 2 s (over / out / skip_until 5 s) pauses with the reason "
                            "timeout. The reply: stop {cpu, reason step / breakpoint / pause / timeout, cpu_pc, "
                            "breakpoint_id, address, access}, the card CPU's pc and sp, the main CPU's main_pc and "
                            "main_sp, state. 409 when not paused or a step of that CPU is under way";
         for (const char* path : {"/api/v1/emulator/{id}/step", "/api/v1/emulator/{id}/steps",
-                                 "/api/v1/emulator/{id}/stepover", "/api/v1/emulator/{id}/stepout"})
+                                 "/api/v1/emulator/{id}/stepover", "/api/v1/emulator/{id}/stepout",
+                                 "/api/v1/emulator/{id}/skip_until"})
         {
             Json::Value& operation = paths[path]["post"];
             Json::Value cpu;
@@ -558,4 +559,8 @@
         paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
             paths["/api/v1/emulator/{id}/steps"]["post"]["description"].asString() +
             " With cpu=gs / ms: count (1-10000) instructions of that card CPU.";
+        paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =
+            paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"].asString() +
+            " With cpu=gs / ms: that card CPU runs to pc (run to the cursor; a cursor at its PC means the next run "
+            "of that instruction); breakpoints always end it, max_tstates is not used; the reply adds hit.";
     }

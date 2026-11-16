@@ -1756,6 +1756,11 @@ void CLIProcessor::HandleSkipUntil(const ClientSession& session, const std::vect
     if (RunControlHeld(session, emulator))
         return;
 
+    // skip_until <pc> --cpu gs|ms: that card CPU runs to the cursor
+    if (HandleCardCpuCommand(session, *emulator, "skip_until", args,
+                             [&](const std::vector<std::string>& rest) { HandleSkipUntil(session, rest); }))
+        return;
+
     if (args.empty())
     {
         session.SendResponse("Usage: skip_until <pc> [max_tstates]");

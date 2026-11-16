@@ -2,6 +2,7 @@
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/cpulogic.h"
+#include "emulator/cpu/qregister.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/cpu/cputables.h"
 #include "op_noprefix.h"
@@ -1043,6 +1044,9 @@ Z80OPCODE ope_B2(Z80 *cpu) { // inir
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
+        // Repeating: MEMPTR = PC+1, as for LDxR / CPxR (z80test 1.2a z80memptr "INIR->NOP'" / "INDR->NOP'")
+        cpu->memptr = cpu->pc + 1;
+
         cpuidle(hl - 1, 5);  // repeat, on the write address
     }
     else
@@ -1286,6 +1290,9 @@ Z80OPCODE ope_BA(Z80 *cpu) { // indr
         cpu->pc = (cpu->pc - 2) & 0xFFFF;
         cpu->f = (cpu->f & ~(F3|F5)) | ((cpu->pc >> 8) & (F3|F5));
 
+        // Repeating: MEMPTR = PC+1, as for LDxR / CPxR (z80test 1.2a z80memptr "INIR->NOP'" / "INDR->NOP'")
+        cpu->memptr = cpu->pc + 1;
+
         cpuidle(hl + 1, 5);  // repeat, on the write address
     }
     else
@@ -1429,6 +1436,7 @@ Z80OPCODE op_ED(Z80 *cpu)
 
 	uint8_t opcode = cpu->m1_cycle();
 	(ext_opcode[opcode])(cpu);
+	cpu->q = cpu->f & z80q::kEd[opcode];
 
 	// Finalize opcode
 	cpu->opcode = opcode;
