@@ -147,7 +147,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 | `write_journal_records` | write journal entries (0 when it was not recorded) |
 | `write_journal_segments` | the spans the write journal covers |
 | `history_limit_frames` / `history_limit_bytes` | the history limit (0 = none), see below |
-| `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit |
+| `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit (no recording folder) |
+| `evicted_to_disk_segments` / `read_back_*` | with a recording folder: segments on disk only (still seekable) / the read-back cache a seek into them fills |
 | `ttd_available` | `false` → build lacks TTD (treat status as capability probe) |
 
 MCP: `time_travel` `{"action":"status"}`.

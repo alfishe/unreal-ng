@@ -2421,6 +2421,17 @@ std::string FormatTtdStatus(const Json::Value& status)
         out << " (" << status["history_bytes"].asUInt64() / (1024 * 1024) << " MB held, "
             << status["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released)";
     }
+    if (status["disk_tier_active"].asBool() || status["evicted_to_disk_segments"].asUInt64() != 0 ||
+        status["read_back_loads"].asUInt64() != 0)
+    {
+        // Two tiers: segments on disk stay seekable; a restore reads one back into the cache
+        out << ", on disk " << status["evicted_to_disk_segments"].asUInt64() << " segment(s) ("
+            << status["evicted_to_disk_checkpoints"].asUInt64() << " checkpoints, still seekable), read-back cache "
+            << status["read_back_segments"].asUInt64() << "/" << status["read_back_capacity"].asUInt64()
+            << " segment(s) " << status["read_back_bytes"].asUInt64() / 1024 << " KB, "
+            << status["read_back_loads"].asUInt64() << " load(s) " << status["read_back_hits"].asUInt64()
+            << " hit(s) " << status["read_back_failures"].asUInt64() << " failure(s)";
+    }
     if (status["port_journal_active"].asBool())
     {
         out << ", port journals: " << status["port_read_count"].asUInt64() << " IN, "
@@ -6763,8 +6774,12 @@ void RegisterTimeTravel(ToolRegistry& registry)
                             text << bytes << " bytes ";
                         text << "- history frames " << b["session_start_frame"].asUInt64() << ".."
                              << b["current_end_frame"].asUInt64() << ", " << b["history_bytes"].asUInt64() << " bytes held, "
-                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released (state "
-                             << b["state"].asString() << ")";
+                             << b["evicted_checkpoints"].asUInt64() << " oldest checkpoint(s) released, "
+                             << b["evicted_to_disk_segments"].asUInt64() << " segment(s) ("
+                             << b["evicted_to_disk_checkpoints"].asUInt64()
+                             << " checkpoints) on disk only, read-back cache " << b["read_back_segments"].asUInt64()
+                             << "/" << b["read_back_capacity"].asUInt64() << " (state " << b["state"].asString()
+                             << ")";
                         return text.str();
                     }, done);
                 }

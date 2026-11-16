@@ -47,18 +47,23 @@ bool TTDRecordingWriter::Close(const TimeTravelEngine& engine, size_t end)
     _sink.reset();
     ++_segment;
     if (ok && _onClosed)
-        _onClosed(_openPath);
+        _onClosed(_openPath, _first);
     return ok;
 }
 
 bool TTDRecordingWriter::Begin(const TimeTravelEngine& engine, std::string& error)
 {
-    if (engine.Segments().empty())
+    return BeginAt(engine, engine.Segments().empty() ? 0 : engine.Segments().size() - 1, error);
+}
+
+bool TTDRecordingWriter::BeginAt(const TimeTravelEngine& engine, size_t segment, std::string& error)
+{
+    if (engine.Segments().empty() || segment >= engine.Segments().size())
     {
         error = "the session has no checkpoint yet";
         return false;
     }
-    if (!Open(engine, engine.Segments().back().firstCheckpoint, error))
+    if (!Open(engine, engine.Segments()[segment].firstCheckpoint, error))
     {
         _error = error;
         return false;

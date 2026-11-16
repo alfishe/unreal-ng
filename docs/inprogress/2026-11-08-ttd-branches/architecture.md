@@ -263,23 +263,68 @@ active lineage, `branch=all` lists all.
 
 ### 5.3 History limit and memory
 
-`EnforceHistoryLimit` (`timetravelcontroller.cpp:4268-4286`) today drops segments from memory and, for the black
-box, deletes the files. With two tiers it only **evicts from memory** (the files stay, Q-3a); `SyncTimelineFront`
-no longer trims journals, markers and bookmarks, because the history still exists.
+Built in P3 (2026-11-16). `EnforceHistoryLimit` (`timetravelcontroller.cpp`) has two modes:
+
+- **Disk tier** (a recording folder whose files are written: `DiskTierActive`): the limits only **evict from
+  memory**; the files stay (Q-3a), the black box no longer deletes any. Nothing is trimmed: journals, markers and
+  bookmarks stay, every checkpoint stays seekable, the earliest position is the session start.
+- **No folder** (none set, the folder failed, or disk-full stopped the files): the old drop + trim. The oldest
+  segments are released, `SyncTimelineFront` cuts the timeline and the journals to the new start, and
+  `evicted_checkpoints` counts them.
+
+What eviction removes: only the segment's piece versions and full tables (`TimeTravelEngine::EvictSegment`). The
+checkpoint records, change records (their pieces, ids set to none), frame table, events and bus journals stay in
+memory, so indexes, lineage and journals need no change. The engine marks the segment not `resident` and forgets
+what live memory holds (ids may be reused).
 
 Memory holds:
 
-- the most recent `windowFrames` of capture, over all branches, in capture order (the black box's default 5 min);
-- the active lineage's last `windowFrames` (a switch to an old branch reads its segments back);
-- a read-back cache of segments loaded for seeks (default 4 segments, LRU, its own counter in the memory report).
+- the most recent `windowFrames` of capture over all branches, in capture order (`TTDSegmentInfo::captureSeq`; the
+  black box's default 5 min);
+- the active lineage's last `windowFrames`: the viewed line's segments, then its parent's up to the fork, and so on
+  (a switch to an old branch reads its segments back lazily, as its seeks need them);
+- the segments the capture head reads (`SegmentHeldByHead`: from the checkpoint the head was built from or its last
+  baseline on), never evicted;
+- a read-back cache of segments loaded for restores: default 4 segments, LRU, its own counters in the memory
+  report. A read-back segment that the window covers again leaves the cache count (it is a window segment).
 
-A segment leaves memory only after the writer has flushed it (its file is complete); otherwise eviction waits.
+The frame rule evicts every resident segment outside the window whose file is complete. The byte rule (over
+`history_bytes`) evicts the cache first (least recently used), then segments outside the window, then the window's,
+oldest first, until under budget or nothing more can go.
+
+A segment leaves memory only after the writer has closed its file (T-C10: `TTDRecordingWriter`'s file-closed
+callback gives the path and the segment's first checkpoint; the controller keeps `(line, first checkpoint) -> path`);
+otherwise eviction waits. A truncate drops the map entries of the files it writes again, a branch delete those of its
+line, a session end all.
+
+The check is cheap per frame: the full pass runs only when a segment started, a file completed, or the bytes are
+over budget. `SetHistoryLimit` with the disk tier active evicts whatever the state (a stopped session too: nothing
+is lost).
 
 ### 5.4 Read back from disk
 
-A seek whose checkpoint is in an evicted segment loads that segment's parts from its file (storage.md §4), into
-the read-back cache, then restores. The segment is self-contained (baseline + deltas), so one file read suffices.
-Target in test-strategy.md B-3 (Q-3b is measured, not assumed).
+Any restore (seek, step, reverse, branch switch, fork, truncate, device reads, `ChangesAt` / `VersionAt` /
+`BuildMap`) whose checkpoint is in an evicted segment first calls `TimeTravelEngine::EnsureResident`, one comparison
+while nothing is evicted. On a miss the engine calls the holder's segment loader: the controller opens the
+segment's file, `TTDSessionFile::ReadSegmentPieces` imports its versions (trunk or branch twin streams; a branch file
+is self-contained, its first checkpoint the fork copy whole), and `ReadBackSegment` validates them (every
+checkpoint's frame and every changed piece present) before anything changes, then sets the change records' ids and
+rebuilds the full tables as `CloseRegion` built them (the segment's first table from its first checkpoint's full
+list, each later one derived with the pieces changed since). The result is bit-identical (T-C9). The cache is then
+trimmed to its capacity, never dropping the segment just read.
+
+The read back runs on the thread of the operation that needs it (an operation parks a recording machine first);
+read-only queries never load the emulation thread. A failed read back counts `read_back_failures` and the restore
+reports the checkpoint damaged.
+
+Save (`SerializeSession`) reads every evicted segment back for the call (the cache unbounded), writes the file, then
+trims the cache again: memory peaks during a save of a long session. `TimeTravelEngine::CheckSession` expects every
+segment resident (only engine tests call it).
+
+Counters on every plane where the memory report appears (`ttd status`, `history-limit`; CLI, WebAPI / OpenAPI,
+MCP, Lua, Python, WebSocket `ttd.status` and `debug.buffers`): `disk_tier_active`, `evicted_to_disk_segments`,
+`evicted_to_disk_checkpoints`, `read_back_segments`, `read_back_bytes`, `read_back_capacity`, `read_back_loads`,
+`read_back_hits`, `read_back_failures`. Measured seek times: test-strategy.md B-3.
 
 ### 5.5 Delete
 

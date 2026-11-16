@@ -267,7 +267,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd start` | `ttd rec` | Begin recording at the next frame boundary. | ✅ Implemented |
 | `ttd stop` | — | Stop capturing; retain history. | ✅ Implemented |
 | `ttd invalidate` | `ttd clear`, `ttd reset` | Invalidate the session and drop captured data. | ✅ Implemented |
-| `ttd limit [frames N] [bytes N[K\|M\|G]]` | `ttd history-limit` | Bound the history: the oldest frames are released while recording beyond either limit (`off` clears; no arguments shows it). See command-interface.md. | ✅ Implemented |
+| `ttd limit [frames N] [bytes N[K\|M\|G]]` | `ttd history-limit` | Bound the history in memory: with a recording folder the oldest segments move to disk (still seekable, read back on a seek), without one the oldest frames are released while recording beyond either limit (`off` clears; no arguments shows it, with the disk tier and the read-back cache). See command-interface.md. | ✅ Implemented |
 | `ttd seek <frame> [tinframe]`, `ttd seek --bookmark <label>` | `ttd goto` | Seek to a (frame, T-state) point or a bookmark. Refused while recording; the machine stays paused at the target. | ✅ Implemented |
 | `ttd step-back` | `ttd sb`, `back` | One frame back. | ✅ Implemented |
 | `ttd step-forward` | `ttd sf`, `forward` | One frame forward. | ✅ Implemented |

@@ -1543,6 +1543,8 @@ emu.ttd_build_journal(from_frame=1200, to_frame=1500)  # build it by replay for 
 emu.ttd_cancel_journal_build()           # stop a build that runs (another thread's call) -> {'cancelled': bool}
 emu.ttd_set_history_limit(frames=3000)   # -> (frames, bytes) in force; keep the newest 3000 frames
 emu.ttd_set_history_limit(bytes=4 << 30) # ... or 4 GB of checkpoint data; None keeps a value, 0 = no limit
+# With a recording folder the rest stays seekable on disk (ttd_status(): evicted_to_disk_*, read_back_*);
+# without one the oldest history is released (evicted_checkpoints)
 emu.ttd_get_journal_enabled()            # -> bool
 emu.ttd_stop()                   # stop recording, keep history
 emu.ttd_invalidate()             # drop all history (reason defaults to 'python invalidate')

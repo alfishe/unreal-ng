@@ -302,6 +302,20 @@ StateNode CheckNode(const TTDRestoreResult& check)
     node["issues"] = issues;
     return node;
 }
+
+/// The two tiers' counters (P3): the memory report of status and history-limit replies on every plane
+void AddDiskTier(StateNode& body, const TTDSessionInfo& info)
+{
+    body["disk_tier_active"] = info.diskTierActive;
+    body["evicted_to_disk_segments"] = info.evictedToDiskSegments;
+    body["evicted_to_disk_checkpoints"] = info.evictedToDiskCheckpoints;
+    body["read_back_segments"] = info.readBackSegments;
+    body["read_back_bytes"] = info.readBackBytes;
+    body["read_back_capacity"] = info.readBackCapacity;
+    body["read_back_loads"] = info.readBackLoads;
+    body["read_back_hits"] = info.readBackHits;
+    body["read_back_failures"] = info.readBackFailures;
+}
 }  // namespace
 
 /// region <Backends>
@@ -782,8 +796,12 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
             ret[key] = 0;
         ret["input_history_complete"] = true;
         ret["port_journal_active"] = false;
-        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints"})
+        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
+                                "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                "read_back_failures"})
             ret[key] = 0;
+        ret["disk_tier_active"] = false;
         ret["port_journal_off_reason"] = StateNode();
         for (const char* key : {"port_read_count", "port_write_count", "port_journal_bytes",
                                 "port_replay_value_mismatches", "port_replay_divergences", "seek_checks",
@@ -824,6 +842,7 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
     ret["history_limit_bytes"] = info.historyLimitBytes;
     ret["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     ret["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(ret, info);
     ret["port_journal_off_reason"] = StringOrNull(info.portJournalOffReason);
     ret["port_read_count"] = static_cast<uint64_t>(info.portReadCount);
     ret["port_write_count"] = static_cast<uint64_t>(info.portWriteCount);
@@ -1032,6 +1051,7 @@ TTDReply TTDControlBackend::HistoryLimit(const TTDRequest& request)
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     reply.body["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(reply.body, info);
     reply.body["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
     reply.body["session_start_frame"] = info.sessionStartFrame;
     reply.body["current_end_frame"] = info.currentEndFrame;

@@ -128,6 +128,18 @@ void WritePortRecords(TTDByteWriter& w, const TTDPortJournal& j, uint64_t from, 
         w.U8(r.value);
 }
 
+/// A checkpoint record's fields up to its changed regions (Load, ReadSegmentPieces): the frame delta, the flags, the
+/// fields, the journal cursors (as stored: relative to the file's start) and how many regions follow
+bool ReadCheckpointFields(TTDByteReader& c, TTDEngineCheckpoint& cp, uint64_t& delta, uint8_t& flags,
+                          uint64_t& changedRegions)
+{
+    uint64_t unclaimed = 0;
+    return c.Varint(delta) && c.U8(flags) && c.U64(cp.start) && c.Raw(&cp.cpu, sizeof(cp.cpu)) &&
+           c.Raw(&cp.chipset, sizeof(cp.chipset)) && c.Varint(unclaimed) && c.Bytes(cp.unclaimedDevices, unclaimed) &&
+           c.Varint(cp.busReadCursor) && c.Varint(cp.busWriteCursor) && c.Varint(cp.mediaReadCursor) &&
+           c.Varint(cp.busVectorCursor) && c.Varint(changedRegions);
+}
+
 bool ReadPortRecords(TTDByteReader& r, std::vector<TTDPortRecord>& out)
 {
     uint64_t count = 0;
@@ -1342,12 +1354,9 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
         for (uint64_t i = 0; ok && i < cps; ++i)
         {
             TTDEngineCheckpoint cp;
-            uint64_t delta = 0, unclaimed = 0, changedRegions = 0;
+            uint64_t delta = 0, changedRegions = 0;
             uint8_t flags = 0;
-            ok = c.Varint(delta) && c.U8(flags) && c.U64(cp.start) && c.Raw(&cp.cpu, sizeof(cp.cpu)) &&
-                 c.Raw(&cp.chipset, sizeof(cp.chipset)) && c.Varint(unclaimed) && c.Bytes(cp.unclaimedDevices, unclaimed) &&
-                 c.Varint(cp.busReadCursor) && c.Varint(cp.busWriteCursor) && c.Varint(cp.mediaReadCursor) &&
-                 c.Varint(cp.busVectorCursor) && c.Varint(changedRegions);
+            ok = ReadCheckpointFields(c, cp, delta, flags, changedRegions);
             frame += delta;
             cp.position.frame = frame;
             cp.baseline = (flags & 1) != 0;
@@ -1626,6 +1635,123 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
     if (reportOut)
         *reportOut = std::move(report);
     return any;
+}
+
+bool TTDSessionFile::ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
+                                       std::string& error)
+{
+    TTDContainerReader reader;
+    if (!reader.Open(source, error, [](uint16_t id) { return KnownStream(id); }))
+        return false;
+    // A folder file holds one line: the trunk's streams, or a branch's twins with its bases as (line + 1, number)
+    std::vector<TTDPieceId> items;
+    auto fail = [&](const std::string& why) {
+        error = why;
+        ReleaseSegmentPieces(store, out);
+        return false;
+    };
+    std::vector<uint8_t> pieceBytes, cpBytes;
+    for (const TTDPartRef& part : reader.Parts())
+    {
+        if (!reader.IsReachable(part.index))
+            return fail("part " + std::to_string(part.index) + ": " +
+                        (part.damaged ? part.damage : std::string("it depends on a damaged part")));
+        const uint32_t line = part.branch;
+        const uint16_t piecesId = line ? BranchTwin(kPieces) : kPieces;
+        const uint16_t checkpointsId = line ? BranchTwin(kCheckpoints) : kCheckpoints;
+        bool havePieces = false, haveCheckpoints = false;
+        for (const TTDRecordRef& record : part.records)
+        {
+            std::string why;
+            if (record.streamId == piecesId)
+                havePieces = reader.ReadRecord(record, pieceBytes, &why);
+            else if (record.streamId == checkpointsId)
+                haveCheckpoints = reader.ReadRecord(record, cpBytes, &why);
+            if (!why.empty())
+                return fail("part " + std::to_string(part.index) + ": " + why);
+        }
+        if (!havePieces || !haveCheckpoints)
+            return fail("part " + std::to_string(part.index) + ": its pieces or checkpoints are missing");
+        if (!part.extra.empty() && (part.extra[0] & kPartFileStart))
+            items.clear();
+        TTDByteReader p(pieceBytes);
+        TTDByteReader c(cpBytes);
+        uint64_t cps = 0;
+        bool ok = c.Varint(cps);
+        uint64_t frame = 0;
+        for (uint64_t i = 0; ok && i < cps; ++i)
+        {
+            TTDEngineCheckpoint cp;
+            uint64_t delta = 0, changedRegions = 0;
+            uint8_t flags = 0;
+            ok = ReadCheckpointFields(c, cp, delta, flags, changedRegions);
+            frame += delta;
+            std::vector<TTDImportedChange> changes;
+            for (uint64_t g = 0; ok && g < changedRegions; ++g)
+            {
+                uint32_t region = 0, changeCount = 0;
+                ok = c.VarintAs(region) && c.VarintAs(changeCount) && changeCount <= c.Left();
+                for (uint32_t k = 0; ok && k < changeCount; ++k)
+                {
+                    uint32_t piece = 0, depth = 0, crc = 0, size = 0;
+                    uint64_t base = 0;
+                    uint8_t encoding = 0;
+                    const uint8_t* payload = nullptr;
+                    TTDPieceId baseId = TTDPieceStore::kNone;
+                    ok = c.VarintAs(piece) && p.U8(encoding) && p.VarintAs(depth) && p.Varint(base);
+                    if (ok && line != 0 && base != 0)
+                    {
+                        uint64_t number = 0;
+                        ok = p.Varint(number) && base - 1 == line && number < items.size();
+                        if (ok)
+                            baseId = items[static_cast<size_t>(number)];
+                    }
+                    else if (ok && base != 0)
+                    {
+                        ok = base - 1 < items.size();
+                        if (ok)
+                            baseId = items[static_cast<size_t>(base - 1)];
+                    }
+                    ok = ok && p.U32(crc) && p.VarintAs(size) && p.View(payload, size) && depth <= 0xFFFF;
+                    if (!ok)
+                        break;
+                    const TTDPieceId id = store.Import(static_cast<TTDPieceStore::Encoding>(encoding), baseId,
+                                                       static_cast<uint16_t>(depth), crc, payload, size);
+                    ok = id != TTDPieceStore::kNone;
+                    if (ok)
+                    {
+                        items.push_back(id);
+                        changes.push_back({region, piece, id});
+                    }
+                }
+            }
+            if (!ok)
+            {
+                for (const TTDImportedChange& change : changes)
+                    store.Release(change.id);
+                break;
+            }
+            std::vector<TTDImportedChange>& slot = out.byFrame[frame];
+            if (!slot.empty())
+            {
+                for (const TTDImportedChange& change : changes)
+                    store.Release(change.id);
+                return fail("frame " + std::to_string(frame) + " appears twice");
+            }
+            slot = std::move(changes);
+        }
+        if (!ok)
+            return fail("part " + std::to_string(part.index) + ": damaged checkpoints");
+    }
+    return true;
+}
+
+void TTDSessionFile::ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces)
+{
+    for (const auto& [frame, changes] : pieces.byFrame)
+        for (const TTDImportedChange& change : changes)
+            store.Release(change.id);
+    pieces.byFrame.clear();
 }
 
 bool TTDSessionFile::ReadFrameStream(const ITTDByteSource& source, uint32_t stream, uint64_t frame,

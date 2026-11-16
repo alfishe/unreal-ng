@@ -175,13 +175,22 @@
         op["responses"]["200"]["description"] = "The limit now in force and the history it bounds";
         r["type"] = "object";
         for (const char* name : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
-                                 "checkpoint_count", "session_start_frame", "current_end_frame"})
+                                 "checkpoint_count", "session_start_frame", "current_end_frame",
+                                 "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                 "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                 "read_back_failures"})
         {
             r["properties"][name]["type"] = "integer";
             r["properties"][name]["format"] = "uint64";
         }
         r["properties"]["history_bytes"]["description"] = "Checkpoint data held now (what `bytes` bounds)";
-        r["properties"]["evicted_checkpoints"]["description"] = "Checkpoints released by the limit in this session";
+        r["properties"]["evicted_checkpoints"]["description"] =
+            "Checkpoints released by the limit in this session (no recording folder)";
+        r["properties"]["disk_tier_active"]["type"] = "boolean";
+        r["properties"]["disk_tier_active"]["description"] =
+            "With a recording folder the limit moves segments to disk; the whole session stays seekable";
+        r["properties"]["evicted_to_disk_segments"]["description"] = "Segments held on disk only now";
+        r["properties"]["read_back_segments"]["description"] = "The read-back cache's segments";
         r["properties"]["state"]["type"] = "string";
         op["responses"]["400"]["description"] = "frames or bytes is not a non-negative integer";
         op["responses"]["404"]["description"] = "Emulator instance not found";

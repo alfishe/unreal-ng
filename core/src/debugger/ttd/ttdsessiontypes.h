@@ -259,6 +259,16 @@ struct TTDSessionInfo
     uint64_t historyLimitBytes  = 0;  ///< ... or beyond this many bytes of checkpoint data (0 = no limit)
     uint64_t evictedCheckpoints = 0;  ///< Checkpoints the history limit released since the session started
     uint64_t historyBytes       = 0;  ///< What the byte limit measures (TimeTravelController::HistoryBytes)
+    /// Two tiers (P3): with a recording folder the limits move segments to disk instead of releasing them
+    bool     diskTierActive = false;          ///< the limits evict to the folder's files (nothing is released)
+    uint64_t evictedToDiskSegments = 0;       ///< segments held on disk only now
+    uint64_t evictedToDiskCheckpoints = 0;    ///< their checkpoints (still seekable: read back on demand)
+    uint64_t readBackSegments = 0;            ///< the read-back cache: segments in memory again for a restore
+    uint64_t readBackBytes = 0;               ///< their payload bytes
+    uint64_t readBackCapacity = 0;            ///< the cache's capacity in segments
+    uint64_t readBackLoads = 0;               ///< segments read back from their files in this session
+    uint64_t readBackHits = 0;                ///< loader calls whose segment was already in memory
+    uint64_t readBackFailures = 0;            ///< read backs that failed (the restore reported the segment)
     uint64_t baselineFramesCaptured = 0;  ///< Live page slots (distinct RAM snapshots in store)
 
     /// @brief Total heap footprint of the recorded session, in bytes.

@@ -573,6 +573,12 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     if (info.historyLimitBytes != 0)
         ss << info.historyLimitBytes << " bytes";
     ss << " (" << info.historyBytes << " bytes held, " << info.evictedCheckpoints << " oldest released)" << NEWLINE;
+    ss << "  Disk tier:              " << (info.diskTierActive ? "on" : "off") << ", "
+       << info.evictedToDiskSegments << " segments (" << info.evictedToDiskCheckpoints
+       << " checkpoints) on disk only" << NEWLINE;
+    ss << "  Read-back cache:        " << info.readBackSegments << "/" << info.readBackCapacity << " segments, "
+       << info.readBackBytes << " bytes; " << info.readBackLoads << " loads, " << info.readBackHits << " hits, "
+       << info.readBackFailures << " failures" << NEWLINE;
     ss << NEWLINE;
     ss << "  Write journal:          " << (info.writeJournalEnabled ? "on" : "off") << ", "
        << info.writeJournalRecords << " records (" << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
@@ -831,6 +837,10 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
     ss << "  History: frames " << info.sessionStartFrame << " .. " << info.currentEndFrame << ", "
        << info.checkpointCount << " checkpoints, " << info.historyBytes << " bytes held, " << info.evictedCheckpoints
        << " oldest released" << NEWLINE;
+    ss << "  Disk tier: " << (info.diskTierActive ? "on" : "off") << ", " << info.evictedToDiskSegments
+       << " segments (" << info.evictedToDiskCheckpoints << " checkpoints) on disk only; read-back cache "
+       << info.readBackSegments << "/" << info.readBackCapacity << " segments, " << info.readBackBytes << " bytes"
+       << NEWLINE;
     session.SendResponse(ss.str());
 }
 

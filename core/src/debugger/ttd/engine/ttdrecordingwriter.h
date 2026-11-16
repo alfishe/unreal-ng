@@ -39,6 +39,9 @@ public:
 
     /// The first segment's file (the session has its first checkpoint)
     bool Begin(const TimeTravelEngine& engine, std::string& error);
+    /// Begin at the active line's segment @p segment (a new branch's first, its fork copy: segments of one frame
+    /// have begun another by the first chance to write)
+    bool BeginAt(const TimeTravelEngine& engine, size_t segment, std::string& error);
     /// After each capture: a new segment closes the current file and opens the next
     bool Collect(TimeTravelEngine& engine);
     /// Before the engine is truncated: the writer thread stops (it reads the
@@ -61,8 +64,10 @@ public:
             _writer->SetHolderStreams(std::move(streams));
     }
 
-    /// Called with each file's path once it is closed with its index (a recording folder's branches.tdx)
-    void SetOnFileClosed(std::function<void(const std::string&)> fn) { _onClosed = std::move(fn); }
+    /// Called with each file's path and its first checkpoint (its segment's) once it is closed with its index (a
+    /// recording folder's branches.tdx; the two tiers: the segment may leave memory)
+    using FileClosedFn = std::function<void(const std::string& path, size_t firstCheckpoint)>;
+    void SetOnFileClosed(FileClosedFn fn) { _onClosed = std::move(fn); }
 
     bool Failed() const { return !_error.empty() || (_writer && _writer->Failed()); }
     std::string Error() const;
@@ -80,7 +85,7 @@ private:
     std::vector<size_t> _fileFirsts;   ///< per file written (closed or open), its first checkpoint
     size_t _first = 0;              ///< the open file's first checkpoint
     std::string _openPath;
-    std::function<void(const std::string&)> _onClosed;
+    FileClosedFn _onClosed;
     std::unique_ptr<TTDFileSink> _sink;
     std::unique_ptr<TTDSessionWriter> _writer;
     std::string _error;

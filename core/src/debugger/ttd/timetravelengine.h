@@ -48,6 +48,8 @@ namespace ttd
 
 /// A capture at which a device that runs behind the CPU was not synced to the
 /// frame boundary (TTDSerializable::TTDSyncedTime, FR-19)
+class ITTDByteSource;
+
 struct TTDSyncMiss
 {
     uint64_t frame = 0;
@@ -80,6 +82,15 @@ struct TTDSegmentInfo
     size_t firstCheckpoint = 0;   ///< its baseline
     size_t firstChange = 0;       ///< its first change record
     uint64_t firstFrame = 0;
+    /// Two tiers (docs/inprogress/2026-11-08-ttd-branches/architecture.md §5.3): the order segments started in over
+    /// all lines, the memory window's order
+    uint64_t captureSeq = 0;
+    /// Its versions and full tables are in memory; false: evicted, its file in the recording folder holds them
+    /// (EvictSegment), read back when a restore needs them (ReadBackSegment)
+    bool resident = true;
+    bool readBack = false;           ///< in memory because a restore read it back (the read-back cache)
+    uint64_t readBackBytes = 0;      ///< read back: the payload bytes it brought in
+    mutable uint64_t lastUse = 0;    ///< read back: the engine's use clock at its last use (the cache's LRU order)
 };
 
 /// One piece of a region taking a new version (TimeTravelEngine::ImportCheckpoint)
@@ -88,6 +99,13 @@ struct TTDImportedChange
     uint32_t region = 0;
     uint32_t piece = 0;
     uint32_t id = 0;   ///< TTDPieceId
+};
+
+/// The versions one segment file holds (TTDSessionFile::ReadSegmentPieces), per checkpoint by its frame, each
+/// imported into the store with one reference (ReleaseSegmentPieces drops them); a read back takes its own
+struct TTDSegmentPieces
+{
+    std::map<uint64_t, std::vector<TTDImportedChange>> byFrame;
 };
 
 struct TTDEngineCheckpoint
@@ -127,6 +145,7 @@ struct TTDEngineCheckpoint
         uint32_t region = 0;
         uint32_t firstChange = 0;
         uint32_t changeCount = 0;
+        bool evictedTable = false;   ///< its full table left memory with its segment (rebuilt on read back)
     };
     std::vector<RegionRefs> regions;   ///< sorted by region
 };
@@ -535,6 +554,54 @@ public:
 
     /// endregion </Branch lines>
 
+    /// region <Two tiers (P3, architecture.md §5.3-5.4)>
+
+    /// Called when a restore needs segment @p segment of line @p line and it is evicted: the holder reads the
+    /// segment's file and hands it to ReadBackSegment. False when it cannot (the restore reports the segment)
+    using SegmentLoader = std::function<bool(uint32_t line, size_t segment)>;
+    void SetSegmentLoader(SegmentLoader loader) { _segmentLoader = std::move(loader); }
+    /// Line @p line's segments (null for a line not held)
+    const std::deque<TTDSegmentInfo>* LineSegments(uint32_t line) const
+    {
+        return HasLine(line) ? &_lines[line]->segments : nullptr;
+    }
+    /// The checkpoint after line @p line's segment @p segment (its next segment's first, or the line's end)
+    size_t SegmentEnd(uint32_t line, size_t segment) const;
+    /// Frames segment @p segment of line @p line covers
+    uint64_t SegmentFrameSpan(uint32_t line, size_t segment) const;
+    /// The segment of line @p line holding checkpoint @p index (SIZE_MAX: none)
+    size_t SegmentOf(uint32_t line, size_t index) const;
+    /// The capture head reads the segment (its versions continue there): it stays in memory
+    bool SegmentHeldByHead(uint32_t line, size_t segment) const;
+    /// Release segment @p segment's versions and full tables from memory; its checkpoints, change records (their
+    /// pieces), frames, events and journals stay. Its file must hold it (the holder's to know). Live memory is unknown
+    /// afterwards (ids may be reused). False when the capture head reads it
+    bool EvictSegment(uint32_t line, size_t segment, std::string& error);
+    /// Bring an evicted segment back from @p pieces (its file's versions): every change record and full table as
+    /// before the eviction, holding the same content. The segment joins the read-back cache (readBack). Nothing
+    /// changes when @p pieces does not match the segment (a frame or a piece missing)
+    bool ReadBackSegment(uint32_t line, size_t segment, const TTDSegmentPieces& pieces, std::string& error);
+    /// ReadBackSegment from the segment's file @p source (TTDSessionFile::ReadSegmentPieces)
+    bool ReadBackSegmentFrom(uint32_t line, size_t segment, const ITTDByteSource& source, std::string& error);
+    /// A read-back segment stays as a window segment (false) or joins the cache again (true)
+    void SetSegmentReadBack(uint32_t line, size_t segment, bool readBack);
+    /// Segments held on disk only, and their checkpoints, over all lines
+    size_t EvictedSegments() const;
+    size_t EvictedCheckpoints() const;
+    /// The read-back cache: its segments and the payload bytes they brought in
+    size_t ReadBackSegments() const;
+    uint64_t ReadBackBytes() const;
+    /// Segments begun over all lines (changes when a segment starts)
+    uint64_t SegmentSerial() const { return _segmentSerial; }
+    /// Checkpoint @p index of the line read now has its versions in memory, read back when evicted; false when the
+    /// segment cannot be read back. Cheap while nothing is evicted (one comparison)
+    bool EnsureResident(size_t index) const
+    {
+        return (_line->evicted == 0 && _line->readBack == 0) || const_cast<TimeTravelEngine*>(this)->MakeResident(index);
+    }
+
+    /// endregion </Two tiers>
+
     /// Write region @p region as it was at checkpoint @p index into @p out
     /// (the region's pieces × 4 KB). Pieces the session had not seen at that
     /// point are left untouched and marked 0 in @p present (optional)
@@ -554,7 +621,8 @@ public:
     std::vector<std::pair<uint32_t, TTDPieceId>> ChangesAt(size_t index, uint32_t region) const
     {
         std::vector<std::pair<uint32_t, TTDPieceId>> changes;
-        if (const TTDEngineCheckpoint::RegionRefs* r = HasCheckpoint(index) ? RefsOf(index, region) : nullptr)
+        if (const TTDEngineCheckpoint::RegionRefs* r =
+                HasCheckpoint(index) && EnsureResident(index) ? RefsOf(index, region) : nullptr)
             for (uint32_t k = 0; k < r->changeCount; ++k)
                 changes.emplace_back(ChangeAt(r->firstChange + k).piece, ChangeAt(r->firstChange + k).id);
         return changes;
@@ -763,6 +831,8 @@ private:
         size_t cpBase = 0;       ///< checkpoints dropped from the front
         size_t changeBase = 0;   ///< change records dropped from the front
         std::deque<TTDSegmentInfo> segments;
+        size_t evicted = 0;    ///< segments not resident (EvictSegment)
+        size_t readBack = 0;   ///< segments read back (the read-back cache)
         std::map<uint32_t, std::deque<FrameStreamCopy_>> streamCopies;   ///< by stream, oldest first
         std::vector<PieceChange> changes;
         TTDFrameTable frames;
@@ -798,6 +868,20 @@ private:
     BranchLine& AddImportedLine(uint32_t parent, size_t index, const TTDPosition& cut, uint32_t wanted);
     /// Capture continues from the active line's checkpoint @p index (TruncateAfter, ForkAt, SwitchLine)
     bool RebuildHeadFrom(size_t index, std::string& error);
+    /// The checkpoint of _headLine the capture head was built from (RebuildHeadFrom) or the last baseline it
+    /// captured: the head's versions and last full tables lie in its segment or later ones (SegmentHeldByHead)
+    size_t _headFloor = 0;
+
+    /// Two tiers: the holder's reader of evicted segments, the read-back cache's use clock
+    SegmentLoader _segmentLoader;
+    uint64_t _segmentSerial = 0;   ///< segments begun over all lines (TTDSegmentInfo::captureSeq)
+    uint64_t _useClock = 0;
+    /// EnsureResident: read the segment of @p index on the line read now back, or mark its use
+    bool MakeResident(size_t index);
+    /// A segment begins on @p line at checkpoint @p first (firstChange, frame): its capture order taken
+    TTDSegmentInfo NewSegment(size_t first, size_t firstChange, uint64_t frame);
+    /// A segment leaves the line (dropped or cut): the line's counters follow
+    static void ForgetSegment(BranchLine& line, const TTDSegmentInfo& segment);
 
     /// Every distinct screen layout of the session, once (a mode switch adds one; most sessions have one or two)
     std::vector<std::vector<TTDScreenRange>> _screenLayouts;

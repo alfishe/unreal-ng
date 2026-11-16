@@ -758,7 +758,33 @@
     schemas["TTDStatusResponse"]["properties"]["history_bytes"]["description"] =
         "Checkpoint data held now: page-store slots plus device blobs (what the byte limit bounds)";
     schemas["TTDStatusResponse"]["properties"]["evicted_checkpoints"]["description"] =
-        "Oldest checkpoints released by the history limit in this session";
+        "Oldest checkpoints released by the history limit in this session (no recording folder)";
+    // Two tiers (P3): with a recording folder the limit moves segments to disk; a restore reads one back
+    for (const char* name : {"evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                             "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                             "read_back_failures"})
+    {
+        schemas["TTDStatusResponse"]["properties"][name]["type"] = "integer";
+        schemas["TTDStatusResponse"]["properties"][name]["format"] = "uint64";
+    }
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["description"] =
+        "The history limit evicts segments to the recording folder's files (nothing is released)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_segments"]["description"] =
+        "Segments held on disk only now (still seekable)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_checkpoints"]["description"] =
+        "Checkpoints of the segments on disk only";
+    schemas["TTDStatusResponse"]["properties"]["read_back_segments"]["description"] =
+        "The read-back cache: evicted segments in memory again for a restore";
+    schemas["TTDStatusResponse"]["properties"]["read_back_bytes"]["description"] = "Payload bytes of the read-back cache";
+    schemas["TTDStatusResponse"]["properties"]["read_back_capacity"]["description"] =
+        "The read-back cache's capacity in segments (least recently used goes first)";
+    schemas["TTDStatusResponse"]["properties"]["read_back_loads"]["description"] =
+        "Segments read back from their files in this session";
+    schemas["TTDStatusResponse"]["properties"]["read_back_hits"]["description"] =
+        "Read backs asked for a segment already in memory";
+    schemas["TTDStatusResponse"]["properties"]["read_back_failures"]["description"] =
+        "Read backs that failed (the restore reported the segment)";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";

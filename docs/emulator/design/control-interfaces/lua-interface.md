@@ -1113,8 +1113,10 @@ ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_b
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
-ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
-                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history in memory
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields;
+                                       --   with a recording folder the rest stays seekable on disk:
+                                       --   evicted_to_disk_*, read_back_* fields; without one it is released)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
