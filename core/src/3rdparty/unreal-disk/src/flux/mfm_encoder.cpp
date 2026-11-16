@@ -110,9 +110,9 @@ void FmEncoder::encodeByte(uint8_t byte, bool isSyncMark)
         {
             clockPattern = FM_CLOCK_IDAM;
         }
-        else if (byte >= 0xF8 && byte <= 0xFB)
+        else if ((byte >= 0xF8 && byte <= 0xFB) || byte == 0xFC)
         {
-            clockPattern = FM_CLOCK_DAM;
+            clockPattern = FM_CLOCK_DAM;  // a data mark, or FC: the index mark
         }
     }
 

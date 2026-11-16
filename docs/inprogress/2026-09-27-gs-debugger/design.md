@@ -568,6 +568,13 @@ at cycle 60,000, which is main T 17,500.
 When all three are false, tight mode is off. The card then simply stays
 behind until the next port access or frame end, as today.
 
+> **As built (2026-11-14), the third trigger:** the selection is one per machine (`DebugManager::SelectCpu`, the last
+> front-end's choice). Tight mode comes with a direct run of the paused machine (`Emulator::DirectStepScope`: a step,
+> steps, a run of T or frames), plus one catch-up at the run's end, rather than with the pause itself: switching tight
+> mode takes a `CpuHold` (`FeatureManager::applyDebugMode`), and a pause edge comes from inside the execution arbiter.
+> The main CPU only runs while paused in a direct run, so the effect is the same. The card does not catch up at the
+> selection itself, only with the next step.
+
 ### 5.3 The stepping coordinator
 
 All run and step requests from all front-ends go to one object,

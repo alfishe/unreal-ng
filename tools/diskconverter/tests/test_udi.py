@@ -66,22 +66,22 @@ def test_dc05_bad_id_crc_detected_and_kept(scratch, capsys):
     assert [s.number for s in again if not s.id_crc_valid] == [5]
 
     # UDI -> FDI warns: FDI has no place for it
-    fdi.write(disk, str(scratch / "out.fdi"))
-    assert "ID CRC error is not representable in FDI" in capsys.readouterr().out
+    warnings = fdi.write(disk, str(scratch / "out.fdi"))
+    assert any("sector 5: ID CRC error cannot be stored" in w for w in warnings)
 
 
-def test_dc05_trd_refuses_bad_id_crc(scratch):
-    import pytest
-
-    from diskconverter.disk_image import DiskConversionError
+def test_dc05_trd_drops_bad_id_crc_like_cpp(scratch):
+    """LoaderTRD::isTrdosGeometry checks sector numbers, data fields and sizes only: a broken ID CRC is not a
+    refusal (C++ writes the TRD and the error is lost; see the parity report)"""
     from diskconverter.formats import trd
 
     raw, clocks = _bad_id_crc_track()
     (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
     disk = udi.read(str(scratch / "bad.udi"))
     assert not disk.get_track(0, 0).is_standard_trdos()
-    with pytest.raises(DiskConversionError):
-        trd.write(disk, str(scratch / "bad.trd"))
+    assert trd.write(disk, str(scratch / "bad.trd")) == []
+    data = (scratch / "bad.trd").read_bytes()
+    assert data == b"".join(bytes([r]) * 256 for r in range(1, 17))
 
 
 def test_dc08_marks_inside_data_are_no_sectors(scratch):
@@ -102,3 +102,42 @@ def test_udi_without_clock_marks_still_decodes(scratch):
     (raw, _clocks), _ = _key_track()
     (scratch / "noclk.udi").write_bytes(build_udi([(raw, [])], cylinders=1, heads=1))
     assert len(udi.read(str(scratch / "noclk.udi")).get_track(0, 0).sectors) == 1
+
+
+def _raw_crc_track(id_crc: bytes, data_crc: bytes):
+    """One 256-byte sector whose ID CRC and data CRC are replaced by the given on-disk bytes"""
+    id_bytes, id_clocks = mfm_field(bytes([0xFE, 0, 0, 1, 1]), gap=80)
+    data_bytes, data_clocks = mfm_field(bytes([0xFB]) + bytes(range(256)))
+    return mfm_track([(id_bytes[:-2] + id_crc, id_clocks), (data_bytes[:-2] + data_crc, data_clocks)])
+
+
+def test_r03_udi_round_trip_keeps_broken_crc_bytes(scratch):
+    """R-03: a broken CRC is written back with its original bytes, not as `crc ^ 1`"""
+    raw, clocks = _raw_crc_track(b"\x12\x34", b"\x56\x78")
+    (scratch / "bad.udi").write_bytes(build_udi([(raw, clocks)], cylinders=1, heads=1))
+    sector = udi.read(str(scratch / "bad.udi")).get_track(0, 0).sectors[0]
+    assert (sector.id_crc_valid, sector.id_crc_stored) == (False, b"\x12\x34")
+    assert (sector.crc_valid, sector.data_crc_stored) == (False, b"\x56\x78")
+
+    udi.write(udi.read(str(scratch / "bad.udi")), str(scratch / "out.udi"))
+    again = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
+    assert (again.id_crc_valid, again.id_crc_stored) == (False, b"\x12\x34")
+    assert (again.crc_valid, again.data_crc_stored) == (False, b"\x56\x78")
+    assert again.data == bytes(range(256))
+
+
+def test_r03_broken_crc_without_raw_bytes_falls_back_to_inverted_crc(scratch):
+    """From a format that keeps only a flag (here: a Sector built without stored bytes) the track gets a wrong
+    CRC the way the C++ FDI / TD0 loaders write one: the computed value with both bytes inverted"""
+    from diskconverter import mfm
+    from diskconverter.disk_image import DiskImage, Sector
+
+    disk = DiskImage(cylinders=1, heads=1)
+    disk.track(0, 0).sectors = [
+        Sector(cylinder=0, head=0, number=1, size_code=1, data=bytes(256), crc_valid=False, id_crc_valid=False)
+    ]
+    udi.write(disk, str(scratch / "out.udi"))
+    sector = udi.read(str(scratch / "out.udi")).get_track(0, 0).sectors[0]
+    assert not sector.id_crc_valid and not sector.crc_valid
+    assert sector.id_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFE, 0, 0, 1, 1])) ^ 0xFFFF)
+    assert sector.data_crc_stored == mfm.crc_bytes(mfm.crc_wd1793(bytes([0xFB]) + bytes(256)) ^ 0xFFFF)

@@ -290,5 +290,27 @@ def test_the_card_cpu_steps(s):
     clear(s)
 
 
+def test_the_selected_card_follows_main_steps(s):
+    """select_cpu (design §5.2): the card a front-end shows follows the main CPU's steps of the paused machine; the
+    choice is one per machine, the scripts see it, main ends it, a card that is not there is refused"""
+    clear(s)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'gs'})
+    expect(r.structured.get('cpu') == 'gs' and r.structured.get('follows') is True and 'follows' in r.text,
+           'the card shown follows', (r.text, r.structured))
+    r = s.call('control_execution', {'action': 'step_n', 'count': 20})
+    expect(not r.is_error, 'the main CPU steps with the card shown', r.text)
+    code = 'local c = selected_cpu() print("shown", c.cpu, c.follows)'
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('shown\tgs\ttrue' in output or 'shown gs true' in output, 'Lua sees the choice', output)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'ms'}, ok=False)
+    expect(r.is_error and 'not available' in r.text, 'no MultiSound card', r.text)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'main'})
+    expect(r.structured.get('cpu') == 'main' and r.structured.get('follows') is False, 'main ends it', r.structured)
+    r = s.call('control_execution', {'action': 'select_cpu'})
+    expect(r.text.startswith('Selected cpu: main'), 'no cpu: the report', r.text)
+    clear(s)
+
+
 if __name__ == '__main__':
     raise SystemExit(main(globals()))

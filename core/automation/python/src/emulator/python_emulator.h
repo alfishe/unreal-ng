@@ -3220,6 +3220,17 @@ namespace PythonBindings
                 return py::none();
             }, "Step over call instructions; cpu='gs' / 'ms': the sound card CPU's (returns its step's reply)",
                py::arg("cpu") = "")
+            // The CPU the front-ends show (CpuView::SetSelected): a card shown follows the main CPU's steps
+            .def("select_cpu", [](Emulator& self, const std::string& cpu) -> py::object {
+                if (const std::string error = CpuView::SetSelected(self.GetContext(), cpu); !error.empty())
+                    throw py::value_error(error);
+                return StateNodeToPy(CpuView::Selected(self.GetContext()));
+            }, "Show a CPU in the debugger front-ends ('main', 'gs', 'ms'): a card shown follows the main CPU's steps of "
+               "the paused machine in tight mode, so its state is the one at the main CPU's moment; returns {cpu, follows}",
+               py::arg("cpu"))
+            .def("selected_cpu", [](Emulator& self) -> py::object {
+                return StateNodeToPy(CpuView::Selected(self.GetContext()));
+            }, "The CPU the debugger front-ends show: {cpu, follows}")
 
             // Frame stepping
             .def("run_frame", [](Emulator& self, bool skipBreakpoints) {

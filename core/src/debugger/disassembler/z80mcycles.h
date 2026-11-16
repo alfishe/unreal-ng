@@ -36,8 +36,8 @@ struct Z80MCycle
 struct Z80MCycleList
 {
     static constexpr size_t kMax = 12;
-    /// No `{}` on the array: Z80MCycle's member initialisers already set every element, and g++ 14 -O3 -flto dies
-    /// (internal compiler error in gimple_add_tmp_var) value-initialising a struct holding it (Emulator's BreakpointStop)
+    // No {} on the array: its elements take Z80MCycle's member initializers anyway, and g++ 14 crashes (ICE in
+    // gimple_add_tmp_var) on a temporary of a struct holding this list with it (Emulator::BreakpointStop{})
     Z80MCycle cycles[kMax];
     uint8_t count = 0;
     uint8_t total = 0;

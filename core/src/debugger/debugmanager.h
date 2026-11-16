@@ -62,6 +62,10 @@ protected:
     int TargetsMask() const;  ///< bit 0: gs, bit 1: ms
     void PublishTargetsIfChanged();
     bool _catchingUp = false;      ///< CatchUpCards is running (the emulation thread only): no nested catch-up
+    std::atomic<uint8_t> _selectedCpu{static_cast<uint8_t>(DebugCpuId::Main)};  ///< SelectCpu
+    std::atomic<bool> _directRun{false};  ///< OnDirectRun: the paused machine's main CPU runs on a control thread
+    /// The card runs tight: debugged with a stop, or selected during a direct run
+    bool CardTight(const GSCardTarget* target) const;
     bool _shuttingDown = false;    ///< the destructor: the targets going away do not switch tight mode
     /// endregion </Fields>
 
@@ -110,13 +114,22 @@ public:
     void OnGeneralSoundCardCreated();
     /// The slot cards were built or released (SlotManager): the MultiSound GS's hooks follow its card
     void OnSlotCardsChanged();
-    /// Tight mode on while any card CPU is debugged with a stop (GSCardTarget::WantsTight), off when none is: the
-    /// main CPU catches the card up at every instruction start (FeatureManager::setCardTightHold). Called from a target's changes
-    /// (breakpoint demand, step armed or cancelled), never from inside the card's run
+    /// Tight mode on while any card CPU is debugged with a stop (GSCardTarget::WantsTight) or is the selected CPU
+    /// during a direct run, off when none is: the main CPU catches the card up at every instruction start
+    /// (FeatureManager::setCardTightHold). Called from a target's changes (breakpoint demand, step armed or
+    /// cancelled), the selection and the direct run's edges, never from inside the card's run
     void UpdateCardTight();
-    /// Tight mode, at a main CPU instruction start: each card debugged with a stop runs up to the main CPU's time
-    /// (where a breakpoint or step of the card parks the machine). Not while a card is parked inside its own run
+    /// Tight mode, at a main CPU instruction start: each card in tight mode runs up to the main CPU's time (where a
+    /// breakpoint or step of the card parks the machine). Not while a card is parked inside its own run
     void CatchUpCards();
+    /// The CPU a front-end shows (gs-debugger design §5.2, the third trigger): a card selected there follows the main
+    /// CPU's steps of a paused machine in tight mode, so its state is the one at the main CPU's moment. One per
+    /// machine, the last front-end's choice; it costs nothing while the machine runs
+    void SelectCpu(DebugCpuId cpu);
+    DebugCpuId SelectedCpu() const { return static_cast<DebugCpuId>(_selectedCpu.load(std::memory_order_acquire)); }
+    /// A direct run (Emulator::DirectStepScope: a step, steps, a run of T or frames of the paused machine) starts or
+    /// ends, on its thread with the CPU held
+    void OnDirectRun(bool running);
     /// CatchUpCards is running: the main CPU stands at an instruction start, the previous instruction finished
     bool CatchingUp() const { return _catchingUp; }
     /// Every CPU a debugger can name (main, gs, ms) and whether it is there now

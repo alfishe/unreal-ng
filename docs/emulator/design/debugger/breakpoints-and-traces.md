@@ -171,6 +171,25 @@ both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
   frame end. So a card stop finds the main CPU at the start of the instruction under way at that card time, not up
   to a frame later; its memory path stays as it was. Tight mode only splits the card's catch-up into shorter runs: the card
   executes the same instructions at the same card times as without it.
+- **The CPU shown** (gs-debugger design §5.2, the third trigger). A front-end says which CPU it shows
+  (`DebugManager::SelectCpu`; the Qt debugger with its CPU tab). A card shown follows the main CPU's steps of the paused
+  machine (step, steps, a run of T or frames on a control thread, `Emulator::DirectStepScope`): tight mode for that
+  run, and one more catch-up at its end, so the card's registers and memory are the ones at the main CPU's moment, not
+  at the last host port access or frame end. One choice per machine, the last front-end's; `main` ends it. It costs
+  nothing while the machine runs: tight mode comes only with a direct run. The card does not catch up at the choice
+  itself, only with the next step.
+
+  | Plane | The CPU shown |
+  | :--- | :--- |
+  | CLI | `selected-cpu [main\|gs\|ms]` |
+  | Lua | `select_cpu("gs")`, `selected_cpu()` |
+  | Python | `emu.select_cpu("gs")`, `emu.selected_cpu()` |
+  | MCP | `control_execution` `select_cpu` with `cpu` (none: the report) |
+  | REST | `GET` / `PUT /debug/selected_cpu {cpu}` |
+  | WebSocket | the REST routes as `call`s |
+
+  The answer: `{cpu, follows}` (`follows`: a card is shown and is in its slot). An unknown name is a 400 (a script
+  error, Python `ValueError`), a card CPU with no card a 404.
 - **Cost.** The hooks are on the card only while an active card breakpoint exists; without them the card runs its
   fast loop unchanged. Tight mode splits the card's run into one piece per main instruction while a card breakpoint
   or step asks for it (about a quarter more per host frame than the same breakpoint without it); with none, the

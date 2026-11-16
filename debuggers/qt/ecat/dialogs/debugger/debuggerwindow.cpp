@@ -204,6 +204,12 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
     });
     connect(m_cpu_tabs, &QTabWidget::currentChanged, this, [this](int) {
+        //The tab's CPU is the one shown: a card's follows the main CPU's steps of the paused machine
+        //(this->e: the constructor's parameter of the same name is not captured)
+        if (CPU * c = current_cpu(); c != nullptr && this->e->loaded) {
+            Emulator * em = this->e;
+            em->invoke([em, c]() { em->debug_select(c); });
+        }
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();

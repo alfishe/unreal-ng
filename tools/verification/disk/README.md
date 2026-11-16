@@ -9,6 +9,7 @@ others), which the DSK loader rejected and which then hung in a READ ID loop.
 | [`dsk-tracks.py`](dsk-tracks.py) | the file only | which tracks are not a plain format; for one track, the sectors, the marks inside the long dumps and the layout on the disk |
 | [`disk-boot-check.py`](disk-boot-check.py) | unreal-qt | does each image insert, and what is on the screen after N frames (results table, screenshots, contact sheet) |
 | [`fdc-probe.py`](fdc-probe.py) | unreal-qt | where a hanging load spins: registers and floppy controller per frame, the stack and the code it returns to |
+| [`parity.py`](parity.py) | `zxdisk` | do unreal-disk and `tools/diskconverter` hold every image byte for byte the same (raw stream, clock and weak bitmaps, sector index, warnings) and write the same UDI / FDI / TD0 / TRD / SCL from it |
 
 `disklib.py` holds the shared WebAPI client.
 
@@ -66,3 +67,24 @@ blank-screen test and the contact sheet need Pillow.
 The loader side is `core/src/3rdparty/unreal-disk/src/loaders/loader_dsk.cpp` (`layOutOverlappingFields`, the cut
 fallback after it, the CPDRead slots in `parseTrack`), with tests in `core/tests/loaders/disk/loader_dsk_test.cpp`
 (`Load_OverlappingLongFields_*`, `Load_CpdreadSlots_*`).
+
+## Python / C++ parity
+
+`parity.py` runs `zxdisk dump <image>` (unreal-disk, the reference) and the same dump from `tools/diskconverter`
+(`python3 -m diskconverter dump`), and compares the format, the geometry and, per track, the encoding, length, raw
+stream, clock bitmap, weak bitmap and every indexed sector (C/H/R/raw N, IDAM/DAM/data offsets, size, flags, stored
+CRCs). The loader warnings are compared on their own. Then, per target format (udi, fdi, td0, trd, scl), it runs
+`zxdisk convert` and the Python writer: the bytes must be equal, a refusal must be mutual with the same reason, and
+the warning zxdisk prints (the writer's first) must match. The first difference is reported with its track, field
+and byte offset.
+
+```bash
+python3 tools/verification/disk/parity.py                                  # all floppy fixtures under testdata/ (~40 s)
+python3 tools/verification/disk/parity.py scratch/zxf-originals --json     # any images or folders
+python3 tools/verification/disk/parity.py --zxdisk path/to/zxdisk --no-convert a.td0
+```
+
+`zxdisk` is looked up in `cmake-build-agent-release/bin` (then the other build folders, of this checkout and of the
+main one for a worktree, then `PATH`); build it with `tools/build/build.sh zxdisk`. The report goes to
+`scratch/disk-parity/report.json` (`--report` names another file); exit 1 on any difference, 2 when zxdisk is
+missing. It replaces the former `sector-parity.py`, which compared sector tables over the WebAPI.

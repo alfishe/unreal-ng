@@ -103,6 +103,48 @@ TEST_F(TTDMediaUndo_Test, ASeekSetsTheDiskToTheTracksItHadThere)
     EXPECT_EQ(FirstByte(), original) << "and back again";
 }
 
+/// WRITE TRACK past the image's last cylinder grows the image (FDD::trackUnderHeadForWrite): a seek before it takes
+/// the added cylinders off and gives the image its dirty flag back; a seek after it adds them again with their track
+TEST_F(TTDMediaUndo_Test, ASeekBeforeAWriteTrackThatGrewTheImageShrinksItBack)
+{
+    FDD* fdd = _context->coreState.diskDrives[0];
+    DiskImage* disk = fdd->getDiskImage();
+    ASSERT_NE(disk, nullptr);
+    const uint8_t cylinders = disk->getCylinders();
+    ASSERT_LT(cylinders + 2, MAX_CYLINDERS);
+    const bool dirty = disk->isDirty();
+
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    const uint64_t before = _context->emulatorState.frame_counter;
+    // The controller's WRITE TRACK two cylinders past the end: the track under the head, the hook, the bytes
+    fdd->setTrack(static_cast<int8_t>(cylinders + 1));
+    DiskImage::Track* track = fdd->trackUnderHeadForWrite(0);
+    ASSERT_NE(track, nullptr);
+    FloppyDriveSlot::BeforeTrackWrite(_context, 0, track);
+    track->rawData()[100] = 0xA5;
+    track->markDirty();
+    FloppyDriveSlot::NoteSlotWrite(_context, 0, "test write track");
+    ASSERT_EQ(disk->getCylinders(), cylinders + 2);
+    _emulator->RunNFrames(2, /*skipBreakpoints=*/true);
+    const uint64_t after = _context->emulatorState.frame_counter;
+    _ttd->StopRecording();
+
+    ASSERT_TRUE(_ttd->SeekTo({before, 0}));
+    disk = _context->coreState.diskDrives[0]->getDiskImage();
+    ASSERT_NE(disk, nullptr);
+    EXPECT_EQ(disk->getCylinders(), cylinders) << "the grown cylinders went with the seek";
+    EXPECT_EQ(disk->isDirty(), dirty);
+    EXPECT_EQ(disk->getTrackForCylinderAndSide(static_cast<uint8_t>(cylinders + 1), 0), nullptr);
+
+    ASSERT_TRUE(_ttd->SeekTo({after, 0}));
+    ASSERT_EQ(disk->getCylinders(), cylinders + 2) << "forward again: the image grows with the written track";
+    DiskImage::Track* again = disk->getTrackForCylinderAndSide(static_cast<uint8_t>(cylinders + 1), 0);
+    ASSERT_NE(again, nullptr);
+    EXPECT_EQ(again->rawData()[100], 0xA5);
+    EXPECT_TRUE(disk->isDirty());
+}
+
 TEST_F(TTDMediaUndo_Test, AWriteAfterASeekBackDropsTheFuture)
 {
     const uint8_t original = FirstByte();
