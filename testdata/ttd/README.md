@@ -308,3 +308,35 @@ Write them again after a format change (then `git add -f`, `*.ttd` is ignored):
 `TTDSessionFile_Test.CommittedFixturesStillLoad` fails when they are stale;
 `tools/verification/ttd-analyzer/tests/test_ttdcontainer.py` checks the analyzer
 against them.
+
+## Branched sessions for the maintenance tools (`branches/`)
+
+Fixtures of the TTD maintenance tools ([tools/python/ttd](../../tools/python/ttd/README.md), P7 of
+[TTD branches](../../docs/inprogress/2026-11-08-ttd-branches/tools.md)). Written by the C++ code
+(`TTDBranchFixtures_Test.DISABLED_WriteBranchFixtures`, `core/tests/debugger/ttd/ttdbranchfixtures_test.cpp`), except
+`tool-outputs/`, written by `ttdtool.py`:
+
+| Fixture | What |
+|---|---|
+| `two-branches.ttd` | save-all of a synthetic session: trunk 30 frames, branch 1 forked at frame 12 (10 frames) |
+| `deep-lineage.ttd` | a chain of six branches, each forked from the previous, plus a side branch from branch 2; controller records (names, tags, a pinned one, runs), the active branch 6 |
+| `mid-frame.ttd` | three branches forked inside frame 8 (T = 1, 34944, 69887) |
+| `many-short.ttd` | 24 short branches as an analyzer leaves them: two runs, creators, tags `keep`, two pinned, ages over 46 days |
+| `folder/` | a recording folder written by the controller on a Pentagon: trunk, branch 1, branch 2 from branch 1, the trunk again (four segment files), `branches.tdx`, `owner.pid` = 0 (no live process) |
+| `folder-crashed/` | the same folder after a crash: the last file cut inside its last part, `branches.tdx` cut inside its last record |
+| `damaged/` | bit flips in a branch part, a branch's first part, a trunk part; a cut; a create record naming another parent; one naming another fork frame; a broken trailer |
+| `expected.json` | what the C++ reader finds: per file and line the parent, fork and (frame, content CRC) of every checkpoint; the verdict on each damaged copy; the C++ join of each folder (size, CRC32C, lines); the C++ rebuild of each `branches.tdx` |
+| `tool-outputs/` | `ttdtool.py` outputs: an extract by lineage and by subtree, a prune by run, the joins of both folders |
+
+The content CRC of a checkpoint: CRC32C over the CPU state (48 bytes), then for every (region, piece) holding a
+version, ascending, the region (u32), the piece (u32) and the version's content CRC (u32).
+
+`TTDBranchToolOutputs_Test.ToolOutputsRestoreAsTheOriginals` loads every tool output and checks that each line
+restores every checkpoint as the same line of the original (T-F1 oracle), and that a join equals the C++ join byte
+for byte. Write them again after a format change (`*.ttd` here is not ignored):
+
+```bash
+./cmake-build-agent-release/bin/core-tests --gtest_also_run_disabled_tests \
+    --gtest_filter='TTDBranchFixtures_Test.DISABLED_WriteBranchFixtures'
+python3 tools/python/ttd/tests/make_tool_outputs.py
+```

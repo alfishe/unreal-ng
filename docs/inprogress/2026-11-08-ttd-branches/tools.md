@@ -1,22 +1,41 @@
 # TTD branches: maintenance tools
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08), not built (P7). Format: [storage.md](storage.md).
+Part of [TTD branches](README.md). Status: **built** (P7, 2026-11-15) in
+[tools/python/ttd/](../../../tools/python/ttd/README.md). Format: [storage.md](storage.md).
 
 Python tools to inspect, extract and clean branched sessions and recording folders without an emulator. They build
-on the existing reader `tools/verification/ttd-analyzer/src/ttdcontainer.py` (headers, parts, CRCs, every piece
-version decoded, part dependencies), which moves to a shared package so the analyzer and the new tools use one
-reader.
+on the reader that was `tools/verification/ttd-analyzer/src/ttdcontainer.py` (headers, parts, CRCs, every piece
+version decoded, part dependencies), moved to the shared package `tools/python/ttd/ttdlib/` so the analyzer and the
+new tools use one reader.
+
+As built, against this design:
+
+- the path is `tools/python/ttd/` (owner's choice), not `tools/ttd/`;
+- `ttdlib` holds `ttdcontainer.py` (the moved reader, trunk only; it now skips branch parts), `session.py` (the
+  branch-aware read, rule for rule the engine's loader, so its verdict on a damaged file is the C++ one; the
+  controller's branch record; per-checkpoint content CRCs), `writer.py` (the container writer, byte for byte the
+  C++ one) and `folder.py` (segment names, `branches.tdx`, owner pid, the join, crashed folders);
+- `extract` takes `--branch <id|guid|name>` with `--lineage` (default) or `--subtree`; branch ids are kept (not
+  renumbered): the loader accepts gaps, so only part indices and dependencies change;
+- a folder `prune` replaces `branches.tdx` by a rename with one more part of delete records (rebuilt first when it is
+  missing or damaged), then deletes the files: the same state as `DeleteLines`;
+- `reindex` keeps the old index as `branches.tdx.old`; `join` and `reindex` give the C++ bytes exactly (tested);
+- `recover` keeps each file up to its first damaged part and drops a branch's later files after a lost one;
+- `info` has no memory / disk tiers yet (P3 is open: files record no tiers); `stats` counts unique bytes as the
+  branch's subtree (what deleting it frees) and shared bytes as its ancestors';
+- every writing command checks its output by loading it whole and comparing every kept line's positions and content
+  CRCs with the original's.
 
 ## 1. Layout
 
 ```text
-tools/ttd/
+tools/python/ttd/
   README.md
   requirements.txt            # zstandard (as the analyzer)
   ttdlib/                     # the shared reader (moved from ttd-analyzer/src/ttdcontainer.py) + branch table,
                               #   folder index, writer of containers (part copy, index, trailer)
   ttdtool.py                  # the command line
-  tests/                      # pytest over C++-written fixtures (testdata/ttd/v2/, branched ones added)
+  tests/                      # pytest over C++-written fixtures (testdata/ttd/branches/)
 ```
 
 `tools/verification/ttd-analyzer` keeps its commands and imports `ttdlib`.
@@ -49,6 +68,10 @@ references) stays in the C++ engine (`ttd save lineage=`); `ttdtool.py flatten` 
 emulator runs, and says so otherwise.
 
 ## 3. Tests
+
+Built as below: fixtures in `testdata/ttd/branches/` (written by `TTDBranchFixtures_Test.DISABLED_WriteBranchFixtures`,
+`core/tests/debugger/ttd/ttdbranchfixtures_test.cpp`; tool outputs by `tools/python/ttd/tests/make_tool_outputs.py`),
+52 pytest cases, and `TTDBranchToolOutputs_Test.ToolOutputsRestoreAsTheOriginals` in core-tests.
 
 - pytest over fixtures written by the C++ writer (a `DISABLED_WriteBranchFixtures` test, as the analyzer's
   fixtures are made): a two-branch session, a deep lineage, a mid-frame fork, many short branches, a folder with
