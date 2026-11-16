@@ -361,6 +361,36 @@ TEST_F(LoaderSCP_Test, Serialize_SingleSided_EndTrackIsLastCylinderSideZero)
     ExpectSameTracksScp(image, *loaded);
 }
 
+TEST_F(LoaderSCP_Test, Serialize_FluxDataOffsetCountsFromTheTrackHeader)
+{
+    DiskImage image(40, 1);
+    FormatAllScp(image, false);
+
+    LoaderSCP saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    ASSERT_TRUE(saver.serialize(&image, buffer, warnings));
+
+    // The data offset is relative to "TRK": with one revolution the flux follows its 4 + 12 byte header
+    auto u32 = [&](size_t at) {
+        return static_cast<uint32_t>(buffer[at] | (buffer[at + 1] << 8) | (buffer[at + 2] << 16) |
+                                     (static_cast<uint32_t>(buffer[at + 3]) << 24));
+    };
+    const size_t trackOffset = u32(0x10);
+    ASSERT_EQ(std::memcmp(buffer.data() + trackOffset, "TRK", 3), 0);
+    EXPECT_EQ(u32(trackOffset + 4 + 8), 16u);
+
+    // The track starts with its gap, not with cells read from the revolution header
+    LoaderSCP loader;
+    std::unique_ptr<DiskImage> loaded(loader.parse(buffer.data(), buffer.size(), warnings));
+    ASSERT_NE(loaded, nullptr);
+    DiskImage::Track* want = image.getTrackForCylinderAndSide(0, 0);
+    DiskImage::Track* got = loaded->getTrackForCylinderAndSide(0, 0);
+    ASSERT_NE(got, nullptr);
+    ASSERT_GE(got->rawSize(), 16u);
+    EXPECT_EQ(std::memcmp(got->rawData(), want->rawData(), 16), 0);
+}
+
 TEST_F(LoaderSCP_Test, Serialize_MoreCylindersThanTheTrackTable_Refused)
 {
     DiskImage image(86, 2);

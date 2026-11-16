@@ -563,7 +563,7 @@ bool LoaderSCP::serialize(DiskImage* diskImage, std::vector<uint8_t>& out, std::
 
             putU32LE(out, indexTimeTicks);
             putU32LE(out, static_cast<uint32_t>(fluxTicks.size()));
-            putU32LE(out, REV_HEADER_SIZE);
+            putU32LE(out, TRACK_HEADER_SIZE + REV_HEADER_SIZE);  // from "TRK": the flux follows the one revolution header
 
             for (uint16_t tick : fluxTicks)
             {

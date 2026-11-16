@@ -17,7 +17,7 @@
 0x0B  1   resolution (0 = 25 ns)
 0x0C  4   checksum of everything after the header
 0x10  4×168 track data header offsets (0 = track absent)
-Track data header: "TRK", track number, then per revolution: index time (4), flux count (4), data offset (4)
+Track data header: "TRK", track number, then per revolution: index time (4), flux count (4), data offset (4, from the start of "TRK": 16 for the one revolution this loader writes)
 Flux data: 16-bit big-endian intervals in 25 ns units (0 = overflow, add 65536)
 ```
 

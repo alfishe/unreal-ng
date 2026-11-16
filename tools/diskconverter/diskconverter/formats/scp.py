@@ -271,7 +271,7 @@ def serialize(tracks: dict, cylinders: int, sides: int, *, version: int = 0x20, 
             nominal_cell_ns = flux.FM_CELL_NS if fm else flux.MFM_CELL_NS
             ticks, trailing = _flux_ticks(cells, nominal_cell_ns // NS_PER_TICK)
             index_ticks = (trailing + sum(ticks) + 65536 * ticks.count(0)) & 0xFFFFFFFF
-            out += struct.pack("<III", index_ticks, len(ticks), REV_HEADER_SIZE)
+            out += struct.pack("<III", index_ticks, len(ticks), TRACK_HEADER_SIZE + REV_HEADER_SIZE)
             out += struct.pack(f">{len(ticks)}H", *ticks)
 
     checksum = sum(memoryview(out)[HEADER_SIZE:]) & 0xFFFFFFFF
