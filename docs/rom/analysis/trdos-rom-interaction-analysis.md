@@ -175,6 +175,36 @@ This walkthrough shows **exactly** what happens when TR-DOS calls a 48K ROM rout
 | `$3D2F` | ROM switch trampoline | **Key address**: Switch ROM and jump to stacked address |
 | `$3D31` | Full DOS entry | Creates sys vars if needed, enters command processor |
 
+#### `$3D13` right after the cold start reads drive D
+
+The cold start (TR-DOS 5.04T `$2FAF`) writes `$FF` to the system register and to its copy `$5D16`:
+`LD A,$FF : OUT ($FF),A : LD ($5D16),A`. Drive select bits 0-1 are `11`, drive D, while the current drive `$5CF6` and the
+default drive `$5D19` say A (0). The read and write functions of `$3D13` (C=5, C=6) do not select a drive: they use
+the one the system register selects. Until a TR-DOS command (`CAT`, `RUN`, `*"A:"`) or a select call ran, a sector
+read from machine code goes to drive D, and with a disk in D it reads that disk. This is the ROM's behaviour, not an
+emulator one. With no disk in D the emulator's WD1793 ends Read Sector at once with Not Ready (status `$80`: READY is
+"a disk in the drive", as in Unreal Speccy) and the call returns with the buffer untouched and no TR-DOS error. MAME
+wires the Beta 128's RDY to HLD instead, so there the read would wait for an ID that never comes; TR-DOS itself
+detects a missing disk by the index pulse timeout of `$3DAD`, not by READY. Machine code selects the drive first:
+
+```asm
+        XOR  A          ; drive A
+        LD   C,1        ; select drive
+        CALL $3D13
+        LD   HL,buffer
+        LD   DE,$0008   ; track 0, sector 9
+        LD   BC,$0105   ; one sector, read
+        CALL $3D13
+```
+
+The first select of a drive is slow: `$3DCB` writes `$3C | drive` to the system register, and while the drive's
+table entry (`$5CFA + drive`) has bit 7 set it restores the head, waits for index pulses (`$3DAD`) and probes the
+drive's tracks and sides (`$3E16`, `$1FCA`), about 30 frames on Pentagon. The read then returns within a frame. A
+TTD recording of the sequence above: `OUT ($FF),$3C` from `$3DD5`, the read called 30 frames later, its sector in the
+buffer one frame after that.
+
+Pinned by `core/tests/loaders/disk/trdos_3d13_drive_test.cpp`.
+
 ### 1.3 The ROM Switch Trampoline (`$3D2F`)
 
 This is the **critical routine** that temporarily switches to SOS ROM:

@@ -23,20 +23,35 @@ LUT    per track: offset (2, in 512-byte blocks), length (2, bytes) — the trac
 Track data: bit cells, LSB first, MFM cells at the bit rate (1 = flux transition); one revolution
 ```
 
-v3 (`"HXCHFEV3"`) adds an opcode stream inside the track data (0xF0 NOP, 0xF1 SETINDEX, 0xF2 SETBITRATE,
-0xF3 SKIPBITS, 0xF4 RAND — weak bits); bytes are bit-reversed compared with v1.
+v3 (`"HXCHFEV3"`) adds an opcode stream inside the track data; bytes are bit-reversed compared with v1. The opcode
+semantics follow Greaseweazle (`greaseweazle/image/hfe.py`), the reference both HxC and Greaseweazle files agree with:
+
+| Opcode | Arguments | Cells |
+|--------|-----------|-------|
+| 0xF0 NOP | none | none (padding) |
+| 0xF1 SETINDEX | none | none (index here) |
+| 0xF2 SETBITRATE | 1 byte: 36 MHz / cell rate (72 for 2 µs cells) | none |
+| 0xF3 SKIPBITS | n, x | the low 8 − n bits of x; x = 0xF4: 8 − n weak cells |
+| 0xF4 RAND | none | 8 weak cells |
+
+The LUT length is twice the longer side's actual bytes: the padding of the last 512-byte block is not counted.
+FM is stored at double rate, each FM cell as two (`0c`), so a file at 250 kbit/s holds FM and MFM tracks alike.
 
 ## 2. Mapping to the model
 
-Per track: de-interleave the 256-byte side blocks, convert to a bit stream, run `MfmDecoder` (or `FmDecoder` for
-encoding 2/3) → byte stream + clock bitmap → `setRaw / setClockBitmap / reindex`. v3 `SETINDEX` fixes offset 0;
-`RAND` runs mark the weak bitmap; `SETBITRATE` changes the cell length mid-track (handled by the PLL). Track length is
-whatever the bit count divides to (≈6250 for DD).
+Per track: de-interleave the 256-byte side blocks (LUT length / 2 bytes a side), convert to bit cells (v3: run the
+opcodes, a weak flag per cell), then decode with `MfmDecoder` and with `FmDecoder` on both phases of the doubled
+stream (and on the cells as they are when the header says FM at ≤150 kbit/s). The decode with the most sectors wins,
+the header's encoding byte first on a tie (a disk-wide byte cannot describe a mixed disk). Byte stream + clock
+bitmap → `setRaw / setClockBitmap`; a byte is weak when any of its cells is (`weakBytes()` of the decoders).
 
 ## 3. Save
 
-v3 by default (weak bits, exact index); v1 on request. Byte stream + clock bitmap → `MfmEncoder` → bit cells →
-side-interleaved 512-byte blocks → LUT. Lossless for model content.
+v3 by default; v1 on request (weak bits dropped, with a warning). Byte stream + clock bitmap → `MfmEncoder` /
+`FmEncoder` (FM doubled) → bit cells. v3 starts each side with SETBITRATE 72, writes weak bytes as RAND, sends a
+cell byte that would read as an opcode (high nibble F) as SKIPBITS 1 + seven cells, pads with NOP. Header: bit rate
+250, encoding FM only when every track is FM, unused bytes 0xFF. Lossless for model content: a 6250-byte track
+reads back as 6250 bytes.
 
 ## 4. Tests
 

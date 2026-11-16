@@ -36,6 +36,8 @@ public:
     static void NoteSlotWrite(EmulatorContext* context, uint8_t drive, const char* detail);
     /// A controller is about to change `track` of `drive`'s disk (emulation thread): the manager keeps it as it is
     static void BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track);
+    /// `drive`'s disk is about to grow past its last cylinder (WRITE TRACK there): the manager keeps its size
+    static void BeforeImageGrow(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage& disk);
 
     uint8_t Drive() const { return _drive; }
 

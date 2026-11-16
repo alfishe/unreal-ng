@@ -306,6 +306,9 @@ public:
     /// unit was, so a seek sets the medium to any recorded version (gap 11). Emulation thread
     void BeforeSectorWrite(const std::string& slotId, uint64_t lba, IBlockDevice& below) override;
     void BeforeTrackWrite(const std::string& slotId, const DiskImage::Track& track);
+    /// WRITE TRACK is about to grow the slot's floppy image past its last cylinder: the undo log keeps its size, so a
+    /// seek before the write takes the added tracks off again. Emulation thread
+    void BeforeImageGrow(const std::string& slotId, const DiskImage& disk);
 
     /// IMediaHistory (TTD Phase 3, Step 4). A version is the count of the medium's changes: the frames that wrote it
     /// and the write-protect toggles. While a TTD history exists every change goes into the slot's undo log

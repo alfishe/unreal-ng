@@ -146,6 +146,7 @@ const std::set<std::string> kDebugRoutes = {
     "PUT /breakpoints/{bp_id}/group",
     "PUT /breakpoints/{bp_id}/note",
     "PUT /callbacks/{cb_id}/policy",
+    "PUT /debug/selected_cpu",
     "PUT /debugmode",
     "PUT /disk/{drive}/sector/{cyl}/{side}/{sec}",
     "PUT /markup",
