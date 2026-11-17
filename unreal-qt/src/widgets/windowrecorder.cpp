@@ -174,6 +174,27 @@ struct WindowRecorder::Writer
     QString fifoPath;  ///< the sound goes into the same ffmpeg through this FIFO (no muxing afterwards)
     std::atomic<uint64_t> framesDone{0};
 
+    // Timings in microseconds since the writer was made (0 = not reached): the status shows where a late start went
+    const std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
+    std::atomic<int64_t> writerStartUs{0}, encoderReadyUs{0}, firstFrameUs{0}, slowestFrameUs{0};
+    int64_t sinceCreatedUs() const
+    {
+        return std::max<int64_t>(1, std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now() - created).count());
+    }
+    /// One picture handled: the first one's time, the slowest one's duration
+    void pictureHandled(int64_t startedUs)
+    {
+        const int64_t now = sinceCreatedUs();
+        int64_t zero = 0;
+        firstFrameUs.compare_exchange_strong(zero, now);
+        const int64_t took = now - startedUs;
+        int64_t slowest = slowestFrameUs.load();
+        while (took > slowest && !slowestFrameUs.compare_exchange_weak(slowest, took))
+        {
+        }
+    }
+
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<Job> jobs;
@@ -344,6 +365,7 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
         for (;;)
         {
@@ -371,6 +393,7 @@ struct WindowRecorder::Writer
                                        static_cast<size_t>(job.sound.size()) / sizeof(int16_t), job.soundTime);
             if (job.picture.isNull())
                 continue;
+            const int64_t pictureStartUs = sinceCreatedUs();
             FrameTarget target;
             if (encoder.AcquireFrameTarget(static_cast<uint32_t>(size.width()), static_cast<uint32_t>(size.height()),
                                            target) == FrameTargetResult::Ready)
@@ -383,6 +406,7 @@ struct WindowRecorder::Writer
             }
             // else: the encoder is stuck for now: this picture stays out, the previous one holds
             framesDone = job.frameStart + job.repeat;
+            pictureHandled(pictureStartUs);
         }
         encoder.Stop();
         error = failure;
@@ -392,6 +416,7 @@ struct WindowRecorder::Writer
 
     void run()
     {
+        writerStartUs = sinceCreatedUs();
 #ifdef __APPLE__
         if (native)
         {
@@ -452,6 +477,7 @@ struct WindowRecorder::Writer
         };
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
 
         for (;;)
@@ -488,6 +514,7 @@ struct WindowRecorder::Writer
             }
             if (job.picture.isNull() || !failure.empty())
                 continue;
+            const int64_t pictureStartUs = sinceCreatedUs();
             const QImage frame = compose(job);
             for (uint32_t i = 0; i < job.repeat && failure.empty(); i++)
             {
@@ -520,6 +547,7 @@ struct WindowRecorder::Writer
                 if (!pumpSound())
                     fail("ffmpeg stopped taking the sound");
             }
+            pictureHandled(pictureStartUs);
         }
 
         sound.close();
@@ -1095,4 +1123,11 @@ void WindowRecorder::fill(WindowRecordingStatus& out)
     out.framesPending = _writer ? (_frames > _writer->framesDone ? _frames - _writer->framesDone : 0) : 0;
     out.sampleRate = _sampleRate;
     out.audioSamples = _audioSamples;
+    if (_writer)
+    {
+        out.writerStartMs = static_cast<double>(_writer->writerStartUs) / 1000.0;
+        out.encoderReadyMs = static_cast<double>(_writer->encoderReadyUs) / 1000.0;
+        out.firstFrameMs = static_cast<double>(_writer->firstFrameUs) / 1000.0;
+        out.slowestFrameMs = static_cast<double>(_writer->slowestFrameUs) / 1000.0;
+    }
 }
