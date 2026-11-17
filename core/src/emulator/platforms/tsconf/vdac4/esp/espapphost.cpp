@@ -1466,4 +1466,16 @@ void EspAppHost::ForceCleanup()
 
 /// endregion
 
+bool EspAppHost::PeekAppByte(uint32_t elfAddress, uint8_t& value) const
+{
+    if (_app.address == 0)
+        return false;
+    const uint32_t address = _app.image.MapSymbol(elfAddress);
+    const uint8_t* bytes = address != 0 ? _memory.Bytes(address, 1) : nullptr;
+    if (bytes == nullptr)
+        return false;
+    value = *bytes;
+    return true;
+}
+
 }  // namespace vdac4

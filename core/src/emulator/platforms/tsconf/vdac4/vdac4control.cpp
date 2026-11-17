@@ -109,6 +109,11 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.commandFirst = info.commandFirst;
     state.commandLast = info.commandLast;
     state.appError = board.Runtime().Host().LastError();
+    state.appSections.clear();
+    if (const vdac4::EspElfImage* image = board.Runtime().Host().AppImage())
+        for (const vdac4::EspElfSection& section : image->sections)
+            if (section.size != 0 && section.addr != 0)
+                state.appSections.push_back({section.vaddr, section.size, section.addr});
 
     state.pendingFromZ80 = esp.Link().PendingFromZ80();
     state.pendingToZ80 = esp.Link().PendingToZ80();
@@ -136,6 +141,43 @@ bool GetState(EmulatorContext* context, BoardState& state, size_t logLines, std:
     state.audioUnderruns = audio.underruns;
     state.audioDropped = audio.dropped;
     state.audioSound = audio.sound;
+    return true;
+}
+
+bool ReadEspMemory(EmulatorContext* context, uint32_t address, uint32_t size, bool appAddress,
+                   std::vector<uint8_t>& out, std::string* error)
+{
+    auto fail = [error](const std::string& text) {
+        if (error)
+            *error = text;
+        return false;
+    };
+    PortDecoder_TSConf* decoder = FindDecoder(context, error);
+    if (!decoder)
+        return false;
+    if (size == 0 || size > kMaxEspRead)
+        return fail("size is 1.." + std::to_string(kMaxEspRead));
+    Vdac4Board& board = *decoder->GetVdac4Board();
+    uint32_t at = address;
+    if (appAddress)
+    {
+        const BoardState published = board.Published();
+        if (published.appSections.empty())
+            return fail("no app is running on the ESP");
+        at = 0;
+        for (const BoardState::AppSection& section : published.appSections)
+            if (address >= section.elfAddress && address - section.elfAddress < section.size &&
+                size <= section.size - (address - section.elfAddress))
+                at = section.loadedAt + (address - section.elfAddress);
+        if (at == 0)
+            return fail("the range is not inside one section of the app's image");
+    }
+    // The PSRAM and SRAM buffers live as long as the board: a read beside the running ESP sees the bytes of the
+    // moment, as a Z80 memory read beside the running machine does
+    const uint8_t* bytes = board.Runtime().Host().Memory().Bytes(at, size);
+    if (bytes == nullptr)
+        return fail("the range is not ESP memory (PSRAM, SRAM)");
+    out.assign(bytes, bytes + size);
     return true;
 }
 

@@ -55,8 +55,105 @@ std::string Vdac4StateText(const Json::Value& reply, size_t logLines)
     return out.str();
 }
 
+std::string Vdac4EspMemoryText(const Json::Value& reply)
+{
+    const std::string hex = reply["hex"].asString();
+    const uint32_t address = reply["address"].asUInt();
+    std::ostringstream out;
+    out << "ESP memory, " << (hex.size() / 2) << " bytes at 0x" << std::hex << address
+        << (reply["app"].asBool() ? " of the app's ELF image" : "");
+    static const char kDigits[] = "0123456789abcdef";
+    for (size_t offset = 0; offset * 2 < hex.size(); offset += 16)
+    {
+        const uint32_t at = address + static_cast<uint32_t>(offset);
+        out << "\n";
+        for (int shift = 28; shift >= 0; shift -= 4)
+            out << kDigits[(at >> shift) & 0x0F];
+        out << ":";
+        for (size_t i = offset; i < offset + 16 && i * 2 < hex.size(); ++i)
+            out << ' ' << hex.substr(i * 2, 2);
+    }
+    return out.str();
+}
+
+namespace
+{
+
+void RegisterVdac4EspMemory(ToolRegistry& registry)
+{
+    Json::Value schema;
+    schema["type"] = "object";
+    schema["properties"]["target"]["type"] = "string";
+    schema["properties"]["target"]["description"] = "Emulator id, or 'auto'";
+    schema["properties"]["address"]["type"] = "string";
+    schema["properties"]["address"]["description"] = "32-bit address, decimal or 0x hex";
+    schema["properties"]["size"]["type"] = "integer";
+    schema["properties"]["size"]["minimum"] = 1;
+    schema["properties"]["size"]["maximum"] = 4096;
+    schema["properties"]["size"]["description"] = "Bytes (default 16, at most 4096)";
+    schema["properties"]["app"]["type"] = "boolean";
+    schema["properties"]["app"]["description"] =
+        "The address is one of the running app's ELF image (as a haptic probe `cpu: esp` takes it)";
+    schema["required"].append("address");
+
+    registry.Register(
+        "vdac4_esp_memory",
+        "Read the TS-Conf VDAC4 board's ESP32-S3 memory (the TSL-VDAC4 model): bytes at a D-bus / I-bus / SRAM "
+        "address, or with app=true at an address of the running app's ELF image (DOOM, R-Type VDAC4; the sections "
+        "`vdac4_state` lists). A hex dump in the text, {address, size, app, hex} in structuredContent. Read-only, no "
+        "pause (GET /vdac4/esp/memory). Finds the game state a haptic profile's `cpu: esp` probes watch.",
+        std::move(schema),
+        [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
+            const Json::Value& addressArg = args["address"];
+            std::string address;
+            if (addressArg.isString())
+                address = addressArg.asString();
+            else if (addressArg.isIntegral() && addressArg.asInt64() >= 0)
+                address = std::to_string(addressArg.asUInt64());
+            if (address.empty())
+            {
+                done(ToolResult::Error("address: a 32-bit address, decimal or 0x hex"));
+                return;
+            }
+            const Json::Value& sizeArg = args["size"];
+            if (!sizeArg.isNull() && (!sizeArg.isIntegral() || sizeArg.asInt64() < 1 || sizeArg.asInt64() > 4096))
+            {
+                done(ToolResult::Error("size: 1 to 4096 bytes"));
+                return;
+            }
+            const std::string query = "/vdac4/esp/memory?address=" + address +
+                                      "&size=" + std::to_string(sizeArg.isNull() ? 16 : sizeArg.asInt64()) +
+                                      (args["app"].asBool() ? "&app=1" : "");
+            TargetResolver::ResolveFromArgs(args, caller, [query, &caller, done](bool ok, const std::string& idOrError) {
+                if (!ok)
+                {
+                    done(ToolResult::Error(idOrError));
+                    return;
+                }
+                const std::string id = idOrError;
+                caller.Call("GET", Endpoint(id, query), nullptr, [id, done](int status, Json::Value reply) {
+                    if (status == 0)
+                    {
+                        done(ToolResult::Error("WebAPI unreachable — is the emulator running with WebAPI enabled (port 8090)?"));
+                        return;
+                    }
+                    if (status < 200 || status >= 300)
+                    {
+                        done(ToolResult::Error("vdac4_esp_memory [target " + id + "]: " + DescribeErrorBody(reply)));
+                        return;
+                    }
+                    const std::string text = Vdac4EspMemoryText(reply) + "\n[target " + id + "]";
+                    done(ToolResult::Ok(text, std::move(reply)));
+                });
+            });
+        });
+}
+
+} // namespace
+
 void RegisterVdac4State(ToolRegistry& registry)
 {
+    RegisterVdac4EspMemory(registry);
     Json::Value schema;
     schema["type"] = "object";
     schema["properties"]["target"]["type"] = "string";

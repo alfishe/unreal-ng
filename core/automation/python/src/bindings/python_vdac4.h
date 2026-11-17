@@ -56,6 +56,16 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             app["command_first"] = s.commandFirst;
             app["command_last"] = s.commandLast;
             app["error"] = s.appError;
+            py::list sections;
+            for (const auto& section : s.appSections)
+            {
+                py::dict item;
+                item["elf_address"] = section.elfAddress;
+                item["size"] = section.size;
+                item["loaded_at"] = section.loadedAt;
+                sections.append(item);
+            }
+            app["sections"] = sections;
             py::dict link;
             link["pending_from_z80"] = s.pendingFromZ80;
             link["pending_to_z80"] = s.pendingToZ80;
@@ -98,11 +108,24 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
         },
         "The TS-Conf VDAC4 board's state, the keys of WebAPI GET /vdac4/state: tang {personality, armed, esp_host, "
         "ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources, clock_restarts, "
-        "clock_offset_us}, app {running, module, name, version, command_first, command_last, error}, link "
+        "clock_offset_us}, app {running, module, name, version, command_first, command_last, error, sections [{elf_address, size, loaded_at}]}, link "
         "{pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames}, packets {count, "
         "recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns, dropped, sound}, log "
         "(the last `log` ESP lines, at most 256). Raises RuntimeError without the board.",
         py::arg("log") = 50);
+    emulatorClass.def(
+        "vdac4_esp_memory",
+        [](Emulator& self, uint32_t address, uint32_t size, bool app) {
+            std::vector<uint8_t> bytes;
+            std::string error;
+            if (!Vdac4Control::ReadEspMemory(self.GetContext(), address, size, app, bytes, &error))
+                throw std::runtime_error("vdac4_esp_memory: " + error);
+            return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        },
+        "Bytes of the VDAC4 board's ESP32 memory (WebAPI GET /vdac4/esp/memory): `size` (at most 4096) from `address`, "
+        "a D-bus / I-bus / SRAM address, or with app=True an address of the running app's ELF image (the one a haptic "
+        "probe `cpu: esp` takes). Raises RuntimeError without the board, the app or the memory.",
+        py::arg("address"), py::arg("size") = 16, py::arg("app") = false);
 }
 
 }  // namespace PythonBindings

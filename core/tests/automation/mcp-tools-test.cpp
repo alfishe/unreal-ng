@@ -2526,6 +2526,34 @@ TEST_F(McpTools_Test, Vdac4State_NoBoardAndBadLogAreErrors)
     EXPECT_TRUE(RunTool(*_registry, "vdac4_state", bad, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, Vdac4EspMemory_DumpsTheAppBytes)
+{
+    Json::Value reply;
+    reply["address"] = 0x1234;
+    reply["size"] = 18;
+    reply["app"] = true;
+    reply["hex"] = "000102030405060708090a0b0c0d0e0f6411";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/esp/memory?address=0x1234&size=18&app=1"] = {200, reply};
+
+    Json::Value args;
+    args["address"] = "0x1234";
+    args["size"] = 18;
+    args["app"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_esp_memory", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("18 bytes at 0x1234 of the app's ELF image"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("00001234: 00 01 02"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("00001244: 64 11"), std::string::npos) << "the second line: " << result.text;
+    EXPECT_EQ(result.structured["hex"].asString(), reply["hex"].asString());
+
+    Json::Value missing(Json::objectValue);
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_esp_memory", missing, *_caller).isError) << "the address is required";
+    Json::Value big;
+    big["address"] = "0";
+    big["size"] = 5000;
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_esp_memory", big, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, AnalyzePerformance_MemoryCounters_ListsCellsInText)
 {
     Json::Value reply;

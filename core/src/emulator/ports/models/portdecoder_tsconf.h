@@ -151,6 +151,7 @@ public:
     Vdac4Tang* GetVdac4Tang() const { return _vdac4Tang; }
     /// The VDAC4 board's ESP32-S3 (SPI slot 2) with its app runtime, else nullptr (design §6, §8)
     Vdac4Board* GetVdac4Board() const { return _vdac4Board.get(); }
+    bool PeekEspAppByte(uint32_t address, uint8_t& value) const override;
     /// Insert an image file / a medium through the media manager (directly
     /// when the context has none: bare decoder tests)
     bool InsertSdCard(const std::string& path, SdCardSpi::WriteMode mode, bool writeProtect = false);

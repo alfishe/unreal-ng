@@ -512,6 +512,25 @@ emulation thread. The answer is the same JSON tree on every plane:
 A machine without the board (not TS-Conf, `[MISC] TS_VDAC4=0`, a build without `ENABLE_VDAC2`) answers on every plane
 with the reason. The live MCP check: `tools/verification/mcp/test_vdac4.py`.
 
+**Implemented (2026-11-16): the app's memory.** `app.sections` in the state lists the running app's ELF sections
+(`elf_address`, `size`, `loaded_at`). `vdac4_esp_memory` reads up to 4096 bytes: by the app's ELF address (`app=1`,
+mapped through those sections) or by the ESP's D-bus address. It reads at the caller's moment from the board's
+memory, not the emulation thread's frame copy, so it is a debugging read, not a frame-exact one.
+
+| Plane | Call |
+|---|---|
+| CLI | `vdac4 esp-memory <address> [size] [app]` (default 64 bytes; hex dump) |
+| Python | `emu.vdac4_esp_memory(address, size=16, app=False)` -> bytes |
+| Lua | `vdac4_esp_memory(address[, size[, app]])` -> `{address, size, app, bytes, hex}` |
+| MCP | tool `vdac4_esp_memory` (`address`, `size` 1..4096, `app`): a hex dump, 16 bytes a line |
+| REST | `GET /api/v1/emulator/{id}/vdac4/esp/memory?address=&size=&app=1` -> `{address, size, app, hex}`; 400 / 409 |
+| WebSocket | the REST route as a `call` |
+
+Game profiles use it through the haptic probes' `cpu: esp` (frame-end reads on the emulation thread,
+[haptics.md §5](../2026-10-17-controller-manager/haptics.md)). The DOOM profile `data/software/tsconf/doom-vdac4.yaml`
+binds a pad (twin stick, the PC keys Esc / Tab / Backspace through `pc.*`) and plays shots, hits, pickups and death
+from players[0]; the addresses and how they were found are in its header.
+
 **Planned:**
 
 - `vdac4 status`: personality, M_SEL, `espHost`, RAM_G mode, fonts, app name / version / state, tasks with core,
@@ -519,7 +538,7 @@ with the reason. The live MCP check: `tools/verification/mcp/test_vdac4.py`.
 - `vdac4 log [n]`: the app log ring.
 - `vdac4 app stop`, `vdac4 cache list|clear`.
 - `vdac4 tang read|write <addr>`: LINK registers.
-- ESP memory peek: guest addresses `0x3C……` and `0x42……`.
+- ESP memory peek by guest address (`0x3C……`, `0x42……`); the app's image is readable now (below).
 
 FT812 inspection reuses the VDAC2 commands on the Tang's chip (screenshot of the FT picture, DL dump, metrics). The
 WebSocket topics are app state changes and log lines, coalesced (owner rule "debug infra: no load on emulation").

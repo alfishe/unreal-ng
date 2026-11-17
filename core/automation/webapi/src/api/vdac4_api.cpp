@@ -89,6 +89,16 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     app["command_first"] = state.commandFirst;
     app["command_last"] = state.commandLast;
     app["error"] = state.appError;
+    Json::Value& sections = app["sections"];
+    sections = Json::arrayValue;
+    for (const auto& section : state.appSections)
+    {
+        Json::Value item;
+        item["elf_address"] = section.elfAddress;
+        item["size"] = section.size;
+        item["loaded_at"] = section.loadedAt;
+        sections.append(item);
+    }
     Json::Value& packets = body["packets"];
     packets["count"] = static_cast<Json::UInt64>(state.packets);
     Json::Value& link = body["link"];
@@ -120,6 +130,60 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     for (const std::string& line : state.log)
         log.append(line);
 
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    addCorsHeaders(resp);
+    callback(resp);
+}
+
+/// @brief GET /api/v1/emulator/{id}/vdac4/esp/memory?address=A&size=N[&app=1]  (N at most 4096; app=1: A is an
+/// address of the running app's ELF image)
+void EmulatorAPI::vdac4EspMemory(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+    if (!emulator)
+    {
+        sendVdac4Error(callback, HttpStatusCode::k404NotFound, "Not Found", "Emulator with specified ID not found");
+        return;
+    }
+    const std::string addressParam = req->getParameter("address");
+    const std::string sizeParam = req->getParameter("size");
+    char* end = nullptr;
+    const unsigned long long address = std::strtoull(addressParam.c_str(), &end, 0);
+    if (addressParam.empty() || end == nullptr || *end != '\0' || address > 0xFFFFFFFFull)
+    {
+        sendVdac4Error(callback, HttpStatusCode::k400BadRequest, "bad_request",
+                       "address is a 32-bit number (decimal or 0x hex)");
+        return;
+    }
+    const unsigned long size = sizeParam.empty() ? 16 : std::strtoul(sizeParam.c_str(), nullptr, 0);
+    const std::string appParam = req->getParameter("app");
+    const bool app = appParam == "1" || appParam == "true";
+
+    std::vector<uint8_t> bytes;
+    std::string error;
+    if (!Vdac4Control::ReadEspMemory(emulator->GetContext(), static_cast<uint32_t>(address),
+                                     static_cast<uint32_t>(std::min<unsigned long>(size, 0xFFFFFFFFul)), app, bytes,
+                                     &error))
+    {
+        const bool noBoard = !Vdac4Control::HasBoard(emulator->GetContext());
+        sendVdac4Error(callback, noBoard ? HttpStatusCode::k409Conflict : HttpStatusCode::k400BadRequest,
+                       noBoard ? "No VDAC4 Board" : "bad_request", error);
+        return;
+    }
+    static const char kHex[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(bytes.size() * 2);
+    for (uint8_t byte : bytes)
+    {
+        hex.push_back(kHex[byte >> 4]);
+        hex.push_back(kHex[byte & 0x0F]);
+    }
+    Json::Value body;
+    body["address"] = static_cast<Json::UInt>(address);
+    body["size"] = static_cast<Json::UInt>(bytes.size());
+    body["app"] = app;
+    body["hex"] = hex;
     auto resp = HttpResponse::newHttpJsonResponse(body);
     addCorsHeaders(resp);
     callback(resp);

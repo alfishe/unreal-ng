@@ -61,6 +61,13 @@
         field(app, "command_first", "integer", "First command of the app's range (first > last: none)");
         field(app, "command_last", "integer", "Last command of the app's range");
         field(app, "error", "string", "The runtime's last error: a fault, what and where (empty: none)");
+        Json::Value& sections = app["properties"]["sections"];
+        sections["type"] = "array";
+        sections["description"] = "The running app's loaded sections (empty: no app): what `vdac4/esp/memory?app=1` maps";
+        sections["items"]["type"] = "object";
+        field(sections["items"], "elf_address", "integer", "The section's address in the app's ELF file");
+        field(sections["items"], "size", "integer", "Bytes");
+        field(sections["items"], "loaded_at", "integer", "The ESP D-bus address it was loaded at");
 
         Json::Value& link = block("link", "The Z80 <-> ESP link and its frame transport");
         field(link, "pending_from_z80", "integer", "Bytes received from the Z80, not yet parsed");
@@ -97,4 +104,41 @@
         get["responses"]["409"]["description"] =
             "No VDAC4 board (not TS-Conf, [MISC] TS_VDAC4=0, or a build without VDAC2 / VDAC4 support); the "
             "message says which";
+    }
+
+    // ESP memory (read-only): the app's data for haptic probes `cpu: esp` and for study
+    {
+        const std::string memoryPath = "/api/v1/emulator/{id}/vdac4/esp/memory";
+        Json::Value& get = paths[memoryPath]["get"];
+        get["summary"] = "Read the VDAC4 ESP's memory";
+        get["tags"].append("VDAC4");
+        get["description"] =
+            "Bytes of the ESP32-S3's memory (CLI `vdac4 esp-memory`, Lua / Python `vdac4_esp_memory()`, MCP "
+            "`vdac4_esp_memory`, WebSocket a call of this route). With `app=1` the address is one of the running app's "
+            "ELF image (the address a symbol has in the file, as a haptic probe `cpu: esp` takes it), mapped through "
+            "the sections of the last frame end; else a D-bus / I-bus / SRAM address. No pause: the bytes of the moment.";
+        Json::Value& params = get["parameters"];
+        params[0]["name"] = "id";
+        params[0]["in"] = "path";
+        params[0]["required"] = true;
+        params[0]["schema"]["type"] = "string";
+        params[1]["name"] = "address";
+        params[1]["in"] = "query";
+        params[1]["required"] = true;
+        params[1]["schema"]["type"] = "string";
+        params[1]["description"] = "32-bit address, decimal or 0x hex";
+        params[2]["name"] = "size";
+        params[2]["in"] = "query";
+        params[2]["schema"]["type"] = "integer";
+        params[2]["schema"]["minimum"] = 1;
+        params[2]["schema"]["maximum"] = 4096;
+        params[2]["description"] = "Bytes (default 16, at most 4096)";
+        params[3]["name"] = "app";
+        params[3]["in"] = "query";
+        params[3]["schema"]["type"] = "boolean";
+        params[3]["description"] = "The address is one of the running app's ELF image";
+        get["responses"]["200"]["description"] = "{address, size, app, hex}: the bytes as lowercase hex";
+        get["responses"]["400"]["description"] = "A bad address or size, no app running (app=1), or unmapped memory";
+        get["responses"]["404"]["description"] = "No emulator with this id";
+        get["responses"]["409"]["description"] = "No VDAC4 board";
     }

@@ -123,7 +123,13 @@ public:
     /// Guest faults and diagnostics so far (a stopped app explains itself here)
     const std::string& LastError() const { return _lastError; }
     EspMemory& Memory() { return _memory; }
+    const EspMemory& Memory() const { return _memory; }
     uint64_t Instructions() const { return _instructions; }
+    /// A byte of the running app at an address of its ELF image (EspElfImage::MapSymbol: the address a symbol has in
+    /// the file), no side effects; false with no app loaded or outside its sections
+    bool PeekAppByte(uint32_t elfAddress, uint8_t& value) const;
+    /// The running app's sections: ELF address, size and the D-bus address each was loaded at (none: no app)
+    const EspElfImage* AppImage() const { return _app.address != 0 ? &_app.image : nullptr; }
 
 private:
     struct HostCall

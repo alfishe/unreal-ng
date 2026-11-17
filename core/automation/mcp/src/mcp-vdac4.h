@@ -14,8 +14,13 @@
 namespace mcp
 {
 
-/// Registers the vdac4_state tool
+/// Registers the vdac4_state tool and vdac4_esp_memory (GET /vdac4/esp/memory: the ESP's memory, or the running app's
+/// by the addresses of its ELF image)
 void RegisterVdac4State(ToolRegistry& registry);
+
+/// The text vdac4_esp_memory answers with for a GET /vdac4/esp/memory reply: a hex dump, 16 bytes a line (exposed
+/// for tests)
+std::string Vdac4EspMemoryText(const Json::Value& reply);
 
 /// The text the tool answers with for a GET /vdac4/state reply; `logLines` = the newest log lines shown (exposed for
 /// tests)

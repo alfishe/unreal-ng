@@ -7,6 +7,9 @@
  *                         the last N ESP log lines (default 10)
  *   vdac4 status          the same as `vdac4 state`
  *   vdac4 log [N]         only the ESP log (default 50, at most 256)
+ *   vdac4 esp-memory <address> [size] [app]
+ *                         a hex dump of the ESP's memory (size default 64, at most 4096); `app`: the address is one
+ *                         of the running app's ELF image (as a haptic probe `cpu: esp` takes it)
  *
  * Design: docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2.
  * Every surface goes through Vdac4Control, so all of them answer the same.
@@ -16,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iomanip>
 #include <sstream>
 
 #include "emulator/emulatorcontext.h"
@@ -49,7 +53,68 @@ void CLIProcessor::ShowVdac4Help(const ClientSession& session)
         << "                       lines (default 10, at most 256)" << NEWLINE
         << "  vdac4 status         the same as 'vdac4 state'" << NEWLINE
         << "  vdac4 log [N]        only the ESP log (default 50, at most 256)" << NEWLINE
+        << "  vdac4 esp-memory <address> [size] [app]" << NEWLINE
+        << "                       a hex dump of the ESP's memory (size default 64, at most 4096); 'app': the" << NEWLINE
+        << "                       address is one of the running app's ELF image (haptic probes 'cpu: esp')" << NEWLINE
         << "Needs TS-Conf with the board ([MISC] TS_VDAC4=1, the TSL-VDAC4 model)." << NEWLINE;
+    session.SendResponse(out.str());
+}
+
+void CLIProcessor::HandleVdac4EspMemory(const ClientSession& session, const std::vector<std::string>& args)
+{
+    const std::string usage = "Usage: vdac4 esp-memory <address> [size] [app]" + std::string(NEWLINE);
+    if (args.size() < 2 || args.size() > 4)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    char* end = nullptr;
+    const unsigned long long address = std::strtoull(args[1].c_str(), &end, 0);
+    if (end == nullptr || *end != '\0' || address > 0xFFFFFFFFull)
+    {
+        session.SendResponse(usage);
+        return;
+    }
+    unsigned long size = 64;
+    bool app = false;
+    for (size_t i = 2; i < args.size(); ++i)
+    {
+        if (args[i] == "app")
+            app = true;
+        else
+        {
+            size = std::strtoul(args[i].c_str(), &end, 0);
+            if (end == nullptr || *end != '\0')
+            {
+                session.SendResponse(usage);
+                return;
+            }
+        }
+    }
+    auto emulator = GetSelectedEmulator(session);
+    if (!emulator)
+    {
+        session.SendResponse("No emulator selected. Use 'select' or 'list' to manage emulators." + std::string(NEWLINE));
+        return;
+    }
+    std::vector<uint8_t> bytes;
+    std::string error;
+    if (!Vdac4Control::ReadEspMemory(emulator->GetContext(), static_cast<uint32_t>(address),
+                                     static_cast<uint32_t>(std::min<unsigned long>(size, 0xFFFFFFFFul)), app, bytes,
+                                     &error))
+    {
+        session.SendResponse("VDAC4: " + error + NEWLINE);
+        return;
+    }
+    std::ostringstream out;
+    out << std::hex << std::setfill('0');
+    for (size_t offset = 0; offset < bytes.size(); offset += 16)
+    {
+        out << std::setw(8) << (address + offset) << ":";
+        for (size_t i = offset; i < offset + 16 && i < bytes.size(); ++i)
+            out << ' ' << std::setw(2) << static_cast<unsigned>(bytes[i]);
+        out << NEWLINE;
+    }
     session.SendResponse(out.str());
 }
 
@@ -57,6 +122,11 @@ void CLIProcessor::HandleVdac4(const ClientSession& session, const std::vector<s
 {
     std::string action = args.empty() ? std::string() : args[0];
     std::transform(action.begin(), action.end(), action.begin(), ::tolower);
+    if (action == "esp-memory")
+    {
+        HandleVdac4EspMemory(session, args);
+        return;
+    }
     if (action != "state" && action != "status" && action != "log")
     {
         ShowVdac4Help(session);

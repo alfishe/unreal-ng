@@ -153,7 +153,7 @@ EveChip* EveCreate(const EveConfig* config)
     chip->vdac4 = config->model == EVE_MODEL_VDAC4;
     chip->ramGSize = chip->table->ramGSize;
     chip->ramGLimit = chip->ramGSize;
-    chip->regionCount = chip->vdac4 ? RegionCount : kFt812RegionCount;
+    chip->regionCount = chip->vdac4 ? static_cast<uint32_t>(RegionCount) : kFt812RegionCount;
     if (chip->vdac4)
         chip->vdac4State.ramGLimit = kVdac4RamG2Mb; // PowerOnReset completes the block
     chip->externalClockHz = config->externalClockHz;

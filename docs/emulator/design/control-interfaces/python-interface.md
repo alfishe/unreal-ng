@@ -393,6 +393,11 @@ class Emulator:
         dropped, sound}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
         the board"""
 
+    def vdac4_esp_memory(self, address: int, size: int = 16, app: bool = False) -> bytes:
+        """The VDAC4 ESP32's memory (GET /vdac4/esp/memory): `size` bytes (at most 4096) from `address`, a
+        D-bus / I-bus / SRAM address, or with app=True an address of the running app's ELF image (as a haptic
+        probe `cpu: esp` takes it; app.sections of vdac4_state lists the image). RuntimeError with the reason"""
+
     def network_state(self) -> dict:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""

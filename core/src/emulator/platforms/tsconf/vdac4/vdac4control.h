@@ -46,6 +46,13 @@ struct BoardState
     uint8_t commandFirst = 1;   ///< the app's command range (first > last: none)
     uint8_t commandLast = 0;
     std::string appError;       ///< the runtime's last error (a fault: what and where; "" none)
+    struct AppSection
+    {
+        uint32_t elfAddress = 0;    ///< the section's address in the app's ELF file
+        uint32_t size = 0;
+        uint32_t loadedAt = 0;      ///< the ESP D-bus address it was loaded at
+    };
+    std::vector<AppSection> appSections;  ///< the running app's loaded sections (.text, .bss, .data, ...)
 
     std::vector<std::string> log;  ///< the ESP's recent log lines, oldest first
 
@@ -80,6 +87,14 @@ bool HasBoard(EmulatorContext* context, std::string* error = nullptr);
 /// The board's state; `logLines` = how many recent log lines to include (0: none). Any thread: the Tang, ESP and
 /// app fields are the board's copy from the last frame end, the log, packets and audio are read under their locks
 bool GetState(EmulatorContext* context, BoardState& state, size_t logLines, std::string* error = nullptr);
+
+/// `size` bytes (at most kMaxEspRead) of the ESP's memory from `address`: a D-bus / I-bus / SRAM address, or with
+/// `appAddress` an address of the running app's ELF image (the sections of the last frame end map it). Any thread,
+/// no pause: the bytes are the ones in memory now, as a Z80 memory read is. False with a reason: no board, no app,
+/// unmapped
+constexpr uint32_t kMaxEspRead = 4096;
+bool ReadEspMemory(EmulatorContext* context, uint32_t address, uint32_t size, bool appAddress,
+                   std::vector<uint8_t>& out, std::string* error = nullptr);
 
 /// The Tang, ESP, app and link fields read live (emulation thread only; Vdac4Board publishes them per frame)
 void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state);

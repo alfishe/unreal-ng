@@ -272,6 +272,7 @@ private:
     void ShowVdac2Help(const ClientSession& session);
     // TS-Conf VDAC4 board (Tang + ESP32-S3) state (cli-processor-vdac4.cpp)
     void HandleVdac4(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVdac4EspMemory(const ClientSession& session, const std::vector<std::string>& args);
     void ShowVdac4Help(const ClientSession& session);
 
 

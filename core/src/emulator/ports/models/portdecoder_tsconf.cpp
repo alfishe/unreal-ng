@@ -3,6 +3,8 @@
 #include "common/modulelogger.h"
 
 #include "portdecoder_tsconf.h"
+#include "emulator/platforms/tsconf/vdac4/esp/espapphost.h"
+#include "emulator/platforms/tsconf/vdac4/esp/espxtensaruntime.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4board.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4espspi.h"
 #include "emulator/slots/portowners.h"
@@ -239,6 +241,17 @@ void PortDecoder_TSConf::ApplyTsBiosSdBootNvram()
     };
     for (size_t i = 0; i < sizeof(kCells); ++i)
         _evoAvr.WriteRegister(static_cast<uint8_t>(kFirstCell + i), kCells[i]);
+}
+
+bool PortDecoder_TSConf::PeekEspAppByte(uint32_t address, uint8_t& value) const
+{
+#ifdef ENABLE_VDAC2
+    return _vdac4Board != nullptr && _vdac4Board->Runtime().Host().PeekAppByte(address, value);
+#else
+    (void)address;
+    (void)value;
+    return false;
+#endif
 }
 
 void PortDecoder_TSConf::RefreshVdac2Card()

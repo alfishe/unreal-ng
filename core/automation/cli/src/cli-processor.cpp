@@ -794,7 +794,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "                                - FT812 bus to an .evr replay stream (chip selects, bytes, clocks, frame hashes)" << NEWLINE;
     oss << NEWLINE;
     oss << "TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3):" << NEWLINE;
-    oss << "  vdac4 state [log N] | vdac4 log [N]" << NEWLINE;
+    oss << "  vdac4 state [log N] | vdac4 log [N] | vdac4 esp-memory <address> [size] [app]" << NEWLINE;
     oss << "                                - Tang personality, ESP phase, running app, link, audio, ESP log" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;

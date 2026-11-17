@@ -14,12 +14,18 @@
 ///        packets = {count, recent = {{command, length, ms}, ...}},
 ///        audio = {input_rate, output_rate, queued, underruns, dropped, sound},
 ///        log = {"line", ...}}  or {error = "..."}
+///        (app also has sections = {{elf_address, size, loaded_at}, ...}: the running app's loaded sections)
+///
+///   m = vdac4_esp_memory(address [, size [, app]])   -- the ESP's memory (size default 16, at most 4096; app = true:
+///       an address of the running app's ELF image, as a haptic probe `cpu: esp` takes it)
+///       {address, size, app, bytes = "<raw string>", hex = "0011.."}  or {error = "..."}
 
 #include <sol/sol.hpp>
 
 #include <algorithm>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include <emulator/emulator.h>
 #include <emulator/emulatorcontext.h>
@@ -71,6 +77,16 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         app["command_first"] = s.commandFirst;
         app["command_last"] = s.commandLast;
         app["error"] = s.appError;
+        sol::table sections = view.create_table();
+        for (const auto& section : s.appSections)
+        {
+            sol::table item = view.create_table();
+            item["elf_address"] = section.elfAddress;
+            item["size"] = section.size;
+            item["loaded_at"] = section.loadedAt;
+            sections.add(item);
+        }
+        app["sections"] = sections;
         t["app"] = app;
 
         sol::table link = view.create_table();
@@ -109,6 +125,34 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         for (size_t i = 0; i < s.log.size(); ++i)
             lines[i + 1] = s.log[i];
         t["log"] = lines;
+        return t;
+    });
+
+    lua.set_function("vdac4_esp_memory", [getEmulator](uint32_t address, sol::optional<uint32_t> size,
+                                                       sol::optional<bool> app, sol::this_state ts) -> sol::table {
+        sol::state_view view(ts);
+        sol::table t = view.create_table();
+        Emulator* emulator = getEmulator();
+        std::vector<uint8_t> bytes;
+        std::string error = "No emulator selected";
+        if (!emulator || !Vdac4Control::ReadEspMemory(emulator->GetContext(), address, size.value_or(16),
+                                                      app.value_or(false), bytes, &error))
+        {
+            t["error"] = error;
+            return t;
+        }
+        static const char kHex[] = "0123456789abcdef";
+        std::string hex;
+        for (uint8_t byte : bytes)
+        {
+            hex.push_back(kHex[byte >> 4]);
+            hex.push_back(kHex[byte & 0x0F]);
+        }
+        t["address"] = address;
+        t["size"] = static_cast<uint32_t>(bytes.size());
+        t["app"] = app.value_or(false);
+        t["bytes"] = std::string(bytes.begin(), bytes.end());
+        t["hex"] = hex;
         return t;
     });
 }
