@@ -142,6 +142,8 @@ protected:
     std::unique_ptr<GSHistory> _gsHistory;  // the General Sound card's, named by its slot (gsporttrace.h)
     // The card CPU's instructions (`<slot>.cpu`, exechistory.h): kept across personality switches like _gsHistory
     std::unique_ptr<history::DeviceHistory<ExecRecord>> _gsExecHistory;
+    // The host's commands, decoded (`<slot>.commands`, gscommandlog.h): kept across personality switches too
+    std::unique_ptr<GSCommandLog> _gsCommandLog;
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
@@ -580,6 +582,10 @@ public:
     GSHistory* gsHistory() const
     {
         return _gsHistory.get();
+    }
+    GSCommandLog* gsCommandLog() const
+    {
+        return _gsCommandLog.get();
     }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see

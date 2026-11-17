@@ -1739,7 +1739,7 @@ Full tape transport, inspection and the offline audio bridge — one-to-one with
 | `POST` | `/tape/pause` | — | Freeze mid-block; next play resumes exactly there (idempotent when already paused; 400 when not playing) |
 | `POST` | `/tape/stop` | — | Terminal stop: invalidates the loaded image |
 | `POST` | `/tape/rewind` | — | Rewind to block 0, image kept |
-| `POST` | `/tape/seek` | `{"block": N}` | Position the head at catalog block N |
+| `POST` | `/tape/seek` | `{"block": N}` | Position the head at catalog block N; a tape still on its way (loaded while TTD records) answers `"queued": true` and takes the seek when it lands |
 | `GET` | `/tape` | — | Full snapshot: status, file, format, state, position, cursor, fast/turbo flags, fast-load plan, `blocks[]` catalog |
 | `GET` | `/tape/info` | — | Alias of `GET /tape` |
 | `GET` | `/tape/blocks/{index}` | — | One catalog descriptor + `payload_bytes` and a 64-byte `preview_hex` |

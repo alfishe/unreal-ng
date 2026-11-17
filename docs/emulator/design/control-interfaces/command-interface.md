@@ -1994,7 +1994,10 @@ the host. Recipe: [.recipe/media/window-recording.md](../../../../.recipe/media/
 | `video window record stop` | | Finish the file: waits for ffmpeg, then muxes the sound in (the picture copied, seconds). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `recording`, `path`, `keyboard` (the picture in the file, empty = none), `frames`, `width`, `height`, `fps`,
-`audio`, `sample_rate`, `audio_samples` (sample pairs so far); `record frames` adds `ran`. Errors: `bad-parameter` (a
+`audio`, `sample_rate`, `audio_samples` (sample pairs so far), `frames_pending` (taken, not yet in the encoder) and the
+timings in ms since the start, 0 = not reached yet: `writer_start_ms` (the writer thread began running),
+`encoder_ready_ms` (the encoder is up), `first_frame_ms`, `slowest_frame_ms` (the longest one picture took in the
+writer). A recording that starts late or stalls says there where the time went. `record frames` adds `ran`. Errors: `bad-parameter` (a
 value out of range, an unknown key, a sound track with an `fps`), `unavailable` (no ffmpeg, not recording, the window
 shows another instance, a keyboard of another matrix, a frame too small), `not-paused`, `revoked` (the user took
 control back), `no-window`. The same as WebAPI `POST` / `GET /api/v1/emulator/{id}/video/window/record`, `POST
@@ -3764,7 +3767,7 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
 | `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
 | `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
-| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). | ✅ Implemented |
+| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). A tape loaded while TTD records lands at the next frame boundary: a seek before that is queued (`Seek to block N when the tape is in`) and moves the cursor when the tape lands, before a queued play; a block past the tape's end is then dropped with a warning. Same on every plane (`Tape::Seek`). | ✅ Implemented |
 | `tape pos` | | | One-line playback position: state, block, elapsed seconds, consumption cursor. | ✅ Implemented |
 | `tape blocks` | | | Block catalog table: index, kind, name, size, duration, fast-load eligibility. | ✅ Implemented |
 | `tape info` | | | Detailed status: format, position, block count, total duration, fast/turbo tape feature state, fast-load plan summary. | ✅ Implemented |

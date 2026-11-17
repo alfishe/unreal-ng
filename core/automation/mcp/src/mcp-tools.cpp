@@ -4655,6 +4655,10 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << "\n[audio_gs] " << value["device"].asString()
                                         << ", page " << value["page"].asUInt() << ", ram " << value["ram_kb"].asUInt() << " KB"
                                         << (value["rom_loaded"].asBool() ? ", rom ok" : ", rom missing")
+                                        << (!value["firmware_profile"].isObject() ? std::string()
+                                            : value["firmware_profile"]["known"].asBool()
+                                                ? ", firmware " + value["firmware_profile"]["title"].asString()
+                                                : ", unknown firmware " + value["firmware_profile"]["sha256"].asString().substr(0, 16) + "…, no symbols")
                                         << (value["command_pending"].asBool() ? ", cmd pending" : "")
                                         << (value["data_pending"].asBool() ? ", data pending" : "");
                                     const Json::Value& gsChannels = value["channels"];

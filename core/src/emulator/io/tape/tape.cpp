@@ -226,7 +226,13 @@ void Tape::AttachImage(const TapeImage* image, const std::string& sourcePath, co
     _attachedFormatId = formatId;
     _attachGeneration++;
     _context->coreState.tapeFilePath = sourcePath;
-    // A play asked for while this tape was on its way: it starts now, from its first block
+    // A seek asked for while this tape was on its way: the cursor goes there first
+    const size_t seek = _seekWhenAttached;
+    _seekWhenAttached = SIZE_MAX;
+    if (seek != SIZE_MAX && !_context->ttdReplayActive && EnsureImageLoaded() && !SeekToBlock(seek))
+        MLOGWARNING("Tape seek to block %zu dropped: the tape has %zu block(s)", seek, _tapeBlocks.size());
+    // A play asked for while this tape was on its way: it starts now, from the cursor (its first block, or the
+    // queued seek's)
     if (_playWhenAttached && !_context->ttdReplayActive)
     {
         _playWhenAttached = false;
@@ -477,6 +483,17 @@ std::optional<TapePosition> Tape::GetPosition() const
     }
 
     return position;
+}
+
+TapeSeekResult Tape::Seek(size_t index)
+{
+    if (EnsureImageLoaded())
+        return SeekToBlock(index) ? TapeSeekResult::Done : TapeSeekResult::OutOfRange;
+    MediaManager* media = _context ? _context->pMediaManager : nullptr;
+    if (media == nullptr || !media->HasIncoming(TapeSlot::kId))
+        return TapeSeekResult::OutOfRange;
+    _seekWhenAttached = index;
+    return TapeSeekResult::Queued;
 }
 
 bool Tape::SeekToBlock(size_t index)

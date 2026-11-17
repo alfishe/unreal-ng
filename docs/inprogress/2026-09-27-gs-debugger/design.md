@@ -764,6 +764,46 @@ const GSFirmwareProfile* FindGSFirmwareProfile(const std::string& sha256);
   handler is not the "unknown command" stub. A table typed by hand therefore
   cannot drift from the ROM.
 
+**As built (phase 4, item 2).**
+
+- **Code.** `core/src/emulator/sound/chips/gs/firmware/gsfirmwareprofile.h/.cpp`.
+  - Each command has a name, `pre` (the byte written to the data register
+    before the command, which the handler takes on entry), `post` (bytes sent
+    after the firmware took the command, or variable) and up to four named
+    parameters with a kind.
+  - It also records the reply bytes and their meaning, the transfer it starts
+    (module / sample upload, block up / down, Covox stream), whether the guide
+    documents it, and a note.
+  - The stream commands taken during an upload are listed apart: `#D1`, `#D2`.
+- **Command sets.** v1.04 names 129 commands. v1.05a and v1.05b name 131:
+  the patch adds `#6A` and `#6B`.
+- **Sources over the guide.** Every handler in `COM_L.a80` / `COM_H.a80` was
+  read. The sources name commands the guide omits: `#2C`, `#2D`, `#2F`,
+  `#34`, `#3B`, `#3C`, `#50`, `#F0`, channels 4-7 of `#80-#AF`. They also
+  correct the guide:
+  - `#02` sets every volume to maximum and `#03` sets them to zero (the guide
+    swaps them).
+  - `#3E #00` loads a signed sample and `#3E #01` behaves as `#38`.
+  - The setters (`#2E`, `#42`, `#45`-`#47`) reply the old value.
+- **Variables.** 35 variables per version (37 in 1.05: `PlMode`, `MODLLEN`).
+  Each has its address, size and meaning. The addresses are the same in every
+  version.
+- **Identity.** `IdentifyGSFirmware(card)` hashes the card's ROM pages
+  (`cardRomPage`). The image digest selects the profile.
+- **Where the card names its firmware.** The GS report (`state audio gs` on
+  every plane, MCP `audio_gs`) carries `firmware_profile`:
+  - for a known ROM: `known`, `id`, `title`, `symbols` (the bundle set of the
+    card CPU's labels), `sha256`, `page_sha256`;
+  - for an unknown ROM: `known: false` with the digests, and MCP says
+    "unknown firmware, no symbols".
+- **Self-check** (`GSFirmwareProfile_Test`). For each shipped ROM:
+  - every `COMTAB` / `COMTABH` handler that is not `COMZ` / `COMHZ` has a
+    named command, no stub has one, and every handler has a label;
+  - the variables sit at their labels;
+  - the digests select the profile and its symbol bundle.
+- **Not done.** The `rom.cpp` known-ROM table entries; profiles from files.
+  NeoGS reports its flash as unknown firmware.
+
 ### 6.2 Firmware symbols (L3, L5, R1, N5)
 
 The binaries are the truth; the sources supply the names. For each shipped
@@ -924,6 +964,56 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
   with a time after the seek target are cut off, using the per-entry frame
   and cycle. Replay forward regenerates them, because the hooks fire during
   replay as well.
+
+**As built (phase 4, item 3).**
+
+- **A device history.** `GSCommandLog` (`core/src/emulator/sound/chips/gs/gscommandlog.h/.cpp`) is the decoder in
+  front of a `history::DeviceHistory<GSCommandLogEntry>` named `<slot>.commands` (`zxbus.1.commands`; a
+  ZX-MultiSound's GS `<slot>.gs.commands`).
+  - The planes get it through the history verbs (`device_history` in MCP, `history` in the CLI, `/history` in the
+    WebAPI and the WebSocket, Lua, Python). "Start" is a ring or a capture, "stop" is off, plus read and clear.
+    "Export" is the stream: every record to a JSON Lines file.
+  - Each record carries the fields, the profile's names and a decoded `text` line
+    (`#2C Set current module, module #05`).
+  - It is off by default; the ring holds 65,536 entries.
+- **Ownership.** `SoundManager` owns the machine's log, as it owns `<slot>.cpu`. Every personality is bound to it
+  (`GeneralSoundCard::attachCommandLog`), so the log survives LLE ↔ LW switches. The MultiSound slot card owns its
+  card's log.
+- **Feeds.** The host port handlers and the automation actions (`sendCommand`, `sendData`, `readData`, flagged
+  `automation`) of LLE, LW and NeoGS, plus a `#33` reset and the frame start. Each hook runs before the access
+  changes the mailbox, so it sees the status the access met.
+  - While the log is off a hook is a null test and one relaxed load. A log switched on again starts over and
+    identifies the firmware again.
+  - A TTD replay is not recorded (as in the WD1793's history).
+- **The card side is not hooked.** `CardTook` is seen at the next host access, when status bit 0 is clear. The
+  card's own reads of `#01` / `#02` and its reply writes `#03` are not entries.
+- **Profile.** The ROM digest selects it (§6.1); the lightweight card uses gs105a's. NeoGS firmware has no profile,
+  so its records are raw: commands and bytes without names.
+- **Decoder.**
+  - The data byte written before a command is its `pre` (`kHasPre`). The profile's `post` bytes are `Param` entries
+    (`#0D`: one per bit of the mask's low nibble; `#6B`: its optional high byte as one). Any other byte is `Data`.
+    Replies are numbered against the profile's count; one nothing asked for is flagged `unasked`.
+  - An upload or a stream is one `Block` entry with its byte count.
+    - `#30` / `#38` / `#3E` (format `#00` / `#01` only): LOAD takes a command as a stream command (flag `stream`,
+      `#D1` / `#D2` named). `#D2`, `#F3` or `#F4` ends the upload.
+    - `#14` / `#15` end at their length, at their address (dest `ram`).
+    - `#0E` / `#0F` streams end at the next command.
+    - A reset ends any of them `truncated`.
+  - The block's firmware destination (the module table) is not read: `dest` is `unknown` except for `#14` / `#15`.
+- **Anomalies (F4).**
+  - `command_overwritten`: a command while bit 0 is still set by the previous one.
+  - `data_overwritten`: data while bit 7 is still set by the host's previous byte and no reply is due.
+  - `reply_not_ready`: a due reply read while bit 7 is clear. The byte is flagged `not_ready` and the reply stays due.
+    Not for the handlers that write the reply and then read their data byte before RSCOM (`#2A`-`#2E`, `#30`,
+    `#32`-`#35`, `#38`, `#3B`-`#3E`, `#42`, `#45`-`#47`, `#6A`; `GSCommandInfo::replyUnflagged`): that read clears
+    bit 7, so once the card took the command the reply is in the register without the flag.
+  - `transfer_stalled`: an upload with no byte for 50 frames, reported once.
+- **Tests.** `GSCommandLog_Test`: decoding on the lightweight card; one block per upload with the stall; `#14` at its
+  length; the three host anomalies on the LLE card; a reset; a restart. The MCP check is
+  `test_the_command_log_is_a_device_history`.
+- **Benchmark (P2).** `BM_GSCommandLog_HostTraffic_{None,Off,Ring}`: one frame of an upload with 256 host writes.
+- **Not done.** TTD cut-off on a seek (D3, phase 6). The log starting itself when a debugger attaches (an option,
+  F1b). A Qt panel (U2).
 
 ### 6.4 Protocol state and firmware objects (F3, F5, W2, W3)
 

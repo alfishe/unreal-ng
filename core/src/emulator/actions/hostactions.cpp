@@ -1427,10 +1427,14 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
                 }
                 else
                 {
-                    if (!tape.EnsureImageLoaded() || !tape.SeekToBlock(static_cast<size_t>(*block)))
+                    const TapeSeekResult seek = tape.Seek(static_cast<size_t>(*block));
+                    if (seek == TapeSeekResult::OutOfRange)
                         return BadRequest("No block " + std::to_string(*block) + " on the tape");
                     body["block"] = *block;
-                    message = "Seeked to block " + std::to_string(*block);
+                    body["queued"] = seek == TapeSeekResult::Queued;
+                    message = seek == TapeSeekResult::Queued
+                                  ? "Seek to block " + std::to_string(*block) + " when the tape is in"
+                                  : "Seeked to block " + std::to_string(*block);
                 }
                 return ActionResult::Success(std::move(body), std::move(message));
             },
