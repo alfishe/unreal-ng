@@ -1,7 +1,8 @@
 /// @file timetravelcontroller_tapeload_test.cpp
 /// @brief A tape loaded while a recording runs lands at the next frame boundary (an event of the recording there,
 /// M3), so a play right after the load (the WebAPI / MCP load_software autostart) found no blocks and failed. Play is
-/// now queued for a tape on its way and starts when the tape lands; a stop drops it.
+/// now queued for a tape on its way and starts when the tape lands; a stop drops it. A seek right after the load
+/// answered "out of range" the same way: it is queued too and moves the cursor when the tape lands, before the play.
 
 #include <gtest/gtest.h>
 
@@ -84,4 +85,60 @@ TEST_F(TimeTravelController_TapeLoad_Test, WithoutARecordingTheTapeIsInAtOnce)
     ASSERT_TRUE(_emulator->LoadTape(Tape(), &error)) << error;
     EXPECT_EQ(_context->pTape->Play(), TapePlayResult::Started);
     EXPECT_TRUE(_context->pTape->IsPlaying());
+}
+
+TEST_F(TimeTravelController_TapeLoad_Test, ASeekRightAfterALoadWhileRecordingAppliesWhenTheTapeLands)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadTape(Tape(), &error)) << error;
+    EXPECT_EQ(_context->pTape->Seek(2), TapeSeekResult::Queued) << "the tape is on its way to the deck";
+
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    const auto position = _context->pTape->GetPosition();
+    ASSERT_TRUE(position.has_value()) << "the tape landed at the frame boundary";
+    EXPECT_EQ(position->blockIndex, 2u) << "the queued seek moved the cursor";
+    EXPECT_FALSE(_context->pTape->IsPlaying()) << "a seek never starts playback";
+}
+
+TEST_F(TimeTravelController_TapeLoad_Test, AQueuedSeekThenPlayStartsAtTheSoughtBlock)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadTape(Tape(), &error)) << error;
+    ASSERT_EQ(_context->pTape->Seek(2), TapeSeekResult::Queued);
+    ASSERT_EQ(_context->pTape->Play(), TapePlayResult::Queued);
+
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    EXPECT_TRUE(_context->pTape->IsPlaying());
+    const auto position = _context->pTape->GetPosition();
+    ASSERT_TRUE(position.has_value());
+    EXPECT_EQ(position->blockIndex, 2u) << "the play started where the seek put the cursor";
+}
+
+TEST_F(TimeTravelController_TapeLoad_Test, AQueuedSeekPastTheTapeIsDropped)
+{
+    ASSERT_TRUE(_ttd->StartRecording());
+    _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
+
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadTape(Tape(), &error)) << error;
+    ASSERT_EQ(_context->pTape->Seek(99), TapeSeekResult::Queued) << "the block count is not known before it lands";
+
+    _emulator->RunNFrames(1, /*skipBreakpoints=*/true);
+    const auto position = _context->pTape->GetPosition();
+    ASSERT_TRUE(position.has_value());
+    EXPECT_EQ(position->blockIndex, 0u) << "the cursor stayed at the first block";
+}
+
+TEST_F(TimeTravelController_TapeLoad_Test, WithoutARecordingASeekIsDoneAtOnce)
+{
+    std::string error;
+    ASSERT_TRUE(_emulator->LoadTape(Tape(), &error)) << error;
+    EXPECT_EQ(_context->pTape->Seek(2), TapeSeekResult::Done);
+    EXPECT_EQ(_context->pTape->Seek(99), TapeSeekResult::OutOfRange);
 }

@@ -3336,9 +3336,8 @@ public:
 
             EmulatorPauseBracket bracket(emulator);
 
-            if (!ctx->pTape->EnsureImageLoaded())
-                return false;
-            return ctx->pTape->SeekToBlock(static_cast<size_t>(blockIndex));
+            // A tape still on its way (loaded while a TTD recording runs) takes the seek when it lands
+            return ctx->pTape->Seek(static_cast<size_t>(blockIndex)) != TapeSeekResult::OutOfRange;
         });
 
         lua.set_function("tape_pos", [this]() -> sol::optional<sol::table> {

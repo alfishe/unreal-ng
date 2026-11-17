@@ -3744,7 +3744,7 @@ Full tape transport, inspection and the offline audio bridge. Playback subcomman
 | `tape pause` | | | Freeze playback mid-block; the next `tape play` resumes exactly there. Idempotent when already paused; error when not playing. | ✅ Implemented |
 | `tape stop` | | | Terminal stop: playback stops and the loaded image is invalidated. | ✅ Implemented |
 | `tape rewind` | | | Rewind to block 0 keeping the image and block catalog loaded. | ✅ Implemented |
-| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). | ✅ Implemented |
+| `tape seek <index>` | | `<block-index>` | Position the tape head at catalog block `<index>` (the same indices `tape blocks` shows). A tape loaded while TTD records lands at the next frame boundary: a seek before that is queued (`Seek to block N when the tape is in`) and moves the cursor when the tape lands, before a queued play; a block past the tape's end is then dropped with a warning. Same on every plane (`Tape::Seek`). | ✅ Implemented |
 | `tape pos` | | | One-line playback position: state, block, elapsed seconds, consumption cursor. | ✅ Implemented |
 | `tape blocks` | | | Block catalog table: index, kind, name, size, duration, fast-load eligibility. | ✅ Implemented |
 | `tape info` | | | Detailed status: format, position, block count, total duration, fast/turbo tape feature state, fast-load plan summary. | ✅ Implemented |

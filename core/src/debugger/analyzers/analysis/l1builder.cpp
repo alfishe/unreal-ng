@@ -674,6 +674,8 @@ struct L1Builder::Impl
         int dir = 0;
         PhysKey srcKey = 0;
         PhysKey dstKey = 0;
+        uint64_t firstFrame = 0;  ///< the frame of its first byte
+        uint64_t lastFrame = 0;   ///< the frame of its last byte so far
     } copyRun;
     /// Runs another copy broke into (an interrupt's copies in the middle of an LDIR): the run goes on when a copy
     /// continues it
@@ -684,6 +686,8 @@ struct L1Builder::Impl
         uint64_t count = 0;
         PhysKey srcKey = 0;
         PhysKey dstKey = 0;
+        uint64_t firstFrame = 0;  ///< the first run's first byte
+        uint64_t lastFrame = 0;   ///< the last run's last byte
     };
     std::map<std::tuple<uint32_t, uint16_t, uint16_t, uint32_t, int>, CopySeen> copyRuns;
     std::map<uint32_t, size_t> copyRunsOf;  ///< distinct runs kept per copier (its first node)
@@ -701,13 +705,17 @@ struct L1Builder::Impl
             const auto key = std::make_tuple(run.node, run.src, run.dst, run.length, run.dir);
             const auto it = copyRuns.find(key);
             if (it != copyRuns.end())
+            {
                 ++it->second.count;
+                it->second.firstFrame = std::min(it->second.firstFrame, run.firstFrame);
+                it->second.lastFrame = std::max(it->second.lastFrame, run.lastFrame);
+            }
             else
             {
                 size_t& mine = copyRunsOf[run.node];
                 if (mine < kMaxCopiesOne && (copyRuns.size() < kMaxCopies || mine < kCopyReserve))
                 {
-                    copyRuns.emplace(key, CopySeen{1, run.srcKey, run.dstKey});
+                    copyRuns.emplace(key, CopySeen{1, run.srcKey, run.dstKey, run.firstFrame, run.lastFrame});
                     ++mine;
                 }
             }
@@ -740,7 +748,7 @@ struct L1Builder::Impl
         copyRun = CopyRun{};
     }
 
-    void NoteCopy(uint32_t node, uint16_t src, uint16_t dst)
+    void NoteCopy(uint32_t node, uint16_t src, uint16_t dst, uint64_t frame)
     {
         {
             // Provenance: the destination now holds the source's byte (or what the source byte was copied from)
@@ -761,6 +769,7 @@ struct L1Builder::Impl
                 c.dir = dir;
                 c.lastSrc = src;
                 c.lastDst = dst;
+                c.lastFrame = frame;
                 ++c.length;
                 return;
             }
@@ -777,6 +786,7 @@ struct L1Builder::Impl
                 c = resumed;
                 c.lastSrc = src;
                 c.lastDst = dst;
+                c.lastFrame = frame;
                 ++c.length;
                 return;
             }
@@ -789,6 +799,7 @@ struct L1Builder::Impl
         c.dir = 1;
         c.srcKey = MakeKey(pageOf(src), src);
         c.dstKey = MakeKey(pageOf(dst), dst);
+        c.firstFrame = c.lastFrame = frame;
     }
     std::unordered_map<PhysKey, uint32_t, SaltedHash> wordPtrs;
     /// Bytes holding the memory byte their value was copied from through a register (UseAcc::memFrom): at most
@@ -1460,6 +1471,23 @@ struct L1Builder::Impl
         caller.pendingMask = frame.defined;
     }
 
+    /// A handler that leaves without a RET (it takes the return address off the stack and jumps there, `POP HL` +
+    /// `JP (HL)` or a patched `JP nn`): the interrupt frame ends when the code arrives at the interrupted address with
+    /// the stack back where the interrupt found it. Without this the frame stays open and its time takes in the main
+    /// code that runs after it (an entry seen as hundreds of thousands of T)
+    void LeaveInterruptByJump(uint16_t pc, uint16_t sp, uint64_t now)
+    {
+        if (topInterrupt < 0)
+            return;
+        const Frame& frame = stack[static_cast<size_t>(topInterrupt)];
+        if (frame.returnAddress != pc || sp != static_cast<uint16_t>(frame.retSlot + 2))
+            return;
+        const auto keep = static_cast<size_t>(topInterrupt);
+        while (stack.size() > keep + 1)
+            PopFrame(now, false);  // calls inside the handler it never returned from
+        PopFrame(now, true);
+    }
+
     /// complete false: the replay ended inside the loop. Its passes and accesses count, its trips only when the loop
     /// never finished an instance (a cut instance would report too few trips)
     void CloseTop(bool complete = true)
@@ -1945,7 +1973,7 @@ struct L1Builder::Impl
             walkBase = after.sp;
         }
         if (op.cls == OpClass::Block && op.mem == MemForm::Block && op.memRead && op.memWrite && ptrRead && ptrWrite)
-            NoteCopy(p.node, ptrReadAddress, ptrWriteAddress);
+            NoteCopy(p.node, ptrReadAddress, ptrWriteAddress, p.frame);
 
         // DataFlow: the uses first (the tags before this instruction), then its definitions
         const auto window = [this](uint64_t seq) { return seq != 0 && blockSeq - seq <= 1; };
@@ -2307,6 +2335,8 @@ struct L1Builder::Impl
             interruptPush = interrupted ? regs.sp : -1;
             Finish(succNode, nextPc, after, now, events, count);
             interruptPush = -1;
+            if (!interrupted)
+                LeaveInterruptByJump(pc, regs.sp, now);
         }
         NoteArrival(current, prev, page, pc, now, frame);
         if (first)
@@ -2962,6 +2992,8 @@ L1Result L1Builder::Impl::Build(const ReplaySummary& summary, const std::functio
         c.length = length;
         c.dir = static_cast<int8_t>(dir);
         c.count = seen.count;
+        c.firstFrame = seen.firstFrame;
+        c.lastFrame = seen.lastFrame;
         out.copies.push_back(c);
     }
     std::sort(out.copies.begin(), out.copies.end(), [](const BlockCopy& a, const BlockCopy& b) {
