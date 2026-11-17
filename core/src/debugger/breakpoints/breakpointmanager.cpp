@@ -796,8 +796,11 @@ BreakpointConditionPtr BreakpointManager::CompileCondition(BreakpointTypeEnum ty
         dryRun.cpu = &registers;
         dryRun.target = _target;
         dryRun.state = _context ? &_context->emulatorState : nullptr;
+        // Labels in the condition are the card CPU's own (its firmware symbols)
+        const LabelManager* cardLabels =
+            _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager(_target->Id()) : nullptr;
         BreakpointConditionPtr program =
-            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, nullptr,
+            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, cardLabels,
                                                 error, dialect, cpu ? &dryRun : nullptr);
         if (!program)
             error = "condition: " + error;

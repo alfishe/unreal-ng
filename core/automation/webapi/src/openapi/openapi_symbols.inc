@@ -31,7 +31,7 @@ paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["responses"]["200"]["descri
 paths["/api/v1/emulator/{id}/symbols/detect"]["get"]["responses"]["400"]["description"] = "No path or the file cannot be read";
 
 paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["summary"] = "List symbol sets";
-paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["description"] = "The sets of the main CPU: user (AddLabel / UpdateLabel), one per loaded file, named sets. A higher priority wins by name; equal priorities: the later set.";
+paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["description"] = "The sets of the main CPU (cpu=gs / ms: the sound card CPU's): user (AddLabel / UpdateLabel), one per loaded file, named sets. A higher priority wins by name; equal priorities: the later set.";
 paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["tags"].append("Symbols");
 paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["name"] = "id";
 paths["/api/v1/emulator/{id}/symbols/sets"]["get"]["parameters"][0]["in"] = "path";
@@ -182,3 +182,30 @@ paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["requestBody"]["con
 paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["200"]["description"] = "{path, main, dialect, sources, set, records, added, aliased, complete, diagnostics, labels}";
 paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["400"]["description"] = "Several sources and no main (sources listed), bad option";
 paths["/api/v1/emulator/{id}/symbols/import/source"]["post"]["responses"]["404"]["description"] = "No such file, disk or source";
+
+// cpu: the sound card CPU's own labels and sets (gs-debugger design §6.2; its firmware symbols load by themselves). A
+// query parameter, or a member of the JSON body; scan and import/live read main RAM and stay the main CPU's
+{
+    const std::vector<std::pair<std::string, std::string>> routes = {
+        {"/api/v1/emulator/{id}/labels", "get"},          {"/api/v1/emulator/{id}/labels", "post"},
+        {"/api/v1/emulator/{id}/labels", "delete"},       {"/api/v1/emulator/{id}/labels/{name}", "get"},
+        {"/api/v1/emulator/{id}/labels/{name}", "delete"}, {"/api/v1/emulator/{id}/labels/{name}", "put"},
+        {"/api/v1/emulator/{id}/labels/resolve", "get"},  {"/api/v1/emulator/{id}/symbols/load", "post"},
+        {"/api/v1/emulator/{id}/symbols/save", "post"},   {"/api/v1/emulator/{id}/symbols/sets", "get"},
+        {"/api/v1/emulator/{id}/symbols/sets", "put"},    {"/api/v1/emulator/{id}/symbols/sets", "delete"},
+        {"/api/v1/emulator/{id}/symbols/import", "post"}, {"/api/v1/emulator/{id}/symbols/export", "post"},
+        {"/api/v1/emulator/{id}/symbols/import/source", "post"}};
+    for (const auto& [path, verb] : routes)
+    {
+        Json::Value cpu;
+        cpu["name"] = "cpu";
+        cpu["in"] = "query";
+        cpu["required"] = false;
+        cpu["description"] = "Whose labels: main (default), gs / ms: the sound card CPU's own store";
+        cpu["schema"]["type"] = "string";
+        cpu["schema"]["enum"].append("main");
+        cpu["schema"]["enum"].append("gs");
+        cpu["schema"]["enum"].append("ms");
+        paths[path][verb]["parameters"].append(cpu);
+    }
+}

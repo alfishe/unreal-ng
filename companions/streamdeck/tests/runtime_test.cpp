@@ -246,6 +246,216 @@ void TestReadonlyAndUnavailable()
     press(1);
     CHECK(rt.State()["last_actions"].size() == actionsBefore + 1);  // greyed out: no job ran
 }
+// A host that records the catalogue actions it is asked to run
+struct Calls final : ActionHost
+{
+    std::vector<ActionCall> calls;
+    Runtime* rt = nullptr;
+    ActionResult RunAction(const ActionCall& call) override
+    {
+        calls.push_back(call);
+        return {true, "ok"};
+    }
+    HttpResponse Webapi(const std::string&, const std::string&, const json&, bool) override
+    {
+        return {};
+    }
+    HttpResponse Http(const std::string&, const std::string&, const json&, const std::string&) override
+    {
+        return {};
+    }
+    int Shell(const std::string&, int, std::string&) override
+    {
+        return 0;
+    }
+    bool Open(const std::string&) override
+    {
+        return true;
+    }
+    bool Keys(const std::string&, const std::string&, std::string&) override
+    {
+        return true;
+    }
+    void Navigate(const json& r) override
+    {
+        if (rt)
+            rt->Navigate(r);
+    }
+    void Brightness(const json&) override {}
+    void SleepMs(int) override {}
+    void Note(const std::string&) override {}
+};
+
+json BranchDoc()
+{
+    return json::parse(R"({ "name": "br", "model": "plusxl",
+      "root": { "id": "home", "type": "menu", "title": "Home",
+        "dials": [ { "index": 2, "label": "OPS",
+          "turn": { "kind": "action", "id": "ttd.jog_instructions", "value": { "d": "$ticks" } },
+          "press": { "kind": "action", "id": "ttd.resume_live" },
+          "press_turn": { "kind": "dir", "left": { "kind": "action", "id": "ttd.branch_prev_sibling" },
+                          "right": { "kind": "action", "id": "ttd.branch_next_sibling" } } } ],
+        "items": [
+          { "id": "branches", "type": "menu", "title": "Branches", "at": [3, 2], "nav": { "back": [0, 0] },
+            "long": { "kind": "action", "id": "ttd.branch_prev" },
+            "list": { "readout": "ttd.branch_list.items", "label": "{name}{pinned? *|}", "show": "{age}",
+              "do": { "kind": "action", "id": "ttd.branch_switch", "value": { "branch": "$id" } },
+              "long": { "kind": "action", "id": "ttd.branch_delete", "value": { "branch": "$id", "now": true }, "hold": true },
+              "on": "active", "dim": "!on_lineage", "dial": 0 },
+            "items": [ { "id": "pin", "type": "action", "title": "Pin", "at": [0, 1],
+                         "do": { "kind": "action", "id": "ttd.branch_pin" } } ] }
+        ] } })");
+}
+
+json BranchItems(int n)
+{
+    json items = json::array();
+    for (int i = 0; i < n; ++i)
+        items.push_back({{"id", i}, {"name", "b" + std::to_string(i)}, {"age", "1m"}, {"active", i == 0},
+                         {"on_lineage", i < 2}, {"pinned", i == 1}, {"length", 100}});
+    return items;
+}
+
+// The key of the current page that shows node `id` (-1 none) and its entry
+json KeyEntry(const Runtime& rt, const std::string& id)
+{
+    const json page = rt.CurrentPage();
+    for (const auto& k : page["keys"])
+        if (k.value("id", "") == id)
+            return k;
+    return nullptr;
+}
+
+// Key `long` (a press held holdMs: its long step on the release), a menu's list page (keys from a readout's items,
+// pages on a dial) and a dial's press_turn (turns while held; its press only on a release without a turn)
+void TestLongListPressTurn()
+{
+    const Model& m = *FindModel(kElgatoVid, 0x00C6);
+    {
+        const Scenario sc = Load(BranchDoc());
+        CHECK(sc.root.items[0].longPress && sc.root.items[0].list && sc.root.items[0].list->dial == 0);
+        CHECK(sc.root.dials[0].pressTurn && sc.root.dials[0].pressTurn->kind == "dir");
+        const json back = ToJson(sc);  // written back
+        CHECK(back["root"]["items"][0]["long"]["id"] == "ttd.branch_prev");
+        CHECK(back["root"]["items"][0]["list"]["readout"] == "ttd.branch_list.items" &&
+              back["root"]["items"][0]["list"]["dial"] == 0 && back["root"]["items"][0]["list"]["dim"] == "!on_lineage");
+        CHECK(back["root"]["dials"][0]["press_turn"]["kind"] == "dir");
+        std::vector<Issue> issues;
+        json bad = BranchDoc();
+        bad["root"]["items"][0]["list"]["oops"] = 1;
+        CHECK(!Parse(bad, issues));
+        issues.clear();
+        bad = BranchDoc();
+        bad["root"]["items"][0]["list"]["dial"] = 9;
+        CHECK(!Parse(bad, issues));
+        issues.clear();
+        bad = BranchDoc();
+        bad["root"]["items"][0]["items"][0]["do"]["hold"] = true;
+        bad["root"]["items"][0]["items"][0]["long"] = {{"kind", "action"}, {"id", "ttd.branch_prev"}};
+        CHECK(!Parse(bad, issues));  // a key with long acts on its release: its own action cannot be held
+    }
+    // short presses (holdMs as shipped): a menu with long opens on a short press; items switch
+    Device dev(m, std::make_unique<NullTransport>(), "T");
+    auto host = std::make_unique<Calls>();
+    Calls* h = host.get();
+    RuntimeOptions opt;
+    opt.syncActions = true;
+    Runtime rt(dev, Load(BranchDoc()), std::move(host), opt);
+    h->rt = &rt;
+    auto press = [&](Runtime& r, int k) {
+        r.Inject({EventType::KeyDown, k});
+        r.Step(0);
+        r.Inject({EventType::KeyUp, k});
+        r.Step(0);
+    };
+    rt.Step(0);
+    press(rt, 3 * 9 + 2);
+    CHECK((StackIds(rt) == std::vector<std::string>{"home", "branches"}));
+    CHECK(h->calls.empty());
+    CHECK(KeyEntry(rt, "branches#0").is_null());  // no items yet: no keys
+    rt.SetReadout("ttd.branch_list.items", BranchItems(40));
+    rt.Step(0);
+    // 36 keys - the back key - PIN = 34 a page: two pages; the items from [0, 2] on, row by row
+    CHECK(rt.CurrentPage()["list"]["pages"] == 2 && rt.CurrentPage()["list"]["page"] == 1);
+    CHECK(KeyEntry(rt, "branches#0").value("key", -1) == 2 && KeyEntry(rt, "branches#0").value("title", "") == "b0");
+    CHECK(KeyEntry(rt, "branches#1").value("title", "") == "b1 *");  // pinned
+    CHECK(KeyEntry(rt, "branches#33").value("key", -1) == 35 && KeyEntry(rt, "branches#34").is_null());
+    CHECK(KeyEntry(rt, "branches#0").value("action", "") == "ttd.branch_switch");
+    press(rt, 3);
+    CHECK(h->calls.size() == 1 && h->calls[0].id == "ttd.branch_switch" && h->calls[0].params["branch"] == 1);
+    // the dial turns the pages; the page shows in the path and on the dial's label
+    rt.Inject({EventType::DialTurn, 0, 1});
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 2);
+    CHECK(KeyEntry(rt, "branches#34").value("key", -1) == 2 && KeyEntry(rt, "branches#0").is_null());
+    CHECK(rt.State()["path"].back() == "Branches 2/2");
+    CHECK(rt.CurrentPage()["dials"][0].value("label", "") == "PAGE 2/2");
+    rt.Inject({EventType::DialTurn, 0, 3});  // the last page: stays
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 2);
+    rt.Inject({EventType::DialDown, 0});  // a press: the first page
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 0});
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 1 && h->calls.size() == 1);
+    rt.SetReadout("ttd.branch_list.items", BranchItems(3));  // fewer items: one page
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["pages"] == 1 && KeyEntry(rt, "branches#3").is_null());
+    CHECK(rt.State()["path"].back() == "Branches");
+
+    // press_turn: turns while held run it (siblings), the press waits for a release without a turn
+    rt.Navigate({{"to", "home"}});
+    rt.Step(0);
+    h->calls.clear();
+    rt.Inject({EventType::DialDown, 2});
+    rt.Step(0);
+    CHECK(h->calls.empty());  // not on the press
+    rt.Inject({EventType::DialTurn, 2, 1});
+    rt.Step(0);
+    rt.Inject({EventType::DialTurn, 2, -2});
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 2});
+    rt.Step(0);
+    CHECK(h->calls.size() == 3 && h->calls[0].id == "ttd.branch_next_sibling" &&
+          h->calls[1].id == "ttd.branch_prev_sibling" && h->calls[2].id == "ttd.branch_prev_sibling");
+    rt.Inject({EventType::DialDown, 2});
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 2});
+    rt.Step(0);
+    CHECK(h->calls.size() == 4 && h->calls[3].id == "ttd.resume_live");  // pressed, not turned
+    rt.Inject({EventType::DialTurn, 2, 2});  // not held: the turn
+    rt.Step(0);
+    CHECK(h->calls.size() == 5 && h->calls[4].id == "ttd.jog_instructions" && h->calls[4].value["delta"] == 2);
+
+    // long presses (holdMs 0: every press is long): the menu key sends its long step and stays; an item deletes
+    Device dev2(m, std::make_unique<NullTransport>(), "T2");
+    auto host2 = std::make_unique<Calls>();
+    Calls* h2 = host2.get();
+    RuntimeOptions opt2 = opt;
+    opt2.holdMs = 0;
+    Runtime rt2(dev2, Load(BranchDoc()), std::move(host2), opt2);
+    h2->rt = &rt2;
+    rt2.Step(0);
+    press(rt2, 3 * 9 + 2);
+    CHECK(h2->calls.size() == 1 && h2->calls[0].id == "ttd.branch_prev");
+    CHECK((StackIds(rt2) == std::vector<std::string>{"home"}));
+    rt2.Navigate({{"to", "node"}, {"node", "branches"}});
+    rt2.SetReadout("ttd.branch_list.items", BranchItems(3));
+    rt2.Step(0);
+    press(rt2, 4);  // b2
+    // a held step after the release: pressed and released at once (now: true deletes on the press)
+    CHECK(h2->calls.size() == 3 && h2->calls[1].id == "ttd.branch_delete" && h2->calls[1].params["branch"] == 2 &&
+          h2->calls[1].params["now"] == true && h2->calls[1].value == true && h2->calls[2].value == false);
+    // the item under the finger changed between the press and the release: nothing runs
+    rt2.Inject({EventType::KeyDown, 4});
+    rt2.Step(0);
+    rt2.SetReadout("ttd.branch_list.items", BranchItems(2));
+    rt2.Step(0);
+    rt2.Inject({EventType::KeyUp, 4});
+    rt2.Step(0);
+    CHECK(h2->calls.size() == 3);
+}
+
 // The daemon ends: the keys go dark (V2: "Fill Key with Color" black, a feature report per key) and the strip is
 // written whole with the farewell, so the deck does not stay frozen on a page that no longer answers
 void TestShowStopped()
@@ -740,4 +950,5 @@ void TestRuntime()
     }
     TestTimelineTouch();
     TestReadonlyAndUnavailable();
+    TestLongListPressTurn();
 }

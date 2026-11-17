@@ -99,7 +99,7 @@ public:
 private:
     struct RevolutionData
     {
-        uint32_t indexTimeNs;
+        uint64_t indexTimeNs;
         std::vector<uint32_t> fluxIntervalsNs;
     };
 
@@ -110,11 +110,13 @@ private:
     };
 
     /// Parse flux intervals for one revolution from SCP data.
+    /// One tick lasts nsPerTick: 25 ns x (resolution + 1), the header's byte 11
     static bool parseFluxData(const uint8_t* data, size_t offset, uint32_t count,
-                               std::vector<uint32_t>& intervalsNs);
+                               std::vector<uint32_t>& intervalsNs, uint32_t nsPerTick = NS_PER_TICK);
 
-    /// Decode flux intervals to raw track bytes using PLL and MFM/FM decoder.
-    static void decodeTrack(const std::vector<uint32_t>& intervalsNs, bool fm,
+    /// Decode flux intervals to raw track bytes using PLL and MFM/FM decoder. The time from the last transition to
+    /// the index (indexTimeNs past the sum of the intervals) gives the trailing zero cells
+    static void decodeTrack(const std::vector<uint32_t>& intervalsNs, bool fm, uint64_t indexTimeNs,
                             std::vector<uint8_t>& bytes, std::vector<uint8_t>& clockBitmap);
 
     /// Merge multiple revolutions by majority voting, marking disagreements as weak.
@@ -122,9 +124,16 @@ private:
                                   std::vector<uint8_t>& merged,
                                   std::vector<bool>& weakBits);
 
-    /// Encode raw track bytes to flux intervals for saving.
+    /// The clock marks of a merged track: byte i's mark comes from the first revolution that decoded the byte the
+    /// vote chose, so a mark always belongs to the byte it is stored with
+    static std::vector<uint8_t> mergeClockMarks(const std::vector<std::vector<uint8_t>>& revBytes,
+                                                const std::vector<std::vector<uint8_t>>& revClocks,
+                                                const std::vector<uint8_t>& merged);
+
+    /// Encode raw track bytes to flux intervals for saving: one value per transition (the ticks since the one
+    /// before). The cells after the last transition have no flux: trailingTicks, which the index time adds
     static void encodeTrack(const uint8_t* bytes, size_t count, const uint8_t* clockBitmap,
-                            bool fm, std::vector<uint16_t>& fluxTicks);
+                            bool fm, std::vector<uint16_t>& fluxTicks, uint32_t& trailingTicks);
 
     LoaderOptions _options;
     std::string _filepath;

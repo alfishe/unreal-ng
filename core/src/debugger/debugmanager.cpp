@@ -98,6 +98,16 @@ BreakpointManager* DebugManager::GetBreakpointsManager(DebugCpuId cpu)
     return _breakpoints;
 }
 
+LabelManager* DebugManager::GetLabelManager(DebugCpuId cpu)
+{
+    if (IsCardCpu(cpu))
+    {
+        GSCardTarget* target = GetCardTarget(cpu);
+        return target ? target->GetLabelManager() : nullptr;
+    }
+    return GetLabelManager();
+}
+
 GSCardTarget* DebugManager::GetCardTarget(DebugCpuId cpu)
 {
     switch (cpu)
@@ -149,8 +159,35 @@ void DebugManager::UpdateCardTight()
 {
     if (_shuttingDown || !_context || !_context->pFeatureManager)
         return;
-    const bool tight = (_gsTarget && _gsTarget->WantsTight()) || (_msTarget && _msTarget->WantsTight());
-    _context->pFeatureManager->setCardTightHold(tight);
+    _context->pFeatureManager->setCardTightHold(CardTight(_gsTarget.get()) || CardTight(_msTarget.get()));
+}
+
+bool DebugManager::CardTight(const GSCardTarget* target) const
+{
+    if (!target)
+        return false;
+    return target->WantsTight() || (_directRun.load(std::memory_order_acquire) && SelectedCpu() == target->Id());
+}
+
+void DebugManager::SelectCpu(DebugCpuId cpu)
+{
+    if (_selectedCpu.exchange(static_cast<uint8_t>(cpu), std::memory_order_acq_rel) != static_cast<uint8_t>(cpu))
+        UpdateCardTight();
+}
+
+void DebugManager::OnDirectRun(bool running)
+{
+    if (SelectedCpu() == DebugCpuId::Main)
+    {
+        _directRun.store(running, std::memory_order_release);
+        return;
+    }
+    // The run's last instruction start caught the card up to that instruction: up to its end now, where the main CPU
+    // stands while paused
+    if (!running)
+        CatchUpCards();
+    _directRun.store(running, std::memory_order_release);
+    UpdateCardTight();
 }
 
 void DebugManager::CatchUpCards()
@@ -160,7 +197,7 @@ void DebugManager::CatchUpCards()
     _catchingUp = true;
     for (GSCardTarget* target : {_gsTarget.get(), _msTarget.get()})
     {
-        if (!target || !target->WantsTight() || target->ParkedInside())
+        if (!target || !CardTight(target) || target->ParkedInside())
             continue;
         if (GeneralSoundCard* card = target->Card())
             card->catchUpToHost();

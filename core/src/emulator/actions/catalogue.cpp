@@ -94,6 +94,14 @@ const Descriptions& DescriptionTable()
         {"ttd.journal_build", "Build the write journal over the history (params from_frame, to_frame)."},
         {"ttd.journal_build_cancel", "Cancel a running write-journal build."},
         {"ttd.export_clip", "Export a range of the history as a lossless clip (params path, from, to)."},
+        // TTD branches (branchactions.cpp)
+        {"ttd.branch_prev", "Go back to the branch left last; repeated presses walk further back."},
+        {"ttd.branch_next_sibling", "Switch to the next branch at the nearest fork of the lineage (by creation)."},
+        {"ttd.branch_prev_sibling", "Switch to the previous branch at the nearest fork of the lineage (by creation)."},
+        {"ttd.branch_switch", "Switch to a branch (param branch: an id, a GUID or a name; frame, tinframe: a moment on it)."},
+        {"ttd.branch_menu", "List the branches for a menu: the active lineage first, newest first (the ttd.branch_list readout)."},
+        {"ttd.branch_pin", "Pin the active branch, or unpin it (a pinned branch is never pruned or dropped as empty)."},
+        {"ttd.branch_delete", "Delete a branch off the active lineage (param branch) after a 1 s hold; now: at the press."},
         // Context
         {"ctx.set", "Set the instance's surface context (play, ttd, ttd.timecode, debug.disasm); \"\" returns to the default."},
         // Machine and capture

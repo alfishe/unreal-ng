@@ -875,7 +875,7 @@ bool RecordingWidget::startWindowRecording(const QString& container)
     const recordingplan::Plan plan = recordingplan::MakePlan(_settings, _settings.backend == 1);
     const WindowRecordingRequest request = MakeWindowRecordingRequest(
         container, plan.videoCodec, !plan.audioCodec.isEmpty(), UiGpuAcceleration(), plan.profile,
-        generateOutputPath(container));
+        generateOutputPath(container), _settings.backend);
 
     WindowRecordingStatus status;
     std::string error;

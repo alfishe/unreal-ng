@@ -27,7 +27,10 @@ Spec (JSON):
   Also (deckflow.py, the scenario pipeline): "face" / "face_on" given as objects are used as they are; "tags" on
   menus; "navigation" (more nav fields of a menu); "extra" (any other fields of the node, as they are); a spec with
   "shared": true is a menu of its own to be included: its root keeps a back key.
-  DIAL   = {"index", "label", "turn"?: STEP, "press"?: STEP, "left"? / "right"?: STEP (a dir turn)}
+  DIAL   = {"index", "label", "turn"?: STEP, "press"?: STEP, "left"? / "right"?: STEP (a dir turn),
+            "press_turn"?: STEP | {"left"?, "right"?: STEP} (turned while held)}
+  KEY and MENU also take "long": STEP (a press held 600 ms); MENU "list": {"readout", "label"?, "show"?, "do"?: STEP,
+  "long"?: STEP, "on"?, "dim"?, "key"?, "dial"?} (keys from a readout's items, scenarios.md / pipeline.md)
   An icon is a picture of the icon set (icons/<name>.png, the label is in the picture) or else a built-in icon drawn
   with the label.
 
@@ -212,6 +215,8 @@ class Generator:
         # else: a display-only key, its face shows a value (face.value) and a press does nothing
         if n.get("then"):
             out["then"] = n["then"]
+        if isinstance(n.get("long"), dict):
+            out["long"] = self.step(n["long"], n["id"])  # a press held 600 ms: this step (on the release)
         out.update(n.get("extra", {}))
         return out
 
@@ -241,6 +246,16 @@ class Generator:
                     out["turn"][side] = self.step(d[side], where)
         if "press" in d:
             out["press"] = self.step(d["press"], where)
+        if isinstance(d.get("press_turn"), dict):
+            # turned while held: one step with $ticks, or a step a detent each way (a dir turn)
+            pt = d["press_turn"]
+            if set(pt) & {"left", "right"} and set(pt) <= {"left", "right"}:
+                out["press_turn"] = {"kind": "dir"}
+                for side in ("left", "right"):
+                    if side in pt:
+                        out["press_turn"][side] = self.step(pt[side], where)
+            else:
+                out["press_turn"] = self.step(pt, where)
         return out
 
     def strip(self, st, where):
@@ -290,6 +305,15 @@ class Generator:
             out["window"] = list(n["window"])
         if n.get("strip"):
             out["strip"] = self.strip(n["strip"], n["id"])
+        if isinstance(n.get("long"), dict):
+            out["long"] = self.step(n["long"], n["id"])
+        if isinstance(n.get("list"), dict):
+            # a list page: keys from a readout's items in the free slots; its steps take $<field> of the item
+            lst = dict(n["list"])
+            for f in ("do", "long"):
+                if isinstance(lst.get(f), dict):
+                    lst[f] = self.step(lst[f], n["id"])
+            out["list"] = lst
         if n.get("dials"):
             out["dials"] = [self.dial(d, n["id"]) for d in n["dials"]]
         items = [self.menu(c) if c.get("menu") else self.include(c) if c.get("include") else self.key(c)

@@ -72,8 +72,8 @@ struct Page
 
 // What the page means, as compact JSON for agents (no image analysis needed):
 //   {menu, path:[{id,title}], breadcrumbs, back_key, can_back, scroll?:{column, width, window:[first, last]},
-//    keys:[{key,row,col,at?,pinned?,role:item|back,id,type,title,label,tags,kind,action,then,state,on,context}],
-//    dials:[{index,label,turn,press}], strip, context}
+//    keys:[{key,row,col,at?,pinned?,role:item|back,id,type,title,label,tags,long,kind,action,then,state,on,context}],
+//    dials:[{index,label,turn,press,press_turn}], strip, context}
 // Empty keys are left out. `toggles` = node id -> on (toggles and state-bound faces); `context` = the surface context
 // of the path (its innermost menu declaring one).
 [[nodiscard]] json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const Page& p,

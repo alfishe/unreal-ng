@@ -709,6 +709,8 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
+c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 
 -- Properties
 id = emu:get_id()
@@ -1111,8 +1113,10 @@ ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_b
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
-ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
-                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history in memory
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields;
+                                       --   with a recording folder the rest stays seekable on disk:
+                                       --   evicted_to_disk_*, read_back_* fields; without one it is released)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
@@ -1333,6 +1337,8 @@ local b = ttd_branches()                    -- or ttd_branches{scope = "lineage"
 for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
 ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
 -- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_switch_to("previous")            -- the branch left last (again: further back); "next_sibling" / "prev_sibling":
+-- the next / previous branch at the nearest fork (the reply adds fork_frame, siblings); error for another word
 ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
 -- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
 ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
@@ -1491,6 +1497,7 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+emu.skip_until(0x4010, "gs")         -- the sound card CPU to the cursor (a breakpoint ends it; the card step's table + hit)
 
 -- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
 run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
@@ -1615,7 +1622,8 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
                                      --   hardware, fit, picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
                                      --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
-                                     --   audio, sample_rate, audio_samples }, or { ok = false, error, kind }
+                                     --   audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms, first_frame_ms,
+                                     --   slowest_frame_ms }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran
 emu.window_record_stop()             -- finish the file (waits for ffmpeg, muxes the sound in); its last status
 emu.window_record_status()           -- the recording's status; headless { ok = false, error, kind = "no-window" }

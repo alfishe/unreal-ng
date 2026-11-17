@@ -26,6 +26,15 @@ Z80Disassembler::Z80Disassembler(EmulatorContext* context) : _logger(nullptr), _
 {
 }
 
+LabelManager* Z80Disassembler::Labels() const
+{
+    if (t_noLabels)
+        return nullptr;
+    if (t_labels)
+        return t_labels;
+    return _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager() : nullptr;
+}
+
 /// region <Static>
 
 // Operand placeholders in mnemonics:
@@ -2049,16 +2058,12 @@ std::string Z80Disassembler::disassembleSingleCommandWithRuntime(const std::vect
         }
 
         // Look up and set a label for this instruction if available (not under a NoLabelsScope)
-        if (_context && _context->pDebugManager && !t_noLabels)
+        if (LabelManager* labelManager = Labels())
         {
-            auto labelManager = _context->pDebugManager->GetLabelManager();
-            if (labelManager)
+            std::shared_ptr<Label> label = labelManager->GetLabelByZ80Address(decodedInstruction.instructionAddr);
+            if (label && !label->name.empty())
             {
-                std::shared_ptr<Label> label = labelManager->GetLabelByZ80Address(decodedInstruction.instructionAddr);
-                if (label && !label->name.empty())
-                {
-                    decodedInstruction.label = label->name;
-                }
+                decodedInstruction.label = label->name;
             }
         }
 
@@ -2957,11 +2962,7 @@ std::string Z80Disassembler::formatOperandString(const DecodedInstruction& decod
     result.reserve(mnemonic.size() + 16 * values.size());  // Extra space for potential labels
 
     // Get LabelManager for symbolic resolution
-    LabelManager* labelManager = nullptr;
-    if (_context && _context->pDebugManager && !t_noLabels)
-    {
-        labelManager = _context->pDebugManager->GetLabelManager();
-    }
+    LabelManager* labelManager = Labels();
 
     // Check if this instruction targets an address (for label lookup)
     const uint32_t flags = decoded.opcode.flags;

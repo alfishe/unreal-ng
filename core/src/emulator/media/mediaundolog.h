@@ -7,7 +7,8 @@
 ///
 /// A version is the medium's count of changes (MediaManager: a frame that wrote it, a write-protect toggle). The log
 /// keeps, per version, each changed unit as it was before its first change in that version: a block sector, a floppy
-/// track (its whole stream: a write may reformat it), the write-protect switch. Going back restores those and keeps
+/// track (its whole stream: a write may reformat it), the write-protect switch, a floppy image's cylinder count (kept
+/// before the tracks it adds, so going back removes them last and going forward adds them first). Going back restores those and keeps
 /// what the units held, so going forward again restores that. A change made after going back drops the versions
 /// above (the history's future is gone, as TTD's own). The oldest versions go first past the budget: the medium can
 /// no longer go back to them, and a seek there reports it.
@@ -31,9 +32,16 @@ public:
         Sector,   ///< a block medium's sector (index: the LBA)
         Track,    ///< a floppy track (index: cylinder * 2 + side)
         Protect,  ///< the slot's write-protect switch (index 0)
+        Geometry, ///< a floppy image's cylinder count, with its image-level dirty flag (index 0)
     };
-    /// A unit's contents: a sector's bytes, a track's stream, the switch
-    using Image = std::variant<std::vector<uint8_t>, unrealdisk::DiskImage::RawTrack, bool>;
+    /// A floppy image's size: WRITE TRACK past its last cylinder grows it (FDD::trackUnderHeadForWrite)
+    struct Geometry
+    {
+        uint8_t cylinders = 0;
+        bool dirty = false;
+    };
+    /// A unit's contents: a sector's bytes, a track's stream, the switch, the image's size
+    using Image = std::variant<std::vector<uint8_t>, unrealdisk::DiskImage::RawTrack, bool, Geometry>;
 
     /// The medium the log sets back and forth
     class IUnits

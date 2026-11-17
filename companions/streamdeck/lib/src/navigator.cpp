@@ -193,6 +193,8 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
             e["label"] = n->face.label;
         if (!n->tags.empty())
             e["tags"] = n->tags;
+        if (n->longPress)
+            e["long"] = n->longPress->kind == "action" ? n->longPress->spec.value("id", "") : n->longPress->kind;
         if (!n->IsMenu())
         {
             e["kind"] = n->action.kind;
@@ -224,6 +226,8 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
                 e["turn"] = d->turn->kind;
             if (d->press)
                 e["press"] = d->press->kind;
+            if (d->pressTurn)
+                e["press_turn"] = d->pressTurn->kind;
             dials.push_back(e);
         }
     json out{{"menu", nav.Current().id},

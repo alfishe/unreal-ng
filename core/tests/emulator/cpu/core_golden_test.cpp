@@ -50,18 +50,21 @@ struct Golden
 // CPU state are unchanged. Earlier history: rows moved with master's changes
 // to the machines themselves (contention, Profi/ATM ports, ZX-Evo BaseConf,
 // the ATM IDE board status on the #7FFD class), not with the devices tested
+// SCORPION / PROFSCORP / PROFI3 CPU hashes re-recorded 2026-11-15 (Q latch per instruction class, qregister.h): the
+// runs end with Q = 0x08 where it was 0. With Q = 0 the state hashes to the old value: every other register, the RAM
+// and the T-states are unchanged
 const Golden kGolden[] = {
     {"48K", nullptr, 0xF6F7645FFB8D32EEull, 0x30CF0C783D0E991Full, 10483200ull},
     {"128k", nullptr, 0xEA31963B89AC26CDull, 0x99282911875249E1ull, 10636200ull},
     {"PLUS3", nullptr, 0x190BA788495BE1C7ull, 0x2A4FE2DFB3C7F009ull, 10636200ull},
     {"PENTAGON", nullptr, 0xDF565E9821C0C00Eull, 0x0AF8E05A04352BC0ull, 10752000ull},
     {"PENTAGON", "testdata/loaders/sna/eyeache1.sna", 0xBE8FEFDC569D139Aull, 0xE0C7CB5F6C6AB285ull, 10752000ull},
-    {"SCORPION", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
-    {"PROFSCORP", nullptr, 0xF60D982DD39FBB7Aull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"SCORPION", nullptr, 0xF60D982DD39FBB7Aull, 0x95209FA30E059FD0ull, 10483200ull},
+    {"PROFSCORP", nullptr, 0xF60D982DD39FBB7Aull, 0x95209FA30E059FD0ull, 10483200ull},
     // PROFI re-recorded 2026-10-02 (branch profi-v3-v5): the v5 board's video WAIT (ProfiWaitOverlay). PROFI3 runs
     // the v3 Kramis BIOS without waits; its CPU state matches the old PROFI row, which had no waits either
     {"PROFI", nullptr, 0xE41159B56042B338ull, 0x2581F3CF0B41E279ull, 10483200ull},
-    {"PROFI3", nullptr, 0x91D5D8DF4122FD05ull, 0xA0ACA621D375DA98ull, 10483200ull},
+    {"PROFI3", nullptr, 0x91D5D8DF4122FD05ull, 0x95209FA30E059FD0ull, 10483200ull},
     {"ATM710", nullptr, 0x32E968D662FA8C22ull, 0xE983E879C9C60C20ull, 10483200ull},   // 2026-10-01: the v7.xx keyboard controller (v4.1) answers IN #FE
     // ATM3 re-recorded 2026-09-30 (branch not-modeled-waits): its BIOS runs at 14 MHz, where the DRAM's cache
     // misses now wait (EvoTurboOverlay, docs/inprogress/2026-09-29-machine-waits)

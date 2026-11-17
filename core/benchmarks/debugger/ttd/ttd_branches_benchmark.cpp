@@ -14,6 +14,10 @@
 //   B-4  analyzer workload: 1000 experiments of 200 frames from one point, each a branch-create with a poke, an
 //        input script, a run, a read and go_back (the analyzer's kept experiment, l3experimentbranch.h), then one
 //        prune by the run id (pass: measured - throughput, memory, disk bytes and files per branch)
+//   B-3  seek into a segment evicted to disk (P3, architecture.md §5.3-5.4): a 3000-frame recording with a
+//        500-frame window, seeks cycling over more evicted segments than the read-back cache holds (every seek
+//        reads its segment's file); idle (the ROM's loop) and under load (a program rewriting 24 KB of RAM every
+//        two frames) (pass: measured; proposed target p50 <= 50 ms, p99 <= 250 ms)
 //
 // Run with:  ./core-benchmarks --benchmark_filter="TTD_Branch"
 
@@ -36,6 +40,8 @@
 #include "debugger/ttd/engine/ttdcontainer.h"
 #include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
+#include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
@@ -709,5 +715,72 @@ void BM_TTD_Branch_AnalyzerWorkload(benchmark::State& state)
     Percentiles(state, us);
 }
 BENCHMARK(BM_TTD_Branch_AnalyzerWorkload)->Arg(1000)->Iterations(1)->Unit(benchmark::kSecond);
+
+// ---- B-3 --------------------------------------------------------------------------------------------------------
+
+/// Seeks into evicted segments: range(0) 0 = idle, 1 = under load; each seek a segment the cache does not hold
+void BM_TTD_Branch_SeekEvicted(benchmark::State& state)
+{
+    if (!EnsureFixture())
+    {
+        state.SkipWithError("fixture");
+        return;
+    }
+    BranchFixture& f = g_fixture;
+    EmulatorContext* context = f.emulator->GetContext();
+    f.ttd->InvalidateSession("benchmark reset");
+    if (state.range(0) == 1)
+    {
+        // DI; LD HL,0; outer: INC HL; LD SP,0; LD C,3; mid: LD B,0; inner: PUSH HL x16; DJNZ inner; DEC C;
+        // JR NZ,mid; JR outer - #A000-#FFFF rewritten with a new value every two frames
+        std::vector<uint8_t> program = {0xF3, 0x21, 0x00, 0x00, 0x23, 0x31, 0x00, 0x00, 0x0E, 0x03, 0x06, 0x00};
+        program.insert(program.end(), 16, 0xE5);
+        program.insert(program.end(), {0x10, 0xEE, 0x0D, 0x20, 0xE9, 0x18, 0xE1});
+        for (size_t i = 0; i < program.size(); ++i)
+            context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(0x8000 + i), program[i]);
+        context->pCore->GetZ80()->pc = 0x8000;
+    }
+    const std::string root = BenchScratch("bench-ttd-seek-evicted");
+    f.ttd->SetShadowRecordingRoot(root);
+    f.ttd->SetHistoryLimit(500, 0);   // segments of 62 frames
+    f.ttd->StartRecording();
+    const auto t0 = std::chrono::steady_clock::now();
+    f.emulator->RunNFrames(3000, /*skipBreakpoints=*/true);
+    const double recordSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    f.ttd->StopRecording();
+    const ttd::TTDSessionInfo before = f.ttd->GetSessionInfo();
+
+    // The evicted segments' middles, visited in turn (more of them than the cache holds: every seek reads a file)
+    std::vector<uint64_t> targets;
+    for (const ttd::TTDSegmentInfo& s : f.ttd->GetEngine().Segments())
+        if (!s.resident)
+            targets.push_back(s.firstFrame + 31);
+    if (targets.size() <= before.readBackCapacity)
+    {
+        state.SkipWithError("too few evicted segments");
+        return;
+    }
+    std::vector<double> us;
+    size_t next = 0;
+    for (auto _ : state)
+    {
+        const ttd::TTDTimePoint at{targets[next % targets.size()], 1000};
+        us.push_back(TimeUs([&] { benchmark::DoNotOptimize(f.ttd->SeekTo(at)); }));
+        next += 3;   // not the neighbour: no help from the replay's direction
+    }
+    const ttd::TTDSessionInfo after = f.ttd->GetSessionInfo();
+    state.counters["evicted_segments"] = static_cast<double>(before.evictedToDiskSegments);
+    state.counters["loads"] = static_cast<double>(after.readBackLoads - before.readBackLoads);
+    state.counters["failures"] = static_cast<double>(after.readBackFailures);
+    state.counters["cache_kb"] = static_cast<double>(after.readBackBytes) / 1024.0;
+    state.counters["history_mb"] = static_cast<double>(after.historyBytes) / (1024.0 * 1024.0);
+    state.counters["record_s"] = recordSeconds;
+    state.counters["ram_a000"] = context->pMemory->DirectReadFromZ80Memory(0xA000);   // the load ran: not 0
+    Percentiles(state, us);
+    f.ttd->InvalidateSession("benchmark reset");
+    f.ttd->SetHistoryLimit(0, 0);
+    f.ttd->SetShadowRecordingRoot(std::string());   // the next benchmarks record without a folder
+}
+BENCHMARK(BM_TTD_Branch_SeekEvicted)->Arg(0)->Arg(1)->Iterations(100)->Unit(benchmark::kMillisecond);
 
 }  // namespace

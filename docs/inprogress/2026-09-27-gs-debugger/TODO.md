@@ -116,8 +116,54 @@ Plan: [PLAN.md](../PLAN.md) #45 (T2).
   `stop`, the `debug` topic's `paused` event and the snapshot's and `wait`'s `pause`). MCP `wait` adds the text; the
   debugger's status line shows it after a card's stop (`ecatshim::Emulator::debug_stop_main_text`, both adapters).
   Contention: the measured T beside the table's (`contended`), the cycle is the uncontended one.
-- [ ] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger), card run-to
-  (§5.3).
+- [x] Tight mode while the machine is paused with the card selected in a front-end (§5.2 third trigger, 2026-11-14):
+  `DebugManager::SelectCpu` (one per machine, the last front-end's), tight mode for a direct run of the paused machine
+  (`Emulator::DirectStepScope` -> `DebugManager::OnDirectRun`) and a catch-up at its end, so the card stands at the
+  main CPU's moment after each step. Not on pause edges: `applyDebugMode` takes a `CpuHold`, the edge comes from inside
+  the arbiter. Planes: `CpuView::SetSelected` / `Selected`; REST `GET` / `PUT /debug/selected_cpu`, CLI
+  `selected-cpu`, Lua / Python `select_cpu` / `selected_cpu`, MCP `control_execution` `select_cpu`; the Qt debugger's
+  CPU tab (`ecatshim::Emulator::debug_select`, both adapters; main again at detach). Tests:
+  `GSCardTarget_Test.TheSelectedCardFollowsTheMainCpusSteps`, live `test_gs_debugger.py`.
+- [x] Card run-to (§5.3) on the automation planes (2026-11-15): a step kind `to` (`GSCardTarget::StepKind::To`, the
+  cursor as the step's target; at the card's PC: its next run) through `RunControl::CardStep(..., "to", 1, address)`,
+  the reply adds `hit`. Planes: the main CPU's run until PC with a card CPU: REST / WebSocket `POST /skip_until?cpu=gs`,
+  CLI `skip_until <pc> --cpu gs`, Lua `skip_until(pc, "gs")`, Python `skip_until(pc, cpu="gs")`, MCP
+  `control_execution` `run_until_pc` `cpu`. A breakpoint on the way always ends it; no t-state budget (5 s). The Qt
+  debugger keeps its own breakpoint. Tests: `GSCardTarget_Test.AStepParksAtItsBoundary` (to),
+  `TheMachinesCardStepsThroughRunControl` (to, to at the cursor, a breakpoint first), live `test_gs_debugger.py`.
+
+## Design §6 (firmware knowledge) — phase 4, branch `gs-firmware` (2026-11-16)
+
+Findings before the work: the in-tree sources (`materials/gs/gs-firmware`) assemble with sjasmplus 1.23.1 into
+`gs105b.rom` byte for byte, and without `patch/patch.a80` into `gs104.rom` byte for byte; `gs105a.rom` differs from
+v1.05b in 63 bytes. So v1.04 and v1.05b take the reference build's labels exactly, and v1.05a takes them outside its
+63 changed bytes. sjasmplus's SLD output marks EQUs (`+equ`) and gives each label its 16K page (0: low ROM, 1: the
+fixed RAM window, 3: high ROM at `#C000`).
+
+1. [x] **Card symbols (L1-L4, R1).** A label store per card CPU (`LabelManager` with the card's page map), page-tied
+   labels (`gs.rom0` / `gs.rom1` / the fixed RAM window), the card's disassembly and breakpoints by name;
+   `tools/gsfirmware/markup_symbols.py` (sjasmplus reference builds, SLD) writes `data/symbols/gs/<id>.map` and a
+   mark-up report; `data/symbols/gs/manifest.json` bundles matched by the card's ROM page SHA-256 load at card boot;
+   a test checks every shipped label's bytes against the ROM; R1's build check (v1.05b from the sources = the
+   shipped file). Planes: `cpu` on the label and symbol verbs (REST `/labels`, `/symbols`, CLI, Lua, Python, MCP).
+   - Done (uncommitted, worktree `scratch/wt-gs-firmware`): store and bundles as in design §6.2 "As built", `cpu`
+     on every plane, card breakpoint conditions by name, tests `GSCardTarget_Test.TheFirmwareSymbolsNameTheCardsCode`,
+     `TheMachinesCardLoadsItsFirmwareSymbols`, `McpTools_Test.ManageSymbols_Cpu_NamesTheCardsLabels`. The label byte
+     check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, NeoGS (N5), Qt card labels.
+2. [x] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
+   selected by the ROM image SHA-256; the card names its firmware; self-check test: every non-stub handler in the
+   ROM's tables has a named command.
+   - Done (worktree `scratch/wt-gs-firmware`): `gsfirmwareprofile.h/.cpp` (129 / 131 commands, variables, stream
+     commands), `firmware_profile` in the GS report, `GSFirmwareProfile_Test` (self-check against the ROM tables and
+     labels). Design §6.1 "As built". Left: `rom.cpp` known-ROM entries, profiles from files.
+3. [x] **Command log (F1, F4, P2, F7 basics).** `GSCommandLog` (ring, decoder by profile, anomalies), owned by
+   `SoundManager`, fed by LLE and LW; start / stop / clear / read / export on every plane; on / off benchmark.
+   - Done: the device history `<slot>.commands` (every plane through the history verbs; the stream file is the
+     export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
+     `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
+     §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
+4. [ ] **Protocol state and send with decoding (F3, F6).**
+5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
 
 ### Later
 

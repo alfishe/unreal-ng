@@ -1293,6 +1293,57 @@
    "params": "name (trdos, coverage, aylog, audiocapture)"
   },
   {
+   "id": "ttd.branch_prev",
+   "label": "Previous branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_next_sibling",
+   "label": "Next branch at the fork",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_prev_sibling",
+   "label": "Previous branch at the fork",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_switch",
+   "label": "Switch to a branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false,
+   "params": "branch, frame? + tinframe?"
+  },
+  {
+   "id": "ttd.branch_menu",
+   "label": "Branches",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_pin",
+   "label": "Pin the branch",
+   "group": "Time travel",
+   "kind": "press",
+   "held": false
+  },
+  {
+   "id": "ttd.branch_delete",
+   "label": "Delete a branch (hold 1 s)",
+   "group": "Time travel",
+   "kind": "press",
+   "held": true,
+   "params": "branch, now? (false: hold the control 1 s)"
+  },
+  {
    "id": "ttd.scrub_back",
    "label": "Scrub back",
    "group": "Time travel",

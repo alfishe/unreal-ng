@@ -23,7 +23,8 @@ public:
         Snapshot,
         Tape,
         Disk,
-        File  ///< any other file (a hard disk or CD image for a block slot)
+        File,       ///< any other file (a hard disk or CD image for a block slot)
+        ThisFolder  ///< the folder shown, offered as the medium itself (a slot that takes a host folder)
     };
 
     /// What the browser offers
@@ -45,7 +46,9 @@ public:
 
     /// Offering @p filter: in the folder the last file was opened from (its file focused; Up climbs to the roots), at
     /// the roots when there is none or it is gone
-    void Open(Filter filter);
+    /// @p folders: the slot takes a host folder too (an SD card, a hard disk): each folder listing starts with
+    /// "Insert this folder", whose Activate answers the folder's path
+    void Open(Filter filter, bool folders = false);
     Filter filter() const { return _filter; }
 
     bool atRoots() const { return _atRoots; }
@@ -77,6 +80,7 @@ private:
     bool accepts(Kind kind) const;
 
     Filter _filter = Filter::Any;
+    bool _folders = false;
     bool _atRoots = true;
     bool _atRecent = false;
     QString _folder;

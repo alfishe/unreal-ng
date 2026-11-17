@@ -22,6 +22,9 @@
 ///   import-source path [main set policy generated]   the labels a source defines with their values (a source, an image,
 ///                                                  a hobeta file, or disk:A/NAME.T: the disk in a drive as the project)
 ///
+/// `cpu` (sets, import, export, set, drop, import-source): main (default), or a card CPU's own store ("gs", "ms";
+/// gs-debugger design §6.2); scan and import-live read the main CPU's RAM only.
+///
 /// @code
 ///   SymbolReply reply = SymbolControl(context).Execute({"import", {{"path", "game.sym"}, {"policy", "replace"}}});
 ///   http.status = reply.HttpStatus();  http.body = StateNodeToJson(reply.ToValue());

@@ -5,10 +5,13 @@
 #include <cstring>
 #include <memory>
 
+#include "common/filehelper.h"
+#include "common/signaturecache.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -26,6 +29,17 @@ GSCardTarget::GSCardTarget(EmulatorContext* context, DebugCpuId id, std::functio
     : _context(context), _id(id), _cardSource(std::move(cardSource))
 {
     _breakpoints = std::make_unique<BreakpointManager>(context, this);
+    _labels = std::make_unique<LabelManager>(context, DebugCpuName(id), [this](uint8_t window, bool& rom, uint16_t& page) {
+        GeneralSoundCard* card = Card();
+        if (!card)
+            return false;
+        const GeneralSoundCard::CardPage where = card->mapCardAddress(static_cast<uint16_t>(window << 14));
+        if (where.kind == GeneralSoundCard::CardPage::None)
+            return false;
+        rom = where.kind == GeneralSoundCard::CardPage::Rom;
+        page = where.page;
+        return true;
+    });
 }
 
 GSCardTarget::~GSCardTarget()
@@ -52,6 +66,25 @@ void GSCardTarget::OnCardCreated()
     _attached = nullptr;
     _pending = Stop{};
     Attach();
+    ApplySymbolBundles();
+}
+
+std::vector<std::string> GSCardTarget::ApplySymbolBundles()
+{
+    // The card's ROM pages by number, as for the main ROM (Emulator::ApplySymbolBundles); the card bundles are a
+    // folder of their own, so a main ROM's bundle never lands in a card's store
+    const std::string folder = Emulator::SymbolBundleFolder();
+    GeneralSoundCard* card = Card();
+    if (folder.empty() || !card || !_labels)
+        return {};
+    std::vector<std::string> pages;
+    const uint32_t count = card->cardPageCount(GeneralSoundCard::CardPage::Rom);
+    for (uint32_t i = 0; i < count; i++)
+    {
+        const uint8_t* page = card->cardRomPage(i);
+        pages.push_back(page ? SignatureCache::Sha256Hex(page, PAGE_SIZE) : std::string());
+    }
+    return _labels->ApplyBundles(FileHelper::PathCombine(folder, "gs"), pages);
 }
 
 void GSCardTarget::Attach()
@@ -170,7 +203,7 @@ void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
     _parkedInside.store(false, std::memory_order_release);
 }
 
-std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
+std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target)
 {
     GeneralSoundCard* card = Card();
     Z80CpuRegisters regs{};
@@ -217,6 +250,12 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count)
         _stepSkip = 0;
         _stepReturning = inside && IsReturnAt(card, pc);
         _stepReturnSp = regs.sp;
+    }
+    else if (kind == StepKind::To)
+    {
+        // The boundary of the instruction at PC is passed: a cursor at PC means its next run
+        _stepTarget = target;
+        _stepSkip = inside ? 0u : 1u;
     }
     _stepKind.store(kind, std::memory_order_release);
     Attach();
@@ -286,6 +325,15 @@ bool GSCardTarget::StepBoundary(uint16_t pc)
             _stepReturning = regs.sp >= _stepSp && IsReturnAt(card, pc);
             _stepReturnSp = regs.sp;
             return false;
+        case StepKind::To:
+            if (_stepSkip > 0)
+            {
+                _stepSkip--;
+                return false;
+            }
+            if (pc != _stepTarget)
+                return false;
+            break;
         default:
             return false;
     }

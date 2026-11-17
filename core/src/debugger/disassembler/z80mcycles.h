@@ -36,7 +36,9 @@ struct Z80MCycle
 struct Z80MCycleList
 {
     static constexpr size_t kMax = 12;
-    Z80MCycle cycles[kMax]{};
+    // No {} on the array: its elements take Z80MCycle's member initializers anyway, and g++ 14 crashes (ICE in
+    // gimple_add_tmp_var) on a temporary of a struct holding this list with it (Emulator::BreakpointStop{})
+    Z80MCycle cycles[kMax];
     uint8_t count = 0;
     uint8_t total = 0;
 };

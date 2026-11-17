@@ -55,6 +55,8 @@ namespace ttd
 {
 
 class TimeTravelEngine;
+class TTDPieceStore;
+struct TTDSegmentPieces;
 
 /// Part-end extra, bit 0: a file starts here (the loader restarts the
 /// numbering of versions and the journal positions)
@@ -313,6 +315,13 @@ public:
     static void SetBranchReadingForTesting(bool on);
     /// The recorded machine's devices (the session's device table), without loading the session (file-info)
     static bool ReadDevices(const ITTDByteSource& source, std::vector<TTDDeviceDescriptor>& out, std::string& error);
+
+    /// Two tiers (P3): the versions of a recording folder's segment file, per checkpoint, imported into @p store
+    /// (each with one reference: ReleaseSegmentPieces) for TimeTravelEngine::ReadBackSegment. False with the reason
+    /// when a part is damaged or a version does not fit; nothing is held then
+    static bool ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
+                                  std::string& error);
+    static void ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at
     /// @p frame, from a session file; false with the reason when the stream

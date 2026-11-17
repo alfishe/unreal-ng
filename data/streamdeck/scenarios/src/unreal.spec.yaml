@@ -15,12 +15,12 @@ settings: {brightness: 60, activity: {ignore: [ttd.seek_by, audio.volume_by, run
 # 0 | PAUSE      RESET      NMI        TURBO      HOLD       X1         >SPEED     MUTE       FULL
 # 1 | S1         L1         >STATE     >MEDIA     TAPE       LAST FILE  >KEYBOARD  >GAME      >BASIC
 # 2 | >MODEL     >SOUND     >PICTURE   .          .          .          SHOT       >VIDEO     >AUDIO
-# 3 | >DEBUG     >TIME      .          -5S        LIVE       >TTD       MARK       .          >MONITOR
+# 3 | >DEBUG     >TIME      >BRANCH    -5S        LIVE       >TTD       MARK       .          >MONITOR
 # opens: [0,6] speed, [1,2] state, [1,3] media, [1,6] keyboard, [1,7] game, [1,8] basic, [2,0] machine, [2,1] sound
-#        [2,2] picture, [2,7] video, [2,8] audio, [3,0] debug, [3,1] time, [3,5] ttd, [3,8] monitor
+#        [2,2] picture, [2,7] video, [2,8] audio, [3,0] debug, [3,1] time, [3,2] branches, [3,5] ttd, [3,8] monitor
 # dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
 # dial 1 TIME: turn ttd.seek_by, press run.pause_toggle
-# dial 2 OPS: turn ttd.jog_instructions, press ttd.resume_live
+# dial 2 OPS: turn ttd.jog_instructions, press ttd.resume_live, press_turn left ttd.branch_prev_sibling / right ttd.branch_next_sibling
 # dial 3 PACE: turn run.pace_by, press run.pace_toggle
 # dial 5 VOLUME: turn audio.volume_by, press audio.mute_toggle
 # +--
@@ -31,7 +31,7 @@ menu home:
   dials:
     0: {label: FRAMES, uc: D3.3, turn: {action: ttd.jog_frames, value: {d: $ticks}}, press: {action: run.pause_toggle}}
     1: {label: TIME, uc: [U2.1, D3.2], turn: {action: ttd.seek_by, value: {d: $ticks, rate: $rate, unit: seconds, min: 1, max: 50}}, press: {action: run.pause_toggle}}
-    2: {label: OPS, uc: D3.3, turn: {action: ttd.jog_instructions, value: {d: $ticks}}, press: {action: ttd.resume_live}}
+    2: {label: OPS, uc: D3.3, turn: {action: ttd.jog_instructions, value: {d: $ticks}}, press: {action: ttd.resume_live}, press_turn: {left: {action: ttd.branch_prev_sibling}, right: {action: ttd.branch_next_sibling}}}
     3: {label: PACE, uc: D1.1, turn: {action: run.pace_by, value: {d: $ticks}}, press: {action: run.pace_toggle}}
     5: {label: VOLUME, uc: C8.2, turn: {action: audio.volume_by, value: {d: $ticks}}, press: {action: audio.mute_toggle}}
   keys:
@@ -67,6 +67,7 @@ menu home:
     # STOP first there
     debug:   {at: [3, 0], open: debug}
     time:    {at: [3, 1], open: time}
+    branches: {at: [3, 2], open: branches}
     back5:   {at: [3, 3], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
     live:    {at: [3, 4], uc: [U2.3, D3.6], action: ttd.resume_live, label: LIVE}
     ttd:     {at: [3, 5], open: ttd}
@@ -685,8 +686,8 @@ menu basic:
 #     0          1          2          3          4          5          6          7          8
 # 0 | <BACK      25FPS      5FPS       1FPS       LINE       OP         PACE       STOP       FULL
 # 1 | START      -FRAME     -LINE      -OP        .          +OP        +LINE      +FRAME     END
-# 2 | REV RUN    REV STEP   .          BACK       FRAME      FORWARD    .          .          LIVE
-# 3 | MARK <     MARK       MARK >     MARKS      .          WRITE      READ       EXEC       TTD REC
+# 2 | REV RUN    REV STEP   PREV BR    BACK       FRAME      FORWARD    SIB <      SIB >      LIVE
+# 3 | MARK <     MARK       MARK >     MARKS      PIN        WRITE      READ       EXEC       TTD REC
 # dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
 # dial 1 SCRUB: turn ttd.seek_by, press run.pause_toggle
 # dial 2 LINES: turn run.step_by, press run.to_pixel
@@ -737,6 +738,35 @@ menu time:
     lastr:   {at: [3, 6], uc: D5.1, gui: memory.find_last, params: {access: read}, label: READ}
     laste:   {at: [3, 7], uc: D5.1, gui: memory.find_last, params: {access: execute}, label: EXEC}
     timttdrec: {at: [3, 8], uc: C7.1, action: ttd.record_toggle, label: TTD REC}
+    # TTD branches: back to the branch left last, the other futures at the nearest fork, pinning the active one
+    timbrprev: {at: [2, 2], action: ttd.branch_prev, glyph: nav.back, label: PREV BR}
+    timsibprv: {at: [2, 6], action: ttd.branch_prev_sibling, glyph: nav.prev_page, label: SIB <}
+    timsibnxt: {at: [2, 7], action: ttd.branch_next_sibling, glyph: nav.next_page, label: SIB >}
+    timbrpin:  {at: [3, 4], action: ttd.branch_pin, glyph: media.protect, glyph_on: media.protect.on, state: ttd.branch.pinned, label: PIN}
+
+# TTD branches: the futures of the history. The free keys list the branches (the active lineage first, newest first;
+# lit: the active one, dimmed: off the lineage, '*': pinned); a press switches to it, a long press deletes it. Dial 0
+# turns the pages. The home key shows the active branch and the count; its long press goes back to the branch left
+# last.
+# +-- screen branches: Branches (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8
+# 0 | <BACK      PREV BR    PIN        .          .          .          .          .          .
+# 1 | .          .          .          .          .          .          .          .          .
+# 2 | .          .          .          .          .          .          .          .          .
+# 3 | .          .          .          .          .          .          .          .          .
+# list: the free keys (.) show ttd.branch_list.items: ttd.branch_switch, long ttd.branch_delete, pages on dial 0
+# +--
+menu branches:
+  title: Branches
+  label: BRANCH
+  show: {readout: ttd.branch, format: "{name}\n{count} BR"}
+  long: {action: ttd.branch_prev}
+  context: ttd
+  strip: {content: title, status: ttd, target: true}
+  list: {readout: ttd.branch_list.items, label: '{name}{pinned? *|}', show: '{age}', on: active, dim: '!on_lineage', dial: 0, action: ttd.branch_switch, value: {branch: $id}, long: {action: ttd.branch_delete, value: {branch: $id, now: true}}}
+  keys:
+    brprev:  {at: [0, 1], action: ttd.branch_prev, glyph: nav.back, label: PREV BR}
+    brpin:   {at: [0, 2], action: ttd.branch_pin, glyph: media.protect, glyph_on: media.protect.on, state: ttd.branch.pinned, label: PIN}
 
 # D2, D4, D6, D8, D10: the debugger. Row 0 pause and the steps, row 1 breakpoints, row 2 the panes, row 3 symbols and profilers.
 # +-- screen debug: Debugger (deckflow build writes this map from the keys below)

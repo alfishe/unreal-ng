@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -21,6 +22,9 @@
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
+#include "debugger/targets/cpuview.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
 #include "emulator/cpu/core.h"
@@ -462,6 +466,72 @@ TEST(GSCardTarget_Test, TheNeoGSDmaWritesHitThePagesWatchpoint)
 // The card of a whole machine (the PENTAGON's NeoGS): a card breakpoint puts the hooks on the card the machine runs,
 // and its stop ends the main CPU's direct run. Without an SD card the loader polls it with interrupts off: the
 // instruction the card is at comes round again
+// The card CPU's labels (gs-debugger design §6.2, L1-L4): its own store, the shipped firmware symbols chosen by the
+// SHA-256 of the card's ROM page 0, ROM labels tied to their pages; the card's listing names its instructions and
+// operands from them, the main CPU's labels stay out
+TEST(GSCardTarget_Test, TheFirmwareSymbolsNameTheCardsCode)
+{
+    Card card;
+    const std::vector<std::string> sets = card.target->ApplySymbolBundles();
+    ASSERT_EQ(sets, std::vector<std::string>{"bundle:gs:gs105a"});
+    LabelManager& labels = *card.target->GetLabelManager();
+    EXPECT_EQ(labels.Cpu(), "gs");
+
+    const auto comint = labels.GetLabelByName("COMINT");
+    ASSERT_NE(comint, nullptr);
+    EXPECT_EQ(comint->address, 0x026B);
+    EXPECT_TRUE(comint->isROM());
+    EXPECT_EQ(comint->bank, 0);
+    // The high ROM's command table: ROM page 1 at #C000 (page 0 of the 32K window)
+    const auto comtabh = labels.GetLabelByName("COMTABH");
+    ASSERT_NE(comtabh, nullptr);
+    EXPECT_EQ(comtabh->address, 0xD720);
+    EXPECT_TRUE(comtabh->isROM());
+    EXPECT_EQ(comtabh->bank, 1);
+    ASSERT_NE(labels.GetLabelByName("BUSY"), nullptr);  // a firmware variable in the fixed RAM window
+    EXPECT_EQ(labels.GetLabelByName("BUSY")->address, 0x4086);
+
+    // A ROM 1 label and a RAM label at one address: the page the window shows decides
+    ASSERT_TRUE(labels.AddLabel("RamThere", 0xD720, 2, 0x1720, "data"));
+    std::shared_ptr<Label> at = labels.GetLabelByZ80Address(0xD720);
+    ASSERT_NE(at, nullptr);
+    const GeneralSoundCard::CardPage window3 = card.chip->mapCardAddress(0xD720);
+    EXPECT_EQ(at->name, window3.kind == GeneralSoundCard::CardPage::Rom && window3.page == 1 ? "COMTABH" : "RamThere");
+    labels.RemoveLabel("RamThere");
+
+    // The listing (no machine, so the disassembler directly): the instruction's label from the card's store
+    Z80Disassembler disassembler(&card.ctx);
+    Z80Disassembler::LabelsScope scope(&labels);
+    std::vector<uint8_t> bytes(4);
+    for (uint16_t i = 0; i < 4; i++)
+        ASSERT_TRUE(card.chip->peekCardMemory(static_cast<uint16_t>(0x026B + i), bytes[i]));
+    uint8_t length = 0;
+    DecodedInstruction decoded;
+    disassembler.disassembleSingleCommand(bytes, 0x026B, &length, &decoded);
+    EXPECT_EQ(decoded.label, "COMINT");
+}
+
+// The machine's card takes its firmware's symbols when it is fitted; the main CPU's labels do not get them
+TEST(GSCardTarget_Test, TheMachinesCardLoadsItsFirmwareSymbols)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    LabelManager* labels = context->pDebugManager->GetLabelManager(DebugCpuId::GS);
+    ASSERT_NE(labels, nullptr);
+    EXPECT_NE(labels, context->pDebugManager->GetLabelManager());
+    ASSERT_NE(labels->GetLabelByName("COMINT"), nullptr);
+    EXPECT_EQ(context->pDebugManager->GetLabelManager()->GetLabelByName("COMINT"), nullptr);
+
+    // The card's listing at COMINT carries its name
+    StateNode listing = CpuView::Disasm(context, DebugCpuId::GS, 0x026B, 1);
+    ASSERT_EQ(listing["instructions"].size(), 1u);
+    EXPECT_EQ(listing["instructions"].items[0]["label"].s, "COMINT");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 TEST(GSCardTarget_Test, TheMachinesCardStopsWhereItLoops)
 {
     SoundCardScope sound(TestSound::GeneralSound);
@@ -566,6 +636,56 @@ TEST(GSCardTarget_Test, ACardBreakpointParksTheMainCpuNearby)
     const MainPosition lazy = stopWith(false);
     EXPECT_TRUE(lazy.frameEnd || lazy.gapT > 1000) << "lazy: main ran on to a port access or the frame end; gap "
                                                    << lazy.gapT;
+}
+
+// The card a front-end shows follows the main CPU's steps of the paused machine (gs-debugger design §5.2, the third
+// trigger): tight mode for the direct run and a catch-up at its end, so the card stands at the main CPU's moment, not
+// at the last port access or frame end. Tight mode is off again after the run, and off while the main CPU is shown
+TEST(GSCardTarget_Test, TheSelectedCardFollowsTheMainCpusSteps)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::NGS));
+    FeatureManager* features = emulator->GetFeatureManager();
+    features->setFeature(Features::kDebugMode, true);
+    GeneralSoundCard* card = context->pSoundManager->getGeneralSound();
+    DebugManager* debug = context->pDebugManager;
+    emulator->RunNFrames(3);
+    // The card's lag behind the main CPU in ZX T (the card can end up to an instruction ahead: negative)
+    auto gap = [&] {
+        return std::llround(static_cast<double>(card->hostLead()) /
+                            GSHostClock::unitsPerZxTact(context, card->cardUnitsPerSecond()));
+    };
+
+    emulator->RunNCPUCycles(40, true);
+    const long long lazy = gap();
+    EXPECT_GT(lazy, 100) << "not shown: the card stays where the frame end left it";
+
+    EXPECT_EQ(CpuView::SetSelected(context, "gs"), "");
+    EXPECT_EQ(debug->SelectedCpu(), DebugCpuId::GS);
+    EXPECT_FALSE(features->cardTightHold()) << "shown, but nothing runs: no tight mode";
+    for (int i = 0; i < 5; i++)
+    {
+        emulator->RunSingleCPUCycle(true);
+        EXPECT_LT(std::llabs(gap()), 24) << "step " << i << ": the card at the main CPU's moment";
+        EXPECT_FALSE(features->cardTightHold()) << "off again after the step";
+    }
+    emulator->RunNCPUCycles(40, true);
+    EXPECT_LT(std::llabs(gap()), 24) << "after steps too";
+    StateNode selected = CpuView::Selected(context);
+    EXPECT_EQ(selected["cpu"].s, "gs");
+    EXPECT_TRUE(selected["follows"].b);
+
+    EXPECT_EQ(CpuView::SetSelected(context, "main"), "");
+    emulator->RunNCPUCycles(40, true);
+    EXPECT_GT(gap(), 100) << "the main CPU shown: the card lags again";
+    EXPECT_FALSE(CpuView::Selected(context)["follows"].b);
+    EXPECT_NE(CpuView::SetSelected(context, "ms"), "") << "no MultiSound card";
+    EXPECT_NE(CpuView::SetSelected(context, "zx"), "");
+    EXPECT_EQ(debug->SelectedCpu(), DebugCpuId::Main) << "a refused choice keeps the last one";
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 // Tight mode only splits the card's catch-up into more runs, it does not change them (gs-debugger design §5.6): the
@@ -714,7 +834,8 @@ uint16_t CardSp(GeneralSoundCard& card)
 
 // A step parks at an instruction boundary (gs-debugger design §5.3). Without a machine the card runs on past the
 // park, so each step starts from the routine's entry: in after one instruction, in 3 after three, over at the
-// instruction after the CALL with the entry SP, out after the taken RET (RET Z not taken does not end it)
+// instruction after the CALL with the entry SP, out after the taken RET (RET Z not taken does not end it), to at the
+// cursor (a cursor at PC: the instruction's next run, once round the loop)
 TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
 {
     Card card;
@@ -730,7 +851,9 @@ TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
                           Case{GSCardTarget::StepKind::In, 3, kCall, kRoutine + 2},
                           Case{GSCardTarget::StepKind::Over, 1, kCall, kAfterCall},
                           Case{GSCardTarget::StepKind::Over, 1, kAfterCall, kLoop},
-                          Case{GSCardTarget::StepKind::Out, 1, kRoutine, kAfterCall}})
+                          Case{GSCardTarget::StepKind::Out, 1, kRoutine, kAfterCall},
+                          Case{GSCardTarget::StepKind::To, 1, kCall, kRoutine + 3},
+                          Case{GSCardTarget::StepKind::To, 1, kCall, kCall}})
     {
         LoadRoutine(*card.chip);
         Z80CpuRegisters regs{};
@@ -744,7 +867,7 @@ TEST(GSCardTarget_Test, AStepParksAtItsBoundary)
             card.chip->pokeCardMemory(kStack - 1, kAfterCall >> 8);
         }
         card.chip->setCardRegisters(regs);
-        ASSERT_EQ(card.target->ArmStep(c.kind, c.count), "");
+        ASSERT_EQ(card.target->ArmStep(c.kind, c.count, c.boundary), "");  // the cursor for To
         EXPECT_TRUE(card.target->HooksAttached()) << "an armed step runs the debug loop";
         ASSERT_TRUE(card.runUntilStop(1)) << "start #" << std::hex << c.start;
         const GSCardTarget::Stop stop = card.target->LastStop();
@@ -797,8 +920,8 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
     ASSERT_NE(shared, nullptr);
     execution::RunControl control(shared);
     const execution::Requester requester{execution::Origin::WebApi, {}};
-    auto step = [&](const char* kind, unsigned count, const char* reason, uint16_t pc) {
-        const execution::RunReply reply = control.CardStep(requester, DebugCpuId::GS, kind, count);
+    auto step = [&](const char* kind, unsigned count, const char* reason, uint16_t pc, uint16_t cursor = 0) {
+        const execution::RunReply reply = control.CardStep(requester, DebugCpuId::GS, kind, count, cursor);
         EXPECT_TRUE(reply.Ok()) << kind << ": " << reply.message;
         const StateNode* stop = reply.body.find("stop");
         EXPECT_NE(stop, nullptr) << kind;
@@ -816,6 +939,8 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
             EXPECT_GE(main->find("gap_t")->i, 0) << kind;
         EXPECT_EQ(reply.body.find("state")->s, "paused") << kind;
         EXPECT_TRUE(emulator->IsPaused());
+        if (std::string(kind) == "to")
+            EXPECT_EQ(reply.body.find("hit")->b, std::string(reason) == "step") << "to #" << std::hex << cursor;
     };
     step("in", 1, "step", kRoutine);  // paused between frames: the first boundary is the CALL's own
     step("in", 2, "step", kRoutine + 2);
@@ -831,6 +956,14 @@ TEST(GSCardTarget_Test, TheMachinesCardStepsThroughRunControl)
     step("over", 1, "breakpoint", kRoutine + 1);
     breakpoints->RemoveBreakpointByID(id);
     step("out", 1, "step", kAfterCall);
+
+    // Run to the cursor: round the loop into the routine; a breakpoint on the way ends it first
+    step("to", 1, "step", kRoutine + 1, kRoutine + 1);
+    step("to", 1, "step", kRoutine + 1, kRoutine + 1);  // at the cursor: its next run
+    const uint16_t before = breakpoints->AddBreakpoint(Exec(kCall), error);
+    ASSERT_NE(before, BRK_INVALID) << error;
+    step("to", 1, "breakpoint", kCall, kRoutine);
+    breakpoints->RemoveBreakpointByID(before);
 
     const execution::RunReply refused = control.CardStep(requester, DebugCpuId::MultiSoundGS, "in", 1);
     EXPECT_FALSE(refused.Ok()) << "no MultiSound in this machine";

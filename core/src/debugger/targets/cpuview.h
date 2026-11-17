@@ -27,6 +27,12 @@ namespace CpuView
 /// no card with a CPU in its slot")
 std::string Select(EmulatorContext* context, const std::string& name, DebugCpuId& cpu);
 
+/// The CPU the front-ends show (DebugManager::SelectCpu, gs-debugger design §5.2), `name` as Select takes it: a card
+/// shown follows the main CPU's steps of the paused machine. "" on success, else why not
+std::string SetSelected(EmulatorContext* context, const std::string& name);
+/// {cpu, follows}: the CPU shown, and whether a card follows the main CPU's steps (a card is shown and is there)
+StateNode Selected(EmulatorContext* context);
+
 /// The card whose CPU `cpu` is, while it has one (null: main, or no such card now)
 GeneralSoundCard* Card(EmulatorContext* context, DebugCpuId cpu);
 
@@ -56,7 +62,8 @@ std::string Write(Emulator* emulator, DebugCpuId cpu, const char* source, uint16
                   const std::vector<uint8_t>& bytes, size_t* written = nullptr);
 
 /// `count` (1..256) instructions from `address` of the card CPU: the GET /disasm object (address, count,
-/// instructions[] with address, bytes, mnemonic, size, target) plus "cpu"; no labels (they are the main CPU's).
+/// instructions[] with address, bytes, mnemonic, size, target, label) plus "cpu"; the labels and the operands' names
+/// are the card CPU's own (GSCardTarget::GetLabelManager), never the main CPU's.
 /// `before` / `snap` as DebugSnapshot::Disasm (the virtual window, no anchors but the bytes)
 StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, size_t count, size_t before = 0,
                  bool snap = false);

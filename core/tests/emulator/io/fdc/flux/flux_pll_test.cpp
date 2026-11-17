@@ -47,10 +47,11 @@ TEST_F(FluxPll_Test, IdealTiming_MFM_DoubleCell)
     std::vector<uint32_t> intervals = {4000, 2000};
     pll.addIntervals(intervals);
 
+    // An interval ends with its transition: 4 us = "01", 2 us = "1"
     auto& cells = pll.bitCells();
     ASSERT_EQ(cells.size(), 3);
-    EXPECT_EQ(cells[0], 1);
-    EXPECT_EQ(cells[1], 0);
+    EXPECT_EQ(cells[0], 0);
+    EXPECT_EQ(cells[1], 1);
     EXPECT_EQ(cells[2], 1);
 }
 
@@ -61,9 +62,9 @@ TEST_F(FluxPll_Test, IdealTiming_MFM_TripleCell)
 
     auto& cells = pll.bitCells();
     ASSERT_EQ(cells.size(), 4);
-    EXPECT_EQ(cells[0], 1);
+    EXPECT_EQ(cells[0], 0);
     EXPECT_EQ(cells[1], 0);
-    EXPECT_EQ(cells[2], 0);
+    EXPECT_EQ(cells[2], 1);
     EXPECT_EQ(cells[3], 1);
 }
 
@@ -77,8 +78,8 @@ TEST_F(FluxPll_Test, IdealTiming_FM)
     auto& cells = fmPll.bitCells();
     ASSERT_EQ(cells.size(), 4);
     EXPECT_EQ(cells[0], 1);
-    EXPECT_EQ(cells[1], 1);
-    EXPECT_EQ(cells[2], 0);
+    EXPECT_EQ(cells[1], 0);
+    EXPECT_EQ(cells[2], 1);
     EXPECT_EQ(cells[3], 1);
 }
 
@@ -93,7 +94,7 @@ TEST_F(FluxPll_Test, JitteredTiming_10Percent)
     ASSERT_EQ(cells.size(), 8);
     for (size_t i = 0; i < 8; i++)
     {
-        uint8_t expected = (i % 2 == 0) ? 1 : 0;
+        uint8_t expected = (i % 2 == 1) ? 1 : 0;
         EXPECT_EQ(cells[i], expected) << "Cell " << i << " mismatch with 10% jitter";
     }
 }
@@ -108,12 +109,12 @@ TEST_F(FluxPll_Test, JitteredTiming_20Percent)
     auto& cells = pll.bitCells();
     ASSERT_EQ(cells.size(), 7);
     EXPECT_EQ(cells[0], 1);
-    EXPECT_EQ(cells[1], 1);
-    EXPECT_EQ(cells[2], 0);
+    EXPECT_EQ(cells[1], 0);
+    EXPECT_EQ(cells[2], 1);
     EXPECT_EQ(cells[3], 1);
-    EXPECT_EQ(cells[4], 1);
+    EXPECT_EQ(cells[4], 0);
     EXPECT_EQ(cells[5], 0);
-    EXPECT_EQ(cells[6], 0);
+    EXPECT_EQ(cells[6], 1);
 }
 
 TEST_F(FluxPll_Test, Reset_ClearsState)
@@ -128,9 +129,12 @@ TEST_F(FluxPll_Test, Reset_ClearsState)
 TEST_F(FluxPll_Test, DetectMode_MFM)
 {
     std::vector<uint32_t> mfmIntervals;
+    // DD MFM: 2 us cells, flux 4 / 6 / 8 us; the 6 us interval only occurs in MFM
     for (int i = 0; i < 100; i++)
     {
-        mfmIntervals.push_back(2000);
+        mfmIntervals.push_back(4000);
+        mfmIntervals.push_back(6000);
+        mfmIntervals.push_back(8000);
         mfmIntervals.push_back(4000);
     }
 
@@ -158,7 +162,7 @@ TEST_F(FluxPll_Test, LongGap_MaxCells)
 
     auto& cells = pll.bitCells();
     EXPECT_LE(cells.size(), 8);
-    EXPECT_EQ(cells[0], 1);
+    EXPECT_EQ(cells.back(), 1);
 }
 
 TEST_F(FluxPll_Test, ShortPulse_MinOneCell)
@@ -168,7 +172,7 @@ TEST_F(FluxPll_Test, ShortPulse_MinOneCell)
 
     auto& cells = pll.bitCells();
     EXPECT_GE(cells.size(), 1);
-    EXPECT_EQ(cells[0], 1);
+    EXPECT_EQ(cells.back(), 1);
 }
 
 TEST_F(FluxPll_Test, NominalCellWidth_MFM)
@@ -180,4 +184,15 @@ TEST_F(FluxPll_Test, NominalCellWidth_FM)
 {
     FluxPll fmPll{FluxPll::Mode::FM};
     EXPECT_EQ(fmPll.nominalCellNs(), 4000);
+}
+
+TEST_F(FluxPll_Test, TrailingTime_AddsZeroCellsUpToTheIndex)
+{
+    pll.addIntervals({4000, 2000});
+    pll.addTrailingTime(4100);  // two more cells without a transition
+    const std::vector<uint8_t> want = {0, 1, 1, 0, 0};
+    EXPECT_EQ(pll.bitCells(), want);
+
+    pll.addTrailingTime(900);  // under half a cell: nothing
+    EXPECT_EQ(pll.bitCells().size(), 5u);
 }

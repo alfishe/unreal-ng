@@ -2,6 +2,7 @@
 #include "stdafx.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <map>
 #include <vector>
@@ -93,6 +94,14 @@ protected:
     // next use of the store (Flush), so a script adding labels one by one does not rebuild the view each time
     mutable std::vector<unrealasm::symbols::Symbol> _pendingUser;
     bool _userOnTop = true;
+    std::string _cpu = "main";
+
+public:
+    /// Which page a 16K window of the CPU shows now (rom: a ROM page); false when it shows none
+    using PageMapper = std::function<bool(uint8_t window, bool& rom, uint16_t& page)>;
+
+protected:
+    PageMapper _mapper;  // another CPU's map (a card's); empty: the machine's memory
 
     // File format detection and parsing helpers
 public:
@@ -111,6 +120,9 @@ public:
     /// region <Constructors / destructors>
 public:
     LabelManager(EmulatorContext* context);
+    /// Another CPU's labels (gs-debugger design §6.2: a card CPU's own store): `cpu` names it ("gs", "ms") in the
+    /// change notification, `mapper` gives its page map for labels of several pages at one address
+    LabelManager(EmulatorContext* context, std::string cpu, PageMapper mapper);
     virtual ~LabelManager();
     /// endregion </Constructors / destructors>
 
@@ -174,6 +186,8 @@ public:
 
     /// The emulator the labels belong to (the live scan copies its RAM)
     EmulatorContext* GetContext() const { return _context; }
+    /// The CPU the labels are of: "main", or a card's ("gs", "ms")
+    const std::string& Cpu() const { return _cpu; }
 
     // Symbol sets (the store behind the labels)
     static constexpr const char* USER_SET = "user";

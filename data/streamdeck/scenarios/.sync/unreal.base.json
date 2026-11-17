@@ -301,12 +301,33 @@
    "state": null,
    "title": "bps"
   },
+  "branches": {
+   "glyph": "nav.folder",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Branches"
+  },
   "brk": {
    "glyph": "input.key",
    "glyph_on": null,
    "hold": true,
    "state": null,
    "title": "Key"
+  },
+  "brpin": {
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "hold": false,
+   "state": "ttd.branch.pinned",
+   "title": "Pin the branch"
+  },
+  "brprev": {
+   "glyph": "nav.back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch"
   },
   "bttdc": {
    "glyph": null,
@@ -2247,6 +2268,20 @@
    "state": null,
    "title": "threads"
   },
+  "timbrpin": {
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "hold": false,
+   "state": "ttd.branch.pinned",
+   "title": "Pin the branch"
+  },
+  "timbrprev": {
+   "glyph": "nav.back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch"
+  },
   "time": {
    "glyph": "ttd.menu",
    "glyph_on": null,
@@ -2260,6 +2295,20 @@
    "hold": false,
    "state": null,
    "title": "Resume live"
+  },
+  "timsibnxt": {
+   "glyph": "nav.next_page",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Next branch at the fork"
+  },
+  "timsibprv": {
+   "glyph": "nav.prev_page",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch at the fork"
   },
   "timttdrec": {
    "glyph": "ttd.record",
@@ -3748,6 +3797,48 @@
     "C10.5"
    ]
   },
+  "branches": {
+   "at": [
+    3,
+    2
+   ],
+   "context": "ttd",
+   "in": "home",
+   "kind": "menu",
+   "label": "BRANCH",
+   "list": {
+    "action": "ttd.branch_switch",
+    "dial": 0,
+    "dim": "!on_lineage",
+    "label": "{name}{pinned? *|}",
+    "long": {
+     "action": "ttd.branch_delete",
+     "value": {
+      "branch": "$id",
+      "now": true
+     }
+    },
+    "on": "active",
+    "readout": "ttd.branch_list.items",
+    "show": "{age}",
+    "value": {
+     "branch": "$id"
+    }
+   },
+   "long": {
+    "action": "ttd.branch_prev"
+   },
+   "show": {
+    "format": "{name}\n{count} BR",
+    "readout": "ttd.branch"
+   },
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "Branches"
+  },
   "brk": {
    "action": "input.key",
    "at": [
@@ -3765,6 +3856,30 @@
     "hold": true,
     "key": "caps+space"
    }
+  },
+  "brpin": {
+   "action": "ttd.branch_pin",
+   "at": [
+    0,
+    2
+   ],
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "in": "branches",
+   "kind": "key",
+   "label": "PIN",
+   "state": "ttd.branch.pinned"
+  },
+  "brprev": {
+   "action": "ttd.branch_prev",
+   "at": [
+    0,
+    1
+   ],
+   "glyph": "nav.back",
+   "in": "branches",
+   "kind": "key",
+   "label": "PREV BR"
   },
   "bttdc": {
    "at": [
@@ -4866,6 +4981,14 @@
      "label": "OPS",
      "press": {
       "action": "ttd.resume_live"
+     },
+     "press_turn": {
+      "left": {
+       "action": "ttd.branch_prev_sibling"
+      },
+      "right": {
+       "action": "ttd.branch_next_sibling"
+      }
      },
      "turn": {
       "action": "ttd.jog_instructions",
@@ -8561,6 +8684,30 @@
     "C10.2"
    ]
   },
+  "timbrpin": {
+   "action": "ttd.branch_pin",
+   "at": [
+    3,
+    4
+   ],
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "in": "time",
+   "kind": "key",
+   "label": "PIN",
+   "state": "ttd.branch.pinned"
+  },
+  "timbrprev": {
+   "action": "ttd.branch_prev",
+   "at": [
+    2,
+    2
+   ],
+   "glyph": "nav.back",
+   "in": "time",
+   "kind": "key",
+   "label": "PREV BR"
+  },
   "time": {
    "at": [
     3,
@@ -8674,6 +8821,28 @@
    "uc": [
     "D3.6"
    ]
+  },
+  "timsibnxt": {
+   "action": "ttd.branch_next_sibling",
+   "at": [
+    2,
+    7
+   ],
+   "glyph": "nav.next_page",
+   "in": "time",
+   "kind": "key",
+   "label": "SIB >"
+  },
+  "timsibprv": {
+   "action": "ttd.branch_prev_sibling",
+   "at": [
+    2,
+    6
+   ],
+   "glyph": "nav.prev_page",
+   "in": "time",
+   "kind": "key",
+   "label": "SIB <"
   },
   "timttdrec": {
    "action": "ttd.record_toggle",

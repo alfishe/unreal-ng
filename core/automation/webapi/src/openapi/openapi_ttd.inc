@@ -150,10 +150,13 @@
         op["summary"] = "Set or read the TTD history limit";
         op["tags"].append("Time-Travel Debug");
         op["description"] =
-            "Bounds the recorded history: while recording, the oldest checkpoints (one per frame) are released "
-            "once there are more than `frames` of them or their data exceeds `bytes`. The session start moves "
-            "forward; the input, port, external-event and bookmark records before it go too, so a session saved "
-            "after a release loads and replays its remaining frames exactly. Two checkpoints always stay.\n\n"
+            "Bounds the recorded history in memory. With a recording folder nothing is released: segments outside "
+            "the window leave memory once their file is complete and a seek reads one back into the read-back "
+            "cache; the session start does not move and the journals stay. Without one, while recording, the "
+            "oldest checkpoints (one per frame) are released once there are more than `frames` of them or their "
+            "data exceeds `bytes`; the session start moves forward and the input, port, external-event and "
+            "bookmark records before it go too, so a session saved after a release loads and replays its "
+            "remaining frames exactly. Two checkpoints always stay.\n\n"
             "Body (each field optional; a missing one keeps its value; 0 = no limit; an empty body only reports): "
             "`frames` (integer), `bytes` (integer). While recording the limit applies at once, otherwise from "
             "the next recorded frame. The limit stays for later recordings of this instance. Default: no limit.";
@@ -175,13 +178,22 @@
         op["responses"]["200"]["description"] = "The limit now in force and the history it bounds";
         r["type"] = "object";
         for (const char* name : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
-                                 "checkpoint_count", "session_start_frame", "current_end_frame"})
+                                 "checkpoint_count", "session_start_frame", "current_end_frame",
+                                 "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                 "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                 "read_back_failures"})
         {
             r["properties"][name]["type"] = "integer";
             r["properties"][name]["format"] = "uint64";
         }
         r["properties"]["history_bytes"]["description"] = "Checkpoint data held now (what `bytes` bounds)";
-        r["properties"]["evicted_checkpoints"]["description"] = "Checkpoints released by the limit in this session";
+        r["properties"]["evicted_checkpoints"]["description"] =
+            "Checkpoints released by the limit in this session (no recording folder)";
+        r["properties"]["disk_tier_active"]["type"] = "boolean";
+        r["properties"]["disk_tier_active"]["description"] =
+            "With a recording folder the limit moves segments to disk; the whole session stays seekable";
+        r["properties"]["evicted_to_disk_segments"]["description"] = "Segments held on disk only now";
+        r["properties"]["read_back_segments"]["description"] = "The read-back cache's segments";
         r["properties"]["state"]["type"] = "string";
         op["responses"]["400"]["description"] = "frames or bytes is not a non-negative integer";
         op["responses"]["404"]["description"] = "Emulator instance not found";
@@ -761,6 +773,25 @@
         sw["responses"]["400"]["description"] = "frame / tinframe not integers, or tinframe without frame";
         sw["responses"]["404"]["description"] = "Emulator instance not found, or unknown branch";
         sw["responses"]["409"]["description"] = "The switch was refused (recording, a moment off the branch)";
+
+        Json::Value& rel = paths["/api/v1/emulator/{id}/ttd/branches/switch"]["post"];
+        rel["summary"] = "Switch to the previous branch or a sibling at the nearest fork";
+        rel["tags"].append("Time-Travel Debug");
+        rel["description"] =
+            "to=previous: the branch left last (every switch and fork leaves one on a trail; repeated calls walk it "
+            "back), at its last visited moment. to=next_sibling / prev_sibling: the next / previous branch at the "
+            "nearest fork of the active lineage (the last fork at or before the moment, else the first after it), "
+            "the lineage's own branch past the fork included, by creation.";
+        rel["parameters"].append(idParam());
+        rel["requestBody"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchRelativeRequest";
+        rel["responses"]["200"]["description"] = "Switched";
+        rel["responses"]["200"]["content"]["application/json"]["schema"]["$ref"] =
+            "#/components/schemas/TTDBranchSwitchResponse";
+        rel["responses"]["400"]["description"] = "to missing or not previous / next_sibling / prev_sibling";
+        rel["responses"]["404"]["description"] =
+            "Emulator instance not found, no branch left before this one, or no other branch at a fork";
+        rel["responses"]["409"]["description"] = "The switch was refused";
     }
 
     // =====================================================================

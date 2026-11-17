@@ -2595,6 +2595,46 @@ TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
     EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);
 }
 
+/// manage_symbols cpu: a sound card CPU's labels and sets go as ?cpu= / body cpu; the main CPU's listing actions refuse it
+TEST_F(McpTools_Test, ManageSymbols_Cpu_NamesTheCardsLabels)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/labels?cpu=gs", "GET /api/v1/emulator/emu-1/labels/resolve?name=COMINT&cpu=gs",
+                              "GET /api/v1/emulator/emu-1/symbols/sets?cpu=gs", "POST /api/v1/emulator/emu-1/symbols/import"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "list";
+    args["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels?cpu=gs"));
+
+    args["action"] = "resolve";
+    args["name"] = "COMINT";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels/resolve?name=COMINT&cpu=gs"));
+
+    Json::Value sets;
+    sets["action"] = "sets";
+    sets["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", sets, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/symbols/sets?cpu=gs"));
+
+    Json::Value import;
+    import["action"] = "import";
+    import["path"] = "/x/gs.map";
+    import["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", import, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs");
+
+    Json::Value listing;
+    listing["action"] = "source_at";
+    listing["address"] = "0x026B";
+    listing["cpu"] = "gs";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", listing, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, AsmSource_ActionsMapToTheAsmRoutes)
 {
     for (const char* route : {"GET /api/v1/asm/formats", "GET /api/v1/emulator/emu-1/asm/files?drive=B", "POST /api/v1/emulator/emu-1/asm/convert"})

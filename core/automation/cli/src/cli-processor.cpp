@@ -126,6 +126,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"out", &CLIProcessor::HandlePortOut},  // A debugger's port write through the decoder (PortWrite)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
+                        {"selected-cpu", &CLIProcessor::HandleSelectedCpu},  // The CPU front-ends show (CpuView::SetSelected)
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -703,6 +704,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  ... --cpu gs|ms - step [count] / steps / stepover / stepout of the sound card CPU: the machine runs" << NEWLINE;
     oss << "                  until the card's step ends (the main CPU moves on to the card's catch-up point)" << NEWLINE;
     oss << "  skip_until <pc> [max_tstates] - Fast-forward until PC reaches target" << NEWLINE;
+    oss << "  skip_until <pc> --cpu gs|ms   - Run the sound card CPU to <pc> (a breakpoint on the way ends it)" << NEWLINE;
     oss << "  run_until key=value ...       - Frames until if= / text= / screen= / event= holds ('run_until help')" << NEWLINE;
     oss << "  watch add|list|del            - Armed frame watches: a hit pauses and is pushed as watch_hit" << NEWLINE;
     oss << "  pace [show|presets|set <preset> [ms]|interval <ms>|next|prev|start|stop|toggle|step] - Run at a pace (25 / 5 / 1 fps, a frame, lines, an instruction per interval); stops at a breakpoint" << NEWLINE;
@@ -712,6 +714,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  next nextreg <reg> <value> [nextreg|port|internal] - ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it); `next dma|video|palette|ports|nextreg|copper|sprites` read the reports; `next pixel <x> <y> [sx]` says which layer draws a pixel of the last frame and why; `next layer-capture [on|off]` switches the per-layer record (images: `capture screen --layer=ula|layer2|tilemap|sprites|ids`)" << NEWLINE;
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
+    oss << "  selected-cpu [main|gs|ms] - The CPU the front-ends show; a card shown follows the main CPU's steps" << NEWLINE;
     oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;

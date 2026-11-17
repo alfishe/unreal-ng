@@ -76,6 +76,24 @@ struct Dial
     int index = 0;
     std::string label;
     std::optional<Action> turn, press;
+    // turned while held down (JSON "press_turn"): runs with $ticks as a turn does (a "dir" step: left / right per
+    // detent); a dial with one fires its press on the release, and only when it was not turned while held
+    std::optional<Action> pressTurn;
+};
+
+// A list page (JSON "list" of a menu): keys made from a readout's array, one per item, in the menu's free slots (row
+// by row, after its own keys and the back key). An item's fields go into the templates ({name}) and the steps ($id).
+// More items than free slots: pages, turned by the dial `dial` (its label says PAGE n/m, a press goes to the first).
+struct List
+{
+    std::string readout;      // a readout path to an array of objects: "ttd.branch_list.items"
+    std::string key = "id";   // the item field naming it (the key's id: "<menu>#<value>")
+    std::string label;        // a template (sdb/valueface.h) of the key's caption: "{name}{pinned? *|}"
+    std::string show;         // a template of its big text ("" = a label key): "{age}"
+    std::optional<Action> press, longPress;  // JSON "do" / "long": steps with $<field> of the item
+    std::string on;           // an item field: the key lit while it is true ("active")
+    std::string dim;          // an item field (a leading '!' negates): the key dimmed while it is true
+    int dial = -1;            // the dial that turns the pages (-1: none)
 };
 
 // A touch zone of a strip that shows keys (content "keys"): a tap runs its action. Zones share the strip by span (six
@@ -130,6 +148,9 @@ struct Node
     std::vector<std::string> tags;  // free labels for search / agents ("debug", "ttd", "danger")
     Slot at;                        // position in the parent menu
     Face face;
+    // a press held at least RuntimeOptions::holdMs (JSON "long"): this step instead of the key's own action (or
+    // opening its menu). A key with one acts on its release: short = its own, long = this
+    std::optional<Action> longPress;
     // menu
     std::vector<Node> items;
     std::vector<Dial> dials;
@@ -142,6 +163,7 @@ struct Node
                                             // the columns outside it hold pinned keys (scroll keys, shifts)
     bool readonly = false;  // menu (v2): its keys only show (monitoring): a press does nothing (no action, no press
                             // look); the back key goes back, a page key opens its page
+    std::optional<List> list;  // menu: keys made from a readout's items (see List)
     // action
     Action action;
     std::string then = "stay";   // stay | back | home

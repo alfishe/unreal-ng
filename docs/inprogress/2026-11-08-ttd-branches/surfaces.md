@@ -49,18 +49,14 @@ popups or docks. So the chip, the tree and the fork popup became:
 - **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard relocks
   every 250 ms: the two made the panel flicker).
 
-Not done yet:
-
-- the main window's status bar;
-- the menu items and keys below;
-- the lane filters (creator / tags / run);
-- edits in the past.
-
-A rename, note, tag or pin changes the session in memory; for a folder session it is not yet written to
-`branches.tdx`, which has no update record.
+Not built (the owner closed the work 2026-11-16; [DONE.md](DONE.md)): the main window's status bar, the lane
+filters (creator / tags / run), edits in the past from the panel, and writing a rename, note, tag or pin of a folder
+session to `branches.tdx` (it has no update record; a save from memory keeps them).
 
 Keyboard: `Ctrl+Alt+B` previous branch (the one left last), `Ctrl+Alt+Shift+B` the tree. Assigned through the action
-catalogue like the other TTD actions.
+catalogue like the other TTD actions. As built: the debugger keyboard profile (`profiles/debug/keyboard-default.yaml`)
+binds `key.ctrl.alt.b` to `ttd.branch_prev` and `key.ctrl.alt.shift.b` to the GUI command `unrealqt.ttd_branches`
+(the TTD panel with its Branches row).
 
 ## 2. Actions (shared by Qt, Stream Deck, controllers)
 
@@ -79,6 +75,31 @@ New built-in actions (`emulator/actions/builtinactions.cpp`), each a thin call i
 Readouts (the `show:` vocabulary, `readouts.h`): `ttd.branch.name`, `ttd.branch.count`, `ttd.branch.depth`,
 `ttd.branch.created_ago`, `ttd.branch.pinned`.
 
+**As built (P6, 2026-11-14).** The actions live in `emulator/actions/branchactions.cpp`, each a call into the
+TTDControl verb `branch-switch` / `branch-update` / `branch-delete`:
+
+- `ttd.branch_prev` is `branch-switch {to: previous}`. The trail is the controller's (`TimeTravelController::BranchTrail`):
+  every branch left by a switch on any plane, and by a fork, is pushed (no repeats, at most 64); a press pops back to
+  the last live entry other than the active branch, so presses walk further back. A `branch-create` with `go_back`
+  is one step (the branch it returns from), its internal switches leave nothing. Loading a session clears the trail.
+- `ttd.branch_next_sibling` / `ttd.branch_prev_sibling` are `branch-switch {to: next_sibling | prev_sibling}`. The
+  nearest fork: the last fork of the lineage at or before the current frame, else the first after it. The siblings:
+  the lineage's own branch there and the branches leaving there, by creation (time, then id), wrapping.
+- `ttd.branch_switch {branch, frame?, tinframe?}` is the branch menu's key; `ttd.branch_menu` returns the
+  `ttd.branch_list` value.
+- `ttd.branch_pin` pins / unpins the active branch (toggle state `toggle.ttd.branch_pin`).
+- `ttd.branch_delete {branch, now?}` is held: it deletes on the release after 1 s (`now`: at the press), never with
+  `force`, so pinned branches and the active lineage are refused with the reason.
+
+The readouts are one object each, so `ttd.branch.name` etc. are paths into it: `ttd.branch` {available, id, guid,
+name, count, depth (ancestors on the lineage), pinned, created_ago / age ("12s", "5m", "3h", "2d"), viewed {id, name},
+previous {id, name} | null, siblings (at the nearest fork), forks (the lineage's fork frames, at most 64: the deck strip's ticks)} and `ttd.branch_list` {available, active, count, total,
+items[] (at most 100: the active lineage first, then newest first) {id, name, age, pinned, active, on_lineage,
+length}}. The list is not called `ttd.branches`: that is the WebSocket topic of the branch table (it gained
+`previous`). Both read the published branch table only. Planes: `POST /ttd/branches/switch {to}` (REST, WebSocket
+call), MCP `time_travel branch_switch {to}`, CLI `ttd branch back` / `ttd branch sibling [next|prev]`, Lua / Python
+`ttd_branch_switch_to(to)`; `GET /ttd/branches` names `previous`.
+
 ## 3. Stream Deck (`companions/streamdeck/`, scenario `data/streamdeck/scenarios/src/unreal.spec.yaml`)
 
 | Element | With branches |
@@ -95,6 +116,23 @@ Prerequisite fix (finding F-2): the FRAME key reads `ttd.position.current.frame`
 `ttd-surface-contract` verification gets a case for it. The new branch readouts go into that contract from the
 start.
 
+**As built (P6).** Three scenario v2 fields carry it ([pipeline.md §3](../../companions/streamdeck/pipeline.md)):
+`long` (a key's or a menu key's long press: held 600 ms or more, it runs on the release), `list` (a menu's free keys
+filled from a readout array, paged by a dial that shows `PAGE n/m`) and `press_turn` (a dial turned while pressed;
+the dial's press then runs on the release, only when it did not turn). The strip subscribes `ttd.branch` with the
+timeline: with more than one branch it draws the active branch's name after the state word and a green fork tick at
+every fork frame of the lineage (`StripLive::Key` holds the count, the name and the forks, so only a change of them
+repaints). The product scenario: home [3,2] BRANCH is the `branches` menu key, a value key `{name}` over `{count} BR`,
+a long press `ttd.branch_prev`; the OPS dial keeps turn `ttd.jog_instructions` and press `ttd.resume_live`, turned
+while held it walks the siblings (`ttd.branch_prev_sibling` / `ttd.branch_next_sibling`). The Time menu adds PREV BR
+[2,2], SIB < [2,6], SIB > [2,7] and PIN [3,4] (lit while `ttd.branch.pinned`). The `branches` menu (context ttd,
+strip status ttd) lists `ttd.branch_list.items` on its free keys: the name with `*` when pinned, the age as the value,
+lit when active, dimmed off the active lineage; a press is `ttd.branch_switch {branch: $id}`, a long press deletes it
+(`ttd.branch_delete {branch: $id, now: true}`): no DELETE key, the delete is the long press on a list item. PREV BR
+and PIN sit in its row 0; dial 0 turns the pages. Not built: the long touch on a fork tick (the strip seeks on a touch
+as before), and the BRANCH key is always shown (the scenario format has no visibility rule, so it cannot wait for a
+second branch).
+
 ## 4. Controllers
 
 | Device | Mapping |
@@ -105,6 +143,12 @@ start.
 | Paddles | unchanged |
 
 Profiles under `data/controllers/profiles/` get the new actions in their defaults; users remap as today.
+
+**As built (P6).** ShuttlePRO: K12 stays reverse continue; K14 held + K12 is the previous branch (a chord, like
+K14 + jog). Pad (`pad-default.yaml`): `view+east` chord, east alone stays resume. Surface Dial: not built. Windows'
+wheel menu is suppressed for the emulator's window by design (controller manager surface-dial.md §4.1: the emulator
+reads the Dial through HID), and the router has no long press, so there is no press-hold menu to add to; the Dial
+keeps scrubbing the active lineage. Tested by `BranchBindings_Test` (T-A6).
 
 ## 5. Automation planes
 

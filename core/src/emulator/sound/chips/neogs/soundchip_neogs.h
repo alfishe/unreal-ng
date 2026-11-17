@@ -146,6 +146,7 @@ public:
     bool setDebugHooks(IGSDebugHooks* hooks) override;
     CardPage mapCardAddress(uint16_t addr) const override;
     uint32_t cardPageCount(CardPage::Kind kind) const override;
+    const uint8_t* cardRomPage(uint32_t page) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return _runner.now(); }
     void catchUpToHost() override;

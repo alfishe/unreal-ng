@@ -4,11 +4,13 @@
 #include <cctype>
 #include <cstdio>
 #include <iterator>
+#include <optional>
 #include <utility>
 
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/disassemblywindow.h"
 #include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -51,6 +53,28 @@ std::string Select(EmulatorContext* context, const std::string& name, DebugCpuId
     if (IsCardCpu(cpu) && !Card(context, cpu))
         return std::string("cpu ") + DebugCpuName(cpu) + " not available: no card with a CPU in its slot";
     return {};
+}
+
+std::string SetSelected(EmulatorContext* context, const std::string& name)
+{
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    if (!debug)
+        return "no debugger on this machine";
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (std::string error = Select(context, name, cpu); !error.empty())
+        return error;
+    debug->SelectCpu(cpu);
+    return {};
+}
+
+StateNode Selected(EmulatorContext* context)
+{
+    StateNode ret = StateNode::Object();
+    DebugManager* debug = context ? context->pDebugManager : nullptr;
+    const DebugCpuId cpu = debug ? debug->SelectedCpu() : DebugCpuId::Main;
+    ret["cpu"] = std::string(DebugCpuName(cpu));
+    ret["follows"] = IsCardCpu(cpu) && Card(context, cpu) != nullptr;
+    return ret;
 }
 
 GeneralSoundCard* Card(EmulatorContext* context, DebugCpuId cpu)
@@ -227,7 +251,7 @@ std::string Write(Emulator* emulator, DebugCpuId cpu, const char* source, uint16
 
 namespace
 {
-/// The card CPU's 64K as the window reads it: peeks, no marks (labels and the markup are the main CPU's)
+/// The card CPU's 64K as the window reads it: peeks, no marks (the markup is the main CPU's)
 class CardSource : public disasm::Source
 {
 public:
@@ -260,6 +284,14 @@ StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, siz
     count = std::clamp<size_t>(count, 1, 256);
     before = std::min<size_t>(before, 256);
 
+    // The card's own labels name its instructions and operands (none: no names, never the main CPU's)
+    LabelManager* labels = debug->GetLabelManager(cpu);
+    std::optional<Z80Disassembler::LabelsScope> cardLabels;
+    std::optional<Z80Disassembler::NoLabelsScope> noLabels;
+    if (labels)
+        cardLabels.emplace(labels);
+    else
+        noLabels.emplace();
     CardSource source(card);
     disasm::Window window(*debug->GetDisassembler(), source);
     if (snap)
@@ -285,6 +317,9 @@ StateNode Disasm(EmulatorContext* context, DebugCpuId cpu, uint16_t address, siz
         line["bytes"] = hex;
         line["mnemonic"] = row.mnemonic;
         line["size"] = static_cast<int>(row.length);
+        if (labels)
+            if (std::shared_ptr<Label> label = labels->GetLabelByZ80Address(row.address))
+                line["label"] = label->name;
         const DecodedInstruction& decoded = row.decoded;
         if (row.kind == disasm::RowKind::Data)
             line["kind"] = std::string(row.cut ? "cut" : "data");

@@ -197,6 +197,37 @@ def test_the_card_cpus_registers_memory_and_code(s):
     clear(s)
 
 
+def test_the_card_names_its_firmware(s):
+    """The GS report's firmware_profile (gs-debugger design §6.1, L4): the PENTAGON's NeoGS runs its own flash, no
+    built-in profile: known false with the digest, and the text says unknown firmware, no symbols"""
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs'})
+    profile = (r.structured or {}).get('body', {}).get('firmware_profile', {})
+    expect(profile.get('known') is False and len(profile.get('sha256', '')) == 64 and len(profile.get('page_sha256', [])) == 2,
+           'an unknown firmware with its digests', profile)
+    r = s.call('inspect_state', {'aspects': ['audio_gs']})
+    expect('unknown firmware' in r.text and 'no symbols' in r.text, 'said in the text', r.text)
+    r = s.call('manage_symbols', {'action': 'sets', 'cpu': 'gs'})
+    expect('bundle:gs:' not in r.text, 'no firmware symbols for the card CPU', r.text)
+
+
+def test_the_command_log_is_a_device_history(s):
+    """The host's GS commands (gs-debugger design §6.3): `<slot>.commands` in device_history, off until configured; a
+    port write of the host's (#B3 then #BB) is a data and a command record, each with its text. The NeoGS runs its own
+    firmware: no profile, the records raw"""
+    r = s.call('device_history', {'action': 'list'})
+    logs = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*\.commands)\b', r.text)))
+    expect(logs, 'a command log among the histories', r.text)
+    device = logs[0]
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'ring'})
+    for port, value in (('0xB3', '0x05'), ('0xBB', '0x2C')):
+        w = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out',
+                                  'body': {'port': port, 'value': value}}, ok=False)
+        expect(not w.is_error, 'the host port written', w.text)
+    r = s.call('device_history', {'action': 'read', 'device': device, 'last': 16})
+    expect('#2C' in r.text and 'data #05' in r.text, 'a data and a command record, decoded to text', r.text)
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})
+
+
 def test_the_card_cpu_from_python(s):
     """Python's cpu= on the register, memory and code functions; memory_map('gs') the windows; ms is a RuntimeError"""
     clear(s)
@@ -287,6 +318,58 @@ def test_the_card_cpu_steps(s):
         expect('card-step True step gs' in output, 'Python steps the card', output)
     r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
     expect((r.structured or {}).get('stop', {}).get('reason') == 'step', 'MCP still holds the machine', r.text)
+    clear(s)
+
+
+def test_the_selected_card_follows_main_steps(s):
+    """select_cpu (design §5.2): the card a front-end shows follows the main CPU's steps of the paused machine; the
+    choice is one per machine, the scripts see it, main ends it, a card that is not there is refused"""
+    clear(s)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'gs'})
+    expect(r.structured.get('cpu') == 'gs' and r.structured.get('follows') is True and 'follows' in r.text,
+           'the card shown follows', (r.text, r.structured))
+    r = s.call('control_execution', {'action': 'step_n', 'count': 20})
+    expect(not r.is_error, 'the main CPU steps with the card shown', r.text)
+    code = 'local c = selected_cpu() print("shown", c.cpu, c.follows)'
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('shown\tgs\ttrue' in output or 'shown gs true' in output, 'Lua sees the choice', output)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'ms'}, ok=False)
+    expect(r.is_error and 'not available' in r.text, 'no MultiSound card', r.text)
+    r = s.call('control_execution', {'action': 'select_cpu', 'cpu': 'main'})
+    expect(r.structured.get('cpu') == 'main' and r.structured.get('follows') is False, 'main ends it', r.structured)
+    r = s.call('control_execution', {'action': 'select_cpu'})
+    expect(r.text.startswith('Selected cpu: main'), 'no cpu: the report', r.text)
+    clear(s)
+
+
+def test_the_card_cpu_runs_to_the_cursor(s):
+    """run_until_pc with cpu gs (design §5.3): the card CPU runs to the cursor and the machine is paused there; the
+    reply says hit; Lua runs it there too"""
+    clear(s)
+    # A place the card comes back to: the first instruction its loop runs again
+    seen = [card_pc(s)]
+    looped = False
+    for _ in range(500):
+        pc = s.call('control_execution', {'action': 'step', 'cpu': 'gs'}).structured.get('pc')
+        looped = pc in seen
+        if looped:
+            break
+        seen.append(pc)
+    expect(looped, 'the card comes back to an instruction within 500 steps', seen[-10:])
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'gs'})
+    stop = (r.structured or {}).get('stop', {})
+    expect(stop.get('reason') == 'step' and stop.get('cpu_pc') == pc and r.structured.get('hit') is True,
+           'the card at the cursor', r.structured)
+    expect(('Ran cpu gs to #%04X' % pc) in r.text, 'said in the text', r.text)
+    expect(card_pc(s) == pc and r.structured.get('state') == 'paused', 'paused there', r.structured)
+
+    code = 'local r = skip_until(%d, "gs") print("to", r.ok, r.hit, r.pc == %d)' % (pc, pc)
+    r = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/lua/exec', 'body': {'code': code}}, ok=False)
+    output = ((r.structured or {}).get('body') or {}).get('output', '') + r.text
+    expect('to\ttrue\ttrue\ttrue' in output or 'to true true true' in output, 'Lua runs the card to it', output)
+    r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'ms'}, ok=False)
+    expect(r.is_error, 'no MultiSound card', r.text)
     clear(s)
 
 

@@ -71,7 +71,7 @@ Runtime::Runtime(Device& dev, Scenario s, std::unique_ptr<ActionHost> host, Runt
     // faces are drawn at the key's own size: the device pipeline then sends them as they are (sharp, no resize)
     _faceSize = _m.key.w > 0 && _m.key.w == _m.key.h ? _m.key.w : kFaceSize;
     _safePad = _m.keySafeInset > 0 && _m.key.w > 0 ? (_m.keySafeInset * _faceSize + _m.key.w / 2) / _m.key.w : 0;
-    _page = Layout(_s, _nav, _m);
+    Relayout();
     _lastActivity = NowMs();
 }
 
@@ -181,10 +181,13 @@ void Runtime::EnsureMonitor()
                     // the same few paths a page's keys name: its state-bound faces and its value faces. Live, the
                     // surface client pushes the core's; the GUI program's (gui.*) are asked still
                     auto add = [&](const std::string& path) {
-                        if (!path.empty() && !_pushed.count(path) && (!_live || path.rfind("gui.", 0) == 0) &&
+                        if (!path.empty() && path.front() != '@' && !_pushed.count(path) &&
+                            (!_live || path.rfind("gui.", 0) == 0) &&
                             std::find(paths.begin(), paths.end(), path) == paths.end())
                             paths.push_back(path);
                     };
+                    if (_nav.Current().list)
+                        add(_nav.Current().list->readout);  // a list page's items
                     for (const Node* n : _page.keys)
                         if (n)
                         {
@@ -282,6 +285,9 @@ void Runtime::Step(int timeoutMs)
             _nav.Rebind(_s, ids);
             _toggles.clear();
             _holds.clear();
+            _longArmed.clear();
+            _dialHeld.clear();
+            _listMenu = nullptr;  // the old scenario's: the list page starts at its first
             _dialHint = StripLive::kAllDials, _dialHintUntil = NowMs() + 2000;  // the reloaded page opens anew
             force = true;
             reloaded = true;
@@ -294,7 +300,7 @@ void Runtime::Step(int timeoutMs)
             _lastActivity = NowMs();
             _dev.Note("auto exit -> " + JoinPath(Layout(_s, _nav, _m).path));
         }
-        _page = Layout(_s, _nav, _m);
+        Relayout();
     }
     if (_running && !_opt.syncActions)
         EnsureMonitor();
@@ -504,21 +510,41 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                              // pages still open)
             _pressed[static_cast<size_t>(e.index)] = true;
             _downAt[e.index] = now;
-            if (e.index != _page.backKey)
-                Activate(e.index);  // the back key acts on release (hold = home)
+            if (e.index == _page.backKey)
+                break;  // the back key acts on release (hold = home)
+            if (const Node* n = _page.keys[static_cast<size_t>(e.index)]; n && n->longPress)
+                _longArmed[e.index] = n->id;  // a key with a long step acts on its release: short or long
+            else
+                Activate(e.index);
             break;
         case EventType::KeyUp: {
             if (e.index < 0 || e.index >= _m.keys)
                 return;
             _pressed[static_cast<size_t>(e.index)] = false;
+            bool releasedHold = false;
             if (auto held = _holds.find(e.index); held != _holds.end())
             {  // the release of a held action (hold: true): the job the press made, on whatever page shows now
                 Job release = std::move(held->second);
                 _holds.erase(held);
                 Enqueue(std::move(release));
                 ReleaseLatches(false);  // a one-shot shift of the strip went with this key
+                releasedHold = true;
             }
-            else if (e.index != _page.backKey && _downAt.count(e.index) && !_latched.empty())
+            if (auto armed = _longArmed.find(e.index); armed != _longArmed.end())
+            {
+                // the same key still there (a list page may have moved under the finger: its id names the item)
+                const Node* n = _page.keys[static_cast<size_t>(e.index)];
+                const auto down = _downAt.find(e.index);
+                if (n && n->id == armed->second && down != _downAt.end())
+                {
+                    if (now - down->second >= _opt.holdMs)
+                        ActivateLong(e.index);
+                    else
+                        Activate(e.index);
+                }
+                _longArmed.erase(armed);
+            }
+            if (!releasedHold && e.index != _page.backKey && _downAt.count(e.index) && !_latched.empty())
                 ReleaseLatches(true);  // a tapped key: the shift lets go once the tap has played
             if (e.index == _page.backKey && _downAt.count(e.index))
             {
@@ -527,7 +553,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                     _nav.Home();
                 else
                     _nav.Back();
-                _page = Layout(_s, _nav, _m);
+                Relayout();
                 NoteMenu();
             }
             _downAt.erase(e.index);
@@ -535,31 +561,55 @@ void Runtime::Handle(const Event& e, std::int64_t now)
         }
         case EventType::DialTurn:
             if (e.index >= 0 && e.index < static_cast<int>(_page.dials.size()))
-                if (const Dial* d = _page.dials[static_cast<size_t>(e.index)]; d && d->turn)
+            {
+                const Dial* d = _page.dials[static_cast<size_t>(e.index)];
+                if (d && d == &_listDial)
+                {
+                    // the list's pages: a page a turn, whatever its detents
+                    const int page = std::clamp(_listPage + (e.delta < 0 ? -1 : 1), 0, std::max(0, _listPages - 1));
+                    _dialHint = e.index, _dialHintUntil = now + 1500;
+                    if (page != _listPage)
+                    {
+                        _listPage = page;
+                        Relayout();
+                    }
+                    break;
+                }
+                if (auto held = _dialHeld.find(e.index); held != _dialHeld.end() && d && d->pressTurn)
+                {
+                    // turned while held: press_turn, and the press on the release is off
+                    held->second = true;
+                    const double rate = TurnRate(e.index, e.delta, now);
+                    _dialHint = e.index, _dialHintUntil = now + 1500;
+                    Enqueue({*d->pressTurn, sdb::Format("dial {} press-turn", e.index),
+                             {{"ticks", e.delta}, {"rate", rate}}, "stay"});
+                    break;
+                }
+                if (d && d->turn)
                 {
                     // how fast it turns (detents a second, smoothed): actions accelerate with it (ttd_seek)
-                    auto& [lastMs, rate] = _turnRate[e.index];
-                    const double inst =
-                        lastMs > 0 ? std::abs(e.delta) * 1000.0 / std::max<std::int64_t>(1, now - lastMs) : 0.0;
-                    rate = now - lastMs > 400 ? inst * 0.3 : rate * 0.5 + inst * 0.5;
-                    lastMs = now;
+                    const double rate = TurnRate(e.index, e.delta, now);
                     _dialHint = e.index, _dialHintUntil = now + 1500;  // its label over the timeline while it turns
                     Enqueue({*d->turn, sdb::Format("dial {}", e.index), {{"ticks", e.delta}, {"rate", rate}}, "stay"});
                 }
+            }
             break;
         case EventType::DialDown:
             if (e.index >= 0 && e.index < static_cast<int>(_page.dials.size()))
-                if (const Dial* d = _page.dials[static_cast<size_t>(e.index)]; d && d->press)
+                if (const Dial* d = _page.dials[static_cast<size_t>(e.index)])
                 {
-                    Job j{*d->press, sdb::Format("dial {} press", e.index), json::object(), "stay"};
-                    if ((d->press->kind == "action" || d->press->kind == "gui") && d->press->spec.value("hold", false))
+                    if (d == &_listDial)
                     {
-                        j.phase = 1;
-                        Job release = j;
-                        release.phase = -1;
-                        _holds[1000 + e.index] = std::move(release);
+                        if (_listPage != 0)
+                        {
+                            _listPage = 0;  // a press: the first page
+                            Relayout();
+                        }
                     }
-                    Enqueue(std::move(j));
+                    else if (d->pressTurn)
+                        _dialHeld[e.index] = false;  // the press waits for the release: a turn first cancels it
+                    else if (d->press)
+                        PressDial(e.index, *d, false);
                 }
             break;
         case EventType::DialUp:
@@ -569,6 +619,14 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 _holds.erase(held);
                 Enqueue(std::move(release));
                 ReleaseLatches(false);
+            }
+            if (auto held = _dialHeld.find(e.index); held != _dialHeld.end())
+            {
+                const bool turned = held->second;
+                _dialHeld.erase(held);
+                if (!turned && e.index < static_cast<int>(_page.dials.size()))
+                    if (const Dial* d = _page.dials[static_cast<size_t>(e.index)]; d && d->press && d != &_listDial)
+                        PressDial(e.index, *d, true);
             }
             break;
         case EventType::LcdTap:
@@ -591,7 +649,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 if (depth >= 0 && static_cast<size_t>(depth) < _nav.Depth())
                 {
                     _nav.PopTo(static_cast<size_t>(depth));
-                    _page = Layout(_s, _nav, _m);
+                    Relayout();
                     NoteMenu();
                 }
             }
@@ -607,7 +665,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 break;
             if (e.x2 > e.x + 40 && _nav.Back())
             {
-                _page = Layout(_s, _nav, _m);
+                Relayout();
                 NoteMenu();
             }
             break;
@@ -615,7 +673,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             if (_nav.Depth() > 0)
             {
                 _nav.Home();
-                _page = Layout(_s, _nav, _m);
+                Relayout();
                 NoteMenu();
             }
             break;
@@ -712,6 +770,152 @@ void Runtime::DimUnavailable(Rgb& img)
         }
 }
 
+double Runtime::TurnRate(int index, int delta, std::int64_t now)
+{
+    auto& [lastMs, rate] = _turnRate[index];
+    const double inst = lastMs > 0 ? std::abs(delta) * 1000.0 / std::max<std::int64_t>(1, now - lastMs) : 0.0;
+    rate = now - lastMs > 400 ? inst * 0.3 : rate * 0.5 + inst * 0.5;
+    lastMs = now;
+    return rate;
+}
+
+void Runtime::PressDial(int index, const Dial& d, bool releaseNow)
+{
+    Job j{*d.press, sdb::Format("dial {} press", index), json::object(), "stay"};
+    if ((d.press->kind == "action" || d.press->kind == "gui") && d.press->spec.value("hold", false))
+    {
+        j.phase = 1;
+        Job release = j;
+        release.phase = -1;
+        if (releaseNow)
+        {
+            Enqueue(std::move(j));
+            Enqueue(std::move(release));
+            return;
+        }
+        _holds[1000 + index] = std::move(release);
+    }
+    Enqueue(std::move(j));
+}
+
+void Runtime::ActivateLong(int key)
+{
+    const Node* n = _page.keys[static_cast<size_t>(key)];
+    if (!n || !n->longPress)
+        return;
+    const Action& a = *n->longPress;
+    if (const std::string why = UnavailableLocked(a); !why.empty())
+    {
+        SetBanner(why, 2500, true);
+        return;
+    }
+    Job j{a, n->id + " long", json::object(), "stay"};
+    if ((a.kind == "action" || a.kind == "gui") && a.spec.value("hold", false))
+    {
+        // the key is up already: a held step is pressed and released at once (ttd.branch_delete with now: true acts
+        // on the press)
+        j.phase = 1;
+        Job release = j;
+        release.phase = -1;
+        Enqueue(std::move(j));
+        Enqueue(std::move(release));
+        return;
+    }
+    Enqueue(std::move(j));
+}
+
+void Runtime::Relayout()
+{
+    _page = Layout(_s, _nav, _m);
+    FillList();
+}
+
+namespace
+{
+bool Truthy(const json& v)
+{
+    if (v.is_boolean())
+        return v.get<bool>();
+    if (v.is_number())
+        return v.get<double>() != 0;
+    if (v.is_string())
+        return !v.get<std::string>().empty();
+    return !v.is_null() && !v.empty();
+}
+}  // namespace
+
+void Runtime::FillList()
+{
+    const Node& cur = _nav.Current();
+    if (&cur != _listMenu)
+    {
+        _listMenu = &cur;
+        _listPage = 0;
+    }
+    _listNodes.clear();
+    _listValues.clear();
+    _listPages = 1;
+    if (!cur.list)
+        return;
+    const List& l = *cur.list;
+    std::vector<int> slots;  // the free keys, row by row
+    for (int k = 0; k < static_cast<int>(_page.keys.size()); ++k)
+        if (!_page.keys[static_cast<size_t>(k)] && k != _page.backKey)
+            slots.push_back(k);
+    const auto found = _readouts.find(l.readout);
+    const json* items = found != _readouts.end() && found->second.is_array() ? &found->second : nullptr;
+    const int count = items ? static_cast<int>(items->size()) : 0;
+    const int per = static_cast<int>(slots.size());
+    _listPages = per > 0 ? std::max(1, (count + per - 1) / per) : 1;
+    _listPage = std::clamp(_listPage, 0, _listPages - 1);
+    if (l.dial >= 0 && l.dial < static_cast<int>(_page.dials.size()))
+    {
+        _listDial = Dial{};
+        _listDial.index = l.dial;
+        _listDial.label = _listPages > 1 ? sdb::Format("PAGE {}/{}", _listPage + 1, _listPages) : "PAGE";
+        _page.dials[static_cast<size_t>(l.dial)] = &_listDial;
+    }
+    if (_listPages > 1 && !_page.path.empty())
+        _page.path.back() += sdb::Format(" {}/{}", _listPage + 1, _listPages);
+    if (!items || per == 0)
+        return;
+    const int first = _listPage * per;
+    const int shown = std::min(per, count - first);
+    _listNodes.reserve(static_cast<size_t>(std::max(0, shown)));  // Page::keys point into it: no reallocation below
+    for (int i = 0; i < shown; ++i)
+    {
+        const json& item = (*items)[static_cast<size_t>(first + i)];
+        if (!item.is_object())
+            continue;
+        Node node;
+        node.type = Node::Type::Action;
+        const json key = item.contains(l.key) ? item[l.key] : json(first + i);
+        node.id = cur.id + "#" + (key.is_string() ? key.get<std::string>() : key.dump());
+        node.face.label = FormatValue(l.label.empty() ? "{" + l.key + "}" : l.label, item);
+        node.title = node.face.label;
+        node.tags = {"list"};
+        if (!l.on.empty() && Truthy(FieldOf(item, l.on)))
+            node.face.bg = draw::Color{0, 90, 170};  // lit: the theme's blue
+        if (!l.dim.empty())
+        {
+            const bool negate = l.dim.front() == '!';
+            if (Truthy(FieldOf(item, negate ? std::string_view(l.dim).substr(1) : std::string_view(l.dim))) != negate)
+                node.face.fg = draw::Color{120, 128, 158};  // dimmed: grey-blue words
+        }
+        if (!l.show.empty())
+        {
+            node.face.value = FaceValue{"@" + node.id, l.show, std::nullopt, std::nullopt};
+            _listValues[node.id] = item;
+        }
+        if (l.press)
+            node.action = Action{l.press->kind, Substitute(l.press->spec, item)};
+        if (l.longPress)
+            node.longPress = Action{l.longPress->kind, Substitute(l.longPress->spec, item)};
+        _listNodes.push_back(std::move(node));
+        _page.keys[static_cast<size_t>(slots[static_cast<size_t>(i)])] = &_listNodes.back();
+    }
+}
+
 void Runtime::Activate(int key)
 {
     const Node* n = _page.keys[static_cast<size_t>(key)];
@@ -725,7 +929,7 @@ void Runtime::Activate(int key)
     if (n->IsMenu())
     {
         _nav.Enter(*n);
-        _page = Layout(_s, _nav, _m);
+        Relayout();
         NoteMenu();
         return;
     }
@@ -896,7 +1100,7 @@ void Runtime::ApplyNav(const json& r)
     }
     if (moved)
     {
-        _page = Layout(_s, _nav, _m);
+        Relayout();
         NoteMenu();
         _lastActivity = NowMs();
     }
@@ -1090,7 +1294,7 @@ void Runtime::RestorePath(const std::vector<std::string>& ids)
 {
     std::lock_guard l(_mu);
     _nav.Rebind(_s, ids);
-    _page = Layout(_s, _nav, _m);
+    Relayout();
 }
 
 void Runtime::ShowStopped(const std::string& text)
@@ -1271,6 +1475,12 @@ json Runtime::CurrentPage() const
 
 ValueShown Runtime::ShownLocked(const FaceValue& v) const
 {
+    if (!v.readout.empty() && v.readout.front() == '@')
+    {
+        // a list item's value face: its item
+        const auto item = _listValues.find(v.readout.substr(1));
+        return ShowValue(v, item != _listValues.end() ? item->second : json());
+    }
     auto it = _readouts.find(v.readout);
     return ShowValue(v, it != _readouts.end() ? it->second : json());
 }
@@ -1278,6 +1488,15 @@ ValueShown Runtime::ShownLocked(const FaceValue& v) const
 json Runtime::PageLocked() const
 {
     json page = DescribePage(_s, _nav, _m, _page, OnStates());
+    if (_nav.Current().list)
+    {
+        // a list page: the page shown of how many, the items there are
+        const auto items = _readouts.find(_nav.Current().list->readout);
+        page["list"] = {{"readout", _nav.Current().list->readout},
+                        {"page", _listPage + 1},
+                        {"pages", _listPages},
+                        {"items", items != _readouts.end() && items->second.is_array() ? items->second.size() : 0}};
+    }
     // value faces: what each key shows now ({readout, text, level}); `flash` while an activity flash lights it
     const std::int64_t now = NowMs();
     if (page.contains("keys"))

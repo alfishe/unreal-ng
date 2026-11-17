@@ -176,7 +176,9 @@ private:
     void openMediumActions(const std::string& slot, int kind);
     void openTapeBlocks();
     void openCardPicker(const std::string& slot);
-    void openBrowser(HandheldBrowser::Filter filter, const QString& title, std::function<void(const QString&)> chosen);
+    /// @p folders: the slot takes a host folder (HandheldBrowser::Open)
+    void openBrowser(HandheldBrowser::Filter filter, const QString& title, std::function<void(const QString&)> chosen,
+                     bool folders = false);
     void openFile(const QString& path);
     void saveSnapshot();
     void quickSlot(const char* op, int slot);

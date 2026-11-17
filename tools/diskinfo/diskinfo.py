@@ -6,8 +6,7 @@
     diskinfo.py <image> --dump idam   [--track 0] [--sector 1-8]
     diskinfo.py <image> --dump raw    [--track 5] [--out track5.bin]
 
-Reads every format diskconvert.py can read - SCL, TRD, FDI, UDI and uncompressed
-TD0 - through the same `diskconverter` package (imported from the sibling
+Reads every format diskconvert.py can read - SCL, TRD, FDI, UDI and TD0 - through the same `diskconverter` package (imported from the sibling
 directory), so both tools always agree on parsing.
 
 Brief mode (the default) prints the geometry: cylinders x heads, the sector count
@@ -22,9 +21,9 @@ Dump modes:
   sectors  sector data only, hexdumped in track stream order
   idam     each sector preceded by its decoded ID field (CHRN, size, data-CRC
            state, deleted/no-data flags) and the CRC bytes the fields carry
-  raw      the raw MFM byte stream of each track - the original stream for UDI
-           inputs, otherwise one synthesized by diskconverter.mfm (gaps rebuilt,
-           nominal 6250-byte revolution) - with IDAM/DAM marker offsets listed
+  raw      the raw byte stream of each track as the model holds it (the same
+           stream unreal-disk builds: the original one for UDI, the loader's
+           layout for the other formats) - with IDAM/DAM marker offsets listed
            ahead of the hexdump
 
 Selection: --track (physical cylinders), --side (heads) and --sector (sector ID
@@ -40,7 +39,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import struct
 import sys
 from pathlib import Path
 
@@ -555,7 +553,14 @@ def idam_line(sec: Sector) -> str:
     a sector whose stored ID CRC differs is marked ERROR."""
     fields = bytes([mfm.IDAM, sec.cylinder, sec.head, sec.number, sec.size_code])
     crc = mfm.crc_wd1793(fields)
-    state = "ok" if sec.id_crc_valid else "ERROR (stored CRC differs)"
+    if sec.id_crc_valid and sec.id_crc_stored is not None:
+        crc = sec.id_crc_stored[0] | (sec.id_crc_stored[1] << 8)  # the stored bytes (an FM track's own CRC)
+    if sec.id_crc_valid:
+        state = "ok"
+    elif sec.id_crc_stored is not None:
+        state = f"ERROR (stored {sec.id_crc_stored.hex().upper()})"
+    else:
+        state = "ERROR (stored CRC differs)"
     return (
         f"C={sec.cylinder} H={sec.head} R={sec.number} {fmt_size_code(sec.size_code)}, "
         f"id-crc {crc & 0xFF:02X}{(crc >> 8) & 0xFF:02X} {state}"
@@ -584,6 +589,8 @@ def dump_idam(
                 data_crc = "no data field"
             elif sec.crc_valid:
                 crc = mfm.crc_wd1793(bytes([dam]) + sec.data)
+                if sec.data_crc_stored is not None:
+                    crc = sec.data_crc_stored[0] | (sec.data_crc_stored[1] << 8)
                 data_crc = f"data-crc OK ({crc & 0xFF:02X}{(crc >> 8) & 0xFF:02X})"
             else:
                 data_crc = "data-crc ERROR (stored CRC does not match the data)"
@@ -595,30 +602,6 @@ def dump_idam(
 
 
 # --------------------------------------------------------------- raw mode
-
-def extract_udi_raw_tracks(path: str) -> dict[tuple[int, int], bytes] | None:
-    """Original per-track MFM byte streams straight out of a UDI file - the only
-    input format that carries them. Mirrors udi.read's walk over the track table,
-    minus sector decoding. Returns None for any non-UDI file (including the
-    compressed 'udi!' variant, which module.read refuses before we get here)."""
-    with open(path, "rb") as f:
-        data = f.read()
-    if not udi_format.detect(data[:16]):
-        return None
-    cylinders = data[9] + 1
-    heads = data[10] + 1
-    offset = 0x10 + struct.unpack_from("<I", data, 0x0C)[0]
-    tracks: dict[tuple[int, int], bytes] = {}
-    for cyl in range(cylinders):
-        for head in range(heads):
-            track_type = data[offset]
-            tlen = struct.unpack_from("<H", data, offset + 1)[0]
-            offset += 3
-            if track_type in (udi_format.TRACK_TYPE_MFM, udi_format.TRACK_TYPE_FM):
-                tracks[(cyl, head)] = data[offset : offset + tlen]
-            offset += tlen + (tlen + 7) // 8  # stream + clock bitmap
-    return tracks
-
 
 def marker_lines(raw: bytes) -> list[str]:
     """Offsets of every A1 A1 A1 <mark> in a raw stream with the ID/data fields
@@ -648,19 +631,16 @@ def dump_raw(
     head_sel: set[int] | None,
     out_binary: str | None,
 ) -> None:
-    """Raw tracks. UDI inputs get their original byte streams (sector gaps,
-    interleave and all); every other format only has structured sectors, so the
-    stream is synthesized by mfm.encode_track - same encoder UDI writing uses."""
-    udi_raw = extract_udi_raw_tracks(path) if module is udi_format else None
+    """Raw tracks: the stream each track holds (for UDI the file's own, for the other formats the one the
+    loader lays out, byte for byte as unreal-disk does)."""
     payload = bytearray() if out_binary else None
     for cyl, head in iter_selected_tracks(disk, cyl_sel, head_sel):
-        if udi_raw is not None and (cyl, head) in udi_raw:
-            raw = udi_raw[(cyl, head)]
-            source = "original stream from UDI"
+        trk = disk.get_track(cyl, head)
+        raw = bytes(trk.raw) if trk else b""
+        if module is udi_format:
+            source = f"{trk.encoding.upper()}, original stream from UDI" if trk else "missing"
         else:
-            trk = disk.get_track(cyl, head)
-            raw = mfm.encode_track(trk.sectors if trk else []).raw
-            source = "synthesized (gaps rebuilt, nominal 6250-byte revolution)"
+            source = f"{trk.encoding.upper()}, laid out by the {disk.format.upper()} loader" if trk else "missing"
         if out_binary is not None:
             payload.extend(raw)
             continue
@@ -707,6 +687,8 @@ def main(argv: list[str] | None = None) -> int:
     except (DiskConversionError, OSError) as e:
         print(f"error: reading {args.image}: {e}", file=sys.stderr)
         return 1
+    for warning in disk.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
 
     warn_out_of_range(cyl_sel, range(disk.cylinders), "track")
     warn_out_of_range(head_sel, range(disk.heads), "side")

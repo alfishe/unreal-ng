@@ -239,6 +239,9 @@ public:
     virtual void debug_step_over(CPU * c) = 0;
     virtual void debug_step_out(CPU * c) = 0;
     virtual void debug_run_to(CPU * c, unsigned int address) = 0;
+    // The CPU of the tab shown: a card's follows the main CPU's steps of the paused machine (its state at the main
+    // CPU's moment); the main CPU's ends that
+    virtual void debug_select(CPU * c) { (void)c; }
     virtual unsigned int debug_serial() const = 0;
     virtual CPU * debug_stop_cpu() const = 0;
     virtual int debug_stop_reason() const = 0;

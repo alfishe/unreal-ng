@@ -36,6 +36,14 @@ root:
       press:
         id: ttd.resume_live
         kind: action
+      press_turn:
+        kind: dir
+        left:
+          id: ttd.branch_prev_sibling
+          kind: action
+        right:
+          id: ttd.branch_next_sibling
+          kind: action
       turn:
         id: ttd.jog_instructions
         kind: action
@@ -6497,6 +6505,19 @@ root:
         -
           at:
             - 2
+            - 2
+          do:
+            id: ttd.branch_prev
+            kind: action
+          face:
+            glyph: nav.back
+            label: "PREV BR"
+          id: timbrprev
+          title: "Previous branch"
+          type: action
+        -
+          at:
+            - 2
             - 3
           do:
             id: ttd.unit_back
@@ -6537,6 +6558,32 @@ root:
           tags:
             - uc:D3.3
           title: "Forward one unit"
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            id: ttd.branch_prev_sibling
+            kind: action
+          face:
+            glyph: nav.prev_page
+            label: "SIB <"
+          id: timsibprv
+          title: "Previous branch at the fork"
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            id: ttd.branch_next_sibling
+            kind: action
+          face:
+            glyph: nav.next_page
+            label: "SIB >"
+          id: timsibnxt
+          title: "Next branch at the fork"
           type: action
         -
           at:
@@ -6612,6 +6659,23 @@ root:
           tags:
             - uc:D3.7
           title: Bookmarks
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            id: ttd.branch_pin
+            kind: action
+          face:
+            glyph: media.protect
+            label: PIN
+          face_on:
+            glyph: media.protect.on
+            label: PIN
+          id: timbrpin
+          state: ttd.branch.pinned
+          title: "Pin the branch"
           type: action
         -
           at:
@@ -6699,6 +6763,81 @@ root:
         - dial.3.uc:D2.5
         - dial.4.uc:D1.1
       title: Time
+      type: menu
+    -
+      at:
+        - 3
+        - 2
+      context: ttd
+      face:
+        glyph: nav.folder
+        label: BRANCH
+        value:
+          format: "{name}\n{count} BR"
+          readout: ttd.branch
+      id: branches
+      items:
+        -
+          at:
+            - 0
+            - 1
+          do:
+            id: ttd.branch_prev
+            kind: action
+          face:
+            glyph: nav.back
+            label: "PREV BR"
+          id: brprev
+          title: "Previous branch"
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            id: ttd.branch_pin
+            kind: action
+          face:
+            glyph: media.protect
+            label: PIN
+          face_on:
+            glyph: media.protect.on
+            label: PIN
+          id: brpin
+          state: ttd.branch.pinned
+          title: "Pin the branch"
+          type: action
+      list:
+        dial: 0
+        dim: "!on_lineage"
+        do:
+          id: ttd.branch_switch
+          kind: action
+          value:
+            branch: $id
+        label: "{name}{pinned? *|}"
+        long:
+          hold: true
+          id: ttd.branch_delete
+          kind: action
+          value:
+            branch: $id
+            now: true
+        on: active
+        readout: ttd.branch_list.items
+        show: "{age}"
+      long:
+        id: ttd.branch_prev
+        kind: action
+      nav:
+        back:
+          - 0
+          - 0
+      strip:
+        content: title
+        status: ttd
+        target: true
+      title: Branches
       type: menu
     -
       at:

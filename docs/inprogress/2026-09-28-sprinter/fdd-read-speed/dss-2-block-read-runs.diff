@@ -1,0 +1,113 @@
+diff --git a/DSS/FS/FAT.asm b/DSS/FS/FAT.asm
+index 4488b6f..a177149 100644
+--- a/DSS/FS/FAT.asm
++++ b/DSS/FS/FAT.asm
+@@ -2334,7 +2334,7 @@ BLOCK_READ:	LD	(READ.PointerOnBuffer),IX
+ 		LD	C,Dss.DRV.Read
+ 		RST	ToDSS.DRV
+ 		;
+-		JR	C,.Error
++		JP	C,.Error
+ 		POP	BC	; B = количество секторов на дочитку, C = (SectorsPerCluster - остаток) либо количество секторов для чтения
+ 		LD	HL,(READ.PointerOnBuffer)
+ 		LD	DE,(CORE_BUFFERS.FS_Buffer.BytesPerSector)
+@@ -2365,21 +2365,84 @@ BLOCK_READ:	LD	(READ.PointerOnBuffer),IX
+ 		OR	A	;CLEAR CF
+ 		RET	Z
+ 		;
++; The clusters that follow one another on the disk go to the driver in one
++; call: the floppy reads them as a run (the BIOS takes a track in one turn),
++; not a call per cluster with a turn lost each time the next sector has passed.
+ .BLOKRD7:	EX	DE,HL
+ 		PUSH	BC
+-		; HL':HL - номер кластера
+-		CALL	READ_FROM_FAT
++		CALL	READ_FROM_FAT	; HL':HL - the cluster read last
+ 		POP	BC
+-		JR	C,.ECL1	;RY01
+-		;
++		JP	C,.ECL1	;RY01
+ 		EXX
+ 		 EX	DE,HL
+-		 PUSH	HL	; номер след. кластера (старшее слово)
+ 		EXX
+-		EX	DE,HL
+-		PUSH	HL	; номер след. кластера (младшее слово)
++		EX	DE,HL		; HL':HL - the run's first cluster
+ 		PUSH	BC
++		EXX
++		 PUSH	HL
++		EXX
++		PUSH	HL
+ 		CALL	CLUSTER_TO_SECTOR
++		LD	(.RunSector),IX
++		LD	(.RunSector+2),HL
++		POP	HL
++		EXX
++		 POP	HL
++		EXX
++		POP	BC		; C - its sectors, B - sectors left after it
++.ext:		LD	A,B
++		OR	A
++		JR	Z,.run
++		PUSH	BC
++		EXX
++		 PUSH	HL
++		EXX
++		PUSH	HL
++		CALL	READ_FROM_FAT	; DE':DE - the cluster after the run's last
++		POP	HL
++		EXX
++		 POP	HL
++		EXX
++		POP	BC
++		JR	C,.run		; (the next round meets the error)
++		PUSH	HL
++		INC	HL
++		AND	A
++		SBC	HL,DE
++		POP	HL
++		JR	NZ,.run		; not the next one on the disk
++		EXX
++		 PUSH	HL
++		 AND	A
++		 SBC	HL,DE
++		 POP	HL
++		EXX
++		JR	NZ,.run
++		INC	HL		; it joins the run
++		PUSH	HL
++		LD	HL,CORE_BUFFERS.FS_Buffer.SectorsPerCluster
++		LD	A,B
++		SUB	(HL)
++		JR	NC,.whole
++		LD	A,C		; the last part of a cluster
++		ADD	A,B
++		LD	C,A
++		LD	B,0
++		POP	HL
++		JR	.run
++.whole:		LD	B,A
++		LD	A,C
++		ADD	A,(HL)
++		LD	C,A
++		POP	HL
++		JR	.ext
++.run:		EXX
++		 PUSH	HL	; the run's last cluster, high word
++		EXX
++		PUSH	HL		; low word
++		PUSH	BC
++		LD	IX,(.RunSector)
++		LD	HL,(.RunSector+2)
+ 		LD	DE,(READ.PointerOnBuffer)
+ 		LD	A,(CORE_BUFFERS.FS_Buffer.DRIVE)
+ 		LD	B,C
+@@ -2408,6 +2471,7 @@ BLOCK_READ:	LD	(READ.PointerOnBuffer),IX
+ 		;
+ .ECL1:		AND	A
+ 		RET 
++.RunSector:	DS	4		; the run's first sector (HL:IX)
+ ;-----------------------------------------------------------------------
+ 
+ ; [x] fat32

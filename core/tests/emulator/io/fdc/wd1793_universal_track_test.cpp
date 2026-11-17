@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "_helpers/testpathhelper.h"
+#include "_helpers/testtier.h"
 #include "_helpers/testtiminghelper.h"
 #include "_helpers/wd1793testcut.h"
 #include "common/modulelogger.h"
@@ -17,6 +18,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/flakysectoremulator.h"
+#include "unrealdisk/floppyformats.h"
 
 /// WD1793 on the universal track model
 /// (docs/inprogress/2026-09-02-universal-track-model/test-plan.md, section 3):
@@ -1490,3 +1492,251 @@ TEST_F(WD1793_UniversalTrack_Test, FlakySector_ReadThroughController_BytesDiffer
 
 /// endregion </Flaky sectors (FlakySectorEmulator)>
 
+
+
+/// region <ZX Format 6 mastering, end to end (R-06)>
+/// The mastering programs (FORMATZF, F43, F1, PF7) are not available: the test replays what they leave on the disk,
+/// command by command through the controller, and checks the result against the sector tables of the original
+/// diskette dump ZXF61_O.FDI (not in the repository; its figures are below). The layout of every track there:
+/// 10 x 4E, then per sector 12 x 00, A1 A1 A1 (F5), the ID field, 22 x 4E, 12 x 00, A1 A1 A1, FB, data, CRC,
+/// 70 x 4E; 6250 bytes per revolution. Track 0: TR-DOS 16 x 256. Tracks 2..118: 5 x 1K, R = 0..4 (some rotated).
+/// Tracks 1 and 119: 4 x 1K, R = 0..3, then the key sector C=#A4 H=#42 R=#F7 N=#F7 written by "FE A4 F7 F7 F7"
+/// (CRC, literal F7, CRC). The dump's tracks 120..159 repeat track 119 (the dumper ran past the laid-out part).
+
+namespace
+{
+    constexpr size_t kZxfTracks = 120;                            // Physical tracks the mastering lays out
+    constexpr uint8_t kZxfCylinders = 83;                         // Geometry of the original dump
+    constexpr size_t kZxfIdam1K[5] = {25, 1181, 2337, 3493, 4649};
+    constexpr uint8_t kZxfKeyFill = 0xAA;                         // The key sector's data on track 119
+
+    /// First sector number on the 5 x 1K tracks whose order is rotated in ZXF61_O.FDI (0 elsewhere)
+    uint8_t ZxfFirstSector(size_t track)
+    {
+        switch (track)
+        {
+            case 3: case 24: case 28: case 38: case 39: case 59: case 63: case 64: case 72: case 75: case 100: case 108:
+                return 1;
+            case 30: return 2;
+            case 90: return 3;
+            default: return 0;
+        }
+    }
+
+    bool ZxfKeyTrack(size_t track) { return track == 1 || track == kZxfTracks - 1; }
+
+    /// One sector the way the mastering stream writes it: sync, ID (or the raw key ID bytes), gap 2, data, gap 3
+    void ZxfAppendSector(std::vector<uint8_t>& out, const std::vector<uint8_t>& id, size_t size, uint8_t fill)
+    {
+        out.insert(out.end(), 12, 0x00);
+        out.insert(out.end(), 3, 0xF5);
+        out.insert(out.end(), id.begin(), id.end());
+        out.insert(out.end(), 22, 0x4E);
+        out.insert(out.end(), 12, 0x00);
+        out.insert(out.end(), 3, 0xF5);
+        out.push_back(0xFB);
+        out.insert(out.end(), size, fill);
+        out.push_back(0xF7);
+        out.insert(out.end(), 70, 0x4E);
+    }
+
+    /// WRITE TRACK source of physical track @p track (cylinder track / 2, side track % 2)
+    std::vector<uint8_t> ZxfTrackStream(size_t track)
+    {
+        const uint8_t c = static_cast<uint8_t>(track / 2);
+        const uint8_t h = static_cast<uint8_t>(track % 2);
+        const uint8_t fill = track == kZxfTracks - 1 ? 0x00 : static_cast<uint8_t>(track);
+        std::vector<uint8_t> out(10, 0x4E);
+        if (track == 0)
+        {
+            for (uint8_t r = 1; r <= 16; r++)
+                ZxfAppendSector(out, {0xFE, c, h, r, 0x01, 0xF7}, 256, 0x00);
+        }
+        else if (ZxfKeyTrack(track))
+        {
+            for (uint8_t r = 0; r < 4; r++)
+                ZxfAppendSector(out, {0xFE, c, h, r, 0x03, 0xF7}, 1024, fill);
+            ZxfAppendSector(out, {0xFE, 0xA4, 0xF7, 0xF7, 0xF7}, 1024, track == 1 ? fill : kZxfKeyFill);
+        }
+        else
+        {
+            for (uint8_t i = 0; i < 5; i++)
+                ZxfAppendSector(out, {0xFE, c, h, static_cast<uint8_t>((ZxfFirstSector(track) + i) % 5), 0x03, 0xF7},
+                                1024, fill);
+        }
+        while (out.size() < 6400) out.push_back(0x4E);
+        return out;
+    }
+
+    /// The sector table of a track as the dump comparison sees it
+    struct ZxfSector
+    {
+        uint8_t c, h, r, n;
+        size_t idam;
+        size_t size;
+        bool idCrcValid, dataCrcValid, deleted;
+        uint16_t dataCrc;
+        bool operator==(const ZxfSector&) const = default;
+    };
+
+    std::vector<ZxfSector> ZxfTable(DiskImage::Track* track)
+    {
+        std::vector<ZxfSector> table;
+        for (size_t i = 0; track && i < track->sectorCount(); i++)
+        {
+            const DiskImage::Sector* s = track->getRawSector(i);
+            table.push_back({s->cylinder(), s->head(), s->number(), s->sizeCode(), s->idamOffset, s->dataSize,
+                             s->idCrcValid, s->dataCrcValid, s->deleted, s->dataCRC()});
+        }
+        return table;
+    }
+
+    /// ZXF61_O.FDI's layout of physical track @p track: C H R raw-N, IDAM offset, size, both CRCs valid
+    void ExpectZxfReferenceLayout(DiskImage& image, size_t track, const char* where)
+    {
+        const uint8_t c = static_cast<uint8_t>(track / 2);
+        const uint8_t h = static_cast<uint8_t>(track % 2);
+        const std::vector<ZxfSector> table = ZxfTable(image.getTrackForCylinderAndSide(c, h));
+        SCOPED_TRACE(StringHelper::Format("%s, track %zu", where, track));
+        ASSERT_EQ(table.size(), track == 0 ? 16u : 5u);
+        for (size_t i = 0; i < table.size(); i++)
+        {
+            const ZxfSector& s = table[i];
+            const bool key = ZxfKeyTrack(track) && i == 4;
+            EXPECT_EQ(s.c, key ? 0xA4 : c) << i;
+            EXPECT_EQ(s.h, key ? 0x42 : h) << i;
+            EXPECT_EQ(s.r, track == 0 ? i + 1 : key ? 0xF7 : ZxfKeyTrack(track) ? i : (ZxfFirstSector(track) + i) % 5) << i;
+            EXPECT_EQ(s.n, track == 0 ? 0x01 : key ? 0xF7 : 0x03) << i;
+            EXPECT_EQ(s.idam, track == 0 ? 25 + 388 * i : kZxfIdam1K[i]) << i;
+            EXPECT_EQ(s.size, track == 0 ? 256u : 1024u) << i;
+            EXPECT_TRUE(s.idCrcValid) << i;
+            EXPECT_TRUE(s.dataCrcValid) << i;
+            EXPECT_FALSE(s.deleted) << i;
+        }
+    }
+}
+
+/// E2E-01: an unformatted 83-cylinder disk, every track laid out through WRITE TRACK (FORMATZF + F43), the disk
+/// exported to UDI and FDI and read back; then F1 (track 1 rewritten) and PF7 (WRITE SECTOR into the key sector
+/// and READ SECTOR back). Each step's sector tables equal the original dump's
+TEST_F(WD1793_UniversalTrack_Test, ZxFormat6Mastering_EndToEnd_MatchesOriginalDump)
+{
+    unrealdisk::BlankFloppySpec blank;
+    blank.format = "unformatted";
+    blank.cylinders = kZxfCylinders;
+    blank.sides = 2;
+    std::unique_ptr<DiskImage> created;
+    ASSERT_TRUE(unrealdisk::FloppyFormats::CreateBlank(false, blank, created).Ok());
+    DiskImage& image = *created;
+
+    WD1793TestCUT fdc(_context);
+    prepare(fdc, image, 0);
+    fdc.getDrive()->setMotor(true);
+
+    auto seek = [&](size_t track) {
+        const uint8_t cylinder = static_cast<uint8_t>(track / 2);
+        fdc._selectedDrive->setTrack(cylinder);
+        fdc._trackRegister = cylinder;
+        fdc._sideUp = (track % 2) != 0;
+    };
+    auto writeTrack = [&](size_t track) {
+        seek(track);
+        issue(fdc, 0xF0);
+        runWriteUntilIdle(fdc, ZxfTrackStream(track), fdc._time + 100);
+        waitIdle(fdc);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTRDY | WD1793::WDS_WRITEPROTECTED)) << track;
+    };
+
+    // FORMATZF + F43: the whole laid-out part in the long tier; otherwise the system track, both key tracks, the
+    // rotated orders and the neighbours of the key track
+    std::vector<size_t> tracks;
+    for (size_t track = 0; track < kZxfTracks; track++)
+        if (TestTier::Long() || track <= 3 || track == 30 || track == 90 || track >= kZxfTracks - 2)
+            tracks.push_back(track);
+    for (size_t track : tracks)
+        writeTrack(track);
+    ASSERT_EQ(image.getCylinders(), kZxfCylinders);
+    for (size_t track : tracks)
+    {
+        ExpectZxfReferenceLayout(image, track, "after WRITE TRACK");
+        EXPECT_EQ(image.getTrackForCylinderAndSide(static_cast<uint8_t>(track / 2), track % 2)->rawSize(), 6250u);
+    }
+    for (uint8_t c = kZxfTracks / 2; c < kZxfCylinders; c++)
+        for (uint8_t h = 0; h < 2; h++)
+            EXPECT_EQ(image.getTrackForCylinderAndSide(c, h)->sectorCount(), 0u) << "unformatted past the layout";
+
+    // Track 119 as dumped: raw key ID bytes, data CRCs of the zero sectors and of the key sector
+    {
+        DiskImage::Track* key = image.getTrackForCylinderAndSide(59, 1);
+        const uint8_t expected[] = {0xFE, 0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+        EXPECT_EQ(std::memcmp(key->rawData() + kZxfIdam1K[4], expected, sizeof(expected)), 0);
+        for (size_t i = 0; i < 4; i++)
+            EXPECT_EQ(key->getRawSector(i)->dataCRC(), 0x2227) << i;
+        EXPECT_EQ(key->getRawSector(4)->dataCRC(), 0xDAA7);
+    }
+
+    // Export and read back: UDI keeps the stream, FDI the sector tables
+    for (const char* name : {"zxf6-mastering.udi", "zxf6-mastering.fdi"})
+    {
+        const std::string path = TestPathHelper::GetUniqueTestScratchPath(name);
+        const unrealdisk::FloppySaveResult saved = unrealdisk::FloppyFormats::Save({}, image, path, false);
+        ASSERT_TRUE(saved.saved) << name << ": " << saved.reason;
+        EXPECT_FALSE(saved.retargeted) << name;
+        std::unique_ptr<DiskImage> loaded;
+        std::string format;
+        ASSERT_TRUE(unrealdisk::FloppyFormats::Load({}, path, loaded, format).Ok()) << name;
+        EXPECT_EQ(loaded->getCylinders(), kZxfCylinders) << name;
+        for (size_t track = 0; track < kZxfCylinders * 2u; track++)
+        {
+            const uint8_t c = static_cast<uint8_t>(track / 2);
+            const uint8_t h = static_cast<uint8_t>(track % 2);
+            EXPECT_EQ(ZxfTable(loaded->getTrackForCylinderAndSide(c, h)), ZxfTable(image.getTrackForCylinderAndSide(c, h)))
+                << name << ", track " << track;
+        }
+        ExpectZxfReferenceLayout(*loaded, kZxfTracks - 1, name);
+    }
+
+    // F1: track 1 laid out again, then its four 1K sectors written through WRITE SECTOR
+    writeTrack(1);
+    for (uint8_t r = 0; r < 4; r++)
+    {
+        fdc._trackRegister = 0;
+        fdc._sectorRegister = r;
+        issue(fdc, 0xA0);
+        std::vector<uint8_t> payload(1024);
+        for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i * 13 + r);
+        EXPECT_EQ(runWriteUntilIdle(fdc, payload, fdc._time + 100), 1024u) << int(r);
+        waitIdle(fdc);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR)) << int(r);
+    }
+    ExpectZxfReferenceLayout(image, 1, "after F1");
+
+    // PF7 on track 119: READ ADDRESS sees the key ID; WRITE SECTOR with the track register at #A4, READ SECTOR back
+    seek(kZxfTracks - 1);
+    bool keyIdSeen = false;
+    for (size_t i = 0; i < 5 && !keyIdSeen; i++)
+    {
+        issue(fdc, 0xC0);
+        const std::vector<uint8_t> id = runReadUntilIdle(fdc, fdc._time + 100);
+        EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_CRCERR | WD1793::WDS_NOTFOUND));
+        keyIdSeen = id == std::vector<uint8_t>{0xA4, 0x42, 0xF7, 0xF7, 0x9F, 0xF8};
+    }
+    EXPECT_TRUE(keyIdSeen) << "READ ADDRESS over one revolution returns the key ID with its CRC";
+
+    fdc._trackRegister = 0xA4;
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0xA0);
+    std::vector<uint8_t> payload(1024);
+    for (size_t i = 0; i < payload.size(); i++) payload[i] = static_cast<uint8_t>(i ^ 0x5A);
+    EXPECT_EQ(runWriteUntilIdle(fdc, payload, fdc._time + 100), 1024u);
+    waitIdle(fdc);
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR));
+
+    fdc._sectorRegister = 0xF7;
+    issue(fdc, 0x80);
+    EXPECT_EQ(runReadUntilIdle(fdc, fdc._time + 100), payload);
+    EXPECT_FALSE(fdc._statusRegister & (WD1793::WDS_NOTFOUND | WD1793::WDS_CRCERR));
+    ExpectZxfReferenceLayout(image, kZxfTracks - 1, "after PF7");
+}
+
+/// endregion </ZX Format 6 mastering, end to end (R-06)>

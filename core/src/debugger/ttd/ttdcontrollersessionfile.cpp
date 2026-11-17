@@ -172,8 +172,16 @@ bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err,
     else if (_branches.HasBranches())
         AddBranchesToSave(params);
 
+    // Two tiers: the file holds every segment, those on disk only are read back for the save (memory peaks here)
+    if (!ReadBackAll(err))
+    {
+        ReleaseAllReadBack();
+        return false;
+    }
     OStreamSink sink(out);
-    return TTDSessionFile::Save(*_engine, sink, err, params);
+    const bool saved = TTDSessionFile::Save(*_engine, sink, err, params);
+    ReleaseAllReadBack();
+    return saved;
 }
 
 void TimeTravelController::AddLineageToSave(TTDSessionSaveParams& params)
@@ -403,6 +411,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _engine = std::move(loaded);
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
+    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
     ApplyHistoryPolicy();
     RegisterScreenshotStream(*_engine);
 
@@ -655,6 +664,7 @@ void TimeTravelController::CommitLoadedBranches(const std::function<void(const s
         tip = kTTDTrunk;
     _tip = tip;
     _lastVisited.assign(_lines.size(), std::nullopt);
+    _branchTrail.clear();
     _engine->ViewLine(tip);
     _line = _lines[tip].get();
     _viewId = tip;

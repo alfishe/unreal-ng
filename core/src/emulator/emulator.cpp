@@ -3447,6 +3447,9 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
             else
                 brk->DisarmExecPass();
         }
+        // A card a front-end has selected follows this run in tight mode (gs-debugger design §5.2)
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(true);
     }
 }
 
@@ -3480,6 +3483,8 @@ Emulator::DirectStepScope::~DirectStepScope()
     // A refused run touched nothing: no stop, no picture, no refresh to report
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1 && !_refused)
     {
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
@@ -4547,10 +4552,21 @@ std::string Emulator::GetStatistics()
 
 // endregion
 
-void Emulator::ApplySymbolBundles()
+std::string Emulator::SymbolBundleFolder()
 {
     const char* setting = std::getenv("UNREAL_SYMBOL_BUNDLES");
     if (setting && std::string(setting) == "0")
+        return {};
+    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
+    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
+        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
+    return folder;
+}
+
+void Emulator::ApplySymbolBundles()
+{
+    const std::string folder = SymbolBundleFolder();
+    if (folder.empty())
         return;
     if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
         return;
@@ -4561,8 +4577,5 @@ void Emulator::ApplySymbolBundles()
     std::vector<std::string> pages;
     for (uint8_t i = 0; i < rom.GetROMBanksLoaded(); i++)
         pages.push_back(rom.CalculateSignature(_context->pMemory->ROMPageHostAddress(i), PAGE_SIZE));
-    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
-    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
-        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
     labels->ApplyBundles(folder, pages);
 }

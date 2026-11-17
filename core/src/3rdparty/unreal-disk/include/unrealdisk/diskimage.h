@@ -1329,6 +1329,25 @@ public:
         return true;
     }
 
+    /// Back to `cylinders` (at least 1): the tracks above go - the undo of growCylinders (a TTD seek before the WRITE
+    /// TRACK that grew the image). Pointers into the removed tracks dangle: the caller drops them (a seek restores
+    /// the controllers, which keep none across a restore). False when out of range
+    bool shrinkCylinders(uint8_t cylinders)
+    {
+        if (cylinders >= _cylinders)
+            return cylinders == _cylinders;
+        if (cylinders == 0)
+            return false;
+
+        LayoutLock lock(this);
+        _tracks.resize(static_cast<size_t>(cylinders) * _sides);
+        _cylinders = cylinders;
+        return true;
+    }
+
+    /// The image-level dirty flag alone (the tracks' own flags stay): an undo sets it back to what it was
+    void setImageDirty(bool dirty) { _dirty = dirty; }
+
     /// Low-level format of every track with the given layout (data cleared, dirty flags cleared)
     void formatAll(const TrackFormatSpec& spec)
     {

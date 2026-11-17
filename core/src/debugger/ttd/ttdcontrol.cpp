@@ -302,6 +302,20 @@ StateNode CheckNode(const TTDRestoreResult& check)
     node["issues"] = issues;
     return node;
 }
+
+/// The two tiers' counters (P3): the memory report of status and history-limit replies on every plane
+void AddDiskTier(StateNode& body, const TTDSessionInfo& info)
+{
+    body["disk_tier_active"] = info.diskTierActive;
+    body["evicted_to_disk_segments"] = info.evictedToDiskSegments;
+    body["evicted_to_disk_checkpoints"] = info.evictedToDiskCheckpoints;
+    body["read_back_segments"] = info.readBackSegments;
+    body["read_back_bytes"] = info.readBackBytes;
+    body["read_back_capacity"] = info.readBackCapacity;
+    body["read_back_loads"] = info.readBackLoads;
+    body["read_back_hits"] = info.readBackHits;
+    body["read_back_failures"] = info.readBackFailures;
+}
 }  // namespace
 
 /// region <Backends>
@@ -367,6 +381,8 @@ private:
     TTDReply BookmarkNote(const TTDRequest& request);
     TTDReply Branches(const TTDRequest& request);
     TTDReply BranchSwitch(const TTDRequest& request);
+    /// The reply of a switch that went to @p id
+    TTDReply BranchSwitched(uint32_t id);
     TTDReply BranchUpdate(const TTDRequest& request);
     TTDReply BranchDelete(const TTDRequest& request);
     TTDReply BranchInfo(const TTDRequest& request);
@@ -521,7 +537,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                            "created_by", "media", "run_frames", "input", "read", "go_back", "poke", "regs"}},
         {"branch-prune", {"scope", "created_by", "run", "tag", "name_prefix", "pinned", "min_length", "max_length",
                           "created_after", "created_before", "dry_run"}},
-        {"branch-switch", {"branch", "frame", "tinframe"}},
+        {"branch-switch", {"branch", "frame", "tinframe", "to"}},
         {"branch-update", {"branch", "name", "note", "tags", "add_tags", "remove_tags", "pinned"}},
         {"branch-delete", {"branch", "force"}},
         {"load", {"path"}},
@@ -780,8 +796,12 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
             ret[key] = 0;
         ret["input_history_complete"] = true;
         ret["port_journal_active"] = false;
-        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints"})
+        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
+                                "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                "read_back_failures"})
             ret[key] = 0;
+        ret["disk_tier_active"] = false;
         ret["port_journal_off_reason"] = StateNode();
         for (const char* key : {"port_read_count", "port_write_count", "port_journal_bytes",
                                 "port_replay_value_mismatches", "port_replay_divergences", "seek_checks",
@@ -822,6 +842,7 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
     ret["history_limit_bytes"] = info.historyLimitBytes;
     ret["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     ret["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(ret, info);
     ret["port_journal_off_reason"] = StringOrNull(info.portJournalOffReason);
     ret["port_read_count"] = static_cast<uint64_t>(info.portReadCount);
     ret["port_write_count"] = static_cast<uint64_t>(info.portWriteCount);
@@ -1030,6 +1051,7 @@ TTDReply TTDControlBackend::HistoryLimit(const TTDRequest& request)
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     reply.body["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(reply.body, info);
     reply.body["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
     reply.body["session_start_frame"] = info.sessionStartFrame;
     reply.body["current_end_frame"] = info.currentEndFrame;
@@ -1965,6 +1987,9 @@ TTDReply TTDControlBackend::Branches(const TTDRequest& request)
     reply.body["count"] = static_cast<uint64_t>(info.branches ? info.branches->branches.size() : 1);
     reply.body["active"] = static_cast<uint64_t>(info.activeBranch);
     reply.body["viewed"] = static_cast<uint64_t>(info.viewedBranch);
+    // Where branch-switch to=previous goes (the branch left last); null: none
+    reply.body["previous"] = info.previousBranch == kTTDNoBranch ? StateNode()
+                                                                 : StateNode(static_cast<uint64_t>(info.previousBranch));
     StateNode lineage = StateNode::Array();
     if (info.branches)
         for (const TTDLineageSpan& span : info.branches->lineage)
@@ -1998,9 +2023,48 @@ TTDReply TTDControlBackend::Branches(const TTDRequest& request)
     return reply;
 }
 
+
 TTDReply TTDControlBackend::BranchSwitch(const TTDRequest& request)
 {
     uint32_t id = 0;
+    if (const std::string* to = Option(request, "to"))
+    {
+        if (Option(request, "branch") || Option(request, "frame") || Option(request, "tinframe"))
+            return Fail(TTDControlError::BadRequest, "to goes alone: without branch, frame and tinframe");
+        if (*to == "previous")
+        {
+            PauseAndConfirm();
+            std::string error;
+            const bool ok = _manager->SwitchToPreviousBranch(id, error);
+            NotifyFrameRefresh();
+            if (!ok)
+                return Fail(error.rfind("no branch", 0) == 0 ? TTDControlError::NotFound : TTDControlError::Conflict,
+                            error);
+            return BranchSwitched(id);
+        }
+        if (*to != "next_sibling" && *to != "prev_sibling")
+            return Fail(TTDControlError::BadRequest, "to must be previous, next_sibling or prev_sibling");
+        const TTDSessionInfo info = _manager->ReadSessionInfo();
+        size_t self = 0;
+        uint64_t forkFrame = 0;
+        const std::vector<uint32_t> siblings = TTDSiblingsAtNearestFork(
+            info.branches.get(), std::max(info.currentEndFrame, info.sessionStartFrame + 1),
+            _manager->CurrentPosition().frame, self, forkFrame);
+        if (siblings.size() < 2)
+            return Fail(TTDControlError::NotFound, "no other branch forks on this lineage");
+        const size_t n = siblings.size();
+        id = siblings[*to == "next_sibling" ? (self + 1) % n : (self + n - 1) % n];
+        PauseAndConfirm();
+        std::string error;
+        const bool ok = _manager->SwitchBranch(id, std::nullopt, error);
+        NotifyFrameRefresh();
+        if (!ok)
+            return Fail(TTDControlError::Conflict, error);
+        TTDReply reply = BranchSwitched(id);
+        reply.body["fork_frame"] = forkFrame;
+        reply.body["siblings"] = static_cast<uint64_t>(n);
+        return reply;
+    }
     if (auto refusal = ResolveBranch(request, id))
         return *refusal;
     std::optional<TTDTimePoint> at;
@@ -2021,6 +2085,11 @@ TTDReply TTDControlBackend::BranchSwitch(const TTDRequest& request)
     NotifyFrameRefresh();
     if (!ok)
         return Fail(TTDControlError::Conflict, error);
+    return BranchSwitched(id);
+}
+
+TTDReply TTDControlBackend::BranchSwitched(uint32_t id)
+{
     const TTDSessionInfo info = _manager->ReadSessionInfo();
     TTDReply reply;
     reply.body["switched"] = true;
@@ -2399,6 +2468,8 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
     const TTDSessionInfo before = _manager->ReadSessionInfo();
     const uint32_t returnBranch = before.activeBranch;
     const TTDTimePoint returnTo = _manager->CurrentPosition();
+    // The moves below are one step for ttd.branch_prev's trail: the branch left, when the active one changed
+    const std::vector<uint32_t> trail = _manager->BranchTrail();
 
     // On another branch's lineage: stand there first (at frame / tinframe, default where it was last visited)
     TTDRequest resume{"resume", {}};
@@ -2469,7 +2540,8 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
                                                "it can)");
     const uint32_t newId = created->id;
     const TTDTimePoint forkAt = _manager->CurrentPosition();
-    const TTDBranchInfo* parent = info.branches->Find(created->parent);
+    const uint32_t parentId = created->parent;
+    const TTDBranchInfo* parent = info.branches->Find(parentId);
     std::string text = "Created branch '" + created->meta.name + "' at frame " + std::to_string(forkAt.frame) +
                        (parent ? " of '" + parent->meta.name + "'" : std::string()) + "\n";
 
@@ -2622,12 +2694,19 @@ TTDReply TTDControlBackend::BranchCreate(const TTDRequest& request)
         NotifyFrameRefresh();
     }
 
+    {
+        std::vector<uint32_t> after = trail;
+        if (_manager->ActiveBranch() != returnBranch)
+            after.push_back(returnBranch);
+        _manager->SetBranchTrail(std::move(after));
+    }
+    // A new published copy: the pointers into the old one (created, parent) dangle from here on, look up again
     info = _manager->ReadSessionInfo();
     reply.body["created"] = true;
     if (const TTDBranchInfo* b = info.branches ? info.branches->Find(newId) : nullptr)
         reply.body["branch"] = BranchNode(*b, info);
-    if (parent)
-        reply.body["parent"] = BranchRefNode(*parent);
+    if (const TTDBranchInfo* p = info.branches ? info.branches->Find(parentId) : nullptr)
+        reply.body["parent"] = BranchRefNode(*p);
     reply.body["at"] = TimePointNode(forkAt);
     if (const StateNode* media = resumed.body.find("media"))
         reply.body["media"] = *media;

@@ -25,6 +25,7 @@
 
 class BreakpointManager;
 class GeneralSoundCard;
+class LabelManager;
 class EmulatorContext;
 
 class GSCardTarget final : public IDebugTarget, public IGSDebugHooks
@@ -42,6 +43,11 @@ public:
 
     /// The card CPU's breakpoints (memory, ports, card events)
     BreakpointManager* GetBreakpointManager() { return _breakpoints.get(); }
+    /// The card CPU's labels (gs-debugger design §6.2): its own store, page-tied by the card's map; the shipped
+    /// firmware symbols (data/symbols/gs/manifest.json) join it when the card's ROM page 0 matches a bundle
+    LabelManager* GetLabelManager() { return _labels.get(); }
+    /// The bundles of the card's ROM into the labels (at each card creation); the bundle sets now there
+    std::vector<std::string> ApplySymbolBundles();
 
     /// The slot's card was created or replaced (SoundManager): the hooks go to the new card when they are wanted
     void OnCardCreated();
@@ -76,13 +82,14 @@ public:
         In,    ///< after `count` instructions
         Over,  ///< CALL, RST, DJNZ, a block instruction: at the next instruction with SP at or above the entry SP;
                ///< another instruction: as In
-        Out    ///< after a return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP
+        Out,   ///< after a return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP
+        To     ///< at the next instruction at `target` (run to the cursor); the instruction at PC runs first
     };
     /// Arm a step of the card CPU (the machine paused; the caller resumes it then): the next card run parks the
     /// machine there with the reason step (Emulator::OnTargetStep). A breakpoint on the way ends it first. "" or why
     /// not (no card CPU, a step already armed). The card runs only as the main CPU's run takes it along (at a host
-    /// port access or the frame end), so the main CPU moves on to that point
-    std::string ArmStep(StepKind kind, uint32_t count = 1);
+    /// port access or the frame end), so the main CPU moves on to that point. `target`: To's address
+    std::string ArmStep(StepKind kind, uint32_t count = 1, uint16_t target = 0);
     /// Disarm a step that did not end (a timeout, a pause of another cause)
     void CancelStep();
     bool StepArmed() const { return _stepKind.load(std::memory_order_acquire) != StepKind::None; }
@@ -154,6 +161,7 @@ private:
     DebugCpuId _id = DebugCpuId::GS;
     std::function<GeneralSoundCard*()> _cardSource;
     std::unique_ptr<BreakpointManager> _breakpoints;
+    std::unique_ptr<LabelManager> _labels;
     bool _wanted = false;                    // an active breakpoint asks for the hooks
     std::atomic<bool> _stopWanted{false};    // an active breakpoint stops (tight mode)
     struct LiveEdit
@@ -171,7 +179,7 @@ private:
     // An armed step: set by the caller with the machine paused, read by the emulation thread after the resume
     std::atomic<StepKind> _stepKind{StepKind::None};
     uint32_t _stepSkip = 0;                  // boundaries passed before the step may park (In: count - 1, ...)
-    uint16_t _stepTarget = 0;                // Over: the next instruction's address
+    uint16_t _stepTarget = 0;                // Over: the next instruction's address; To: the cursor
     uint16_t _stepSp = 0;                    // Over / Out: SP when armed
     bool _stepReturning = false;             // Out: the instruction now running is a return
     uint16_t _stepReturnSp = 0;              // Out: SP before that return

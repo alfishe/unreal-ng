@@ -110,8 +110,12 @@ way. This design does the same for every Spectrum-family machine and adds a comp
   new configuration, the same way a model switch rebuilds the emulator. Media follow the restart as they follow a
   model switch. No card is ever created or destroyed inside a running machine. This includes the General Sound
   personality switch, which becomes a slot replace.
-- **R-OP-9. Model switch.** On a model switch, cards that fit the new machine's buses stay in their slots; the others
-  are removed and reported, by the same plan and reply as R-OP-5.
+- **R-OP-9. Model switch.** A model switch from a menu (any platform, any automation plane) loads the cards the new
+  model's configuration names; nothing migrates from the old machine (owner decision 2026-11-14: a chain of switches
+  lost cards for good, e.g. the NeoGS of an ATM 7.10 reached after a Next). A run-time caller that needs the cards
+  migrated asks for it (`ModelSwitchRequest::carryCards`, no caller today); the cards the machine cannot take are then
+  removed and reported, by the same plan and reply as R-OP-5. A cold reset migrates nothing: the cards plugged at run
+  time are part of the instance's own configuration and come back with it.
 
 ### 3.5 Configuration
 

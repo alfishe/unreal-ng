@@ -181,6 +181,7 @@ QString BrowserIcon(HandheldBrowser::Kind kind, const QString& name)
         case HandheldBrowser::Kind::Tape: return QStringLiteral("tape");
         case HandheldBrowser::Kind::Disk: return QStringLiteral("disk");
         case HandheldBrowser::Kind::File: return QStringLiteral("file");
+        case HandheldBrowser::Kind::ThisFolder: return QStringLiteral("folder");
     }
     return QStringLiteral("file");
 }
@@ -928,9 +929,9 @@ void HandheldMenu::quickSlot(const char* op, int slot)
 // region <Media>
 
 void HandheldMenu::openBrowser(HandheldBrowser::Filter filter, const QString& title,
-                               std::function<void(const QString&)> chosen)
+                               std::function<void(const QString&)> chosen, bool folders)
 {
-    _browser.Open(filter);
+    _browser.Open(filter, folders);
     _browserRow = 0;
     _browserTitle = title;
     _browserChosen = std::move(chosen);
@@ -1018,7 +1019,10 @@ void HandheldMenu::openMediumActions(const std::string& slot, int kind)
     const HandheldBrowser::Filter filter = mediaKind == MediaKind::Tape     ? HandheldBrowser::Filter::Tape
                                            : mediaKind == MediaKind::Floppy ? HandheldBrowser::Filter::Disk
                                                                             : HandheldBrowser::Filter::All;
-    actions.push_back({info->present ? tr("Replace…") : tr("Insert…"), [self, slot, filter, label, mediaKind] {
+    // A block slot that takes a host folder (an SD card, a hard disk: the folder shown as a FAT volume) offers the folder
+    // itself: R-Type VDAC2 reads its .PAC files from the SD card its folder is
+    const bool folders = info->descriptor.acceptsFolder && mediaKind == MediaKind::Block;
+    actions.push_back({info->present ? tr("Replace…") : tr("Insert…"), [self, slot, filter, label, mediaKind, folders] {
                            self->openBrowser(filter, tr("Insert into %1").arg(label), [self, slot, mediaKind](const QString& path) {
                                StateNode p = StateNode::Object();
                                p["path"] = StateNode(path.toStdString());
@@ -1041,7 +1045,7 @@ void HandheldMenu::openMediumActions(const std::string& slot, int kind)
                                        self->_status = tr("Inserted %1").arg(QFileInfo(path).fileName());
                                    }
                                });
-                           });
+                           }, folders);
                        }});
     if (info->present)
     {

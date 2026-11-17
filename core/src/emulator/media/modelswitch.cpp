@@ -92,9 +92,10 @@ ModelSwitchResult ModelSwitch::Run(const ModelSwitchRequest& request)
                            : (old->GetContext() ? old->GetContext()->config.ramPowerOn : RamPowerOn::Random);
     // The new machine's config: the old instance's own override (a restart of the same model), the power-on RAM,
     // the running settings the request carries, then the slot set
-    // (exact, or the old machine's cards carried and planned against the new model)
+    // (exact; carried only when the request asks for it; otherwise the new machine takes the cards its configuration
+    // and the kept instance override name, nothing migrates from the old machine)
     std::optional<SlotManager::Result> carried;
-    if (!request.slotSet && old->GetContext()->pSlotManager != nullptr)
+    if (!request.slotSet && request.carryCards && old->GetContext()->pSlotManager != nullptr)
         carried = old->GetContext()->pSlotManager->Snapshot();
     auto carryReport = std::make_shared<SlotManager::CarryReport>();
     std::function<void(CONFIG&)> configOverride =
