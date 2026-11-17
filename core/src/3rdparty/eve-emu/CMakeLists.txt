@@ -89,6 +89,7 @@ set(EVE_SOURCES
     src/eve-copro-matrix.cpp
     src/eve-copro-text.cpp
     src/eve-copro-media.cpp
+    src/eve-vdac4-3d.cpp
     src/eve-audio.cpp
     src/eve-state.cpp
     src/eve-debug.cpp

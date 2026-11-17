@@ -228,6 +228,37 @@ def test_the_command_log_is_a_device_history(s):
     s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})
 
 
+def test_the_debugger_sends_a_command(s):
+    """The protocol state and the debugger's send (gs-debugger design §6.4, F3, F6). The NeoGS loader polls its SD card:
+    the #2C written above is pending while the machine is paused, the protocol says so. Running, the loader clears the
+    command flag but takes no data byte, so the send fails at the byte the card did not take and names its status bit"""
+    r = s.call('device_history', {'action': 'list'})
+    device = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*\.commands)\b', r.text)))[0]
+    r = s.call('inspect_state', {'aspects': ['audio_gs']})
+    expect('protocol: the command log is off' in r.text and device in r.text, 'off: says so, names the history', r.text)
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'ring'})
+    s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out',
+                          'body': {'port': '0xBB', 'value': '0x2C'}})
+    r = s.call('inspect_state', {'aspects': ['audio_gs']})
+    expect('protocol: #2C: not taken yet' in r.text, 'the command not taken', r.text)
+
+    r = s.call('emulator_manage', {'action': 'gs_send', 'value': 0x2C, 'params': [1, 2]}, ok=False)
+    expect('GS send' in r.text, 'no profile: the bytes as given', r.text)
+    s.call('control_execution', {'action': 'resume'})
+    r = s.call('emulator_manage', {'action': 'gs_conversation', 'wait_ms': 0})
+    for _ in range(40):
+        if 'failed' in r.text or 'done' in r.text:
+            break
+        time.sleep(0.1)
+        r = s.call('emulator_manage', {'action': 'gs_conversation'})
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    expect('failed' in r.text and re.search(r'status bit [07] stays set', r.text), 'failed, the byte not taken named',
+           r.text)
+    r = s.call('inspect_state', {'aspects': ['audio_gs']})
+    expect('last send' in r.text, 'the report carries the last send', r.text)
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})
+
+
 def test_the_card_cpu_from_python(s):
     """Python's cpu= on the register, memory and code functions; memory_map('gs') the windows; ms is a RuntimeError"""
     clear(s)

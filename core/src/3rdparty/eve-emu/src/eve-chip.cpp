@@ -29,7 +29,9 @@ void CoreReset(EveChip& chip, bool clearRamG)
     ControlState& state = chip.state;
     state.bus = BusState{};
     Region& ramG = chip.regions[RegionRamG];
-    if (clearRamG)
+    // VDAC4: RAM_G is SDRAM, RAM_DL and RAM_CMD are block RAM; the core reset rewrites the
+    // registers only (ft_core.sv clr)
+    if (clearRamG && !chip.vdac4)
     {
         std::memset(ramG.base, 0, ramG.size);
         ramG.MarkDirtyRange(0, ramG.size);
@@ -39,6 +41,8 @@ void CoreReset(EveChip& chip, bool clearRamG)
     ramG.MarkDirty(kChipIdAddress);
     for (RegionId id : {RegionDl0, RegionDl1, RegionReg, RegionCmd, RegionSpecial})
     {
+        if (chip.vdac4 && (id == RegionDl0 || id == RegionDl1 || id == RegionCmd))
+            continue;
         Region& region = chip.regions[id];
         std::memset(region.base, 0, region.size);
         region.MarkDirtyRange(0, region.size);
@@ -48,7 +52,9 @@ void CoreReset(EveChip& chip, bool clearRamG)
     const uint64_t completedFrames = scan.completedFrames;
     scan = ScanState{};
     scan.completedFrames = completedFrames; // monotonic for the host
-    scan.idReadyAt = kIdReadyDelayClocks;
+    scan.idReadyAt = chip.vdac4 ? 0 : kIdReadyDelayClocks; // VDAC4: REG_ID is the constant 0x7C
+    if (chip.vdac4)
+        chip.vdac4State.resetSweepLeft = kVdac4ResetSweepClocks;
 
     ResetRegisters(chip);
     AudioReset(chip);
@@ -71,6 +77,22 @@ void PowerOnReset(EveChip& chip)
     // At power-on the chip is in SLEEP with the internal oscillator selected (spec §2.2).
     state.power.mode = PowerMode::Sleep;
     state.power.externalClock = 0;
+    if (chip.vdac4)
+    {
+        // The FT core starts ACTIVE on the external clock x 8 (ft_core.sv START_ACTIVE);
+        // the ESP copies the font image after every core load. The RAM_G limit is a board
+        // setting (FT_CFG) and stays.
+        state.power.mode = PowerMode::Active;
+        state.power.externalClock = 1;
+        state.power.multiplier = kVdac4PowerUpMultiplier;
+        Vdac4State& v = chip.vdac4State;
+        const uint32_t limit = v.ramGLimit;
+        v = Vdac4State{};
+        v.magic = kVdac4StateMagic;
+        v.size = static_cast<uint32_t>(sizeof(Vdac4State));
+        v.ramGLimit = limit == kVdac4RamG3Mb ? kVdac4RamG3Mb : kVdac4RamG2Mb;
+        UpdateMemoryMap(chip, false);
+    }
     InitClock(chip);
     ClearRegions(chip);
     CoreReset(chip, true);
@@ -105,9 +127,9 @@ EveChip* EveCreate(const EveConfig* config)
         SetLastError("EveCreate: config->structSize is smaller than sizeof(EveConfig)");
         return nullptr;
     }
-    if (config->model != EVE_MODEL_FT812)
+    if (config->model != EVE_MODEL_FT812 && config->model != EVE_MODEL_VDAC4)
     {
-        SetLastError("EveCreate: unsupported model (only EVE_MODEL_FT812)");
+        SetLastError("EveCreate: unsupported model (EVE_MODEL_FT812 or EVE_MODEL_VDAC4)");
         return nullptr;
     }
     if (config->externalClockHz == 0)
@@ -128,6 +150,12 @@ EveChip* EveCreate(const EveConfig* config)
         return nullptr;
     }
     chip->table = &GetChipTable(config->model);
+    chip->vdac4 = config->model == EVE_MODEL_VDAC4;
+    chip->ramGSize = chip->table->ramGSize;
+    chip->ramGLimit = chip->ramGSize;
+    chip->regionCount = chip->vdac4 ? static_cast<uint32_t>(RegionCount) : kFt812RegionCount;
+    if (chip->vdac4)
+        chip->vdac4State.ramGLimit = kVdac4RamG2Mb; // PowerOnReset completes the block
     chip->externalClockHz = config->externalClockHz;
     chip->romImage = config->romImage;
     chip->romSize = config->romImage != nullptr ? static_cast<uint32_t>(config->romImageSize) : 0;
@@ -144,8 +172,12 @@ EveChip* EveCreate(const EveConfig* config)
     chip->inputBuffer.reset(new (std::nothrow) uint8_t[kRamCmdSize]());
     constexpr size_t kRgbaBytes = 4;
     const size_t imagePixels = kJpegMaxPixels > kPngMaxPixels ? kJpegMaxPixels : kPngMaxPixels;
-    chip->imageBuffer.reset(new (std::nothrow) uint8_t[imagePixels * kRgbaBytes]);
-    if (!chip->decoderState || !chip->workBuffer || !chip->inputBuffer || !chip->imageBuffer || !InitRegions(*chip) || !InitDrawing(*chip))
+    chip->imageBufferBytes = imagePixels * kRgbaBytes;
+    chip->imageBuffer.reset(new (std::nothrow) uint8_t[chip->imageBufferBytes]);
+    if (chip->vdac4)
+        chip->vdac4Depth.reset(new (std::nothrow) uint32_t[kVdac43dDepthWords]());
+    if (!chip->decoderState || !chip->workBuffer || !chip->inputBuffer || !chip->imageBuffer ||
+        (chip->vdac4 && !chip->vdac4Depth) || !InitRegions(*chip) || !InitDrawing(*chip))
     {
         SetLastError("EveCreate: out of memory");
         delete chip;
@@ -169,6 +201,35 @@ void EveReset(EveChip* chip)
 const char* EveLastError(void)
 {
     return lastError;
+}
+
+int EveSetRamGLimit(EveChip* chip, uint32_t bytes)
+{
+    if (!chip->vdac4)
+        return bytes == chip->ramGSize ? 0 : 1;
+    if (bytes != kVdac4RamG2Mb && bytes != kVdac4RamG3Mb)
+        return 1;
+    chip->vdac4State.ramGLimit = bytes;
+    UpdateMemoryMap(*chip);
+    return 0;
+}
+
+uint32_t EveRamGLimit(const EveChip* chip)
+{
+    return chip->ramGLimit;
+}
+
+void EveVdac4SetFontsReady(EveChip* chip, int ready)
+{
+    if (!chip->vdac4)
+        return;
+    chip->vdac4State.fontsReady = ready != 0 ? 1 : 0;
+    UpdateMemoryMap(*chip);
+}
+
+int EveVdac4FontsReady(const EveChip* chip)
+{
+    return chip->vdac4 ? chip->vdac4State.fontsReady : 1;
 }
 
 void EveSelect(EveChip* chip, int selected)

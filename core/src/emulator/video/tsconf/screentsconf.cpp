@@ -200,7 +200,7 @@ void ScreenTSConf::DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) c
         bitmap(ts.regs[TsConfReg::T1GPage]);
     if (tConfig & 0x80)
         bitmap(ts.regs[TsConfReg::SGPage]);
-    if (const Vdac2Card* card = decoder->GetVdac2Card(); card && card->IsShowing())
+    if (const EveHostCard* card = decoder->GetEveCard(); card && card->IsShowing())
     {
         out.push_back({"vdac2.RAM_G", 0, 0x100000});
         out.push_back({"vdac2.DL0", 0, 0x2000});

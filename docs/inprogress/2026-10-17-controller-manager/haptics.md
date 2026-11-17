@@ -253,6 +253,19 @@ Built (2026-10-23):
   frame-end watches), scaled as a byte is (`value * scale / 255`), so a speed of 0 to 511 takes `scale: 0.5`.
 - **During replay.** The breakpoint manager skips memory and port breakpoints while `ttdReplayActive`, and
   ControllerManager drops a replayed frame's hits.
+- **A coprocessor's app (`cpu: esp`, 2026-11-16).** Some games run on another CPU of the machine: DOOM-VDAC4 runs on
+  the ESP32-S3 of the TS-Conf VDAC4 board, and the Z80 only feeds it the keys and the WAD. A frame-end probe (`value`,
+  `frame`, a plain `write`) takes `cpu: esp` and an `address` of the app's ELF image (the address a variable has in
+  the file): `{probe: write, cpu: esp, address: "0x3fc9a2e4", when: increased}`.
+  - The frame end reads the byte through `PortDecoder::PeekEspAppByte` (TS-Conf: `EspAppHost::PeekAppByte`, the
+    image's sections map the address to PSRAM). The ESP runs on the emulation thread, so the read sees the app's
+    state at the frame end, the same in every run.
+  - No app (the launcher still loading it) reads 0, as a page not mapped does.
+  - No breakpoint probes on that CPU (`exec`, `read`, `each_write`), no `if:` (the condition language reads the
+    main CPU); `when`, `value`, `mask`, `word` and the rule gates work as on the main CPU.
+  - Finding the addresses: `vdac4_state` lists the app's sections (`app.sections`), `vdac4_esp_memory` (all planes,
+    `app=1`) reads the image by its addresses. The DOOM profile's player fields were found that way
+    (`data/software/tsconf/doom-vdac4.yaml`).
 
 ## 6. Effects
 

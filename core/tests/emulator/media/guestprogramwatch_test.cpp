@@ -65,6 +65,7 @@ TEST(GuestProgramWatch_Test, ProgramNames)
     EXPECT_TRUE(GuestProgramWatch::IsProgramName("Game.NEX"));
     EXPECT_TRUE(GuestProgramWatch::IsProgramName("ds_next.snx"));
     EXPECT_TRUE(GuestProgramWatch::IsProgramName("a.b.tap"));
+    EXPECT_TRUE(GuestProgramWatch::IsProgramName("_DOOM.SPG")) << "a TS-Conf program started from the SD card";
     EXPECT_FALSE(GuestProgramWatch::IsProgramName("module.bin"));
     EXPECT_FALSE(GuestProgramWatch::IsProgramName("readme"));
 }

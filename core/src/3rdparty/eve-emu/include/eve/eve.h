@@ -1,4 +1,4 @@
-/* eve-emu - FT812 emulator library. Chip API.
+/* eve-emu - FT812 emulator library (and the VDAC4 profile of it). Chip API.
  *
  * Plain C. All functions take the chip first; none of them call back into the host
  * except the decoder interfaces of decoders.h. The library knows nothing about the
@@ -23,7 +23,9 @@ typedef struct EveChip EveChip;
 
 typedef enum EveModel
 {
-    EVE_MODEL_FT812 = 0 /* the only model */
+    EVE_MODEL_FT812 = 0, /* FT812 (the default) */
+    EVE_MODEL_VDAC4 = 1  /* VDAC4 board: the FT812 of its Tang Nano 20K core and BL616
+                            coprocessor (see "VDAC4 profile" below) */
 } EveModel;
 
 typedef struct EveConfig
@@ -48,7 +50,7 @@ typedef struct EveBuildInfo
 void EveGetBuildInfo(EveBuildInfo* out);
 EveChip* EveCreate(const EveConfig* config); /* NULL if a required decoder is missing */
 void EveDestroy(EveChip* chip);
-void EveReset(EveChip* chip);                /* power-on */
+void EveReset(EveChip* chip);                /* power-on (VDAC4: the FT core power-up, below) */
 /* Reason of the last failed EveCreate / EveLoadState on the calling thread
    (thread-local; "" when there was none). */
 const char* EveLastError(void);
@@ -95,7 +97,7 @@ int EveLoadState(EveChip* chip, const void* in, size_t size); /* 0 = ok */
 
 typedef struct EveRegion
 {
-    const char* name; /* "RAM_G", "DL0", "DL1", "REG", "CMD", "SPECIAL", "INFLIGHT" */
+    const char* name; /* "RAM_G", "DL0", "DL1", "REG", "CMD", "SPECIAL", "INFLIGHT"; VDAC4: "VDAC4_3D" */
     uint8_t* base;
     size_t size;
     const uint64_t* dirty; /* one bit per 4 KB page */
@@ -193,6 +195,37 @@ uint32_t EveFrameLinesPassed(const EveChip* chip);
  * not chip state: every frame block records the threshold it was measured with. */
 void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent);
 int EveProbePixel(const EveChip* chip, uint32_t x, uint32_t y, EvePixelSource* out);
+
+/* --- VDAC4 profile ----------------------------------------------------------------- *
+ *
+ * EVE_MODEL_VDAC4 differs from the FT812 where the board does:
+ * - Power-up (EveCreate, EveReset): ACTIVE at once on the external clock x 8 (64 MHz with
+ *   8 MHz), REG_ID reads 0x7C at once, RAM_G zero, the chip ID written, fonts not ready.
+ * - RAM_G is 2 MB, or 3 MB after EveSetRamGLimit. In 2 MB mode 0x200000..0x2FFFFF is the
+ *   ROM font image (EveConfig.romImage), read-only; in 3 MB mode it is RAM.
+ * - The ROM reads 0 (ROM_FONTROOT too) until the host reports the font copy done
+ *   (EveVdac4SetFontsReady). CMD_TEXT and CMD_NUMBER wait for usable font metrics up to
+ *   6 s after the coprocessor reset, then draw with what they read.
+ * - Core reset (RST_PULSE, clock switch, power-down) keeps RAM_DL and RAM_CMD; for 128
+ *   clocks after it host reads return 0 and host writes are dropped.
+ * - PALETTED8: one ARGB8888 entry per index (bytes B, G, R, A) at PALETTE_SOURCE & ~3.
+ * - Coprocessor: the BL616 command set (CMD_PROGRESS, CMD_LOADIMAGE_BOX, CMD_IMAGEINFO,
+ *   the 3D commands 0xFFFFFFA0..AF; CMD_SETFONT2, CMD_ROMFONT, CMD_PLAYVIDEO fault).
+ * - A read of REG_INT_FLAGS keeps a display list swap that lands with the read.
+ * The functions below have no effect on (and report the fixed values of) other models. */
+
+#define EVE_VDAC4_RAMG_2MB 0x200000u
+#define EVE_VDAC4_RAMG_3MB 0x300000u
+
+/* RAM_G the bus sees, from the address 0. VDAC4: EVE_VDAC4_RAMG_2MB (default) or
+   EVE_VDAC4_RAMG_3MB; other models accept only their own size. 0 = done. The limit is part
+   of the saved state and survives EveReset (it is a board setting, FT_CFG bit 0). */
+int EveSetRamGLimit(EveChip* chip, uint32_t bytes);
+uint32_t EveRamGLimit(const EveChip* chip);
+/* VDAC4: the ESP finished copying the ROM font image (ready = 1) or the FT core was loaded
+   again (0). EveReset clears it. */
+void EveVdac4SetFontsReady(EveChip* chip, int ready);
+int EveVdac4FontsReady(const EveChip* chip);
 
 #ifdef __cplusplus
 }

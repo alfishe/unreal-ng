@@ -1040,6 +1040,52 @@ struct GSFirmwareStateView
   It is also valid when the firmware variables are unknown, for example for a
   ROM without a profile.
 
+**As built (phase 4, item 4: F3 and F6).** The protocol-state part and the send; the firmware objects (F5) are phase 6.
+
+- **Protocol state (F3).** `GSCommandLog::State()` (`GSProtocolState`): the decoder's view, published at the end of
+  each host hook under a small lock, read on any thread.
+  - Fields: the last command, whether the card took it, the parameters expected / received, the replies expected /
+    read, the transfer in progress (kind, bytes so far, the length when known, the address of `#14` / `#15`).
+  - The card's taking of a command is seen at the next host access or at the frame start, whichever comes first
+    (a host that polls only the status has no hook): `#2F Set current track: not taken yet, then parameter 2 of 2
+    due` until then.
+  - A text line: `#2F Set current track: parameter 2 of 2 due`, `module upload: 12,288 bytes so far (#30 Load
+    module)`, `idle (last #2C Set current module)`.
+  - In the GS report as `protocol` (every plane: `state audio gs`, `/state/audio/gs`, `gs_state()`, MCP
+    `audio_gs` with a `protocol:` line).
+  - Only while the log records: off it says so and names the history to configure. A switch of the history
+    (on, off, pause) restarts the decoder (`OnSwitch`), so a log switched on mid-conversation starts at the next
+    command.
+  - The module upload has no total: LOAD ends at `#D2`, the module's length is not in the protocol.
+- **Send (F6).** `GSHostDriver` (`gshostdriver.h`), owned by `SoundManager` for the machine's card, polled at the
+  frame start only while a send is queued (one relaxed load otherwise).
+  - A send is a command with its pre byte, the parameters after it and the reply count. It is checked against the
+    profile: a missing or extra pre byte, or a wrong parameter count, is refused with the parameters' names. Without
+    a profile (NeoGS firmware) the bytes go as given and replies are read only when asked.
+  - It goes in as a careful host sends it, one step a frame:
+    - a set data flag at the start: one frame for the card to take a host byte, then the stale reply is read (`drained`);
+    - the pre byte while bit 7 is clear;
+    - the command while bit 0 is clear;
+    - wait for the card to take it (bit 0 clear);
+    - each parameter while bit 7 is clear;
+    - each reply once bit 7 is set; for a `replyUnflagged` command (the handler's data read clears the flag) the
+      reply is read as soon as the card took the command.
+    A step the mailbox does not allow for 50 frames fails the send and names the byte.
+  - Every step is live input: `GSData`, `GSCommand` and the new `GSReadData` (IN `#B3`, the data flag cleared), so a
+    TTD recording replays the bytes; while a replay owns input the send fails ("refused").
+  - The replies are what the card's `readData` returned (`lastAutomationRead`), not a peek.
+  - The log records the bytes with the `automation` flag; a careful send raises no anomaly.
+  - The last 16 sends are kept; at most 16 wait. A paused machine keeps them queued.
+  - Planes: CLI `gs send` / `gs conversation`, WebAPI `/control/audio/gs` actions `send` / `conversation` (waits up
+    to `wait_ms` on a timer, not holding the thread), MCP `emulator_manage` `gs_send` / `gs_conversation`, Lua
+    `gs_send` / `gs_conversation` (never waits), Python `gs_send(..., wait_ms)` / `gs_conversation`. The GS report
+    carries `last_send`.
+- **Tests.** `GSHostDriver_Test`: `#23` on the firmware's card with its reply and no anomaly; the parameter checks
+  and names; drain, timeout, replay refusal; the protocol state through a command, an upload and its end.
+  `TTDInputApply_Test` covers `GSReadData`. MCP: `test_the_debugger_sends_a_command`.
+- **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card). The Qt
+  panel (U2).
+
 ## 7. Front-ends
 
 > **Revision 2.** The front-end side of the debugger is now the debugger

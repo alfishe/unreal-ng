@@ -40,6 +40,10 @@
    "title": "Input"
   },
   {
+   "id": "zx",
+   "title": "ZX Spectrum keyboard"
+  },
+  {
    "id": "basic",
    "title": "BASIC"
   },
@@ -1504,6 +1508,246 @@
    "group": "input",
    "title": "Quick menu",
    "draw": "window with menu lines"
+  },
+  {
+   "id": "zx.1",
+   "group": "zx",
+   "title": "ZX key 1",
+   "draw": "the key's legend 1 big (top left), its red symbol-shift legend ! smaller (bottom right)"
+  },
+  {
+   "id": "zx.2",
+   "group": "zx",
+   "title": "ZX key 2",
+   "draw": "the key's legend 2 big (top left), its red symbol-shift legend @ smaller (bottom right)"
+  },
+  {
+   "id": "zx.3",
+   "group": "zx",
+   "title": "ZX key 3",
+   "draw": "the key's legend 3 big (top left), its red symbol-shift legend # smaller (bottom right)"
+  },
+  {
+   "id": "zx.4",
+   "group": "zx",
+   "title": "ZX key 4",
+   "draw": "the key's legend 4 big (top left), its red symbol-shift legend $ smaller (bottom right)"
+  },
+  {
+   "id": "zx.5",
+   "group": "zx",
+   "title": "ZX key 5",
+   "draw": "the key's legend 5 big (top left), its red symbol-shift legend % smaller (bottom right)"
+  },
+  {
+   "id": "zx.6",
+   "group": "zx",
+   "title": "ZX key 6",
+   "draw": "the key's legend 6 big (top left), its red symbol-shift legend & smaller (bottom right)"
+  },
+  {
+   "id": "zx.7",
+   "group": "zx",
+   "title": "ZX key 7",
+   "draw": "the key's legend 7 big (top left), its red symbol-shift legend ' smaller (bottom right)"
+  },
+  {
+   "id": "zx.8",
+   "group": "zx",
+   "title": "ZX key 8",
+   "draw": "the key's legend 8 big (top left), its red symbol-shift legend ( smaller (bottom right)"
+  },
+  {
+   "id": "zx.9",
+   "group": "zx",
+   "title": "ZX key 9",
+   "draw": "the key's legend 9 big (top left), its red symbol-shift legend ) smaller (bottom right)"
+  },
+  {
+   "id": "zx.0",
+   "group": "zx",
+   "title": "ZX key 0",
+   "draw": "the key's legend 0 big (top left), its red symbol-shift legend _ smaller (bottom right)"
+  },
+  {
+   "id": "zx.q",
+   "group": "zx",
+   "title": "ZX key Q",
+   "draw": "the key's legend Q big (top left), its red symbol-shift legend <= smaller (bottom right)"
+  },
+  {
+   "id": "zx.w",
+   "group": "zx",
+   "title": "ZX key W",
+   "draw": "the key's legend W big (top left), its red symbol-shift legend <> smaller (bottom right)"
+  },
+  {
+   "id": "zx.e",
+   "group": "zx",
+   "title": "ZX key E",
+   "draw": "the key's legend E big (top left), its red symbol-shift legend >= smaller (bottom right)"
+  },
+  {
+   "id": "zx.r",
+   "group": "zx",
+   "title": "ZX key R",
+   "draw": "the key's legend R big (top left), its red symbol-shift legend < smaller (bottom right)"
+  },
+  {
+   "id": "zx.t",
+   "group": "zx",
+   "title": "ZX key T",
+   "draw": "the key's legend T big (top left), its red symbol-shift legend > smaller (bottom right)"
+  },
+  {
+   "id": "zx.y",
+   "group": "zx",
+   "title": "ZX key Y",
+   "draw": "the key's legend Y big (top left), its red symbol-shift legend AND smaller (bottom right)"
+  },
+  {
+   "id": "zx.u",
+   "group": "zx",
+   "title": "ZX key U",
+   "draw": "the key's legend U big (top left), its red symbol-shift legend OR smaller (bottom right)"
+  },
+  {
+   "id": "zx.i",
+   "group": "zx",
+   "title": "ZX key I",
+   "draw": "the key's legend I big (top left), its red symbol-shift legend AT smaller (bottom right)"
+  },
+  {
+   "id": "zx.o",
+   "group": "zx",
+   "title": "ZX key O",
+   "draw": "the key's legend O big (top left), its red symbol-shift legend ; smaller (bottom right)"
+  },
+  {
+   "id": "zx.p",
+   "group": "zx",
+   "title": "ZX key P",
+   "draw": "the key's legend P big (top left), its red symbol-shift legend \" smaller (bottom right)"
+  },
+  {
+   "id": "zx.a",
+   "group": "zx",
+   "title": "ZX key A",
+   "draw": "the key's legend A big (top left), its red symbol-shift legend STOP smaller (bottom right)"
+  },
+  {
+   "id": "zx.s",
+   "group": "zx",
+   "title": "ZX key S",
+   "draw": "the key's legend S big (top left), its red symbol-shift legend NOT smaller (bottom right)"
+  },
+  {
+   "id": "zx.d",
+   "group": "zx",
+   "title": "ZX key D",
+   "draw": "the key's legend D big (top left), its red symbol-shift legend STEP smaller (bottom right)"
+  },
+  {
+   "id": "zx.f",
+   "group": "zx",
+   "title": "ZX key F",
+   "draw": "the key's legend F big (top left), its red symbol-shift legend TO smaller (bottom right)"
+  },
+  {
+   "id": "zx.g",
+   "group": "zx",
+   "title": "ZX key G",
+   "draw": "the key's legend G big (top left), its red symbol-shift legend THEN smaller (bottom right)"
+  },
+  {
+   "id": "zx.h",
+   "group": "zx",
+   "title": "ZX key H",
+   "draw": "the key's legend H big (top left), its red symbol-shift legend ↑ smaller (bottom right)"
+  },
+  {
+   "id": "zx.j",
+   "group": "zx",
+   "title": "ZX key J",
+   "draw": "the key's legend J big (top left), its red symbol-shift legend - smaller (bottom right)"
+  },
+  {
+   "id": "zx.k",
+   "group": "zx",
+   "title": "ZX key K",
+   "draw": "the key's legend K big (top left), its red symbol-shift legend + smaller (bottom right)"
+  },
+  {
+   "id": "zx.l",
+   "group": "zx",
+   "title": "ZX key L",
+   "draw": "the key's legend L big (top left), its red symbol-shift legend = smaller (bottom right)"
+  },
+  {
+   "id": "zx.enter",
+   "group": "zx",
+   "title": "ZX key ENTER",
+   "draw": "the word ENTER and a return arrow"
+  },
+  {
+   "id": "zx.caps",
+   "group": "zx",
+   "title": "ZX key CAPS SHIFT",
+   "draw": "the words CAPS / SHIFT on two lines"
+  },
+  {
+   "id": "zx.z",
+   "group": "zx",
+   "title": "ZX key Z",
+   "draw": "the key's legend Z big (top left), its red symbol-shift legend : smaller (bottom right)"
+  },
+  {
+   "id": "zx.x",
+   "group": "zx",
+   "title": "ZX key X",
+   "draw": "the key's legend X big (top left), its red symbol-shift legend £ smaller (bottom right)"
+  },
+  {
+   "id": "zx.c",
+   "group": "zx",
+   "title": "ZX key C",
+   "draw": "the key's legend C big (top left), its red symbol-shift legend ? smaller (bottom right)"
+  },
+  {
+   "id": "zx.v",
+   "group": "zx",
+   "title": "ZX key V",
+   "draw": "the key's legend V big (top left), its red symbol-shift legend / smaller (bottom right)"
+  },
+  {
+   "id": "zx.b",
+   "group": "zx",
+   "title": "ZX key B",
+   "draw": "the key's legend B big (top left), its red symbol-shift legend * smaller (bottom right)"
+  },
+  {
+   "id": "zx.n",
+   "group": "zx",
+   "title": "ZX key N",
+   "draw": "the key's legend N big (top left), its red symbol-shift legend , smaller (bottom right)"
+  },
+  {
+   "id": "zx.m",
+   "group": "zx",
+   "title": "ZX key M",
+   "draw": "the key's legend M big (top left), its red symbol-shift legend . smaller (bottom right)"
+  },
+  {
+   "id": "zx.symbol",
+   "group": "zx",
+   "title": "ZX key SYMBOL SHIFT",
+   "draw": "the words SYMBOL / SHIFT on two lines, in red"
+  },
+  {
+   "id": "zx.space",
+   "group": "zx",
+   "title": "ZX key SPACE",
+   "draw": "the word SPACE and, smaller in red, BREAK (its caps-shift legend)"
   },
   {
    "id": "basic.menu",

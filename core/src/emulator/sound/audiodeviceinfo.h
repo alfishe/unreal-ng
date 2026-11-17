@@ -39,6 +39,8 @@ enum class AudioSourceType
     WildSoundXm,     // WS XM: the uploaded module
     WildSoundAy1,    // WS AY 1: chip 0
     WildSoundAy2,    // WS AY 2: chip 1
+    // The VDAC4 board's ESP32-S3 (TS-Conf + VDAC4): the firmware's I2S audio player, the apps' PCM
+    Vdac4Esp,
     Custom
 };
 

@@ -79,6 +79,10 @@ public:
     /// decoder calls it before a write that the next line start would latch,
     /// so a latch taken during the current instruction sees the old value
     void CatchUp(uint32_t t);
+    /// The engine is advancing (a catch-up, the DMA's cycles): a device the DMA reaches (an SPI device on the
+    /// Z-controller) must not catch the engine up again from inside it - a nested catch-up would run the DMA's next
+    /// words before the current one finished (the VDAC4 ESP saw bytes "c d a d" for "a b c d")
+    bool Advancing() const { return _advancing != 0; }
     /// #7FFD: V_PAGE changes at once, also for the rest of the current line
     void SetLiveVideoPage(uint8_t vPage);
 
@@ -143,6 +147,16 @@ public:
     /// endregion
 
 private:
+    struct AdvanceScope
+    {
+        explicit AdvanceScope(uint32_t& depth) : _depth(depth) { ++_depth; }
+        ~AdvanceScope() { --_depth; }
+        AdvanceScope(const AdvanceScope&) = delete;
+        AdvanceScope& operator=(const AdvanceScope&) = delete;
+        uint32_t& _depth;
+    };
+    uint32_t _advancing = 0;
+
     uint32_t RasterAt(uint32_t t) const;
     void LineStart(uint32_t line);
     /// TS window of the line and its TSU pixels (hs §4.4)

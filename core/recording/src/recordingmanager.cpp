@@ -117,6 +117,8 @@ static const char* GetAudioSourceName(AudioSourceType source)
             return "WildSoundAy1";
         case AudioSourceType::WildSoundAy2:
             return "WildSoundAy2";
+        case AudioSourceType::Vdac4Esp:
+            return "Vdac4Esp";
         case AudioSourceType::Custom:
             return "Custom";
         default:

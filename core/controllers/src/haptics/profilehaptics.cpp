@@ -69,9 +69,10 @@ ProfileHaptics::ProfileHaptics(HapticProfile profile, std::string name, HapticMi
         if (source.IsProbe() && _watches.size() + bytes <= HapticFrame::kMaxWatches)
         {
             state.watch = static_cast<int>(_watches.size());
-            _watches.push_back({source.address, source.page});
+            _watches.push_back({source.address, source.page, source.esp, source.espAddress});
             if (source.word)
-                _watches.push_back({static_cast<uint16_t>(source.address + 1), source.page});
+                _watches.push_back({static_cast<uint16_t>(source.address + 1), source.page, source.esp,
+                                    source.espAddress + 1});
         }
         if (source.IsBreakpointProbe() && _probes.size() < HapticFrame::kMaxProbes)
         {

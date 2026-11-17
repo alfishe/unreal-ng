@@ -154,6 +154,7 @@
 #include <debugger/history/historycontrol.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
+#include "../bindings/python_vdac4.h"
 
 namespace py = pybind11;
 
@@ -5546,6 +5547,37 @@ namespace PythonBindings
             .def("gs_send_data", [](Emulator& self, int byte) {
                 return SubmitGSInput(self, ttd::TTDInputKind::GSData, byte);
             }, "Send data byte to GS (OUT #B3 semantics; live input; True when submitted)", py::arg("byte"))
+            .def("gs_send", [](Emulator& self, int command, std::optional<int> pre, std::vector<int> params,
+                               std::optional<int> replies, uint32_t waitMs) -> py::object {
+                const auto byte = [](int v, const char* what) {
+                    if (v < 0 || v > 255)
+                        throw py::value_error(std::string(what) + ": a byte 0..255");
+                    return static_cast<uint8_t>(v);
+                };
+                GSSendRequest request;
+                request.command = byte(command, "command");
+                if (pre)
+                    request.pre = byte(*pre, "pre");
+                for (int p : params)
+                    request.params.push_back(byte(p, "params"));
+                if (replies)
+                    request.replies = byte(*replies, "replies");
+                const GSSendReply reply = GSSend(self.GetContext(), request, std::min<uint32_t>(waitMs, 10000));
+                if (reply.status == 400)
+                    throw py::value_error(reply.text);
+                if (reply.status != 200)
+                    throw std::runtime_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The debugger's send (F6): each byte when the card may take it, the replies read, named by the firmware "
+               "profile; waits up to wait_ms for them. A wrong parameter count is a ValueError",
+               py::arg("command"), py::arg("pre") = py::none(), py::arg("params") = std::vector<int>{},
+               py::arg("replies") = py::none(), py::arg("wait_ms") = 1000)
+            .def("gs_conversation", [](Emulator& self, uint32_t id) -> py::object {
+                const GSSendReply reply = GSConversationRead(self.GetContext(), id);
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
             .def("gs_read_data", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
@@ -8846,5 +8878,8 @@ namespace PythonBindings
 
         // TS-Conf VDAC2 card (FT812): bus capture
         registerVdac2Bindings(emulatorClass);
+
+        // TS-Conf VDAC4 board (Tang + ESP32-S3): state
+        registerVdac4Bindings(emulatorClass);
     }
 }

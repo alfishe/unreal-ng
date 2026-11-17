@@ -33,7 +33,7 @@ std::string LowerExtension(const std::string& name)
 
 bool GuestProgramWatch::IsProgramName(const std::string& name)
 {
-    static const char* const kExtensions[] = {"nex", "snx", "sna", "z80", "szx", "tap", "tzx", "trd", "scl", "sp"};
+    static const char* const kExtensions[] = {"nex", "snx", "sna", "z80", "szx", "tap", "tzx", "trd", "scl", "sp", "spg"};
     const std::string ext = LowerExtension(name);
     return std::any_of(std::begin(kExtensions), std::end(kExtensions), [&ext](const char* known) { return ext == known; });
 }

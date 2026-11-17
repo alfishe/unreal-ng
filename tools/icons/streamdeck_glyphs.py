@@ -28,6 +28,7 @@ GROUPS = [
     ('audio', 'Audio'),
     ('video', 'Video and capture'),
     ('input', 'Input'),
+    ('zx', 'ZX Spectrum keyboard'),
     ('basic', 'BASIC'),
     ('settings', 'Settings'),
     ('status', 'Status'),
@@ -282,6 +283,7 @@ GLYPHS = [
     ('osd.keyboard', 'input', 'On-screen keyboard', 'keyboard on a screen'),
     ('osd.keyboard_picture', 'input', 'Keyboard picture (next)', 'keyboard and a chevron right'),
     ('osd.quick_menu', 'input', 'Quick menu', 'window with menu lines'),
+    # --- ZX Spectrum keyboard: one glyph per key of the 48K, inserted here from ZX_KEYS (below)
     # --- BASIC
     ('basic.menu', 'basic', 'BASIC (menu) / LIST', 'program listing with line numbers'),
     ('basic.run', 'basic', 'RUN', 'listing with a play triangle'),
@@ -303,6 +305,36 @@ GLYPHS = [
     ('status.offline', 'status', 'No connection to unreal-ng', 'unplugged plug'),
     ('status.hold', 'status', 'Hold to confirm', 'stopwatch'),
 ]
+
+# The 40 keys of the ZX Spectrum 48K keyboard in its four rows: (glyph id, main legend, red symbol-shift legend as on
+# the key; on SPACE the red BREAK is the caps-shift legend). The keyword of the key (PLOT, PRINT, EDIT...) is the key's
+# label in the scenario, never part of the picture. Legends checked against the 48K ROM's symbol-shift table (#026A).
+ZX_KEYS = [
+    ('zx.1', '1', '!'), ('zx.2', '2', '@'), ('zx.3', '3', '#'), ('zx.4', '4', '$'), ('zx.5', '5', '%'),
+    ('zx.6', '6', '&'), ('zx.7', '7', "'"), ('zx.8', '8', '('), ('zx.9', '9', ')'), ('zx.0', '0', '_'),
+    ('zx.q', 'Q', '<='), ('zx.w', 'W', '<>'), ('zx.e', 'E', '>='), ('zx.r', 'R', '<'), ('zx.t', 'T', '>'),
+    ('zx.y', 'Y', 'AND'), ('zx.u', 'U', 'OR'), ('zx.i', 'I', 'AT'), ('zx.o', 'O', ';'), ('zx.p', 'P', '"'),
+    ('zx.a', 'A', 'STOP'), ('zx.s', 'S', 'NOT'), ('zx.d', 'D', 'STEP'), ('zx.f', 'F', 'TO'), ('zx.g', 'G', 'THEN'),
+    ('zx.h', 'H', '\u2191'), ('zx.j', 'J', '-'), ('zx.k', 'K', '+'), ('zx.l', 'L', '='), ('zx.enter', 'ENTER', ''),
+    ('zx.caps', 'CAPS SHIFT', ''), ('zx.z', 'Z', ':'), ('zx.x', 'X', '\u00a3'), ('zx.c', 'C', '?'), ('zx.v', 'V', '/'),
+    ('zx.b', 'B', '*'), ('zx.n', 'N', ','), ('zx.m', 'M', '.'), ('zx.symbol', 'SYMBOL SHIFT', ''),
+    ('zx.space', 'SPACE', 'BREAK'),
+]
+
+
+def zx_glyph(gid, main, red):
+    if len(main) == 1:
+        return (gid, 'zx', 'ZX key %s' % main, 'the key\'s legend %s big (top left), its red symbol-shift legend %s '
+                                               'smaller (bottom right)' % (main, red))
+    draws = {'zx.enter': 'the word ENTER and a return arrow',
+             'zx.caps': 'the words CAPS / SHIFT on two lines',
+             'zx.symbol': 'the words SYMBOL / SHIFT on two lines, in red',
+             'zx.space': 'the word SPACE and, smaller in red, BREAK (its caps-shift legend)'}
+    return gid, 'zx', 'ZX key %s' % main, draws[gid]
+
+
+_at = next(i for i, g in enumerate(GLYPHS) if g[1] == 'basic')
+GLYPHS[_at:_at] = [zx_glyph(*k) for k in ZX_KEYS]
 
 # Catalogue action (or GUI command) -> faces. face / face_on: glyph ids; state: the readout that selects face_on; params: a glyph per
 # parameter value; label: the key's text (a pack glyph with a label, or a text-only face where there is no glyph).
@@ -578,6 +610,7 @@ def main():
         f.write('\n')
     print('%d glyphs, %d actions with faces, %d pruned -> %s' % (len(GLYPHS), len(ACTIONS), len(PRUNED),
                                                                 os.path.relpath(OUT, ROOT_DIR)))
+    unused = [g for g in unused if not g.startswith('zx.')]  # the keyboard page's keys: named by the scenario
     if unused:
         print('glyphs used by no action or menu (states / status): %s' % ', '.join(unused))
 
