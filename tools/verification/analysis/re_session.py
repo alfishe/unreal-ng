@@ -204,7 +204,8 @@ def set_key(s, key, down):
 def call(args):
     s, _ = session_of(args.work)
     body = json.loads(args.args) if args.args else {}
-    r = s.call('analysis', dict(body, action=args.action), ok=False)
+    # ACTION goes to --tool (default the analysis tool): time_travel seek, memory_at, ... take the same form
+    r = s.call(args.tool, dict(body, action=args.action), ok=False)
     print(r.text)
     if args.json:
         with open(args.json, 'w') as f:
@@ -553,6 +554,7 @@ def main():
     p.add_argument('--work', required=True)
     p = sub.add_parser('call')
     p.add_argument('--work', required=True)
+    p.add_argument('--tool', default='analysis', help='the MCP tool ACTION and its JSON go to (default analysis)')
     p.add_argument('--json')
     p.add_argument('action')
     p.add_argument('args', nargs='?')

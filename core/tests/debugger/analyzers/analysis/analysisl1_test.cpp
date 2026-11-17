@@ -507,6 +507,26 @@ TEST_F(AnalysisL1_Test, InterruptProfile)
     EXPECT_TRUE(writesTicks);
 }
 
+TEST_F(AnalysisL1_Test, InterruptJumpExit)
+{
+    // The handler leaves by a patched JP to the interrupted address: its time ends there, not at the replay's end
+    const unsigned frames = 6;
+    const L1Result l1 = Run("interrupt-jp.asm", frames, "48K", [this] {
+        for (uint16_t a = 0x9000; a <= 0x9100; ++a)
+            _memory->DirectWriteToZ80Memory(a, 0x91);
+    });
+    ASSERT_FALSE(HasFailure());
+    const Routine* handler = RoutineAt(l1, At("handler"));
+    ASSERT_NE(handler, nullptr);
+    EXPECT_TRUE(handler->kinds & entry::kInterrupt) << EntryKindNames(handler->kinds);
+    ASSERT_GE(handler->profile.entries, frames - 1u);
+    // POP HL, LD (nn),HL, LD A,(nn), INC A, LD (nn),A, EI, JP nn: 10 + 16 + 13 + 4 + 13 + 4 + 10 = 70 T, plus the
+    // interrupt's own 19 and contention; a frame left open would hold tens of thousands
+    const uint64_t perEntry = handler->profile.tstatesInclusive / handler->profile.entries;
+    EXPECT_GE(perEntry, 70u);
+    EXPECT_LT(perEntry, 200u) << "the interrupt frame did not end at the JP to the interrupted address";
+}
+
 TEST_F(AnalysisL1_Test, RegisterLiveInOut)
 {
     const L1Result l1 = Run("registers.asm", 1);

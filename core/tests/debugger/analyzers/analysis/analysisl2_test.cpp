@@ -1441,6 +1441,10 @@ TEST_F(AnalysisL2_Test, AnalysisCopies_InterruptedLdirIsOneCopy)
                  << "\n";
             whole += c.src == 0 && c.dst == 0xA000 && c.length == 6000 ? c.count : 0;
             EXPECT_EQ(c.src, 0u) << "a run that starts inside the copy\n" << runs.str();
+            // 6000 LDIR steps are about 126 000 T: the run starts in one frame and ends in a later one
+            EXPECT_LE(c.firstFrame, c.lastFrame);
+            if (c.length == 6000)
+                EXPECT_GT(c.lastFrame, c.firstFrame) << "the copy's frames";
         }
     EXPECT_GE(whole, 1u) << runs.str();
 }

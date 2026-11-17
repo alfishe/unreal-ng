@@ -3405,9 +3405,8 @@ namespace PythonBindings
 
                 EmulatorPauseBracket bracket(&self);
 
-                if (!ctx->pTape->EnsureImageLoaded())
-                    return false;
-                return ctx->pTape->SeekToBlock(static_cast<size_t>(blockIndex));
+                // A tape still on its way (loaded while a TTD recording runs) takes the seek when it lands
+                return ctx->pTape->Seek(static_cast<size_t>(blockIndex)) != TapeSeekResult::OutOfRange;
             }, "Position the tape at block <block_index>", py::arg("block_index"))
             .def("tape_pos", [](Emulator& self) -> py::object {
                 auto* ctx = self.GetContext();

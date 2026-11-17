@@ -118,7 +118,7 @@ it under `scratch/`). The workflow and the gates: [.recipe/analysis/reverse-engi
 | `build` | builds again from the loaded recording, a window of it with `--stage N` or `--from-frame` / `--from-tinframe` / `--to-frame`; `--into` a stage's own folder; writes `l1.json`, `start.bin` (the memory at the window's start), `review.txt`, `findings.txt` |
 | `stages` | the code arrivals of the last build, one line each with the `build` window for that stage |
 | `interrupts` | the interrupt handlers of the last build: entries, entries a frame, T-states an entry, the CPU share, the callees |
-| `call` | one `analysis` call on the live instance (`ACTION` and its options as JSON); `--json` writes the structured answer |
+| `call` | one call on the live instance: `ACTION` and its options as JSON go to the `analysis` tool, or with `--tool NAME` to that MCP tool (`time_travel seek`, `memory_at`, ...); `--json` writes the structured answer |
 | `export` | every draft format into `W/draft`, and the findings register |
 | `check` | the gates into `W/check.json`: `rebuild-plain`, `assemble` (with `--sjasmplus`), the score (with `--reference`) |
 | `stop` | ends the instance |
