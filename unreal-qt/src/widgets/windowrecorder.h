@@ -33,7 +33,7 @@ class OsdKeyboardWindow;
 /// the frame's height (sharp, not scaled up afterwards) and centres it in it
 WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
                                                   bool gpuAcceleration, const QString& profile,
-                                                  const QString& path);
+                                                  const QString& path, int engine = 0);
 
 class WindowRecorder : public QObject
 {
