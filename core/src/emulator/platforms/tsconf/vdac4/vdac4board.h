@@ -22,6 +22,7 @@ class EmulatorContext;
 class SpiDevice;
 class Vdac4Audio;
 class Vdac4Esp;
+class Vdac4FtWorker;
 class Vdac4Tang;
 
 namespace vdac4
@@ -42,6 +43,7 @@ public:
     vdac4::EspXtensaRuntime& Runtime() { return *_runtime; }
     /// The ESP's sound on the mixer ("VDAC4 ESP" row)
     Vdac4Audio& Audio() { return *_audio; }
+    Vdac4FtWorker& FtWorker() { return *_ft; }
 
     /// Machine clock restarts (resets) the ESP's clock stepped over, and the ESP time they took back in total
     uint64_t ClockRestarts() const { return _backSteps; }
@@ -78,11 +80,14 @@ private:
 
     EmulatorContext* _context;
     Vdac4Tang& _tang;
+    std::function<void()> _catchUp;
     Vdac4Control::BoardState _published;  ///< guarded by _ringLock
     std::unique_ptr<TangLink> _link;
     std::unique_ptr<Vdac4Audio> _audio;
     bool _audioAttached = false;
     std::unique_ptr<vdac4::EspXtensaRuntime> _runtime;
+    std::unique_ptr<Vdac4FtWorker> _ft;  ///< the Tang's work for the ESP's jobs (vdac4ftworker.h)
+    uint64_t _jobStamp = 0;              ///< the running ESP job's stamp (its thread)
     std::unique_ptr<Vdac4Esp> _esp;
     std::ofstream _logFile;
     mutable std::mutex _ringLock;  ///< the log and packet rings: written on the emulation thread, read by any

@@ -953,6 +953,12 @@ int Vdac4EspFirmware::SendEvent(uint8_t code, const uint8_t* data, size_t size)
     return _transport.QueueEvent(code, data, size) ? kZmOk : kZmBusy;
 }
 
+size_t Vdac4EspFirmware::EventQueueRoom() const
+{
+    const size_t queued = _transport.QueuedEvents();
+    return queued < EspFrameTransport::kEventQueueDepth ? EspFrameTransport::kEventQueueDepth - queued : 0;
+}
+
 int Vdac4EspFirmware::Reply(uint8_t response, const uint8_t* data, size_t size)
 {
     if (!_inCommand)

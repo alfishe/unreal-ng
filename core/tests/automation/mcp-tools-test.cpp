@@ -2487,6 +2487,9 @@ TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
     reply["audio"]["input_rate"] = 11025;
     reply["audio"]["output_rate"] = 48000;
     reply["audio"]["underruns"] = 3;
+    reply["threads"]["esp_thread"] = true;
+    reply["threads"]["esp_latency_ms"] = 4;
+    reply["threads"]["esp_jobs"] = 2000;
     for (int i = 0; i < 12; ++i)
         reply["log"].append("line " + std::to_string(i));
     _caller->routes["GET /api/v1/emulator/emu-1/vdac4/state?log=12"] = {200, reply};
@@ -2502,6 +2505,8 @@ TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
     EXPECT_NE(result.text.find("running \"DOOM\" 1.2 (doom.zm)"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("11025 Hz -> 48000 Hz"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("underruns 3"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ESP jobs on a worker, FT work inline, latency 4 ms; 2000 jobs"), std::string::npos)
+        << result.text;
     // the text keeps the last 10 lines, structuredContent all 12
     EXPECT_NE(result.text.find("Log (last 10 of 12)"), std::string::npos) << result.text;
     EXPECT_EQ(result.text.find("line 1\n"), std::string::npos) << result.text;

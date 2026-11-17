@@ -85,6 +85,8 @@ public:
     virtual void FtOpened(bool selected) = 0;
     /// The Tang LINK, nullptr when none is attached
     virtual IVdac4TangLink* Tang() = 0;
+    /// Events SendEvent takes now before it answers kZmBusy (the free places of the 8-deep queue)
+    virtual size_t EventQueueRoom() const { return 8; }
 };
 
 /// What the running app declared (zm_app_t name, version, command_first, command_last)

@@ -211,6 +211,11 @@ void CLIProcessor::HandleVdac4(const ClientSession& session, const std::vector<s
             out << s.audioInputRate << " Hz -> " << s.audioOutputRate << " Hz, queued " << s.audioQueued << ", underruns "
                 << s.audioUnderruns << ", dropped " << s.audioDropped << (s.audioSound ? ", sounding" : ", silent");
         out << NEWLINE;
+        out << "  Threads: ESP " << (s.espThread ? "worker" : "inline") << ", FT " << (s.ftThread ? "own thread" : "inline")
+            << ", latency " << s.espLatencyMs << " ms; jobs " << s.espJobs << " (" << s.espThreadedJobs << " threaded, "
+            << s.espJobMs << " ms), waits " << s.espWaits << " (" << s.espWaitMs << " ms); FT ops " << s.ftOps
+            << ", reads " << s.ftReads << ", apply " << s.ftApplyMs << " ms, job waits " << s.ftProducerWaitMs
+            << " ms, emulation waits " << s.ftOwnerWaits << " (" << s.ftOwnerWaitMs << " ms)" << NEWLINE;
     }
     out << (logOnly ? "VDAC4 ESP log" : "  Log") << " (" << s.log.size() << " line(s))" << (s.log.empty() ? "" : ":") << NEWLINE;
     for (const std::string& line : s.log)

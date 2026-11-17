@@ -146,6 +146,7 @@ private:
     void ReleaseResource(const char* name) override;
     int ReadModule(const char* name, std::vector<uint8_t>& out) override;
     void FtOpened(bool selected) override;
+    size_t EventQueueRoom() const override;
     IVdac4TangLink* Tang() override { return _tang; }
 
     EspFrameTransport& _transport;

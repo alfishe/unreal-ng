@@ -55,6 +55,7 @@ Vdac4Tang::Vdac4Tang(EmulatorContext* context, std::function<uint32_t()> rasterI
 
 void Vdac4Tang::PowerOn()
 {
+    WaitEsp();
     EveHostCard::PowerOn();  // the chip powered down: slot 0 has no FT812
     const uint64_t now = Now();
     const EmulatorContext* context = Context();
@@ -68,6 +69,7 @@ void Vdac4Tang::PowerOn()
 
 void Vdac4Tang::Reset()
 {
+    WaitEsp();
     // TS-Conf clears M_SEL; the slot-1 core leaves by the idle rule (R3 §3.4).
     // The Evo transfer in flight is cut by the hub's reset
     _state.msel = 0;
@@ -141,12 +143,14 @@ void Vdac4Tang::EnterTs()
 
 void Vdac4Tang::OnFrameEnd()
 {
+    WaitEsp();
     EveHostCard::OnFrameEnd();
     Update(GetTime().frameBase);
 }
 
 void Vdac4Tang::SetShowing(bool showing)
 {
+    WaitEsp();
     _state.msel = showing ? 1 : 0;
     // M_SEL = 1 in slot 0 blanks the Evo picture; in slot 1 the FT picture is shown.
     // The chip of a slot-0 Tang is powered down: its picture is black
@@ -155,6 +159,8 @@ void Vdac4Tang::SetShowing(bool showing)
 
 size_t Vdac4Tang::TakeIntEdges(uint32_t rasterInFrame, uint32_t* out, size_t max)
 {
+    if (_espJob)
+        return 0;  // the ESP is the FT host (INT_N held inactive) and its job may be using the chip right now
     const size_t taken = EveHostCard::TakeIntEdges(rasterInFrame, out, max);
     if (IsEspHost() || _state.personality != Personality::Ft)
         return 0;  // INT_N held inactive (R3 §3.5)
@@ -163,6 +169,7 @@ size_t Vdac4Tang::TakeIntEdges(uint32_t rasterInFrame, uint32_t* out, size_t max
 
 void Vdac4Tang::select(bool selected)
 {
+    WaitEsp();
     const uint64_t now = Now();
     Update(now);
     _state.selected = selected ? 1 : 0;
@@ -183,6 +190,7 @@ void Vdac4Tang::select(bool selected)
 
 uint8_t Vdac4Tang::exchange(uint8_t mosi)
 {
+    WaitEsp();
     const uint64_t now = Now();
     Update(now);
     _state.lastEvoTraffic = now;
@@ -350,6 +358,13 @@ void Vdac4Tang::LinkWrite(uint32_t address, uint32_t value)
         case LinkFtStat:  // FT_CFG
         {
             const bool ramModeChanged = ((_state.ftCfg ^ value) & kFtCfgRamG3M) != 0;
+            // The Evo gets the FT host back: INT_N reaches it again from now on, not with the edges of the time
+            // the ESP drove the chip (nobody took them while INT_N was held inactive)
+            if (IsEspHost() && (value & kFtCfgEspHost) == 0 && ft)
+            {
+                Synchronize();
+                DropIntEdges();
+            }
             _state.ftCfg = value & 0x0F;
             if (ramModeChanged && ft)
                 ApplyRamMode();

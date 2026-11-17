@@ -125,6 +125,21 @@ void EmulatorAPI::vdac4State(const HttpRequestPtr& req, std::function<void(const
     audio["underruns"] = static_cast<Json::UInt64>(state.audioUnderruns);
     audio["dropped"] = static_cast<Json::UInt64>(state.audioDropped);
     audio["sound"] = state.audioSound;
+    Json::Value& threads = body["threads"];
+    threads["esp_thread"] = state.espThread;
+    threads["ft_thread"] = state.ftThread;
+    threads["esp_latency_ms"] = state.espLatencyMs;
+    threads["esp_jobs"] = static_cast<Json::UInt64>(state.espJobs);
+    threads["esp_threaded_jobs"] = static_cast<Json::UInt64>(state.espThreadedJobs);
+    threads["esp_waits"] = static_cast<Json::UInt64>(state.espWaits);
+    threads["esp_wait_ms"] = state.espWaitMs;
+    threads["esp_job_ms"] = state.espJobMs;
+    threads["ft_ops"] = static_cast<Json::UInt64>(state.ftOps);
+    threads["ft_reads"] = static_cast<Json::UInt64>(state.ftReads);
+    threads["ft_apply_ms"] = state.ftApplyMs;
+    threads["ft_producer_wait_ms"] = state.ftProducerWaitMs;
+    threads["ft_owner_waits"] = static_cast<Json::UInt64>(state.ftOwnerWaits);
+    threads["ft_owner_wait_ms"] = state.ftOwnerWaitMs;
     Json::Value& log = body["log"];
     log = Json::arrayValue;
     for (const std::string& line : state.log)

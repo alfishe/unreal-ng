@@ -243,14 +243,22 @@ public:
     /// endregion
 
     const Time& GetTime() const { return _time; }
+    /// "Now" is `tact` until unpinned (kNotPinned): accesses made off the owner's thread (the VDAC4 ESP's job,
+    /// which runs at the moment it was posted) take that time instead of the owner's live position
+    static constexpr uint64_t kNotPinned = UINT64_MAX;
+    void PinNow(uint64_t tact) { _pinnedNow = tact; }
     /// The chip, for the inspection API of eve/eve.h (nullptr if not ready)
     EveChip* Chip() const { return _chip; }
 
 protected:
     /// The log prefix and the board parameters
     const Params& GetParams() const { return _params; }
-    /// The owner's current position, absolute raster tacts
-    uint64_t Now() const { return _time.frameBase + _rasterInFrame(); }
+    /// The owner's current position, absolute raster tacts (the pinned tact while one is pinned)
+    uint64_t Now() const { return _pinnedNow != kNotPinned ? _pinnedNow : OwnerNow(); }
+    /// The owner's live position, pinned or not (the owner's thread)
+    uint64_t OwnerNow() const { return _time.frameBase + _rasterInFrame(); }
+    /// Forget the INT_N edges not taken yet (edges of a time nobody sampled the pin: INT_N held inactive)
+    void DropIntEdges() { _edgeCount = 0; }
     /// PowerOn as of an earlier tact `at` (<= Now()): the chip runs from there on the next access or Synchronize
     void PowerOnAt(uint64_t at);
     EmulatorContext* Context() const { return _context; }
@@ -285,6 +293,7 @@ private:
     std::vector<uint8_t> _rom;
     EveChip* _chip = nullptr;
     Time _time;
+    uint64_t _pinnedNow = kNotPinned;
     uint64_t _edges[kMaxPendingEdges] = {};
     size_t _edgeCount = 0;
 

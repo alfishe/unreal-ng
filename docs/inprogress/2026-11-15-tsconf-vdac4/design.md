@@ -93,6 +93,9 @@ Out of scope, first round:
   - `RamG`: `2M` (default), `3M`. This is the power-on value; the ESP and apps switch it through `FT_CFG`;
   - `EspCache`: module cache directory, default `<instance data>/vdac4/zm`;
   - `EspMhz`: 240;
+  - `EspThread`: 1 = the ESP app's jobs on a worker thread, 0 = on the emulation thread (§7.5);
+  - `FtThread`: 1 = the Tang / FT812 work of those jobs on a thread of its own, 0 (default) = on the job's thread;
+  - `EspLatencyMs`: 1-16, default 4: emulated ms the app's outputs reach the firmware after its job (§7.5);
   - `EspBootMs`: ESP boot time after power-on, when it arms the Tang (§5.3), default 400;
   - `EspLog`: app log file, empty = off;
   - `LoadDelayMs`: Tang slot switch time, default 174 (R3 §2.2).
@@ -287,22 +290,62 @@ emulation runs below 100 % while the ESP is busy (measured in phase 4).
 - `millis()` = emulated time.
 - The FreeRTOS tick is 1 kHz (R2 §2.1).
 
-### 7.5 Quantum model
+### 7.5 Quantum model (implemented: jobs)
 
-- The emulated timeline is cut into quanta of `Q` = 1 ms of emulated time (tunable).
-- At boundary `k`, the emulation thread publishes to the ESP worker everything the Z80 side produced in quantum
-  `k`: completed SPI requests, DMA puts, Evo FT accesses.
-- The worker runs both ESP cores over quantum `k`, in a fixed core order and interleave (core 0 slice, core 1 slice,
-  …, 64 instructions each). Its outputs are timestamped in emulated time within `k`: link responses, FT writes, PCM
-  frames, events.
-- The emulation thread applies those outputs during quantum `k+1`, each at its timestamp + `Q`.
+The plan was quanta of `Q` = 1 ms with the ESP one quantum late. What runs is that idea cut to what DOOM needs:
+the Z80 side never waits on the ESP, the ESP's work runs off the emulation thread, and the result does not depend on
+host timing or on which thread did the work.
 
-So the ESP appears one quantum late, deterministically. The two threads overlap, and the result is independent of
-host timing. While no app runs the worker sleeps; the link core answers on the emulation thread.
+**Jobs.** While the app owns the board's FT812 (the Tang runs the FT core with the ESP as its host), each
+`EspXtensaRuntime::Poll` (once per emulated ms, from the firmware) posts a *job*: "advance the ESP to `t`".
 
-FT812 accesses from both hosts in the same quantum are ordered by timestamp, then by host (Evo first) on equal
-time. Real hardware has its own arbiter in the Tang (FT_FREE queue); exact interleaving inside one quantum is not
-observable to the programs.
+- A job's board accesses (LINK reads and writes) happen at the job's *stamp*: the Tang's raster position when it
+  was posted (`EveHostCard::PinNow`). At its end the FT812 is drawn up to that stamp (`Synchronize`).
+- What the app hands the firmware during a job (events, PCM, log lines, `ft_open`, `link_media`) is kept with the
+  job and replayed on the emulation thread `EspLatencyMs` Polls after the post, in job order.
+- What the app asks is answered from the job's own inputs: `core->event` takes as many events as the firmware's
+  queue had room for at the post, less what the jobs not yet replayed took; `core->reply` and `core->app_done`
+  answer as outside a command (a job never runs inside one).
+- A command, an app start or stop, and the frame end flush: wait for every job, replay everything. A machine frame
+  ends with the ESP settled, so TTD checkpoints, snapshots and the published state never see a job in flight.
+- Before the emulation thread touches the Tang (Z80 port access, the FT detach guard, reset, frame end) it waits for
+  the jobs (`Vdac4Tang::SetEspWait`); `TakeIntEdges` answers nothing while a job is out (INT_N is held inactive in
+  this mode anyway).
+- Once the newest replayed job says the app no longer owns the FT812, the runtime flushes and runs the ESP directly
+  again, outputs at once.
+
+**Threads.** `EspThread=1` runs the jobs on the runtime's worker; `EspThread=0` runs the same jobs at once on the
+emulation thread. The replay rule is the same, so the two give the same machine bit for bit (unit test
+`Vdac4EspJobs_Test.ThreadedEqualsInline`; DOOM's screen hash after 6300 frames is the same for both).
+`FtThread=1` moves the Tang's part of a job (`Vdac4FtWorker`) to a third thread: the job queues its LINK writes with
+their stamps and an end-of-job marker, the FT thread applies them in order; a LINK read waits until the queue is
+applied and reads on the job's thread. Also bit for bit the same.
+
+`EspLatencyMs` is part of the emulated behaviour (a run with 4 is not the run with 1, each is deterministic): it is
+how far the worker may run behind the machine. 1 serializes the threads (the emulation thread waits for each job
+it posted a ms earlier); 4 lets them overlap.
+
+**Measured** (DOOM-VDAC4 in game, the shooting scene; Apple M-class build host, 300 frames from frame 6000 as fast as
+possible, ms per frame, A/B rounds interleaved):
+
+| Mode | ms / frame |
+|---|---|
+| before the jobs (all on the emulation thread) | 6.96 - 7.12 |
+| jobs, `EspThread=0` | 6.90 - 7.05 |
+| `EspThread=1`, latency 1 | 6.47 |
+| `EspThread=1`, latency 4 | 5.96 - 5.99 |
+| `EspThread=1 FtThread=1`, latency 4 | 6.15 - 6.21 |
+
+Per frame, threaded (latency 4): the worker runs about 4.3 ms of jobs (about 20 jobs: the Xtensa interpreter and the
+FT812 work), the emulation thread does about 2.5 ms of its own and waits about 3.5 ms. The ESP is the critical path;
+at 50 fps (20 ms a frame) the waits cost nothing as long as the worker's share fits the frame. The FT thread does
+not help: the app reads the FT812 about once per job (≈ 19 reads a frame) and each read waits for the queue, while
+the FT812 work itself is only ≈ 0.9 ms a frame.
+
+The counters are in the state route's `threads` block (§9).
+
+FT812 accesses from both hosts are not mixed in this mode: with the ESP as host the Evo's SPI to the FT812 is cut off
+(R3 §3.5).
 
 ## 8. ESP firmware HLE (`EspAppHost`)
 
@@ -435,7 +478,8 @@ releases in the firmware's order. Per-task THREADPTR and pinning come with HMM2.
 - Not yet: saved state of the app runtime.
 - Diagnostics: `GET /api/v1/emulator/{id}/vdac4/state[?log=N]` (`Vdac4Control`): Tang personality / FT_CFG, ESP phase
   and time, the app (module, name, version, command range, last runtime error), link counters (pending bytes, send
-  blocked, bad checksums, resyncs, dropped frames), the Z80's last 64 packets and the ESP log ring (256 lines).
+  blocked, bad checksums, resyncs, dropped frames), the Z80's last 64 packets, the ESP log ring (256 lines) and the
+  `threads` block of §7.5 (modes, latency, job / FT counters and host time).
 
 **First DOOM run (2026-11-16).** `TSL-VDAC4`, SD = host folder with `DOOM/_DOOM.SPG`, `DOOM.ELF`, `DOOM1.WAD`, the
 SPG loaded through the snapshot loader: the launcher's FT812 boot screen, path.cfg, ELF upload (366 MOD_PUT) and

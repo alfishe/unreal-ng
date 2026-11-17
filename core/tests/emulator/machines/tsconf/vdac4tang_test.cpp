@@ -10,8 +10,10 @@
 
 #include "vdac2cardfixture.h"
 
+#include <thread>
 #include <vector>
 
+#include "emulator/platforms/tsconf/vdac4/vdac4ftworker.h"
 #include "emulator/platforms/tsconf/vdac4/vdac4tang.h"
 
 using namespace Vdac2Test;
@@ -184,6 +186,44 @@ TEST_F(Vdac4Tang_Test, LinkRegistersAndFtWindow)
     EXPECT_EQ(Read32(kRamG + 0x44), 0x01020304u);
     Tang()->LinkWrite(Vdac4Tang::LinkFtAddr, kRamG + 0x44);
     EXPECT_EQ(Tang()->LinkRead(Vdac4Tang::LinkFtData), 0x01020304u);
+}
+
+/// The FT worker (the Tang's work for an ESP job): the ops of a producer thread applied in order, on its own thread
+/// or at once, a read seeing every write before it; more ops than its ring holds wait for room, nothing is lost
+TEST_F(Vdac4Tang_Test, FtWorkerAppliesInOrder)
+{
+    Tang()->LinkWrite(Vdac4Tang::LinkBoot, 0x41524D31);  // ARM1
+    Tang()->LinkWrite(Vdac4Tang::LinkBoot, 0x424F4F54);  // BOOT
+    TickMs(_context->config.vdac4_load_delay_ms + 1);
+    ASSERT_EQ(Tang()->LinkRead(Vdac4Tang::LinkVersion) >> 24, 2u) << "slot 1";
+
+    constexpr uint32_t kWords = 70'000;  // over the worker's 65536-op ring
+    for (const bool threaded : {false, true})
+    {
+        const uint32_t salt = threaded ? 0x9E3779B9u : 0x7F4A7C15u;
+        auto word = [salt](uint32_t i) { return i * 2654435761u ^ salt; };
+        Vdac4FtWorker ft(*Tang());
+        ft.SetThreaded(threaded);
+        const uint64_t stamp = Tang()->CurrentTact();
+        uint32_t readBack = 0;
+        std::thread producer([&]() {
+            ft.Write(stamp, Vdac4Tang::LinkFtAddr, kRamG);
+            for (uint32_t i = 0; i < kWords; ++i)
+                ft.Write(stamp, Vdac4Tang::LinkFtData, word(i));
+            ft.Write(stamp, Vdac4Tang::LinkFtAddr, kRamG + 4 * (kWords - 1));
+            readBack = ft.Read(stamp, Vdac4Tang::LinkFtData);
+            ft.EndJob(stamp, 0);
+        });
+        producer.join();
+        EXPECT_FALSE(ft.JobHosted(0)) << "the Evo is the FT812's host";
+        ft.WaitIdle();
+        EXPECT_EQ(readBack, word(kWords - 1)) << "threaded " << threaded;
+        for (uint32_t i : {0u, 1u, 4095u, 65535u, 65536u, kWords - 1})
+            EXPECT_EQ(Read32(kRamG + 4 * i), word(i)) << "word " << i << " threaded " << threaded;
+        EXPECT_EQ(ft.GetStats().reads, 1u);
+        if (threaded)
+            EXPECT_EQ(ft.GetStats().ops, kWords + 3u);  // the writes and the job's end
+    }
 }
 
 #endif // ENABLE_VDAC2

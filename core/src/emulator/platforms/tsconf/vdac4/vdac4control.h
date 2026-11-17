@@ -79,6 +79,22 @@ struct BoardState
     uint64_t audioUnderruns = 0;
     uint64_t audioDropped = 0;
     bool audioSound = false;        ///< the last frame was not silent
+
+    // Threads (design.md §7.5): the ESP app's jobs and the Tang / FT812 work they hand over; host time in ms
+    bool espThread = false;         ///< jobs on the runtime's worker thread ([VDAC4] EspThread)
+    bool ftThread = false;          ///< the Tang's work for the jobs on its own thread ([VDAC4] FtThread)
+    uint32_t espLatencyMs = 0;      ///< ms the app's outputs reach the firmware after its job ([VDAC4] EspLatencyMs)
+    uint64_t espJobs = 0;           ///< Advances run as jobs since power-on
+    uint64_t espThreadedJobs = 0;   ///< of them on the worker
+    uint64_t espWaits = 0;          ///< times the emulation thread waited for a job
+    double espWaitMs = 0;           ///< host time it waited
+    double espJobMs = 0;            ///< host time the worker ran jobs
+    uint64_t ftOps = 0;             ///< LINK writes and job ends the FT thread applied
+    uint64_t ftReads = 0;           ///< LINK reads of the jobs (each waits for the FT thread)
+    double ftApplyMs = 0;           ///< host time the FT thread applied ops
+    double ftProducerWaitMs = 0;    ///< host time the jobs waited for the FT thread (reads, a full queue)
+    uint64_t ftOwnerWaits = 0;      ///< times the emulation thread waited for the FT thread
+    double ftOwnerWaitMs = 0;
 };
 
 /// The machine has a VDAC4 board; `error` says why not

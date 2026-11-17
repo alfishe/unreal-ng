@@ -43,6 +43,14 @@ std::string Vdac4StateText(const Json::Value& reply, size_t logLines)
         out << audio["input_rate"].asUInt64() << " Hz -> " << audio["output_rate"].asUInt64() << " Hz, queued "
             << audio["queued"].asUInt64() << ", underruns " << audio["underruns"].asUInt64() << ", dropped "
             << audio["dropped"].asUInt64() << (audio["sound"].asBool() ? ", sounding" : ", silent");
+    const Json::Value& threads = reply["threads"];
+    if (threads.isObject())
+        out << "\nThreads: ESP jobs " << (threads["esp_thread"].asBool() ? "on a worker" : "inline") << ", FT work "
+            << (threads["ft_thread"].asBool() ? "on its own thread" : "inline") << ", latency "
+            << threads["esp_latency_ms"].asUInt64() << " ms; " << threads["esp_jobs"].asUInt64() << " jobs ("
+            << threads["esp_job_ms"].asDouble() << " ms), emulation waited " << threads["esp_waits"].asUInt64()
+            << " times (" << threads["esp_wait_ms"].asDouble() << " ms); FT ops " << threads["ft_ops"].asUInt64()
+            << ", reads " << threads["ft_reads"].asUInt64();
     const Json::Value& log = reply["log"];
     const size_t total = log.isArray() ? log.size() : 0;
     const size_t shown = std::min(total, logLines);
@@ -169,8 +177,8 @@ void RegisterVdac4State(ToolRegistry& registry)
         "The TS-Conf VDAC4 board (Tang FPGA with an FT812-compatible core + ESP32-S3 running apps such as DOOM; the "
         "TSL-VDAC4 model): the Tang's personality (ts / loading / ft), FT_CFG, the ESP's phase (off / booting / running "
         "/ flushing / restart_wait), boots and last error, the running app (module, name, version, command range, "
-        "runtime error), the Z80 link counters and recent packets, the ESP audio player (rates, queue, underruns) and "
-        "the ESP log. Read-only, safe to poll (GET /vdac4/state). A machine without the board answers an error saying why.",
+        "runtime error), the Z80 link counters and recent packets, the ESP audio player (rates, queue, underruns), "
+        "the threads the ESP app's jobs run on (modes, latency, job and wait counters) and the ESP log. Read-only, safe to poll (GET /vdac4/state). A machine without the board answers an error saying why.",
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             const Json::Value& logArg = args["log"];

@@ -12,6 +12,7 @@
 #include "vdac4espframes.h"
 #include "vdac4esplink.h"
 #include "vdac4espfirmware.h"
+#include "vdac4ftworker.h"
 #include "vdac4tang.h"
 
 namespace Vdac4Control
@@ -121,6 +122,9 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.badChecksums = esp.Transport().Parser().BadChecksums();
     state.resyncs = esp.Transport().Parser().Resyncs();
     state.droppedFrames = esp.Transport().DroppedFrames();
+    state.espThread = board.Runtime().Threaded();
+    state.ftThread = board.FtWorker().Threaded();
+    state.espLatencyMs = board.Runtime().Latency();
 }
 
 bool GetState(EmulatorContext* context, BoardState& state, size_t logLines, std::string* error)
@@ -141,6 +145,20 @@ bool GetState(EmulatorContext* context, BoardState& state, size_t logLines, std:
     state.audioUnderruns = audio.underruns;
     state.audioDropped = audio.dropped;
     state.audioSound = audio.sound;
+    // The counters are atomics: live
+    const vdac4::EspJobStats jobs = board.Runtime().Stats();
+    state.espJobs = jobs.jobs;
+    state.espThreadedJobs = jobs.threadedJobs;
+    state.espWaits = jobs.waits;
+    state.espWaitMs = jobs.waitNs / 1e6;
+    state.espJobMs = jobs.jobNs / 1e6;
+    const Vdac4FtWorker::Stats ft = board.FtWorker().GetStats();
+    state.ftOps = ft.ops;
+    state.ftReads = ft.reads;
+    state.ftApplyMs = ft.applyNs / 1e6;
+    state.ftProducerWaitMs = ft.producerWaitNs / 1e6;
+    state.ftOwnerWaits = ft.ownerWaits;
+    state.ftOwnerWaitMs = ft.ownerWaitNs / 1e6;
     return true;
 }
 

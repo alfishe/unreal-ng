@@ -95,6 +95,22 @@
         field(audio, "dropped", "integer", "Frames dropped on overflow");
         field(audio, "sound", "boolean", "The last frame was not silent");
 
+        Json::Value& threads = block("threads", "The ESP app's jobs and the Tang / FT812 work they hand over (host time)");
+        field(threads, "esp_thread", "boolean", "Jobs on the runtime's worker thread ([VDAC4] EspThread)");
+        field(threads, "ft_thread", "boolean", "The Tang's work for the jobs on its own thread ([VDAC4] FtThread)");
+        field(threads, "esp_latency_ms", "integer", "ms the app's outputs reach the firmware after its job ([VDAC4] EspLatencyMs)");
+        field(threads, "esp_jobs", "integer", "Advances run as jobs since power-on");
+        field(threads, "esp_threaded_jobs", "integer", "Of them on the worker thread");
+        field(threads, "esp_waits", "integer", "Times the emulation thread waited for a job");
+        field(threads, "esp_wait_ms", "number", "Host time the emulation thread waited for jobs, ms");
+        field(threads, "esp_job_ms", "number", "Host time the worker ran jobs, ms");
+        field(threads, "ft_ops", "integer", "LINK writes and job ends the FT thread applied");
+        field(threads, "ft_reads", "integer", "LINK reads of the jobs (each waits for the FT thread)");
+        field(threads, "ft_apply_ms", "number", "Host time the FT thread applied ops, ms");
+        field(threads, "ft_producer_wait_ms", "number", "Host time the jobs waited for the FT thread, ms");
+        field(threads, "ft_owner_waits", "integer", "Times the emulation thread waited for the FT thread");
+        field(threads, "ft_owner_wait_ms", "number", "Host time the emulation thread waited for the FT thread, ms");
+
         Json::Value& logLines = schema["properties"]["log"];
         logLines["type"] = "array";
         logLines["items"]["type"] = "string";

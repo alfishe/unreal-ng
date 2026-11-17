@@ -121,6 +121,23 @@ inline void registerBindings(sol::state& lua, std::function<Emulator*()> getEmul
         audio["sound"] = s.audioSound;
         t["audio"] = audio;
 
+        sol::table threads = view.create_table();
+        threads["esp_thread"] = s.espThread;
+        threads["ft_thread"] = s.ftThread;
+        threads["esp_latency_ms"] = s.espLatencyMs;
+        threads["esp_jobs"] = s.espJobs;
+        threads["esp_threaded_jobs"] = s.espThreadedJobs;
+        threads["esp_waits"] = s.espWaits;
+        threads["esp_wait_ms"] = s.espWaitMs;
+        threads["esp_job_ms"] = s.espJobMs;
+        threads["ft_ops"] = s.ftOps;
+        threads["ft_reads"] = s.ftReads;
+        threads["ft_apply_ms"] = s.ftApplyMs;
+        threads["ft_producer_wait_ms"] = s.ftProducerWaitMs;
+        threads["ft_owner_waits"] = s.ftOwnerWaits;
+        threads["ft_owner_wait_ms"] = s.ftOwnerWaitMs;
+        t["threads"] = threads;
+
         sol::table lines = view.create_table(static_cast<int>(s.log.size()), 0);
         for (size_t i = 0; i < s.log.size(); ++i)
             lines[i + 1] = s.log[i];

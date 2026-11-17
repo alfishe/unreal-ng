@@ -98,6 +98,17 @@ public:
     /// region <LINK (the ESP's side)>
     uint32_t LinkRead(uint32_t address);
     void LinkWrite(uint32_t address, uint32_t value);
+
+    /// region <The ESP's jobs (vdac4board.h)>
+    /// The owner's position now, absolute raster tacts (the stamp of an ESP job; a job running meanwhile may have
+    /// pinned "now" to its own stamp)
+    uint64_t CurrentTact() const { return OwnerNow(); }
+    /// A job of the ESP may be running on another thread with this Tang (its FT812 included): the owner's
+    /// entry points (SPI select / exchange, frame end, showing, power, reset) first call `waitEsp`, and INT_N
+    /// edges are not looked at (the ESP is the FT host then: INT_N is held inactive)
+    void SetEspJobOutstanding(bool outstanding) { _espJob = outstanding; }
+    void SetEspWait(std::function<void()> waitEsp) { _waitEsp = std::move(waitEsp); }
+    /// endregion
     /// endregion
 
     Personality GetPersonality() const { return _state.personality; }
@@ -148,5 +159,13 @@ private:
     uint32_t ChipRead32(uint32_t address);
     void ChipHostCommand(uint8_t command, uint8_t parameter);
 
+    void WaitEsp()
+    {
+        if (_espJob && _waitEsp)
+            _waitEsp();
+    }
+
     State _state;
+    bool _espJob = false;
+    std::function<void()> _waitEsp;
 };
