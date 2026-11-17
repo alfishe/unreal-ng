@@ -14,9 +14,12 @@ Spec (JSON):
   {"name", "model", "settings"?, "icons"?: "$data/streamdeck/themes/unrealng/keys",
    "root": MENU}
   MENU   = {"id", "title", "menu": true (the root may omit it), "context"?, "icon"?, "label"?, "bg"?, "strip"?,
-            "back"?: [row, col] | false (submenus: default [0, 0]), "dials"?: [DIAL], "items": [MENU | KEY], "at"?}
-  KEY    = {"id", "title", "at"?, "icon"?, "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?,
-            "tags"?, STEP | "steps": [STEP]}
+            "width"?: columns (a menu wider than its window scrolls), "window"?: [first, last] deck columns that
+            show the scrolled grid (the others hold pinned keys), "back"?: [row, col] | false (submenus: default
+            [0, 0]), "dials"?: [DIAL], "items": [MENU | KEY], "at"?}
+  STRIP  = {"content", ..., "keys"?: [{"label", "span"?, "latch"?, STEP}]}  (content "keys": touch zones)
+  KEY    = {"id", "title", "at"?, "pin"? (a windowed menu: at is the deck's slot, it never scrolls), "icon"?,
+            "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?, "tags"?, STEP | "steps": [STEP]}
   STEP   = {"action": id, "value"?: ..., "hold"?: true}, {"gui": method, "params"?: {...}, "target"?: ...} (a
             GUI control plane command, checked against data/streamdeck/gui-catalogue.json) or {"kind": ..., ...} (any
             other step kind as it is)
@@ -187,6 +190,8 @@ class Generator:
             out["tags"] = list(n["tags"])
         if "at" in n:
             out["at"] = list(n["at"])
+        if n.get("pin"):
+            out["pin"] = True
         out["face"] = self.face(n)
         if isinstance(n.get("face_on"), dict):
             out["face_on"] = dict(n["face_on"])
@@ -238,6 +243,25 @@ class Generator:
             out["press"] = self.step(d["press"], where)
         return out
 
+    def strip(self, st, where):
+        """A strip as it is, its keys' zones made steps: {label, span?, latch?, STEP} -> {label, span?, latch?, do}."""
+        if not isinstance(st, dict) or not isinstance(st.get("keys"), list):
+            return st
+        out = dict(st)
+        out["keys"] = []
+        for z in st["keys"]:
+            if not isinstance(z, dict):
+                self.fail(where, "strip.keys: each zone is {label, span?, latch?, action | gui | kind}")
+            zone = {"label": z.get("label", "")}
+            for f in ("span", "latch"):
+                if f in z:
+                    zone[f] = z[f]
+            step = {k: v for k, v in z.items() if k not in ("label", "span", "latch")}
+            zone["do"] = self.step(step["do"] if isinstance(step.get("do"), dict) else step,
+                                   f"{where} strip {zone['label']}")
+            out["keys"].append(zone)
+        return out
+
     def menu(self, n, root=False):
         out = {"id": n["id"], "type": "menu", "title": n.get("title", n["id"])}
         if n.get("tags"):
@@ -246,6 +270,8 @@ class Generator:
             out["context"] = n["context"]
         if "at" in n:
             out["at"] = list(n["at"])
+        if n.get("pin"):
+            out["pin"] = True
         out["face"] = self.face(n)
         back = None if root and not self.spec.get("shared") else n.get("back", [0, 0])
         nav = {}
@@ -258,8 +284,12 @@ class Generator:
         nav.update(n.get("navigation", {}))
         if nav:
             out["nav"] = nav
+        if n.get("width"):
+            out["width"] = n["width"]
+        if n.get("window"):
+            out["window"] = list(n["window"])
         if n.get("strip"):
-            out["strip"] = n["strip"]
+            out["strip"] = self.strip(n["strip"], n["id"])
         if n.get("dials"):
             out["dials"] = [self.dial(d, n["id"]) for d in n["dials"]]
         items = [self.menu(c) if c.get("menu") else self.include(c) if c.get("include") else self.key(c)

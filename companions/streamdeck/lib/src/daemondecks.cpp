@@ -813,12 +813,13 @@ void DaemonDecks::AddRoutes(automation::Api& api)
              }});
     api.Add({"POST",
              "/api/v1/navigate",
-             "Navigate: back, home, or to a node (its menu path is pushed)",
+             "Navigate: back, home, to a node (its menu path is pushed), or scroll a wide menu's window",
              "",
              {"runtime", "navigation"},
              {deckQuery,
-              {"to", "body", "string", "back | home | node", true, {"back", "home", "node"}},
-              {"node", "body", "string", "node id for to=node"}},
+              {"to", "body", "string", "back | home | node | scroll", true, {"back", "home", "node", "scroll"}},
+              {"node", "body", "string", "node id for to=node"},
+              {"by", "body", "integer", "columns for to=scroll (+ right, - left; clamped to the menu)"}},
              json{{"to", "node"}, {"node", "debug"}},
              [this, afterStep](const Request& r) {
                  const std::string deck = r.Str("deck");

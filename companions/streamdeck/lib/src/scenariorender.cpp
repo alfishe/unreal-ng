@@ -631,7 +631,9 @@ std::string TargetLine(const json& target)
 std::string StripLive::Key() const
 {
     std::string k = std::to_string(static_cast<int>(link)) + (showTarget ? "t" : "-") + notice + "|" + activity + "|" +
-                    std::to_string(dialHint) + (bannerInfo ? "i" : "e");
+                    std::to_string(dialHint) + (bannerInfo ? "i" : "e") + "z" + std::to_string(tapped);
+    for (const int z : latched)
+        k += "l" + std::to_string(z);
     if (target)
         k += target->dump();
     if (!readouts)
@@ -673,10 +675,92 @@ std::pair<int, int> TimelineSpan(const Page& page, int w)
     return {x0, w - 12};
 }
 
+std::vector<std::pair<int, int>> StripKeySpans(const Strip& strip, int w)
+{
+    std::vector<std::pair<int, int>> out;
+    int total = 0;
+    for (const auto& z : strip.keys)
+        total += std::max(1, z.span);
+    int at = 0;
+    for (const auto& z : strip.keys)
+    {
+        const int next = at + std::max(1, z.span);
+        out.emplace_back(w * at / std::max(1, total), w * next / std::max(1, total));
+        at = next;
+    }
+    return out;
+}
+
+int StripKeyHit(const Strip& strip, int w, int x)
+{
+    const auto spans = StripKeySpans(strip, w);
+    for (size_t i = 0; i < spans.size(); ++i)
+        if (x >= spans[i].first && x < spans[i].second)
+            return static_cast<int>(i);
+    return -1;
+}
+
+namespace
+{
+// Strip keys: the zones as keys of their own (a raised cap, its label; a latch on: lit and underlined; the zone just
+// tapped: pressed). A wide menu's window: a track along the top, its columns in cells, the shown ones lit.
+void DrawStripKeys(Rgb& im, const Page& page, const StripLive* live)
+{
+    const int w = im.w, h = im.h;
+    const int top = page.width > 0 ? 12 : 6;
+    const auto spans = StripKeySpans(*page.strip, w);
+    for (size_t i = 0; i < spans.size(); ++i)
+    {
+        const auto& z = page.strip->keys[i];
+        const bool on = live && std::find(live->latched.begin(), live->latched.end(), static_cast<int>(i)) !=
+                                    live->latched.end();
+        const bool tapped = live && live->tapped == static_cast<int>(i);
+        const int x0 = spans[i].first + 6, x1 = spans[i].second - 6, kh = h - top - 6;
+        const draw::Color cap = on ? draw::Color{40, 70, 132} : tapped ? draw::Color{58, 62, 90} : draw::Color{30, 32, 48};
+        draw::RoundRect(im, static_cast<float>(x0), static_cast<float>(top), static_cast<float>(x1 - x0),
+                        static_cast<float>(kh), 12.f, on ? draw::Color{110, 170, 255} : draw::Color{56, 60, 86});
+        draw::RoundRect(im, static_cast<float>(x0 + 2), static_cast<float>(top + 2), static_cast<float>(x1 - x0 - 4),
+                        static_cast<float>(kh - 4), 10.f, cap);
+        const std::string t = DisplayText(z.label);
+        const int sc = std::min(4, FitScale(t, x1 - x0 - 24, 4));
+        const int tx = x0 + std::max(0, (x1 - x0 - draw::TextWidth(t, sc)) / 2), ty = top + (kh - 7 * sc) / 2;
+        draw::Text(im, tx, ty, t, sc, on ? draw::Color{240, 246, 255} : draw::Color{205, 210, 228});
+        if (on)
+            draw::FillRect(im, tx, ty + 7 * sc + 5, draw::TextWidth(t, sc), 3, {110, 170, 255});
+    }
+    if (page.width > 0)
+    {
+        // the window: one cell per column of the menu, those on the deck lit
+        const int cols = page.width;
+        const int cell = (w - 24) / cols;
+        for (int c = 0; c < cols; ++c)
+        {
+            const bool lit = c >= page.scroll && c < page.scroll + page.visibleCols;
+            draw::FillRect(im, 12 + c * cell + 2, 3, cell - 4, 4, lit ? draw::Color{110, 170, 255} : draw::Color{40, 44, 64});
+        }
+    }
+}
+}  // namespace
+
 Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner, double autoExitLeft,
                 const std::string& status, const std::string& scenarioDir, const StripLive* live)
 {
     Rgb im(w, h, 8, 8, 14);
+    if (page.strip && page.strip->content == "keys" && !page.strip->keys.empty())
+    {
+        // the strip is a row of keys: no crumbs, status, timeline or target; a message still comes over it
+        DrawStripKeys(im, page, live);
+        if (!banner.empty())
+        {
+            const std::string t = DisplayText(banner);
+            const int sc = FitScale(t, w - 24, 5);
+            const bool info = live && live->bannerInfo;
+            draw::FillRect(im, 0, 0, w, h, info ? draw::Color{16, 24, 46} : draw::Color{120, 10, 20});
+            draw::Text(im, std::max(12, (w - draw::TextWidth(t, sc)) / 2), (h - 7 * sc) / 2, t, sc,
+                       info ? draw::Color{240, 215, 150} : draw::Color{255, 255, 255});
+        }
+        return im;
+    }
     int contentX = 12;
     const bool dialLabels =
         std::any_of(page.dials.begin(), page.dials.end(), [](const Dial* d) { return d && !d->label.empty(); });

@@ -1364,6 +1364,987 @@ root:
     -
       at:
         - 1
+        - 6
+      context: play
+      dials:
+        -
+          index: 0
+          label: CAPS
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: caps
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+        -
+          index: 1
+          label: SPACE
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+        -
+          index: 2
+          label: SPACE
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+        -
+          index: 3
+          label: SPACE
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+        -
+          index: 4
+          label: SPACE
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: space
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+        -
+          index: 5
+          label: SYMBOL
+          press:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: symbol
+          turn:
+            by: $ticks
+            kind: nav
+            to: scroll
+      face:
+        glyph: input.keyboard
+        label: KEYBOARD
+      id: keyboard
+      items:
+        -
+          at:
+            - 0
+            - 0
+          do:
+            kind: nav
+            to: home
+          face:
+            glyph: nav.home
+          id: kbhome
+          pin: true
+          tags:
+            - uc:U1.7
+          title: Home
+          type: action
+        -
+          at:
+            - 0
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "1"
+          face:
+            glyph: zx.1
+            label: EDIT
+          id: zx1
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "2"
+          face:
+            glyph: zx.2
+            label: "CAPS LOCK"
+          id: zx2
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "3"
+          face:
+            glyph: zx.3
+            label: "TRUE VIDEO"
+          id: zx3
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "4"
+          face:
+            glyph: zx.4
+            label: "INV VIDEO"
+          id: zx4
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 4
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "5"
+          face:
+            glyph: zx.5
+            label: LEFT
+          id: zx5
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 5
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "6"
+          face:
+            glyph: zx.6
+            label: DOWN
+          id: zx6
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 6
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "7"
+          face:
+            glyph: zx.7
+            label: UP
+          id: zx7
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 7
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "8"
+          face:
+            glyph: zx.8
+            label: RIGHT
+          id: zx8
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: enter
+          face:
+            glyph: zx.enter
+          id: kbenter
+          pin: true
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 8
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "9"
+          face:
+            glyph: zx.9
+            label: GRAPHICS
+          id: zx9
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 0
+            - 9
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: "0"
+          face:
+            glyph: zx.0
+            label: DELETE
+          id: zx0
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            by: -1
+            kind: nav
+            to: scroll
+          face:
+            glyph: nav.prev_page
+          id: kbleft1
+          pin: true
+          tags:
+            - uc:U1.7
+          title: "Scroll left"
+          type: action
+        -
+          at:
+            - 1
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: q
+          face:
+            glyph: zx.q
+            label: PLOT
+          id: zxq
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: w
+          face:
+            glyph: zx.w
+            label: DRAW
+          id: zxw
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: e
+          face:
+            glyph: zx.e
+            label: REM
+          id: zxe
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: r
+          face:
+            glyph: zx.r
+            label: RUN
+          id: zxr
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 4
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: t
+          face:
+            glyph: zx.t
+            label: RAND
+          id: zxt
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 5
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: y
+          face:
+            glyph: zx.y
+            label: RETURN
+          id: zxy
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 6
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: u
+          face:
+            glyph: zx.u
+            label: IF
+          id: zxu
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 7
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: i
+          face:
+            glyph: zx.i
+            label: INPUT
+          id: zxi
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            by: 1
+            kind: nav
+            to: scroll
+          face:
+            glyph: nav.next_page
+          id: kbright1
+          pin: true
+          tags:
+            - uc:U1.7
+          title: "Scroll right"
+          type: action
+        -
+          at:
+            - 1
+            - 8
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: o
+          face:
+            glyph: zx.o
+            label: POKE
+          id: zxo
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 1
+            - 9
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: p
+          face:
+            glyph: zx.p
+            label: PRINT
+          id: zxp
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            by: -1
+            kind: nav
+            to: scroll
+          face:
+            glyph: nav.prev_page
+          id: kbleft2
+          pin: true
+          tags:
+            - uc:U1.7
+          title: "Scroll left"
+          type: action
+        -
+          at:
+            - 2
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: a
+          face:
+            glyph: zx.a
+            label: NEW
+          id: zxa
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: s
+          face:
+            glyph: zx.s
+            label: SAVE
+          id: zxs
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: d
+          face:
+            glyph: zx.d
+            label: DIM
+          id: zxd
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: f
+          face:
+            glyph: zx.f
+            label: FOR
+          id: zxf
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 4
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: g
+          face:
+            glyph: zx.g
+            label: "GO TO"
+          id: zxg
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 5
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: h
+          face:
+            glyph: zx.h
+            label: "GO SUB"
+          id: zxh
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 6
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: j
+          face:
+            glyph: zx.j
+            label: LOAD
+          id: zxj
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 7
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: k
+          face:
+            glyph: zx.k
+            label: LIST
+          id: zxk
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            by: 1
+            kind: nav
+            to: scroll
+          face:
+            glyph: nav.next_page
+          id: kbright2
+          pin: true
+          tags:
+            - uc:U1.7
+          title: "Scroll right"
+          type: action
+        -
+          at:
+            - 2
+            - 8
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: l
+          face:
+            glyph: zx.l
+            label: LET
+          id: zxl
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 2
+            - 9
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: enter
+          face:
+            glyph: zx.enter
+          id: zxenter
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 0
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: caps
+          face:
+            glyph: zx.caps
+          id: zxcaps
+          pin: true
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 1
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: z
+          face:
+            glyph: zx.z
+            label: COPY
+          id: zxz
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 2
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: x
+          face:
+            glyph: zx.x
+            label: CLEAR
+          id: zxx
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 3
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: c
+          face:
+            glyph: zx.c
+            label: CONT
+          id: zxc
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 4
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: v
+          face:
+            glyph: zx.v
+            label: CLS
+          id: zxv
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 5
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: b
+          face:
+            glyph: zx.b
+            label: BORDER
+          id: zxb
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 6
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: n
+          face:
+            glyph: zx.n
+            label: NEXT
+          id: zxn
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 7
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: m
+          face:
+            glyph: zx.m
+            label: PAUSE
+          id: zxm
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+        -
+          at:
+            - 3
+            - 8
+          do:
+            hold: true
+            id: input.key
+            kind: action
+            value:
+              hold: true
+              key: symbol
+          face:
+            glyph: zx.symbol
+          id: zxsymbol
+          pin: true
+          tags:
+            - uc:U1.7
+          title: Key
+          type: action
+      nav:
+        back: null
+        dials: own
+      strip:
+        content: keys
+        keys:
+          -
+            do:
+              hold: true
+              id: input.key
+              kind: action
+              value:
+                hold: true
+                key: caps
+            label: "CAPS SHIFT"
+            latch: true
+          -
+            do:
+              id: input.key
+              kind: action
+              value:
+                key: space
+            label: SPACE
+            span: 4
+          -
+            do:
+              hold: true
+              id: input.key
+              kind: action
+              value:
+                hold: true
+                key: symbol
+            label: "SYMBOL SHIFT"
+            latch: true
+      tags:
+        - uc:U1.7
+        - dial.0.uc:U1.7
+        - dial.1.uc:U1.7
+        - dial.2.uc:U1.7
+        - dial.3.uc:U1.7
+        - dial.4.uc:U1.7
+        - dial.5.uc:U1.7
+      title: Keyboard
+      type: menu
+      width: 10
+      window:
+        - 1
+        - 7
+    -
+      at:
+        - 1
         - 7
       context: play
       face:

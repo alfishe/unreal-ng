@@ -69,11 +69,12 @@ MENU_GLYPH = "nav.folder"
 NAV_GLYPHS = {"back": "nav.back", "home": "nav.home"}
 
 # Fields of a key entry, of a menu section, of a dial; the order fresh entries are written in
-KEY_FIELDS = ["at", "uc", "open", "action", "gui", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
+KEY_FIELDS = ["at", "pin", "uc", "open", "action", "gui", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
               "glyph", "glyph_on", "state", "show", "face", "face_on", "tags", "activity", "extra"]
 INCLUDE_FIELDS = ["at", "open", "uc", "title", "label", "glyph", "face", "tags", "extra"]
-MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "readonly", "strip", "back", "navigation", "face", "tags",
-               "extra", "dials", "keys"]
+MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "readonly", "width", "window", "strip", "back", "navigation", "face",
+               "tags", "extra", "dials", "keys"]
+STRIP_KEY_FIELDS = ("label", "span", "latch")  # a strip key zone (strip.content keys): these and one step
 DIAL_FIELDS = ["label", "uc", "turn", "press", "left", "right"]
 TOP_FIELDS = ["scenario", "shared", "model", "pack", "settings"]
 DERIVED = ("title", "glyph", "glyph_on", "state", "hold")
@@ -561,6 +562,27 @@ def grid_of(model):
     return GRIDS.get(model["doc"].get("model", "plusxl"), (4, 9))
 
 
+def menu_window(model, mid):
+    """(first, count): the deck's columns a menu's grid shows; the whole deck unless the menu names a `window`."""
+    w = (model["nodes"].get(mid) or {}).get("window")
+    if isinstance(w, list) and len(w) == 2 and all(isinstance(x, int) for x in w) and 0 <= w[0] <= w[1]:
+        return w[0], w[1] - w[0] + 1
+    return 0, grid_of(model)[1]
+
+
+def menu_cols(model, mid):
+    """A menu's columns: its width when it is wider than its window (the deck shows a window of them)."""
+    w = (model["nodes"].get(mid) or {}).get("width")
+    if isinstance(w, int) and not isinstance(w, bool) and w > menu_window(model, mid)[1]:
+        return w
+    return grid_of(model)[1]
+
+
+def is_wide(model, mid):
+    w = (model["nodes"].get(mid) or {}).get("width")
+    return isinstance(w, int) and not isinstance(w, bool) and w > menu_window(model, mid)[1]
+
+
 def back_slot(model, mid):
     n = model["nodes"][mid]
     root = n.get("in") is None
@@ -740,9 +762,14 @@ class Project:
                        "tags": self.tags(e, meta)}
                 if n.get("at") is not None:
                     out["at"] = n["at"]
-                for f in ("context", "readonly", "strip"):
+                for f in ("context", "readonly", "width", "window", "strip"):
                     if n.get(f) is not None:
                         out[f] = n[f]
+                if isinstance(out.get("strip"), dict) and isinstance(out["strip"].get("keys"), list):
+                    out["strip"] = dict(out["strip"], keys=[
+                        dict({k: z[k] for k in STRIP_KEY_FIELDS if k in z},
+                             **self.step({k: v for k, v in z.items() if k not in STRIP_KEY_FIELDS}))
+                        if isinstance(z, dict) else z for z in out["strip"]["keys"]])
                 if "back" in n:
                     out["back"] = n["back"]
                 if n.get("navigation"):
@@ -763,6 +790,8 @@ class Project:
                 return out
             out = {"id": nid, "title": e["title"], "at": n.get("at"), "face": self.face(e),
                    "tags": self.tags(e)}
+            if n.get("pin"):
+                out["pin"] = True
             fo = self.face(e, "_on")
             if fo:
                 out["face_on"] = fo
@@ -914,12 +943,15 @@ def project_model(doc, vocab, base=None, where=""):
         m = {"in": parent}
         if parent is not None and isinstance(n.get("at"), list):
             m["at"] = list(n["at"])
+        if n.get("pin"):
+            m["pin"] = True
         if meta.get("uc"):
             m["uc"] = meta["uc"]
         if rest:
             m["tags"] = rest
         known = {"id", "type", "title", "tags", "at", "face", "face_on", "items", "do", "then", "state", "nav",
-                 "dials", "strip", "context", "readonly", "file", "node", "activity", "included_from"}
+                 "dials", "strip", "width", "window", "pin", "context", "readonly", "file", "node", "activity",
+                 "included_from"}
         x = {k: v for k, v in n.items() if k not in known}
         face = dict(n.get("face") or {})
         b = bnodes.get(nid)
@@ -948,9 +980,13 @@ def project_model(doc, vocab, base=None, where=""):
             return
         if t == "menu":
             m["kind"] = "menu"
-            for f in ("context", "readonly", "strip"):
+            for f in ("context", "readonly", "width", "window", "strip"):
                 if n.get(f) is not None:
                     m[f] = n[f]
+            if isinstance(m.get("strip"), dict) and isinstance(m["strip"].get("keys"), list):
+                m["strip"] = dict(m["strip"], keys=[
+                    dict({k: z[k] for k in STRIP_KEY_FIELDS if k in z}, **decompile_step(z.get("do") or {}, vocab))
+                    if isinstance(z, dict) else z for z in m["strip"]["keys"]])
             nav = dict(n.get("nav") or {})
             if parent is not None or d["kind"] == "shared":
                 bk = nav.pop("back", [0, 0]) if "back" in nav else [0, 0]
@@ -1145,10 +1181,10 @@ def merge(S, P, B, prefer=None):
             conflicts.append((nid, "in", S["nodes"].get(nid, {}).get("in"), P["nodes"].get(nid, {}).get("in"),
                               f"menu {par} is gone"))
             continue
-        at = tuple(n.get("at") or ())
+        at = tuple(n.get("at") or ()) + (("pin",) if n.get("pin") else ())  # pinned keys: the deck's slots
         if at in slots.get(par, {}):
             other = slots[par][at]
-            conflicts.append((nid, "at", f"{list(at)} (also {other})", "", "the same key on both sides"))
+            conflicts.append((nid, "at", f"{list(at[:2])} (also {other})", "", "the same key on both sides"))
         slots.setdefault(par, {})[at] = nid
     return M, conflicts
 
@@ -1269,18 +1305,24 @@ def map_step(st):
         return str(st["gui"])
     if st.get("nav"):
         return "go " + str(st["nav"])
+    if st.get("kind") == "nav" and st.get("to") == "scroll":
+        return "scroll"
     return ""
 
 
 def screen_map(model, mid):
     """The comment block above `menu ID:`: the page as the deck shows it (a cell per key, `<` the back key, `.` free),
     the pages its keys open and what its dials do. deckflow build writes it; edit the keys, not the map."""
-    rows, cols = grid_of(model)
+    rows, cols = grid_of(model)[0], menu_cols(model, mid)
     n = model["nodes"][mid]
     cells = {}
     opens = []
+    pins = []
     for k in children(model, mid):
         c = model["nodes"][k]
+        if c.get("pin") and isinstance(c.get("at"), list):
+            pins.append(f"[{c['at'][0]},{c['at'][1]}] {map_cell(model, k)}")
+            continue
         if isinstance(c.get("at"), list) and len(c["at"]) == 2:
             cells[tuple(c["at"])] = map_cell(model, k)
             if c.get("kind") in ("menu", "include"):
@@ -1305,6 +1347,17 @@ def screen_map(model, mid):
     for idx, d in sorted((n.get("dials") or {}).items(), key=lambda x: int(x[0])):
         sides = [f"{side} {map_step(d.get(side))}" for side in ("turn", "press", "left", "right") if d.get(side)]
         out.append(f"# dial {idx} {str(d.get('label') or '').upper()}: " + ", ".join(sides))
+    st = n.get("strip")
+    if isinstance(st, dict) and isinstance(st.get("keys"), list):
+        zones = [str(z.get("label", "")).upper() + (" (latch)" if z.get("latch") else "")
+                 for z in st["keys"] if isinstance(z, dict)]
+        out.append("# strip: " + " | ".join(zones))
+    if is_wide(model, mid):
+        first, count = menu_window(model, mid)
+        out.append(f"# the deck shows {count} of the {menu_cols(model, mid)} columns at a time" +
+                   (f" on its columns {first}..{first + count - 1}" if n.get("window") is not None else ""))
+    if pins:
+        out.append("# pinned: " + ", ".join(sorted(pins)))
     out.append(MAP_TAIL)
     return out
 
@@ -1773,14 +1826,66 @@ def check_model(model, vocab, spec=None, where_default=""):
             b = n.get("back")
             if b is not None and b is not False and not (isinstance(b, list) and len(b) == 2):
                 issues.append(Issue(at(nid, "back"), "back: [row, col] or false"))
+            w, win = n.get("width"), n.get("window")
+            if win is not None:
+                if not (isinstance(win, list) and len(win) == 2 and all(isinstance(x, int) for x in win) and
+                        0 <= win[0] <= win[1] < cols):
+                    issues.append(Issue(at(nid, "window"), f"window: [first, last] of the {cols} deck columns"))
+                elif not is_wide(model, nid):
+                    issues.append(Issue(at(nid, "window"), f"a window needs a width over its "
+                                                           f"{menu_window(model, nid)[1]} columns"))
+            wcols = menu_window(model, nid)[1]
+            if w is not None:
+                if not isinstance(w, int) or isinstance(w, bool) or w < wcols:
+                    issues.append(Issue(at(nid, "width"), f"width: columns, at least the {wcols} of the "
+                                                          + ("window" if win is not None else m)))
+                elif w > wcols and back_slot(model, nid) is not None:
+                    issues.append(Issue(at(nid, "width"), "a wide menu scrolls its back key away: back: false (a "
+                                                          "long press on the strip goes home)"))
+            st = n.get("strip")
+            if isinstance(st, dict) and st.get("keys") is not None:
+                if st.get("content") != "keys":
+                    issues.append(Issue(at(nid, "strip"), "strip.keys go with content: keys"))
+                if not isinstance(st["keys"], list) or not st["keys"]:
+                    issues.append(Issue(at(nid, "strip"), "strip.keys: a list of zones {label, span?, latch?, "
+                                                          "action ...}"))
+                else:
+                    for z in st["keys"]:
+                        if not isinstance(z, dict) or not z.get("label"):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z!r}: needs a label"))
+                            continue
+                        if "span" in z and (not isinstance(z["span"], int) or z["span"] < 1):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z['label']}: span is a count >= 1"))
+                        if "latch" in z and not isinstance(z["latch"], bool):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z['label']}: latch is true or false"))
+                        step({k: v for k, v in z.items() if k not in STRIP_KEY_FIELDS}, nid, "strip")
+            elif isinstance(st, dict) and st.get("content") == "keys":
+                issues.append(Issue(at(nid, "strip"), "strip content keys needs strip.keys"))
         par = n.get("in")
         if par is not None:
             a = n.get("at")
             if not (isinstance(a, list) and len(a) == 2 and all(isinstance(x, int) for x in a)):
                 issues.append(Issue(at(nid, "at"), f"at: [row, col], not {a!r}"))
                 continue
-            if not (0 <= a[0] < rows and 0 <= a[1] < cols):
-                issues.append(Issue(at(nid, "at"), f"slot {a} is outside the {m} grid ({rows} rows x {cols} keys)"))
+            if n.get("pin") is not None and not isinstance(n.get("pin"), bool):
+                issues.append(Issue(at(nid, "pin"), "pin: true or false"))
+            if n.get("pin"):
+                first, count = menu_window(model, par)
+                if (model["nodes"].get(par) or {}).get("window") is None:
+                    issues.append(Issue(at(nid, "pin"), f"pin goes in a menu with a window; {par} has none"))
+                elif not (0 <= a[0] < rows and 0 <= a[1] < cols):
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} is outside the {m} grid ({rows} rows x "
+                                                       f"{cols} keys)"))
+                elif first <= a[1] < first + count:
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} is inside the window of {par}"))
+                other = slots.setdefault((par, "pin"), {}).get(tuple(a))
+                if other:
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} of {par} is taken by {other}"))
+                slots[(par, "pin")][tuple(a)] = nid
+                continue
+            if not (0 <= a[0] < rows and 0 <= a[1] < menu_cols(model, par)):
+                issues.append(Issue(at(nid, "at"), f"slot {a} is outside the {m} grid ({rows} rows x "
+                                                   f"{menu_cols(model, par)} keys)"))
             if back_slot(model, par) == tuple(a):
                 issues.append(Issue(at(nid, "at"), f"slot {a} is the back key of {par}"))
             other = slots.setdefault(par, {}).get(tuple(a))
@@ -2222,7 +2327,7 @@ class MetaDoc:
         n = mm["nodes"][mid]
         e = effective(n, self.vocab, mid)
         doc = mm["doc"]
-        rows, cols = grid_of(mm)
+        rows, cols = grid_of(mm)[0], menu_cols(mm, mid)
         head = f"## menu {mid}" + (f" ({lbl})" if lbl != self.main.label() else "")
         out = [head, ""]
         facts = [f"Title: {e['title']}"]
@@ -2232,6 +2337,11 @@ class MetaDoc:
             facts.append(f"context `{n['context']}`")
         if n.get("readonly"):
             facts.append("read-only (its keys only show)")
+        if is_wide(mm, mid):
+            first, count = menu_window(mm, mid)
+            facts.append(f"{cols} columns wide, the deck shows {count} at a time" +
+                         (f" on its columns {first}..{first + count - 1}" if n.get("window") is not None else "") +
+                         " (a dial or a swipe moves them)")
         if n.get("in"):
             facts.append(f"opened from `{n['in']}` at {n.get('at')}")
         elif doc.get("kind") != "shared":
@@ -2248,8 +2358,8 @@ class MetaDoc:
             kn = mm["nodes"][k]
             ke = effective(kn, self.vocab, k)
             a = kn.get("at") or [0, 0]
-            if not (0 <= a[0] < rows and 0 <= a[1] < cols):
-                continue
+            if kn.get("pin") or not (0 <= a[0] < rows and 0 <= a[1] < cols):
+                continue  # a pinned key: in the table below (its slot is the deck's)
             g, title = self.face_of(kn, ke)
             cell = (self.img(g) + "<br>") if g else ""
             cell += (f"**{kn['label']}** " if kn.get("label") else "") + f"{title}"
@@ -2272,7 +2382,8 @@ class MetaDoc:
                 gtxt += f" / {self.img(ke['glyph_on'], 28)} `{ke['glyph_on']}` when `{ke.get('state')}`"
             if kn.get("label"):
                 gtxt += f" + label {kn['label']}"
-            out.append(f"| `{k}` | {kn.get('at')} | {gtxt} | {title.replace('|', '/')} | "
+            slot = f"{kn.get('at')}" + (" pinned" if kn.get("pin") else "")
+            out.append(f"| `{k}` | {slot} | {gtxt} | {title.replace('|', '/')} | "
                        f"{self.does(kn, ke).replace('|', '/')} | {' '.join(kn.get('uc') or [])} |")
         if n.get("dials"):
             out += ["", "| Dial | Label | Turn | Press | Use case |", "|:--|:--|:--|:--|:--|"]

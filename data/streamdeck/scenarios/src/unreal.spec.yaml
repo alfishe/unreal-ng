@@ -13,11 +13,11 @@ settings: {brightness: 60, activity: {ignore: [ttd.seek_by, audio.volume_by, run
 # +-- screen home: Home (deckflow build writes this map from the keys below)
 #     0          1          2          3          4          5          6          7          8
 # 0 | PAUSE      RESET      NMI        TURBO      HOLD       X1         >SPEED     MUTE       FULL
-# 1 | S1         L1         >STATE     >MEDIA     TAPE       LAST FILE  .          >GAME      >BASIC
+# 1 | S1         L1         >STATE     >MEDIA     TAPE       LAST FILE  >KEYBOARD  >GAME      >BASIC
 # 2 | >MODEL     >SOUND     >PICTURE   .          .          .          SHOT       >VIDEO     >AUDIO
 # 3 | >DEBUG     >TIME      .          -5S        LIVE       >TTD       MARK       .          >MONITOR
-# opens: [0,6] speed, [1,2] state, [1,3] media, [1,7] game, [1,8] basic, [2,0] machine, [2,1] sound, [2,2] picture
-#        [2,7] video, [2,8] audio, [3,0] debug, [3,1] time, [3,5] ttd, [3,8] monitor
+# opens: [0,6] speed, [1,2] state, [1,3] media, [1,6] keyboard, [1,7] game, [1,8] basic, [2,0] machine, [2,1] sound
+#        [2,2] picture, [2,7] video, [2,8] audio, [3,0] debug, [3,1] time, [3,5] ttd, [3,8] monitor
 # dial 0 FRAMES: turn ttd.jog_frames, press run.pause_toggle
 # dial 1 TIME: turn ttd.seek_by, press run.pause_toggle
 # dial 2 OPS: turn ttd.jog_instructions, press ttd.resume_live
@@ -52,6 +52,7 @@ menu home:
     media:   {at: [1, 3], open: media}
     tape:    {at: [1, 4], uc: C4.2, action: media.tape, value: {op: toggle}, label: TAPE, show: {readout: media.tape, format: '{block}/{blocks}'}}
     recent:  {at: [1, 5], uc: C4.3, action: media.open_recent, value: {index: 0}, label: LAST FILE}
+    keyboard: {at: [1, 6], open: keyboard}
     game:    {at: [1, 7], open: game}
     basic:   {at: [1, 8], open: basic}
     # C3, C8, C9: the settings pages; C7: capture last (the screenshot, video and audio recording)
@@ -564,6 +565,92 @@ menu game:
     k4:      {at: [3, 3], uc: U1.4, action: input.key, value: {key: '4', hold: true}, hold: true, label: '4'}
     gamback5: {at: [3, 7], uc: U2.2, action: ttd.unit_back, value: {unit: seconds, count: 5}, label: -5S}
     gamqload: {at: [3, 8], uc: U2.4, action: snapshot.quick, value: {op: load, slot: 1}, label: L1}
+
+# U1.7: the keyboard. One deck key per Spectrum key, the rows as on the 48K. The middle seven deck columns show seven
+# of the ten keyboard columns; the edge columns stay put: the scroll keys in the two middle rows (dimmed at the end),
+# home and ENTER above them, CAPS SHIFT and SYMBOL SHIFT below (where the 48K has them). A dial turned or a swipe on
+# the strip moves the window too. The strip is CAPS SHIFT, SPACE and SYMBOL SHIFT instead of the status (a shift tapped
+# holds for the next key; CAPS then SYMBOL: extended mode), the dials hold them while pressed. No back key (home is
+# pinned, a long press on the strip goes home too).
+# +-- screen keyboard: Keyboard (deckflow build writes this map from the keys below)
+#     0          1          2          3          4          5          6          7          8          9
+# 0 | EDIT       CAPS LOCK  TRUE VIDE  INV VIDEO  LEFT       DOWN       UP         RIGHT      GRAPHICS   DELETE
+# 1 | PLOT       DRAW       REM        RUN        RAND       RETURN     IF         INPUT      POKE       PRINT
+# 2 | NEW        SAVE       DIM        FOR        GO TO      GO SUB     LOAD       LIST       LET        ZXENTER
+# 3 | .          COPY       CLEAR      CONT       CLS        BORDER     NEXT       PAUSE      .          .
+# dial 0 CAPS: turn scroll, press input.key
+# dial 1 SPACE: turn scroll, press input.key
+# dial 2 SPACE: turn scroll, press input.key
+# dial 3 SPACE: turn scroll, press input.key
+# dial 4 SPACE: turn scroll, press input.key
+# dial 5 SYMBOL: turn scroll, press input.key
+# strip: CAPS SHIFT (latch) | SPACE | SYMBOL SHIFT (latch)
+# the deck shows 7 of the 10 columns at a time on its columns 1..7
+# pinned: [0,0] KBHOME, [0,8] KBENTER, [1,0] KBLEFT1, [1,8] KBRIGHT1, [2,0] KBLEFT2, [2,8] KBRIGHT2, [3,0] ZXCAPS, [3,8] ZXSYMBOL
+# +--
+menu keyboard:
+  title: Keyboard
+  label: KEYBOARD
+  uc: U1.7
+  glyph: input.keyboard
+  context: play
+  width: 10
+  window: [1, 7]
+  back: false
+  strip: {content: keys, keys: [{label: CAPS SHIFT, latch: true, action: input.key, value: {key: caps, hold: true}, hold: true}, {label: SPACE, span: 4, action: input.key, value: {key: space}}, {label: SYMBOL SHIFT, latch: true, action: input.key, value: {key: symbol, hold: true}, hold: true}]}
+  dials:
+    0: {label: CAPS, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: caps, hold: true}, hold: true}}
+    1: {label: SPACE, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: space, hold: true}, hold: true}}
+    2: {label: SPACE, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: space, hold: true}, hold: true}}
+    3: {label: SPACE, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: space, hold: true}, hold: true}}
+    4: {label: SPACE, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: space, hold: true}, hold: true}}
+    5: {label: SYMBOL, uc: U1.7, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: symbol, hold: true}, hold: true}}
+  keys:
+    zx1:      {at: [0, 0], uc: U1.7, action: input.key, value: {key: '1', hold: true}, hold: true, label: EDIT, glyph: zx.1}
+    zx2:      {at: [0, 1], uc: U1.7, action: input.key, value: {key: '2', hold: true}, hold: true, label: CAPS LOCK, glyph: zx.2}
+    zx3:      {at: [0, 2], uc: U1.7, action: input.key, value: {key: '3', hold: true}, hold: true, label: TRUE VIDEO, glyph: zx.3}
+    zx4:      {at: [0, 3], uc: U1.7, action: input.key, value: {key: '4', hold: true}, hold: true, label: INV VIDEO, glyph: zx.4}
+    zx5:      {at: [0, 4], uc: U1.7, action: input.key, value: {key: '5', hold: true}, hold: true, label: LEFT, glyph: zx.5}
+    zx6:      {at: [0, 5], uc: U1.7, action: input.key, value: {key: '6', hold: true}, hold: true, label: DOWN, glyph: zx.6}
+    zx7:      {at: [0, 6], uc: U1.7, action: input.key, value: {key: '7', hold: true}, hold: true, label: UP, glyph: zx.7}
+    zx8:      {at: [0, 7], uc: U1.7, action: input.key, value: {key: '8', hold: true}, hold: true, label: RIGHT, glyph: zx.8}
+    zx9:      {at: [0, 8], uc: U1.7, action: input.key, value: {key: '9', hold: true}, hold: true, label: GRAPHICS, glyph: zx.9}
+    zx0:      {at: [0, 9], uc: U1.7, action: input.key, value: {key: '0', hold: true}, hold: true, label: DELETE, glyph: zx.0}
+    zxq:      {at: [1, 0], uc: U1.7, action: input.key, value: {key: q, hold: true}, hold: true, label: PLOT, glyph: zx.q}
+    zxw:      {at: [1, 1], uc: U1.7, action: input.key, value: {key: w, hold: true}, hold: true, label: DRAW, glyph: zx.w}
+    zxe:      {at: [1, 2], uc: U1.7, action: input.key, value: {key: e, hold: true}, hold: true, label: REM, glyph: zx.e}
+    zxr:      {at: [1, 3], uc: U1.7, action: input.key, value: {key: r, hold: true}, hold: true, label: RUN, glyph: zx.r}
+    zxt:      {at: [1, 4], uc: U1.7, action: input.key, value: {key: t, hold: true}, hold: true, label: RAND, glyph: zx.t}
+    zxy:      {at: [1, 5], uc: U1.7, action: input.key, value: {key: y, hold: true}, hold: true, label: RETURN, glyph: zx.y}
+    zxu:      {at: [1, 6], uc: U1.7, action: input.key, value: {key: u, hold: true}, hold: true, label: IF, glyph: zx.u}
+    zxi:      {at: [1, 7], uc: U1.7, action: input.key, value: {key: i, hold: true}, hold: true, label: INPUT, glyph: zx.i}
+    zxo:      {at: [1, 8], uc: U1.7, action: input.key, value: {key: o, hold: true}, hold: true, label: POKE, glyph: zx.o}
+    zxp:      {at: [1, 9], uc: U1.7, action: input.key, value: {key: p, hold: true}, hold: true, label: PRINT, glyph: zx.p}
+    zxa:      {at: [2, 0], uc: U1.7, action: input.key, value: {key: a, hold: true}, hold: true, label: NEW, glyph: zx.a}
+    zxs:      {at: [2, 1], uc: U1.7, action: input.key, value: {key: s, hold: true}, hold: true, label: SAVE, glyph: zx.s}
+    zxd:      {at: [2, 2], uc: U1.7, action: input.key, value: {key: d, hold: true}, hold: true, label: DIM, glyph: zx.d}
+    zxf:      {at: [2, 3], uc: U1.7, action: input.key, value: {key: f, hold: true}, hold: true, label: FOR, glyph: zx.f}
+    zxg:      {at: [2, 4], uc: U1.7, action: input.key, value: {key: g, hold: true}, hold: true, label: GO TO, glyph: zx.g}
+    zxh:      {at: [2, 5], uc: U1.7, action: input.key, value: {key: h, hold: true}, hold: true, label: GO SUB, glyph: zx.h}
+    zxj:      {at: [2, 6], uc: U1.7, action: input.key, value: {key: j, hold: true}, hold: true, label: LOAD, glyph: zx.j}
+    zxk:      {at: [2, 7], uc: U1.7, action: input.key, value: {key: k, hold: true}, hold: true, label: LIST, glyph: zx.k}
+    zxl:      {at: [2, 8], uc: U1.7, action: input.key, value: {key: l, hold: true}, hold: true, label: LET, glyph: zx.l}
+    zxenter:  {at: [2, 9], uc: U1.7, action: input.key, value: {key: enter, hold: true}, hold: true, glyph: zx.enter}
+    zxz:      {at: [3, 1], uc: U1.7, action: input.key, value: {key: z, hold: true}, hold: true, label: COPY, glyph: zx.z}
+    zxx:      {at: [3, 2], uc: U1.7, action: input.key, value: {key: x, hold: true}, hold: true, label: CLEAR, glyph: zx.x}
+    zxc:      {at: [3, 3], uc: U1.7, action: input.key, value: {key: c, hold: true}, hold: true, label: CONT, glyph: zx.c}
+    zxv:      {at: [3, 4], uc: U1.7, action: input.key, value: {key: v, hold: true}, hold: true, label: CLS, glyph: zx.v}
+    zxb:      {at: [3, 5], uc: U1.7, action: input.key, value: {key: b, hold: true}, hold: true, label: BORDER, glyph: zx.b}
+    zxn:      {at: [3, 6], uc: U1.7, action: input.key, value: {key: n, hold: true}, hold: true, label: NEXT, glyph: zx.n}
+    zxm:      {at: [3, 7], uc: U1.7, action: input.key, value: {key: m, hold: true}, hold: true, label: PAUSE, glyph: zx.m}
+    kbhome:   {at: [0, 0], pin: true, uc: U1.7, nav: home}
+    kbenter:  {at: [0, 8], pin: true, uc: U1.7, action: input.key, value: {key: enter, hold: true}, hold: true, glyph: zx.enter}
+    kbleft1:  {at: [1, 0], pin: true, uc: U1.7, do: {kind: nav, to: scroll, by: -1}, title: Scroll left, glyph: nav.prev_page}
+    kbleft2:  {at: [2, 0], pin: true, uc: U1.7, do: {kind: nav, to: scroll, by: -1}, title: Scroll left, glyph: nav.prev_page}
+    kbright1: {at: [1, 8], pin: true, uc: U1.7, do: {kind: nav, to: scroll, by: 1}, title: Scroll right, glyph: nav.next_page}
+    kbright2: {at: [2, 8], pin: true, uc: U1.7, do: {kind: nav, to: scroll, by: 1}, title: Scroll right, glyph: nav.next_page}
+    zxcaps:   {at: [3, 0], pin: true, uc: U1.7, action: input.key, value: {key: caps, hold: true}, hold: true, glyph: zx.caps}
+    zxsymbol: {at: [3, 8], pin: true, uc: U1.7, action: input.key, value: {key: symbol, hold: true}, hold: true, glyph: zx.symbol}
 
 # U4: BASIC and the ROM.
 # +-- screen basic: BASIC (deckflow build writes this map from the keys below)
