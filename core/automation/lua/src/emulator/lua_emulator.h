@@ -636,6 +636,17 @@ protected:
         return result;
     }
 
+    /// The labels of a CPU by its name (none: the main CPU's; "gs" / "ms": the sound card CPU's own store, gs-debugger
+    /// design §6.2); an unknown name or a card CPU the machine does not have throws (ScriptCpu)
+    LabelManager* ScriptLabels(const sol::optional<std::string>& cpuName) const
+    {
+        Emulator* emulator = effectiveEmulator();
+        EmulatorContext* ctx = emulator ? emulator->GetContext() : nullptr;
+        if (!ctx || !ctx->pDebugManager)
+            return nullptr;
+        return ctx->pDebugManager->GetLabelManager(ScriptCpu(cpuName));
+    }
+
     /// The breakpoints of a CPU by its name ("main" or none, "gs": the sound card's CPU); null when there is none
     BreakpointManager* ScriptBreakpoints(const std::string& cpuName) const
     {
@@ -4342,14 +4353,15 @@ public:
         });
 
         // Labels/Symbols
-        lua.set_function("label_get", [this](const std::string& name) -> sol::table {
+        // Every label function takes the CPU last: "gs" / "ms" for the sound card CPU's own labels
+        lua.set_function("label_get", [this](const std::string& name, sol::optional<std::string> cpu) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return result;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             auto label = lm ? lm->GetLabelByName(name) : nullptr;
             if (!label) return result;
             result["name"] = label->name;
@@ -4365,14 +4377,14 @@ public:
             return result;
         });
 
-        lua.set_function("label_at", [this](uint16_t address) -> sol::table {
+        lua.set_function("label_at", [this](uint16_t address, sol::optional<std::string> cpu) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return result;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             auto label = lm ? lm->GetLabelByZ80Address(address) : nullptr;
             if (!label) return result;
             result["name"] = label->name;
@@ -4390,43 +4402,45 @@ public:
         lua.set_function("label_add", [this](const std::string& name, uint16_t address,
                                              sol::optional<std::string> type,
                                              sol::optional<std::string> module,
-                                             sol::optional<std::string> comment) -> bool {
+                                             sol::optional<std::string> comment,
+                                             sol::optional<std::string> cpu) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             return lm && lm->AddLabel(name, address, UINT16_MAX, UINT16_MAX,
                                       type.value_or(""), module.value_or(""), comment.value_or(""));
         });
 
-        lua.set_function("label_remove", [this](const std::string& name) -> bool {
+        lua.set_function("label_remove", [this](const std::string& name, sol::optional<std::string> cpu) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             return lm && lm->RemoveLabel(name);
         });
 
-        lua.set_function("label_count", [this]() -> int {
+        lua.set_function("label_count", [this](sol::optional<std::string> cpu) -> int {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return 0;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return 0;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             return lm ? static_cast<int>(lm->GetLabelCount()) : 0;
         });
 
         lua.set_function("labels_list", [this](sol::optional<std::string> module,
-                                               sol::optional<std::string> type) -> sol::table {
+                                               sol::optional<std::string> type,
+                                               sol::optional<std::string> cpu) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return result;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return result;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             if (!lm) return result;
 
             LabelManager::LabelFilter filter;
@@ -4448,30 +4462,30 @@ public:
             return result;
         });
 
-        lua.set_function("labels_clear", [this]() {
+        lua.set_function("labels_clear", [this](sol::optional<std::string> cpu) {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             if (lm) lm->ClearAllLabels();
         });
 
-        lua.set_function("symbols_load", [this](const std::string& path) -> bool {
+        lua.set_function("symbols_load", [this](const std::string& path, sol::optional<std::string> cpu) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             return lm && lm->LoadLabels(path);
         });
 
-        lua.set_function("symbols_save", [this](const std::string& path) -> bool {
+        lua.set_function("symbols_save", [this](const std::string& path, sol::optional<std::string> cpu) -> bool {
             Emulator* emulator = effectiveEmulator();
             if (!emulator) return false;
             auto* ctx = emulator->GetContext();
             if (!ctx || !ctx->pDebugManager) return false;
-            LabelManager* lm = ctx->pDebugManager->GetLabelManager();
+            LabelManager* lm = ScriptLabels(cpu);
             return lm && lm->SaveLabels(path);
         });
 
@@ -4481,7 +4495,9 @@ public:
         // symbols_drop(id), symbols_formats(), symbols_detect(path), symbols_scan(), symbols_import_live{scanner=, page=,
         // offset=, set=, policy=}. A refusal: the table has ok = false, error = why
         lua.set_function("symbols_formats", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "formats", {}); });
-        lua.set_function("symbols_sets", [this](sol::this_state ts) -> sol::object { return symbolsRun(ts, "sets", {}); });
+        lua.set_function("symbols_sets", [this](sol::this_state ts, sol::optional<std::string> cpu) -> sol::object {
+            return symbolsRun(ts, "sets", cpu ? std::map<std::string, std::string>{{"cpu", *cpu}} : std::map<std::string, std::string>{});
+        });
         lua.set_function("symbols_detect", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "detect", arg, "path"); });
         lua.set_function("symbols_import", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "import", arg, "path"); });
         lua.set_function("symbols_export", [this](sol::this_state ts, sol::object arg) -> sol::object { return symbolsCall(ts, "export", arg, "path"); });
@@ -8692,13 +8708,13 @@ public:
         });
 
         // Resolve a label name to its address, or an address to label(s)
-        lua.set_function("label_resolve", [this](sol::object queryValue) -> sol::table {
+        lua.set_function("label_resolve", [this](sol::object queryValue, sol::optional<std::string> cpu) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
             if (!emulator) { result["error"] = "no emulator"; return result; }
             auto* ctx = emulator->GetContext();
-            LabelManager* labelMgr = ctx && ctx->pDebugManager ? ctx->pDebugManager->GetLabelManager() : nullptr;
+            LabelManager* labelMgr = ctx ? ScriptLabels(cpu) : nullptr;
             if (!labelMgr) { result["error"] = "label manager not available"; return result; }
 
             std::string query;

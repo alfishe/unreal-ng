@@ -822,6 +822,31 @@ flowchart LR
     by bytes, and writes `materials/neogs/firmware/COMPARISON.md`: same as
     GS, changed from GS, NeoGS only.
 
+**As built (phase 4, item 1).**
+
+- **The mark-up is a build, not a search.** The sources rebuild two shipped
+  ROMs byte for byte: the plain sources give `gs104.rom`, the sources with
+  `patch/` give `gs105b.rom`. For those two the labels are the build's own
+  (sjasmplus SLD). `gs105a.rom` uses the patched build's labels. It differs in
+  63 bytes in 5 ranges (#00CE-#00D5, #013C, #0EF3-#0EF5, #1147-#1149,
+  #1D00-#1D2F). `data/symbols/gs/REPORT.md` lists them and the labels over
+  them. Labels per firmware: 1354 for 1.04, 1396 for 1.05a and 1.05b.
+- **Verification (L3, R1).** The script's default mode rebuilds and fails
+  when 1.04 or 1.05b differ from the shipped ROMs, when two firmwares share a
+  page-0 digest, or when the committed output differs. CI does not run it yet,
+  because it needs `sjasmplus`.
+- **Store.** `GSCardTarget` owns a `LabelManager` with CPU name `gs` / `ms`
+  and a page mapper over `mapCardAddress`. The card's ROM pages are hashed
+  when the card is made (`cardRomPage`). `data/symbols/gs/manifest.json`
+  bundles (`gs:gs104`, `gs:gs105a`, `gs:gs105b`) match page 0. Disassembly
+  (`CpuView` with `Z80Disassembler::LabelsScope`, CLI `disasm --cpu gs`) and
+  card breakpoint conditions use this store. The planes reach it with `cpu`
+  ([command interface 4.4](../../emulator/design/control-interfaces/command-interface.md#44-labels--symbol-management)).
+- **Open.** User labels per firmware (L5) are not saved to the settings folder
+  yet; `symbols export --cpu gs` writes them by hand. NeoGS (N5) is not done:
+  no sources are imported, and no bundle matches a NeoGS flash. The Qt
+  debugger's card view still shows no labels (phase 5).
+
 ### 6.3 The command log (F1-F1c, F3, F4, W1-W4)
 
 **Ownership.** `GSCommandLog` is owned by `SoundManager`, not by the card.

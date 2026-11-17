@@ -1166,6 +1166,13 @@ uint32_t SoundChip_GeneralSound::cardPageCount(CardPage::Kind kind) const
     }
 }
 
+const uint8_t* SoundChip_GeneralSound::cardRomPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * PAGE_SIZE > _rom.size())
+        return nullptr;
+    return _rom.data() + static_cast<size_t>(page) * PAGE_SIZE;
+}
+
 bool SoundChip_GeneralSound::cardRegisters(Z80CpuRegisters& out) const
 {
     if (!_cpu)

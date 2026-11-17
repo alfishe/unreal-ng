@@ -626,8 +626,8 @@ Commands to view and analyze the internal state of the selected emulator instanc
 
 `--cpu gs` (`--cpu ms`: the MultiSound card's General Sound) on `registers`, `memory`, `memory info` and `disasm`
 reads and writes the sound card CPU (General Sound / NeoGS) instead of the machine's: its registers (the card's own
-clock `card_time` for the frame time), its 64K as its four windows map them, its code from its PC (no labels: they
-are the machine's). `registers pc --cpu gs`, `r a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
+clock `card_time` for the frame time), its 64K as its four windows map them, its code from its PC with the card's
+own labels (its firmware's symbols load by themselves, see 4.4). `registers pc --cpu gs`, `r a 0x10 --cpu gs`, `memory 0x4000 32 --cpu gs`,
 `memory write 0x4000 01 02 --cpu gs`, `memory info --cpu gs` (the windows: ROM / RAM and page), `disasm --cpu gs`.
 Edits are tool edits (recorded by a time travel session; in the recorded past they fork a branch there). A card without a CPU or an
 empty slot answers that the CPU is not there. On `step [count]`, `steps <count>`, `stepover` and `stepout` it steps
@@ -1330,6 +1330,20 @@ Labels provide symbolic names for memory addresses, enabling human-readable debu
 | `asm decode <path>` | | `<path> [--codec c] [--version v] [--codepage cp] [--output f]` | The source as text. |
 | `asm encode <text-file>` | | `<file> --codec c [--version v] [--output f\|disk:A/NAME.T] [--start n]` | Text in a source format, to a host file or onto the disk. |
 | `asm convert <path>` | | `<path> --to dialect [--codec c] [--from d] [--z80n] [--output f]` | The source in another dialect (sjasmplus, pasmo, z88dk). `asm <addr> <code>` still assembles, as `assemble`. |
+
+**The sound card CPU's labels** (gs-debugger design §6.2): a General Sound / NeoGS card has its own label store,
+apart from the machine's. When the card is made, the SHA-256 of each of its ROM pages picks a bundle from
+`data/symbols/gs/` (firmware 1.04, 1.05a, 1.05b: set `bundle:gs:<id>`), so the card's disassembly names its firmware
+routines (`COMINT`, `COMTABH`). A card label is bank-aware: `ROM1:C000` shows only while window 3 maps ROM page 1. Every
+label and symbol verb takes the CPU:
+
+| Plane | Form |
+| :--- | :--- |
+| CLI | `--cpu gs` (`ms`) on `label`, `labels`, `symbols` (not `scan` / `import live`, they read main RAM): `labels --cpu gs`, `symbols sets --cpu gs` |
+| REST / WebSocket | `?cpu=gs` or `cpu` in the JSON body on `/labels*`, `/symbols/load`, `/symbols/save`, `/symbols/sets`, `/symbols/import`, `/symbols/export`, `/symbols/import/source`; `labels_changed` names `cpu` when it is not main |
+| MCP | `manage_symbols` `cpu: "gs"` on the label and set actions; listing actions, `scan`, `import_live` refuse it |
+| Lua | a last argument: `label_at(0x026B, "gs")`, `labels_list("", "", "gs")`, `symbols_sets("gs")`; table forms take `cpu=` |
+| Python | `cpu=`: `label_at(0x026B, cpu="gs")`, `symbols_sets(cpu="gs")`, `symbols_import(path, cpu="gs")` |
 
 **Label Structure**:
 - `name`: Unique symbolic identifier

@@ -4552,10 +4552,21 @@ std::string Emulator::GetStatistics()
 
 // endregion
 
-void Emulator::ApplySymbolBundles()
+std::string Emulator::SymbolBundleFolder()
 {
     const char* setting = std::getenv("UNREAL_SYMBOL_BUNDLES");
     if (setting && std::string(setting) == "0")
+        return {};
+    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
+    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
+        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
+    return folder;
+}
+
+void Emulator::ApplySymbolBundles()
+{
+    const std::string folder = SymbolBundleFolder();
+    if (folder.empty())
         return;
     if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
         return;
@@ -4566,8 +4577,5 @@ void Emulator::ApplySymbolBundles()
     std::vector<std::string> pages;
     for (uint8_t i = 0; i < rom.GetROMBanksLoaded(); i++)
         pages.push_back(rom.CalculateSignature(_context->pMemory->ROMPageHostAddress(i), PAGE_SIZE));
-    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
-    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
-        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
     labels->ApplyBundles(folder, pages);
 }
