@@ -172,6 +172,9 @@ private:
     void openMachinePicker(size_t family, int row);
     void openRamPicker(size_t family, size_t machine);
     void startMachine(const std::string& name, uint32_t ramKb);
+    /// Rows "." (the family list) and ".." (the level above) at the top of a nested machine picker, so A goes up as
+    /// well as B; "." only when the level above is not the family list already
+    void addMachineWaysUp(const QString& upTitle, std::function<void()> up, std::function<void()> top);
     void openSpeedPicker();
     void openKeyboardPicker();
     void openCrtPicker();

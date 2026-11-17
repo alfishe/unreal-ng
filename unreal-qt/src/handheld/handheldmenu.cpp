@@ -1256,6 +1256,7 @@ void HandheldMenu::openMachinePicker(size_t family, int row)
         if (self)
             self->openFamilyPicker(static_cast<int>(family));
     };
+    addMachineWaysUp(tr("Model"), _picker.back, {});
     _hasPicker = true;
     emitState();
 }
@@ -1296,8 +1297,37 @@ void HandheldMenu::openRamPicker(size_t family, size_t machine)
         else
             self->openMachinePicker(family, static_cast<int>(machine));
     };
+    std::function<void()> top;
+    if (!oneMachine)
+        top = [self, family] {
+            if (self)
+                self->openFamilyPicker(static_cast<int>(family));
+        };
+    addMachineWaysUp(oneMachine ? tr("Model") : QString::fromStdString(inFamily.title), _picker.back, std::move(top));
     _hasPicker = true;
     emitState();
+}
+
+void HandheldMenu::addMachineWaysUp(const QString& upTitle, std::function<void()> up, std::function<void()> top)
+{
+    std::vector<QString> labels;
+    std::vector<std::function<void()>> ways;
+    if (top)
+    {
+        labels.push_back(QStringLiteral(".   ") + tr("Model"));
+        ways.push_back(std::move(top));
+    }
+    labels.push_back(QStringLiteral("..  ") + upTitle);
+    ways.push_back(std::move(up));
+    _picker.items.insert(_picker.items.begin(), labels.begin(), labels.end());
+    const int shift = static_cast<int>(ways.size());
+    _picker.row += shift;  // the cursor stays on the machine or size it was on
+    _picker.chosen = [ways = std::move(ways), chosen = std::move(_picker.chosen), shift](int index) {
+        if (index < shift)
+            ways[static_cast<size_t>(index)]();
+        else if (chosen)
+            chosen(index - shift);
+    };
 }
 
 void HandheldMenu::startMachine(const std::string& name, uint32_t ramKb)
