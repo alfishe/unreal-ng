@@ -891,6 +891,10 @@ void MenuManager::createMachineMenu()
     // main window fills it each time it opens
     _machineControllersMenu = _machineMenu->addMenu(tr("C&ontrollers"));
     _machineControllersMenu->setStatusTip(tr("Plug a joystick into a connector, swap the joystick ports"));
+    // The running state into another open instance or a new machine of a model, in memory (model what-if W0b); the main
+    // window fills it each time it opens
+    _machineTransferMenu = _machineMenu->addMenu(tr("Transfer S&tate To"));
+    _machineTransferMenu->setStatusTip(tr("Move this machine's running state into another open instance or a new machine"));
 
     _machineMenu->addSeparator();
 

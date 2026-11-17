@@ -189,6 +189,9 @@ void TTDSessionFile::SetBranchReadingForTesting(bool on)
 
 bool TTDSessionFile::KnownStream(uint16_t id)
 {
+    // A chunked twin's records join into one payload of its stream (the container does it)
+    if (IsChunkedTwin(id))
+        return KnownStream(StreamOfChunkedTwin(id));
     if ((id >= kFrameStreamFirst && id <= kFrameStreamLast) || IsHolderStream(id))
         return true;
     if (id == kBranchTable)
@@ -222,11 +225,20 @@ std::string TTDSessionWriter::Error() const
     return _error;
 }
 
-void TTDSessionWriter::Fail(const std::string& why)
+TTDWriteFailure TTDSessionWriter::Failure() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _failure;
+}
+
+void TTDSessionWriter::Fail(const std::string& why, TTDWriteFailure kind)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     if (!_failed.exchange(true))
+    {
         _error = why;
+        _failure = kind;
+    }
 }
 
 bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, const TTDSessionSaveParams& params,
@@ -300,6 +312,16 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
                     header.streams.push_back({twin, 1, TTDStreamKind::Ancillary, "branch-" + h.name});
             }
     }
+    // Chunked twins (F3): the streams written whole once per file (the write journal, the holder's data) grow with
+    // the session and may pass the container's record limit; their twins are ancillary like them, so a reader
+    // without chunks reads such a file as one without those streams
+    for (size_t k = 0, declared = header.streams.size(); k < declared; ++k)
+    {
+        const TTDStreamDesc d = header.streams[k];
+        const uint16_t trunk = TrunkOfTwin(d.id) != 0 ? TrunkOfTwin(d.id) : d.id;
+        if (trunk == kWriteJournal || IsHolderStream(trunk))
+            header.streams.push_back({ChunkedTwin(d.id), d.layoutVersion, TTDStreamKind::Ancillary, "chunked-" + d.name});
+    }
     {
         TTDByteWriter w;
         w.U16(kTablesVersion);
@@ -326,8 +348,12 @@ bool TTDSessionWriter::Begin(const TimeTravelEngine& e, ITTDByteSink& sink, cons
         header.sessionTables = std::move(w.bytes);
     }
 
+    _writer.SetRecordLimit(params.recordLimit);
     if (!_writer.Begin(sink, header, &error))
+    {
+        Fail(error, _writer.Error().kind);
         return false;
+    }
     if (_background)
         _thread = std::thread([this]() { Run(); });
     return true;
@@ -349,7 +375,8 @@ bool TTDSessionWriter::CollectParts(const TimeTravelEngine& e)
     {
         if (_queuedBytes.load() > _limits.lagHardBytes)
         {
-            Fail("the disk cannot keep up: " + std::to_string(_queuedBytes.load() >> 20) + " MB waiting");
+            Fail("the disk cannot keep up: " + std::to_string(_queuedBytes.load() >> 20) + " MB waiting",
+                 TTDWriteFailure::Io);
             break;
         }
         PartJob job;
@@ -441,24 +468,27 @@ void TTDSessionWriter::Write(PartJob& job)
     // new ones (it fell behind): their data is whole. Only a write error stops it
     if (_ioFailed.load())
         return;
-    auto ioFail = [this](const char* why) {
+    // The container's reason: the system's words for a refused write (disk full only when it is), the sizes of
+    // a record over the limit, the order of the calls
+    auto ioFail = [this]() {
         _ioFailed = true;
-        Fail(why);
+        const TTDWriteError& why = _writer.Error();
+        Fail(why.text.empty() ? std::string("the session file could not be written") : why.text, why.kind);
     };
     if (job.finalize)
     {
         if (!_writer.Finalize())
-            ioFail("the index could not be written");
+            ioFail();
         return;
     }
     for (const auto& [stream, bytes] : job.records)
         if (!_writer.AddRecord(stream, bytes))
         {
-            ioFail("a write failed (disk full or device gone)");
+            ioFail();
             return;
         }
     if (!_writer.EndPart(job.end, true))
-        ioFail("a write failed (disk full or device gone)");
+        ioFail();
 }
 
 bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t last, bool final, PartJob& job)
@@ -836,14 +866,33 @@ bool TTDSessionWriter::BuildPart(const TimeTravelEngine& e, size_t first, size_t
 }
 
 bool TTDSessionFile::Save(const TimeTravelEngine& e, ITTDByteSink& sink, std::string& error,
-                          const TTDSessionSaveParams& params)
+                          const TTDSessionSaveParams& params, TTDWriteFailure* failure)
 {
+    if (failure)
+        *failure = TTDWriteFailure::None;
     if (!e._open || e.CheckpointCount() == e.FirstCheckpoint())
     {
         error = "no session to save";
+        if (failure)
+            *failure = TTDWriteFailure::Layout;
         return false;
     }
     TTDSessionWriter writer(false);
+    // The kind of a failure for the caller (the HTTP status of a dump): the writer's, or Layout for a refusal
+    // before anything was written
+    struct ReportFailure
+    {
+        const TTDSessionWriter& writer;
+        const std::string& error;
+        TTDWriteFailure* out;
+        ~ReportFailure()
+        {
+            if (out && writer.Failed())
+                *out = writer.Failure();
+            else if (out && !error.empty())
+                *out = TTDWriteFailure::Layout;
+        }
+    } report{writer, error, failure};
     size_t liveLines = 0;
     for (const auto& line : e._lines)
         liveLines += line != nullptr;
@@ -1131,7 +1180,8 @@ bool TTDSessionFile::Load(TimeTravelEngine& e, const ITTDByteSource& source, std
     TTDContainerReader reader;
     const bool branchReading = g_branchReading.load();
     auto known = [branchReading](uint16_t id) {
-        return KnownStream(id) && (branchReading || (id != kBranchTable && TrunkOfTwin(id) == 0));
+        const uint16_t stream = StreamOfChunkedTwin(id);
+        return KnownStream(id) && (branchReading || (stream != kBranchTable && TrunkOfTwin(stream) == 0));
     };
     if (!reader.Open(source, error, known))
         return false;

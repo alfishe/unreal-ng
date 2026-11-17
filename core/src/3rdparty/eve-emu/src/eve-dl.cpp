@@ -18,11 +18,13 @@ constexpr uint32_t kVertexFormatMax = 4;              // 1/16 pixel
 constexpr uint32_t kDisplayListIndexMask = 0xFFFF;    // CALL / JUMP destination field
 constexpr uint32_t kWhite = 0xFFFFFF;
 
+// A word of the ROM image (VDAC4: also before the font copy, as the core's preset handles)
 uint32_t RomWord(const EveChip& chip, uint32_t address)
 {
-    return static_cast<uint32_t>(RomByte(chip, address)) | (static_cast<uint32_t>(RomByte(chip, address + 1)) << 8) |
-           (static_cast<uint32_t>(RomByte(chip, address + 2)) << 16) |
-           (static_cast<uint32_t>(RomByte(chip, address + 3)) << 24);
+    return static_cast<uint32_t>(RomImageByte(chip, address)) |
+           (static_cast<uint32_t>(RomImageByte(chip, address + 1)) << 8) |
+           (static_cast<uint32_t>(RomImageByte(chip, address + 2)) << 16) |
+           (static_cast<uint32_t>(RomImageByte(chip, address + 3)) << 24);
 }
 
 uint32_t Field(uint32_t word, uint32_t high, uint32_t low)
@@ -433,10 +435,10 @@ bool SameStep(const LinePlanStep& a, const GraphicsContext& ca, const LinePlanSt
 
 bool PagesUnchanged(const EveChip& chip, uint64_t start, uint64_t end, uint64_t mark)
 {
-    if (start >= kRamGSize || end <= start)
-        return true; // ROM or nothing: constant
-    if (end > kRamGSize)
-        end = kRamGSize;
+    if (start >= chip.ramGLimit || end <= start)
+        return true; // ROM or nothing: constant (a map change invalidates every line)
+    if (end > chip.ramGLimit)
+        end = chip.ramGLimit;
     for (uint64_t page = start >> kPageShift; page <= (end - 1) >> kPageShift; ++page)
     {
         if (chip.ramGPageChanges[page] <= mark)
@@ -492,7 +494,10 @@ bool StepReadsUnchanged(const EveChip& chip, const LinePlanStep& s, const Graphi
     if (h.format == kFormatPaletted4444 || h.format == kFormatPaletted565 || h.format == kFormatPaletted8)
     {
         const uint64_t entryBytes = h.format == kFormatPaletted8 ? 4 : 2;
-        return PagesUnchanged(chip, c.paletteSource, c.paletteSource + entryBytes * kPaletteEntries, mark);
+        // VDAC4 PALETTED8 reads from PALETTE_SOURCE & ~3
+        const uint64_t palette =
+            chip.vdac4 && h.format == kFormatPaletted8 ? (c.paletteSource & ~3u) : c.paletteSource;
+        return PagesUnchanged(chip, palette, palette + entryBytes * kPaletteEntries, mark);
     }
     return true;
 }
@@ -1022,8 +1027,8 @@ bool InitDrawing(EveChip& chip)
     chip.palettes.reset(new (std::nothrow) PaletteCache[kPaletteCacheEntries]());
     chip.linePlan.reset(new (std::nothrow) LinePlan());
     chip.lineKept.reset(new (std::nothrow) LineKept[kMaxLines]());
-    chip.ramGPageChanges.reset(new (std::nothrow) uint64_t[kRamGSize >> kPageShift]());
-    chip.ramGBlockChanges.reset(new (std::nothrow) uint64_t[kRamGSize >> kChangeBlockShift]());
+    chip.ramGPageChanges.reset(new (std::nothrow) uint64_t[chip.ramGSize >> kPageShift]());
+    chip.ramGBlockChanges.reset(new (std::nothrow) uint64_t[chip.ramGSize >> kChangeBlockShift]());
     chip.probeColor.reset(new (std::nothrow) uint8_t[kMaxLineWidth * kChannels]());
     chip.probeStencil.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
     chip.probeTag.reset(new (std::nothrow) uint8_t[kMaxLineWidth]());
@@ -1041,12 +1046,30 @@ void DrawingReset(EveChip& chip)
             LoadRomFontHandle(chip, handle, handle);
     ContextDefaults(chip.state.context);
     DrawingInvalidate(chip);
+    AsyncTakeDrawingState(chip, false);
 }
 
 void CatchUp(EveChip& chip)
 {
     const uint32_t due = LinesDue(chip);
-    if (!chip.drawing || !ScanRunning(chip))
+    const bool draw = chip.drawing && ScanRunning(chip);
+    if (chip.asyncDrawing)
+    {
+        // The renderer draws them; the lines passed move on here as they would with the drawing. Nothing new
+        // passed: nothing to queue (a portrait frame's repeated catch-up only forgets kept lines again)
+        const uint32_t next = draw && Portrait(chip) ? due : (chip.drawnLines > due ? chip.drawnLines : due);
+        if (next == chip.drawnLines)
+            return;
+        AsyncLines(chip, due, draw);
+        chip.drawnLines = next;
+        return;
+    }
+    DrawLinesTo(chip, due, draw);
+}
+
+void DrawLinesTo(EveChip& chip, uint32_t due, bool draw)
+{
+    if (!draw)
     {
         // Lines passed without drawing are not measured: their costs from an earlier
         // frame must not count for this one (the frame's metrics block, the in-flight view)
@@ -1081,13 +1104,17 @@ void FrameStart(EveChip& chip)
 {
     chip.drawnLines = 0;
     chip.overflowLines = 0;
+    if (chip.asyncDrawing)
+        AsyncFrameStart(chip);
 }
 
 void DisplayListSwapped(EveChip& chip, bool changed)
 {
     if (changed)
         ++chip.dlVersion; // a swap to the same words changes nothing drawn
-    if (!chip.drawing)
+    if (chip.asyncDrawing)
+        AsyncSwapped(chip, changed); // the handles are the renderer's: it runs the state pass when not drawing
+    else if (!chip.drawing)
         StatePass(chip);
 }
 
@@ -1104,6 +1131,7 @@ void DrawingInvalidate(EveChip& chip)
     }
     for (LineSignature& s : chip.linePlan->lines)
         s.valid = false;
+    AsyncInvalidate(chip);
 }
 
 void FoldFrameMetrics(EveChip& chip)

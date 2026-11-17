@@ -31,6 +31,11 @@ public:
     {
         return _machineControllersMenu;
     }
+    /// Machine > Transfer State To: empty until it opens (the owner fills it on aboutToShow, StateTransferChoices::Fill)
+    QMenu* machineTransferMenu() const
+    {
+        return _machineTransferMenu;
+    }
 
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
@@ -314,6 +319,7 @@ private:
     QAction* _networkWindowAction = nullptr;
     QAction* _slotsWindowAction = nullptr;
     QMenu* _machineControllersMenu = nullptr;
+    QMenu* _machineTransferMenu = nullptr;
     QAction* _nextLayersAction = nullptr;
     QAction* _osdKeyboardAction = nullptr;
     QAction* _midiActivityAction = nullptr;

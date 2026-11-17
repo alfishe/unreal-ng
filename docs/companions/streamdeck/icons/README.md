@@ -12,7 +12,7 @@ and the actions it is bound to: [glyphs.md](glyphs.md) (generated).
 | `tools/icons/streamdeck_glyphs.py` | The canonical glyph list: id, group, title, the brief ("draw"), state variants, and the table binding catalogue actions to glyphs (`ACTIONS`), the pruned actions, the navigation map | **yes**: the source of the list |
 | `data/streamdeck/icons/glyphs.json` | The list as data, written by the script above | no: regenerate |
 | `tools/icons/streamdeck_packs/magicwb.py` | **The drawings**: one function per glyph id (`DRAW`), on a 32 x 32 grid with semantic palette keys | **yes**: change a picture here |
-| `tools/icons/streamdeck_pixel.py` | Pixel helpers the drawings use (masks, shading, lines, the 4 x 7 digit font) | rarely |
+| `tools/icons/streamdeck_pixel.py` | Pixel helpers the drawings use (masks, shading, lines, the 4 x 7 font: digits, A-Z, signs) | rarely |
 | `tools/icons/streamdeck_packs/reskin.py` | Re-skins the drawings into other pixel styles (ramps per key, outline, shadow / glow hooks) | rarely |
 | `tools/icons/streamdeck_packs/vector.py` | Renders the drawings smooth at 256 px (same API, shape ids, gaps, cut vs backdrop details) | rarely |
 | `tools/icons/streamdeck_packs/<pack>.py` | One generator per pack: its palette and treatment | **yes**: change a style here |
@@ -54,6 +54,7 @@ Draw with **meanings, not colours**: every pack maps the keys to its own palette
 | `d` | dark grey | a dark body (cassette shell, chip); a dark detail stays dark |
 | `b` | blue: the accent | the pack's accent (cyan, group colour, blue ramp, orange on Workbench 1.3) |
 | `e` | beige / warm: the second accent | warm accent (amber, tan, orange) |
+| `r` | red: the record marker, the ZX keys' red legends | red in every pack |
 
 Rules that keep all packs working:
 - Separate parts with `solid(..., outline=True)` (the default): the outline ring becomes the gap between shapes in
@@ -62,7 +63,23 @@ Rules that keep all packs working:
   near-monochrome): a needle high vs low, a lock closed vs open, a filled vs hollow dot.
 - Thin details (1-pixel `px` / `line`) vanish at 72 px and on Workbench 1.3's half-height rows: give anything that
   carries meaning at least 2 pixels.
-- Text: only the digits and letters of `streamdeck_pixel.FONT_4X7` (0 1 2 4 8 N T); prefer a symbol to text.
+- Text: `streamdeck_pixel.FONT_4X7` (digits, A-Z, the signs); prefer a symbol to text. The exception is the ZX
+  Spectrum keyboard (below), where the legend is the meaning.
+
+### The ZX Spectrum keyboard (`zx.*`)
+
+One glyph per key of the 48K keyboard (`streamdeck_glyphs.ZX_KEYS`, in the keyboard's four rows) for a keyboard page
+where each deck key is one Spectrum key. The picture is the key's own legend big in white at the top left and its red
+symbol-shift legend smaller at the bottom right; ENTER, CAPS SHIFT, SYMBOL SHIFT (red) and SPACE (with its red BREAK)
+are their words. The key's keyword (PLOT, PRINT, EDIT...) is **not** drawn: the scenario sets it as the key's label,
+which the deck writes under the picture. In `magicwb.py`:
+- `ZX_BIG`: the big legend, `FONT_4X7` stretched to 12 x 17 (`ZX_ROWS`: 3-pixel stems and bars), with the letters
+  whose diagonals do not survive the stretch (K M N Q R V W X Y Z 4 7) drawn by hand on that grid;
+- `ZX_RED_FONT`: the red legends in a bold 7-row pixel font after the Spectrum's own (2-pixel stems);
+- Workbench 1.3 squashes row pairs: its skin says `tall_pixels`, and there the legends are drawn two rows per font
+  row (the big one from the middle row of each `ZX_ROWS` band, the red one in the thin `FONT_4X7`).
+
+The red legends follow the 48K ROM's symbol-shift table (`#026A`) and the printed keys.
 
 ## 3. Typical changes and what to run
 

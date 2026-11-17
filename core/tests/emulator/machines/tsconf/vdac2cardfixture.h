@@ -78,7 +78,7 @@ protected:
         _z80->t = 0;
     }
 
-    Vdac2Card* Card() { return _decoder->GetVdac2Card(); }
+    EveHostCard* Card() { return _decoder->GetEveCard(); }
 
     /// region <Raster time>
 

@@ -277,6 +277,8 @@ bool CLIProcessor::HandleCardCpuCommand(const ClientSession& session, Emulator& 
     for (StateNode& line : listing["instructions"].items)
     {
         const unsigned at = static_cast<unsigned>(line["address"].i);
+        if (const StateNode* label = line.find("label"))
+            out << "  " << label->s << ":" << NEWLINE;  // the card's firmware symbols
         out << (at == pc ? "> " : "  ") << Hex(at, 4) << "  " << std::left << std::setw(10) << std::setfill(' ')
             << line["bytes"].s << std::right << "  " << line["mnemonic"].s << NEWLINE;
     }

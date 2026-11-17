@@ -1,0 +1,1 @@
+lzsa2 : incbin './decrunch/lzDataTest.bin' : lzclose : lafin : save './decrunch/lzDataTest.lzsa2',0,lafin 

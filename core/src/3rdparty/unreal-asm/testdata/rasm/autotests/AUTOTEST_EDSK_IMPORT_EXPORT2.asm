@@ -1,0 +1,1 @@
+edsk create,'rasmoutput_test.dsk',VENDOR,OVERWRITE: edsk delfile,'rasmoutput_test.dsk','rasmoutp.bin':edsk putfile,'rasmoutput_test.dsk','rasmoutput_test.bin',AMSDOS,BINARY,LOAD=0xC000:edsk putfile,'rasmoutput_test.dsk','rasmoutput_test.bin','dest.Scr',AMSDOS,TYPE=2,LOAD=0xC000,EXEC=0x100,PROT,HIDDEN:lenom defb 0,'RASMOUTPBIN': edsk check,'rasmoutput_test.dsk','2:0x45',12,lenom

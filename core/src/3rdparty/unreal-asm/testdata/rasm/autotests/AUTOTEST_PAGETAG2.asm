@@ -1,0 +1,1 @@
+bankset 0:call maroutine:bank 4:org #C000:autreroutine:nop:ret:bank 5:org #8000:maroutine:ldir:ret:bankset 2:org #9000:troize:nop:assert {page}maroutine==#7FC5:assert {pageset}maroutine==#7FC2:assert {page}autreroutine==#7FC4:assert {pageset}autreroutine==#7FC2:assert {page}troize==#7FCE:assert {pageset}troize==#7FCA

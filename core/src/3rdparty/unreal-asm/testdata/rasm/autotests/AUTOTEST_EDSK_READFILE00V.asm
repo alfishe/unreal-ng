@@ -1,0 +1,1 @@
+EDSK create,'rasmoutput_test.dsk',VENDOR,OVERWRITE:bank:defs 4096,#DD: defs 16384-4096,#EE: defs 24000,#FF:save 'g4k.bin',0,4096,DSK,'rasmoutput_test.dsk': save 'g16k.bin',0,16384,DSK,'rasmoutput_test.dsk': save 'g36k.bin',0,1024*36,DSK,'rasmoutput_test.dsk' 

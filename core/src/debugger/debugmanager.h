@@ -107,6 +107,8 @@ public:
     GSCardTarget* GetCardTarget(DebugCpuId cpu);
     /// The breakpoints of a CPU: the main CPU's (GetBreakpointsManager), or a card's
     BreakpointManager* GetBreakpointsManager(DebugCpuId cpu);
+    /// The labels of a CPU: the main CPU's (GetLabelManager), or a card's own store
+    LabelManager* GetLabelManager(DebugCpuId cpu);
     /// The CPU of a surface name ("main", "gs", "ms"; "neogs" names the GS slot, "multisound" the MultiSound's GS);
     /// false for an unknown name
     static bool ParseCpuName(const std::string& name, DebugCpuId& out);

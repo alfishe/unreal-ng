@@ -21,7 +21,7 @@ namespace EveLib
 
 constexpr uint32_t kAddressMask = 0x3FFFFF;  // 22-bit host address space
 constexpr uint32_t kRamGBase = 0x000000;
-constexpr uint32_t kRamGSize = 1024 * 1024;
+constexpr uint32_t kRamGSize = 1024 * 1024;      // FT812; a chip uses EveChip::ramGLimit
 constexpr uint32_t kChipIdAddress = 0x0C0000;
 constexpr uint32_t kRomFontBase = 0x1E0000;
 constexpr uint32_t kRomEnd = 0x300000;       // ROM_FONT .. ROM_FONTROOT end
@@ -61,6 +61,29 @@ constexpr uint32_t kPaletteEntries = 256;   // 8-bit palette indices
 
 // Chip ID bytes at kChipIdAddress after reset (spec §1).
 constexpr uint8_t kChipId[4] = {0x08, 0x12, 0x01, 0x00};
+
+// --- VDAC4 profile (Tang Nano 20K FT812 core + BL616 coprocessor) ---------------------------
+//
+// RAM_G is 3 MB of SDRAM. The bus sees 2 MB (default) or all 3 MB (FT_CFG bit 0); in 2 MB mode
+// 0x200000..0x2FFFFF is the ROM font image, read-only (ft_core.sv gm_ro / gm_addr).
+constexpr uint32_t kVdac4RamGSize = 3 * 1024 * 1024;
+constexpr uint32_t kVdac4RamG2Mb = 2 * 1024 * 1024;
+constexpr uint32_t kVdac4RamG3Mb = kVdac4RamGSize;
+// Clock multiplier of the power-up into ACTIVE (ft_core.sv START_ACTIVE: ext_clk = 1, mul = 8).
+constexpr uint8_t kVdac4PowerUpMultiplier = 8;
+// Core reset sweep: registers are rewritten one per clock for 128 clocks; meanwhile host reads
+// return 0 and host write bytes are dropped (ft_core.sv clr / clearing).
+constexpr uint32_t kVdac4ResetSweepClocks = 128;
+// A read of REG_INT_FLAGS keeps the swap bit when a swap lands this many clocks before the
+// clear or later (ft_core.sv swap_after_read = detached_swap_now || swap_recent).
+constexpr uint64_t kVdac4SwapAfterReadClocks = 1;
+// CMD_TEXT / CMD_NUMBER wait for usable font metrics: up to 6 s after the coprocessor reset,
+// and at least 1 s after the wait began (ft_copro.h FTC_ROM_WAIT_MS, FTC_TEXT_RETRY_MS). The
+// emulation polls the metrics every kVdac4TextPollMs.
+constexpr uint64_t kVdac4RomWaitMs = 6000;
+constexpr uint64_t kVdac4TextRetryMs = 1000;
+constexpr uint64_t kVdac4TextPollMs = 1;
+constexpr uint32_t kVdac4TextMax = 256;     // FTC_TEXT_MAX: characters drawn of one string
 
 // --- Registers (spec §3) ---------------------------------------------------------------
 
@@ -141,8 +164,10 @@ const ChipTable& GetChipTable(EveModel model);
 enum RegionId : uint8_t
 {
     RegionRamG, RegionDl0, RegionDl1, RegionReg, RegionCmd, RegionSpecial, RegionInflight,
+    RegionVdac43d,     // VDAC4 only: the 3D frame (triangles) and mesh cache (eve-vdac4-3d.cpp)
     RegionCount
 };
+constexpr uint32_t kFt812RegionCount = RegionVdac43d; // the FT812 regions, in this order
 
 struct Region
 {
@@ -287,6 +312,7 @@ enum class CoproFault : uint8_t
     InvalidStream,        // CMD_INFLATE data is not a valid stream
     InvalidImage,         // CMD_LOADIMAGE / video data the chip rejects
     InflightOverflow,     // the operation needs more than kInflightCapacity
+    ThreeDParameters,     // VDAC4: a 3D command with invalid parameters (FTC_FAULT_3D)
     Count
 };
 
@@ -408,6 +434,77 @@ static_assert(std::is_trivially_copyable<ControlState>::value, "ControlState mus
 constexpr uint32_t kStateMagic = 0x31455645; // "EVE1"
 constexpr uint32_t kStateVersion = 8; // 8: FrameMetricsState
 
+// --- VDAC4 state: saved after ControlState, only for EVE_MODEL_VDAC4 ---------------------------
+
+constexpr uint32_t kVdac43dStack = 8;          // FTC3D_STACK
+constexpr uint32_t kVdac43dMaxTris = 1280;     // FTC3D_MAX_TRIS
+constexpr uint32_t kVdac43dMaxVerts = 512;     // FTC3D_MAX_VERTS
+constexpr uint32_t kVdac43dMaxFaces = 1024;    // FTC3D_MAX_FACES
+constexpr uint32_t kVdac43dCacheWords = 6144;  // FTC3D_CACHE_WORDS
+constexpr uint32_t kVdac43dCacheItems = 16;    // FTC3D_CACHE_ITEMS
+constexpr uint32_t kVdac43dDepthWords = 16384 / 2; // FTC3D_STRIP / 2: pixels of one strip
+
+// One triangle of the 3D frame (ftc3d_tri_t without the texture attributes).
+struct Vdac43dTri
+{
+    int32_t x[3], y[3];        // target, 1/16 pixel, clockwise (y down)
+    float iz[3];               // znear / z
+    uint8_t sh[3];             // light 0...255
+    uint8_t textured;
+    uint16_t color;            // RGB565
+    int16_t y0, y1;            // target rows it touches
+};
+static_assert(std::is_trivially_copyable<Vdac43dTri>::value, "Vdac43dTri is copied into a region");
+
+struct Vdac43dCached
+{
+    uint32_t addr, words, at;  // RAM_G words [addr, addr + 4 words) at cache word `at`
+};
+
+// The scalar 3D state (ftc3d_t); the triangles and the mesh cache are in RegionVdac43d.
+struct Vdac43dState
+{
+    float m[12];                       // model-view, affine 3 x 4
+    float stack[kVdac43dStack][12];
+    uint32_t sp;
+    uint32_t addr, fmt, w, h, aa;      // CMD_3D_TARGET
+    float focal, znear;                // CMD_3D_PROJECT
+    float lx, ly, lz;                  // CMD_3D_LIGHT, normalised
+    uint32_t ambient, diffuse;
+    uint32_t clear;                    // CMD_3D_CLEAR argb
+    float fogNear, fogFar, colorSteps; // CMD_3D_MATERIAL
+    uint32_t fogColor, material;
+    uint32_t texW, texH, texFormat, texValid; // CMD_3D_TEXTURE
+    uint32_t ntris, dropped;
+    uint32_t lastTris, lastMs;         // CMD_3D_INFO
+    uint32_t ncached, cacheUsed;
+    Vdac43dCached cached[kVdac43dCacheItems];
+};
+
+struct Vdac4State
+{
+    uint32_t magic;            // kVdac4StateMagic
+    uint32_t size;             // sizeof(Vdac4State)
+    uint32_t ramGLimit;        // RAM_G the bus sees: kVdac4RamG2Mb or kVdac4RamG3Mb
+    uint8_t fontsReady;        // the ESP copied the ROM font image: ROM_FONTROOT valid
+    uint8_t textWaiting;       // CMD_TEXT / CMD_NUMBER wait for font metrics
+    uint8_t boxScaled;         // CMD_LOADIMAGE_BOX in flight writes a downscaled image
+    uint8_t reserved0;
+    uint32_t resetSweepLeft;   // clocks of the core reset sweep left
+    uint64_t lastSwapClock;    // totalClocks + 1 of the last display list swap, 0 = none
+    uint64_t romWaitStart;     // totalClocks at the coprocessor reset (text wait)
+    uint64_t textWaitStart;    // totalClocks when the text wait began
+    uint32_t imageInfo[4];     // CMD_IMAGEINFO results
+    uint32_t sourceWidth, sourceHeight; // the image in flight before scaling
+    Vdac43dState threeD;
+};
+static_assert(std::is_trivially_copyable<Vdac4State>::value, "Vdac4State must be trivially copyable");
+constexpr uint32_t kVdac4StateMagic = 0x34434456; // "VDC4"
+
+// RegionVdac43d layout: the triangles, then the mesh cache words.
+constexpr uint32_t kVdac43dTrisBytes = kVdac43dMaxTris * static_cast<uint32_t>(sizeof(Vdac43dTri));
+constexpr uint32_t kVdac43dRegionSize = kVdac43dTrisBytes + kVdac43dCacheWords * 4;
+
 struct PaletteCache
 {
     bool valid;
@@ -436,6 +533,12 @@ struct LinePlanDelete
     void operator()(LinePlan* plan) const;
 };
 
+struct AsyncDrawing; // eve-async.cpp
+struct AsyncDrawingDelete
+{
+    void operator()(AsyncDrawing* async) const;
+};
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -444,6 +547,16 @@ struct EveChip
 {
     const EveLib::ChipTable* table;
     EveLib::ControlState state;
+    EveLib::Vdac4State vdac4State; // saved after `state` for EVE_MODEL_VDAC4 (vdac4 = true)
+    bool vdac4 = false;            // EVE_MODEL_VDAC4: the profile's rules apply
+
+    // The memory map (derived from the model and vdac4State, UpdateMemoryMap). FT812: RAM_G
+    // 1 MB, the ROM from 0x1E0000.
+    uint32_t ramGSize = EveLib::kRamGSize;    // RAM_G allocated
+    uint32_t ramGLimit = EveLib::kRamGSize;   // RAM_G the bus sees, [0, ramGLimit)
+    uint32_t romStart = EveLib::kRomFontBase; // the ROM window [romStart, kRomEnd)
+    bool romBlank = false;                    // VDAC4 before the font copy: the ROM reads 0
+    uint32_t regionCount = EveLib::kFt812RegionCount;
 
     // Configuration.
     uint32_t externalClockHz;
@@ -451,7 +564,7 @@ struct EveChip
     uint32_t romBase;          // first ROM address covered by romImage
     uint32_t romSize;
 
-    // Regions.
+    // Regions (regionCount of them are in use).
     EveLib::Region regions[EveLib::RegionCount];
     std::unique_ptr<uint8_t[]> memory;     // backing store of all regions
     std::unique_ptr<uint64_t[]> dirtyBits; // backing store of all dirty bitmaps
@@ -478,8 +591,11 @@ struct EveChip
     std::unique_ptr<uint8_t[]> workBuffer;   // decoder output before it goes to memory
     std::unique_ptr<uint8_t[]> inputBuffer;  // ring data handed to a decoder in one piece
     std::unique_ptr<uint8_t[]> imageBuffer;  // decoded image (canonical layout), CMD_LOADIMAGE
+    size_t imageBufferBytes = 0;             // its size (VDAC4: grows to the largest image decoded)
     uint32_t imagePalette[EveLib::kPaletteEntries]; // its palette, for indexed PNG
     bool imageDecoded;                       // imageBuffer holds the image in flight
+    std::unique_ptr<uint8_t[]> vdac4Scaled;  // VDAC4 CMD_LOADIMAGE_BOX: the downscaled output (derived)
+    std::unique_ptr<uint32_t[]> vdac4Depth;  // VDAC4 3D: z-buffer of one strip (derived)
 
     // Derived drawing state.
     std::unique_ptr<uint8_t[]> lineColor;    // line buffers (kMaxLineWidth pixels)
@@ -527,6 +643,12 @@ struct EveChip
     uint32_t widthCapacity;
     uint32_t heightCapacity;
     int drawing;
+
+    // Drawing on the renderer thread (eve-async.cpp, EveSetAsyncDrawing): the chip queues what it would draw,
+    // a shadow chip draws it. Declared last: the renderer stops before anything else goes
+    EveConfig config;                      // as created: the shadow is made from it
+    bool asyncDrawing = false;
+    std::unique_ptr<EveLib::AsyncDrawing, EveLib::AsyncDrawingDelete> async;
 };
 
 namespace EveLib
@@ -566,6 +688,11 @@ const uint8_t* ActiveDl(const EveChip& chip);
 Region& PendingDlRegion(EveChip& chip);
 Region& ActiveDlRegion(EveChip& chip);
 uint8_t RomByte(const EveChip& chip, uint32_t address);
+uint8_t RomImageByte(const EveChip& chip, uint32_t address); // the image, even while blank
+// The memory map from the model and the VDAC4 state (RAM_G limit, font copy); drawn lines and
+// decoded palettes that read the old map are invalidated (catchUp: lines due so far are drawn
+// with the old map first).
+void UpdateMemoryMap(EveChip& chip, bool catchUp = true);
 
 inline uint32_t LoadLe32(const uint8_t* p)
 {
@@ -633,6 +760,8 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
 uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
+// The lines of the frame in flight up to `due`: drawn (draw), or passed without drawing (CatchUp's work)
+void DrawLinesTo(EveChip& chip, uint32_t due, bool draw);
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
 void DisplayListSwapped(EveChip& chip, bool changed); // a new active list (changed: other words)
 void DrawingInvalidate(EveChip& chip);        // derived drawing state is stale (restore)
@@ -643,6 +772,29 @@ void LoadRomFontHandle(EveChip& chip, uint32_t handle, uint32_t font);
 void SetHandleFromMetrics(BitmapHandle& h, uint32_t format, uint32_t stride, uint32_t width, uint32_t height,
                           uint32_t source);
 bool InitDrawing(EveChip& chip);               // allocate the derived drawing buffers
+
+// --- Drawing on the renderer thread (eve-async.cpp) -------------------------------------------------
+
+// Queued instead of drawn while chip.asyncDrawing: lines up to `due`, a frame start / end, a swap
+void AsyncLines(EveChip& chip, uint32_t due, bool draw);
+void AsyncFrameStart(EveChip& chip);
+void AsyncFrameEnd(EveChip& chip);
+void AsyncSwapped(EveChip& chip, bool changed);
+// The drawing state is stale (DrawingInvalidate): the next operation carries all of RAM_G and the list
+void AsyncInvalidate(EveChip& chip);
+// The chip's handles and context (and the metrics) are the truth again (reset, state load): the shadow takes them
+void AsyncTakeDrawingState(EveChip& chip, bool metrics);
+// Wait until the renderer drew everything queued (no-op off, or on the renderer thread)
+void AsyncWait(const EveChip& chip);
+// The chip whose drawing state (handles, line costs, metrics, kept lines) is current: the shadow after a wait
+const EveChip& DrawingChip(const EveChip& chip);
+// REG_TAG as the drawing left it, into the chip's register (a host read)
+void AsyncSyncTag(EveChip& chip);
+
+// --- VDAC4 3D (eve-vdac4-3d.cpp) ---------------------------------------------------------------
+
+void Vdac43dReset(EveChip& chip);              // ftc3d_reset
+bool Vdac43dExecute(EveChip& chip);            // a 3D command; false: FTC_FAULT_3D
 
 // --- State (eve-state.cpp) ---------------------------------------------------------------------
 

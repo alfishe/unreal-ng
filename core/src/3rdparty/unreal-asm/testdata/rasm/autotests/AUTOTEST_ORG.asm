@@ -1,0 +1,1 @@
+ORG #8000,#1000:defw $:ORG $:defw $

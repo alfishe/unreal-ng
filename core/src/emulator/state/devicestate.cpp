@@ -22,6 +22,7 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/covox.h"
@@ -713,6 +714,25 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
     ret["enabled"] = true;
     ret["rom_loaded"] = gs->isROMLoaded();
     ret["firmware"] = gs->firmwareDescription();
+    // The firmware profile the ROM's SHA-256 selects (gs-debugger design §6.1, L4): id and title, or
+    // known = false with the digest of an unknown ROM. A card without a ROM to hash (lightweight) has none
+    if (const GSFirmwareIdentity identity = IdentifyGSFirmware(*gs); identity.hasRom)
+    {
+        StateNode profile = StateNode::Object();
+        profile["known"] = identity.profile != nullptr;
+        if (identity.profile)
+        {
+            profile["id"] = std::string(identity.profile->id);
+            profile["title"] = std::string(identity.profile->title);
+            profile["symbols"] = std::string("bundle:gs:") + identity.profile->id;
+        }
+        profile["sha256"] = identity.sha256;
+        StateNode pages = StateNode::Array();
+        pages.push(identity.sha256Pages[0]);
+        pages.push(identity.sha256Pages[1]);
+        profile["page_sha256"] = pages;
+        ret["firmware_profile"] = profile;
+    }
     ret["ram_kb"] = uint64_t(gs->getRamSizeKB());
     ret["status"] = int(status);
     ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
@@ -726,6 +746,25 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
     ret["data_from_host"] = int(gs->getDataFromHost());
     ret["data_to_host"] = int(gs->getDataToHost());
     ret["page"] = int(gs->getMPAG());  // MPAG banking latch (GS design §2.3)
+    // What the host's conversation is at (gs-debugger design §6.4, F3): the command log's decoder, so only while the
+    // log records; and the debugger's last send (F6) to the machine's card
+    if (const GSCommandLog* log = gs->commandLog())
+    {
+        StateNode protocol = StateNode::Object();
+        log->State().ToState(protocol);
+        if (!log->On())
+            protocol["device"] = log->History().Device();
+        ret["protocol"] = protocol;
+    }
+    if (const std::shared_ptr<GSHostDriver> driver = sm && sm->getGeneralSound() == gs ? sm->gsHostDriver() : nullptr)
+    {
+        if (const std::optional<GSConversation> last = driver->Find(0))
+        {
+            StateNode send = StateNode::Object();
+            last->ToState(send);
+            ret["last_send"] = send;
+        }
+    }
 
     StateNode channels = StateNode::Array();
     for (int i = 0; i < gs->channelCount(); i++)

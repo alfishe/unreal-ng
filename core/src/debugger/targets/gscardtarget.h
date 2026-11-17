@@ -25,6 +25,7 @@
 
 class BreakpointManager;
 class GeneralSoundCard;
+class LabelManager;
 class EmulatorContext;
 
 class GSCardTarget final : public IDebugTarget, public IGSDebugHooks
@@ -42,6 +43,11 @@ public:
 
     /// The card CPU's breakpoints (memory, ports, card events)
     BreakpointManager* GetBreakpointManager() { return _breakpoints.get(); }
+    /// The card CPU's labels (gs-debugger design §6.2): its own store, page-tied by the card's map; the shipped
+    /// firmware symbols (data/symbols/gs/manifest.json) join it when the card's ROM page 0 matches a bundle
+    LabelManager* GetLabelManager() { return _labels.get(); }
+    /// The bundles of the card's ROM into the labels (at each card creation); the bundle sets now there
+    std::vector<std::string> ApplySymbolBundles();
 
     /// The slot's card was created or replaced (SoundManager): the hooks go to the new card when they are wanted
     void OnCardCreated();
@@ -155,6 +161,7 @@ private:
     DebugCpuId _id = DebugCpuId::GS;
     std::function<GeneralSoundCard*()> _cardSource;
     std::unique_ptr<BreakpointManager> _breakpoints;
+    std::unique_ptr<LabelManager> _labels;
     bool _wanted = false;                    // an active breakpoint asks for the hooks
     std::atomic<bool> _stopWanted{false};    // an active breakpoint stops (tight mode)
     struct LiveEdit

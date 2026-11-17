@@ -39,7 +39,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from .ttdcontainer import (ENCODING_RANGES, ENCODING_XOR, ENCODING_ZERO, PIECE, Checkpoint, Container, Reader,
-                           TtdContainerError, TtdError, Version, crc32c, open_container, read_record, reachable)
+                           TtdContainerError, TtdError, Version, crc32c, is_chunked_twin, open_container, read_record,
+                           reachable, stream_of_chunked_twin)
 
 BRANCH_TABLE = 0x0200
 BRANCH_FIRST, BRANCH_LAST = 0x0201, 0x023F
@@ -69,6 +70,8 @@ def trunk_of_twin(sid: int) -> int:
 
 def known_stream(sid: int) -> bool:
     """TTDSessionFile::KnownStream (branch reading on)."""
+    if is_chunked_twin(sid):
+        return known_stream(stream_of_chunked_twin(sid))
     if FRAME_FIRST <= sid <= FRAME_LAST or is_holder_stream(sid) or sid == BRANCH_TABLE:
         return True
     trunk = trunk_of_twin(sid)

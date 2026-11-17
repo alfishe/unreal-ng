@@ -66,6 +66,8 @@ TEST(MachineCatalog_Test, AtmTurboHoldsBothBoardsWithTheirRamSizes)
 TEST(MachineCatalog_Test, VariantsAndAliasesFindTheirFamily)
 {
     EXPECT_EQ(MachineCatalog::FamilyOf("TSL-VDAC2"), "zx-evo");
+    EXPECT_EQ(MachineCatalog::FamilyOf("TSL-VDAC4"), "zx-evo");
+    EXPECT_EQ(MachineCatalog::FamilyOf("TSCONF-VDAC4"), "zx-evo");
     EXPECT_EQ(MachineCatalog::FamilyOf("tsconf-vdac2"), "zx-evo") << "a variant alias";
     EXPECT_EQ(MachineCatalog::FamilyOf("TSCONF"), "zx-evo") << "a model alias";
     EXPECT_EQ(MachineCatalog::FamilyOf("PROFI3"), "profi");

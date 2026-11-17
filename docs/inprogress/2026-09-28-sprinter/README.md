@@ -35,6 +35,7 @@ Covox-Blaster work; and it has TTD, debugger and automation support like the oth
 | [estex-dss-build.md](estex-dss-build.md) | building Estex DSS (kernel, shell, installer, boot loader) from source with sjasmplus, the symbols for debugging, putting the build on a disk; the built 1.71.66 is in testdata |
 | [pld-configurations.md](pld-configurations.md) | PLD configurations overview: how bitstreams load on the hardware, how MAME and unreal-ng model them as modules, the differences and why (read first); §6 is the full account of the DooM and Video configurations (Sprinter 97 legacy, not planned) |
 | [game-configuration.md](game-configuration.md) | the "Game" PLD configuration (V10): the bitstream, what it changes, the grid-offset picture, the module, tests |
+| [fdd-read-speed.md](fdd-read-speed.md) | why a program's start from a 1.44 MB floppy is slow under BIOS 3.06 and DSS 1.71: DSS's `MediaCheck` drive reset, one driver call per cluster, the BIOS's per-sector `SEEK`; before / after code, the patches, the floppy / HDD / CF measurements |
 
 ## Key findings
 

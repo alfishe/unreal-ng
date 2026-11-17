@@ -1,0 +1,1 @@
+idx=5: print 'grouik { idx + 3 } ':nop

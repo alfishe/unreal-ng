@@ -835,6 +835,8 @@ StateNode L1Result::ToStateNode() const
         node["length"] = static_cast<uint64_t>(c.length);
         node["dir"] = static_cast<int64_t>(c.dir);
         node["count"] = c.count;
+        node["first_frame"] = c.firstFrame;
+        node["last_frame"] = c.lastFrame;
         copyList.push(std::move(node));
     }
     flow["copies"] = std::move(copyList);

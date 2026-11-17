@@ -28,7 +28,7 @@ const std::vector<FamilyDef>& FamilyDefs()
         {"sinclair", "Sinclair", {"48K", "48K-BETA128", "128k", "PLUS2", "PLUS2A", "PLUS3"}},
         {"pentagon", "Pentagon", {"PENTAGON"}},
         {"atm", "ATM Turbo", {"ATM450", "ATM710"}},
-        {"zx-evo", "ZX-Evo", {"ATM3", "TSL", "TSL-VDAC2"}},
+        {"zx-evo", "ZX-Evo", {"ATM3", "TSL", "TSL-VDAC2", "TSL-VDAC4"}},
         {"profi", "Profi", {"PROFI3", "PROFI", "PROFI-PLUS"}},
         {"scorpion", "Scorpion", {"SCORPION", "PROFSCORP", "GMX"}},
         {"next", "ZX Spectrum Next", {"NEXT", "NEXT-KS1", "NEXT-KS3", "NEXT-DDMA"}},

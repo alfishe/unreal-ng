@@ -864,7 +864,9 @@
         "General Sound card (classic GS, lightweight or NeoGS; [SOUND] GSType=Z80, LW or NGS). One report for every "
         "interface (DeviceState::Gs; CLI state audio gs, Lua/Python gs_state, MCP audio_gs): device, implementation, "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
-        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
+        "and 6-bit volume, firmware/RAM fitment, firmware_profile (a card with a ROM: known, id, title, symbols - the "
+        "bundle set of the card CPU's labels - for a built-in profile, sha256 of the 32 KB image and page_sha256 of "
+        "its pages; known false: an unknown firmware, no symbols) and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
         "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
         "view of ZX-DMA: mode (off | watch | divert), overlay_installed, read_latch (the byte the next host read "
         "gets), pending (none | read | write) and pending_address, bytes_read / bytes_written / bytes_dropped, "
@@ -957,11 +959,30 @@
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("send");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("conversation");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["pre"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["params"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["params"]["items"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["replies"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["wait_ms"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["send_id"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
         "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the slot "
-        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing')";
+        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing'; send (value = the command, pre, params, replies, wait_ms) and "
+        "conversation (send_id) carry the send: id, state queued / running / done / failed, command, name, pre, params "
+        "with their names, replies, reply_meaning, error, text)";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
-        "Unknown action, invalid value or unknown personality";
+        "Unknown action, invalid value or unknown personality; send: a parameter count the firmware profile does not "
+        "take";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =

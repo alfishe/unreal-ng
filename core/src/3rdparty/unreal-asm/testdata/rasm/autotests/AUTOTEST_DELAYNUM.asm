@@ -1,0 +1,1 @@
+macro test  label:    dw {label}:    endm:    repeat 3, idx:idx2 = idx-1: test label_{idx2}:    rend:repeat 3, idx:label_{idx-1}:nop:rend

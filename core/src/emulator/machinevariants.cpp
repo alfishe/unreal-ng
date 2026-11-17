@@ -18,12 +18,29 @@ namespace
 void ApplyTsConfVdac2(CONFIG& config)
 {
     config.ts_vdac = 7;
+    config.ts_vdac4 = false;
     config.ide_scheme = IDE_NONE;
 }
 
 bool IsTsConfVdac2(const CONFIG& config)
 {
-    return config.mem_model == MM_TSL && config.ts_vdac == 7;
+    return config.mem_model == MM_TSL && config.ts_vdac == 7 && !config.ts_vdac4;
+}
+
+/// TS-Conf with the VDAC4 board on its IDE connector: the stock VDAC2 firmware
+/// build (VDAC_VER = 7, ESP32_SPI), the Tang FPGA's FT812 core where the VDAC2
+/// card's FT812 sits and the ESP32-S3 on #77 bit 4
+/// (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+void ApplyTsConfVdac4(CONFIG& config)
+{
+    config.ts_vdac = 7;
+    config.ts_vdac4 = true;
+    config.ide_scheme = IDE_NONE;
+}
+
+bool IsTsConfVdac4(const CONFIG& config)
+{
+    return config.mem_model == MM_TSL && config.ts_vdac == 7 && config.ts_vdac4;
 }
 
 bool TsConfVdac2Supported(std::string* reason)
@@ -130,6 +147,9 @@ const std::vector<MachineVariant> kVariants = {
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
      ApplyTsConfVdac2, IsTsConfVdac2, TsConfVdac2Supported},
+    {"TSL-VDAC4", "TS-Conf + VDAC4",
+     "TS-Conf with the VDAC4 board: Tang Nano 20K (FT812 core) and ESP32-S3 application processor (no IDE)", "TSL",
+     4096, ApplyTsConfVdac4, IsTsConfVdac4, TsConfVdac2Supported},
     {"PROFI-PLUS", "ZX Profi+ (BIOS Plus, PQ-DOS)",
      "ZX Profi v5 with the V0.03 port decoder and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, IDE", "PROFI", 1024,
      ApplyProfiPlus, IsProfiPlus, ProfiPlusSupported},
@@ -154,6 +174,7 @@ const Alias kAliases[] = {
     {"48K-TRDOS", "48K-BETA128"},
     {"48K-BETA", "48K-BETA128"},
     {"TSCONF-VDAC2", "TSL-VDAC2"},
+    {"TSCONF-VDAC4", "TSL-VDAC4"},
     {"PROFIPLUS", "PROFI-PLUS"},
     {"NEXT-ISSUE2", "NEXT-KS1"},
     {"NEXT-ISSUE5", "NEXT-KS3"},

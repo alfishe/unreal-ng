@@ -116,13 +116,15 @@ enum class TTDInputKind : uint8_t
     ConnectorState,     ///< the retro controls held on one connector of ControllerManager whose device has no kind of
                         ///< its own: key = connector index, dx = the control mask (controllers::kRight ... bit order)
 
-    HostKeys            ///< the ZX keys host controllers hold on one half-row (ControllerManager's host key overlay,
+    HostKeys,           ///< the ZX keys host controllers hold on one half-row (ControllerManager's host key overlay,
                         ///< independent of the user's keys): key = half-row 0..7 (A8..A15), dx = the held bits
                         ///< (bit n = D n, active high)
+
+    GSReadData          ///< IN #B3 from automation (the debugger's send reads a reply): clears the data flag
 };
 
 /// Last valid kind: the file reader refuses anything above it
-constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::HostKeys;
+constexpr TTDInputKind kLastTTDInputKind = TTDInputKind::GSReadData;
 
 /// The kinds that carry a network record (netIndex) and payload bytes
 constexpr bool HasNetRecord(TTDInputKind kind)

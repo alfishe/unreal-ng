@@ -1,0 +1,1 @@
+mavar=67:label{mavar}truc:ld hl,7+2*label{mavar}truc:mnt=1234567:lab2{mavar}{mnt}:ld de,lab2{mavar}{mnt}:lab3{mavar}{mnt}h:ld de,lab3{mavar}{mnt}h

@@ -1,0 +1,192 @@
+diff --git a/src/bios/exp/EXTENDED/FDD_DRIVER.asm b/src/bios/exp/EXTENDED/FDD_DRIVER.asm
+index a0e7e3d..26fa95e 100644
+--- a/src/bios/exp/EXTENDED/FDD_DRIVER.asm
++++ b/src/bios/exp/EXTENDED/FDD_DRIVER.asm
+@@ -201,8 +201,12 @@ FDD_5x_LONG_READ:
+ 		 PUSH	BC
+ 		 CALL	SEEK
+ 		 POP	BC
+-		EXX 
+-		PUSH	DE
++		 BIT	5,B		; a write: sector by sector, as before
++		EXX
++		JR	NZ,.IN_ORDER
++		CALL	RUN_FITS	; two or more sectors of this track, in this page?
++		JP	NC,.ARRIVE	;  yes: in the order they come under the head
++.IN_ORDER:	PUSH	DE
+ 		PUSH	BC
+ 		PUSH	HL
+ 		CALL	FDD_RW_SECTOR
+@@ -284,6 +288,99 @@ FDD_5x_LONG_READ:
+ 		EX	AF,AF'
+ 		SCF 
+ 		RET 
++;
++; The sectors of this track that the request needs, in the order they come:
++; READ ADDRESS names the sector passing now, the read starts at the next one
++; and wraps round to the run's first sectors. After a step or a call that
++; came too late for its sector this costs a turn at most, not a turn plus the run.
++;   D - logical track, E - first sector (from 0), B - sectors left, C - sectors per track
++;   HL - address (window 3, page XH): the run ends inside the page (RUN_FITS)
++.ARRIVE:	PUSH	DE		; the same frame as the sector-by-sector path (.ERRDOS)
++		PUSH	BC
++		PUSH	HL
++		LD	A,C
++		SUB	E
++		CP	B
++		JR	C,.a_n
++		LD	A,B
++.a_n:		EXX
++		 LD	E,A		; E' - the run's length
++		EXX
++		CALL	READ_ID		; A - the sector passing now (from 1)
++		JR	C,.a_first	; no ID: from the run's first sector
++		CP	C
++		JR	C,.a_j		; A - the next sector's index (from 0)
++		XOR	A		; the last one passed: the track's first comes next
++.a_j:		SUB	E		; its offset in the run
++		EXX
++		 CP	E
++		EXX
++		JR	C,.a_k
++.a_first:	XOR	A		; not in the run: from its first sector
++.a_k:		EXX
++		 LD	D,A		; D' - the offset to read
++		 LD	C,E		; C' - sectors still to read
++		EXX
++.a_lp:		POP	HL		; the run's address
++		PUSH	HL
++		EXX
++		 LD	A,D
++		EXX
++		OR	A
++		JR	Z,.a_rd
++		PUSH	DE
++		LD	B,A
++		LD	D,YH
++		LD	E,YL
++.a_mul:		ADD	HL,DE		; + offset * sector size
++		DJNZ	.a_mul
++		POP	DE
++.a_rd:		PUSH	DE
++		ADD	A,E
++		LD	E,A		; the sector's index on the track
++		CALL	FDD_RW_SECTOR
++		POP	DE
++		JP	C,.ERRDOS	; (the whole run counts as not read)
++		EXX
++		 INC	D
++		 LD	A,D
++		 CP	E
++		 JR	C,.a_nw
++		 LD	D,0		; past the run's end: its first sector
++.a_nw:		 DEC	C
++		EXX
++		JR	NZ,.a_lp
++		POP	HL		; the run is read: past it
++		POP	BC
++		EXX
++		 LD	A,E
++		EXX
++		LD	D,YH
++		LD	E,YL
++.a_adv:		ADD	HL,DE
++		DEC	A
++		JR	NZ,.a_adv
++		POP	DE
++		JR	NC,.a_pg
++		PUSH	DE		; the run ended at the page's end
++		CALL	CHANGE_MEM_BLK
++		POP	DE
++.a_pg:		EXX
++		 LD	A,E
++		EXX
++		ADD	A,E
++		LD	E,A
++		CP	C
++		JR	NZ,.a_trk
++		LD	E,0		; the next logical track
++		INC	D
++.a_trk:		LD	A,B
++		EXX
++		 SUB	E
++		EXX
++		LD	B,A
++		JP	NZ,.DSK_LP
++		JP	.RETDOS
+ 
+ ;[]===========================================================[]
+ ;Function: Write Sectors
+@@ -753,6 +850,72 @@ NTRACK:		PUSH	HL
+ 		LD	H,A
+ 		RET
+ ;
++;
++; CF=0 when the run on this track (min(B, C-E) sectors) has two sectors or more
++; and ends inside the page: HL + run * size <= #10000. Keeps all but AF.
++RUN_FITS:	LD	A,C
++		SUB	E
++		CP	B
++		JR	C,.n
++		LD	A,B
++.n:		CP	2
++		RET	C
++		PUSH	HL
++		PUSH	DE
++		PUSH	BC
++		LD	B,A
++		LD	D,YH
++		LD	E,YL
++.lp:		ADD	HL,DE
++		JR	C,.cy
++		DJNZ	.lp
++		JR	.ok
++.cy:		DEC	B
++		SCF
++		JR	NZ,.ok		; crossed before the run's last sector
++		LD	A,H
++		OR	L
++		JR	Z,.ok		; ends at the page's end: fits (CF=0)
++		SCF
++.ok:		POP	BC
++		POP	DE
++		POP	HL
++		RET
++;
++; READ ADDRESS: A - the sector number of the ID field passing now, CF=1 none.
++; Keeps C, DE; changes B, HL.
++READ_ID:	LD	A,#C0		; READ ADDRESS
++		OUT	(FDC_93.Command),A
++		LD	B,3
++		LD	HL,0
++.wait:		IN	A,(FDC_93.DrvCTRL)
++		AND	%1100'0000
++		JR	NZ,.data
++		DEC	HL
++		LD	A,H
++		OR	L
++		JR	NZ,.wait
++		DJNZ	.wait
++		LD	A,#D0		; no ID in time: FORCE INTERRUPT
++		OUT	(FDC_93.Command),A
++		SCF
++		RET
++.data:		LD	H,3		; track, side, SECTOR, size, CRC
++.byte:		IN	A,(FDC_93.Data)
++		DEC	H
++		JR	NZ,.next
++		LD	L,A
++.next:		IN	A,(FDC_93.DrvCTRL)
++		AND	%1100'0000
++		JR	Z,.next
++		JP	P,.byte
++		IN	A,(FDC_93.Command)
++		AND	%0001'1000	; RECORD NOT FOUND, CRC ERROR
++		LD	A,L
++		RET	Z
++		SCF
++		RET
++;
+ SAVE_INTERRUPTS:
+ .switch_off:	PUSH	AF
+ 		LD	A,R

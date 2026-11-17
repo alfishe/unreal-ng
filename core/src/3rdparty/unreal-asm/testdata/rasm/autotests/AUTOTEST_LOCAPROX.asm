@@ -1,0 +1,1 @@
+repeat 1: @label  nop: .prox   nop: @label2 nop: djnz @label.prox: rend

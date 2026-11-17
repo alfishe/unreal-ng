@@ -188,6 +188,9 @@ private:
     void SetBanner(const std::string& text, int ms, bool info = false);
     void FailureBanner(const Job& j, const std::string& message);
     bool SeekOnTimeline(int x, int x2, bool swipe);
+    void TapStripKey(int zone, std::int64_t now);  // strip.content "keys": a tap on a zone
+    void ReleaseLatches(bool afterTap);
+    [[nodiscard]] bool ScrollStuck(const Node& n) const;            // the latched zones let go (afterTap: once a tap has played)
     [[nodiscard]] std::string UnavailableLocked(const Action& a) const;
     static void DimUnavailable(Rgb& img);
     int _swipeStep = 1, _swipeDir = 0;  // the timeline's swipe: seconds of the last step, its way
@@ -222,6 +225,9 @@ private:
     std::map<std::string, json> _readouts;     // readout path -> value
     std::map<std::string, bool> _pushed;       // readouts a surface client delivers (not polled)
     std::map<int, Job> _holds;                 // keys / dials (1000 + index) held down: their release job
+    std::map<int, Job> _latched;               // strip key zones latched (a one-shot shift): their release job
+    int _stripTapped = -1;                     // the strip key zone just tapped, drawn pressed until _stripTappedUntil
+    std::int64_t _stripTappedUntil = 0;
     std::map<int, std::int64_t> _flashUntil;   // activity flash per key
     std::string _context;                      // the context sent last (ctx.set)
     bool _contextSent = false;

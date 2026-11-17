@@ -536,7 +536,7 @@ TEST(TTDSessionWriter_Test, ASlowDiskNeverHoldsCapture)
     EXPECT_TRUE(reader.Finalized()) << "a writer that fell behind still finishes its file";
 }
 
-/// A write error (disk full): the writer stops with the reason, and the file
+/// A write error: the writer stops with the reason, and the file
 /// opens up to its last complete part
 TEST(TTDSessionWriter_Test, AWriteErrorKeepsTheFileValid)
 {
@@ -554,7 +554,8 @@ TEST(TTDSessionWriter_Test, AWriteErrorKeepsTheFileValid)
     }
     writer.Finish(rec.engine);
     EXPECT_TRUE(writer.Failed());
-    EXPECT_NE(writer.Error().find("write failed"), std::string::npos) << writer.Error();
+    EXPECT_NE(writer.Error().find("failed: the file system refused the write"), std::string::npos) << writer.Error();
+    EXPECT_EQ(writer.Failure(), TTDWriteFailure::Io) << "the sink did not say the disk is full";
 
     TTDMemorySource source(sink.bytes);
     TTDContainerReader reader;

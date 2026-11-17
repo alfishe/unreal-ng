@@ -1,0 +1,1 @@
+srl8 bc : srl8 de : srl8 hl : srl8 ix : srl8 iy:ld c,b : ld b,0 : ld e,d : ld d,0 : ld l,h : ld  h,0 : ld xl,xh : ld xh,0 : ld yl,yh : ld yh,0

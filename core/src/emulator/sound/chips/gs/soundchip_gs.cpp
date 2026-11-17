@@ -414,6 +414,7 @@ void SoundChip_GeneralSound::traceIdle(uint16_t head, int64_t start, uint64_t it
 void SoundChip_GeneralSound::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
 
     // Frame-relative bases (Unreal init_gs_frame): the ZX tact counter and
     // the GS cycle accumulator are snapshotted so host-multiplier changes
@@ -566,6 +567,7 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
     {
         case 0xB3: // GSDAT: bit7 clears, the GS->ZX byte returns
             flush();
+            logHostReplyRead(_mb.dataToHost);
             _mb.status &= 0x7F;  // Original Unreal: clear bit7 directly
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
@@ -591,6 +593,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_CONTROL, value, true);
             if (value & 0x80)
             {
+                logHostReset();
                 resetCard();
                 flush(); // re-execute the elapsed frame time from reset state
                 return;
@@ -609,12 +612,14 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3: // GSDAT write: latch byte, raise bit7
             flush();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             onHostDataWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB: // GSCOM write: latch command, raise bit0
             flush();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             onHostCommandWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
             return;
@@ -654,6 +659,8 @@ uint8_t SoundChip_GeneralSound::readStatus()
 uint8_t SoundChip_GeneralSound::readData()
 {
     flush();
+    logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F; // IN #B3: clear bit7
     return _mb.dataToHost;
 }
@@ -661,12 +668,14 @@ uint8_t SoundChip_GeneralSound::readData()
 void SoundChip_GeneralSound::sendCommand(uint8_t command)
 {
     flush();
+    logHostCommand(command, true);
     onHostCommandWrite(command);
 }
 
 void SoundChip_GeneralSound::sendData(uint8_t data)
 {
     flush();
+    logHostData(data, true);
     onHostDataWrite(data);
 }
 
@@ -1164,6 +1173,13 @@ uint32_t SoundChip_GeneralSound::cardPageCount(CardPage::Kind kind) const
         case CardPage::Ram: return static_cast<uint32_t>(_ram.size() / PAGE_SIZE);
         default: return 0;
     }
+}
+
+const uint8_t* SoundChip_GeneralSound::cardRomPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * PAGE_SIZE > _rom.size())
+        return nullptr;
+    return _rom.data() + static_cast<size_t>(page) * PAGE_SIZE;
 }
 
 bool SoundChip_GeneralSound::cardRegisters(Z80CpuRegisters& out) const

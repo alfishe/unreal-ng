@@ -30,6 +30,7 @@
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
 #include "mcp-signature.h"
+#include "mcp-vdac4.h"
 #include "mcp-tool-utils.h"
 
 #include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
@@ -155,6 +156,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     for (const char* action : {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
+                               "gs_send", "gs_conversation",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
                                "gs_stereo_mode",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
@@ -175,7 +177,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
         "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
-        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
+        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size', "
+        "'symbolic_id', 'start') "
         "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
         "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
         "reason when the target cannot hold the state; 'check': true (with 'to') only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are NOT moved. 'create' with 'zxpoly': true starts a "
@@ -186,6 +189,10 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "card over the same /control/audio/gs endpoint the WebAPI serves (gs_reset/gs_reset_card/gs_nmi/"
         "gs_send_command/gs_send_data/gs_read_status/gs_read_data; the byte actions need 'value'; writes, "
         "resets and NMI apply at the next instruction boundary, reads are side-effect-free peeks); "
+        "'gs_send' is the debugger's send: 'value' the command, 'pre' its pre byte, 'params' the bytes after it, "
+        "'replies' to override the reply count; each byte goes in when the card may take it, the replies are read, "
+        "all named by the firmware profile (a wrong parameter count is refused); answered when done or after "
+        "'wait_ms' (default 1000); 'gs_conversation' reads a send by 'send_id' (none: the last); "
         "'gs_switch_personality' replaces the card in the GS slot (needs 'personality': 'z80'|'lle', "
         "'lw'|'lightweight' or 'ngs'|'neogs'): a slot change applied by a machine restart (new emulator id; "
         "'replace_if_incompatible' / 'dry_run' as for slots_plug); NeoGS only: 'gs_sd_insert' (needs 'path' to a raw "
@@ -283,6 +290,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["check"]["type"] = "boolean";
     schema["properties"]["check"]["description"] =
         "transfer_state with 'to': only report whether the transfer is possible and what would move; nothing changes";
+    schema["properties"]["keep_frame_position"]["type"] = "boolean";
+    schema["properties"]["keep_frame_position"]["description"] =
+        "transfer_state: keep the source's in-frame position when both models share the frame geometry (default true)";
+    schema["properties"]["symbolic_id"]["type"] = "string";
+    schema["properties"]["symbolic_id"]["description"] = "transfer_state with 'model': the new instance's symbolic id";
+    schema["properties"]["start"]["type"] = "boolean";
+    schema["properties"]["start"]["description"] =
+        "transfer_state with 'model': start the new instance (default: when the source is running and not paused)";
     schema["properties"]["zxpoly"]["type"] = "boolean";
     schema["properties"]["zxpoly"]["description"] =
         "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
@@ -291,7 +306,19 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "For 'create' with zxpoly: host path of a .zxp snapshot, a .prom ZX-Poly ROM image (Test ROM) or a "
         "multiloader disk (.trd/.scl; needs a model with TR-DOS)";
     schema["properties"]["value"]["type"] = "integer";
-    schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data";
+    schema["properties"]["value"]["description"] = "Byte value (0-255) required by gs_send_command and gs_send_data; "
+                                                   "gs_send: the command";
+    schema["properties"]["pre"]["type"] = "integer";
+    schema["properties"]["pre"]["description"] = "gs_send: the data byte written before the command (0-255)";
+    schema["properties"]["params"]["type"] = "array";
+    schema["properties"]["params"]["items"]["type"] = "integer";
+    schema["properties"]["params"]["description"] = "gs_send: the data bytes after the command, in order";
+    schema["properties"]["replies"]["type"] = "integer";
+    schema["properties"]["replies"]["description"] = "gs_send: reply bytes to read (default: the firmware profile's)";
+    schema["properties"]["wait_ms"]["type"] = "integer";
+    schema["properties"]["wait_ms"]["description"] = "gs_send: how long to wait for the replies (0..10000, default 1000)";
+    schema["properties"]["send_id"]["type"] = "integer";
+    schema["properties"]["send_id"]["description"] = "gs_conversation: the send (default the last)";
     schema["properties"]["since"]["type"] = "integer";
     schema["properties"]["since"]["description"] =
         "operations: only entries after this seq (the last_seq of a previous answer)";
@@ -648,6 +675,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["ram_size"] = args["ram_size"].asUInt();
                     if (args.isMember("check") && args["check"].asBool())
                         body["check"] = true;
+                    if (args.isMember("keep_frame_position") && args["keep_frame_position"].isBool())
+                        body["keep_frame_position"] = args["keep_frame_position"].asBool();
+                    if (hasModel && args.isMember("symbolic_id") && args["symbolic_id"].isString() &&
+                        !args["symbolic_id"].asString().empty())
+                        body["symbolic_id"] = args["symbolic_id"].asString();
+                    if (hasModel && args.isMember("start") && args["start"].isBool())
+                        body["start"] = args["start"].asBool();
                     caller.Call("POST", Endpoint(id, "/snapshot/transfer"), &body, [id, done](int status, Json::Value response) {
                         // The report carries the per-item reasons on success and on refusal alike
                         const std::string summary = response.get("summary", "").asString();
@@ -785,6 +819,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                 else if (action == "gs_reset" || action == "gs_reset_card" || action == "gs_nmi" ||
                          action == "gs_send_command" || action == "gs_send_data" ||
                          action == "gs_read_status" || action == "gs_read_data" ||
+                         action == "gs_send" || action == "gs_conversation" ||
                          action == "gs_switch_personality" || action == "gs_dump_module" || action == "gs_sd_insert" ||
                          action == "gs_sd_eject" || action == "gs_flash_save" || action == "gs_stereo_mode")
                 {
@@ -793,7 +828,18 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                     // prefix maps 1:1 onto the body action names
                     Json::Value body;
                     body["action"] = action.substr(3);
-                    if (action == "gs_send_command" || action == "gs_send_data")
+                    if (action == "gs_send" || action == "gs_conversation")
+                    {
+                        if (action == "gs_send" && !args.isMember("value"))
+                        {
+                            done(ToolResult::Error("Action 'gs_send' requires 'value' (the command, 0-255)"));
+                            return;
+                        }
+                        for (const char* field : {"value", "pre", "params", "replies", "wait_ms", "send_id"})
+                            if (args.isMember(field))
+                                body[field] = args[field];
+                    }
+                    else if (action == "gs_send_command" || action == "gs_send_data")
                     {
                         if (!args.isMember("value"))
                         {
@@ -841,6 +887,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         {
                             // A slot change (Q10): the plan, the restart, the new emulator id
                             done(SlotReplyResult(status, std::move(response)));
+                            return;
+                        }
+                        if (status >= 200 && status < 300 && (action == "gs_send" || action == "gs_conversation"))
+                        {
+                            // The decoded line: the agent may see only the text
+                            std::string message = "GS send " + std::to_string(response.get("id", 0).asUInt()) + ": " +
+                                                  response.get("text", "").asString();
+                            done(ToolResult::Ok(std::move(message), std::move(response)));
                             return;
                         }
                         if (status >= 200 && status < 300)
@@ -4691,8 +4745,20 @@ void RegisterInspectState(ToolRegistry& registry)
                                     out << "\n[audio_gs] " << value["device"].asString()
                                         << ", page " << value["page"].asUInt() << ", ram " << value["ram_kb"].asUInt() << " KB"
                                         << (value["rom_loaded"].asBool() ? ", rom ok" : ", rom missing")
+                                        << (!value["firmware_profile"].isObject() ? std::string()
+                                            : value["firmware_profile"]["known"].asBool()
+                                                ? ", firmware " + value["firmware_profile"]["title"].asString()
+                                                : ", unknown firmware " + value["firmware_profile"]["sha256"].asString().substr(0, 16) + "…, no symbols")
                                         << (value["command_pending"].asBool() ? ", cmd pending" : "")
                                         << (value["data_pending"].asBool() ? ", data pending" : "");
+                                    if (value["protocol"].isObject())
+                                        out << "\n  protocol: " << value["protocol"]["text"].asString()
+                                            << (value["protocol"].isMember("device")
+                                                    ? " (device_history config " + value["protocol"]["device"].asString() + ")"
+                                                    : std::string());
+                                    if (value["last_send"].isObject())
+                                        out << "\n  last send " << value["last_send"]["id"].asUInt() << ": "
+                                            << value["last_send"]["text"].asString();
                                     const Json::Value& gsChannels = value["channels"];
                                     for (Json::ArrayIndex i = 0; i < gsChannels.size(); ++i)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
@@ -8428,6 +8494,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+    // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)
+    RegisterVdac4State(*registry);
 
     // gui_<interface>, gui_list, gui_state: the GUI control plane's methods, when the program registered them before
     // the start (gui-control-plane design §4.10)

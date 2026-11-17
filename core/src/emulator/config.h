@@ -42,6 +42,7 @@ private:
     static constexpr const char* slotsSection = "SLOTS";   // not `slots`: a Qt macro
     static constexpr const char* midi = "MIDI";
     static constexpr const char* vdac2 = "VDAC2";
+    static constexpr const char* vdac4 = "VDAC4";
 
     // Separate ROM file variables within ROMSET profile
     static constexpr const char* romset_128 = "128";

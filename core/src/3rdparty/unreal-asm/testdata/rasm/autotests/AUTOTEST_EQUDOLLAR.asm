@@ -1,0 +1,1 @@
+ ld hl,une_equ: ld de,deux_equ: ldir: une_equ equ $+2: deux_equ equ $+4: defw 1: preums: defw 2: deuze: defw 3,4,5,6: assert une_equ == preums: assert deux_equ == deuze

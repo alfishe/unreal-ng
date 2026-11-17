@@ -20,6 +20,7 @@ sjasmplus are in the unreal-asm design
 | Power Assembler (Oleg Sergeyev) | [power-assembler.md](power-assembler.md) | 3.0 128K beta |
 | ZEUS (Brattel, Mottershead; Russian disk builds) | [zeus.md](zeus.md) | 1983 (tape), 1.1 beta, GG, v7.E; Primus Assembler 2.9 (a ZEUS clone) |
 | XAS (Maxim Petrov) | [xas.md](xas.md) | 4.18, 7.447 |
+| rasm (Roudoudou; PC cross assembler) | [rasm.md](rasm.md) | 3.3.3 (host build) |
 
 Pick the recipe of your assembler; read this page for the parts every recipe points back to.
 

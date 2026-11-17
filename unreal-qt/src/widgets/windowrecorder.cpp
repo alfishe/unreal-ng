@@ -13,7 +13,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #ifdef Q_OS_UNIX
 #include <fcntl.h>
@@ -29,6 +32,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
+#include "ffmpeg_probe.h"
 #ifdef __APPLE__
 #include "common/encoderconfig.h"
 #include "platform/macos/videotoolbox_encoder.h"
@@ -37,6 +41,57 @@
 namespace
 {
 const QColor kBackground(24, 24, 24);
+
+/// The GPU encoder ffmpeg offers for the codec, found rather than assumed: the build lists it AND a real trial
+/// encode works (NVENC is listed by every build, whatever the card). Empty: none, the caller encodes in software.
+/// Cached per ffmpeg and codec: the trial runs once
+QString FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
+{
+    static std::mutex cacheMutex;
+    static std::map<QString, QString> cache;
+    const QString key = ffmpeg + (h265 ? "|h265" : "|h264");
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+    const std::string path = ffmpeg.toStdString();
+    const FFmpegProbe::HWAccelInfo info = FFmpegProbe::detectHWAccel(path);
+    const char* codec = h265 ? "hevc_" : "h264_";
+    std::vector<std::string> candidates;
+#ifdef __APPLE__
+    if (info.videoToolbox)
+        candidates.push_back(std::string(codec) + "videotoolbox");
+#else
+    if (info.nvenc)
+        candidates.push_back(std::string(codec) + "nvenc");
+    if (info.qsv)
+        candidates.push_back(std::string(codec) + "qsv");
+    if (info.amf)
+        candidates.push_back(std::string(codec) + "amf");
+#endif
+    QString chosen;
+    for (const std::string& name : candidates)
+    {
+        if (!FFmpegProbe::isEncoderAvailable(name, path))
+            continue;
+        // A few frames into the null muxer: the encoder opens its device or it does not
+        QProcess trial;
+        trial.start(ffmpeg, {"-v", "error", "-f", "lavfi", "-i", "color=size=256x256:rate=10", "-frames:v", "3",
+                             "-c:v", QString::fromStdString(name), "-pix_fmt", "yuv420p", "-f", "null", "-"});
+        if (trial.waitForFinished(15000) && trial.exitStatus() == QProcess::NormalExit && trial.exitCode() == 0)
+        {
+            chosen = QString::fromStdString(name);
+            break;
+        }
+        if (trial.state() != QProcess::NotRunning)
+            trial.kill();
+    }
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = chosen;
+    return chosen;
+}
 constexpr int kMaxQueuedFrames = 10;  // ffmpeg behind by this many pictures: the next ones repeat (running) or wait (paused)
 
 QImage ToImage(const WindowViewGrab& grab)
@@ -119,6 +174,27 @@ struct WindowRecorder::Writer
     QString fifoPath;  ///< the sound goes into the same ffmpeg through this FIFO (no muxing afterwards)
     std::atomic<uint64_t> framesDone{0};
 
+    // Timings in microseconds since the writer was made (0 = not reached): the status shows where a late start went
+    const std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
+    std::atomic<int64_t> writerStartUs{0}, encoderReadyUs{0}, firstFrameUs{0}, slowestFrameUs{0};
+    int64_t sinceCreatedUs() const
+    {
+        return std::max<int64_t>(1, std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now() - created).count());
+    }
+    /// One picture handled: the first one's time, the slowest one's duration
+    void pictureHandled(int64_t startedUs)
+    {
+        const int64_t now = sinceCreatedUs();
+        int64_t zero = 0;
+        firstFrameUs.compare_exchange_strong(zero, now);
+        const int64_t took = now - startedUs;
+        int64_t slowest = slowestFrameUs.load();
+        while (took > slowest && !slowestFrameUs.compare_exchange_weak(slowest, took))
+        {
+        }
+    }
+
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<Job> jobs;
@@ -127,6 +203,9 @@ struct WindowRecorder::Writer
     bool wantRetry = false;                 ///< a paused machine's picture was refused: tell the GUI when there is room
     std::function<void()> onRoom;           ///< called from the writer thread
     std::atomic<bool> failed{false};
+    /// The encoder is up (the hardware encoder's first start, or ffmpeg's, can take seconds on a loaded machine):
+    /// the GUI side starts the file's clock only then, so no picture or sound of the wait is lost or piles up
+    std::atomic<bool> ready{false};
     std::atomic<bool> done{false};
     std::string error;                      ///< valid once done
     std::thread thread;
@@ -166,6 +245,22 @@ struct WindowRecorder::Writer
         job.soundTime = time;
         jobs.push_back(std::move(job));
         wake.notify_one();
+    }
+    /// Writer thread: the sound queued behind the picture being written, taken out of the queue in its order. A
+    /// picture repeated for the frames the writer owes is written before the sound of those frames, which is already
+    /// queued after it: ffmpeg interleaves the two inputs and takes no more picture until it has that sound, so the
+    /// writer must hand the sound over while it waits for the picture (else both wait for good)
+    void takeQueuedSound(std::deque<QByteArray>& into)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto it = jobs.begin(); it != jobs.end();)
+            if (it->picture.isNull() && !it->sound.isEmpty())
+            {
+                into.push_back(std::move(it->sound));
+                it = jobs.erase(it);
+            }
+            else
+                ++it;
     }
     void requestRetry()
     {
@@ -286,6 +381,8 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
+        ready = true;  // a failed start is told by `failed`
         for (;;)
         {
             Job job;
@@ -312,6 +409,7 @@ struct WindowRecorder::Writer
                                        static_cast<size_t>(job.sound.size()) / sizeof(int16_t), job.soundTime);
             if (job.picture.isNull())
                 continue;
+            const int64_t pictureStartUs = sinceCreatedUs();
             FrameTarget target;
             if (encoder.AcquireFrameTarget(static_cast<uint32_t>(size.width()), static_cast<uint32_t>(size.height()),
                                            target) == FrameTargetResult::Ready)
@@ -324,6 +422,7 @@ struct WindowRecorder::Writer
             }
             // else: the encoder is stuck for now: this picture stays out, the previous one holds
             framesDone = job.frameStart + job.repeat;
+            pictureHandled(pictureStartUs);
         }
         encoder.Stop();
         error = failure;
@@ -333,6 +432,7 @@ struct WindowRecorder::Writer
 
     void run()
     {
+        writerStartUs = sinceCreatedUs();
 #ifdef __APPLE__
         if (native)
         {
@@ -393,6 +493,8 @@ struct WindowRecorder::Writer
         };
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
+        ready = true;  // a failed start is told by `failed`
 
         for (;;)
         {
@@ -428,17 +530,58 @@ struct WindowRecorder::Writer
             }
             if (job.picture.isNull() || !failure.empty())
                 continue;
+            // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
+            // takeQueuedSound): the picture is never ahead of its sound
+            auto feedSound = [&]() -> bool {
+                std::deque<QByteArray> queued;
+                takeQueuedSound(queued);
+                for (QByteArray& chunk : queued)
+                {
+                    if (!fifoPath.isEmpty())
+                        backlog.push_back(std::move(chunk));
+                    else if (sound.write(chunk) != chunk.size())
+                    {
+                        fail("Cannot write the sound: " + sound.errorString().toStdString());
+                        return false;
+                    }
+                }
+                if (pumpSound())
+                    return true;
+                fail("ffmpeg stopped taking the sound");
+                return false;
+            };
+            const int64_t pictureStartUs = sinceCreatedUs();
             const QImage frame = compose(job);
             for (uint32_t i = 0; i < job.repeat && failure.empty(); i++)
             {
+                if (!feedSound())
+                    break;
                 process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
                 // No event loop here: the bytes go to ffmpeg only while we wait, and ffmpeg's pace is the pace
-                if (!process.waitForBytesWritten(60000) || process.state() != QProcess::Running)
+                // Wait in short slices, the sound flowing meanwhile, until the whole frame is in the pipe. A slow
+                // ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits for is fed
+                // here, so that is not a lack of it): the recording fails instead of hanging
+                int stalledMs = 0;
+                bool taken = false;
+                while (process.state() == QProcess::Running && stalledMs < 15000)
+                {
+                    const bool progress = process.waitForBytesWritten(100);
+                    if (progress && process.bytesToWrite() == 0)  // the whole frame is in the pipe
+                    {
+                        taken = true;
+                        break;
+                    }
+                    stalledMs = progress ? 0 : stalledMs + 100;
+                    if (!feedSound())
+                        break;
+                }
+                if (!taken || process.state() != QProcess::Running)
                     fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
                 framesDone++;
                 if (!pumpSound())
                     fail("ffmpeg stopped taking the sound");
             }
+            pictureHandled(pictureStartUs);
         }
 
         sound.close();
@@ -496,11 +639,15 @@ struct WindowRecorder::Writer
 
 WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
                                                   bool gpuAcceleration, const QString& profile,
-                                                  const QString& path)
+                                                  const QString& path, int engine)
 {
     WindowRecordingRequest request;
     request.codec = codec.toStdString();
-    request.hardware = gpuAcceleration && container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) != 0;
+    // The engine chosen in the recording dialog decides (1 = Native: the hardware encoder, 2 = FFmpeg: ffmpeg);
+    // Auto follows View > GPU acceleration. MKV never goes to the hardware encoder (it writes MP4 / MOV)
+    // Native = the Mac's own writer (MP4 / MOV); FFmpeg, and MKV, take the GPU's encoder through ffmpeg
+    request.hardware = engine == 1 || gpuAcceleration;
+    request.ffmpegOnly = engine == 2 || container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) == 0;
     request.audio = audio;
     const struct { const char* id; int w, h; } profiles[] = {{"1080p", 1920, 1080}, {"1440p", 2560, 1440}, {"4k", 3840, 2160}};
     for (const auto& fixed : profiles)
@@ -600,7 +747,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The Mac's own encoder (VideoToolbox: H.264 / H.265 on the GPU, ProRes 4444) needs no ffmpeg
     bool native = false;
 #ifdef __APPLE__
-    native = request.codec == "prores" || request.hardware;
+    native = request.codec == "prores" || (request.hardware && !request.ffmpegOnly);
 #endif
     QString ffmpeg;
     if (!native)
@@ -759,25 +906,33 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     QStringList args{"-v",      "error", "-y",  "-f",  "rawvideo", "-pix_fmt", "rgba", "-s",
                      QString("%1x%2").arg(_size.width()).arg(_size.height()), "-r", rate,
                      "-i",      "-"};
+    QString hardwareEncoder;
     if (!fifo.isEmpty())
         args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
     if (request.codec == "prores")
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
-    else if (request.hardware)  // the GPU's encoder: 4:2:0, real time at any size
+    else if (request.hardware && !(hardwareEncoder = FfmpegHardwareEncoder(ffmpeg, request.codec == "h265")).isEmpty())
     {
-#ifdef Q_OS_MAC
-        // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked), h264
-        // 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
-        if (request.codec == "h265")
-            args << "-c:v" << "hevc_videotoolbox" << "-profile:v" << "rext" << "-q:v" << "85" << "-pix_fmt"
-                 << "yuv422p10le" << "-tag:v" << "hvc1";
-        else
-            args << "-c:v" << "h264_videotoolbox" << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
-#else
-        args << "-c:v" << (request.codec == "h265" ? "hevc_nvenc" : "h264_nvenc") << "-cq" << "18" << "-pix_fmt"
-             << "yuv420p";
-#endif
+        // The GPU's encoder (found by probing): 4:2:0, real time at any size
+        const bool h265 = request.codec == "h265";
+        args << "-c:v" << hardwareEncoder;
+        if (hardwareEncoder.contains("videotoolbox"))
+        {
+            // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked),
+            // h264 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
+            if (h265)
+                args << "-profile:v" << "rext" << "-q:v" << "85" << "-pix_fmt" << "yuv422p10le" << "-tag:v" << "hvc1";
+            else
+                args << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
+        }
+        else if (hardwareEncoder.contains("nvenc"))
+            args << "-cq" << "18" << "-pix_fmt" << "yuv420p";
+        else if (hardwareEncoder.contains("qsv"))
+            args << "-global_quality" << "18" << "-pix_fmt" << "nv12";
+        else  // amf
+            args << "-quality" << "quality" << "-rc" << "cqp" << "-qp_i" << "18" << "-qp_p" << "18" << "-pix_fmt"
+                 << "yuv420p";
     }
     else if (request.codec == "h265")
         args << "-c:v" << "libx265" << "-preset" << "veryfast" << "-crf" << "14" << "-pix_fmt" << "yuv444p";
@@ -897,6 +1052,15 @@ void WindowRecorder::onRefreshed()
         closeWriter();
         return;
     }
+    if (!_writer->ready)
+    {
+        // The encoder is still starting: the file's first frame is the first one after it is up, so what ran
+        // meanwhile is dropped, not queued behind the start (a lost picture, a sound far ahead of the video)
+        std::lock_guard<std::mutex> lock(_sink->mutex);
+        _sink->pending.clear();
+        _sink->started = false;
+        return;
+    }
     // The emulated frames since the start: the file holds one picture for each, and each one's sound
     std::vector<FrameSound> sounds;
     uint64_t target = 0;
@@ -993,4 +1157,11 @@ void WindowRecorder::fill(WindowRecordingStatus& out)
     out.framesPending = _writer ? (_frames > _writer->framesDone ? _frames - _writer->framesDone : 0) : 0;
     out.sampleRate = _sampleRate;
     out.audioSamples = _audioSamples;
+    if (_writer)
+    {
+        out.writerStartMs = static_cast<double>(_writer->writerStartUs) / 1000.0;
+        out.encoderReadyMs = static_cast<double>(_writer->encoderReadyUs) / 1000.0;
+        out.firstFrameMs = static_cast<double>(_writer->firstFrameUs) / 1000.0;
+        out.slowestFrameMs = static_cast<double>(_writer->slowestFrameUs) / 1000.0;
+    }
 }

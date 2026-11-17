@@ -22,6 +22,8 @@
 #include "base/featuremanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/disassembler/z80disasm.h"
+#include "debugger/labels/labelmanager.h"
 #include "debugger/targets/cpuview.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/slots/cards/multisound/multisoundstagedmachine.h"
@@ -464,6 +466,72 @@ TEST(GSCardTarget_Test, TheNeoGSDmaWritesHitThePagesWatchpoint)
 // The card of a whole machine (the PENTAGON's NeoGS): a card breakpoint puts the hooks on the card the machine runs,
 // and its stop ends the main CPU's direct run. Without an SD card the loader polls it with interrupts off: the
 // instruction the card is at comes round again
+// The card CPU's labels (gs-debugger design §6.2, L1-L4): its own store, the shipped firmware symbols chosen by the
+// SHA-256 of the card's ROM page 0, ROM labels tied to their pages; the card's listing names its instructions and
+// operands from them, the main CPU's labels stay out
+TEST(GSCardTarget_Test, TheFirmwareSymbolsNameTheCardsCode)
+{
+    Card card;
+    const std::vector<std::string> sets = card.target->ApplySymbolBundles();
+    ASSERT_EQ(sets, std::vector<std::string>{"bundle:gs:gs105a"});
+    LabelManager& labels = *card.target->GetLabelManager();
+    EXPECT_EQ(labels.Cpu(), "gs");
+
+    const auto comint = labels.GetLabelByName("COMINT");
+    ASSERT_NE(comint, nullptr);
+    EXPECT_EQ(comint->address, 0x026B);
+    EXPECT_TRUE(comint->isROM());
+    EXPECT_EQ(comint->bank, 0);
+    // The high ROM's command table: ROM page 1 at #C000 (page 0 of the 32K window)
+    const auto comtabh = labels.GetLabelByName("COMTABH");
+    ASSERT_NE(comtabh, nullptr);
+    EXPECT_EQ(comtabh->address, 0xD720);
+    EXPECT_TRUE(comtabh->isROM());
+    EXPECT_EQ(comtabh->bank, 1);
+    ASSERT_NE(labels.GetLabelByName("BUSY"), nullptr);  // a firmware variable in the fixed RAM window
+    EXPECT_EQ(labels.GetLabelByName("BUSY")->address, 0x4086);
+
+    // A ROM 1 label and a RAM label at one address: the page the window shows decides
+    ASSERT_TRUE(labels.AddLabel("RamThere", 0xD720, 2, 0x1720, "data"));
+    std::shared_ptr<Label> at = labels.GetLabelByZ80Address(0xD720);
+    ASSERT_NE(at, nullptr);
+    const GeneralSoundCard::CardPage window3 = card.chip->mapCardAddress(0xD720);
+    EXPECT_EQ(at->name, window3.kind == GeneralSoundCard::CardPage::Rom && window3.page == 1 ? "COMTABH" : "RamThere");
+    labels.RemoveLabel("RamThere");
+
+    // The listing (no machine, so the disassembler directly): the instruction's label from the card's store
+    Z80Disassembler disassembler(&card.ctx);
+    Z80Disassembler::LabelsScope scope(&labels);
+    std::vector<uint8_t> bytes(4);
+    for (uint16_t i = 0; i < 4; i++)
+        ASSERT_TRUE(card.chip->peekCardMemory(static_cast<uint16_t>(0x026B + i), bytes[i]));
+    uint8_t length = 0;
+    DecodedInstruction decoded;
+    disassembler.disassembleSingleCommand(bytes, 0x026B, &length, &decoded);
+    EXPECT_EQ(decoded.label, "COMINT");
+}
+
+// The machine's card takes its firmware's symbols when it is fitted; the main CPU's labels do not get them
+TEST(GSCardTarget_Test, TheMachinesCardLoadsItsFirmwareSymbols)
+{
+    SoundCardScope sound(TestSound::GeneralSound);
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    ASSERT_TRUE(FitGeneralSoundCard(context->pSoundManager, GSTypeKind::Z80));
+    LabelManager* labels = context->pDebugManager->GetLabelManager(DebugCpuId::GS);
+    ASSERT_NE(labels, nullptr);
+    EXPECT_NE(labels, context->pDebugManager->GetLabelManager());
+    ASSERT_NE(labels->GetLabelByName("COMINT"), nullptr);
+    EXPECT_EQ(context->pDebugManager->GetLabelManager()->GetLabelByName("COMINT"), nullptr);
+
+    // The card's listing at COMINT carries its name
+    StateNode listing = CpuView::Disasm(context, DebugCpuId::GS, 0x026B, 1);
+    ASSERT_EQ(listing["instructions"].size(), 1u);
+    EXPECT_EQ(listing["instructions"].items[0]["label"].s, "COMINT");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
 TEST(GSCardTarget_Test, TheMachinesCardStopsWhereItLoops)
 {
     SoundCardScope sound(TestSound::GeneralSound);

@@ -1,0 +1,1 @@
+org #FF00: norecess: lzx0: defs 512: lzclose: jr norecess

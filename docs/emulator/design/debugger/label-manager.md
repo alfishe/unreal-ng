@@ -56,6 +56,7 @@ Modern assemblers like sjasmplus support Source Level Debugging (SLD) format tha
 | **DebuggerWindow** | Label editor UI, symbolic display in registers/memory views |
 | **Automation** | CLI/WebAPI/Lua/Python access for scripted debugging |
 | **Analyzers** | TR-DOS analyzer uses labels to annotate system calls |
+| **Sound card CPU** | A General Sound / NeoGS card has its own `LabelManager` (`GSCardTarget::GetLabelManager`, `DebugManager::GetLabelManager(cpu)`): CPU name `gs` / `ms`, a page mapper over the card's windows instead of the machine's memory, firmware bundles from `data/symbols/gs/` matched by the card's ROM page hashes. The disassembler takes it through `Z80Disassembler::LabelsScope`; every plane names it with `cpu` ([command interface 4.4](../control-interfaces/command-interface.md#44-labels--symbol-management)) |
 
 ### Data Flow
 

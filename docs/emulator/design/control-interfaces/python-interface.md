@@ -387,6 +387,22 @@ class Emulator:
         tile, bitmap_x, bitmap_y, palette, words), active_sprites, cram (256
         cells: value, rgb). available=False on other machines"""
 
+    def vdac4_state(self, log: int = 50) -> dict:
+        """TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3), the keys of GET /vdac4/state: tang {personality,
+        armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources,
+        clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
+        error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
+        packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
+        dropped, sound}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
+        esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits,
+        ft_owner_wait_ms}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
+        the board"""
+
+    def vdac4_esp_memory(self, address: int, size: int = 16, app: bool = False) -> bytes:
+        """The VDAC4 ESP32's memory (GET /vdac4/esp/memory): `size` bytes (at most 4096) from `address`, a
+        D-bus / I-bus / SRAM address, or with app=True an address of the running app's ELF image (as a haptic
+        probe `cpu: esp` takes it; app.sections of vdac4_state lists the image). RuntimeError with the reason"""
+
     def network_state(self) -> dict:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""
@@ -1517,6 +1533,31 @@ emu.run_frames(500)
 print(unreal.rzx_status(r["emulator_id"])["summary"])
 ```
 
+### Machine State Transfer
+
+`unreal.transfer_state(to="", model="", ram_size=0, symbolic_id="", check=False, keep_frame_position=None, start=None, emulator_id="")`
+moves a machine's running state (`emulator_id`, default the selected one) into another instance, in memory - the verb of
+every plane (`StateTransferControl`; WebAPI `POST /emulator/{id}/snapshot/transfer`, CLI `snapshot transfer`, Lua
+`transfer_state{}`, [automation.md](../../../features/automation.md#machine-state-transfer)). Name exactly one target:
+`to` (an existing instance; `check=True` only reports what would move) or `model` (a new instance, with `ram_size`,
+`symbolic_id`; started when the source runs unless `start` says otherwise). `keep_frame_position` keeps the in-frame
+position when both models share the frame geometry (default `True`).
+
+It returns the WebAPI's report dict - `ok`, `mode` (`clone` / `cross-model`), `reason`, `items` (`name`, `status`
+`copied` / `dropped` / `refused` / `note`, `detail`), `copied`, `dropped`, `refused`, `summary`, `source_id`,
+`target_id`, `created`, `state`, `model`, `ram_kb` - with `ok` False for a refused transfer (nothing changed), and
+raises `RuntimeError("<error>: <message>")` when no report could be made (no such target, the machine state
+coordinator refuses, a bad request). A check opens no implicit run-control session; a transfer does.
+
+```python
+r = unreal.transfer_state(to=other_id, check=True)
+if r["ok"]:
+    r = unreal.transfer_state(to=other_id)
+print(r["summary"])
+fork = unreal.transfer_state(model="PENTAGON", ram_size=512)
+print(fork["target_id"], fork["mode"], fork["copied"], fork["dropped"])
+```
+
 ### Time-Travel Debugging
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -1814,8 +1855,10 @@ emu.ttd_branch_prune(run='r1', dry_run=False)   # deletes; the active lineage an
 **Sessions on disk:**
 
 ```python
-emu.ttd_dump('/tmp/session.ttd')            # -> bool; every branch
-emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> bool; only the active branch's lineage, one linear history
+emu.ttd_dump('/tmp/session.ttd')            # -> True; every branch
+emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> True; only the active branch's lineage, one linear history
+# A failure raises RuntimeError("ttd_dump: <reason>"), the system's words ("... cannot create: Permission denied";
+# "disk full" only for a full disk); the partial file (<path>.partial) is removed, a file already under the name stays
 emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)
@@ -2072,7 +2115,9 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
                                      #   hardware, fit, picture_height= (0..4320, GPU), width= / height= (the frame), layout=
                                      #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
-                                     #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples'} or {'ok': False, ...}
+                                     #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples', 'frames_pending', and the timings in ms since
+                                     #   the start: 'writer_start_ms', 'encoder_ready_ms', 'first_frame_ms',
+                                     #   'slowest_frame_ms'} or {'ok': False, ...}
 emu.window_record_frames(100)        # a paused machine runs 100 frames, every one recorded; the status with 'ran'
 emu.window_record_stop()             # finish the file (waits for ffmpeg, muxes the sound in); its last status
 emu.window_record_status()           # the recording's status; headless {'ok': False, 'error', 'kind': 'no-window'}

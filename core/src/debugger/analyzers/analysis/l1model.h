@@ -360,6 +360,8 @@ struct BlockCopy
     uint32_t length = 0;
     int8_t dir = 1;           ///< +1 LDI / LDIR, -1 LDD / LDDR
     uint64_t count = 0;       ///< runs with this source, destination and length
+    uint64_t firstFrame = 0;  ///< the recording's frame of the first run's first byte
+    uint64_t lastFrame = 0;   ///< the recording's frame of the last run's last byte
 };
 
 /// The source byte shown next to a drawn byte on the screen (to its right, or below it): how far after it in memory,

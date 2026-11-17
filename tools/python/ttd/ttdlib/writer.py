@@ -7,14 +7,16 @@ when that is smaller), part-end records (stream 0), the index (part table,
 per-stream totals in order of first appearance, index extra) and the trailer.
 
 The tools copy parts verbatim (storage.md S-6): a record is added as stored
-(add_stored), with its flags and raw size kept; only new records (an index
-record of branches.tdx) are encoded here (add_record).
+(add_stored), with its flags and raw size kept (a chunked stream's records
+one by one, Part.physical); only new records (an index record of
+branches.tdx) are encoded here (add_record), chunked over record_limit when
+the header declares the stream's chunked twin.
 
 Worked example:
 
     w = ContainerWriter.like(container)          # the input's header
     for part in container.parts:
-        for rec in part.records:
+        for rec in part.physical:
             w.add_stored(rec.stream_id, rec.flags, stored_payload(container, rec), rec.raw_size)
         w.end_part(part.first_frame, part.frame_count, part.branch, part.dependencies, part.extra)
     data = w.finalize()                           # the same bytes as the input
@@ -27,8 +29,9 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import zstandard
 
-from .ttdcontainer import (FIXED_HEADER, FLAG_COMPRESSED, FLAG_PART_END, MAGIC, RECORD_HEADER, SCHEMA, SYNC,
-                           TRAILER_MAGIC, Container, Record, StreamDesc, TtdError, crc32c)
+from .ttdcontainer import (FIXED_HEADER, FLAG_COMPRESSED, FLAG_CONTINUED, FLAG_PART_END, MAGIC, MAX_RAW,
+                           RECORD_HEADER, SCHEMA, SYNC, TRAILER_MAGIC, Container, Record, StreamDesc, TtdError,
+                           chunked_twin, crc32c)
 
 ZSTD_LEVEL = 1          # codec::kDefaultZstdLevel
 INDEX_VERSION = 1
@@ -103,6 +106,7 @@ class ContainerWriter:
         self._parts: List[Tuple[int, int, int, int]] = []        # part end offset, first frame, frames, branch
         self._totals: Dict[int, List[int]] = {}                   # stream -> records, stored, raw (first-seen order)
         self._finalized = False
+        self.record_limit = MAX_RAW         # TTDContainerWriter::SetRecordLimit (tests set a small one)
 
     @classmethod
     def like(cls, c: Container, streams: Optional[Sequence[StreamDesc]] = None) -> "ContainerWriter":
@@ -137,18 +141,34 @@ class ContainerWriter:
         """A record as another file stored it (TTDContainerWriter::AddStoredRecord)."""
         if stream_id == 0:
             raise TtdError("stream 0 holds part ends only")
-        self._part_records.append(self._write_record(stream_id, flags & FLAG_COMPRESSED, stored, raw_size))
+        self._part_records.append(self._write_record(stream_id, flags & (FLAG_COMPRESSED | FLAG_CONTINUED), stored,
+                                                     raw_size))
         self._count(stream_id, len(stored), raw_size)
 
-    def add_record(self, stream_id: int, payload: bytes, allow_compress: bool = True) -> None:
-        """A new record, compressed when that is smaller (TTDContainerWriter::AddRecord)."""
-        if stream_id == 0:
-            raise TtdError("stream 0 holds part ends only")
+    def _add_one(self, stream_id: int, flags: int, payload: bytes, allow_compress: bool) -> None:
         packed = compress(payload) if allow_compress and payload else b""
         use = bool(packed) and len(packed) < len(payload)
         stored = packed if use else payload
-        self._part_records.append(self._write_record(stream_id, FLAG_COMPRESSED if use else 0, stored, len(payload)))
+        self._part_records.append(self._write_record(stream_id, flags | (FLAG_COMPRESSED if use else 0), stored,
+                                                     len(payload)))
         self._count(stream_id, len(stored), len(payload))
+
+    def add_record(self, stream_id: int, payload: bytes, allow_compress: bool = True) -> None:
+        """A new payload, compressed when that is smaller (TTDContainerWriter::AddRecord); over record_limit, the
+        records of the stream's chunked twin (declared in the header), every one but the last continued."""
+        if stream_id == 0 or stream_id & 0x8000:
+            raise TtdError(f"stream {stream_id} is not a stream a payload may name")
+        if len(payload) <= self.record_limit:
+            self._add_one(stream_id, 0, payload, allow_compress)
+            return
+        twin = chunked_twin(stream_id)
+        if not any(s.id == twin for s in self.streams):
+            raise TtdError(f"stream {stream_id}: a payload of {len(payload)} bytes passes the record limit of "
+                           f"{self.record_limit} bytes, and the file does not declare the stream as chunked")
+        for at in range(0, len(payload), self.record_limit):
+            chunk = payload[at:at + self.record_limit]
+            last = at + len(chunk) == len(payload)
+            self._add_one(twin, 0 if last else FLAG_CONTINUED, chunk, allow_compress)
 
     def end_part(self, first_frame: int = 0, frame_count: int = 0, branch: int = 0,
                  dependencies: Iterable[int] = (), extra: bytes = b"") -> None:
@@ -199,7 +219,7 @@ def copy_parts(c: Container, keep: Sequence[int], streams: Optional[Sequence[Str
         part = c.parts[old]
         if part.damaged:
             raise TtdError(f"part {old} is damaged: {part.damage}")
-        for rec in part.records:
+        for rec in part.physical:
             w.add_stored(rec.stream_id, rec.flags, stored_payload(c, rec), rec.raw_size)
         deps = []
         for d in part.dependencies:

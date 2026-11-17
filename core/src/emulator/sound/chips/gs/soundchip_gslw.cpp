@@ -857,6 +857,7 @@ uint8_t SoundChip_GSLightweight::portDeviceInMethod(uint16_t port)
         {
             flush();
             const uint8_t value = _mb.dataToHost;
+            logHostReplyRead(value);
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, value, false);
@@ -881,6 +882,7 @@ void SoundChip_GSLightweight::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_CONTROL, value, true);
             if (value & 0x80)
             {
+                logHostReset();
                 resetCard();
                 flush(); // re-execute the elapsed frame time from reset state
                 return;
@@ -895,11 +897,13 @@ void SoundChip_GSLightweight::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3: // GSDAT write: the interpreter takes the byte in-call
             flush();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             acceptHostData(value);
             return;
         case 0xBB: // GSCOM write: the interpreter reacts at once (no poll delay)
             flush();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             acceptHostCommand(value);
             return;
         default:
@@ -919,6 +923,8 @@ uint8_t SoundChip_GSLightweight::readData()
 {
     flush();
     const uint8_t value = _mb.dataToHost;
+    logHostReplyRead(value, true);
+    noteAutomationRead(value);
     _mb.status &= 0x7F;
     pumpReply();
     return value;
@@ -927,12 +933,14 @@ uint8_t SoundChip_GSLightweight::readData()
 void SoundChip_GSLightweight::sendCommand(uint8_t command)
 {
     flush();
+    logHostCommand(command, true);
     acceptHostCommand(command);
 }
 
 void SoundChip_GSLightweight::sendData(uint8_t data)
 {
     flush();
+    logHostData(data, true);
     acceptHostData(data);
 }
 
@@ -1151,6 +1159,7 @@ void SoundChip_GSLightweight::traceEvent(GSTraceSide side, uint16_t port, uint8_
 void SoundChip_GSLightweight::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
 
     // Nominal base, not the card's actual time: the player ends a frame up to one
     // 320-cycle quantum past it, and that overshoot must not pile up frame after

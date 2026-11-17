@@ -1,16 +1,25 @@
 # TODO — RE agents vs MCP / WebAPI efficiency (2026-11-12)
 
-**Status:** analysis done, no proposal started. PLAN row **#122** (T2).
+**Status:** analysis done; F3 done. PLAN row **#122** (T2).
 
 ## Documents
 - [analysis.md](analysis.md) — every fault, slow path, missing verb and ergonomics gap the reverse-engineering agents hit, with evidence in the reverse cases repo, the master code places, and proposals (§6 summary table).
 
-## Proposals, in priority order (none started)
+## Proposals, in priority order
 
 ### P1
 - [ ] F1: no silent clamp in `run_frames` / `/steps` / `run_tstates`; answers carry `frames_run`, `frame`, `t`, `stop`; MCP text from the answer (S).
 - [ ] F2: `RunNFrames` aims at an absolute frame boundary; split-independent runs, with a test (M).
-- [ ] F3: TTD dump failure reasons; chunk records over 1 GiB; partial file handling (M).
+- [x] F3: TTD dump failure reasons; chunk records over 1 GiB; partial file handling (M).
+  As built (2026-11-16, uncommitted on `transfer-dump`): the cause was measured, the write journal written whole with
+  the last part (8.3 KB raw per frame, 1 GiB at about 130 000 frames; SimCity's 139 382 frames refused as "disk full").
+  Streams over the record limit are written as chunked twins (`S | 0x8000`, flag bit 2 continued), read back joined by
+  the C++ reader, the recovery scan, `ttdlib` and the analyzer; older readers skip the twin. Writer failures carry a
+  reason (`TTDWriteError`: io / no_space / too_large / layout); `ttd dump` writes `<path>.partial` and renames it,
+  removes it on failure; WebAPI 409 `io` / `session`, 507 `no_space` (ENOSPC / EDQUOT only), 500 `too_large`; Lua
+  `false, why`, Python `RuntimeError`. Spec: [ttd-container-format.md](../../emulator/design/debugger/time-travel-debug/ttd-container-format.md#chunked-streams-2026-11-16), `ttd.ksy`;
+  tests `ttdcontainer_chunks_test.cpp`, `ttdsessionfile_chunks_test.cpp`, `AFailedDumpSaysWhyAndLeavesNoPartialFile`,
+  `tools/python/ttd/tests/test_chunks.py`.
 - [ ] F4: analysis of sessions recorded during RZX playback (bundle carries the RZX; PLAN #27 R5) (M).
 - [ ] S1: `memory_series` verb (frame range / step, several ranges, `changes_only`, base64) (M).
 

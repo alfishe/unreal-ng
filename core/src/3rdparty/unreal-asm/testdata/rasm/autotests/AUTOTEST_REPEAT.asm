@@ -1,0 +1,1 @@
+ce=100:repeat 2,ce:repeat 5,cx:repeat 5,cy:defb cx*cy:rend:rend:rend:assert cx==6 && cy==6 && ce==3:cpt=0:repeat:cpt=cpt+1:until cpt>4:assert cpt==5

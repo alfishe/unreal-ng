@@ -56,6 +56,10 @@ struct HapticSource
     /// probes: a CPU address, or `page:<n>:<addr>` (RAM page n, the offset `addr & #3FFF`)
     uint16_t address = 0;
     uint16_t page = 0xFFFF;
+    /// `cpu: esp`: a frame-end probe (value, frame, plain write) of the app the machine's ESP32 runs (the TS-Conf
+    /// VDAC4 board: DOOM-VDAC4), `espAddress` an address of the app's ELF image; `address` / `page` unused
+    bool esp = false;
+    uint32_t espAddress = 0;
     HapticWhen when = HapticWhen::Changed;
     uint8_t value = 0;
     bool hasValue = false;  ///< `value` was given (port-out tests it only then)

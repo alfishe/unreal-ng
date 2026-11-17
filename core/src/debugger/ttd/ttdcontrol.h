@@ -40,8 +40,9 @@ enum class TTDControlError : uint8_t
     NotAvailable,  ///< time travel is not built in / not constructed for this instance (HTTP 501)
     BadRequest,    ///< unknown verb or option, a value that does not parse (HTTP 400)
     NotFound,      ///< a named thing does not exist: a bookmark label (HTTP 404)
-    Conflict,      ///< refused in the session's current state (HTTP 409)
-    Internal       ///< should not happen (HTTP 500)
+    Conflict,      ///< refused in the session's current state, or the file system refused a file (HTTP 409)
+    Internal,      ///< should not happen, or a limit of the file format was reached (HTTP 500)
+    InsufficientStorage   ///< the disk or the quota is full (ENOSPC / EDQUOT): HTTP 507
 };
 
 int TTDControlErrorHttpStatus(TTDControlError error);

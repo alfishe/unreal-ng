@@ -1,0 +1,1 @@
+org #100:protect #101,#102:nop:nop:org $+1:inc a

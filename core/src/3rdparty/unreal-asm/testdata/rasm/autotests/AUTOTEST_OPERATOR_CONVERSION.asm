@@ -1,0 +1,1 @@
+ld hl,10 OR 20:ld a,40 and 10:ld bc,5 MOD 2:ld a,(ix+45 xor 45)

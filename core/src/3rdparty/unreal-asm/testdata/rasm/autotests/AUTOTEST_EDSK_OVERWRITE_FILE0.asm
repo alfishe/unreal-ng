@@ -1,0 +1,1 @@
+EDSK create,'rasmoutput_test.dsk',DATA,OVERWRITE:bank:org #100 : defb 'roudoudou' : save 'machin.bin',#100,$-#100,DSK,'rasmoutput_test.dsk' : save '1:machin.bin',#100,$-#100,DSK,'rasmoutput_test.dsk'

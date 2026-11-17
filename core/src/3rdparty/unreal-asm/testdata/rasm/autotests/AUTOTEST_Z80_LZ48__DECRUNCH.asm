@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call LZ48_decrunch : jr #FE : include 'decrunch/lz48decrunch_v006b.asm' : org #C000 : incbin './decrunch/lzDataTest.l48' 
