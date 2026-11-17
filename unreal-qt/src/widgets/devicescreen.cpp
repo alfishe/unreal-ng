@@ -155,6 +155,7 @@ WindowPresentStats DeviceScreen::presentStats() const
     out.syncReason = _syncReason;
     out.machineHz = _frameRate.Hz();
     out.clock = FrameClockSourceName(_shownClock);
+    out.lowLatency = _shownAtOnce;
     if (_displayRate == DisplayRate::Match)
     {
         out.displayState = "unchanged";
@@ -165,7 +166,8 @@ WindowPresentStats DeviceScreen::presentStats() const
 
 bool DeviceScreen::smoothActive() const
 {
-    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
+    // Low-latency video shows each frame at once: an interpolated picture would wait for the frame after it
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled && !_shownAtOnce &&
            (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
@@ -244,13 +246,15 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             drawImage = &_latchedFrame;
             geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
             _shownClock = info.source;
+            _shownAtOnce = info.atOnce;
             if (_smoothAuto)
             {
                 if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
                 {
                     _meteredSerial = info.serial;
-                    // A turbo frame (timed by its latch) says nothing about the machine's rate
-                    if (info.source == FrameClockSource::Latch)
+                    // A turbo frame (timed by its latch) says nothing about the machine's rate; a low-latency one is
+                    // latched at the machine's own pace
+                    if (info.source == FrameClockSource::Latch && !info.atOnce)
                         _frameRate.PushUnpaced();
                     else
                         _frameRate.Push(info.targetNs, info.periodNs);

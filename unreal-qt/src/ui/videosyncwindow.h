@@ -71,6 +71,7 @@ private:
     QTimer* _timer = nullptr;
     QCheckBox* _sync = nullptr;
     std::map<std::string, QLabel*> _cells;
+    QLabel* _errorCaption = nullptr;  ///< "On screen vs asked", or "Handed over to screen" under low-latency video
     int _numberWidth = 0;
 
     // The counters a second ago: the rates per second

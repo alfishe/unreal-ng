@@ -28,11 +28,12 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
 - **Low latency** is a machine feature, not a window setting: `feature lowlatency on` (CLI; WebAPI / MCP features; Qt Machine > Low Latency (Game Mode))
   makes each frame due at its latch, so the newest finished frame is shown at once, and shortens the sound path
   (audio ring target from 10 ms, 15 ms on Windows, adapted to the host; a 128-frame device period on macOS): the sound follows ~20-30 ms later
-  (~55 ms on Windows). Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock`
-  `latch`; `GET /audio/mixer` -> `host_output.device` shows the ring and the latency.
+  (~45 ms on Windows). Off by default; Steam Deck Game Mode turns it on. The present report then shows `clock`
+  `latch` and `low_latency` true: `error_ms` is then the way from the hand-over to the screen, `late` and `lead_ms`
+  judge nothing; `GET /audio/mixer` -> `host_output.device` shows the ring and the latency.
 
 - **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl-timed` on Linux / `gl` / `software`),
-  `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `presented`, `shown`,
+  `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `low_latency` (the frame on screen shown at once), `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
   `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
   blended, interpolated, motion_fields, on_device, held_flicker}, `display` {state, reason, hz, original_hz,

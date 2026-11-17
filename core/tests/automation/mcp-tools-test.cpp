@@ -3017,6 +3017,35 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
 }
 
+/// Low-latency video asks for each frame at once: the text says so and names neither a lead, nor refreshes late, nor
+/// the interpolation it turns off
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesLowLatency)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["sync"]["mode"] = "interpolate";
+    present["clock"] = "latch";
+    present["low_latency"] = true;
+    present["presented"] = 600;
+    present["late"] = 250;
+    present["lead_ms"] = 36.7;
+    present["error_ms"]["p50"] = 24.75;
+    present["error_ms"]["p99"] = 54.34;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"low latency: each frame at once", "hand-over to screen p50 24.75 p99 54.34 ms"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+    for (const char* part : {"a refresh late", "lead 36.7", "video sync interpolate"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)
 {
     Json::Value settings;

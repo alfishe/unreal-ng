@@ -52,7 +52,10 @@
             pf("refresh_hz", "object", "{min, max}: the display's refresh range (min 0: a variable range whose low end the system does not report, Windows)");
             pf("clock", "string",
                "The clock the frame on screen was timed by: audio (when its sound is heard), emulated (no audio device "
-               "delivering), latch (turbo, a run not paced to real time), none (untimed)");
+               "delivering), latch (turbo, a run not paced to real time, or the feature lowlatency), none (untimed)");
+            pf("low_latency", "boolean",
+               "The frame on screen was shown at once by the feature lowlatency (no lead, no smooth motion): error_ms is "
+               "then its way from the hand-over to the screen, late and lead_ms judge nothing");
             pf("timing", "object",
                "How the frames are timed: {delay_clamped (the frame timed last: its sound comes later than the screen "
                "holds its frames, a long audio path or a large lip-sync trim, so it is due max_delay_ms after its "

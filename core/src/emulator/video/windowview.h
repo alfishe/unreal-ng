@@ -84,6 +84,10 @@ struct WindowPresentStats
     /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
     /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
     std::string clock = "none";
+    /// Low-latency video (feature `lowlatency`) timed the frame on screen: it goes to the first refresh after its latch
+    /// (VRR: at once), with no lead and no smooth motion. A frame is asked for at once, so `error*Ms` is the way from
+    /// the hand-over to the screen and `late` / `leadMs` judge nothing
+    bool lowLatency = false;
     uint64_t beatFrames = 0;  ///< native presenter only: pictures judged against the beat pattern (ScreenBeat)
     uint64_t offBeat = 0;     ///< ... on screen for a refresh count outside it: a refresh missed, held, never shown
     double soundOffsetP50Ms = 0.0;  ///< screen time minus the picture's sound (the clock's time, the lip-sync trim out)

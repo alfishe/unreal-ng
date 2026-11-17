@@ -1872,8 +1872,9 @@ the frames reach the screen: `presenter` metal / dxgi / gl-timed (Linux: a threa
 gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
 yes / no / unknown, `reason`: X11 RandR `vrr_capable` and a fullscreen window, unknown on Wayland and Windows}, `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
 it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
-on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo, `none`),
-`timing` {`delay_clamped` (the frame timed last: its sound comes later than the screen holds its frames, a long audio
+on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo or under the feature `lowlatency`, `none`),
+`low_latency` (the frame on screen shown at once by `lowlatency`: `error_ms` is then its way from the hand-over to the
+screen, `late` and `lead_ms` judge nothing), `timing` {`delay_clamped` (the frame timed last: its sound comes later than the screen holds its frames, a long audio
 path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_delay_ms` after its frame's end and the
 picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
 (refreshes that found no frame due yet: start up), `carried` (steps of the frames' clock carried and paid back by

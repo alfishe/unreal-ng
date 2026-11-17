@@ -185,6 +185,7 @@ private:
     std::string _syncReason;
     FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
     FrameClockSource _shownClock = FrameClockSource::None;  // the clock that timed the frame drawn last
+    bool _shownAtOnce = false;  // low-latency video (feature lowlatency) timed it: each frame at once, no smooth motion
     uint64_t _meteredSerial = 0; // the last frame pushed into it
     QImage _nextFrame;    // a frame on its way into _smooth
     QImage _smoothFrame;  // the picture drawn

@@ -3974,12 +3974,8 @@ void MainWindow::handleContentionToggled(bool enabled)
 void MainWindow::handleLowLatencyToggled(bool enabled)
 {
     // The feature change reaches the audio device and the screen through NC_FEATURE_CHANGED
-    if (_emulator)
-    {
-        EmulatorContext* context = _emulator->GetContext();
-        if (FeatureManager* featureManager = context ? context->pFeatureManager : nullptr)
-            featureManager->setFeature(Features::kLowLatency, enabled);
-    }
+    if (FeatureManager* featureManager = _emulator ? _emulator->GetFeatureManager() : nullptr)
+        featureManager->setFeature(Features::kLowLatency, enabled);
     _menuManager->updateMenuStates(_emulator);
 }
 

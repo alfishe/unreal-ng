@@ -774,6 +774,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     out.originalHz = _originalHz;
     out.machineHz = _frameRate.Hz();
     out.clock = FrameClockSourceName(_shownInfo.source);
+    out.lowLatency = _shownInfo.atOnce;
     return out;
 }
 

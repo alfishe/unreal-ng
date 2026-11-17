@@ -56,14 +56,16 @@ namespace
         return QString::number(perSecond, 'f', 1) + " /s";
     }
 
-    QString ClockText(const std::string& clock)
+    QString ClockText(const std::string& clock, bool lowLatency)
     {
+        if (clock == "latch" && lowLatency)
+            return QObject::tr("latch: low latency, each frame due when it is made (not held for its sound)");
         if (clock == "audio")
             return QObject::tr("audio: when each frame's sound is heard");
         if (clock == "emulated")
             return QObject::tr("emulated: no audio device, the machine's own times");
         if (clock == "latch")
-            return QObject::tr("latch: turbo, not paced to real time");
+            return QObject::tr("latch: turbo or stepping, not paced to real time");
         return QObject::tr("none: the frames are not timed");
     }
 
@@ -76,11 +78,12 @@ namespace
         return box;
     }
 
-    void Caption(QGridLayout* grid, int row, const QString& text, int column = 0)
+    QLabel* Caption(QGridLayout* grid, int row, const QString& text, int column = 0)
     {
         auto* label = new QLabel(text, grid->parentWidget());
         label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         grid->addWidget(label, row, column);
+        return label;
     }
 
     /// A column heading over number cells
@@ -146,7 +149,7 @@ VideoSyncWindow::VideoSyncWindow(std::function<WindowDisplaySettings()> settings
     Heading(grid, 5, 1, tr("p50"));
     Heading(grid, 5, 2, tr("p99"));
     Heading(grid, 5, 3, tr("max"));
-    Caption(grid, 6, tr("On screen vs asked"));
+    _errorCaption = Caption(grid, 6, tr("On screen vs asked"));
     cell(grid, "error_p50", 6, 1, Align::Number);
     cell(grid, "error_p99", 6, 2, Align::Number);
     cell(grid, "error_max", 6, 3, Align::Number);
@@ -283,14 +286,22 @@ void VideoSyncWindow::refresh()
         mode = tr("Interpolation: a picture per refresh on the fixed %1").arg(Hz(p.maxRefreshHz));
     else
         mode = tr("Off: the frame due on each refresh");
+    // Low-latency video takes over the timing: no lead, no interpolation, the frame at once (what VRR or a switched
+    // display rate does stays: the refresh it lands on)
+    if (p.lowLatency)
+        mode = p.vrr ? tr("Low latency: each frame at once (VRR)")
+                     : tr("Low latency: each frame at the first refresh after it is made (%1)").arg(Hz(displayHz));
     set("mode", mode);
-    if (p.sync == "off")
+    if (p.lowLatency)
+        set("why", tr("The feature lowlatency is on (Machine > Low Latency): frames are not held for their sound, "
+                      "led or interpolated, so the picture comes sooner and leads the sound"));
+    else if (p.sync == "off")
         set("why", tr("View > Video Synchronization is off: smooth motion %1, present policy %2, display rate %3")
                        .arg(QString::fromStdString(s.smoothMotion), QString::fromStdString(s.presentPolicy),
                             QString::fromStdString(s.displayRate)));
     else
         set("why", p.syncReason.empty() ? kNone : QString::fromStdString(p.syncReason));
-    set("clock", ClockText(p.clock));
+    set("clock", ClockText(p.clock, p.lowLatency));
 
     // The display and the machine
     set("refresh", p.fixedDisplay           ? tr("fixed %1").arg(Hz(p.maxRefreshHz))
@@ -321,7 +332,8 @@ void VideoSyncWindow::refresh()
         if (rateDue)
             set("shown", _lastNs != 0 ? Rate(PerSecond(p.shown, _last.shown, seconds)) : kNone);
         set("dropped", Count(p.dropped));
-        set("late", Count(p.late));
+        // Low latency asks for each frame at once: every frame lands a refresh or so after, nothing to judge
+        set("late", p.lowLatency ? kNone : Count(p.late));
         set("off_beat", Count(p.offBeat));
         set("off_beat_share", p.beatFrames > 0 ? tr("of %1 frames (%2 %)")
                                                      .arg(Count(p.beatFrames))
@@ -329,7 +341,7 @@ void VideoSyncWindow::refresh()
                                                               static_cast<double>(p.beatFrames),
                                                           0, 'f', 2)
                                                : QString());
-        set("lead", Ms(p.leadMs));
+        set("lead", p.lowLatency ? kNone : Ms(p.leadMs));
         set("error_p50", Ms(p.errorP50Ms));
         set("error_p99", Ms(p.errorP99Ms));
         set("error_max", Ms(p.errorMaxMs));
@@ -344,8 +356,13 @@ void VideoSyncWindow::refresh()
         set("off_beat_share", QString());
     }
 
+    // Low latency asks for each frame at once: the error is its way from the hand-over to the screen
+    if (_errorCaption)
+        _errorCaption->setText(p.lowLatency ? tr("Handed over to screen") : tr("On screen vs asked"));
+
     const bool smoothOn = p.smooth != "off";
-    set("smooth", smoothOn ? tr("%1 on the %2%3")
+    set("smooth", !smoothOn && p.lowLatency ? tr("off: low latency shows each frame at once")
+                  : smoothOn ? tr("%1 on the %2%3")
                                  .arg(QString::fromStdString(p.smooth),
                                       QString::fromStdString(p.smoothDevice).toUpper(),
                                       p.game ? tr(", the game's cadence") : QString())
