@@ -98,6 +98,16 @@ BreakpointManager* DebugManager::GetBreakpointsManager(DebugCpuId cpu)
     return _breakpoints;
 }
 
+LabelManager* DebugManager::GetLabelManager(DebugCpuId cpu)
+{
+    if (IsCardCpu(cpu))
+    {
+        GSCardTarget* target = GetCardTarget(cpu);
+        return target ? target->GetLabelManager() : nullptr;
+    }
+    return GetLabelManager();
+}
+
 GSCardTarget* DebugManager::GetCardTarget(DebugCpuId cpu)
 {
     switch (cpu)

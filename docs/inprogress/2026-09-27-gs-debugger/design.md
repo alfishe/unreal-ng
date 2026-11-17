@@ -764,6 +764,46 @@ const GSFirmwareProfile* FindGSFirmwareProfile(const std::string& sha256);
   handler is not the "unknown command" stub. A table typed by hand therefore
   cannot drift from the ROM.
 
+**As built (phase 4, item 2).**
+
+- **Code.** `core/src/emulator/sound/chips/gs/firmware/gsfirmwareprofile.h/.cpp`.
+  - Each command has a name, `pre` (the byte written to the data register
+    before the command, which the handler takes on entry), `post` (bytes sent
+    after the firmware took the command, or variable) and up to four named
+    parameters with a kind.
+  - It also records the reply bytes and their meaning, the transfer it starts
+    (module / sample upload, block up / down, Covox stream), whether the guide
+    documents it, and a note.
+  - The stream commands taken during an upload are listed apart: `#D1`, `#D2`.
+- **Command sets.** v1.04 names 129 commands. v1.05a and v1.05b name 131:
+  the patch adds `#6A` and `#6B`.
+- **Sources over the guide.** Every handler in `COM_L.a80` / `COM_H.a80` was
+  read. The sources name commands the guide omits: `#2C`, `#2D`, `#2F`,
+  `#34`, `#3B`, `#3C`, `#50`, `#F0`, channels 4-7 of `#80-#AF`. They also
+  correct the guide:
+  - `#02` sets every volume to maximum and `#03` sets them to zero (the guide
+    swaps them).
+  - `#3E #00` loads a signed sample and `#3E #01` behaves as `#38`.
+  - The setters (`#2E`, `#42`, `#45`-`#47`) reply the old value.
+- **Variables.** 35 variables per version (37 in 1.05: `PlMode`, `MODLLEN`).
+  Each has its address, size and meaning. The addresses are the same in every
+  version.
+- **Identity.** `IdentifyGSFirmware(card)` hashes the card's ROM pages
+  (`cardRomPage`). The image digest selects the profile.
+- **Where the card names its firmware.** The GS report (`state audio gs` on
+  every plane, MCP `audio_gs`) carries `firmware_profile`:
+  - for a known ROM: `known`, `id`, `title`, `symbols` (the bundle set of the
+    card CPU's labels), `sha256`, `page_sha256`;
+  - for an unknown ROM: `known: false` with the digests, and MCP says
+    "unknown firmware, no symbols".
+- **Self-check** (`GSFirmwareProfile_Test`). For each shipped ROM:
+  - every `COMTAB` / `COMTABH` handler that is not `COMZ` / `COMHZ` has a
+    named command, no stub has one, and every handler has a label;
+  - the variables sit at their labels;
+  - the digests select the profile and its symbol bundle.
+- **Not done.** The `rom.cpp` known-ROM table entries; profiles from files.
+  NeoGS reports its flash as unknown firmware.
+
 ### 6.2 Firmware symbols (L3, L5, R1, N5)
 
 The binaries are the truth; the sources supply the names. For each shipped
@@ -821,6 +861,31 @@ flowchart LR
   - A comparison step matches NeoGS routines against the GS v1.05a mark-up
     by bytes, and writes `materials/neogs/firmware/COMPARISON.md`: same as
     GS, changed from GS, NeoGS only.
+
+**As built (phase 4, item 1).**
+
+- **The mark-up is a build, not a search.** The sources rebuild two shipped
+  ROMs byte for byte: the plain sources give `gs104.rom`, the sources with
+  `patch/` give `gs105b.rom`. For those two the labels are the build's own
+  (sjasmplus SLD). `gs105a.rom` uses the patched build's labels. It differs in
+  63 bytes in 5 ranges (#00CE-#00D5, #013C, #0EF3-#0EF5, #1147-#1149,
+  #1D00-#1D2F). `data/symbols/gs/REPORT.md` lists them and the labels over
+  them. Labels per firmware: 1354 for 1.04, 1396 for 1.05a and 1.05b.
+- **Verification (L3, R1).** The script's default mode rebuilds and fails
+  when 1.04 or 1.05b differ from the shipped ROMs, when two firmwares share a
+  page-0 digest, or when the committed output differs. CI does not run it yet,
+  because it needs `sjasmplus`.
+- **Store.** `GSCardTarget` owns a `LabelManager` with CPU name `gs` / `ms`
+  and a page mapper over `mapCardAddress`. The card's ROM pages are hashed
+  when the card is made (`cardRomPage`). `data/symbols/gs/manifest.json`
+  bundles (`gs:gs104`, `gs:gs105a`, `gs:gs105b`) match page 0. Disassembly
+  (`CpuView` with `Z80Disassembler::LabelsScope`, CLI `disasm --cpu gs`) and
+  card breakpoint conditions use this store. The planes reach it with `cpu`
+  ([command interface 4.4](../../emulator/design/control-interfaces/command-interface.md#44-labels--symbol-management)).
+- **Open.** User labels per firmware (L5) are not saved to the settings folder
+  yet; `symbols export --cpu gs` writes them by hand. NeoGS (N5) is not done:
+  no sources are imported, and no bundle matches a NeoGS flash. The Qt
+  debugger's card view still shows no labels (phase 5).
 
 ### 6.3 The command log (F1-F1c, F3, F4, W1-W4)
 

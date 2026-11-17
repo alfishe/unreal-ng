@@ -1551,6 +1551,13 @@ uint32_t SoundChip_NeoGS::cardPageCount(CardPage::Kind kind) const
     }
 }
 
+const uint8_t* SoundChip_NeoGS::cardRomPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * NeoGSMemory::PAGE_SIZE > Flash29F040B::SIZE)
+        return nullptr;
+    return _flash.data() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+}
+
 bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const
 {
     if (!_cpu)

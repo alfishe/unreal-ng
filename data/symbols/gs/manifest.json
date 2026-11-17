@@ -1,0 +1,43 @@
+{
+  "format": "unreal-symbols-manifest",
+  "version": 1,
+  "note": "General Sound card firmware labels for the card CPU's store (gs, ms): a bundle applies when the card ROM's page 0 has the listed SHA-256; the map's ROM0 / ROM1 are the card's ROM pages.",
+  "bundles": [
+    {
+      "id": "gs:gs104",
+      "title": "General Sound firmware v1.04",
+      "file": "gs104.map",
+      "match": {
+        "page": 0,
+        "page_sha256": [
+          "a3b0cc4dcee93e7de5c389d0b43ae62f698269b7636b24308f7efcee74da23d6"
+        ]
+      },
+      "note": "data/rom/gs104.rom, image SHA-256 03b1e1801b3682bd0ef25f6006299f7bfacb3d8755f8792c87ea4d856e47dce0"
+    },
+    {
+      "id": "gs:gs105a",
+      "title": "General Sound firmware v1.05a",
+      "file": "gs105a.map",
+      "match": {
+        "page": 0,
+        "page_sha256": [
+          "63266df7ba7b875b5cbfa7225b5b081ecd751790a6548530db35301cae86cbbc"
+        ]
+      },
+      "note": "data/rom/gs105a.rom, image SHA-256 e256c963cf1bc5565bde1160855280a3d5cdd7e5d8481f3ee1c93f4e7e77b4d5"
+    },
+    {
+      "id": "gs:gs105b",
+      "title": "General Sound firmware v1.05b",
+      "file": "gs105b.map",
+      "match": {
+        "page": 0,
+        "page_sha256": [
+          "db59edcfc246179f17ee168514fd662df4fb74e61add22c4bf91b2e388b84bfa"
+        ]
+      },
+      "note": "data/rom/gs105b.rom, image SHA-256 9948ec9617365fb1913b0c56e00d5f6b6a36084875cca16debae270a4c6e6adf"
+    }
+  ]
+}

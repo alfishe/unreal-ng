@@ -869,6 +869,8 @@ public:
     /// The symbol bundles (data/symbols/manifest.json, in the resources or next to the executable) that match the
     /// loaded ROM pages go into the label manager as sets of origin "bundle"; UNREAL_SYMBOL_BUNDLES=0 turns it off
     void ApplySymbolBundles();
+    /// The shipped symbol bundles' folder (`symbols/` beside `rom/`); "" when UNREAL_SYMBOL_BUNDLES=0 turns them off
+    static std::string SymbolBundleFolder();
 
     // Debug methods
     void DebugOn();

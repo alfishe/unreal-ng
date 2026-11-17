@@ -428,6 +428,13 @@ public:
         (void)kind;
         return 0;
     }
+    /// The 16K ROM (or flash) page `page` as mapCardAddress numbers it, for its SHA-256 (the card CPU's symbol
+    /// bundles, gs-debugger design §6.2); null past the last page or without a CPU
+    virtual const uint8_t* cardRomPage(uint32_t page) const
+    {
+        (void)page;
+        return nullptr;
+    }
     /// The card CPU's full register file; false without a CPU
     virtual bool cardRegisters(Z80CpuRegisters& out) const
     {

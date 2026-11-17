@@ -42,6 +42,12 @@ LabelManager::LabelManager(EmulatorContext* context)
     _logger = _context->pModuleLogger;
 }
 
+LabelManager::LabelManager(EmulatorContext* context, std::string cpu, PageMapper mapper) : LabelManager(context)
+{
+    _cpu = std::move(cpu);
+    _mapper = std::move(mapper);
+}
+
 // @brief Destroy the LabelManager instance
 //
 // Cleans up all allocated resources and removes all labels.
@@ -239,12 +245,22 @@ std::shared_ptr<Label> LabelManager::GetLabelByZ80Address(uint16_t address) cons
 
 std::shared_ptr<Label> LabelManager::MappedAt(const std::vector<View::Paged>& labels, uint16_t address) const
 {
-    Memory* memory = _context ? _context->pMemory : nullptr;
-    if (!memory)
-        return nullptr;
     const uint8_t window = static_cast<uint8_t>(address >> 14);
-    const bool rom = memory->IsWindowRom(window);
-    const uint16_t page = rom ? memory->GetROMPageForBank(window) : memory->GetRAMPageForBank(window);
+    bool rom = false;
+    uint16_t page = 0;
+    if (_mapper)
+    {
+        if (!_mapper(window, rom, page))
+            return nullptr;
+    }
+    else
+    {
+        Memory* memory = _context ? _context->pMemory : nullptr;
+        if (!memory)
+            return nullptr;
+        rom = memory->IsWindowRom(window);
+        page = rom ? memory->GetROMPageForBank(window) : memory->GetRAMPageForBank(window);
+    }
     for (auto it = labels.rbegin(); it != labels.rend(); ++it)
         if (it->label->bank == UINT16_MAX || (it->label->bank == page && it->rom == rom))
             return it->label;
@@ -669,7 +685,7 @@ void LabelManager::Notify() const
 {
     // The instance, for the debuggers' labels_changed (none: a label manager of no emulator)
     const std::string id = _context && _context->pEmulator ? _context->pEmulator->GetId() : std::string();
-    MessageCenter::DefaultMessageCenter().Post(NC_LABEL_CHANGED, new LabelsChangedPayload(id), true);
+    MessageCenter::DefaultMessageCenter().Post(NC_LABEL_CHANGED, new LabelsChangedPayload(id, _cpu), true);
 }
 
 /// endregion </Symbol sets>
@@ -1100,7 +1116,10 @@ std::optional<Label> LabelManager::ToLabel(const unrealasm::symbols::Symbol& sym
     label.module = symbol.module;
     label.comment = symbol.comment;
     label.active = symbol.enabled;
-    label.bankType = label.address < 0x4000 ? BANK_ROM : BANK_RAM;
+    // A page says it (a card's high ROM at #C000); a CPU-view symbol goes by the window
+    label.bankType = kind == SpaceKind::Rom ? BANK_ROM
+                     : (kind == SpaceKind::Ram || kind == SpaceKind::Cache) ? BANK_RAM
+                     : label.address < 0x4000 ? BANK_ROM : BANK_RAM;
     for (const std::string& trait : symbol.traits)
     {
         if (trait.compare(0, 6, "label.") != 0)

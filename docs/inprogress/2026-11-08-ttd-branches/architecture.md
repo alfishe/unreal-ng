@@ -318,8 +318,7 @@ read-only queries never load the emulation thread. A failed read back counts `re
 reports the checkpoint damaged.
 
 Save (`SerializeSession`) reads every evicted segment back for the call (the cache unbounded), writes the file, then
-trims the cache again: memory peaks during a save of a long session. `TimeTravelEngine::CheckSession` expects every
-segment resident (only engine tests call it).
+trims the cache again: memory peaks during a save of a long session.
 
 Counters on every plane where the memory report appears (`ttd status`, `history-limit`; CLI, WebAPI / OpenAPI,
 MCP, Lua, Python, WebSocket `ttd.status` and `debug.buffers`): `disk_tier_active`, `evicted_to_disk_segments`,

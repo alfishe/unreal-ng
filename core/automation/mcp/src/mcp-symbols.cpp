@@ -19,6 +19,9 @@
 //   import_live  → POST /symbols/import/live {scanner?, page?, offset?, set?, policy?}
 //   import_source → POST /symbols/import/source {path, main?, set?, policy?, generated?}
 //
+// cpu (gs / ms): the sound card CPU's own labels and sets (?cpu= / body cpu) for the label and set actions; the
+// listing actions, scan and import_live are the main CPU's.
+//
 // Drogon-free; all calls go through the loopback IApiCaller.
 
 #include "mcp-symbols.h"
@@ -105,6 +108,13 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
         "data: the file's name";
     schema["properties"]["address"]["type"] = "string";
     schema["properties"]["address"]["description"] = "Address for resolve / source_at — integer or \"0x…\" hex string";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* cpu : {"main", "gs", "ms"})
+        schema["properties"]["cpu"]["enum"].append(cpu);
+    schema["properties"]["cpu"]["description"] =
+        "gs / ms: the sound card CPU's own labels (its firmware's symbols load by themselves) for load_labels, list, resolve, "
+        "sets, set_enable, drop, import, export, import_source; default main";
     schema["properties"]["clear"]["type"] = "boolean";
     schema["properties"]["clear"]["default"] = false;
     schema["properties"]["clear"]["description"] = "Replace a previously loaded listing instead of merging";
@@ -123,6 +133,22 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
         std::move(schema),
         [](const Json::Value& args, IApiCaller& caller, ToolCallback done, const ProgressFn&) {
             std::string action = args["action"].asString();
+            // cpu: a card CPU's labels and sets; the actions that read the main CPU's listing or RAM refuse it
+            const std::string cpu = args.isMember("cpu") && args["cpu"].isString() ? args["cpu"].asString() : "";
+            const bool cardCpu = !cpu.empty() && cpu != "main";
+            for (const char* mainOnly : {"load_listing", "source_at", "step_line", "run_to_line", "scan", "import_live"})
+                if (cardCpu && action == mainOnly)
+                {
+                    done(ToolResult::Error(action + " is the main CPU's; cpu '" + cpu + "' takes the label and set actions"));
+                    return;
+                }
+            const auto withCpu = [&](std::string query) {
+                return cardCpu ? query + (query.find('?') == std::string::npos ? "?" : "&") + "cpu=" + UrlEncodeSegment(cpu) : query;
+            };
+            const auto bodyCpu = [&](Json::Value& body) {
+                if (cardCpu)
+                    body["cpu"] = cpu;
+            };
 
             if (action == "load_labels")
             {
@@ -133,6 +159,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 }
                 Json::Value body;
                 body["path"] = args["path"].asString();
+                bodyCpu(body);
                 ResolveAndForward(args, "POST", "/symbols/load", &body, caller, "Symbols loaded", done);
                 return;
             }
@@ -158,7 +185,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
                 const unsigned limit = args.isMember("limit") && args["limit"].isIntegral()
                                            ? std::clamp(args["limit"].asUInt(), 1u, 2000u) : 100u;
-                ResolveAndForward(args, "GET", "/labels" + query, nullptr, caller, "Labels", [name, limit, done](ToolResult result) {
+                ResolveAndForward(args, "GET", withCpu("/labels" + query), nullptr, caller, "Labels", [name, limit, done](ToolResult result) {
                     if (result.isError)
                     {
                         done(std::move(result));
@@ -212,7 +239,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 }
                 std::string query = hasName ? "?name=" + args["name"].asString() : "?address=" + AddressArg(args["address"]);
                 // The answer in the text: "CLS = 0x0D6B rom3 code ; CLS command: Clear screen"
-                ResolveAndForward(args, "GET", "/labels/resolve" + query, nullptr, caller, "Label resolved", [done](ToolResult result) {
+                ResolveAndForward(args, "GET", withCpu("/labels/resolve" + query), nullptr, caller, "Label resolved", [done](ToolResult result) {
                     const Json::Value& label = result.structured["label"];
                     if (!result.isError && label.isObject())
                     {
@@ -325,13 +352,15 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 for (const char* name : {"path", "main", "set", "policy", "generated"})
                     if (args.isMember(name) && !args[name].isNull())
                         body[name] = args[name].asString();
+                bodyCpu(body);
                 ResolveAndForward(args, "POST", "/symbols/import/source", &body, caller, "Labels of the source imported", done);
                 return;
             }
 
             if (action == "formats" || action == "sets")
             {
-                ResolveAndForward(args, "GET", "/symbols/" + action, nullptr, caller, action == "formats" ? "Symbol formats" : "Symbol sets",
+                ResolveAndForward(args, "GET", action == "sets" ? withCpu("/symbols/sets") : "/symbols/formats", nullptr, caller,
+                                  action == "formats" ? "Symbol formats" : "Symbol sets",
                                   done);
                 return;
             }
@@ -357,7 +386,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                 }
                 if (action == "drop")
                 {
-                    ResolveAndForward(args, "DELETE", "/symbols/sets?id=" + UrlEncodeSegment(args["id"].asString()), nullptr, caller,
+                    ResolveAndForward(args, "DELETE", withCpu("/symbols/sets?id=" + UrlEncodeSegment(args["id"].asString())), nullptr, caller,
                                       "Symbol set dropped", done);
                     return;
                 }
@@ -367,6 +396,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                     body["enabled"] = args["enabled"].asBool();
                 if (args.isMember("priority"))
                     body["priority"] = args["priority"].asInt();
+                bodyCpu(body);
                 ResolveAndForward(args, "PUT", "/symbols/sets", &body, caller, "Symbol set changed", done);
                 return;
             }
@@ -389,6 +419,7 @@ void RegisterManageSymbolsImpl(ToolRegistry& registry)
                         body[name] = args[name].asString();
                 if (action == "export" && args.isMember("sets"))
                     body["sets"] = args["sets"];
+                bodyCpu(body);
                 ResolveAndForward(args, "POST", "/symbols/" + action, &body, caller,
                                   action == "import" ? "Symbols imported" : "Symbols exported", done);
                 return;

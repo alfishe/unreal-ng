@@ -622,14 +622,15 @@ public:
     virtual ~DebugEditedPayload() = default;
 };
 
-/// Payload of NC_LABEL_CHANGED: the instance whose labels changed
+/// Payload of NC_LABEL_CHANGED: the instance whose labels changed, and the CPU whose store it was ("main", "gs", "ms")
 class LabelsChangedPayload : public MessagePayload
 {
 public:
     unreal::UUID emulatorId;
+    std::string cpu = "main";
 
-    explicit LabelsChangedPayload(const std::string& emulator)
-        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    explicit LabelsChangedPayload(const std::string& emulator, std::string cpuName = "main")
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), cpu(std::move(cpuName))
     {
     }
     virtual ~LabelsChangedPayload() = default;
