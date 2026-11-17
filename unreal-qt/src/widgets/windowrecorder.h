@@ -28,8 +28,9 @@ class Emulator;
 class OsdKeyboardWindow;
 
 /// The request the panel and the full Video Recording dialog both make for a window recording, so the same options
-/// give the same file: the format's own codec; the GPU's encoder when View > GPU acceleration is on (the Mac's
-/// hardware encoder writes MP4 / MOV, MKV goes through ffmpeg in software); a fixed profile frame draws the CRT at
+/// give the same file: the format's own codec; the GPU's encoder when View > GPU acceleration is on or the engine is
+/// Native (the Mac's own writer for MP4 / MOV; MKV and the FFmpeg engine take the GPU encoder ffmpeg offers, found
+/// by probing, software only when there is none); a fixed profile frame draws the CRT at
 /// the frame's height (sharp, not scaled up afterwards) and centres it in it
 WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
                                                   bool gpuAcceleration, const QString& profile,

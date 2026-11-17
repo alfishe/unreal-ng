@@ -247,6 +247,7 @@ struct WindowRecordingRequest
     std::string keyboard;  ///< "" = the picture only; "default" = the model's keyboard; else a keyboard picture id
     std::string codec = "prores";  ///< "prores" (ProRes 4444, full colour), "h264" (4:4:4) or "h265" (4:4:4)
     bool hardware = false;  ///< h264 / h265 on the GPU's encoder where there is one (4:2:0: a CRT mask loses colour)
+    bool ffmpegOnly = false;  ///< with hardware: through ffmpeg's GPU encoder (found by probing), never the Mac's own writer
     int fps = 0;       ///< 0: the machine's frame rate (3.5 MHz / t-states per frame: 48.83 on a Pentagon)
     bool audio = true; ///< the machine's sound, frame for frame with the picture (needs fps 0)
     int scale = 1;  ///< the window's pixels as scale x scale blocks (1..4); the keyboard drawn at the file's width
