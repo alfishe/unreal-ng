@@ -433,7 +433,28 @@ struct WindowRecorder::Writer
             {
                 process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
                 // No event loop here: the bytes go to ffmpeg only while we wait, and ffmpeg's pace is the pace
-                if (!process.waitForBytesWritten(60000) || process.state() != QProcess::Running)
+                // A loaded machine slows ffmpeg, it does not fail it: wait in short slices (the sound keeps flowing
+                // meanwhile) while ffmpeg runs; only a process that is gone, or one that took nothing for 5 minutes,
+                // is a failure
+                int stalledMs = 0;
+                bool taken = false;
+                while (process.state() == QProcess::Running && stalledMs < 300000)
+                {
+                    if (process.waitForBytesWritten(500))
+                    {
+                        stalledMs = 0;
+                        if (process.bytesToWrite() == 0)  // the whole frame is in the pipe
+                        {
+                            taken = true;
+                            break;
+                        }
+                        continue;
+                    }
+                    stalledMs += 500;
+                    if (!pumpSound())
+                        break;
+                }
+                if (!taken || process.state() != QProcess::Running)
                     fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
                 framesDone++;
                 if (!pumpSound())
@@ -496,11 +517,14 @@ struct WindowRecorder::Writer
 
 WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, const QString& codec, bool audio,
                                                   bool gpuAcceleration, const QString& profile,
-                                                  const QString& path)
+                                                  const QString& path, int engine)
 {
     WindowRecordingRequest request;
     request.codec = codec.toStdString();
-    request.hardware = gpuAcceleration && container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) != 0;
+    // The engine chosen in the recording dialog decides (1 = Native: the hardware encoder, 2 = FFmpeg: ffmpeg);
+    // Auto follows View > GPU acceleration. MKV never goes to the hardware encoder (it writes MP4 / MOV)
+    const bool hardware = engine == 1 || (engine == 0 && gpuAcceleration);
+    request.hardware = hardware && container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) != 0;
     request.audio = audio;
     const struct { const char* id; int w, h; } profiles[] = {{"1080p", 1920, 1080}, {"1440p", 2560, 1440}, {"4k", 3840, 2160}};
     for (const auto& fixed : profiles)

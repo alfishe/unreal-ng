@@ -223,8 +223,7 @@ Option (b) + (c) of §4.1, with these choices:
   while the folder is written starts its files at its fork copy even when its first capture already began a
   second segment (segments of one frame: before P3 such a branch got no files).
 - **Not covered (edges):** the branch state, per-branch coverage and bookmarks are not in the folder (a save from
-  memory has them). Segments recorded before the folder's files covered them (a loaded session's, a branch forked
-  before its line had files) have no file and stay in memory.
+  memory has them).
 
 ## 6. Sizes and timings (measured, B-5 / B-9)
 

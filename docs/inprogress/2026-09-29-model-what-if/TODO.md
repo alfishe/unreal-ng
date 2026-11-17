@@ -7,7 +7,7 @@ Scene and requirements OR-30 … OR-37:
 
 - [x] W0: machine state transfer (`MachineStateTransfer`), WebAPI `POST /snapshot/transfer`, MCP `transfer_state`; floppies and tape as in-memory copies with postfixed paths; SD / HDD / CD explicitly not moved; invariant tests over every model (`6f5759f3`, `570ca3ce`, `7ddbef11`)
 - [ ] W0b: transfer on CLI, Lua, Python, Qt (parity)
-- [x] W1: in-memory branches — redesigned and built as [TTD branches](../2026-11-08-ttd-branches/README.md) (P1-P2 `e0ac62a53` 2026-11-10, panel `66f6811ae`, debuggers `0744664bb`); its README tracks what is left
+- [x] W1: in-memory branches — redesigned and built as [TTD branches](../2026-11-08-ttd-branches/README.md) (P1-P2 `e0ac62a53` 2026-11-10, panel `66f6811ae`, debuggers `0744664bb`); closed 2026-11-16 ([DONE.md](../2026-11-08-ttd-branches/DONE.md))
 - [ ] W2: history across snapshot / tape / disk loads — dropped: a load ends the session (D42, owner 2026-10-06, final)
 - [ ] W3: forks to other models (`RestoreInto`, lockstep fork runner, input events from the parent, parent link, per-target report); `switch_model` with state — needs W1 and O-1
 - [ ] W4: capture, grid, scores, verdict; batch mode
