@@ -6,14 +6,21 @@
 
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include "_helpers/heapcounter.h"
 #include "_helpers/testpathhelper.h"
@@ -681,6 +688,67 @@ TEST_F(TTDControl_Test, FileVerbsReportMissingAndUnreadableFiles)
     EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "2"}}).error, TTDControlError::BadRequest);  // no path
     Record(2);
     EXPECT_EQ(Run("export-clip", {{"from", "0"}, {"to", "1"}, {"path", missing}}).error, TTDControlError::Conflict);
+}
+
+/// F3: a dump is written as "<path>.partial" and renamed when whole. A refused file answers 409 with the
+/// system's words and reason "io"; a failure after the file was made removes it and says so; a file already
+/// under the name stays as it was; a good dump leaves no partial file behind
+TEST_F(TTDControl_Test, AFailedDumpSaysWhyAndLeavesNoPartialFile)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = FileHelper::ToFsPath(TestPathHelper::GetUniqueTestScratchPath("ttdcontrol-dump-fail"));
+    fs::create_directories(dir);
+    const std::string kept = (dir / "kept.ttd").string();
+    std::ofstream(FileHelper::ToFsPath(kept)) << "keep";
+
+    // Nothing to dump: the partial file was made, then removed; the old file is untouched
+    TTDReply r = Run("dump", {{"path", kept}});
+    EXPECT_EQ(r.error, TTDControlError::Conflict);
+    EXPECT_EQ(r.HttpStatus(), 409);
+    EXPECT_EQ(Str(r, "reason"), "session");
+    EXPECT_TRUE(Bool(r, "partial_removed"));
+    EXPECT_NE(r.message.find("no session"), std::string::npos) << r.message;
+    EXPECT_NE(r.message.find("was removed"), std::string::npos) << r.message;
+    EXPECT_FALSE(fs::exists(FileHelper::ToFsPath(kept + ".partial")));
+    std::ifstream in(FileHelper::ToFsPath(kept));
+    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(content, "keep");
+
+    // A good dump: the file under the name, no partial file
+    Record(2);
+    ASSERT_TRUE(Run("stop").Ok());
+    r = Run("dump", {{"path", kept}});
+    ASSERT_TRUE(r.Ok()) << r.message;
+    EXPECT_EQ(static_cast<int64_t>(fs::file_size(FileHelper::ToFsPath(kept))), Int(r, "bytes"));
+    EXPECT_FALSE(fs::exists(FileHelper::ToFsPath(kept + ".partial")));
+
+    // A folder that does not exist: the system's reason, never "disk full"
+    const std::string nowhere = (dir / "no-such-folder" / "s.ttd").string();
+    r = Run("dump", {{"path", nowhere}});
+    EXPECT_EQ(r.error, TTDControlError::Conflict);
+    EXPECT_EQ(Str(r, "reason"), "io");
+    EXPECT_EQ(Str(r, "path"), nowhere);
+    EXPECT_FALSE(Bool(r, "partial_removed"));
+    EXPECT_NE(r.message.find(nowhere), std::string::npos) << r.message;
+    EXPECT_NE(r.message.find("cannot create"), std::string::npos) << r.message;
+    EXPECT_EQ(r.message.find("disk full"), std::string::npos) << r.message;
+
+#ifndef _WIN32
+    // A folder without write permission (POSIX): "Permission denied" in the answer
+    const fs::path locked = dir / "locked";
+    fs::create_directories(locked);
+    fs::permissions(locked, fs::perms::owner_read | fs::perms::owner_exec);
+    r = Run("dump", {{"path", (locked / "s.ttd").string()}});
+    fs::permissions(locked, fs::perms::owner_all);
+    if (::geteuid() != 0)   // root writes anyway
+    {
+        EXPECT_EQ(r.error, TTDControlError::Conflict);
+        EXPECT_EQ(Str(r, "reason"), "io");
+        EXPECT_NE(r.message.find(std::strerror(EACCES)), std::string::npos) << r.message;
+    }
+#endif
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }
 
 /// D13: a seek to a frame without a T-state lands at the frame's end - the

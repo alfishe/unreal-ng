@@ -10,6 +10,8 @@
 #include <common/filehelper.h>
 #include <loaders/snapshot/snapshotlauncher.h>
 
+#include "cli-statetransfer.h"
+
 #include <optional>
 #include <sstream>
 
@@ -57,6 +59,10 @@ void CLIProcessor::HandleSnapshot(const ClientSession& session, const std::vecto
     else if (subcommand == "formats")
     {
         HandleSnapshotFormats(session, emulator);
+    }
+    else if (subcommand == "transfer")
+    {
+        HandleSnapshotTransfer(session, emulator, args);
     }
     else
     {
@@ -258,6 +264,11 @@ void CLIProcessor::ShowSnapshotHelp(const ClientSession& session)
     ss << "                                 why it is refused); nothing is written" << NEWLINE;
     ss << "  snapshot formats               Which formats this machine can be saved in right now, and why not" << NEWLINE;
     ss << "  snapshot info                  Get current snapshot status and the last load's pipeline report" << NEWLINE;
+    ss << "  snapshot transfer <id> [--check] [--no-keep-frame] [--json]" << NEWLINE;
+    ss << "                                 Move this machine's running state into the open instance <id>, in memory;" << NEWLINE;
+    ss << "                                 --check: only report what would be copied, dropped or refused" << NEWLINE;
+    ss << "  snapshot transfer --model <name> [--ram <KB>] [--id <symbolic>] [--start | --no-start] [--no-keep-frame]" << NEWLINE;
+    ss << "                                 The same into a new instance of that model (started when this one runs)" << NEWLINE;
     ss << NEWLINE;
 
     session.SendResponse(ss.str());
@@ -332,6 +343,30 @@ void CLIProcessor::HandleSnapshotFormats(const ClientSession& session, std::shar
         ss << NEWLINE;
     }
     session.SendResponse(ss.str());
+}
+
+void CLIProcessor::HandleSnapshotTransfer(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                                          const std::vector<std::string>& args)
+{
+    // A thin adapter over StateTransferControl (loaders/snapshot/statetransfercontrol.h), see cli-statetransfer.h
+    const std::vector<std::string> rest(args.begin() + 1, args.end());
+    if (!rest.empty() && (rest[0] == "help" || rest[0] == "--help"))
+    {
+        session.SendResponse(ClientSession::FormatForTerminal(CliStateTransfer::Usage()));
+        return;
+    }
+    StateTransferRequest request;
+    bool json = false;
+    std::string error;
+    if (!CliStateTransfer::ParseArgs(rest, request, json, error))
+    {
+        session.SendResponse(ClientSession::FormatForTerminal("Error: " + error + "\n" + CliStateTransfer::Usage()));
+        return;
+    }
+    request.sourceId = emulator->GetId();
+    emulator.reset();
+    const StateTransferReply reply = StateTransferControl::Execute(request);
+    session.SendResponse(ClientSession::FormatForTerminal(CliStateTransfer::Render(reply, json)));
 }
 
 /// endregion </Snapshot Control Commands>

@@ -19,8 +19,9 @@ constexpr uint8_t kSync[4] = {'T', 'R', 'E', 'C'};
 constexpr uint8_t kTrailerMagic[4] = {'T', 'T', 'D', 'X'};
 constexpr uint16_t kFlagCompressed = 1;
 constexpr uint16_t kFlagPartEnd = 2;
+constexpr uint16_t kFlagContinued = 4;   ///< a chunked stream's record: the payload goes on in the next record
 constexpr uint16_t kIndexVersion = 1;
-constexpr uint32_t kMaxRawSize = 1u << 30;        ///< a record never decompresses to more (allocation bound)
+constexpr uint32_t kMaxRawSize = kMaxRecordRaw;   ///< a record never decompresses to more (allocation bound)
 constexpr uint32_t kMaxHeaderSize = 64u << 20;
 
 using ByteWriter = TTDByteWriter;
@@ -80,6 +81,8 @@ TTDFileSink::~TTDFileSink() = default;
 bool TTDFileSink::Write(const uint8_t* data, size_t size) { return _file && _file->Write(data, size); }
 bool TTDFileSink::Sync() { return _file && _file->Sync(); }
 uint64_t TTDFileSink::Size() const { return _file ? _file->Size() : 0; }
+std::string TTDFileSink::LastError() const { return _file ? _file->LastError() : std::string("the file is not open"); }
+bool TTDFileSink::LastErrorNoSpace() const { return _file && _file->LastErrorNoSpace(); }
 void TTDFileSink::Close()
 {
     if (_file)
@@ -103,6 +106,8 @@ bool TTDContainerWriter::Begin(ITTDByteSink& sink, const TTDContainerHeader& hea
 {
     _sink = &sink;
     _failed = false;
+    _error = {};
+    _streams = header.streams;
     _partIndex = 0;
     _sequence = 0;
     _partRecords.clear();
@@ -136,38 +141,84 @@ bool TTDContainerWriter::Begin(ITTDByteSink& sink, const TTDContainerHeader& hea
     PutU32(w.bytes.data() + 12, codec::Crc32C(w.bytes.data(), w.bytes.size()));
     if (!_sink->Write(w.bytes.data(), w.bytes.size()))
     {
-        _failed = true;
+        FailSink("writing the header");
         if (error)
-            *error = "the header could not be written";
+            *error = _error.text;
         return false;
     }
+    return true;
+}
+
+bool TTDContainerWriter::Fail(TTDWriteFailure kind, std::string text)
+{
+    if (!_failed)
+        _error = {kind, std::move(text)};
+    _failed = true;
+    return false;
+}
+
+bool TTDContainerWriter::FailSink(const std::string& what)
+{
+    const std::string why = _sink ? _sink->LastError() : std::string();
+    const bool noSpace = _sink && _sink->LastErrorNoSpace();
+    return Fail(noSpace ? TTDWriteFailure::NoSpace : TTDWriteFailure::Io,
+                what + " failed: " + (why.empty() ? std::string("the file system refused the write") : why));
+}
+
+std::string TTDContainerWriter::StreamName(uint16_t id) const
+{
+    for (const TTDStreamDesc& d : _streams)
+        if (d.id == id)
+            return "stream '" + d.name + "' (id " + std::to_string(id) + ")";
+    return "stream " + std::to_string(id);
+}
+
+bool TTDContainerWriter::Usable()
+{
+    if (_failed)
+        return false;   // the first reason stays
+    if (!_sink)
+        return Fail(TTDWriteFailure::Layout, "the session file was not begun");
     return true;
 }
 
 bool TTDContainerWriter::WriteRecord(uint16_t streamId, uint16_t flags, const uint8_t* stored, size_t storedSize,
                                      size_t rawSize)
 {
-    if (!_sink || _failed || storedSize > UINT32_MAX || rawSize > kMaxRawSize)
-    {
-        _failed = true;
+    if (!Usable())
         return false;
-    }
+    if (storedSize > UINT32_MAX || rawSize > kMaxRawSize)
+        return Fail(TTDWriteFailure::TooLarge, StreamName(streamId) + ": a record of " + std::to_string(rawSize) +
+                                                   " bytes raw (" + std::to_string(storedSize) +
+                                                   " stored) passes the record limit of " +
+                                                   std::to_string(kMaxRawSize) + " bytes");
     const uint32_t crc = codec::Crc32C(stored, storedSize);
+    const uint64_t offset = _sink->Size();
     const std::vector<uint8_t> header =
         EncodeRecordHeader(streamId, flags, _partIndex, _sequence++, static_cast<uint32_t>(storedSize),
                            static_cast<uint32_t>(rawSize), crc);
     if (!_sink->Write(header.data(), header.size()) || (storedSize && !_sink->Write(stored, storedSize)))
-    {
-        _failed = true;
-        return false;
-    }
+        return FailSink("writing a record of " + StreamName(streamId) + " (" + std::to_string(storedSize) +
+                        " bytes) at offset " + std::to_string(offset));
     return true;
 }
 
-bool TTDContainerWriter::AddRecord(uint16_t streamId, const uint8_t* data, size_t size, bool compress)
+void TTDContainerWriter::Count(uint16_t streamId, size_t stored, size_t raw)
 {
-    if (streamId == kContainerStream || !_sink || _failed)
-        return false;
+    auto total = std::find_if(_totals.begin(), _totals.end(), [streamId](const auto& t) { return t.first == streamId; });
+    if (total == _totals.end())
+    {
+        _totals.push_back({streamId, {}});
+        total = std::prev(_totals.end());
+    }
+    total->second.records++;
+    total->second.stored += stored;
+    total->second.raw += raw;
+}
+
+bool TTDContainerWriter::WritePayload(uint16_t streamId, uint16_t flags, const uint8_t* data, size_t size,
+                                      bool compress)
+{
     const uint64_t offset = _sink->Size();
     std::vector<uint8_t> packed;
     if (compress && size > 0)
@@ -175,46 +226,62 @@ bool TTDContainerWriter::AddRecord(uint16_t streamId, const uint8_t* data, size_
     const bool usePacked = !packed.empty() && packed.size() < size;
     const uint8_t* stored = usePacked ? packed.data() : data;
     const size_t storedSize = usePacked ? packed.size() : size;
-    if (!WriteRecord(streamId, usePacked ? kFlagCompressed : 0, stored, storedSize, size))
+    if (!WriteRecord(streamId, static_cast<uint16_t>(flags | (usePacked ? kFlagCompressed : 0)), stored, storedSize,
+                     size))
         return false;
     _partRecords.push_back(offset);
+    Count(streamId, storedSize, size);
+    return true;
+}
 
-    auto total = std::find_if(_totals.begin(), _totals.end(), [streamId](const auto& t) { return t.first == streamId; });
-    if (total == _totals.end())
+bool TTDContainerWriter::AddRecord(uint16_t streamId, const uint8_t* data, size_t size, bool compress)
+{
+    if (!Usable())
+        return false;
+    if (streamId == kContainerStream || IsChunkedTwin(streamId))
+        return Fail(TTDWriteFailure::Layout, StreamName(streamId) + " is not a stream a payload may name");
+    if (size <= _recordLimit)
+        return WritePayload(streamId, 0, data, size, compress);
+
+    // Over the record limit: the chunked twin's records, one after another, every one but the last "continued"
+    const uint16_t twin = ChunkedTwin(streamId);
+    bool declared = false;
+    for (const TTDStreamDesc& d : _streams)
+        declared |= d.id == twin;
+    if (!declared)
+        return Fail(TTDWriteFailure::TooLarge, StreamName(streamId) + ": a payload of " + std::to_string(size) +
+                                                   " bytes passes the record limit of " +
+                                                   std::to_string(_recordLimit) +
+                                                   " bytes, and the file does not declare the stream as chunked");
+    for (size_t at = 0; at < size; at += _recordLimit)
     {
-        _totals.push_back({streamId, {}});
-        total = std::prev(_totals.end());
+        const size_t n = std::min<size_t>(_recordLimit, size - at);
+        const bool last = at + n == size;
+        if (!WritePayload(twin, last ? 0 : kFlagContinued, data + at, n, compress))
+            return false;
     }
-    total->second.records++;
-    total->second.stored += storedSize;
-    total->second.raw += size;
     return true;
 }
 
 bool TTDContainerWriter::AddStoredRecord(uint16_t streamId, uint16_t flags, const uint8_t* stored, size_t storedSize,
                                          size_t rawSize)
 {
-    if (streamId == kContainerStream || !_sink || _failed)
+    if (!Usable())
         return false;
+    if (streamId == kContainerStream)
+        return Fail(TTDWriteFailure::Layout, "stream 0 holds the part ends only");
     const uint64_t offset = _sink->Size();
-    if (!WriteRecord(streamId, static_cast<uint16_t>(flags & kFlagCompressed), stored, storedSize, rawSize))
+    if (!WriteRecord(streamId, static_cast<uint16_t>(flags & (kFlagCompressed | kFlagContinued)), stored, storedSize,
+                     rawSize))
         return false;
     _partRecords.push_back(offset);
-    auto total = std::find_if(_totals.begin(), _totals.end(), [streamId](const auto& t) { return t.first == streamId; });
-    if (total == _totals.end())
-    {
-        _totals.push_back({streamId, {}});
-        total = std::prev(_totals.end());
-    }
-    total->second.records++;
-    total->second.stored += storedSize;
-    total->second.raw += rawSize;
+    Count(streamId, storedSize, rawSize);
     return true;
 }
 
 bool TTDContainerWriter::EndPart(const TTDPartEnd& part, bool sync)
 {
-    if (!_sink || _failed)
+    if (!Usable())
         return false;
     ByteWriter w;
     w.U64(part.firstFrame);
@@ -240,10 +307,7 @@ bool TTDContainerWriter::EndPart(const TTDPartEnd& part, bool sync)
     if (!WriteRecord(kContainerStream, kFlagPartEnd, w.bytes.data(), w.bytes.size(), w.bytes.size()))
         return false;
     if (sync && !_sink->Sync())
-    {
-        _failed = true;
-        return false;
-    }
+        return FailSink("making part " + std::to_string(_partIndex) + " durable");
     _parts.push_back({offset, part.firstFrame, part.frameCount, part.branch});
     _partRecords.clear();
     ++_partIndex;
@@ -252,7 +316,7 @@ bool TTDContainerWriter::EndPart(const TTDPartEnd& part, bool sync)
 
 bool TTDContainerWriter::Finalize(const std::vector<uint8_t>& indexExtra)
 {
-    if (!_sink || _failed)
+    if (!Usable())
         return false;
     ByteWriter w;
     w.U16(kIndexVersion);
@@ -282,12 +346,10 @@ bool TTDContainerWriter::Finalize(const std::vector<uint8_t>& indexExtra)
     t.U32(codec::Crc32C(w.bytes.data(), w.bytes.size()));
     t.Bytes(kTrailerMagic, 4);
     t.U32(codec::Crc32C(t.bytes.data(), t.bytes.size()));
-    if (!_sink->Write(w.bytes.data(), w.bytes.size()) || !_sink->Write(t.bytes.data(), t.bytes.size()) ||
-        !_sink->Sync())
-    {
-        _failed = true;
-        return false;
-    }
+    if (!_sink->Write(w.bytes.data(), w.bytes.size()) || !_sink->Write(t.bytes.data(), t.bytes.size()))
+        return FailSink("writing the index");
+    if (!_sink->Sync())
+        return FailSink("making the index durable");
     return true;
 }
 
@@ -446,6 +508,7 @@ bool TTDContainerReader::ParsePartEnd(const TTDRecordRef& partEnd, TTDPartRef& o
     }
     out.index = partEnd.partIndex;
     out.records.clear();
+    out.physical.clear();
     bool recordsOk = true;
     for (uint32_t i = 0; i < records; ++i)
     {
@@ -458,7 +521,7 @@ bool TTDContainerReader::ParsePartEnd(const TTDRecordRef& partEnd, TTDPartRef& o
             recordsOk = false;
             why = "a record header of the part is damaged (at " + std::to_string(offset) + ")";
         }
-        out.records.push_back(record);
+        out.physical.push_back(record);
     }
     uint64_t depCount = 0, length = 0;
     if (!r.Varint(depCount) || depCount > r.Left())
@@ -483,10 +546,64 @@ bool TTDContainerReader::ParsePartEnd(const TTDRecordRef& partEnd, TTDPartRef& o
         why = "damaged part-end record (extra)";
         return false;
     }
+    if (recordsOk && !JoinChunks(out, why))
+        recordsOk = false;
     if (!recordsOk)
     {
         out.damaged = true;
         out.damage = why;
+        if (out.records.empty())
+            out.records = out.physical;
+    }
+    return true;
+}
+
+bool TTDContainerReader::JoinChunks(TTDPartRef& part, std::string& why)
+{
+    // A chunked stream's records follow one another in the file and in the part, every one but the last
+    // "continued": one payload of the stream
+    part.records.clear();
+    bool open = false;   // the last record was "continued"
+    for (size_t i = 0; i < part.physical.size(); ++i)
+    {
+        const TTDRecordRef& record = part.physical[i];
+        if (open)
+        {
+            TTDRecordRef& head = part.records.back();
+            const TTDRecordRef& previous = part.physical[i - 1];
+            if (record.streamId != ChunkedTwin(head.streamId) ||
+                record.offset != previous.offset + kRecordHeaderSize + previous.storedSize ||
+                record.sequence != previous.sequence + 1)
+            {
+                why = "a chunked record of stream " + std::to_string(head.streamId) + " is cut (at " +
+                      std::to_string(previous.offset) + ")";
+                return false;
+            }
+            head.chunks++;
+            head.chunkedRaw += record.rawSize;
+            open = (record.flags & kFlagContinued) != 0;
+            continue;
+        }
+        TTDRecordRef joined = record;
+        if (IsChunkedTwin(record.streamId))
+        {
+            joined.streamId = StreamOfChunkedTwin(record.streamId);
+            joined.chunkedRaw = record.rawSize;
+            open = (record.flags & kFlagContinued) != 0;
+        }
+        else if ((record.flags & kFlagContinued) != 0)
+        {
+            why = "a record of stream " + std::to_string(record.streamId) + " claims a continuation (at " +
+                  std::to_string(record.offset) + ")";
+            return false;
+        }
+        part.records.push_back(joined);
+    }
+    if (open)
+    {
+        why = "a chunked record of stream " + std::to_string(part.records.back().streamId) + " is cut (at " +
+              std::to_string(part.physical.back().offset) + ")";
+        return false;
     }
     return true;
 }
@@ -655,7 +772,9 @@ bool TTDContainerReader::ReadStored(const TTDRecordRef& record, std::vector<uint
 {
     out.resize(record.storedSize);
     std::string why;
-    if (!_source || !_source->ReadAt(record.offset + kRecordHeaderSize, out.data(), out.size()))
+    if (record.chunks > 1)
+        why = "the record at " + std::to_string(record.offset) + " is a chunked stream's: read its records one by one";
+    else if (!_source || !_source->ReadAt(record.offset + kRecordHeaderSize, out.data(), out.size()))
         why = "cannot read the record at " + std::to_string(record.offset);
     else if (codec::Crc32C(out.data(), out.size()) != record.payloadCrc)
         why = "damaged record at " + std::to_string(record.offset) + " (CRC)";
@@ -669,6 +788,31 @@ bool TTDContainerReader::ReadStored(const TTDRecordRef& record, std::vector<uint
 
 bool TTDContainerReader::ReadRecord(const TTDRecordRef& record, std::vector<uint8_t>& out, std::string* error)
 {
+    if (record.chunks > 1)
+    {
+        // A chunked stream: its records one after another, each read and checked as a record of its own
+        out.clear();
+        out.reserve(static_cast<size_t>(record.chunkedRaw));
+        uint64_t at = record.offset;
+        std::vector<uint8_t> chunk;
+        for (uint32_t k = 0; k < record.chunks; ++k)
+        {
+            TTDRecordRef piece;
+            if (!ReadRecordHeader(at, piece) || piece.streamId != ChunkedTwin(record.streamId))
+            {
+                const std::string why = "damaged chunked record at " + std::to_string(at);
+                MarkDamaged(record.partIndex, why);
+                if (error)
+                    *error = why;
+                return false;
+            }
+            if (!ReadRecord(piece, chunk, error))
+                return false;
+            out.insert(out.end(), chunk.begin(), chunk.end());
+            at += kRecordHeaderSize + piece.storedSize;
+        }
+        return true;
+    }
     auto fail = [&](const std::string& why) {
         MarkDamaged(record.partIndex, why);
         if (error)

@@ -134,7 +134,7 @@ def cmd_parts(args: argparse.Namespace) -> int:
         sizes = {}
         for r in part.records:
             name = STREAM_NAMES.get(r.stream_id, f"stream {r.stream_id}")
-            sizes[name] = sizes.get(name, 0) + r.stored_size + RECORD_HEADER
+            sizes[name] = sizes.get(name, 0) + r.stored_size + RECORD_HEADER * max(1, len(r.chunks))
         state = "damaged: " + part.damage if part.damaged else ("ok" if reachable(c, part.index) else "unreachable")
         start = " [file start]" if part.file_start else ""
         print(f"part {part.index}: frames {part.first_frame}+{part.frame_count}, {len(part.records)} records, "

@@ -825,3 +825,45 @@ TEST_F(AutomationLua_Test, AnalysisTraceTakesThePathAsItsPositionalOption)
         << message;
     EXPECT_NE(output.find("no recording"), std::string::npos) << output;
 }
+
+/// transfer_state{...} as every surface (StateTransferControl): the WebAPI's report as a table for a check, a transfer
+/// into a new instance and a refusal; nil and the reason when there is no report
+TEST_F(AutomationLua_Test, TransferStateAnswersTheReportOfEverySurface)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
+    auto source = manager->CreateEmulatorWithModelAndRAM("lua-transfer", "128k", 128, LoggerLevel::LogError);
+    auto target = manager->CreateEmulatorWithModelAndRAM("lua-transfer", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(source && target);
+    manager->SetSelectedEmulatorId(source->GetId());
+
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(_lua.executeCode("local r = transfer_state{to = '" + target->GetId() + "', check = true}; "
+                                 "print(r.ok, r.mode, r.check, r.target_id == '" + target->GetId() + "', r.copied > 0)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output, "true\tcross-model\ttrue\ttrue\ttrue\n");
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = transfer_state{model = 'PENTAGON', ram_size = 512, start = false}; "
+                                 "print(r.ok, r.created, r.model, r.ram_kb, r.state, #r.items > 0); print(r.target_id)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output.rfind("true\ttrue\tPENTAGON\t512\tinitialized\ttrue\n", 0), 0u) << output;
+    const std::string created = output.substr(output.find('\n') + 1, output.size() - output.find('\n') - 2);
+    EXPECT_TRUE(manager->GetEmulator(created)) << "the new instance: " << created;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r, err = transfer_state{to = 'no-such-instance'}; print(r, err)", message, output))
+        << message;
+    EXPECT_EQ(output, "nil\tNot Found: Target emulator 'no-such-instance' not found\n");
+}

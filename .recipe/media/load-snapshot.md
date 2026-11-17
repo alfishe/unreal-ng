@@ -265,6 +265,15 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/snapshot/transfer" \
 #   [note] SD / HDD / CD: not moved (by design, for now): the target keeps its own ...
 ```
 
+The same verb on the other planes (same options, same report):
+
+```text
+snapshot transfer <target-id> --check                 # CLI (the selected instance is the source); --json = the route's JSON
+snapshot transfer --model PENTAGON --ram 512
+transfer_state{to = "<target-id>", check = true}      -- Lua
+unreal.transfer_state(model="PENTAGON", ram_size=512) # Python
+```
+
 HTTP 422 = the target cannot hold the state (e.g. a 128K program into a 48K);
 `reason` says why and nothing changed. Details:
 [automation.md → Machine State Transfer](../../docs/features/automation.md#machine-state-transfer).
