@@ -1,0 +1,1 @@
+a=1 : a += 2 : assert a==3 : repeat 2 : a += 10 : rend : assert a==23: a=1 : a -= 2 : assert a==-1 : repeat 2 : a -= 10 : rend : assert a==-21: a=3 : a *= 2 : assert a==6 : repeat 2 : a *= 10 : rend : assert a==600: a=600 : a /= 2 : assert a==300 : repeat 2 : a /= 10 : rend : assert a==3 : nop

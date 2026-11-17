@@ -54,6 +54,7 @@ contributors) as the format reference; no MAME source is vendored.
 | Qt 6 (Gui, Widgets, Multimedia, Network) | system / aqtinstall | LGPL-3.0 | dynamic |
 | QHexView 5.0 | `unreal-qt/3rdparty/QHexView-5.0/` | MIT | static |
 | ayumi (interpolation filter excerpt) | `core/src/common/sound/filters/filter_interpolate.h` | MIT | source |
+| rasm 3.3.x crunchers in unreal-asm: LZ4 1.7 (BSD-2-Clause), Exomizer 2 (Magnus Lind's license: free use with attribution, its text says non-commercial, non-profit), salvador 1.4.2, apultra 1.3.6, lzsa 1.3.5 (zlib), libdivsufsort (MIT), ports of rasm's LZ48/LZ49 (MIT) and ZX7 (BSD-3-Clause); each LICENSE next to its sources | `core/src/3rdparty/unreal-asm/src/compress/` | see each `LICENSE` | static |
 
 ## Stream Deck companion (`UNREAL_STREAMDECK`, off by default)
 

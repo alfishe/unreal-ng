@@ -1,0 +1,1 @@
+bankset 0:org #5000:label1:bankset 1:org #9000:label2:bankset 2:assert {page}label1==0x7FC0:assert {page}label2==0x7FC6:assert {pageset}label1==#7FC0:assert {pageset}label2==#7FC2:nop

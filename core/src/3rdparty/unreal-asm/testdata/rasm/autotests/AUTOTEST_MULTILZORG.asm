@@ -1,0 +1,1 @@
+ tabeul: defw script0: defw script1: defw script2: script0: org #4000,$: lz48: start1: jr end1: defs 100: djnz start1: end1: lzclose: org $: script1: org #4000,$: lz49: start2: jr end2: defs 100: djnz start2: end2: lzclose: org $: script2: org #4000,$: lz49: start3: jr end3: defs 100: djnz start3: end3: lzclose: org $: ei: ret 

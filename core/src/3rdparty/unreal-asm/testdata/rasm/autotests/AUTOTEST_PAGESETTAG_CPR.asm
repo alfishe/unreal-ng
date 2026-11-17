@@ -1,0 +1,1 @@
+buildcpr:bank 0:org 0:ld bc,{pageset}b5:bank 5:org #C000:b5 nop

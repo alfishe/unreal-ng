@@ -1,0 +1,1 @@
+ myval=0x123 : assert getr(myval)==2 : assert getb(myval)==3 : assert getg(myval)==1 : assert getv(myval)==1 : assert setr(2)+setv(1)+setb(3)==0x123 : assert setv(-2)==setv(0) && setb(220)==setb(15) : nop 

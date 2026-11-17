@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call depack : jr #FE : include 'decrunch/unaplib_fast.asm' : depack ApUnpack (void) : org #C000 : incbin './decrunch/lzDataTest.apu' 

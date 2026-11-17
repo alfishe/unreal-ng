@@ -1,0 +1,1 @@
+macro test:nop:endm:ifndef test:error:else:test:endif:ifdef test:test:else:error:endif:nop

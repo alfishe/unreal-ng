@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call mizou : jr #FE : mizou include 'decrunch/deexo.asm' : Mizoumizeur (void) : org #C000 : incbin './decrunch/lzDataTest.exo' 

@@ -1,0 +1,1 @@
+lzapu : incbin './decrunch/lzDataTest.bin' : lzclose : lafin : save './decrunch/lzDataTest.apu',0,lafin 

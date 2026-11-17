@@ -1,0 +1,1 @@
+ utf8remap 'é',20 : struct s_texte : texte defs 10 :  endstruct : struct s_texte unestruct,1,'éééééééééé' 

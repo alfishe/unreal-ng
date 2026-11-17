@@ -1,0 +1,1 @@
+inczx7 './decrunch/lzDataTest.bin' : save './decrunch/lzDataTest.zx7',0,$ 

@@ -1,0 +1,97 @@
+/*
+ * One translation unit for rasm's single-file LZ4 1.7 (lz4.h: lz4.c, lz4hc.c and their headers merged by rasm,
+ * unmodified here), plus the entry points unreal-asm calls. Every external symbol is renamed with the unrealasm_
+ * prefix so that it never clashes with another LZ4 linked into the same program. LZ4 HC keeps its state on the heap
+ * (LZ4HC_HEAPMODE 1), the functions are thread-safe.
+ */
+#include <limits.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lz4unit.h"
+
+/* Generated from nm of this unit without the renames */
+#define LZ4_compress unrealasm_LZ4_compress
+#define LZ4_compressBound unrealasm_LZ4_compressBound
+#define LZ4_compressHC unrealasm_LZ4_compressHC
+#define LZ4_compressHC2 unrealasm_LZ4_compressHC2
+#define LZ4_compressHC2_continue unrealasm_LZ4_compressHC2_continue
+#define LZ4_compressHC2_limitedOutput unrealasm_LZ4_compressHC2_limitedOutput
+#define LZ4_compressHC2_limitedOutput_continue unrealasm_LZ4_compressHC2_limitedOutput_continue
+#define LZ4_compressHC2_limitedOutput_withStateHC unrealasm_LZ4_compressHC2_limitedOutput_withStateHC
+#define LZ4_compressHC2_withStateHC unrealasm_LZ4_compressHC2_withStateHC
+#define LZ4_compressHC_continue unrealasm_LZ4_compressHC_continue
+#define LZ4_compressHC_limitedOutput unrealasm_LZ4_compressHC_limitedOutput
+#define LZ4_compressHC_limitedOutput_continue unrealasm_LZ4_compressHC_limitedOutput_continue
+#define LZ4_compressHC_limitedOutput_withStateHC unrealasm_LZ4_compressHC_limitedOutput_withStateHC
+#define LZ4_compressHC_withStateHC unrealasm_LZ4_compressHC_withStateHC
+#define LZ4_compress_HC unrealasm_LZ4_compress_HC
+#define LZ4_compress_HC_continue unrealasm_LZ4_compress_HC_continue
+#define LZ4_compress_HC_continue_destSize unrealasm_LZ4_compress_HC_continue_destSize
+#define LZ4_compress_HC_destSize unrealasm_LZ4_compress_HC_destSize
+#define LZ4_compress_HC_extStateHC unrealasm_LZ4_compress_HC_extStateHC
+#define LZ4_compress_continue unrealasm_LZ4_compress_continue
+#define LZ4_compress_default unrealasm_LZ4_compress_default
+#define LZ4_compress_destSize unrealasm_LZ4_compress_destSize
+#define LZ4_compress_fast unrealasm_LZ4_compress_fast
+#define LZ4_compress_fast_continue unrealasm_LZ4_compress_fast_continue
+#define LZ4_compress_fast_extState unrealasm_LZ4_compress_fast_extState
+#define LZ4_compress_fast_force unrealasm_LZ4_compress_fast_force
+#define LZ4_compress_forceExtDict unrealasm_LZ4_compress_forceExtDict
+#define LZ4_compress_limitedOutput unrealasm_LZ4_compress_limitedOutput
+#define LZ4_compress_limitedOutput_continue unrealasm_LZ4_compress_limitedOutput_continue
+#define LZ4_compress_limitedOutput_withState unrealasm_LZ4_compress_limitedOutput_withState
+#define LZ4_compress_withState unrealasm_LZ4_compress_withState
+#define LZ4_create unrealasm_LZ4_create
+#define LZ4_createHC unrealasm_LZ4_createHC
+#define LZ4_createStream unrealasm_LZ4_createStream
+#define LZ4_createStreamDecode unrealasm_LZ4_createStreamDecode
+#define LZ4_createStreamHC unrealasm_LZ4_createStreamHC
+#define LZ4_decompress_fast unrealasm_LZ4_decompress_fast
+#define LZ4_decompress_fast_continue unrealasm_LZ4_decompress_fast_continue
+#define LZ4_decompress_fast_usingDict unrealasm_LZ4_decompress_fast_usingDict
+#define LZ4_decompress_fast_withPrefix64k unrealasm_LZ4_decompress_fast_withPrefix64k
+#define LZ4_decompress_safe unrealasm_LZ4_decompress_safe
+#define LZ4_decompress_safe_continue unrealasm_LZ4_decompress_safe_continue
+#define LZ4_decompress_safe_forceExtDict unrealasm_LZ4_decompress_safe_forceExtDict
+#define LZ4_decompress_safe_partial unrealasm_LZ4_decompress_safe_partial
+#define LZ4_decompress_safe_usingDict unrealasm_LZ4_decompress_safe_usingDict
+#define LZ4_decompress_safe_withPrefix64k unrealasm_LZ4_decompress_safe_withPrefix64k
+#define LZ4_freeHC unrealasm_LZ4_freeHC
+#define LZ4_freeStream unrealasm_LZ4_freeStream
+#define LZ4_freeStreamDecode unrealasm_LZ4_freeStreamDecode
+#define LZ4_freeStreamHC unrealasm_LZ4_freeStreamHC
+#define LZ4_loadDict unrealasm_LZ4_loadDict
+#define LZ4_loadDictHC unrealasm_LZ4_loadDictHC
+#define LZ4_resetStream unrealasm_LZ4_resetStream
+#define LZ4_resetStreamHC unrealasm_LZ4_resetStreamHC
+#define LZ4_resetStreamState unrealasm_LZ4_resetStreamState
+#define LZ4_resetStreamStateHC unrealasm_LZ4_resetStreamStateHC
+#define LZ4_saveDict unrealasm_LZ4_saveDict
+#define LZ4_saveDictHC unrealasm_LZ4_saveDictHC
+#define LZ4_setStreamDecode unrealasm_LZ4_setStreamDecode
+#define LZ4_sizeofState unrealasm_LZ4_sizeofState
+#define LZ4_sizeofStateHC unrealasm_LZ4_sizeofStateHC
+#define LZ4_sizeofStreamState unrealasm_LZ4_sizeofStreamState
+#define LZ4_sizeofStreamStateHC unrealasm_LZ4_sizeofStreamStateHC
+#define LZ4_slideInputBuffer unrealasm_LZ4_slideInputBuffer
+#define LZ4_slideInputBufferHC unrealasm_LZ4_slideInputBufferHC
+#define LZ4_uncompress unrealasm_LZ4_uncompress
+#define LZ4_uncompress_unknownOutputSize unrealasm_LZ4_uncompress_unknownOutputSize
+#define LZ4_versionNumber unrealasm_LZ4_versionNumber
+#define LZ4_versionString unrealasm_LZ4_versionString
+
+#include "lz4.h"
+
+int UnrealAsmLz4CompressHc(const char *source, char *destination, int sourceSize, int destinationCapacity, int level)
+{
+    return LZ4_compress_HC(source, destination, sourceSize, destinationCapacity, level);
+}
+
+int UnrealAsmLz4DecompressSafe(const char *source, char *destination, int compressedSize, int destinationCapacity)
+{
+    return LZ4_decompress_safe(source, destination, compressedSize, destinationCapacity);
+}

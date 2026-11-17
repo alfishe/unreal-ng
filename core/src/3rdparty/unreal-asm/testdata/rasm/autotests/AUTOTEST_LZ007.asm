@@ -1,0 +1,1 @@
+org #A000,$:module1:lzx0:jp module1:jp module2:jp module3:jp module4:lzclose:org $:org #A000,$:module2:lzx0:jp module1:jp module2:jp module3:jp module4:lzclose:org $:org #A000,$:module3:lzx0:jp module1:jp module2:jp module3:jp module4:lzclose:org $:org #A000,$:module4:lzx0:jp module1:jp module2:jp module3:jp module4:lzclose:org $

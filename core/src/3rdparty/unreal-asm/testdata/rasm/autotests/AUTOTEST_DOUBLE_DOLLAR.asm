@@ -1,0 +1,1 @@
+nop: assert $==1: assert $$==1: org 0x100,$: assert $==0x100: assert $$==1: org $: assert $==1

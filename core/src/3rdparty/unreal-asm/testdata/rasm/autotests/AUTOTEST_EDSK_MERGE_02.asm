@@ -1,0 +1,1 @@
+byte_format defb #E5:edsk create,'rasmoutput_test.dsk:b',DATA,41,OVERWRITE:edsk create,'rasmoutput_test2.dsk:b',VENDOR,41,OVERWRITE:edsk merge,'rasmoutput_test.dsk:b','rasmoutput_test2.dsk:b','rasmoutput_test3.dsk':edsk check,'rasmoutput_test3.dsk:a','0:#C1',1,byte_format:edsk check,'rasmoutput_test3.dsk:b','0:#41',1,byte_format

@@ -1,0 +1,1 @@
+org #100: nop: old_dollar=$: nocode: defs 10: assert $==old_dollar+10: code: assert $==old_dollar+10: org #200: nop: old_dollar=$: nocode: defs 10: assert $==old_dollar+10: code skip: assert $==old_dollar
