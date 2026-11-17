@@ -13,7 +13,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #ifdef Q_OS_UNIX
 #include <fcntl.h>
@@ -29,6 +32,7 @@
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
 #include "osdkeyboard/osdkeyboardwindow.h"
+#include "ffmpeg_probe.h"
 #ifdef __APPLE__
 #include "common/encoderconfig.h"
 #include "platform/macos/videotoolbox_encoder.h"
@@ -37,6 +41,57 @@
 namespace
 {
 const QColor kBackground(24, 24, 24);
+
+/// The GPU encoder ffmpeg offers for the codec, found rather than assumed: the build lists it AND a real trial
+/// encode works (NVENC is listed by every build, whatever the card). Empty: none, the caller encodes in software.
+/// Cached per ffmpeg and codec: the trial runs once
+QString FfmpegHardwareEncoder(const QString& ffmpeg, bool h265)
+{
+    static std::mutex cacheMutex;
+    static std::map<QString, QString> cache;
+    const QString key = ffmpeg + (h265 ? "|h265" : "|h264");
+    {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+    }
+    const std::string path = ffmpeg.toStdString();
+    const FFmpegProbe::HWAccelInfo info = FFmpegProbe::detectHWAccel(path);
+    const char* codec = h265 ? "hevc_" : "h264_";
+    std::vector<std::string> candidates;
+#ifdef __APPLE__
+    if (info.videoToolbox)
+        candidates.push_back(std::string(codec) + "videotoolbox");
+#else
+    if (info.nvenc)
+        candidates.push_back(std::string(codec) + "nvenc");
+    if (info.qsv)
+        candidates.push_back(std::string(codec) + "qsv");
+    if (info.amf)
+        candidates.push_back(std::string(codec) + "amf");
+#endif
+    QString chosen;
+    for (const std::string& name : candidates)
+    {
+        if (!FFmpegProbe::isEncoderAvailable(name, path))
+            continue;
+        // A few frames into the null muxer: the encoder opens its device or it does not
+        QProcess trial;
+        trial.start(ffmpeg, {"-v", "error", "-f", "lavfi", "-i", "color=size=256x256:rate=10", "-frames:v", "3",
+                             "-c:v", QString::fromStdString(name), "-pix_fmt", "yuv420p", "-f", "null", "-"});
+        if (trial.waitForFinished(15000) && trial.exitStatus() == QProcess::NormalExit && trial.exitCode() == 0)
+        {
+            chosen = QString::fromStdString(name);
+            break;
+        }
+        if (trial.state() != QProcess::NotRunning)
+            trial.kill();
+    }
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cache[key] = chosen;
+    return chosen;
+}
 constexpr int kMaxQueuedFrames = 10;  // ffmpeg behind by this many pictures: the next ones repeat (running) or wait (paused)
 
 QImage ToImage(const WindowViewGrab& grab)
@@ -127,6 +182,9 @@ struct WindowRecorder::Writer
     bool wantRetry = false;                 ///< a paused machine's picture was refused: tell the GUI when there is room
     std::function<void()> onRoom;           ///< called from the writer thread
     std::atomic<bool> failed{false};
+    /// The encoder is up (the hardware encoder's first start, or ffmpeg's, can take seconds on a loaded machine):
+    /// the GUI side starts the file's clock only then, so no picture or sound of the wait is lost or piles up
+    std::atomic<bool> ready{false};
     std::atomic<bool> done{false};
     std::string error;                      ///< valid once done
     std::thread thread;
@@ -286,6 +344,7 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
+        ready = true;  // a failed start is told by `failed`
         for (;;)
         {
             Job job;
@@ -393,6 +452,7 @@ struct WindowRecorder::Writer
         };
         if (!failure.empty())
             failed = true;
+        ready = true;  // a failed start is told by `failed`
 
         for (;;)
         {
@@ -523,8 +583,9 @@ WindowRecordingRequest MakeWindowRecordingRequest(const QString& container, cons
     request.codec = codec.toStdString();
     // The engine chosen in the recording dialog decides (1 = Native: the hardware encoder, 2 = FFmpeg: ffmpeg);
     // Auto follows View > GPU acceleration. MKV never goes to the hardware encoder (it writes MP4 / MOV)
-    const bool hardware = engine == 1 || (engine == 0 && gpuAcceleration);
-    request.hardware = hardware && container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) != 0;
+    // Native = the Mac's own writer (MP4 / MOV); FFmpeg, and MKV, take the GPU's encoder through ffmpeg
+    request.hardware = engine == 1 || gpuAcceleration;
+    request.ffmpegOnly = engine == 2 || container.compare(QLatin1String("MKV"), Qt::CaseInsensitive) == 0;
     request.audio = audio;
     const struct { const char* id; int w, h; } profiles[] = {{"1080p", 1920, 1080}, {"1440p", 2560, 1440}, {"4k", 3840, 2160}};
     for (const auto& fixed : profiles)
@@ -624,7 +685,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The Mac's own encoder (VideoToolbox: H.264 / H.265 on the GPU, ProRes 4444) needs no ffmpeg
     bool native = false;
 #ifdef __APPLE__
-    native = request.codec == "prores" || request.hardware;
+    native = request.codec == "prores" || (request.hardware && !request.ffmpegOnly);
 #endif
     QString ffmpeg;
     if (!native)
@@ -783,25 +844,33 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     QStringList args{"-v",      "error", "-y",  "-f",  "rawvideo", "-pix_fmt", "rgba", "-s",
                      QString("%1x%2").arg(_size.width()).arg(_size.height()), "-r", rate,
                      "-i",      "-"};
+    QString hardwareEncoder;
     if (!fifo.isEmpty())
         args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
     if (request.codec == "prores")
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
-    else if (request.hardware)  // the GPU's encoder: 4:2:0, real time at any size
+    else if (request.hardware && !(hardwareEncoder = FfmpegHardwareEncoder(ffmpeg, request.codec == "h265")).isEmpty())
     {
-#ifdef Q_OS_MAC
-        // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked), h264
-        // 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
-        if (request.codec == "h265")
-            args << "-c:v" << "hevc_videotoolbox" << "-profile:v" << "rext" << "-q:v" << "85" << "-pix_fmt"
-                 << "yuv422p10le" << "-tag:v" << "hvc1";
-        else
-            args << "-c:v" << "h264_videotoolbox" << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
-#else
-        args << "-c:v" << (request.codec == "h265" ? "hevc_nvenc" : "h264_nvenc") << "-cq" << "18" << "-pix_fmt"
-             << "yuv420p";
-#endif
+        // The GPU's encoder (found by probing): 4:2:0, real time at any size
+        const bool h265 = request.codec == "h265";
+        args << "-c:v" << hardwareEncoder;
+        if (hardwareEncoder.contains("videotoolbox"))
+        {
+            // Measured on an M1 Ultra: hevc_videotoolbox takes 4:2:2 10-bit at best (rext, even when 4:4:4 is asked),
+            // h264 4:2:0 only. Full 4:4:4 in hardware is ProRes 4444 alone
+            if (h265)
+                args << "-profile:v" << "rext" << "-q:v" << "85" << "-pix_fmt" << "yuv422p10le" << "-tag:v" << "hvc1";
+            else
+                args << "-q:v" << "85" << "-pix_fmt" << "yuv420p";
+        }
+        else if (hardwareEncoder.contains("nvenc"))
+            args << "-cq" << "18" << "-pix_fmt" << "yuv420p";
+        else if (hardwareEncoder.contains("qsv"))
+            args << "-global_quality" << "18" << "-pix_fmt" << "nv12";
+        else  // amf
+            args << "-quality" << "quality" << "-rc" << "cqp" << "-qp_i" << "18" << "-qp_p" << "18" << "-pix_fmt"
+                 << "yuv420p";
     }
     else if (request.codec == "h265")
         args << "-c:v" << "libx265" << "-preset" << "veryfast" << "-crf" << "14" << "-pix_fmt" << "yuv444p";
@@ -919,6 +988,15 @@ void WindowRecorder::onRefreshed()
     if (_writer->failed)  // ffmpeg or the files failed: finish what there is, the error comes with the status
     {
         closeWriter();
+        return;
+    }
+    if (!_writer->ready)
+    {
+        // The encoder is still starting: the file's first frame is the first one after it is up, so what ran
+        // meanwhile is dropped, not queued behind the start (a lost picture, a sound far ahead of the video)
+        std::lock_guard<std::mutex> lock(_sink->mutex);
+        _sink->pending.clear();
+        _sink->started = false;
         return;
     }
     // The emulated frames since the start: the file holds one picture for each, and each one's sound
