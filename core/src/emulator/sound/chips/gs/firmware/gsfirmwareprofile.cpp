@@ -186,6 +186,11 @@ std::array<GSCommandInfo, 256> Commands104()
     c[0xF6] = Cmd("Busy off", 0, 0, {}, 0, nullptr, T::None, true);
     c[0xF7] = Cmd("Get HX", 0, 0, {}, 1, "HX: bit 7 busy handling");
     c[0xFA] = Cmd("Test mode", 0, 0, {}, 0, nullptr, T::None, true, "the card runs its test commands (TCOM)");
+
+    // COM_H.a80: the handlers that OUT (OUTRG) the reply, then IN A,(DATRG) before OUT (RSCOM)
+    for (uint8_t code : {0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x30, 0x32, 0x33, 0x34, 0x35, 0x38, 0x3B, 0x3C, 0x3D, 0x3E, 0x42,
+                         0x45, 0x46, 0x47})
+        c[code].replyUnflagged = true;
     return c;
 }
 
@@ -195,6 +200,7 @@ std::array<GSCommandInfo, 256> Commands105()
     std::array<GSCommandInfo, 256> c = Commands104();
     c[0x6A] = Cmd("Set player mode", 1, 0, {{"mode", K::Mode}}, 1, "the old mode", T::None, true,
                   "#01: ignore the module's stop (F00); kept over #F3");
+    c[0x6A].replyUnflagged = true;  // Patch2: OUT (OUTRG) before IN A,(DATRG)
     c[0x6B] = Cmd("Set minimum loop length", 1, kVar, {{"words", K::Low}, {"words", K::High}}, 0, nullptr, T::None, true,
                   "the high byte is optional: a command instead sets 512 words; 0: relooper off; at most 16384");
     return c;

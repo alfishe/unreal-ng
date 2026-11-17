@@ -156,8 +156,12 @@ fixed RAM window, 3: high ROM at `#C000`).
    - Done (worktree `scratch/wt-gs-firmware`): `gsfirmwareprofile.h/.cpp` (129 / 131 commands, variables, stream
      commands), `firmware_profile` in the GS report, `GSFirmwareProfile_Test` (self-check against the ROM tables and
      labels). Design §6.1 "As built". Left: `rom.cpp` known-ROM entries, profiles from files.
-3. [ ] **Command log (F1, F4, P2, F7 basics).** `GSCommandLog` (ring, decoder by profile, anomalies), owned by
+3. [x] **Command log (F1, F4, P2, F7 basics).** `GSCommandLog` (ring, decoder by profile, anomalies), owned by
    `SoundManager`, fed by LLE and LW; start / stop / clear / read / export on every plane; on / off benchmark.
+   - Done: the device history `<slot>.commands` (every plane through the history verbs; the stream file is the
+     export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
+     `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
+     §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
 4. [ ] **Protocol state and send with decoding (F3, F6).**
 5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
 

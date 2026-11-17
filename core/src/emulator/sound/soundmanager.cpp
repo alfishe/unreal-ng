@@ -2320,6 +2320,12 @@ void SoundManager::attachGeneralSoundHistory()
         _context->histories.Add(_gsExecHistory.get());
     }
     _gs->attachExecHistory(_gsExecHistory.get(), _context);
+    if (!_gsCommandLog)
+    {
+        _gsCommandLog = std::make_unique<GSCommandLog>(
+            _context, &_context->histories, [context = _context]() { return GSHistoryDevice(context) + ".commands"; });
+    }
+    _gs->attachCommandLog(_gsCommandLog.get());
 }
 
 GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
@@ -2629,6 +2635,7 @@ bool SoundManager::attachToPorts()
             _context->histories.Remove(_gsExecHistory.get());
             _gsExecHistory.reset();
         }
+        _gsCommandLog.reset();
         if (_context->pDebugManager)
             _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone
         _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
