@@ -188,12 +188,12 @@ protected:
             }
             if (++failures <= 10)
             {
-                auto near = trace.m1.lower_bound({s.edge > 200 ? s.edge - 200 : 0, 0});
+                auto nearby = trace.m1.lower_bound({s.edge > 200 ? s.edge - 200 : 0, 0});
                 std::string around;
-                for (int i = 0; i < 8 && near != trace.m1.end(); i++, ++near)
+                for (int i = 0; i < 8 && nearby != trace.m1.end(); i++, ++nearby)
                 {
                     char buf[32];
-                    std::snprintf(buf, sizeof(buf), " %llu:%04X", static_cast<unsigned long long>(near->first), near->second);
+                    std::snprintf(buf, sizeof(buf), " %llu:%04X", static_cast<unsigned long long>(nearby->first), nearby->second);
                     around += buf;
                 }
                 ADD_FAILURE() << name << ": instruction at " << std::hex << s.pc << std::dec << " starts on edge " << s.edge

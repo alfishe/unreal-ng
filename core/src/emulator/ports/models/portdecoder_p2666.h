@@ -94,6 +94,11 @@ public:
     /// xx77 bit 3 in the low byte, #EFF7 bit 4 in the high byte
     uint16_t GetClockSelect() const override;
     void RestoreClockSelect(uint16_t select) override;
+    /// A 48K / 128K snapshot runs on a plain Pentagon 128: every window in Pentagon mode, DOS off, the ZX picture; the
+    /// clock select stays
+    void EnterSpectrum128Paging(uint16_t pc) override;
+    /// #7FFD bit 5 is always a page bit of window 3 (HR §2.5, D-3): a locked state's bank goes into page 32 + bank
+    void FinishSpectrum128State() override;
     /// The INT window in CPU clocks at the clock now in use (HR §1.2): the strobe's edge, 32 CPU rising edges long
     bool FrameIntWindow(uint32_t& start, uint32_t& end) override;
     /// endregion </PortDecoder>
@@ -139,6 +144,7 @@ public:
 
     /// region <Fields>
 protected:
+    friend struct P2666Codec;  // the TTD blobs (debugger/ttd/p2666/ttdp2666.cpp)
     Ds12887 _rtc;                       ///< the MCU's clock behind CMOS cells 0..9
     std::array<uint8_t, 256> _cmos{};   ///< the FPGA's CMOS RAM (cmos_data_out); 64 cells persisted by the MCU
     uint8_t _cmosAddress = 0;           ///< #DFF7

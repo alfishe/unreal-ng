@@ -62,9 +62,9 @@ Board look, not bugs: `tetris`'s grey is 165/255 on P2666 (the board's DAC: a 4-
 whose LSB is 0, hardware-reference.md §6.2) against 202 on the ZX-Evo; `ufo2`'s border is black because the game
 itself does `XOR A : OUT (254),A` (the ZX-Evo shows its own red there).
 
-The Z80 test suites on the card (Patrik Rak's z80test 1.2a): `z80full`, `z80doc`, `z80flags`, `z80memptr` pass;
-`z80ccf` fails 4 of 160 (056, 058, 125, 129: the core's Q register after `DEC` without a flag change, `POP AF`,
-`EX AF,AF'`; the same on every model, not a P2666 matter).
+The Z80 test suites on the card (Patrik Rak's z80test 1.2a): `z80full`, `z80doc`, `z80flags`, `z80ccf`, `z80memptr`
+pass (2026-11-16). `z80ccf` failed 4 of 160 before the core's Q latch fix on master (84adde805): every model, not a
+P2666 matter.
 
 ## ATM Turbo disks on P2666
 

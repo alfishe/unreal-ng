@@ -673,7 +673,8 @@ constexpr BusDef kP2666Buses[] = {
     // The read mux gives the external data bus the CPU only for a port no board row answers (PaE.vhd:1493-1541)
     { .id = "zxbus", .kind = BusKind::ZxBus, .signals = kNemoBus, .physicalSlots = 1,
       .arbitration = Arbitration::BoardWins, .readRule = ReadRule::SlotOrder,
-      .note = "the board's ZX-BUS connector (IORQGE, external ROM, WAIT, BUSRQ, NMI, INT); no card is shipped" },
+      .note = "the board's ZX-BUS connector (IORQGE, external ROM, WAIT, BUSRQ, NMI, INT); no card is shipped. The board's "
+              "own write decodes need A1 or A2 = 1 (ebl, PaE.vhd:1658); A2 = A1 = 0 is the Nemo IDE's" },
 };
 // HR §4.1: FFFD = A15..14 = 11, A1..0 = 01; BFFD = A15..14 = 10, A1..0 = 01
 constexpr PortClaim kP2666AyClaims[] = {

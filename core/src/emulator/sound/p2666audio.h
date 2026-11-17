@@ -95,7 +95,7 @@ public:
     /// endregion
 
 private:
-    friend struct P2666AudioCodec;
+    friend struct P2666Codec;  // the TTD blobs (debugger/ttd/p2666/ttdp2666.cpp)
     void AdvanceTo(double t);
     void Tick();
     void Mix(bool step);

@@ -83,6 +83,11 @@ that the emulator works out of the box, on the following basis:
   vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
   `PROFI_XT-9A8E2686.ROM`) never enables interrupts and so receives no key; 5 bytes at `02Eh`-`032h` are replaced.
   The patch, why, and how it was checked: [`profixt/README.md`](profixt/README.md). CRC32 `59C7A98C`.
+* **Pentagon 2.666 LE ROM set** (`p2666/p2666.rom`, 96 KB, CRC32 `54B5A266`, SHA-256
+  `8be7465ac0f7ef775f9c509dc88c06ee684eb42d75cffb7fd1ea023254ce86f7`): the six 16 KB images the board's MCU uploads
+  into RAM pages `#48..#4C` and page 5, in that order: Gluk Reset Service, TR-DOS 6.11E, BASIC 128 (= `128_low.rom`),
+  BASIC 48 (= `48for128.rom`), FATALL 0.25 and the boot logo. From
+  [koe1234/pentagon_2_666_le](https://github.com/koe1234/pentagon_2_666_le) `LE/PAE_MCU/rom/` (revision `e808402`).
 * **Scorpion GMX flash images** (`gmx.rom`, `gmx644.rom`): the whole 512 KB flash of the GMX card (loader, FPGA
   schemes, eight 64 KB ROM planes). `gmx.rom` (CRC32 `00DF8568`) is "GMX Boot Rom 1.2 V. 5.00" (TMgmx Loader V1.20,
   MOA 1998). `gmx644.rom` (CRC32 `0F84E542`, MD5 `3e07fc606947eef4348c79d2bde4a974`, SHA-256

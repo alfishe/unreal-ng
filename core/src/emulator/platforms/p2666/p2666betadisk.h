@@ -72,6 +72,7 @@ public:
     /// endregion
 
 private:
+    friend struct P2666Codec;  // the TTD blobs (debugger/ttd/p2666/ttdp2666.cpp)
     /// Run the controller to `edge`
     void Advance(uint64_t edge);
     void Complete(uint64_t edge);   ///< the intrq branch of the main process

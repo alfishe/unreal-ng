@@ -196,7 +196,7 @@ port FBDF 023F/021F Kempston mouse X axis
 port FF77 00FF/0077 ATM register (video mode, 28 MHz, CP/M = A9, pen2 = A14)
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 1:72 2:34 7:20 15:40 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 7:20 15:40 17:50 18:49 23:14 35:52 56:22 notRecorded 0
 == pentagon128k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]

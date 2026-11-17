@@ -217,7 +217,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
-        "PLUS3, PENTAGON, SCORPION, PROFSCORP, GMX, ATM450, ATM710, ATM3, TSL, PROFI, PROFI3, NEXT, SPRINTER; machine "
+        "PLUS3, PENTAGON, P2666, SCORPION, PROFSCORP, GMX, ATM450, ATM710, ATM3, TSL, PROFI, PROFI3, NEXT, SPRINTER; machine "
         "variants TSL-VDAC2 and PROFI-PLUS (a base model with a fixed board) (see list_models; creatability is "
         "build-dependent — check the 'creatable' flags: KAY, QUORUM, LSY256 and PHOENIX are listed but not creatable). ZX-Poly "
         "configurations ZXPOLY-48K, ZXPOLY-128K, ZXPOLY-PENTAGON create the four-instance machine by name "
@@ -4877,6 +4877,31 @@ void RegisterInspectState(ToolRegistry& registry)
                                 for (Json::ArrayIndex i = 0; i < banks.size(); ++i)
                                     out << "\n  bank" << banks[i]["bank"].asInt() << " " << banks[i]["address_range"].asString()
                                         << " " << banks[i]["type"].asString() << " p" << banks[i]["page"].asInt();
+                                // Pentagon 2.666 LE: the board latches and the window map (DeviceState::P2666Paging)
+                                if (value.isMember("p2666") && value["p2666"]["available"].asBool())
+                                {
+                                    const Json::Value& b = value["p2666"];
+                                    const Json::Value& x77 = b["port_xx77"];
+                                    const Json::Value& eff7 = b["port_eff7"];
+                                    out << "\n  p2666: cpu_mhz " << b["cpu_mhz"].asString() << ", dos " << (b["dos"].asBool() ? "on" : "off")
+                                        << ", bf0 " << (b["dos_kept_in_ram_bf0"].asBool() ? "1" : "0") << ", map " << b["map"].asInt()
+                                        << "\n    port_xx77=" << x77["value"].asString() << " video_mode=" << x77["video_mode"].asString()
+                                        << " turbo1_28mhz=" << (x77["turbo1_28mhz"].asBool() ? "1" : "0") << " cpm=" << (x77["cpm"].asBool() ? "1" : "0")
+                                        << " palette_blocked_in_dos=" << (x77["palette_blocked_in_dos"].asBool() ? "1" : "0")
+                                        << "\n    port_eff7=" << eff7["value"].asString() << " p16=" << (eff7["p16"].asBool() ? "1" : "0")
+                                        << " mode128=" << (eff7["mode128"].asBool() ? "1" : "0") << " ram0=" << (eff7["ram0"].asBool() ? "1" : "0")
+                                        << " turbo0_3_5mhz=" << (eff7["turbo0_3_5mhz"].asBool() ? "1" : "0") << " cmos=" << (eff7["cmos"].asBool() ? "1" : "0");
+                                    const Json::Value& windows = b["windows"];
+                                    for (Json::ArrayIndex w = 0; w < windows.size(); ++w)
+                                        out << "\n    window" << w << " " << windows[w]["kind"].asString() << " register=" << windows[w]["register"].asString()
+                                            << " page=" << windows[w]["page"].asInt();
+                                    out << "\n    other_map";
+                                    for (const Json::Value& reg : b["other_map"])
+                                        out << " " << reg.asString();
+                                    out << "\n    palette";
+                                    for (const Json::Value& word : b["palette"])
+                                        out << " " << word.asString();
+                                }
                             }
                             else if (aspect == "ports" && value["entries"].isArray())
                             {

@@ -7,6 +7,8 @@
 
 #include "common/modulelogger.h"
 #include "debugger/ttd/atm/ttdevosdcard.h"
+#include "debugger/ttd/p2666/ttdp2666.h"
+#include "debugger/ttd/ttdds12887.h"
 #include "emulator/cpu/core.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/diskimage.h"
@@ -290,6 +292,37 @@ uint16_t PortDecoderP2666::GetClockSelect() const
     return static_cast<uint16_t>((_state->p2666.pxx77 & kX77Turbo) | ((_state->pEFF7 & kEff7Slow) << 8));
 }
 
+void PortDecoderP2666::EnterSpectrum128Paging(uint16_t pc)
+{
+    (void)pc;
+    // The reset leaves the board in Gluk at 28 MHz with DOS on. A Spectrum snapshot's program expects a Pentagon 128,
+    // which is what the board is with these values (HR §2.2, §2.5, §1.1):
+    //   - both maps' windows in Pentagon mode (the CPU reset's values): ROM 0 from DOS / #7FFD.4, RAM 5, 2, #7FFD page
+    //   - DOS off, and switching like a Pentagon's (cpm = 1: on at #3Dxx in the 48K BASIC, off out of the ROM)
+    //   - #EFF7 = 128 mode (bits 5..7 of #7FFD are the lock and nothing else)
+    //   - the ZX picture (#xx77 video mode 3); palette writes gated in DOS as at reset (A14 = 1)
+    // The clock select (#xx77 bit 3, #EFF7 bit 4) is kept: a snapshot has no clock, its program runs at the clock the
+    // machine ran at (Core::ResetKeepingClock put it back; owner rule 2026-10-18, as on the ATMs)
+    EmulatorState& state = *_state;
+    P2666State& p = state.p2666;
+    for (auto& map : p.window)
+    {
+        map[0] = 0x3BF;
+        map[1] = map[2] = map[3] = 0x3FF;
+    }
+    constexpr uint16_t kPort77 = 0x4000 | 0x0200 | 0x0077;
+    Write77Atm(kPort77, static_cast<uint8_t>((p.pxx77 & 0xF8) | 0x03));
+    p.bf0 = 0;
+    p.dos1Off = 1;
+    state.pEFF7 = static_cast<uint8_t>(kEff7Lock128 | (state.pEFF7 & kEff7Slow));
+    state.flags &= ~CF_TRDOS;
+    state.hw_turbo_ratio = SelectedRatio();
+    if (_context->pCore && _context->pCore->GetZ80())
+        _context->pCore->GetZ80()->ApplyHardwareTurboNow();
+    if (_memory)
+        _memory->UpdateZ80Banks();
+}
+
 void PortDecoderP2666::RestoreClockSelect(uint16_t select)
 {
     _state->p2666.pxx77 = static_cast<uint8_t>((_state->p2666.pxx77 & ~kX77Turbo) | (select & kX77Turbo));
@@ -306,6 +339,23 @@ uint8_t PortDecoderP2666::SelectedRatio() const
     if (_state->p2666.pxx77 & kX77Turbo)
         return 8;
     return (_state->pEFF7 & kEff7Slow) ? 1 : 4;
+}
+
+void PortDecoderP2666::FinishSpectrum128State()
+{
+    // The board as built (D-3): in 128 mode a locked machine (#7FFD bit 5 = 1) maps page 32 + bank at #C000, so a
+    // 48K program runs in page 32 on the board. The state's bank is in page `bank`: copy it where the window looks
+    const EmulatorState& state = *_state;
+    const uint8_t bank = state.p7FFD & 0x07;
+    const uint8_t shown = WindowPage(3);
+    const uint16_t reg = state.p2666.window[(state.p7FFD & 0x10) ? 1 : 0][3];
+    if (!(reg & 0x80) || shown == bank)
+        return;
+    uint8_t* from = _memory->RAMPageAddress(bank);
+    uint8_t* to = _memory->RAMPageAddress(shown);
+    if (from && to)
+        std::memcpy(to, from, 0x4000);
+    _memory->UpdateZ80Banks();
 }
 
 uint8_t PortDecoderP2666::WindowPage(uint8_t window) const
@@ -960,7 +1010,12 @@ void PortDecoderP2666::RecomputeIntWindow()
 
 std::vector<ttd::TTDDeviceType> PortDecoderP2666::GetTTDModelStateTypes() const
 {
-    return {ttd::TTDDeviceType::EvoSdCard};
+    std::vector<ttd::TTDDeviceType> types = {ttd::TTDDeviceType::EvoSdCard, ttd::TTDDeviceType::Ds12887,
+                                             ttd::TTDDeviceType::P2666Board, ttd::TTDDeviceType::P2666Sound,
+                                             ttd::TTDDeviceType::P2666Uart};
+    if (_ramDisk)
+        types.push_back(ttd::TTDDeviceType::P2666BetaDisk);  // with [P2666] BetaDisk=wd1793 the WD1793 rides as BetaDisk
+    return types;
 }
 
 std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoderP2666::CreateTTDSerializers() const
@@ -968,6 +1023,13 @@ std::vector<std::unique_ptr<ttd::TTDSerializable>> PortDecoderP2666::CreateTTDSe
     std::vector<std::unique_ptr<ttd::TTDSerializable>> serializers;
     auto* self = const_cast<PortDecoderP2666*>(this);
     serializers.push_back(std::make_unique<ttd::TTDEvoSdCard>(self->_sdCard, self->_zc));
+    serializers.push_back(std::make_unique<ttd::TTDDs12887>(self->_rtc));
+    using Part = ttd::TTDP2666Device::Part;
+    serializers.push_back(std::make_unique<ttd::TTDP2666Device>(*self, Part::Board));
+    serializers.push_back(std::make_unique<ttd::TTDP2666Device>(*self, Part::Sound));
+    serializers.push_back(std::make_unique<ttd::TTDP2666Device>(*self, Part::Uart));
+    if (_ramDisk)
+        serializers.push_back(std::make_unique<ttd::TTDP2666Device>(*self, Part::BetaDisk));
     return serializers;
 }
 

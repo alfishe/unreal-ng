@@ -221,6 +221,7 @@ call.
 | Recipe | What it covers |
 |:--|:--|
 | [machines/pentagon.md](machines/pentagon.md) | Pentagon 128/512/1024 via `ram_size`, Pentagon-1024 `#EFF7` register (GigaScreen, 512x192, a4b), sound-stack defaults |
+| [machines/pentagon-2666.md](machines/pentagon-2666.md) | `P2666` (Pentagon 2.666 LE): Gluk boot at 28 MHz, the ATM shadow ports and two window maps, RAM-disk Beta Disk, SD / NedoOS, the `p2666` paging node, TTD blobs, snapshot rules |
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |
 | [machines/profi.md](machines/profi.md) | Profi v5 (`PROFI`) and v3 (`PROFI3`): board differences, `#7FFD`+`#DFFD` paging, sync PROM timing, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging, IDE hard disk |
 | [machines/tsconf.md](machines/tsconf.md) | TS-Conf (`TSL`): TS-BIOS, the `#xxAF` registers and memory map, TS video modes and TSU, DMA, SD slot `sd.zc`, `.spg` programs, `state tsconf` |

@@ -497,6 +497,50 @@ Pentagon 128. Scorpion snapshots load into the Scorpion scheme (ROM plane
 4); a Spectrum / Scorpion state moves into a GMX the same way. A GMX using its own paging moves only to a GMX.
 )md";
 
+const char* const kMachineP2666 = R"md(# Pentagon 2.666 LE (model P2666)
+
+A Pentagon 1024 (71680-T frame at 3.5625 MHz = 49.70 Hz, no contention, `#7FFD` / `#EFF7`) with the ATM Turbo 2 shadow
+layer, 2 MB, 3.5 / 14 / 28 MHz, Gluk CMOS, Z-Controller SD, Nemo IDE, two YM2149, Covox `#FB`, a 16550 UART on
+`#F8EF..#FFEF` and a Beta Disk emulator over a RAM disk (design: docs/inprogress/2026-11-11-pentagon-2666-le).
+`emulator_manage action=create model=P2666`: 2048K only, config `data/configs/p2666`, ROMs `data/rom/p2666/`. The
+board as built: even Nemo IDE registers read `#FE`, the 8-bit sound sum wraps.
+
+## Boot
+Always Gluk Reset Service (DOS on, `#7FFD` = 0) at 28 MHz. The MCU's power-on upload puts the ROMs into
+write-protected RAM pages `#48..#4C`, the logo into page 5, the palette and 64 CMOS cells. A CPU reset keeps RAM, the
+palette and the CMOS. Gluk: cursor down x7 + Enter = "trdos" from the RAM disk; key 5 = SD boot.
+
+## Ports (writes)
+| Port | Function |
+|:--|:--|
+| `#xx77` (DOS on) | bits 2..0 video mode (3 ZX, 0 EGA 320x200, 2 640x200, 6 text 80x25), bit 3 28 MHz; A9 = CP/M, A14 = no palette in DOS |
+| `#EFF7` | bit 0 Pentagon 16c, bit 2 128 mode (`#7FFD` lock), bit 3 RAM at `#0000`, bit 4 turbo0 (3.5 MHz), bit 7 CMOS |
+| `#xFF7` / `#x7F7` (DOS on) | window registers of the map `#7FFD` bit 4 selects; `#xxBE` reads them back |
+| `#xxBF` | bit 0: keep DOS on in RAM |
+| `#xxFF` | palette entry `border3 : FE[2:0]` = A15..8 : D7..0 (not in 128 mode) |
+| `#DFF7` / `#BFF7` | CMOS address / data (`#EFF7` bit 7) |
+| `#FFFD` / `#BFFD` | YM select (`#FF` chip 0, `#FE` chip 1) / write |
+| `#xx57` / `#xx77` (DOS off) | SD SPI data / CS |
+
+## Media
+`fdd.a` = the RAM disk (pages `#76` down, 41 pages max); `[P2666] BetaDisk=wd1793` gives the WD1793 with drives A..D.
+`sd` (`sd.zc`): an image or a folder (presented as FAT). NedoOS: `testdata/machines/p2666/software/nedoos/sdcard`.
+
+## State
+`inspect_state aspects:["paging"]` reports `p2666`: `port_xx77` (video_mode, turbo1_28mhz, cpm,
+palette_blocked_in_dos), `port_eff7` (p16, mode128, ram0, turbo0_3_5mhz, cmos), `cpu_mhz`, `dos`,
+`dos_kept_in_ram_bf0`, `map`, `windows` (register, kind pentagon / ram / rom, page), `other_map`. TTD carries the board
+as P2666Board (71), P2666Sound (72), P2666BetaDisk (73, RAM disk only), P2666Uart (74), next to the MCU clock
+(Ds12887, 18) and the SD card (EvoSdCard, 15).
+
+## Snapshots and state transfer
+A 48K / 128K snapshot loads as on a Pentagon 128 (windows in Pentagon mode, DOS off, the ZX picture, `#EFF7` = 128
+mode); the clock select stays. A locked `#7FFD` maps page 32 + bank at `#C000` (the board's D-3): the load puts the
+bank there too. A snapshot is saved (as a Pentagon 128) only while the board is that Pentagon 128;
+otherwise `capture_unsupported` / `needs: mode:pentagon128` says what is in use. A Spectrum 128K state moves into the
+board the same way; the board in its own paging moves only to another P2666.
+)md";
+
 struct StaticResource
 {
     const char* uri;
@@ -514,6 +558,7 @@ const StaticResource kStaticResources[] = {
     {"unreal://memory-map", "memory-map", "48K/128K/Pentagon memory maps, screen layout math, 0x7FFD paging bits", "text/markdown", kMemoryMap},
     {"unreal://machine/profi", "machine-profi", "Profi v3 (PROFI3) and v5 (PROFI): board differences, ROM pages, #7FFD/#DFFD/palette ports, 512x240 hi-res, sync PROM timing, limitations", "text/markdown", kMachineProfi},
     {"unreal://machine/tsconf", "machine-tsconf", "TS-Conf (ZX-Evo TS-Labs) machine: #nnAF registers, video modes, TSU, DMA, sound DAC, SPG loading, limitations", "text/markdown", kMachineTsConf},
+    {"unreal://machine/p2666", "machine-p2666", "Pentagon 2.666 LE: Gluk boot, the ATM shadow ports and window maps, clocks, RAM-disk Beta Disk, SD, state, TTD and snapshot rules", "text/markdown", kMachineP2666},
     {"unreal://machine/gmx", "machine-gmx", "ZS Scorpion + GMX: the card's ports, ROM planes and boot, 2 MB paging, state, TTD and snapshot rules", "text/markdown", kMachineGmx},
     {"unreal://machine/sprinter", "machine-sprinter", "Peters Plus Sprinter Sp2000: BIOS selection and start, the PLD port table and codes, windows and video RAM, video modes, DSS from floppy / HDD, accelerator, sound, TTD, limitations", "text/markdown", kMachineSprinter},
 };

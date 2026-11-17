@@ -65,6 +65,7 @@ public:
     /// endregion
 
 private:
+    friend struct P2666Codec;  // the TTD blobs (debugger/ttd/p2666/ttdp2666.cpp)
     void Advance(uint64_t edge);
     void PushRx(uint8_t byte);
     bool Cts() const;  ///< the cts pin: true = high (not clear)

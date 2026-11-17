@@ -1,6 +1,7 @@
 # TODO: Pentagon 2.666 LE
 
-Status 2026-11-12: P0..P2 built and tested; P3 and P4 written, tests in `core/tests/emulator/machines/p2666/`.
+Status 2026-11-16: P0..P4 built, tested and checked with real software
+([testdata/machines/p2666/software/README.md](../../../testdata/machines/p2666/software/README.md)); P5 in progress.
 See [README.md](README.md).
 
 ## Phases
@@ -13,17 +14,39 @@ See [README.md](README.md).
 - [x] POC 051: the board's VHDL in `ghdl` as the timing oracle (CPU clock, I/O stretch, INT, video fetch)
 - [x] P2: video modes, geometry, palette, border, text font (FLASH: dropped by the owner 2026-11-12, "not worth
       it"; the shared ZX renderer has none)
-- [ ] P3: CMOS / RTC (64 MCU cells, `[P2666] CmosFile`), SD (Z-Controller, `sd.zc`), IDE (even registers read FE),
+- [x] P3: CMOS / RTC (64 MCU cells, `[P2666] CmosFile`), SD (Z-Controller, `sd.zc`), IDE (even registers read FE),
       mouse, joystick, sound (two YM2149 cores, Covox, beeper in one wrapping 8-bit DAC sum, `P2666Audio`): written,
-      tests `P2666Devices_Test`; to verify with the test software
-- [ ] P4: Beta Disk on the RAM disk (`P2666BetaDisk`, default; `[P2666] BetaDisk=wd1793` = path A), UART
-      (`P2666Uart`, machine serial port `p2666-uart`): written, tests `P2666BetaDisk_Test`, `P2666Uart_Test`
-- [ ] Test software, headless (`P2666SoftwareProbe_Test.DISABLED_Run`): Gluk + TR-DOS from the RAM disk, Pentagon
+      tests `P2666Devices_Test`; checked: Gluk's clock from the CMOS, FATALL lists the FAT32 SD, NedoOS on SD, mouse
+      (`km-test`), both AY chips and the stereo (`aytest-0.2`, `aydetect`); IDE reads fail as on the board (Q-3)
+- [x] P4: Beta Disk on the RAM disk (`P2666BetaDisk`, default; `[P2666] BetaDisk=wd1793` = path A), UART
+      (`P2666Uart`, machine serial port `p2666-uart`): tests `P2666BetaDisk_Test`, `P2666Uart_Test`; TR-DOS disks
+      (timing tests, ATM Turbo disks) boot from the RAM disk
+- [x] Test software, headless (`P2666SoftwareProbe_Test.DISABLED_Run`): Gluk + TR-DOS from the RAM disk, Pentagon
       timing tests (`tests.trd`, `stime.scl`), AY / TurboSound tests, FATALL on SD, NedoOS `osp26sd.$C`
-- [ ] P5: TTD (`PeripheralId` >= 66: sound, Beta Disk, UART, CMOS; the AY state blob left the slot list with the
-      socket), slots refdata (writes reach the ZX-BUS only with A2 = A1 = 0, `ebl`: a Covox `#FB` card is dead, a TS
-      card loses to the board), snapshot rules, automation planes, Qt menu,
-      `.recipe/machines/pentagon-2666.md`, docs rows, Linux / Windows checks; MCP live block
+      (2026-11-16: `btime` lands on 17985 as the Pentagon; every program of the NedoOS demo card; z80test 1.2a all
+      five pass after the Q latch fix on master)
+- [x] P5 (done 2026-11-16):
+  - [x] TTD: P2666Board (71), P2666Sound (72), P2666BetaDisk (73), P2666Uart (74) + Ds12887 (18) + EvoSdCard (15),
+        one field walk per blob (`debugger/ttd/p2666/ttdp2666.*`); tests `P2666Ttd_Test` (every frame replays),
+        the corpus baseline and the model-state contract list P2666
+  - [x] Snapshots: a 48K / 128K file loads as a Pentagon 128 (`EnterSpectrum128Paging`, clock kept), capture only
+        from that Pentagon 128 (`needs: mode:pentagon128`), state transfer family `P2666Board`; a locked `#7FFD`
+        maps page 32 + bank at `#C000` (D-3), so the load puts the bank there too (`FinishSpectrum128State`); tests
+        `P2666Snapshot_Test`, `MachineStateTransfer_Test.a128kStateMovesIntoTheAtmAndProfiBoards`
+  - [x] Automation planes: the `p2666` node (`DeviceState::P2666Paging`) on WebAPI `/state/paging` and
+        `/state/memory`, CLI `paging` / `state memory`, Lua / Python `paging_state()`, MCP `inspect_state paging`,
+        OpenAPI text, the node in the MCP paging text; MCP resource `unreal://machine/p2666`; the model in the MCP
+        model list
+  - [x] Qt menu: the model comes from `Config::IsModelCreatable` (no list to edit); check on a build
+  - [x] `.recipe/machines/pentagon-2666.md`, `.recipe/_common/machines.md` row, `.recipe/README.md` row,
+        `data/rom/README-ROMS.md` entry; slots refdata ZX-BUS note (`ebl`)
+  - [x] Linux (gcc) / Windows checks (2026-11-16): gcc 16.2 (CI build-gcc-latest steps, long tier) 0 warnings, 11566
+        tests, 0 failures; MSVC 2019 0 warnings after renaming a local `near` in `p2666_timing_test.cpp` (the
+        `windows.h` macro, MinGW too), 11519 tests, 0 failures launched from `c:\` as from `C:\` once
+        `FileHelper::AbsolutePath` and the test root spell the drive letter upper-case
+  - [x] MCP live block: `tools/verification/mcp/test_p2666.py` (2026-11-16: the whole block twice, 34 of 35; only
+        `test_surfaces` 50 Hz poll count fails, at load average 190 from other builds, 86..134 polls of 120 by run;
+        it does not touch P2666)
 
 ## Decisions (owner, 2026-11-11)
 

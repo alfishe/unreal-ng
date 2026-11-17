@@ -1408,6 +1408,11 @@ public:
     /// nothing, the machine already behaves like a 128K
     virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
 
+    /// A 48K / 128K Spectrum state was committed (snapshot load, state transfer): its RAM is in pages 0..7 and its
+    /// #7FFD written. A model whose window shows another page than #7FFD bits 2..0 name (the Pentagon 2.666 maps a
+    /// locked machine's #C000 to page 32 + bank, its D-3) puts the bank there. Default: nothing
+    virtual void FinishSpectrum128State() {}
+
     /// A disk autostart's TR-DOS cold start (Reset(RM_DOS)) reached the TR-DOS command loop, right before it runs the
     /// disk's program: leave the paging the way the user's own boot of a disk would. True when it changed the machine.
     /// Default: nothing, the cold start already is that boot
