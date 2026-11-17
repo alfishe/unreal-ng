@@ -66,6 +66,25 @@ enum : uint32_t
     kCmdVideostart = 0xFFFFFF40,
     kCmdVideoframe = 0xFFFFFF41,
     kCmdSetbitmap = 0xFFFFFF43,
+    // VDAC4 (BL616 firmware): 3D 0xFFFFFFA0...AF, images
+    kCmd3dTarget = 0xFFFFFFA0,
+    kCmd3dProject = 0xFFFFFFA1,
+    kCmd3dIdentity = 0xFFFFFFA2,
+    kCmd3dTranslate = 0xFFFFFFA3,
+    kCmd3dRotate = 0xFFFFFFA4,
+    kCmd3dScale = 0xFFFFFFA5,
+    kCmd3dPush = 0xFFFFFFA6,
+    kCmd3dPop = 0xFFFFFFA7,
+    kCmd3dLight = 0xFFFFFFA8,
+    kCmd3dClear = 0xFFFFFFA9,
+    kCmd3dMesh = 0xFFFFFFAA,
+    kCmd3dRender = 0xFFFFFFAB,
+    kCmd3dInfo = 0xFFFFFFAC,
+    kCmd3dTexture = 0xFFFFFFAD,
+    kCmd3dTexmesh = 0xFFFFFFAE,
+    kCmd3dMaterial = 0xFFFFFFAF,
+    kCmdLoadimageBox = 0xFFFFFFB0,
+    kCmdImageinfo = 0xFFFFFFB1,
 };
 
 constexpr uint32_t kCommandPrefixMask = 0xFFFFFF00; // coprocessor commands are 0xFFFFFFxx
@@ -136,6 +155,10 @@ bool WriteDlWord(EveChip& chip, uint32_t word);   // false: faulted
 void WriteRegister32(EveChip& chip, Reg reg, uint32_t value); // with side effects
 void CompleteCommand(EveChip& chip);
 void CoproFaultNow(EveChip& chip, CoproFault fault);
+// VDAC4 image fault: FTC_FAULT_IMAGE and the report at the start of RAM_CMD ('I' 'M' 'G' + code,
+// the argument, an ASCII reason; ft_copro.c image_fault).
+enum class Vdac4ImageError : uint32_t { Corrupt = 1, Unsupported = 2, TooBig = 3, NoRoom = 4, Size = 5 };
+void Vdac4ImageFault(EveChip& chip, Vdac4ImageError code, uint32_t argument);
 void CoproDefaults(EveChip& chip);
 
 // --- Generated display list words (eve-copro.cpp) ----------------------------------------

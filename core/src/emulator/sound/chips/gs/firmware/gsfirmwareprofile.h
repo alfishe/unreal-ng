@@ -131,3 +131,6 @@ struct GSFirmwareIdentity
 };
 
 GSFirmwareIdentity IdentifyGSFirmware(const GeneralSoundCard& card);
+/// The profile a card answers with: the lightweight card mimics gs105a (soundchip_gslw.h), any other card its
+/// ROM's (IdentifyGSFirmware); nullptr: none (NeoGS firmware, an unknown ROM)
+const GSFirmwareProfile* GSFirmwareProfileOf(const GeneralSoundCard& card);

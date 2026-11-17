@@ -143,18 +143,34 @@ def check_handheld(gui, port_base):
     state = menu()
     expect(state['open'] and state['section'] == 'resume' and state['focus'] == 'sections',
            'the menu opens on Resume, the focus on the sections', state)
-    state = gui.call('handheld.nav', dir='down')
-    expect(state['section'] == 'slots', 'handheld.nav down: Save & Load', state)
-    state = gui.call('handheld.accept')
+    def section(name):
+        # The sections a machine shows vary (Save & Load needs a machine that saves): walk to one by its name
+        state = menu()
+        for _ in range(16):
+            if state['section'] == name:
+                break
+            state = gui.call('handheld.section', dir='next')
+        return state
+
+    state = section('slots')
+    expect(state['section'] == 'slots', 'handheld.section: Save & Load', state)
+    if state['focus'] == 'sections':  # handheld.section keeps the focus where it was
+        state = gui.call('handheld.accept')
     expect(state['focus'] == 'page' and len(state['items']) == 9, 'handheld.accept: the nine slots', state)
     state = gui.call('handheld.nav', dir='right')
     expect(state['row'] == 1, 'handheld.nav right: the next slot', state)
     expect(refused(gui, 'handheld.option', 'bad_request', button='z'), 'handheld.option refuses a button but x, y')
-    state = gui.call('handheld.section', dir='next')
-    expect(state['section'] == 'machine' and state['items'][0]['label'] == 'Model', 'handheld.section next: Machine',
-           state)
+    state = section('machine')
+    labels = [item['label'] for item in state['items']]
+    expect(state['section'] == 'machine' and 'Model' in labels, 'handheld.section: Machine', state)
+    if state['focus'] != 'page':
+        state = gui.call('handheld.accept')
+    for _ in range(labels.index('Model') - state['row'] if 'Model' in labels else 0):
+        state = gui.call('handheld.nav', dir='down')
     state = gui.call('handheld.accept')
     expect(state['focus'] == 'picker' and len(state['picker']['items']) > 1, 'Model opens the model picker', state)
+    expect({'TS-Conf + VDAC2 (FT812)', 'TS-Conf + VDAC4'} <= set(state['picker']['items']),
+           'the model picker lists the machine variants (TS-Conf + VDAC2 / VDAC4)', state['picker']['items'])
     state = gui.call('handheld.back')
     expect(state['focus'] == 'page', 'handheld.back closes the picker', state)
     gui.call('handheld.back')

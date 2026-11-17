@@ -2,6 +2,7 @@
 
 #include <bit>
 #include <cstdio>
+#include <string>
 
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -56,6 +57,23 @@ const char* TransferName(GSTransferKind kind)
         case GSTransferKind::Stream: return "stream";
         default: return "transfer";
     }
+}
+
+/// 12345 -> "12,345"
+std::string Grouped(uint32_t value)
+{
+    std::string digits = std::to_string(value);
+    for (int i = static_cast<int>(digits.size()) - 3; i > 0; i -= 3)
+        digits.insert(static_cast<size_t>(i), ",");
+    return digits;
+}
+
+std::string CommandText(const GSFirmwareProfile* profile, uint8_t command)
+{
+    char hex[4];
+    std::snprintf(hex, sizeof(hex), "%02X", command);
+    const char* name = profile ? profile->Command(command).name : nullptr;
+    return std::string("#") + hex + (name ? std::string(" ") + name : std::string());
 }
 
 } // namespace
@@ -208,6 +226,114 @@ void GSCommandLogEntry::ToState(StateNode& node) const
 
 /// endregion </Entry>
 
+/// region <Protocol state>
+
+std::string GSProtocolState::Text() const
+{
+    if (!on)
+        return "the command log is off: no protocol state";
+    if (inTransfer)
+    {
+        std::string text = std::string(TransferName(static_cast<GSTransferKind>(transfer))) + ": " + Grouped(transferDone);
+        text += transferTotal ? " of " + Grouped(transferTotal) + " bytes" : std::string(" bytes so far");
+        if (hasAddress)
+        {
+            char at[12];
+            std::snprintf(at, sizeof(at), " at #%04X", transferAddress);
+            text += at;
+        }
+        return text + " (" + CommandText(profile, transferCommand) + ")";
+    }
+    if (command < 0)
+        return "idle";
+    const std::string name = CommandText(profile, static_cast<uint8_t>(command));
+    std::string due;
+    if (paramsReceived < paramsExpected)
+        due = "parameter " + std::to_string(paramsReceived + 1) + " of " + std::to_string(paramsExpected) + " due";
+    else if (repliesRead < repliesExpected)
+        due = "reply " + std::to_string(repliesRead + 1) + " of " + std::to_string(repliesExpected) + " due";
+    if (!taken)
+        return name + ": not taken yet" + (due.empty() ? std::string() : ", then " + due);
+    if (!due.empty())
+        return name + ": " + due;
+    return "idle (last " + name + ")";
+}
+
+void GSProtocolState::ToState(StateNode& node) const
+{
+    node["on"] = on;
+    node["text"] = Text();
+    if (!on)
+        return;
+    node["profile"] = profile ? std::string(profile->id) : std::string();
+    if (command >= 0)
+    {
+        node["command"] = command;
+        if (const char* name = profile ? profile->Command(static_cast<uint8_t>(command)).name : nullptr)
+            node["name"] = std::string(name);
+        node["taken"] = taken;
+        node["params_expected"] = int(paramsExpected);
+        node["params_received"] = int(paramsReceived);
+        node["replies_expected"] = int(repliesExpected);
+        node["replies_read"] = int(repliesRead);
+    }
+    if (inTransfer)
+    {
+        StateNode t = StateNode::Object();
+        t["kind"] = std::string(TransferName(static_cast<GSTransferKind>(transfer)));
+        t["command"] = int(transferCommand);
+        t["bytes"] = int64_t(transferDone);
+        if (transferTotal)
+            t["total"] = int64_t(transferTotal);
+        if (hasAddress)
+            t["address"] = int(transferAddress);
+        node["transfer"] = t;
+    }
+}
+
+GSProtocolState GSCommandLog::State() const
+{
+    if (!On())
+        return {};
+    std::lock_guard lock(_stateMutex);
+    GSProtocolState state = _state;
+    state.on = true;
+    if (!_armed.load(std::memory_order_relaxed))
+    {
+        // Switched on, no host access since: nothing decoded yet
+        state = {};
+        state.on = true;
+    }
+    return state;
+}
+
+void GSCommandLog::Publish()
+{
+    GSProtocolState s;
+    s.on = true;
+    s.profile = _profile;
+    s.command = _command;
+    s.taken = !_commandPending;
+    s.paramsExpected = static_cast<uint8_t>(_paramIndex + _postLeft);
+    s.paramsReceived = _paramIndex;
+    s.repliesExpected = static_cast<uint8_t>(_replyIndex + _repliesLeft);
+    s.repliesRead = _replyIndex;
+    s.inTransfer = _inTransfer;
+    if (_inTransfer)
+    {
+        s.transferCommand = _transferCommand;
+        s.transfer = _transfer;
+        s.transferDone = _blockCount;
+        s.transferTotal = _blockExpected;
+        s.hasAddress = _blockDest == GSCommandLogDest::Ram;
+        s.transferAddress = _blockAddr;
+    }
+    std::lock_guard lock(_stateMutex);
+    _state = s;
+}
+
+/// endregion </Protocol state>
+
 /// region <Decoder>
 
 bool GSCommandLog::Skip() const
@@ -224,13 +350,7 @@ void GSCommandLog::Arm()
     _profile = nullptr;
     _profileIndex = 0xFF;
     if (_card)
-    {
-        // The lightweight card answers as gs105a does (soundchip_gslw.h); a card with a ROM by its digest
-        if (_card->implementation() == GSCardImplementation::LW)
-            _profile = GSFirmwareProfiles()[1];
-        else
-            _profile = IdentifyGSFirmware(*_card).profile;
-    }
+        _profile = GSFirmwareProfileOf(*_card);
     const auto& profiles = GSFirmwareProfiles();
     for (size_t i = 0; i < profiles.size(); i++)
         if (profiles[i] == _profile)
@@ -326,6 +446,7 @@ void GSCommandLog::HostCommand(uint8_t command, bool automation)
 {
     if (Skip())
         return;
+    const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
     const uint8_t status = _card ? _card->getStatusRaw() : 0;
@@ -402,6 +523,7 @@ void GSCommandLog::HostData(uint8_t value, bool automation)
 {
     if (Skip())
         return;
+    const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
     const uint8_t status = _card ? _card->getStatusRaw() : 0;
@@ -459,6 +581,7 @@ void GSCommandLog::HostReplyRead(uint8_t value, bool automation)
 {
     if (Skip())
         return;
+    const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
     const uint8_t status = _card ? _card->getStatusRaw() : 0;
@@ -508,6 +631,7 @@ void GSCommandLog::HostReset()
 {
     if (Skip())
         return;
+    const PublishOnExit publish{*this};
     if (!_armed.load(std::memory_order_relaxed))
         Arm();
     if (_inTransfer)
@@ -520,6 +644,14 @@ void GSCommandLog::HostReset()
 
 void GSCommandLog::Frame()
 {
+    // A host that only polls the status (IN #BB, no hook) sees the card take the command: so does the log, at the
+    // frame start at the latest
+    if (_commandPending && _card && !Skip() && _armed.load(std::memory_order_relaxed))
+    {
+        NoteTaken(_card->getStatusRaw());
+        if (!_commandPending)
+            Publish();
+    }
     if (!_inTransfer || _stallReported || !_context || Skip())
         return;
     if (_context->emulatorState.frame_counter - _progressFrame < kStallFrames)

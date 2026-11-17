@@ -185,6 +185,57 @@ TEST(HapticProfile_Test, Haptics_ProbeWriteDecreased)
     EXPECT_TRUE(fired) << "the Haptics tab sees the source fire";
 }
 
+// `cpu: esp` (haptics.md §5): a frame-end probe of the app the ESP32 runs (DOOM-VDAC4), by its ELF image's address
+TEST(HapticProfile_Test, EspProbesWatchTheAppByItsImageAddress)
+{
+    JsonValue section;
+    std::string error;
+    ASSERT_TRUE(ParseJson(R"({"sources": {
+        "hurt":  {"probe": "write", "cpu": "esp", "address": "0x3fc9a2e4", "when": "increased"},
+        "speed": {"probe": "value", "cpu": "esp", "address": 1073741824, "word": true},
+        "lives": {"probe": "write", "cpu": "main", "address": "0x5f20"}},
+      "rules": [{"on": "hurt", "play": "hit"}]})",
+                          section, error))
+        << error;
+    HapticProfile haptics;
+    ASSERT_TRUE(ParseHapticProfile(section, haptics, error)) << error;
+    const HapticSource* hurt = haptics.Find("hurt");
+    ASSERT_NE(hurt, nullptr);
+    EXPECT_TRUE(hurt->esp);
+    EXPECT_EQ(hurt->espAddress, 0x3fc9a2e4u) << "the full 32-bit address, no page";
+    EXPECT_FALSE(haptics.Find("lives")->esp) << "cpu: main is the machine's CPU";
+
+    HapticMixer mixer([](const HostDeviceId&, const RumbleLevels&) { return true; }, false, FixedMixerClock());
+    ProfileHaptics feed(haptics, "game/esp-test", mixer, [] { return std::vector<HostDeviceId>{"pad"}; });
+    std::vector<HapticWatch> watches = feed.Watches();
+    std::sort(watches.begin(), watches.end(), [](const HapticWatch& a, const HapticWatch& b) {
+        return a.esp != b.esp ? a.esp : a.espAddress < b.espAddress;
+    });
+    ASSERT_EQ(watches.size(), 4u) << "hurt, the word's two bytes, lives";
+    EXPECT_TRUE(watches[0].esp);
+    EXPECT_EQ(watches[0].espAddress, 0x3fc9a2e4u);
+    EXPECT_EQ(watches[1].espAddress, 0x40000000u);
+    EXPECT_EQ(watches[2].espAddress, 0x40000001u) << "the word's second byte";
+    EXPECT_FALSE(watches[3].esp);
+    EXPECT_EQ(watches[3].address, 0x5f20);
+
+    const char* const bad[][2] = {
+        {R"({"sources": {"s": {"probe": "exec", "cpu": "esp", "address": "0x42001000"}}})", "frame-end probes only"},
+        {R"({"sources": {"s": {"probe": "write", "cpu": "esp", "each_write": true, "address": 4}}})",
+         "frame-end probes only"},
+        {R"({"sources": {"s": {"probe": "value", "cpu": "esp", "address": 4, "if": "A == 1"}}})", "main CPU"},
+        {R"({"sources": {"s": {"probe": "value", "cpu": "esp"}}})", "ELF image"},
+        {R"({"sources": {"s": {"probe": "value", "cpu": "gs", "address": 4}}})", "'cpu' is main or esp"},
+    };
+    for (const auto& entry : bad)
+    {
+        ASSERT_TRUE(ParseJson(entry[0], section, error)) << error;
+        HapticProfile refused;
+        EXPECT_FALSE(ParseHapticProfile(section, refused, error)) << entry[0];
+        EXPECT_NE(error.find(entry[1]), std::string::npos) << error;
+    }
+}
+
 TEST(HapticProfile_Test, EventsAreTheSourcesOfTheHaptics)
 {
     // A play profile's `events:` (breakpoint taps README.md §7) are haptics sources: the rules name them, beside the

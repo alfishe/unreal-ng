@@ -168,6 +168,12 @@ bool ApplyInputEvent(const TTDInputEvent& ev, const TTDInputDevices& devices, co
             generalSound->reset();
             break;
 
+        case TTDInputKind::GSReadData:
+            if (!generalSound)
+                return false;
+            (void)generalSound->readData();
+            break;
+
         case TTDInputKind::NetEvent:
             if (!devices.network || !net)
                 return false;

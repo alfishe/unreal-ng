@@ -46,6 +46,8 @@ const KeyName kKeys[] = {
     // Wild Sound (a Sprinter ISA card)
     {AudioSourceType::WildSoundXm, "ws_xm"}, {AudioSourceType::WildSoundAy1, "ws_ay1"},
     {AudioSourceType::WildSoundAy2, "ws_ay2"},
+    // The VDAC4 board's ESP (TS-Conf + VDAC4)
+    {AudioSourceType::Vdac4Esp, "vdac4_esp"},
 };
 
 std::string Lower(std::string s)

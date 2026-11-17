@@ -223,6 +223,7 @@ bool TsConfEngine::ProbeTsuLine(uint32_t line, uint8_t* indices, TsConfTsu::Sour
 
 void TsConfEngine::AccountBudget(uint32_t raster)
 {
+    const AdvanceScope advancing(_advancing);
     const uint32_t start = _ts.budgetRaster;
     const uint32_t cpu = _ts.cpuAccesses;
     _ts.cpuAccesses = 0;
@@ -389,6 +390,7 @@ void TsConfEngine::LineStart(uint32_t line)
 
 void TsConfEngine::CatchUp(uint32_t t)
 {
+    const AdvanceScope advancing(_advancing);
     const uint32_t raster = RasterAt(t);
     // Line by line: the budget of a line is accounted before the next line
     // starts (the CPU reads of that line feed the TSU budget)

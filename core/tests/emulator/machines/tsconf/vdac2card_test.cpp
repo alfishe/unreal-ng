@@ -416,7 +416,7 @@ TEST_F(Vdac2Card_Test, DmaRamToSpiReachesTheChip)
 /// a few tokens. The blob never outgrows the worst case it declares
 TEST_F(Vdac2Card_Test, TtdMemoryBlobRestoresEveryByteWhereverTheZerosAre)
 {
-    Vdac2Card* card = Card();
+    EveHostCard* card = Card();
     ASSERT_NE(card, nullptr);
     EveChip* chip = card->Chip();
     ASSERT_NE(chip, nullptr);

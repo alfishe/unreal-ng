@@ -16,9 +16,9 @@ namespace Vdac2Control
 namespace
 {
 
-Vdac2Card* FindCard(EmulatorContext* context, std::string* error)
+EveHostCard* FindCard(EmulatorContext* context, std::string* error)
 {
-    auto fail = [error](const char* text) -> Vdac2Card* {
+    auto fail = [error](const char* text) -> EveHostCard* {
         if (error)
             *error = text;
         return nullptr;
@@ -32,7 +32,7 @@ Vdac2Card* FindCard(EmulatorContext* context, std::string* error)
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
     if (!decoder)
         return fail("the machine is not TS-Conf: the VDAC2 card fits the TS-Conf IDE connector");
-    Vdac2Card* card = decoder->GetVdac2Card();
+    EveHostCard* card = decoder->GetEveCard();
     if (!card)
         return fail("no VDAC2 card: the TS-Conf configuration is not the VDAC2 build ([MISC] TS_VDAC2=1)");
     if (!card->IsReady())
@@ -56,13 +56,13 @@ bool StartCapture(EmulatorContext* context, const std::string& path, std::string
             *error = "no file path";
         return false;
     }
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     return card && card->StartCapture(path, error);
 }
 
 bool StopCapture(EmulatorContext* context, std::string* error)
 {
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     if (!card->StopCapture())
@@ -76,7 +76,7 @@ bool StopCapture(EmulatorContext* context, std::string* error)
 
 bool GetCaptureStatus(EmulatorContext* context, CaptureStatus& status, std::string* error)
 {
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     const Vdac2Capture::Stats stats = card->GetCaptureStats();
@@ -93,7 +93,7 @@ bool GetCaptureStatus(EmulatorContext* context, CaptureStatus& status, std::stri
 
 bool GetFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, bool withLines, bool inFlight, std::string* error)
 {
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     // The frame in flight moves the chip to the machine's position: only on a
@@ -106,7 +106,7 @@ bool GetFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, bool withL
 
 bool GetPresentedFrameMetrics(EmulatorContext* context, FrameMetrics& metrics, std::string* error)
 {
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     if (!card->PresentedFrameMetrics(metrics))
@@ -126,7 +126,7 @@ bool SetLineBudgetMargin(EmulatorContext* context, uint32_t percent, std::string
             *error = "the margin is a percent from 0 to 50";
         return false;
     }
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     card->SetLineBudgetMargin(percent);
@@ -135,7 +135,7 @@ bool SetLineBudgetMargin(EmulatorContext* context, uint32_t percent, std::string
 
 bool SetMeasureAlways(EmulatorContext* context, bool on, std::string* error)
 {
-    Vdac2Card* card = FindCard(context, error);
+    EveHostCard* card = FindCard(context, error);
     if (!card)
         return false;
     card->SetMeasureAlways(on);

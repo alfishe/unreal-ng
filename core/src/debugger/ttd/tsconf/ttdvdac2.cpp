@@ -126,7 +126,7 @@ uint64_t TTDVdac2::TTDHashState() const { return _card.TtdStateHash(); }
 TTDDeviceDescriptor TTDVdac2::TTDDescribe() const
 {
     TTDDeviceDescriptor d = TTDSerializable::TTDDescribe();
-    d.timeFields = Vdac2Card::TtdTimeFields();   // the raster clocks at the blob's start
+    d.timeFields = EveHostCard::TtdTimeFields();   // the raster clocks at the blob's start
     return d;
 }
 

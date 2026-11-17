@@ -162,7 +162,11 @@ fixed RAM window, 3: high ROM at `#C000`).
      export), fed by LLE, LW and NeoGS, owned by `SoundManager` / the MultiSound card; four anomalies;
      `GSCommandLog_Test`, `BM_GSCommandLog_HostTraffic_*`, MCP `test_the_command_log_is_a_device_history`. Design
      §6.3 "As built". Left: TTD seek cut-off (D3), card-side hooks, block destinations of uploads.
-4. [ ] **Protocol state and send with decoding (F3, F6).**
+4. [x] **Protocol state and send with decoding (F3, F6).**
+   - Done: `GSProtocolState` from the command log's decoder (`protocol` in the GS report), `GSHostDriver` (the
+     debugger's send: each byte when the mailbox allows it, replies read, decoded; TTD input `GSReadData`), CLI /
+     WebAPI / MCP / Lua / Python, `GSHostDriver_Test`. Design §6.4 "As built". Left: firmware objects (F5, phase
+     6), a MultiSound card's send, Qt.
 5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
 
 ### Later

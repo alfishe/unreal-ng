@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 
 #include "debugger/history/devicehistory.h"
@@ -86,6 +87,32 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
 
 using GSCommandHistory = history::DeviceHistory<GSCommandLogEntry>;
 
+/// What the host's conversation with the card is at (gs-debugger design §6.4, F3): the decoder's view, so valid only
+/// while the log records (`on`), whatever the card (a ROM without a profile: commands by number)
+struct GSProtocolState
+{
+    bool on = false;
+    const GSFirmwareProfile* profile = nullptr;
+    int command = -1;              ///< the last command written, -1 none
+    bool taken = true;             ///< the card took it (status bit 0 seen clear)
+    uint8_t paramsExpected = 0;    ///< its pre byte and the bytes after it
+    uint8_t paramsReceived = 0;
+    uint8_t repliesExpected = 0;
+    uint8_t repliesRead = 0;
+    bool inTransfer = false;
+    uint8_t transferCommand = 0;
+    uint8_t transfer = 0;          ///< GSTransferKind
+    uint32_t transferDone = 0;     ///< bytes so far
+    uint32_t transferTotal = 0;    ///< 0: until a command ends it
+    bool hasAddress = false;
+    uint16_t transferAddress = 0;
+
+    /// One line: `#2F Set current track: parameter 2 of 2 due`, `module upload: 12,288 bytes so far (#30 Load
+    /// module)`, `idle (last #2C Set current module)`
+    std::string Text() const;
+    void ToState(StateNode& node) const;
+};
+
 const char* GSCommandLogKindName(GSCommandLogKind kind);
 const char* GSCommandLogAnomalyName(GSCommandLogAnomaly anomaly);
 
@@ -141,6 +168,8 @@ public:
 
     /// The profile the decoder uses now (nullptr: raw); identified when the log starts and at a new card
     const GSFirmwareProfile* Profile() const { return _profile; }
+    /// The conversation's state (F3), as the last host access left it; any thread
+    GSProtocolState State() const;
 
 private:
     void Arm();
@@ -151,6 +180,13 @@ private:
     void EndTransfer(bool truncated, bool automation);
     void ResetDecoder();
     bool Skip() const;
+    void Publish();
+    /// Publishes the decoder's state when a hook returns
+    struct PublishOnExit
+    {
+        GSCommandLog& log;
+        ~PublishOnExit() { log.Publish(); }
+    };
 
     const EmulatorContext* _context;
     history::Registry* const _registry;
@@ -186,4 +222,7 @@ private:
     uint8_t _pendingCommand = 0;
     bool _lastDataFromHost = false; ///< the data flag's last raise was the host's write (not taken yet)
     uint8_t _lastData = 0;
+
+    mutable std::mutex _stateMutex;  ///< the published state: written by the hooks while on, read by the planes
+    GSProtocolState _state;
 };

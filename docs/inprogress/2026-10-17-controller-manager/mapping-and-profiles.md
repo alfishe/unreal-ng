@@ -588,8 +588,12 @@ picture shows those callouts as "not wired on this board".
   rule with `player: N` ([haptics.md §6](haptics.md#6-effects)) plays on that pad only. A game that tells its players by
   keys (a fighting game: one key set each) binds the first pad in `play` and the second in `play@2`
   (`games/sprinter/tmnt-fighters.yaml`: pad 1 the Kempston joystick and V G B H J, pad 2 the cursor keys and `pc.*`).
-- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` name keys the ZX matrix has no
-  place for. They travel as HostKeys rows 8 and 9, are held outside the TTD blob (its format and hash stay as they were)
-  and reach a machine whose input is a PS/2 keyboard (Sprinter) only; elsewhere they do nothing.
+- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` and (2026-11-16, for the
+  PC games of the TS-Conf VDAC4 board: DOOM) `pc.escape` (`pc.esc`), `pc.tab`, `pc.backspace`, `pc.alt`, `pc.ctrl`,
+  `pc.f1` .. `pc.f12` name keys the ZX matrix has no place for (Break on the matrix is Caps Shift + Space, which a PS/2
+  keyboard gets as Shift and Space, not Escape). They travel as HostKeys rows 8 to 12, five to a row in the order of
+  their codes (0xE0..), are held outside the TTD blob (its format and hash stay as they were) and reach a machine
+  whose input is a PS/2 keyboard (Sprinter, TS-Conf and ZX-Evo when the host keys reach PS/2) only; elsewhere they do
+  nothing.
 - With several emulator instances, each device follows its instance assignment
   ([architecture.md §9](architecture.md#9-several-emulator-instances)); two players on two machines is two pins.
