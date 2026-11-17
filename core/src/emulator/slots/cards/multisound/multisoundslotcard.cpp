@@ -101,6 +101,7 @@ MultiSoundSlotCard::MultiSoundSlotCard(const CardContext& context, const MultiSo
                  GSPortTraceRecorder::kDefaultCapacity),
       _gsExecHistory(ChipHistoryRegistry(context.emulator), context.slot + ".gs.cpu",
                      "instructions the card's GS Z80 starts", kExecHistoryRing),
+      _gsCommandLog(context.emulator, ChipHistoryRegistry(context.emulator), context.slot + ".gs.commands"),
       _card(context.emulator, config), _cardTtd(std::make_unique<MultiSoundCardTtd>(*this)),
       _synthTtd(std::make_unique<Sam2695Ttd>(_card.Synth()))
 {
@@ -108,6 +109,7 @@ MultiSoundSlotCard::MultiSoundSlotCard(const CardContext& context, const MultiSo
     _card.Gs().attachPortTrace(&*_gsHistory);
     _gsExecHistory->EnableFastPush();
     _card.Gs().attachExecHistory(&*_gsExecHistory, context.emulator);
+    _card.Gs().attachCommandLog(&_gsCommandLog);
 }
 
 MultiSoundSlotCard::~MultiSoundSlotCard() = default;

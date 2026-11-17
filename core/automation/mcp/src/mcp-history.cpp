@@ -100,7 +100,9 @@ void RegisterDeviceHistory(ToolRegistry& registry)
         "device_history",
         "Device histories: one per device and kind, by the device's registry id; action=list shows the machine's. Device "
         "events (beta128: WD1793 commands with track, sector, drive, side, PC, T-states, final status; ay / chips: register "
-        "writes; sd-zc / sd0: SD commands and blocks; zxbus.1: the GS card's host traffic; ts-registers, vdac2, nextreg, "
+        "writes; sd-zc / sd0: SD commands and blocks; zxbus.1: the GS card's host traffic; zxbus.1.commands: the host's GS "
+        "commands decoded by the firmware profile (name, parameters, replies, uploads as one block, anomalies; each "
+        "record's text is one decoded line); ts-registers, vdac2, nextreg, "
         "copper, dma, uart ...), port accesses (`<device>.ports`, `board.ports`: what the registry's claims give each "
         "device) and execution (`cpu`: the main CPU's instructions; `<slot>.cpu`: a GS / NeoGS card's Z80; `copper`). Each "
         "history is off (zero cost), a ring (the standby mode; the FDC runs one of 64 commands from the start) or a capture "
