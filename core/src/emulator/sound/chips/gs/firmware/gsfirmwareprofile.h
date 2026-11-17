@@ -75,6 +75,9 @@ struct GSCommandInfo
     GSTransferKind transfer = GSTransferKind::None;
     bool documented = false;  // in the programming guide without the (*) mark
     const char* note = nullptr;
+    /// The handler writes the reply, then reads a data byte before RSCOM (OUT (OUTRG) / IN A,(DATRG)): that read
+    /// clears status bit 7, so the host reads the reply once bit 0 clears, without the data flag
+    bool replyUnflagged = false;
 };
 
 /// A firmware variable in the card's fixed RAM window (#4000-#7FFF)
@@ -128,3 +131,6 @@ struct GSFirmwareIdentity
 };
 
 GSFirmwareIdentity IdentifyGSFirmware(const GeneralSoundCard& card);
+/// The profile a card answers with: the lightweight card mimics gs105a (soundchip_gslw.h), any other card its
+/// ROM's (IdentifyGSFirmware); nullptr: none (NeoGS firmware, an unknown ROM)
+const GSFirmwareProfile* GSFirmwareProfileOf(const GeneralSoundCard& card);

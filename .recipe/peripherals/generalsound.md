@@ -83,6 +83,8 @@ Drive the card with `emulator_manage` (all `gs_*` actions go to
 | `gs_nmi` | | `#33` bit-6 pulse |
 | `gs_send_command` / `gs_send_data` | `value` 0-255 (required) | `OUT #BB` / `OUT #B3` semantics |
 | `gs_read_status` / `gs_read_data` | | side-effect-free peek: `IN #BB` value (status or `#7E`) / the card-to-ZX byte (bit 7 not cleared) |
+| `gs_send` | `value` the command; `pre`, `params` (array), `replies`, `wait_ms` (default 1000) | the debugger's send: each byte when the card may take it, the replies read, named by the firmware profile (`GS send 3: #23 Get number of RAM pages -> #03 (pages)`); a wrong parameter count is refused |
+| `gs_conversation` | `send_id` (default the last) | a send's state: queued (a paused machine), running, done, failed with the byte the card did not take |
 | `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs`; optional `replace_if_incompatible`, `dry_run` | replace the card in the GS slot: a slot change applied by a machine restart (owner decision Q10) - a new emulator id (the reply's `restart.emulatorId`), the machine state is lost; refused while TTD records |
 | `gs_dump_module` | `path` (optional, relative, no `..`; default `gs-module-dump.mod`) | write the last completed COM30..D2 module upload; 404 if none |
 | `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject while TTD records: an event of the recording at the next frame boundary |
@@ -92,6 +94,11 @@ The writes, resets and NMI are live input: applied at the next instruction
 boundary and journaled for TTD (409 while a TTD replay owns input). Pick
 `gs_reset` vs `gs_reset_card` deliberately when re-running a firmware boot
 test.
+
+What the host program's conversation is at: `inspect_state {"aspects":["audio_gs"]}` shows `protocol:` (the
+command, the parameters and replies due, an upload's bytes) while the command log records
+(`device_history {"action":"config","device":"zxbus.1.commands","mode":"ring"}`; off: "no protocol
+state").
 
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on

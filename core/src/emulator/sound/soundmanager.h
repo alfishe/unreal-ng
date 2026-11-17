@@ -28,6 +28,7 @@
 #include "emulator/sound/audioactivityindicators.h"
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/mixerchannel.h"
+#include "emulator/sound/chips/gs/gshostdriver.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -142,6 +143,10 @@ protected:
     std::unique_ptr<GSHistory> _gsHistory;  // the General Sound card's, named by its slot (gsporttrace.h)
     // The card CPU's instructions (`<slot>.cpu`, exechistory.h): kept across personality switches like _gsHistory
     std::unique_ptr<history::DeviceHistory<ExecRecord>> _gsExecHistory;
+    // The host's commands, decoded (`<slot>.commands`, gscommandlog.h): kept across personality switches too
+    std::unique_ptr<GSCommandLog> _gsCommandLog;
+    // The debugger's send (gshostdriver.h): steps at the frame start while it has one
+    std::shared_ptr<GSHostDriver> _gsHostDriver;
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
@@ -349,6 +354,15 @@ protected:
     /// The thread that runs the frames (stored by handleFrameStart; a default id until the first frame). The
     /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
     std::atomic<std::thread::id> _emulationThread{};
+
+public:
+    /// True on the thread that runs the frames (a send never waits there for its own steps)
+    bool onEmulationThread() const
+    {
+        return _emulationThread.load(std::memory_order_relaxed) == std::this_thread::get_id();
+    }
+
+protected:
 
     /// Turbo mode forces the low-quality DSP path without touching the user's
     /// `soundhq` feature state; clearing the override restores the previous quality. Set on any thread (turbo
@@ -580,6 +594,16 @@ public:
     GSHistory* gsHistory() const
     {
         return _gsHistory.get();
+    }
+    GSCommandLog* gsCommandLog() const
+    {
+        return _gsCommandLog.get();
+    }
+    /// The debugger's send to the machine's card (F6); nullptr without a card. Shared: a plane waiting for a reply
+    /// keeps it while the card goes
+    std::shared_ptr<GSHostDriver> gsHostDriver() const
+    {
+        return _gsHostDriver;
     }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see

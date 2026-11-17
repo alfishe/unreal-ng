@@ -965,6 +965,56 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
   and cycle. Replay forward regenerates them, because the hooks fire during
   replay as well.
 
+**As built (phase 4, item 3).**
+
+- **A device history.** `GSCommandLog` (`core/src/emulator/sound/chips/gs/gscommandlog.h/.cpp`) is the decoder in
+  front of a `history::DeviceHistory<GSCommandLogEntry>` named `<slot>.commands` (`zxbus.1.commands`; a
+  ZX-MultiSound's GS `<slot>.gs.commands`).
+  - The planes get it through the history verbs (`device_history` in MCP, `history` in the CLI, `/history` in the
+    WebAPI and the WebSocket, Lua, Python). "Start" is a ring or a capture, "stop" is off, plus read and clear.
+    "Export" is the stream: every record to a JSON Lines file.
+  - Each record carries the fields, the profile's names and a decoded `text` line
+    (`#2C Set current module, module #05`).
+  - It is off by default; the ring holds 65,536 entries.
+- **Ownership.** `SoundManager` owns the machine's log, as it owns `<slot>.cpu`. Every personality is bound to it
+  (`GeneralSoundCard::attachCommandLog`), so the log survives LLE ↔ LW switches. The MultiSound slot card owns its
+  card's log.
+- **Feeds.** The host port handlers and the automation actions (`sendCommand`, `sendData`, `readData`, flagged
+  `automation`) of LLE, LW and NeoGS, plus a `#33` reset and the frame start. Each hook runs before the access
+  changes the mailbox, so it sees the status the access met.
+  - While the log is off a hook is a null test and one relaxed load. A log switched on again starts over and
+    identifies the firmware again.
+  - A TTD replay is not recorded (as in the WD1793's history).
+- **The card side is not hooked.** `CardTook` is seen at the next host access, when status bit 0 is clear. The
+  card's own reads of `#01` / `#02` and its reply writes `#03` are not entries.
+- **Profile.** The ROM digest selects it (§6.1); the lightweight card uses gs105a's. NeoGS firmware has no profile,
+  so its records are raw: commands and bytes without names.
+- **Decoder.**
+  - The data byte written before a command is its `pre` (`kHasPre`). The profile's `post` bytes are `Param` entries
+    (`#0D`: one per bit of the mask's low nibble; `#6B`: its optional high byte as one). Any other byte is `Data`.
+    Replies are numbered against the profile's count; one nothing asked for is flagged `unasked`.
+  - An upload or a stream is one `Block` entry with its byte count.
+    - `#30` / `#38` / `#3E` (format `#00` / `#01` only): LOAD takes a command as a stream command (flag `stream`,
+      `#D1` / `#D2` named). `#D2`, `#F3` or `#F4` ends the upload.
+    - `#14` / `#15` end at their length, at their address (dest `ram`).
+    - `#0E` / `#0F` streams end at the next command.
+    - A reset ends any of them `truncated`.
+  - The block's firmware destination (the module table) is not read: `dest` is `unknown` except for `#14` / `#15`.
+- **Anomalies (F4).**
+  - `command_overwritten`: a command while bit 0 is still set by the previous one.
+  - `data_overwritten`: data while bit 7 is still set by the host's previous byte and no reply is due.
+  - `reply_not_ready`: a due reply read while bit 7 is clear. The byte is flagged `not_ready` and the reply stays due.
+    Not for the handlers that write the reply and then read their data byte before RSCOM (`#2A`-`#2E`, `#30`,
+    `#32`-`#35`, `#38`, `#3B`-`#3E`, `#42`, `#45`-`#47`, `#6A`; `GSCommandInfo::replyUnflagged`): that read clears
+    bit 7, so once the card took the command the reply is in the register without the flag.
+  - `transfer_stalled`: an upload with no byte for 50 frames, reported once.
+- **Tests.** `GSCommandLog_Test`: decoding on the lightweight card; one block per upload with the stall; `#14` at its
+  length; the three host anomalies on the LLE card; a reset; a restart. The MCP check is
+  `test_the_command_log_is_a_device_history`.
+- **Benchmark (P2).** `BM_GSCommandLog_HostTraffic_{None,Off,Ring}`: one frame of an upload with 256 host writes.
+- **Not done.** TTD cut-off on a seek (D3, phase 6). The log starting itself when a debugger attaches (an option,
+  F1b). A Qt panel (U2).
+
 ### 6.4 Protocol state and firmware objects (F3, F5, W2, W3)
 
 A common read-only structure is filled by either card:
@@ -989,6 +1039,52 @@ struct GSFirmwareStateView
 - The protocol-state part comes from the command-log decoder for both cards.
   It is also valid when the firmware variables are unknown, for example for a
   ROM without a profile.
+
+**As built (phase 4, item 4: F3 and F6).** The protocol-state part and the send; the firmware objects (F5) are phase 6.
+
+- **Protocol state (F3).** `GSCommandLog::State()` (`GSProtocolState`): the decoder's view, published at the end of
+  each host hook under a small lock, read on any thread.
+  - Fields: the last command, whether the card took it, the parameters expected / received, the replies expected /
+    read, the transfer in progress (kind, bytes so far, the length when known, the address of `#14` / `#15`).
+  - The card's taking of a command is seen at the next host access or at the frame start, whichever comes first
+    (a host that polls only the status has no hook): `#2F Set current track: not taken yet, then parameter 2 of 2
+    due` until then.
+  - A text line: `#2F Set current track: parameter 2 of 2 due`, `module upload: 12,288 bytes so far (#30 Load
+    module)`, `idle (last #2C Set current module)`.
+  - In the GS report as `protocol` (every plane: `state audio gs`, `/state/audio/gs`, `gs_state()`, MCP
+    `audio_gs` with a `protocol:` line).
+  - Only while the log records: off it says so and names the history to configure. A switch of the history
+    (on, off, pause) restarts the decoder (`OnSwitch`), so a log switched on mid-conversation starts at the next
+    command.
+  - The module upload has no total: LOAD ends at `#D2`, the module's length is not in the protocol.
+- **Send (F6).** `GSHostDriver` (`gshostdriver.h`), owned by `SoundManager` for the machine's card, polled at the
+  frame start only while a send is queued (one relaxed load otherwise).
+  - A send is a command with its pre byte, the parameters after it and the reply count. It is checked against the
+    profile: a missing or extra pre byte, or a wrong parameter count, is refused with the parameters' names. Without
+    a profile (NeoGS firmware) the bytes go as given and replies are read only when asked.
+  - It goes in as a careful host sends it, one step a frame:
+    - a set data flag at the start: one frame for the card to take a host byte, then the stale reply is read (`drained`);
+    - the pre byte while bit 7 is clear;
+    - the command while bit 0 is clear;
+    - wait for the card to take it (bit 0 clear);
+    - each parameter while bit 7 is clear;
+    - each reply once bit 7 is set; for a `replyUnflagged` command (the handler's data read clears the flag) the
+      reply is read as soon as the card took the command.
+    A step the mailbox does not allow for 50 frames fails the send and names the byte.
+  - Every step is live input: `GSData`, `GSCommand` and the new `GSReadData` (IN `#B3`, the data flag cleared), so a
+    TTD recording replays the bytes; while a replay owns input the send fails ("refused").
+  - The replies are what the card's `readData` returned (`lastAutomationRead`), not a peek.
+  - The log records the bytes with the `automation` flag; a careful send raises no anomaly.
+  - The last 16 sends are kept; at most 16 wait. A paused machine keeps them queued.
+  - Planes: CLI `gs send` / `gs conversation`, WebAPI `/control/audio/gs` actions `send` / `conversation` (waits up
+    to `wait_ms` on a timer, not holding the thread), MCP `emulator_manage` `gs_send` / `gs_conversation`, Lua
+    `gs_send` / `gs_conversation` (never waits), Python `gs_send(..., wait_ms)` / `gs_conversation`. The GS report
+    carries `last_send`.
+- **Tests.** `GSHostDriver_Test`: `#23` on the firmware's card with its reply and no anomaly; the parameter checks
+  and names; drain, timeout, replay refusal; the protocol state through a command, an upload and its end.
+  `TTDInputApply_Test` covers `GSReadData`. MCP: `test_the_debugger_sends_a_command`.
+- **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card). The Qt
+  panel (U2).
 
 ## 7. Front-ends
 

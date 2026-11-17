@@ -1011,6 +1011,7 @@ int64_t SoundChip_NeoGS::hostLead() const
 void SoundChip_NeoGS::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
     // Nominal base, not the card's actual time: the card ends a frame up to one
     // instruction past it, and that overshoot must not pile up frame after frame.
     // Taken against the previous ZX anchor, so before the anchor moves
@@ -1125,6 +1126,7 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
     {
         case 0xB3: // reply byte; the data bit clears after the cycle
             hostPortSync();
+            logHostReplyRead(_mb.dataToHost);
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
@@ -1150,6 +1152,7 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
             {
                 case 0x80:
                     hostPortSync();
+                    logHostReset();
                     resetCard();
                     return;
                 case 0x40:
@@ -1166,12 +1169,14 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3:
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             onHostDataWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB:
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             onHostCommandWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
             return;
@@ -1205,6 +1210,8 @@ uint8_t SoundChip_NeoGS::readStatus()
 uint8_t SoundChip_NeoGS::readData()
 {
     hostPortSync();
+    logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F;
     return _mb.dataToHost;
 }
@@ -1212,12 +1219,14 @@ uint8_t SoundChip_NeoGS::readData()
 void SoundChip_NeoGS::sendCommand(uint8_t command)
 {
     hostPortSync();
+    logHostCommand(command, true);
     onHostCommandWrite(command);
 }
 
 void SoundChip_NeoGS::sendData(uint8_t data)
 {
     hostPortSync();
+    logHostData(data, true);
     onHostDataWrite(data);
 }
 

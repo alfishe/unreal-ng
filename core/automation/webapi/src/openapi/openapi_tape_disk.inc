@@ -112,7 +112,9 @@
          ["properties"]["block"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/tape/seek"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["block"]["description"] = "Zero-based block index";
-    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["200"]["description"] = "Seeked; resulting position returned";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["200"]["description"] =
+        "Seeked; resulting position returned. A tape still on its way (loaded while a TTD recording runs) answers "
+        "queued: true and takes the seek when it lands";
     paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["400"]["description"] = "Block index out of range";
 
     paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["summary"] = "Get one tape block descriptor with a payload preview";

@@ -16,6 +16,7 @@
 #include <emulator/state/devicestate.h>
 #include <emulator/sound/audiomixer.h>
 #include <debugger/ttd/timetravelcontroller.h>
+#include <emulator/sound/chips/gs/gshostdriver.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 
@@ -580,7 +581,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
     }
 
     const std::string action = json->get("action", "").asString();
-    const bool needsValue = (action == "send_command" || action == "send_data");
+    const bool needsValue = (action == "send_command" || action == "send_data" || action == "send");
 
     int value = 0;
     if (json->isMember("value"))
@@ -610,6 +611,114 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
         callback(resp);
+        return;
+    }
+
+    // send: the debugger's send (gs-debugger design §6.4, F6) - 'value' the command, 'pre', 'params', 'replies';
+    // answered when it finishes or after 'wait_ms' (default 1000, at most 10000), polled without holding this thread.
+    // conversation: a send by 'send_id' (none: the last)
+    if (action == "send" || action == "conversation")
+    {
+        const auto respond = [](const std::function<void(const HttpResponsePtr&)>& reply, const GSSendReply& r) {
+            Json::Value body = StateNodeToJson(r.body);
+            if (r.status != 200)
+            {
+                body["message"] = body["error"];
+                body["error"] = r.status == 404 ? "Not Found" : r.status == 409 ? "Conflict" : "Bad Request";
+            }
+            auto resp = HttpResponse::newHttpJsonResponse(body);
+            resp->setStatusCode(static_cast<HttpStatusCode>(r.status));
+            addCorsHeaders(resp);
+            reply(resp);
+        };
+        const auto byteField = [&](const char* name, std::optional<uint8_t>& out) {
+            if (!json->isMember(name) || (*json)[name].isNull())
+                return true;
+            const Json::Value& v = (*json)[name];
+            if (!v.isIntegral() || v.asInt() < 0 || v.asInt() > 255)
+                return false;
+            out = static_cast<uint8_t>(v.asInt());
+            return true;
+        };
+        if (action == "conversation")
+        {
+            const Json::Value sendId = json->get("send_id", 0);
+            respond(callback, GSConversationRead(context, sendId.isIntegral() ? sendId.asUInt() : 0));
+            return;
+        }
+        GSSendRequest request;
+        request.command = static_cast<uint8_t>(value);
+        bool ok = byteField("pre", request.pre) && byteField("replies", request.replies);
+        if (ok && json->isMember("params"))
+        {
+            const Json::Value& params = (*json)["params"];
+            ok = params.isArray();
+            for (Json::ArrayIndex i = 0; ok && i < params.size(); i++)
+            {
+                ok = params[i].isIntegral() && params[i].asInt() >= 0 && params[i].asInt() <= 255;
+                if (ok)
+                    request.params.push_back(static_cast<uint8_t>(params[i].asInt()));
+            }
+        }
+        const Json::Value waitField = json->get("wait_ms", 1000);
+        if (!ok || !waitField.isIntegral() || waitField.asInt() < 0)
+        {
+            GSSendReply bad;
+            bad.status = 400;
+            bad.body = StateNode::Object();
+            bad.body["error"] = std::string("send: 'pre' and 'replies' bytes 0..255, 'params' an array of them, "
+                                            "'wait_ms' 0..10000");
+            respond(callback, bad);
+            return;
+        }
+        const uint32_t waitMs = std::min<uint32_t>(waitField.asUInt(), 10000);
+        const GSSendReply submitted = GSSend(context, request, 0);
+        const std::shared_ptr<GSHostDriver> driver = soundManager->gsHostDriver();
+        if (submitted.status != 200 || waitMs == 0 || !driver)
+        {
+            respond(callback, submitted);
+            return;
+        }
+        struct Waiter
+        {
+            std::function<void(const HttpResponsePtr&)> callback;
+            std::shared_ptr<GSHostDriver> driver;
+            uint32_t id = 0;
+            std::chrono::steady_clock::time_point deadline;
+            trantor::TimerId timer = 0;
+            bool done = false;
+        };
+        auto waiter = std::make_shared<Waiter>();
+        waiter->callback = std::move(callback);
+        waiter->driver = driver;
+        waiter->id = submitted.id;
+        waiter->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(waitMs);
+        trantor::EventLoop* loop = trantor::EventLoop::getEventLoopOfCurrentThread();
+        if (!loop)
+            loop = drogon::app().getLoop();
+        waiter->timer = loop->runEvery(0.01, [waiter, loop, respond]() {
+            if (waiter->done)
+                return;
+            const std::optional<GSConversation> c = waiter->driver->Find(waiter->id);
+            if (c && !c->Finished() && std::chrono::steady_clock::now() < waiter->deadline)
+                return;
+            waiter->done = true;
+            loop->invalidateTimer(waiter->timer);
+            GSSendReply reply;
+            if (c)
+            {
+                reply.id = c->id;
+                reply.body = StateNode::Object();
+                c->ToState(reply.body);
+            }
+            else
+            {
+                reply.status = 404;
+                reply.body = StateNode::Object();
+                reply.body["error"] = std::string("the send is gone");
+            }
+            respond(waiter->callback, reply);
+        });
         return;
     }
 
