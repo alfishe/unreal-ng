@@ -150,9 +150,12 @@ fixed RAM window, 3: high ROM at `#C000`).
      on every plane, card breakpoint conditions by name, tests `GSCardTarget_Test.TheFirmwareSymbolsNameTheCardsCode`,
      `TheMachinesCardLoadsItsFirmwareSymbols`, `McpTools_Test.ManageSymbols_Cpu_NamesTheCardsLabels`. The label byte
      check is the script's rebuild check (1.04 / 1.05b byte-exact), not a C++ test. Left: L5, NeoGS (N5), Qt card labels.
-2. [ ] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
+2. [x] **Firmware profiles (F2).** `GSFirmwareProfile` tables for v1.04 / v1.05a / v1.05b from `COMTAB` / `COMTABH`,
    selected by the ROM image SHA-256; the card names its firmware; self-check test: every non-stub handler in the
    ROM's tables has a named command.
+   - Done (worktree `scratch/wt-gs-firmware`): `gsfirmwareprofile.h/.cpp` (129 / 131 commands, variables, stream
+     commands), `firmware_profile` in the GS report, `GSFirmwareProfile_Test` (self-check against the ROM tables and
+     labels). Design §6.1 "As built". Left: `rom.cpp` known-ROM entries, profiles from files.
 3. [ ] **Command log (F1, F4, P2, F7 basics).** `GSCommandLog` (ring, decoder by profile, anomalies), owned by
    `SoundManager`, fed by LLE and LW; start / stop / clear / read / export on every plane; on / off benchmark.
 4. [ ] **Protocol state and send with decoding (F3, F6).**

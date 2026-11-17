@@ -764,6 +764,46 @@ const GSFirmwareProfile* FindGSFirmwareProfile(const std::string& sha256);
   handler is not the "unknown command" stub. A table typed by hand therefore
   cannot drift from the ROM.
 
+**As built (phase 4, item 2).**
+
+- **Code.** `core/src/emulator/sound/chips/gs/firmware/gsfirmwareprofile.h/.cpp`.
+  - Each command has a name, `pre` (the byte written to the data register
+    before the command, which the handler takes on entry), `post` (bytes sent
+    after the firmware took the command, or variable) and up to four named
+    parameters with a kind.
+  - It also records the reply bytes and their meaning, the transfer it starts
+    (module / sample upload, block up / down, Covox stream), whether the guide
+    documents it, and a note.
+  - The stream commands taken during an upload are listed apart: `#D1`, `#D2`.
+- **Command sets.** v1.04 names 129 commands. v1.05a and v1.05b name 131:
+  the patch adds `#6A` and `#6B`.
+- **Sources over the guide.** Every handler in `COM_L.a80` / `COM_H.a80` was
+  read. The sources name commands the guide omits: `#2C`, `#2D`, `#2F`,
+  `#34`, `#3B`, `#3C`, `#50`, `#F0`, channels 4-7 of `#80-#AF`. They also
+  correct the guide:
+  - `#02` sets every volume to maximum and `#03` sets them to zero (the guide
+    swaps them).
+  - `#3E #00` loads a signed sample and `#3E #01` behaves as `#38`.
+  - The setters (`#2E`, `#42`, `#45`-`#47`) reply the old value.
+- **Variables.** 35 variables per version (37 in 1.05: `PlMode`, `MODLLEN`).
+  Each has its address, size and meaning. The addresses are the same in every
+  version.
+- **Identity.** `IdentifyGSFirmware(card)` hashes the card's ROM pages
+  (`cardRomPage`). The image digest selects the profile.
+- **Where the card names its firmware.** The GS report (`state audio gs` on
+  every plane, MCP `audio_gs`) carries `firmware_profile`:
+  - for a known ROM: `known`, `id`, `title`, `symbols` (the bundle set of the
+    card CPU's labels), `sha256`, `page_sha256`;
+  - for an unknown ROM: `known: false` with the digests, and MCP says
+    "unknown firmware, no symbols".
+- **Self-check** (`GSFirmwareProfile_Test`). For each shipped ROM:
+  - every `COMTAB` / `COMTABH` handler that is not `COMZ` / `COMHZ` has a
+    named command, no stub has one, and every handler has a label;
+  - the variables sit at their labels;
+  - the digests select the profile and its symbol bundle.
+- **Not done.** The `rom.cpp` known-ROM table entries; profiles from files.
+  NeoGS reports its flash as unknown firmware.
+
 ### 6.2 Firmware symbols (L3, L5, R1, N5)
 
 The binaries are the truth; the sources supply the names. For each shipped
