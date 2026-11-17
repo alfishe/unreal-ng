@@ -355,6 +355,7 @@ private:
     std::vector<QAction*> _machineModelActions;
     std::vector<QAction*> _zxpolyConfigurationActions;  // data: the configuration name (ZXPolyGroup::Configurations)
     std::vector<QAction*> _machineVariantActions;  // machine variants (MachineVariants): TS-Conf + VDAC2
+    std::vector<QMenu*> _machineFamilyMenus;       // a submenu per machine family (MachineCatalog), bold when current
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;

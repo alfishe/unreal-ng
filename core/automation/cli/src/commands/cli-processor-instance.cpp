@@ -5,6 +5,7 @@
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/machinevariants.h"
 #include <emulator/buildinfo.h>
 #include <emulator/config.h>
@@ -1284,6 +1285,34 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         session.SendResponse("Requesting to open file: " + filepath);
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
+}
+
+// HandleMachines - the machines by family (MachineCatalog): "ATM Turbo: ATM450 (512/1024K), ATM710 (...)"
+void CLIProcessor::HandleMachines(const ClientSession& session, const std::vector<std::string>& args)
+{
+    const bool all = !args.empty() && StringHelper::ToLower(args[0]) == "all";
+    const std::vector<MachineFamily> families = all ? MachineCatalog::All() : MachineCatalog::Creatable();
+    std::stringstream ss;
+    for (const MachineFamily& family : families)
+    {
+        ss << family.title << " [" << family.id << "]" << NEWLINE;
+        for (const MachineEntry& machine : family.machines)
+        {
+            ss << "  " << machine.name << " - " << machine.title;
+            if (machine.ramSizesKb.size() > 1)
+            {
+                ss << " (";
+                for (size_t i = 0; i < machine.ramSizesKb.size(); ++i)
+                    ss << (i ? "/" : "") << machine.ramSizesKb[i];
+                ss << "K)";
+            }
+            if (!machine.creatable)
+                ss << " (not creatable on this build)";
+            ss << NEWLINE;
+        }
+    }
+    ss << NEWLINE << "Start one: start <name>" << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 // HandleModels - List available ZX Spectrum models

@@ -35,6 +35,9 @@ public:
     // Get available models
     ADD_METHOD_TO(EmulatorAPI::getModels, "/api/v1/emulator/models", drogon::Get);
 
+    // The machines grouped family -> machine -> RAM size: the tree clients build their machine picker from
+    ADD_METHOD_TO(EmulatorAPI::getMachines, "/api/v1/emulator/machines", drogon::Get);
+
     // Create a new emulator (without starting)
     ADD_METHOD_TO(EmulatorAPI::createEmulator, "/api/v1/emulator/create", drogon::Post);
 
@@ -871,6 +874,10 @@ public:
     // Get available models
     void getModels(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+
+    // The machines grouped family -> machine -> RAM size (MachineCatalog)
+    void getMachines(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     // Create a new emulator
     void createEmulator(const drogon::HttpRequestPtr& req,

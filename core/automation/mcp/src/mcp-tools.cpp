@@ -152,7 +152,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
@@ -166,7 +166,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
-        "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
+        "'list_models' enumerates hardware models with creatable flags; 'list_machines' gives them grouped by "
+        "family -> machine -> RAM size, the creatable ones ('all': true for every one; with a 'target' id that instance's "
+        "machine is placed as 'current'); 'server' reports the build fingerprint "
         "and models_creatable; 'status' reports one instance's details; 'operations' its operation log (who reset, "
         "loaded a snapshot, inserted / ejected media, when, with which result - refusals included; 'since' / 'limit'). "
         "'switch_model' replaces the target with "
@@ -214,6 +216,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
+    schema["properties"]["all"]["type"] = "boolean";
+    schema["properties"]["all"]["description"] = "list_machines: every machine, also the ones this build cannot create";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
@@ -393,6 +397,54 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "list_models")
             {
                 ForwardCall("GET", "/api/v1/emulator/models", nullptr, caller, "Available hardware models", done);
+                return;
+            }
+
+            if (action == "list_machines")
+            {
+                std::string path = "/api/v1/emulator/machines";
+                std::string query;
+                if (args.isMember("all") && args["all"].asBool())
+                    query += "all=true";
+                if (const std::string target = args.get("target", "").asString(); !target.empty() && target != "auto")
+                    query += (query.empty() ? "" : "&") + std::string("id=") + target;
+                if (!query.empty())
+                    path += "?" + query;
+                // The tree as text too (an agent may see only the text): a family per line, its machines with
+                // their RAM sizes, the current one marked
+                caller.Call("GET", path, nullptr, [done](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                        return;
+                    }
+                    const Json::Value& current = body["current"];
+                    std::ostringstream out;
+                    out << "Machines by family (start one: create / switch_model with model = the name):";
+                    for (const Json::Value& family : body["families"])
+                    {
+                        out << "\n" << family["title"].asString() << " [" << family["id"].asString() << "]:";
+                        bool first = true;
+                        for (const Json::Value& machine : family["machines"])
+                        {
+                            out << (first ? " " : ", ") << machine["name"].asString();
+                            first = false;
+                            const Json::Value& sizes = machine["ram_sizes_kb"];
+                            if (sizes.size() > 1)
+                            {
+                                out << " (";
+                                for (Json::ArrayIndex i = 0; i < sizes.size(); ++i)
+                                    out << (i ? "/" : "") << sizes[i].asUInt();
+                                out << "K)";
+                            }
+                            if (!machine["creatable"].asBool())
+                                out << " (not creatable)";
+                            if (current.isObject() && current["machine"].asString() == machine["name"].asString())
+                                out << " <- current, " << current["ram_kb"].asUInt() << "K";
+                        }
+                    }
+                    done(ToolResult::Ok(out.str(), std::move(body)));
+                });
                 return;
             }
 
