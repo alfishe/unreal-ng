@@ -10,6 +10,13 @@ tables), records grouped into parts (each part closed by a part-end record),
 then an index and a 24-byte trailer. Every record carries a CRC32C of its
 header and of its payload; payloads are zstd-compressed when that was smaller.
 
+A record holds at most MAX_RAW (1 GiB) raw. A larger payload of stream S is
+stored as several records of S's chunked twin (S | 0x8000), one after another,
+every one but the last flagged FLAG_CONTINUED (F3, 2026-11-16). Part.records
+joins them into one Record of S (its `chunks` the records as stored) and
+read_record returns the whole payload; Part.physical lists every record as
+stored, for verbatim copies.
+
 This reader checks what the C++ reader checks (header, index and trailer CRCs,
 every record's CRC, complete parts, unknown required streams) and more: it
 decodes every piece version through its chain and checks the content CRC, and
@@ -46,6 +53,8 @@ RECORD_HEADER = 32
 TRAILER = 24
 FLAG_COMPRESSED = 1
 FLAG_PART_END = 2
+FLAG_CONTINUED = 4                   # a chunked stream's record: the payload goes on in the next record
+CHUNKED_BIT = 0x8000                 # the chunked twin of stream S is S | CHUNKED_BIT
 PART_FILE_START = 1                  # part-end extra, bit 0
 HEADER_CONVERTED_FROM_V1 = 1         # header flags, bit 0
 PIECE = 4096
@@ -57,6 +66,18 @@ STREAM_NAMES = {
 }
 FRAME_STREAM_FIRST, FRAME_STREAM_LAST = 0x0100, 0x013F    # frame-boundary streams (D19); 0x0100 = screenshot
 KNOWN_STREAMS = (set(STREAM_NAMES) - {0}) | set(range(FRAME_STREAM_FIRST, FRAME_STREAM_LAST + 1))
+
+
+def chunked_twin(sid: int) -> int:
+    return sid | CHUNKED_BIT
+
+
+def is_chunked_twin(sid: int) -> bool:
+    return bool(sid & CHUNKED_BIT)
+
+
+def stream_of_chunked_twin(sid: int) -> int:
+    return sid & ~CHUNKED_BIT
 
 ENCODING_FULL, ENCODING_XOR, ENCODING_ZERO, ENCODING_RANGES = 0, 1, 2, 3
 ENCODING_NAMES = {0: "full", 1: "xor", 2: "zero", 3: "ranges"}
@@ -165,6 +186,9 @@ class Record:
     stored_size: int
     raw_size: int
     payload_crc: int
+    # A chunked stream's payload (Part.records): the records holding it, as stored; stored_size and raw_size are
+    # then their sums. Empty for a record of its own
+    chunks: List["Record"] = field(default_factory=list)
 
 
 @dataclass
@@ -173,7 +197,8 @@ class Part:
     first_frame: int = 0
     frame_count: int = 0
     branch: int = 0
-    records: List[Record] = field(default_factory=list)
+    records: List[Record] = field(default_factory=list)       # one per payload, chunked streams joined
+    physical: List[Record] = field(default_factory=list)      # every record as stored (verbatim copies)
     dependencies: List[int] = field(default_factory=list)
     extra: bytes = b""
     damaged: bool = False
@@ -237,13 +262,49 @@ def _parse_part_end(c: Container, rec: Record) -> Part:
                 part.damaged = True
                 part.damage = f"a record header of the part is damaged (at {offset})"
             member = Record(offset, 0xFFFF, 0, part.index, 0, 0, 0, 0)
-        part.records.append(member)
+        part.physical.append(member)
+    if not part.damaged:
+        why = _join_chunks(part)
+        if why:
+            part.damaged, part.damage = True, why
+    if part.damaged:
+        part.records = list(part.physical)
     deps, prev = r.varint(), 0
     for _ in range(deps):
         prev += r.varint()
         part.dependencies.append(prev)
     part.extra = r.take(r.varint())
     return part
+
+
+def _join_chunks(part: Part) -> str:
+    """Part.records from Part.physical: a chunked stream's records joined (TTDContainerReader::JoinChunks).
+    Returns the reason when a chunked stream is cut, "" when sound."""
+    part.records = []
+    open_run = False
+    for i, rec in enumerate(part.physical):
+        if open_run:
+            head, previous = part.records[-1], part.physical[i - 1]
+            if (rec.stream_id != chunked_twin(head.stream_id)
+                    or rec.offset != previous.offset + RECORD_HEADER + previous.stored_size
+                    or rec.sequence != previous.sequence + 1):
+                return f"a chunked record of stream {head.stream_id} is cut (at {previous.offset})"
+            head.chunks.append(rec)
+            head.stored_size += rec.stored_size
+            head.raw_size += rec.raw_size
+            open_run = bool(rec.flags & FLAG_CONTINUED)
+            continue
+        if is_chunked_twin(rec.stream_id):
+            part.records.append(Record(rec.offset, stream_of_chunked_twin(rec.stream_id), rec.flags, rec.part_index,
+                                       rec.sequence, rec.stored_size, rec.raw_size, rec.payload_crc, [rec]))
+            open_run = bool(rec.flags & FLAG_CONTINUED)
+        elif rec.flags & FLAG_CONTINUED:
+            return f"a record of stream {rec.stream_id} claims a continuation (at {rec.offset})"
+        else:
+            part.records.append(rec)
+    if open_run:
+        return f"a chunked record of stream {part.records[-1].stream_id} is cut (at {part.physical[-1].offset})"
+    return ""
 
 
 def _read_index(c: Container) -> None:
@@ -353,7 +414,7 @@ def open_container(data: bytes, known: Optional[Callable[[int], bool]] = None) -
     except ValueError as e:
         raise TtdContainerError(f"damaged header (tables): {e}") from e
     c = Container(data, flags, uuid, created, zstd_version, streams, tables, size)
-    known = known or (lambda sid: sid in KNOWN_STREAMS)
+    known = known or (lambda sid: stream_of_chunked_twin(sid) in KNOWN_STREAMS)
     for s in streams.values():
         if known(s.id):
             continue
@@ -370,7 +431,9 @@ def open_container(data: bytes, known: Optional[Callable[[int], bool]] = None) -
 
 
 def read_record(c: Container, rec: Record) -> bytes:
-    """A record's payload: CRC checked, decompressed. Raises ValueError when damaged."""
+    """A record's payload: CRC checked, decompressed; a chunked stream's whole. Raises ValueError when damaged."""
+    if rec.chunks:
+        return b"".join(read_record(c, chunk) for chunk in rec.chunks)
     stored = c.data[rec.offset + RECORD_HEADER: rec.offset + RECORD_HEADER + rec.stored_size]
     if len(stored) != rec.stored_size or crc32c(stored) != rec.payload_crc:
         raise ValueError(f"damaged record at {rec.offset} (CRC)")
@@ -495,7 +558,8 @@ def read_session(c: Container) -> Session:
                     payloads[rec.stream_id] = read_record(c, rec)
                     desc = c.streams.get(rec.stream_id)
                     name = STREAM_NAMES.get(rec.stream_id, desc.name if desc else f"stream {rec.stream_id}")
-                    s.stream_bytes[name] = s.stream_bytes.get(name, 0) + rec.stored_size + RECORD_HEADER
+                    headers = RECORD_HEADER * max(1, len(rec.chunks))
+                    s.stream_bytes[name] = s.stream_bytes.get(name, 0) + rec.stored_size + headers
         except ValueError as e:
             s.stopped_at = f"part {part.index}: {e}"
             break

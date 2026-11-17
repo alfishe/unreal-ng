@@ -230,13 +230,14 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
                     break;
                 }
                 std::vector<uint8_t> stored;
-                for (const TTDRecordRef& record : part.records)
+                // As stored: a chunked stream's records one by one
+                for (const TTDRecordRef& record : part.physical)
                     if (!reader.ReadStored(record, stored, &error) ||
                         !writer.AddStoredRecord(record.streamId, record.flags, stored.data(), stored.size(),
                                                 record.rawSize))
                     {
                         if (error.empty())
-                            error = "the joined file could not be written";
+                            error = "the joined file could not be written: " + writer.Error().text;
                         ok = false;
                         break;
                     }
@@ -251,7 +252,7 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
                     end.dependencies.push_back(partBase + d);
                 if (!writer.EndPart(end))
                 {
-                    error = "the joined file could not be written";
+                    error = "the joined file could not be written: " + writer.Error().text;
                     ok = false;
                     break;
                 }
@@ -260,7 +261,7 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
         }
         ok = ok && writer.Finalize();
         if (!ok && error.empty())
-            error = "the joined file could not be written";
+            error = "the joined file could not be written: " + writer.Error().text;
         sink.Close();
     }
     if (ok)

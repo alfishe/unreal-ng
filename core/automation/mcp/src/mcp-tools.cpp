@@ -175,7 +175,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
         "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
-        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
+        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size', "
+        "'symbolic_id', 'start') "
         "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
         "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
         "reason when the target cannot hold the state; 'check': true (with 'to') only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are NOT moved. 'create' with 'zxpoly': true starts a "
@@ -285,6 +286,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["check"]["type"] = "boolean";
     schema["properties"]["check"]["description"] =
         "transfer_state with 'to': only report whether the transfer is possible and what would move; nothing changes";
+    schema["properties"]["keep_frame_position"]["type"] = "boolean";
+    schema["properties"]["keep_frame_position"]["description"] =
+        "transfer_state: keep the source's in-frame position when both models share the frame geometry (default true)";
+    schema["properties"]["symbolic_id"]["type"] = "string";
+    schema["properties"]["symbolic_id"]["description"] = "transfer_state with 'model': the new instance's symbolic id";
+    schema["properties"]["start"]["type"] = "boolean";
+    schema["properties"]["start"]["description"] =
+        "transfer_state with 'model': start the new instance (default: when the source is running and not paused)";
     schema["properties"]["zxpoly"]["type"] = "boolean";
     schema["properties"]["zxpoly"]["description"] =
         "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
@@ -614,6 +623,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["ram_size"] = args["ram_size"].asUInt();
                     if (args.isMember("check") && args["check"].asBool())
                         body["check"] = true;
+                    if (args.isMember("keep_frame_position") && args["keep_frame_position"].isBool())
+                        body["keep_frame_position"] = args["keep_frame_position"].asBool();
+                    if (hasModel && args.isMember("symbolic_id") && args["symbolic_id"].isString() &&
+                        !args["symbolic_id"].asString().empty())
+                        body["symbolic_id"] = args["symbolic_id"].asString();
+                    if (hasModel && args.isMember("start") && args["start"].isBool())
+                        body["start"] = args["start"].asBool();
                     caller.Call("POST", Endpoint(id, "/snapshot/transfer"), &body, [id, done](int status, Json::Value response) {
                         // The report carries the per-item reasons on success and on refusal alike
                         const std::string summary = response.get("summary", "").asString();

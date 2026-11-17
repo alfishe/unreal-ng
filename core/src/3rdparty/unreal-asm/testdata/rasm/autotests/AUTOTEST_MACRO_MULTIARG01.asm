@@ -1,0 +1,1 @@
+macro multi,arg1,arg2,...: if {#}==3 : nop : else : assert 0==1,'wrong param number for this test' : endif: mend:multi 4,5,6: macro multi2,arg1,...: if {#}==5 : defb {4} : endif: defb {50|=#77} : mend: multi2 0,1,2,3,#44

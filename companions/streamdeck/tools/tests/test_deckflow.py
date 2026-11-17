@@ -427,6 +427,95 @@ class BuildTest(Base):
         self.assertEqual([str(i) for i in issues if i.error], [])
 
 
+class WideMenuTest(Base):
+    """A wide menu (width over the deck's columns) with strip keys: the spec's zones in the key form become `do`
+    steps in the project and come back the same; a slot past the deck's columns is taken, past the width is not."""
+
+    KB = ("    tools:  {at: [2, 0], open: tools}\n",
+          "    tools:  {at: [2, 0], open: tools}\n    kb:     {at: [2, 1], open: kb}\n")
+    MENU = """
+menu kb:
+  title: Keys
+  uc: U1.4
+  width: 10
+  back: false
+  strip: {content: keys, keys: [{label: CAPS, latch: true, action: input.key, value: {key: caps, hold: true}, hold: true}, {label: SPACE, span: 4, action: input.key, value: {key: space}}]}
+  dials:
+    0: {label: CAPS, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: caps, hold: true}, hold: true}}
+  keys:
+    kq:     {at: [1, 0], uc: U1.4, action: input.key, value: {key: q, hold: true}, label: Q}
+    kp:     {at: [1, 9], uc: U1.4, action: input.key, value: {key: p, hold: true}, label: P}
+"""
+
+    def setUp(self):
+        super().setUp()
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        self.assertIn(self.KB[0], text)
+        write(p, text.replace(self.KB[0], self.KB[1], 1) + self.MENU)
+
+    def test_build_and_round_trip(self):
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build()
+        kb = find(y.load(read(self.paths.project("fx")))["root"], "kb")
+        self.assertEqual(kb["width"], 10)
+        self.assertEqual(kb["nav"]["back"], None)
+        zones = kb["strip"]["keys"]
+        self.assertEqual(zones[0], {"label": "CAPS", "latch": True, "do": {"kind": "action", "id": "input.key",
+                                                                          "value": {"key": "caps", "hold": True},
+                                                                          "hold": True}})
+        self.assertEqual((zones[1]["span"], zones[1]["do"]["value"]), (4, {"key": "space"}))
+        self.assertEqual(find(kb, "kp")["at"], [1, 9])
+        self.assertEqual(kb["dials"][0]["turn"], {"kind": "nav", "to": "scroll", "by": "$ticks"})
+        self.assertEqual(self.project_model(), self.spec_model())
+        text = self.spec_text()
+        self.assertIn("# strip: CAPS (latch) | SPACE", text)
+        self.assertIn("the deck shows 9 of the 10 columns", text)
+        self.assertIn("    9", text.split("# +-- screen kb")[1].split("\n")[1])  # the map has a column 9
+
+    def test_mistakes(self):
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        write(p, text.replace("kp:     {at: [1, 9]", "kp:     {at: [1, 10]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "outside the plusxl grid (4 rows x 10" in i])
+        write(p, text.replace("  back: false\n", ""))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "scrolls its back key away" in i])
+        write(p, text.replace("{label: CAPS, latch: true, action", "{latch: true, action"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "needs a label" in i])
+
+
+class WindowedMenuTest(WideMenuTest):
+    """A wide menu with a window: the grid scrolls on deck columns 1..7, pinned keys keep the deck's slots outside it
+    (a slot a grid key also has is no clash); the project holds window and pin and comes back the same."""
+
+    MENU = WideMenuTest.MENU.replace("  width: 10\n", "  width: 10\n  window: [1, 7]\n") + \
+        "    kleft:  {at: [1, 0], pin: true, uc: U1.4, do: {kind: nav, to: scroll, by: -1}, title: Left}\n" \
+        "    kright: {at: [1, 8], pin: true, uc: U1.4, do: {kind: nav, to: scroll, by: 1}, title: Right}\n"
+
+    def test_build_and_round_trip(self):
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build()
+        kb = find(y.load(read(self.paths.project("fx")))["root"], "kb")
+        self.assertEqual(kb["window"], [1, 7])
+        self.assertEqual((find(kb, "kleft")["at"], find(kb, "kleft")["pin"]), ([1, 0], True))
+        self.assertNotIn("pin", find(kb, "kq"))
+        self.assertEqual(find(kb, "kright")["do"], {"kind": "nav", "to": "scroll", "by": 1})
+        self.assertEqual(self.project_model(), self.spec_model())
+        text = self.spec_text()
+        self.assertIn("the deck shows 7 of the 10 columns at a time on its columns 1..7", text)
+        self.assertIn("# pinned: [1,0] ", text)
+
+    def test_mistakes(self):
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        write(p, text.replace("kright: {at: [1, 8]", "kright: {at: [1, 4]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "inside the window of kb" in i])
+        write(p, text.replace("  window: [1, 7]\n", ""))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "pin goes in a menu with a window" in i])
+        write(p, text.replace("window: [1, 7]", "window: [1, 9]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "window: [first, last]" in i])
+
+
 class SyncTest(Base):
     def setUp(self):
         super().setUp()

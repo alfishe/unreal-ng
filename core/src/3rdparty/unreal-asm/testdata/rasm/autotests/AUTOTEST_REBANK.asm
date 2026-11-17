@@ -1,0 +1,1 @@
+bank 1: mylabel1 nop: assert {bank}mylabel1==1:bank 2: mylabel2 nop: assert {bank}mylabel2==2:rebank: mylabel3 nop: assert {bank}mylabel3==1:bank: labeltmp: bnktmp={bank}labeltmp:bank: labeltmp2: bnktmp2={bank}labeltmp2: assert bnktmp!=bnktmp2:rebank: labeltmp3: bnktmp3={bank}labeltmp3: assert bnktmp3==bnktmp

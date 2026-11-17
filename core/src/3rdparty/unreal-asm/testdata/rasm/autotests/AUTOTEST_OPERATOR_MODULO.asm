@@ -1,0 +1,1 @@
+revar=46: devar=5 : var=46%5 : assert var==1: var=46 % 5 : assert var==1: var=46 mod 5 : assert var==1:var=revar%5 : assert var==1: var=revar%devar : assert var==1: var=46%devar : assert var==1: var=revar % 5 : assert var==1:var=revar % devar : assert var==1: var=46 % devar : assert var==1: var=revar % %101 : assert var==1: var=revar%%101 : assert var==1: nop

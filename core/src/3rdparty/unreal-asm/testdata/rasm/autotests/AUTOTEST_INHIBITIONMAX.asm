@@ -1,0 +1,1 @@
+roudoudou:ifndef roudoudou:if pouet:macro glop bank,page,param:ifdef nanamouskouri:ld hl,{param}{bank}:elseif aglapi:exx:endif:if {bank}:nop:elseif {grouik}:exx:endif:switch {bite}:nop:case {nichon}:nop:default:nop:break:endswitch:else:ifnot {jojo}:exx:endif:endif:else:defb 'coucou':endif

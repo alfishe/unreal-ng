@@ -395,6 +395,20 @@ public:
     /// @return false with @p err set when there is no session or a write fails
     bool SerializeSession(std::ostream& out, std::string& err, bool lineageOnly = false);
 
+    /// What DumpSession did
+    struct DumpResult
+    {
+        bool ok = false;
+        std::string error;                              ///< the reason, naming the file and the system's words
+        TTDWriteFailure failure = TTDWriteFailure::None;   ///< its kind (the HTTP status of the dump)
+        uint64_t bytes = 0;                             ///< the file's size (ok)
+        bool partialRemoved = false;                    ///< a failed dump removed what it had written
+    };
+    /// @brief Write the session to the file @p path (SerializeSession's content). The file is written as
+    /// "<path>.partial" and renamed to @p path when complete: a failed dump leaves no file that looks like a
+    /// session (it removes the partial one and says so) and an existing @p path stays as it was
+    DumpResult DumpSession(const std::string& path, bool lineageOnly = false);
+
     /// @brief Replace the session by the one in @p in, an engine session file.
     /// Refused, leaving the current session as it was, when the file is
     /// unreadable or a (deleted) v1 file, recorded on another model or ROM set,
@@ -2478,6 +2492,8 @@ private:
     void NoteSegmentFile(uint32_t line, const std::string& path, size_t firstCheckpoint);
     /// Read back every evicted segment (Save and Check read the whole session); ReleaseAllReadBack trims again
     bool ReadBackAll(std::string& error);
+    /// SerializeSession and DumpSession: the session into @p sink, @p failure the kind of a failed write
+    bool SaveSessionTo(ITTDByteSink& sink, std::string& err, bool lineageOnly, TTDWriteFailure* failure);
     void ReleaseAllReadBack();
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _line->timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);

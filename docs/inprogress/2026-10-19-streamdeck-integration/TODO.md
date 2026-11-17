@@ -70,6 +70,11 @@ beside `surface`) is not on `/api/v1/ws` yet: `/api/v1/companions/events` meanwh
   `Contents/Resources`, Windows ZIP, DEB `/usr/lib/unreal-ng`, AppImage and tarball) and in a build's `bin/`
   (`cmake/RuntimeData.cmake`): a scenario's `$data/testsnapshots/...` opens in a release; `release.yml` checks a file
   in the DMG, the DEB and the AppImage ([packaging.md §6](packaging.md#6-data)).
+- 2026-11-17: the keyboard page (U1.7): one deck key per ZX Spectrum key in every icon pack (glyph group `zx`). A
+  wide menu shows its `width` columns through a `window` of deck columns; `pin: true` keys stay outside it (home,
+  ENTER, the scroll keys, CAPS SHIFT, SYMBOL SHIFT); a scroll key at its end is dimmed; dial turns and strip swipes
+  scroll too, the strip holds CAPS | SPACE | SYMBOL. A dry run plays nav steps. deckflow round-trips `window` / `pin`
+  ([scenarios.md](scenarios.md), [pipeline.md](../../companions/streamdeck/pipeline.md)).
 
 ## Open
 

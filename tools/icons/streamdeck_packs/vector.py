@@ -125,19 +125,20 @@ class HiResCanvas:
         self.ids[m] = -1
         self.gap[m] = False
 
-    def text_mask(self, s, x, y, scale=1, gap=1):
+    def text_mask(self, s, x, y, scale=1, gap=1, font=None):
         m = np.zeros((R, R), bool)
         for ch in s.upper():
-            for j, row in enumerate(sp.FONT_4X7[ch]):
+            rows = (font or sp.FONT_4X7)[ch]
+            for j, row in enumerate(rows):
                 for i, bit in enumerate(row):
                     if bit == '1':
                         yy, xx = (y + j * scale) * S, (x + i * scale) * S
                         m[yy:yy + scale * S, xx:xx + scale * S] = True
-            x += (4 + gap) * scale
+            x += (len(rows[0]) + gap) * scale
         return m
 
-    def text(self, s, x, y, col, scale=1, gap=1):
-        m = self.text_mask(s, x, y, scale, gap)
+    def text(self, s, x, y, col, scale=1, gap=1, font=None):
+        m = self.text_mask(s, x, y, scale, gap, font)
         self.cut[m] = self.ids[m] > 0
         self.c[m] = col
         self.ids[m] = -1

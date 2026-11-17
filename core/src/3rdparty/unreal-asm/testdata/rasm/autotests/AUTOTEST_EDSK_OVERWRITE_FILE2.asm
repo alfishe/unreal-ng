@@ -1,0 +1,1 @@
+defs 1024,#AA : save 'machin.bin',0,$,DSK,'rasmoutput_test.dsk' 

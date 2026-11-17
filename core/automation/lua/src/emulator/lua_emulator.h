@@ -32,6 +32,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
+#include <loaders/snapshot/statetransfercontrol.h>
 #include "../bindings/lua_porttrace.h"
 #include "../bindings/lua_vdac2.h"
 #include "../bindings/lua_vdac4.h"
@@ -3870,6 +3871,37 @@ public:
             return StateNodeToLua(state, emulator->LastSnapshotReport().ToStateNode());
         });
 
+        // transfer_state{to = id | model = name [, ram_size = KB, symbolic_id = "..."] [, check = true]
+        //                [, keep_frame_position = false] [, start = true | false]} -> report | nil, error
+        // This machine's running state into another instance, in memory (StateTransferControl, as WebAPI POST
+        // /snapshot/transfer, MCP transfer_state, CLI snapshot transfer): an existing one (`to`; `check` only says what
+        // would move) or a new one of a model (started when this one runs, unless `start` says otherwise). The report
+        // is the WebAPI's answer: {ok, mode = "clone" | "cross-model", reason, items = {{name, status, detail}},
+        // copied, dropped, refused, summary, source_id, target_id, created, state, model, ram_kb}; ok = false: refused,
+        // nothing changed. nil, error when there is no report (no such target, the coordinator refuses, a bad request)
+        lua.set_function("transfer_state", [this](sol::this_state s, sol::table opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* source = effectiveEmulator();
+            if (!source)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            StateTransferRequest request;
+            request.sourceId = source->GetId();
+            request.to = opts.get_or<std::string>("to", "");
+            request.model = opts.get_or<std::string>("model", "");
+            request.ramSizeKB = opts.get_or<uint32_t>("ram_size", 0);
+            request.symbolicId = opts.get_or<std::string>("symbolic_id", "");
+            request.check = opts.get_or("check", false);
+            if (const sol::optional<bool> keep = opts.get<sol::optional<bool>>("keep_frame_position"))
+                request.keepFramePosition = *keep;
+            if (const sol::optional<bool> start = opts.get<sol::optional<bool>>("start"))
+                request.start = *start;
+            // The automation gate as every changing call of a script (a check only reads)
+            execution::script::Check(*source, execution::Origin::Lua, !request.check);
+            const StateTransferReply reply = StateTransferControl::Execute(request);
+            if (!reply.hasReport)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error + ": " + reply.message)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
+        });
+
         // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,
         // emulator_id, model_switched, required_model, summary}; options:
         // desync_mode ("strict" / "tolerant"), ei_short_frame_blocks_int,
@@ -6547,12 +6579,19 @@ public:
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
-        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history
-        lua.set_function("ttd_dump", [this](const std::string& path, sol::optional<bool> lineage) -> bool {
+        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history.
+        // true, or false and the reason (the system's words, a full disk only when it is, the partial file removed)
+        lua.set_function("ttd_dump", [this](sol::this_state ts, const std::string& path,
+                                            sol::optional<bool> lineage) -> sol::variadic_results {
             std::map<std::string, std::string> options{{"path", path}};
             if (lineage && *lineage)
                 options["lineage"] = "true";
-            return TtdRun("dump", options).Ok();
+            const ttd::TTDReply reply = TtdRun("dump", options);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(ts, reply.Ok()));
+            if (!reply.Ok())
+                results.push_back(sol::make_object(ts, reply.message));
+            return results;
         });
 
         // Loading refuses a session recorded on a different machine model: a

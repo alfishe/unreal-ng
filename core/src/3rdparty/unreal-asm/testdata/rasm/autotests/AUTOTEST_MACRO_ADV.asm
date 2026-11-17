@@ -1,0 +1,1 @@
+idx=10:macro mac2 param1,param2:ld hl,{param1}{idx+10}{param2}:{param1}{idx+10}{param2}:djnz {param1}{idx+10}{param2}:mend: mac2 label,45:mac2 glop,10:djnz glop2010:jp label2045

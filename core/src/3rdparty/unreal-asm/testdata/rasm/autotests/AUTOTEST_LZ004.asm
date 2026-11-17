@@ -1,0 +1,1 @@
+org #A000,$:lzx0:ld hl,#EEEE:nop 16:lzclose:org $:ld hl,#EEEE:org #A000,$:lzx0:ld hl,#EEEE:nop 16:lzclose:org $:ld hl,#EEEE:org #A000,$:lzx0:ld hl,#EEEE:nop 16:lzclose:org $:ld hl,#EEEE

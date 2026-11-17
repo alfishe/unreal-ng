@@ -1,0 +1,1 @@
+let monorg=$:NoCode:Org 0:Element1 db 0:Element2 dw 3:Element3 ds 50:Element4 defb 'rdd':Org 0:pouet defb 'nop':Code:Org monorg:cpt=$+element2+element3+element4:defs cpt,0

@@ -4721,6 +4721,34 @@ TEST_F(McpTools_Test, TimeTravel_DumpFailure_IsError)
     EXPECT_NE(result.text.find("no session"), std::string::npos) << result.text;
 }
 
+/// F3: a refused dump's text names the real reason and the status (an agent sees only the text)
+TEST_F(McpTools_Test, TimeTravel_DumpRefused_TextNamesTheReason)
+{
+    for (const auto& [status, message] :
+         {std::pair<int, std::string>{409, "Cannot open file: /ro/s.ttd (/ro/s.ttd.partial: cannot create: Permission denied)"},
+          std::pair<int, std::string>{507, "writing the index failed: No space left on device (the partial file "
+                                           "/tmp/s.ttd.partial was removed)"}})
+    {
+        Json::Value failed;
+        failed["ok"] = false;
+        failed["error"] = status == 507 ? "Insufficient Storage" : "Conflict";
+        failed["message"] = message;
+        failed["reason"] = status == 507 ? "no_space" : "io";
+        failed["partial_removed"] = status == 507;
+        _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {status, failed};
+
+        Json::Value args;
+        args["action"] = "dump";
+        args["path"] = "/tmp/s.ttd";
+        mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+        EXPECT_TRUE(result.isError);
+        EXPECT_NE(result.text.find(std::to_string(status)), std::string::npos) << result.text;
+        EXPECT_NE(result.text.find(status == 507 ? "No space left on device" : "Permission denied"), std::string::npos)
+            << result.text;
+    }
+}
+
 TEST_F(McpTools_Test, TimeTravel_DumpWithoutPath_RejectsBeforeAnyCall)
 {
     Json::Value args;
@@ -4938,6 +4966,19 @@ TEST_F(McpTools_Test, EmulatorManage_TransferState_PostsToOrModel)
     EXPECT_EQ(call2->body["model"].asString(), "PENTAGON");
     EXPECT_EQ(call2->body["ram_size"].asUInt(), 512u);
     EXPECT_FALSE(call2->body.isMember("to"));
+    EXPECT_FALSE(call2->body.isMember("start")) << "omitted: the route's default";
+
+    // The route's other options, as every surface has them (W0b parity)
+    create["symbolic_id"] = "fork";
+    create["start"] = false;
+    create["keep_frame_position"] = false;
+    RunTool(*_registry, "emulator_manage", create, *_caller);
+    const auto* call3 = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call3, nullptr);
+    EXPECT_EQ(call3->body["symbolic_id"].asString(), "fork");
+    EXPECT_FALSE(call3->body["start"].asBool());
+    ASSERT_TRUE(call3->body.isMember("keep_frame_position"));
+    EXPECT_FALSE(call3->body["keep_frame_position"].asBool());
 }
 
 TEST_F(McpTools_Test, EmulatorManage_TransferState_NeedsExactlyOneDestination)

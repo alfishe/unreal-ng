@@ -131,6 +131,20 @@ of one graphics region, base64 in `png`); they are calls, there is no L2 topic (
 structure is there). L3 (`findings`, `review`, `experiment`, `cover`) are calls too; `experiment` and `cover` answer
 when their runs are done, on their own analysis instances (the socket's other calls go on meanwhile).
 
+### Machine state transfer
+
+`POST /api/v1/emulator/{id}/snapshot/transfer` ([automation.md → Machine State Transfer](../../../features/automation.md#machine-state-transfer))
+is a call like every REST route: the same handler (`StateTransferControl`, shared with the CLI, Lua, Python, MCP and
+the Qt menu), the same report and status. There is no transfer topic: a new instance appears on the `instances` topic
+(`emulator`), and the target's run state on `run.state`.
+
+```json
+→ {"op":"call","rid":20,"method":"POST","path":"/api/v1/emulator/0/snapshot/transfer","body":{"to":"1","check":true}}
+← {"op":"result","t":"call","rid":20,"status":200,"body":{"ok":true,"mode":"cross-model","check":true,"copied":9,…,"summary":"transfer: ok (cross-model)\n…"}}
+→ {"op":"call","rid":21,"method":"POST","path":"/api/v1/emulator/0/snapshot/transfer","body":{"model":"PENTAGON","ram_size":512}}
+← {"op":"result","t":"call","rid":21,"status":201,"body":{"ok":true,"created":true,"target_id":"5c1e…","model":"PENTAGON","ram_kb":512,…}}
+```
+
 ## 3. Topics
 
 ```json

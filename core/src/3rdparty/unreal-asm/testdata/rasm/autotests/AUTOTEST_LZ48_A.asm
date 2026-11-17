@@ -1,0 +1,1 @@
+lz48 : incbin 'autotest_include.raw' : lzclose

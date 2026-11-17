@@ -65,6 +65,9 @@ struct StripLive
     static constexpr int kAllDials = 1000;
     int dialHint = -1;
     bool bannerInfo = false;  // the banner is information: the calm look instead of the error's red
+    // strip keys (content "keys"): the zones that hold (a latch on), and the zone just tapped (-1 none)
+    std::vector<int> latched;
+    int tapped = -1;
     [[nodiscard]] std::string Key() const;  // what the picture depends on (the runtime hashes it)
 };
 // A page whose strip shows the TTD timeline (strip.status "ttd", or a dial that scrubs time: ttd.seek_by)
@@ -72,6 +75,9 @@ struct StripLive
 // The timeline's track across the strip, [x0, x1) in logical pixels (after the page's chips); a tap or a swipe there
 // seeks the history
 [[nodiscard]] std::pair<int, int> TimelineSpan(const Page& page, int w);
+// Strip keys (strip.content "keys"): each zone's [x0, x1) in logical pixels, by span; the zone under x, or -1
+[[nodiscard]] std::vector<std::pair<int, int>> StripKeySpans(const Strip& strip, int w);
+[[nodiscard]] int StripKeyHit(const Strip& strip, int w, int x);
 // The target as one line: "PENTAGON 128K (1)"; "NO MACHINE" for null
 [[nodiscard]] std::string TargetLine(const json& target);
 

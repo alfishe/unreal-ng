@@ -542,15 +542,15 @@ MUST unless marked. Traced to OR-30 … OR-37 where they already exist.
 | Phase | Content | Depends on | Size |
 |---|---|---|---|
 | **W0** | Machine state transfer; WebAPI + MCP; floppies and tape; invariant tests over every model | — | **done** (`6f5759f3`, `570ca3ce`, `7ddbef11`) |
-| W0b | Transfer on CLI, Lua, Python, Qt (parity) | W0 | S |
-| **W1** | In-memory branches: timeline tree, divergence rule, switch / rename / delete / pin / promote, `resume` starts a branch, history lanes, distance-to-end, reverse playback; save writes the active lineage | TTD Phase 1 (the timeline code is rewritten there anyway) | M |
-| W2 | History across loads (§4.5) | TTD Phase 3 external events | S-M |
+| **W0b** | Transfer on CLI, Lua, Python, Qt (parity) | W0 | **done** 2026-11-16: one verb `StateTransferControl` behind every plane, Qt Machine > Transfer State To |
+| **W1** | In-memory branches: timeline tree, divergence rule, switch / rename / delete / pin / promote, `resume` starts a branch, history lanes, distance-to-end, reverse playback; save writes the active lineage | TTD Phase 1 (the timeline code is rewritten there anyway) | **done** as [TTD branches](../2026-11-08-ttd-branches/DONE.md) |
+| W2 | History across loads (§4.5) | TTD Phase 3 external events | dropped (D42: a load ends the session) |
 | **W3** | Forks: `RestoreInto`, fork runner (headless, lockstep by frame), input and command events from the parent, parent link, per-target report; `switch_model` with state | W1, O-1 (saved sessions) | M |
 | W4 | Capture, grid, scores, verdict; batch mode | W3, workbench time / Beam Lab panels | L |
-| W5 | Branches and family in the v2 container (streams 10-13) | TTD Phase 5 | S |
-| W6 | Media per branch exact | storage manager M7 | S (on top of M7) |
+| W5 | Branches and family in the v2 container (streams 10-13) | TTD Phase 5 | **done** for branches (TTD branches P2); the family stays with W3 |
+| W6 | Media per branch exact | storage manager M7 | not planned (owner 2026-11-16) |
 
-W1 and W3 are the user-visible core; W0b can go any time.
+W1 and W3 are the user-visible core; W0b is done.
 
 ## 12. Decisions
 

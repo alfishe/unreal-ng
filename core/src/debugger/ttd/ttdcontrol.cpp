@@ -59,6 +59,7 @@ int TTDControlErrorHttpStatus(TTDControlError error)
         case TTDControlError::NotFound: return 404;
         case TTDControlError::Conflict: return 409;
         case TTDControlError::Internal: return 500;
+        case TTDControlError::InsufficientStorage: return 507;
     }
     return 500;
 }
@@ -73,6 +74,7 @@ const char* TTDControlErrorPhrase(TTDControlError error)
         case TTDControlError::NotFound: return "Not Found";
         case TTDControlError::Conflict: return "Conflict";
         case TTDControlError::Internal: return "Internal Error";
+        case TTDControlError::InsufficientStorage: return "Insufficient Storage";
     }
     return "Internal Error";
 }
@@ -5149,27 +5151,33 @@ TTDReply TTDControlBackend::Dump(const TTDRequest& request)
     bool lineage = false;
     if (const std::string* l = Option(request, "lineage"); l && !ParseBool(*l, lineage))
         return Fail(TTDControlError::BadRequest, "lineage must be true or false");
-    // UTF-8 path: FileHelper turns it into the host's form (non-ASCII names on Windows)
-    std::ofstream out(FileHelper::ToFsPath(*path), std::ios::binary);
-    if (!out.is_open())
-    {
-        StateNode body = StateNode::Object();
-        body["ok"] = false;
-        return Fail(TTDControlError::Conflict, "Cannot open file: " + *path, body);
-    }
-    std::string err;
-    // lineage: the active branch's lineage as one linear history; otherwise every branch (Q-9)
-    const bool ok = _manager->SerializeSession(out, err, lineage);
-    const auto bytes = out.tellp();
+    // lineage: the active branch's lineage as one linear history; otherwise every branch (Q-9). Written as
+    // "<path>.partial" and renamed when complete: a failed dump removes what it wrote and says so (F3)
+    const TimeTravelController::DumpResult result = _manager->DumpSession(*path, lineage);
     StateNode body = StateNode::Object();
-    body["ok"] = ok;
-    if (!ok)
+    body["ok"] = result.ok;
+    if (!result.ok)
     {
-        body["error"] = err;
-        return Fail(TTDControlError::Conflict, err, body);
+        // The status by the reason: 409 nothing to dump or the file system refused the file (the system's words
+        // in the text), 507 the disk or the quota is full, 500 a limit of the format (the sizes in the text)
+        TTDControlError status = TTDControlError::Conflict;
+        const char* reason = "io";
+        switch (result.failure)
+        {
+            case TTDWriteFailure::NoSpace: status = TTDControlError::InsufficientStorage; reason = "no_space"; break;
+            case TTDWriteFailure::TooLarge: status = TTDControlError::Internal; reason = "too_large"; break;
+            case TTDWriteFailure::Layout: reason = "session"; break;
+            case TTDWriteFailure::Io:
+            case TTDWriteFailure::None: break;
+        }
+        body["error"] = result.error;
+        body["reason"] = reason;
+        body["path"] = *path;
+        body["partial_removed"] = result.partialRemoved;
+        return Fail(status, result.error, body);
     }
     body["path"] = *path;
-    body["bytes"] = static_cast<int64_t>(bytes);
+    body["bytes"] = static_cast<int64_t>(result.bytes);
     TTDReply reply;
     reply.body = body;
     return reply;

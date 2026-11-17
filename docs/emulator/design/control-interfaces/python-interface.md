@@ -1530,6 +1530,31 @@ emu.run_frames(500)
 print(unreal.rzx_status(r["emulator_id"])["summary"])
 ```
 
+### Machine State Transfer
+
+`unreal.transfer_state(to="", model="", ram_size=0, symbolic_id="", check=False, keep_frame_position=None, start=None, emulator_id="")`
+moves a machine's running state (`emulator_id`, default the selected one) into another instance, in memory - the verb of
+every plane (`StateTransferControl`; WebAPI `POST /emulator/{id}/snapshot/transfer`, CLI `snapshot transfer`, Lua
+`transfer_state{}`, [automation.md](../../../features/automation.md#machine-state-transfer)). Name exactly one target:
+`to` (an existing instance; `check=True` only reports what would move) or `model` (a new instance, with `ram_size`,
+`symbolic_id`; started when the source runs unless `start` says otherwise). `keep_frame_position` keeps the in-frame
+position when both models share the frame geometry (default `True`).
+
+It returns the WebAPI's report dict - `ok`, `mode` (`clone` / `cross-model`), `reason`, `items` (`name`, `status`
+`copied` / `dropped` / `refused` / `note`, `detail`), `copied`, `dropped`, `refused`, `summary`, `source_id`,
+`target_id`, `created`, `state`, `model`, `ram_kb` - with `ok` False for a refused transfer (nothing changed), and
+raises `RuntimeError("<error>: <message>")` when no report could be made (no such target, the machine state
+coordinator refuses, a bad request). A check opens no implicit run-control session; a transfer does.
+
+```python
+r = unreal.transfer_state(to=other_id, check=True)
+if r["ok"]:
+    r = unreal.transfer_state(to=other_id)
+print(r["summary"])
+fork = unreal.transfer_state(model="PENTAGON", ram_size=512)
+print(fork["target_id"], fork["mode"], fork["copied"], fork["dropped"])
+```
+
 ### Time-Travel Debugging
 
 TTD methods live on the `Emulator` object (`emu.ttd_*`). Bindings: `core/automation/python/src/emulator/python_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -1827,8 +1852,10 @@ emu.ttd_branch_prune(run='r1', dry_run=False)   # deletes; the active lineage an
 **Sessions on disk:**
 
 ```python
-emu.ttd_dump('/tmp/session.ttd')            # -> bool; every branch
-emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> bool; only the active branch's lineage, one linear history
+emu.ttd_dump('/tmp/session.ttd')            # -> True; every branch
+emu.ttd_dump('/tmp/line.ttd', lineage=True) # -> True; only the active branch's lineage, one linear history
+# A failure raises RuntimeError("ttd_dump: <reason>"), the system's words ("... cannot create: Permission denied";
+# "disk full" only for a full disk); the partial file (<path>.partial) is removed, a file already under the name stays
 emu.ttd_load('/tmp/session.ttd')
 # -> {'ok': True, 'checkpoint_count': ..., 'session_start_frame': ..., 'current_end_frame': ...}
 #    or {'ok': False, 'error': '...'}  (e.g. recorded on a different model: both model ids named)

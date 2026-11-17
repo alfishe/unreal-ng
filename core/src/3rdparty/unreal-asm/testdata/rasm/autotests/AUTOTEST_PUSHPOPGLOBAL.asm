@@ -1,0 +1,1 @@
+unglobal: nop: repeat 2: @unlocal: .prox nop: rend: .prox nop: apres=$: macro unemacro: @inside: nop: .prox: nop: assert .prox>@inside: djnz .prox: mend: macro deuxmacros: @inside: nop: .prox: nop: unemacro: nop: djnz .prox: assert  .prox>@inside: mend: unemacro (void): assert .prox<apres: djnz .prox: deuxmacros (void): djnz .prox: assert .prox<apres 

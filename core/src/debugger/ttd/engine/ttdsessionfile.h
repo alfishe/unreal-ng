@@ -148,6 +148,8 @@ struct TTDSessionSaveParams
     /// branch's creation in the branch table, and its own holder streams (ids <= 0x3F), with its last part
     std::map<uint32_t, std::vector<uint8_t>> lineMeta;
     std::map<uint32_t, std::vector<TTDHolderStream>> lineHolderStreams;
+    /// Tests: the container's record limit (0: kMaxRecordRaw, 1 GiB), so a chunked stream takes milliseconds
+    uint32_t recordLimit = 0;
 };
 
 struct TTDSessionLoadReport
@@ -223,6 +225,8 @@ public:
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
+    /// What kind of failure Error() names (TTDWriteFailure::None while none)
+    TTDWriteFailure Failure() const;
     uint64_t QueuedBytes() const { return _queuedBytes.load(); }
     bool Behind() const { return QueuedBytes() > _limits.lagSoftBytes; }
     uint32_t PartsQueued() const { return _part; }
@@ -246,7 +250,7 @@ private:
     void Queue(PartJob&& job);
     void Write(PartJob& job);
     void Run();
-    void Fail(const std::string& why);
+    void Fail(const std::string& why, TTDWriteFailure kind = TTDWriteFailure::Layout);
 
     bool _background;
     Limits _limits;
@@ -295,13 +299,16 @@ private:
     std::atomic<bool> _ioFailed{false};   ///< a write failed: nothing more is written
     std::atomic<uint64_t> _queuedBytes{0};
     std::string _error;
+    TTDWriteFailure _failure = TTDWriteFailure::None;
 };
 
 class TTDSessionFile
 {
 public:
+    /// False with the reason; @p failure (optional) says its kind: TTDWriteFailure::Io / NoSpace for a refused
+    /// write (the system's words in @p error), TooLarge for a record over the format's limit, Layout otherwise
     static bool Save(const TimeTravelEngine& engine, ITTDByteSink& sink, std::string& error,
-                     const TTDSessionSaveParams& params = {});
+                     const TTDSessionSaveParams& params = {}, TTDWriteFailure* failure = nullptr);
     /// Replace @p engine's session by the file's. False with the reason when
     /// nothing could be loaded (not a session file, damaged header or tables)
     /// @p append: the next file of the same recording (the next segment), added to @p engine's session

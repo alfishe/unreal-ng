@@ -18,6 +18,17 @@ namespace platform
 
         class PosixAppendFile : public AppendFile
         {
+            /// Keep errno's reason (read at once: the next call may change it)
+            void Failed(const char* what, int code)
+            {
+                _lastError = std::string(what) + ": " + std::strerror(code);
+                _lastErrorNoSpace = code == ENOSPC
+#ifdef EDQUOT
+                                    || code == EDQUOT
+#endif
+                    ;
+            }
+
         public:
             explicit PosixAppendFile(int fd) : _fd(fd) {}
             ~PosixAppendFile() override { Close(); }
@@ -30,15 +41,35 @@ namespace platform
                     const ssize_t n = ::write(_fd, p, size);
                     if (n < 0 && errno == EINTR)
                         continue;
-                    if (n <= 0)
+                    if (n < 0)
+                    {
+                        Failed("write", errno);
                         return false;
+                    }
+                    if (n == 0)
+                    {
+                        _lastError = "write: nothing was written";
+                        _lastErrorNoSpace = false;
+                        return false;
+                    }
                     p += n;
                     size -= static_cast<size_t>(n);
                     _size += static_cast<uint64_t>(n);
                 }
                 return true;
             }
-            bool Sync() override { return _fd >= 0 && ::fsync(_fd) == 0; }
+            bool Sync() override
+            {
+                if (_fd < 0)
+                {
+                    _lastError = "fsync: the file is closed";
+                    return false;
+                }
+                if (::fsync(_fd) == 0)
+                    return true;
+                Failed("fsync", errno);
+                return false;
+            }
             uint64_t Size() const override { return _size; }
             void Close() override
             {

@@ -842,6 +842,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/savesnapshotchoices_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.h"
+        # Machine > Transfer State To: open instances, models, the request and the report (model what-if W0b)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statetransferchoices_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/statetransferchoices.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/statetransferchoices.h"
         # The CRT model both screen backends share: the GPU picture is the software one bit for bit
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtrenderer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"

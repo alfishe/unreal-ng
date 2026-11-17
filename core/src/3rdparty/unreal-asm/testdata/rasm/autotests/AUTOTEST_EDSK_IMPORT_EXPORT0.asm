@@ -1,0 +1,1 @@
+roudoudou: repeat 50: defb 'roudoudou',0: rend: edsk create,'rasmoutput_test.dsk',VENDOR,OVERWRITE:edsk savefile,'rasmoutput_test.dsk','rasm.bin',0,256,RAW:edsk check,'rasmoutput_test.dsk','2:0x45',256,roudoudou:save 'rasmoutput_test.bin',0,256

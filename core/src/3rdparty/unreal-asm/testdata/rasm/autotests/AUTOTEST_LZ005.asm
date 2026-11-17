@@ -1,0 +1,1 @@
+org #A000,$:module1:lzx0:jp module2:nop 16:lzclose:org $:glop1:org #A000,$:module2:lzx0:jp module3:nop 16:lzclose:org $:glop2:org #A000,$:module3:lzx0:jp module1:nop 16:lzclose:org $:glop3

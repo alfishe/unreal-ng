@@ -45,6 +45,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
+#include <loaders/snapshot/statetransfercontrol.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -1731,6 +1732,41 @@ namespace PythonBindings
                 return py::none();
             return StateNodeToPy(emulator->LastSnapshotReport().ToStateNode());
         }, "What the snapshot pipeline did with the last load: commit, verdicts, per-block outcomes, warnings, refusal",
+           py::arg("emulator_id") = "");
+
+        // The machine state transfer (StateTransferControl, as WebAPI POST /snapshot/transfer, MCP transfer_state, CLI
+        // snapshot transfer, Lua transfer_state): the source's (default: the selected one) running state into an
+        // existing instance (to; check=True only says what would move) or a new one of a model. Returns the WebAPI's
+        // report dict (ok False: refused, nothing changed); RuntimeError when there is no report (no such target, the
+        // machine state coordinator refuses, a bad request)
+        m.def("transfer_state", [](const std::string& to, const std::string& model, uint32_t ramSize,
+                                   const std::string& symbolicId, bool check, std::optional<bool> keepFramePosition,
+                                   std::optional<bool> start, const std::string& emulatorId) -> py::object {
+            StateTransferRequest request;
+            request.sourceId = python_rzx::ResolveId(emulatorId);
+            request.to = to;
+            request.model = model;
+            request.ramSizeKB = ramSize;
+            request.symbolicId = symbolicId;
+            request.check = check;
+            request.keepFramePosition = keepFramePosition;
+            request.start = start;
+            if (std::shared_ptr<Emulator> source = EmulatorManager::GetInstance()->GetEmulator(request.sourceId))
+                execution::script::Check(*source, execution::Origin::Python, !check);   // a check only reads
+            StateTransferReply reply;
+            {
+                py::gil_scoped_release release;   // pauses both machines, or builds a new one
+                reply = StateTransferControl::Execute(request);
+            }
+            if (!reply.hasReport)
+                throw std::runtime_error(reply.error + ": " + reply.message);
+            return StateNodeToPy(reply.body);
+        }, "Move a machine's running state into another instance, in memory: to='<id>' (an existing one; check=True "
+           "only reports) or model='PENTAGON' (a new one; ram_size, symbolic_id, start). Returns the report: ok, mode "
+           "(clone / cross-model), items (name, status copied / dropped / refused / note, detail), counts, summary, "
+           "target_id; RuntimeError when no report could be made (unknown target, coordinator refusal, bad request)",
+           py::arg("to") = "", py::arg("model") = "", py::arg("ram_size") = 0, py::arg("symbolic_id") = "",
+           py::arg("check") = false, py::arg("keep_frame_position") = py::none(), py::arg("start") = py::none(),
            py::arg("emulator_id") = "");
 
         // The last save: {ok, message, format, path, machine, reason, needs, warnings} (None before the first)
@@ -6838,9 +6874,13 @@ namespace PythonBindings
                 std::map<std::string, std::string> options{{"path", path}};
                 if (lineage)
                     options["lineage"] = "true";
-                return TtdRunPy(self, "dump", options).Ok();
+                const ttd::TTDReply reply = TtdRunPy(self, "dump", options);
+                if (!reply.Ok())
+                    throw std::runtime_error("ttd_dump: " + reply.message);
+                return true;
             }, "Dump TTD session to .ttd file: every branch, or lineage=True only the active branch's lineage as one "
-               "linear history", py::arg("path"), py::arg("lineage") = false)
+               "linear history. True; RuntimeError with the reason when it fails (the system's words, a full disk "
+               "only when it is; the partial file is removed)", py::arg("path"), py::arg("lineage") = false)
 
             // Loading refuses a session recorded on a different machine model:
             // a checkpoint is raw RAM pages plus a chipset snapshot, so it only

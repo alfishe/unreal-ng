@@ -1,0 +1,1 @@
+unglobal:nop:.local1:nop 3:.local2:nop:machin=.local2-.local1:defb machin
