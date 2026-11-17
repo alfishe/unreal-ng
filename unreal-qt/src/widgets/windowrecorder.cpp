@@ -174,6 +174,27 @@ struct WindowRecorder::Writer
     QString fifoPath;  ///< the sound goes into the same ffmpeg through this FIFO (no muxing afterwards)
     std::atomic<uint64_t> framesDone{0};
 
+    // Timings in microseconds since the writer was made (0 = not reached): the status shows where a late start went
+    const std::chrono::steady_clock::time_point created = std::chrono::steady_clock::now();
+    std::atomic<int64_t> writerStartUs{0}, encoderReadyUs{0}, firstFrameUs{0}, slowestFrameUs{0};
+    int64_t sinceCreatedUs() const
+    {
+        return std::max<int64_t>(1, std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now() - created).count());
+    }
+    /// One picture handled: the first one's time, the slowest one's duration
+    void pictureHandled(int64_t startedUs)
+    {
+        const int64_t now = sinceCreatedUs();
+        int64_t zero = 0;
+        firstFrameUs.compare_exchange_strong(zero, now);
+        const int64_t took = now - startedUs;
+        int64_t slowest = slowestFrameUs.load();
+        while (took > slowest && !slowestFrameUs.compare_exchange_weak(slowest, took))
+        {
+        }
+    }
+
     std::mutex mutex;
     std::condition_variable wake;
     std::deque<Job> jobs;
@@ -224,6 +245,22 @@ struct WindowRecorder::Writer
         job.soundTime = time;
         jobs.push_back(std::move(job));
         wake.notify_one();
+    }
+    /// Writer thread: the sound queued behind the picture being written, taken out of the queue in its order. A
+    /// picture repeated for the frames the writer owes is written before the sound of those frames, which is already
+    /// queued after it: ffmpeg interleaves the two inputs and takes no more picture until it has that sound, so the
+    /// writer must hand the sound over while it waits for the picture (else both wait for good)
+    void takeQueuedSound(std::deque<QByteArray>& into)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto it = jobs.begin(); it != jobs.end();)
+            if (it->picture.isNull() && !it->sound.isEmpty())
+            {
+                into.push_back(std::move(it->sound));
+                it = jobs.erase(it);
+            }
+            else
+                ++it;
     }
     void requestRetry()
     {
@@ -344,6 +381,7 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
         for (;;)
         {
@@ -371,6 +409,7 @@ struct WindowRecorder::Writer
                                        static_cast<size_t>(job.sound.size()) / sizeof(int16_t), job.soundTime);
             if (job.picture.isNull())
                 continue;
+            const int64_t pictureStartUs = sinceCreatedUs();
             FrameTarget target;
             if (encoder.AcquireFrameTarget(static_cast<uint32_t>(size.width()), static_cast<uint32_t>(size.height()),
                                            target) == FrameTargetResult::Ready)
@@ -383,6 +422,7 @@ struct WindowRecorder::Writer
             }
             // else: the encoder is stuck for now: this picture stays out, the previous one holds
             framesDone = job.frameStart + job.repeat;
+            pictureHandled(pictureStartUs);
         }
         encoder.Stop();
         error = failure;
@@ -392,6 +432,7 @@ struct WindowRecorder::Writer
 
     void run()
     {
+        writerStartUs = sinceCreatedUs();
 #ifdef __APPLE__
         if (native)
         {
@@ -452,6 +493,7 @@ struct WindowRecorder::Writer
         };
         if (!failure.empty())
             failed = true;
+        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
 
         for (;;)
@@ -488,30 +530,49 @@ struct WindowRecorder::Writer
             }
             if (job.picture.isNull() || !failure.empty())
                 continue;
+            // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
+            // takeQueuedSound): the picture is never ahead of its sound
+            auto feedSound = [&]() -> bool {
+                std::deque<QByteArray> queued;
+                takeQueuedSound(queued);
+                for (QByteArray& chunk : queued)
+                {
+                    if (!fifoPath.isEmpty())
+                        backlog.push_back(std::move(chunk));
+                    else if (sound.write(chunk) != chunk.size())
+                    {
+                        fail("Cannot write the sound: " + sound.errorString().toStdString());
+                        return false;
+                    }
+                }
+                if (pumpSound())
+                    return true;
+                fail("ffmpeg stopped taking the sound");
+                return false;
+            };
+            const int64_t pictureStartUs = sinceCreatedUs();
             const QImage frame = compose(job);
             for (uint32_t i = 0; i < job.repeat && failure.empty(); i++)
             {
+                if (!feedSound())
+                    break;
                 process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
                 // No event loop here: the bytes go to ffmpeg only while we wait, and ffmpeg's pace is the pace
-                // A loaded machine slows ffmpeg, it does not fail it: wait in short slices (the sound keeps flowing
-                // meanwhile) while ffmpeg runs; only a process that is gone, or one that took nothing for 5 minutes,
-                // is a failure
+                // Wait in short slices, the sound flowing meanwhile, until the whole frame is in the pipe. A slow
+                // ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits for is fed
+                // here, so that is not a lack of it): the recording fails instead of hanging
                 int stalledMs = 0;
                 bool taken = false;
-                while (process.state() == QProcess::Running && stalledMs < 300000)
+                while (process.state() == QProcess::Running && stalledMs < 15000)
                 {
-                    if (process.waitForBytesWritten(500))
+                    const bool progress = process.waitForBytesWritten(100);
+                    if (progress && process.bytesToWrite() == 0)  // the whole frame is in the pipe
                     {
-                        stalledMs = 0;
-                        if (process.bytesToWrite() == 0)  // the whole frame is in the pipe
-                        {
-                            taken = true;
-                            break;
-                        }
-                        continue;
+                        taken = true;
+                        break;
                     }
-                    stalledMs += 500;
-                    if (!pumpSound())
+                    stalledMs = progress ? 0 : stalledMs + 100;
+                    if (!feedSound())
                         break;
                 }
                 if (!taken || process.state() != QProcess::Running)
@@ -520,6 +581,7 @@ struct WindowRecorder::Writer
                 if (!pumpSound())
                     fail("ffmpeg stopped taking the sound");
             }
+            pictureHandled(pictureStartUs);
         }
 
         sound.close();
@@ -1095,4 +1157,11 @@ void WindowRecorder::fill(WindowRecordingStatus& out)
     out.framesPending = _writer ? (_frames > _writer->framesDone ? _frames - _writer->framesDone : 0) : 0;
     out.sampleRate = _sampleRate;
     out.audioSamples = _audioSamples;
+    if (_writer)
+    {
+        out.writerStartMs = static_cast<double>(_writer->writerStartUs) / 1000.0;
+        out.encoderReadyMs = static_cast<double>(_writer->encoderReadyUs) / 1000.0;
+        out.firstFrameMs = static_cast<double>(_writer->firstFrameUs) / 1000.0;
+        out.slowestFrameMs = static_cast<double>(_writer->slowestFrameUs) / 1000.0;
+    }
 }

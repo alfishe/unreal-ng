@@ -1994,7 +1994,10 @@ the host. Recipe: [.recipe/media/window-recording.md](../../../../.recipe/media/
 | `video window record stop` | | Finish the file: waits for ffmpeg, then muxes the sound in (the picture copied, seconds). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
 Fields: `recording`, `path`, `keyboard` (the picture in the file, empty = none), `frames`, `width`, `height`, `fps`,
-`audio`, `sample_rate`, `audio_samples` (sample pairs so far); `record frames` adds `ran`. Errors: `bad-parameter` (a
+`audio`, `sample_rate`, `audio_samples` (sample pairs so far), `frames_pending` (taken, not yet in the encoder) and the
+timings in ms since the start, 0 = not reached yet: `writer_start_ms` (the writer thread began running),
+`encoder_ready_ms` (the encoder is up), `first_frame_ms`, `slowest_frame_ms` (the longest one picture took in the
+writer). A recording that starts late or stalls says there where the time went. `record frames` adds `ran`. Errors: `bad-parameter` (a
 value out of range, an unknown key, a sound track with an `fps`), `unavailable` (no ffmpeg, not recording, the window
 shows another instance, a keyboard of another matrix, a frame too small), `not-paused`, `revoked` (the user took
 control back), `no-window`. The same as WebAPI `POST` / `GET /api/v1/emulator/{id}/video/window/record`, `POST

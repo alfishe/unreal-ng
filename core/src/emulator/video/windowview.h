@@ -271,6 +271,12 @@ struct WindowRecordingStatus
     uint32_t sampleRate = 0;
     uint64_t audioSamples = 0;  ///< sample pairs taken (frames x samples per frame)
     uint64_t framesPending = 0;  ///< taken but not yet encoded (the encoder is behind real time)
+    // Where the time went, in ms since the recording began (0 = not reached yet). A recording that starts late or
+    // stalls says here whether the writer thread got the CPU, the encoder start was slow, or a frame was
+    double writerStartMs = 0;     ///< the writer thread began running
+    double encoderReadyMs = 0;    ///< the encoder (the Mac's writer, or ffmpeg) was up
+    double firstFrameMs = 0;      ///< the first picture was in the encoder
+    double slowestFrameMs = 0;    ///< the longest one picture took in the writer (compose + hand over)
     bool finalizing = false;    ///< stopped, the file is being finished in the background (recording is false)
     std::string error;          ///< why the last recording failed to finish ("" = it did not fail)
 };

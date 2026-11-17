@@ -82,7 +82,9 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.
 - **Status** (`GET video/window/record`) / **stop** (`video/window/record/stop`): `{recording, path, keyboard, frames,
-  width, height, fps, audio, sample_rate, audio_samples}`. Stop waits for ffmpeg, then muxes the sound in (the
+  width, height, fps, audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms,
+  first_frame_ms, slowest_frame_ms}` (the last four: where the time went, ms since the start; a late or stalled
+  recording shows there whether the writer got the CPU, the encoder start or a frame was slow). Stop waits for ffmpeg, then muxes the sound in (the
   picture copied, not re-encoded: seconds). Meanwhile the picture is in `.<name>.video.<ext>` and the sound in
   `.<name>.sound.s16le` beside the file; a failed mux leaves both and names them.
 - **The HUD** ("Remote control" and the like) is never in the file; the keys the program holds light up on the
