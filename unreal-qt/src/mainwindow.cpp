@@ -726,6 +726,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // stay possible during a session (revoking only takes power away)
     _remoteControl->exempt(_menuManager->companionsAction());
     _remoteControl->exempt(_menuManager->streamDeckAction());
+    // Tools > Video Synchronization only shows how the frames reach the display (its switch is locked in the window)
+    _remoteControl->exempt(_menuManager->videoSyncWindowAction());
     _companions = new CompanionController(this);
     connect(_menuManager, &MenuManager::controllersRequested, this, [this] {
         if (_controllersDialog)

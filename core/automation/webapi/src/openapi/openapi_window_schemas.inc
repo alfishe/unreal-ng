@@ -53,6 +53,10 @@
             pf("clock", "string",
                "The clock the frame on screen was timed by: audio (when its sound is heard), emulated (no audio device "
                "delivering), latch (turbo, a run not paced to real time, or the feature lowlatency), none (untimed)");
+            pf("timed_at", "string",
+               "Where presented / shown / dropped and error_ms are taken: screen (a native presenter's screen times), "
+               "paint (the software screen: when the window paints a new frame, not when it reaches the screen; late, "
+               "lead_ms, beat and sound_offset_ms judge nothing), \"\" (no times)");
             pf("low_latency", "boolean",
                "The frame on screen was shown at once by the feature lowlatency (no lead, no smooth motion): error_ms is "
                "then its way from the hand-over to the screen, late and lead_ms judge nothing");

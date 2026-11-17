@@ -3046,6 +3046,41 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesLowLatency)
         EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
 }
 
+/// The software screen times its paints: the text gives them as such, without a refresh grid, a lead or a sound offset
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheSoftwareScreensPaintTimes)
+{
+    Json::Value settings;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "software";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["timed_at"] = "paint";
+    present["presented"] = 480;
+    present["dropped"] = 3;
+    present["error_ms"]["p50"] = 4.25;
+    present["error_ms"]["p99"] = 11.5;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    EXPECT_NE(read.text.find("480 new frames painted, 3 skipped, painted vs asked p50 4.25 p99 11.5 ms (paint times, "
+                             "not the screen)"),
+              std::string::npos)
+        << read.text;
+    for (const char* part : {"a refresh late", "off the beat", "screen to sound"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+
+    // Low latency: the time asked for is the latch
+    settings["present"]["low_latency"] = true;
+    settings["present"]["clock"] = "latch";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult low = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(low.isError) << low.text;
+    EXPECT_NE(low.text.find("made to painted p50 4.25"), std::string::npos) << low.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)
 {
     Json::Value settings;

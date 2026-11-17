@@ -102,6 +102,7 @@ public:
     QAction* fullScreenAction() const { return _fullScreenAction; }
     QAction* companionsAction() const { return _companionsAction; }
     QAction* streamDeckAction() const { return _streamDeckAction; }
+    QAction* videoSyncWindowAction() const { return _videoSyncWindowAction; }
     QAction* overscanAction() const { return _overscanAction; }  // Pentagon only (hidden otherwise)
     QAction* mediaPanelAction() const { return _mediaPanelAction; }
     QMenu* viewMenu() const { return _viewMenu; }

@@ -33,13 +33,15 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   judge nothing; `GET /audio/mixer` -> `host_output.device` shows the ring and the latency.
 
 - **The report** `present` (read with the settings): `presenter` (`metal` / `dxgi` / `gl-timed` on Linux / `gl` / `software`),
-  `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `low_latency` (the frame on screen shown at once), `presented`, `shown`,
+  `fixed_display`, `vrr`, `sync` {`mode`, `reason`}, `refresh_hz` {min, max}, `clock`, `low_latency` (the frame on screen shown at once), `timed_at` (`screen`; `paint` on the software screen: the window's paints of new frames against their time, not the screen; `""`: no times), `presented`, `shown`,
   `dropped`, `late`, `beat` {frames, off}, `lead_ms`, `error_ms` {p50, p99, max}, `sound_offset_ms`, `gpu_wait_ms`,
   `gpu_ms` {`smooth`, `picture`: {p50, max, longest, measured}}, `smooth` {mode in effect, device, game, frames, pictures, renders,
   blended, interpolated, motion_fields, on_device, held_flicker}, `display` {state, reason, hz, original_hz,
   machine_hz}. The counters cover the native presenter's last 600 presents; `gl-timed` has screen times only where GLX
-  has `GLX_OML_sync_control` (X11, XWayland on KDE, gamescope); the plain `gl` and `software` paths have none (they
-  stay 0).
+  has `GLX_OML_sync_control` (X11, XWayland on KDE, gamescope); the plain `gl` path has none (they stay 0); the
+  `software` screen gives its paints instead (`timed_at` `paint`: new frames painted, the ones skipped, paint time
+  minus the time asked for, the last 600; no late, lead, beat or sound offset). It paints each frame at its time
+  and not when it comes (`PaintPacer`); with smooth motion a refresh after each paint and when a frame comes.
 - **`gpu_ms`**: the GPU time of smooth motion's steps (`smooth`) and of the picture (`picture`: CRT composition,
   beam model, preset), from GL timestamps read back frames later. `measured` 0: no timer queries (or the CPU path).
   `longest` is since the GL context was made: a GPU reset makes a new one.

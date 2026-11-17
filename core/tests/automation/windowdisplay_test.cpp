@@ -255,6 +255,10 @@ TEST(WindowDisplay_Test, ReportAndSummary)
     EXPECT_FALSE(present.find("low_latency")->b);
     fake.settings.present.lowLatency = true;
     EXPECT_TRUE(WindowDisplay::Report(fake.settings)["present"].find("low_latency")->b);
+    ASSERT_NE(present.find("timed_at"), nullptr);
+    EXPECT_EQ(present.find("timed_at")->s, "");
+    fake.settings.present.timedAt = "paint";
+    EXPECT_EQ(WindowDisplay::Report(fake.settings)["present"].find("timed_at")->s, "paint");
     ASSERT_NE(present.find("beat"), nullptr);
     EXPECT_EQ(present.find("beat")->find("frames")->i, 500);
     EXPECT_EQ(present.find("beat")->find("off")->i, 4);

@@ -711,6 +711,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.presenter = "gl-timed";
 #endif
         const NativePresenter::Stats s = _presenter->GetStats();
+        out.timedAt = "screen";
         out.minRefreshHz = s.minRefreshHz;
         out.maxRefreshHz = s.maxRefreshHz;
         out.presented = s.presented;

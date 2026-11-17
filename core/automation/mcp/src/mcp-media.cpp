@@ -221,9 +221,20 @@ std::string WindowDisplaySummary(const Json::Value& s)
                     (sync.get("reason", "").asString().empty() ? "" : " (" + sync["reason"].asString() + ")");
         if (lowLatency)
             line += ", low latency: each frame at once, not held for its sound";
-        if (present.get("presented", 0).asUInt64() > 0)
+        const Json::Value& errorMs = present["error_ms"];
+        if (present.get("timed_at", "").asString() == "paint" && present.get("presented", 0).asUInt64() > 0)
         {
-            const Json::Value& error = present["error_ms"];
+            // The software screen: its paints, not screen times; no refresh grid, lead or sound offset to judge by
+            line += ", " + std::to_string(present["presented"].asUInt64()) + " new frames painted, " +
+                    std::to_string(present.get("dropped", 0).asUInt64()) + " skipped, " +
+                    (lowLatency ? "made to painted p50 " : "painted vs asked p50 ") +
+                    NumberText(std::round(errorMs.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(errorMs.get("p99", 0.0).asDouble() * 100) / 100) +
+                    " ms (paint times, not the screen)";
+        }
+        else if (present.get("presented", 0).asUInt64() > 0)
+        {
+            const Json::Value& error = errorMs;  // the screen's times
             line += ", " + std::to_string(present["presented"].asUInt64()) + " presented, " +
                     std::to_string(present.get("dropped", 0).asUInt64()) + " dropped, " +
                     (lowLatency ? std::string("hand-over to screen p50 ")

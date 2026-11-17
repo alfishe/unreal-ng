@@ -8,6 +8,8 @@
 #include <mutex>
 #include <cstdint>
 
+#include "emulator/video/paintpacer.h"
+#include "emulator/video/painttiming.h"
 #include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
@@ -170,7 +172,7 @@ private:
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameSourceFn _frameSource;     // Tear-free frame provider (empty = legacy live-buffer path)
     NextFrameSourceFn _nextFrameSource;  // The frames in order, for smooth motion
-    bool _repaintScheduled = false; // a repaint waits for the next frame's target
+    PaintPacer _paintPacer;  // when the next paint comes: the next frame's target, or a refresh on (smooth motion)
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + devicePixels across threads
 
     // Smooth motion (GUI thread)
@@ -185,6 +187,7 @@ private:
     std::string _syncReason;
     FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
     FrameClockSource _shownClock = FrameClockSource::None;  // the clock that timed the frame drawn last
+    PaintTiming _paintTiming;   // the new frames' paint times: the report's numbers (no screen times here)
     bool _shownAtOnce = false;  // low-latency video (feature lowlatency) timed it: each frame at once, no smooth motion
     uint64_t _meteredSerial = 0; // the last frame pushed into it
     QImage _nextFrame;    // a frame on its way into _smooth
