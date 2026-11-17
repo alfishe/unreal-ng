@@ -1326,6 +1326,7 @@ bool Config::ParseConfig(IniFile& inimanager)
 			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspMhz", 240), 1, 1000));
 		config.vdac4_esp_thread = inimanager.GetLongValue(vdac4, "EspThread", 1) != 0;
 		config.vdac4_ft_thread = inimanager.GetLongValue(vdac4, "FtThread", 0) != 0;
+		config.vdac4_ft_draw_thread = inimanager.GetLongValue(vdac4, "FtDrawThread", 1) != 0;
 		config.vdac4_esp_latency_ms =
 			static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspLatencyMs", 4), 1, 16));
 		CopyStringValue(inimanager.GetValue(vdac4, "EspCache", ""), config.vdac4_esp_cache, sizeof config.vdac4_esp_cache);

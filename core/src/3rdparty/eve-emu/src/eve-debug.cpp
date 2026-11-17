@@ -182,12 +182,12 @@ void EveGetLineCost(const EveChip* chip, uint32_t line, EveLineCost* out)
 {
     *out = EveLineCost{};
     out->line = line;
-    GetLineCost(*chip, line, *out);
+    GetLineCost(DrawingChip(*chip), line, *out);
 }
 
 size_t EveGetFrameMetrics(const EveChip* chip, EveFrameMetrics* out, uint16_t* lineClocks, size_t maxLines)
 {
-    const FrameMetricsState& m = chip->state.metrics;
+    const FrameMetricsState& m = DrawingChip(*chip).state.metrics;
     if (out)
     {
         *out = EveFrameMetrics{};
@@ -222,7 +222,7 @@ void EveSetLineBudgetMargin(EveChip* chip, uint32_t percent)
 int EveProbePixel(const EveChip* chip, uint32_t x, uint32_t y, EvePixelSource* out)
 {
     *out = EvePixelSource{};
-    return ProbePixel(*chip, x, y, *out) ? 1 : 0;
+    return ProbePixel(DrawingChip(*chip), x, y, *out) ? 1 : 0;
 }
 
 } // extern "C"

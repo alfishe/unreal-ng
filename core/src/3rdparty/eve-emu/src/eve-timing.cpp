@@ -37,7 +37,10 @@ void FrameEvent(EveChip& chip)
     ++scan.frames;
     RegSet(chip, Reg::Frames, static_cast<uint32_t>(scan.frames));
     ++scan.completedFrames;
-    FoldFrameMetrics(chip);
+    if (chip.asyncDrawing)
+        AsyncFrameEnd(chip); // the renderer folds the metrics of the lines it drew
+    else
+        FoldFrameMetrics(chip);
 }
 
 void EndOfLine(EveChip& chip)

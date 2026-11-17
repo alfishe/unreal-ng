@@ -1046,12 +1046,30 @@ void DrawingReset(EveChip& chip)
             LoadRomFontHandle(chip, handle, handle);
     ContextDefaults(chip.state.context);
     DrawingInvalidate(chip);
+    AsyncTakeDrawingState(chip, false);
 }
 
 void CatchUp(EveChip& chip)
 {
     const uint32_t due = LinesDue(chip);
-    if (!chip.drawing || !ScanRunning(chip))
+    const bool draw = chip.drawing && ScanRunning(chip);
+    if (chip.asyncDrawing)
+    {
+        // The renderer draws them; the lines passed move on here as they would with the drawing. Nothing new
+        // passed: nothing to queue (a portrait frame's repeated catch-up only forgets kept lines again)
+        const uint32_t next = draw && Portrait(chip) ? due : (chip.drawnLines > due ? chip.drawnLines : due);
+        if (next == chip.drawnLines)
+            return;
+        AsyncLines(chip, due, draw);
+        chip.drawnLines = next;
+        return;
+    }
+    DrawLinesTo(chip, due, draw);
+}
+
+void DrawLinesTo(EveChip& chip, uint32_t due, bool draw)
+{
+    if (!draw)
     {
         // Lines passed without drawing are not measured: their costs from an earlier
         // frame must not count for this one (the frame's metrics block, the in-flight view)
@@ -1086,13 +1104,17 @@ void FrameStart(EveChip& chip)
 {
     chip.drawnLines = 0;
     chip.overflowLines = 0;
+    if (chip.asyncDrawing)
+        AsyncFrameStart(chip);
 }
 
 void DisplayListSwapped(EveChip& chip, bool changed)
 {
     if (changed)
         ++chip.dlVersion; // a swap to the same words changes nothing drawn
-    if (!chip.drawing)
+    if (chip.asyncDrawing)
+        AsyncSwapped(chip, changed); // the handles are the renderer's: it runs the state pass when not drawing
+    else if (!chip.drawing)
         StatePass(chip);
 }
 
@@ -1109,6 +1131,7 @@ void DrawingInvalidate(EveChip& chip)
     }
     for (LineSignature& s : chip.linePlan->lines)
         s.valid = false;
+    AsyncInvalidate(chip);
 }
 
 void FoldFrameMetrics(EveChip& chip)

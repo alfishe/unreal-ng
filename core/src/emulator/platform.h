@@ -701,6 +701,7 @@ struct CONFIG
 	uint16_t vdac4_esp_mhz = 240;		// [VDAC4] EspMhz: ESP core clock (one instruction per cycle)
 	bool vdac4_esp_thread = true;		// [VDAC4] EspThread: the ESP app's jobs on a worker thread (same results either way)
 	bool vdac4_ft_thread = false;		// [VDAC4] FtThread: the Tang / FT812 work of the ESP's jobs on a thread of its own
+	bool vdac4_ft_draw_thread = true;	// [VDAC4] FtDrawThread: the FT812's drawing on its renderer thread (same picture)
 	uint8_t vdac4_esp_latency_ms = 4;	// [VDAC4] EspLatencyMs: 1..16 ms the app's outputs reach the firmware after its job
 	char vdac4_esp_cache[FILENAME_MAX] = {};	// [VDAC4] EspCache: ESP module cache directory; empty = <data dir>/vdac4/zm
 	char vdac4_esp_log[FILENAME_MAX] = {};		// [VDAC4] EspLog: ESP app log file; empty = off

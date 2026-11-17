@@ -95,6 +95,7 @@ inline void registerVdac4Bindings(EmulatorClass& emulatorClass)
             py::dict threads;
             threads["esp_thread"] = s.espThread;
             threads["ft_thread"] = s.ftThread;
+            threads["ft_draw_thread"] = s.ftDrawThread;
             threads["esp_latency_ms"] = s.espLatencyMs;
             threads["esp_jobs"] = s.espJobs;
             threads["esp_threaded_jobs"] = s.espThreadedJobs;

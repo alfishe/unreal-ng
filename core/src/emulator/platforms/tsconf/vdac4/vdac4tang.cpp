@@ -4,6 +4,9 @@
 
 #include "emulator/emulatorcontext.h"
 
+#include <cstdlib>
+#include <cstring>
+
 #ifdef ENABLE_VDAC2
 #include <eve/eve.h>
 #endif
@@ -26,7 +29,11 @@ EveHostCard::Params TangParams(const EmulatorContext* context)
         params.romPath = context->config.vdac2_rom_path;
         params.capturePath = context->config.vdac2_capture_path;
         params.lineBudgetMargin = context->config.vdac2_line_budget_margin;
+        params.drawThread = context->config.vdac4_ft_draw_thread;
     }
+    // UNREAL_VDAC4_FT_DRAW_THREAD=0/1 overrides [VDAC4] FtDrawThread (A/B runs of one build)
+    if (const char* env = std::getenv("UNREAL_VDAC4_FT_DRAW_THREAD"); env && *env)
+        params.drawThread = std::strcmp(env, "0") != 0;
     return params;
 }
 
@@ -235,27 +242,22 @@ void Vdac4Tang::ChipHostCommand(uint8_t command, uint8_t parameter)
 
 void Vdac4Tang::ChipWrite32(uint32_t address, uint32_t value)
 {
-    EveHostCard::select(true);
-    EveHostCard::exchange(static_cast<uint8_t>(0x80 | ((address >> 16) & 0x3F)));
-    EveHostCard::exchange(static_cast<uint8_t>(address >> 8));
-    EveHostCard::exchange(static_cast<uint8_t>(address));
-    for (int i = 0; i < 4; i++)
-        EveHostCard::exchange(static_cast<uint8_t>(value >> (8 * i)));
-    EveHostCard::select(false);
+    const uint8_t mosi[7] = {static_cast<uint8_t>(0x80 | ((address >> 16) & 0x3F)), static_cast<uint8_t>(address >> 8),
+                             static_cast<uint8_t>(address),       static_cast<uint8_t>(value),
+                             static_cast<uint8_t>(value >> 8),    static_cast<uint8_t>(value >> 16),
+                             static_cast<uint8_t>(value >> 24)};
+    EveHostCard::Transaction(mosi, nullptr, sizeof(mosi));
 }
 
 uint32_t Vdac4Tang::ChipRead32(uint32_t address)
 {
-    EveHostCard::select(true);
-    EveHostCard::exchange(static_cast<uint8_t>((address >> 16) & 0x3F));
-    EveHostCard::exchange(static_cast<uint8_t>(address >> 8));
-    EveHostCard::exchange(static_cast<uint8_t>(address));
-    EveHostCard::exchange(0);  // dummy
-    uint32_t value = 0;
-    for (int i = 0; i < 4; i++)
-        value |= static_cast<uint32_t>(EveHostCard::exchange(0)) << (8 * i);
-    EveHostCard::select(false);
-    return value;
+    // Address, the dummy byte, four data bytes
+    const uint8_t mosi[8] = {static_cast<uint8_t>((address >> 16) & 0x3F), static_cast<uint8_t>(address >> 8),
+                             static_cast<uint8_t>(address), 0, 0, 0, 0, 0};
+    uint8_t miso[8];
+    EveHostCard::Transaction(mosi, miso, sizeof(mosi));
+    return static_cast<uint32_t>(miso[4]) | (static_cast<uint32_t>(miso[5]) << 8) |
+           (static_cast<uint32_t>(miso[6]) << 16) | (static_cast<uint32_t>(miso[7]) << 24);
 }
 
 uint32_t Vdac4Tang::LinkRead(uint32_t address)

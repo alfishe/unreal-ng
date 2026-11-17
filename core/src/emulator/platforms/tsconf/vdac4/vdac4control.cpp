@@ -124,6 +124,7 @@ void CaptureLive(Vdac4Board& board, const Vdac4Tang& tang, BoardState& state)
     state.droppedFrames = esp.Transport().DroppedFrames();
     state.espThread = board.Runtime().Threaded();
     state.ftThread = board.FtWorker().Threaded();
+    state.ftDrawThread = tang.DrawingOnThread();
     state.espLatencyMs = board.Runtime().Latency();
 }
 

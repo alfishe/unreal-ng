@@ -96,6 +96,7 @@ void PowerOnReset(EveChip& chip)
     InitClock(chip);
     ClearRegions(chip);
     CoreReset(chip, true);
+    AsyncTakeDrawingState(chip, true); // the metrics block is cleared too
 }
 
 } // namespace EveLib
@@ -156,6 +157,8 @@ EveChip* EveCreate(const EveConfig* config)
     chip->regionCount = chip->vdac4 ? static_cast<uint32_t>(RegionCount) : kFt812RegionCount;
     if (chip->vdac4)
         chip->vdac4State.ramGLimit = kVdac4RamG2Mb; // PowerOnReset completes the block
+    chip->config = *config;
+    chip->config.structSize = sizeof(EveConfig);
     chip->externalClockHz = config->externalClockHz;
     chip->romImage = config->romImage;
     chip->romSize = config->romImage != nullptr ? static_cast<uint32_t>(config->romImageSize) : 0;

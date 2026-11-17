@@ -83,6 +83,7 @@ struct BoardState
     // Threads (design.md §7.5): the ESP app's jobs and the Tang / FT812 work they hand over; host time in ms
     bool espThread = false;         ///< jobs on the runtime's worker thread ([VDAC4] EspThread)
     bool ftThread = false;          ///< the Tang's work for the jobs on its own thread ([VDAC4] FtThread)
+    bool ftDrawThread = false;      ///< the FT812 draws on its renderer thread now ([VDAC4] FtDrawThread)
     uint32_t espLatencyMs = 0;      ///< ms the app's outputs reach the firmware after its job ([VDAC4] EspLatencyMs)
     uint64_t espJobs = 0;           ///< Advances run as jobs since power-on
     uint64_t espThreadedJobs = 0;   ///< of them on the worker

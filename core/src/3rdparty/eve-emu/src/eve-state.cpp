@@ -34,6 +34,7 @@ void StateLoaded(EveChip& chip)
     if (chip.vdac4)
         UpdateMemoryMap(chip, false);
     DrawingInvalidate(chip);
+    AsyncTakeDrawingState(chip, true); // the loaded handles, context and metrics
     CoproStateLoaded(chip);
 }
 
@@ -57,6 +58,15 @@ size_t EveStateSize(const EveChip* chip)
 void EveSaveState(const EveChip* chip, void* out)
 {
     std::memcpy(out, &chip->state, sizeof(ControlState));
+    if (chip->asyncDrawing)
+    {
+        // The drawing's part of the state is the renderer's: the same bytes as with the drawing on this thread
+        const EveChip& drawn = DrawingChip(*chip);
+        ControlState& saved = *static_cast<ControlState*>(out);
+        std::memcpy(saved.handles, drawn.state.handles, sizeof(saved.handles));
+        saved.context = drawn.state.context;
+        saved.metrics = drawn.state.metrics;
+    }
     if (chip->vdac4)
         std::memcpy(static_cast<uint8_t*>(out) + sizeof(ControlState), &chip->vdac4State, sizeof(Vdac4State));
 }

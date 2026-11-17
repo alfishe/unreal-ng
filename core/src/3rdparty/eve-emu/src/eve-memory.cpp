@@ -286,6 +286,9 @@ uint8_t BusPeek(const EveChip& chip, uint32_t address)
 
 uint8_t BusRead(EveChip& chip, uint32_t address)
 {
+    // REG_TAG is set by the drawing: with the renderer on, as it left it (the lines drawn so far, no more)
+    if (chip.asyncDrawing && ((address & kAddressMask) & ~3u) == RegisterInfo(chip, Reg::Tag).address)
+        AsyncSyncTag(chip);
     const uint8_t value = BusPeek(chip, address);
     address &= kAddressMask;
     if (address >= kRamRegBase && address < kRamRegBase + kRamRegSize && (address & 3) == 0)

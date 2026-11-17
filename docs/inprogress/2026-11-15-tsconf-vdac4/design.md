@@ -95,6 +95,8 @@ Out of scope, first round:
   - `EspMhz`: 240;
   - `EspThread`: 1 = the ESP app's jobs on a worker thread, 0 = on the emulation thread (§7.5);
   - `FtThread`: 1 = the Tang / FT812 work of those jobs on a thread of its own, 0 (default) = on the job's thread;
+  - `FtDrawThread`: 1 (default) = the FT812's drawing on the eve-emu renderer thread, 0 = where the FT812 runs
+    ([eve-async-drawing.md](eve-async-drawing.md));
   - `EspLatencyMs`: 1-16, default 4: emulated ms the app's outputs reach the firmware after its job (§7.5);
   - `EspBootMs`: ESP boot time after power-on, when it arms the Tang (§5.3), default 400;
   - `EspLog`: app log file, empty = off;
@@ -320,6 +322,9 @@ emulation thread. The replay rule is the same, so the two give the same machine 
 `FtThread=1` moves the Tang's part of a job (`Vdac4FtWorker`) to a third thread: the job queues its LINK writes with
 their stamps and an end-of-job marker, the FT thread applies them in order; a LINK read waits until the queue is
 applied and reads on the job's thread. Also bit for bit the same.
+`FtDrawThread=1` moves only the FT812's line drawing and the frame conversion to the eve-emu renderer thread
+(`EveSetAsyncDrawing`, [eve-async-drawing.md](eve-async-drawing.md)): the chip stays where it was, its drawing
+inputs are queued; the picture, line costs, metrics and `REG_TAG` are the same bit for bit.
 
 `EspLatencyMs` is part of the emulated behaviour (a run with 4 is not the run with 1, each is deterministic): it is
 how far the worker may run behind the machine. 1 serializes the threads (the emulation thread waits for each job

@@ -533,6 +533,12 @@ struct LinePlanDelete
     void operator()(LinePlan* plan) const;
 };
 
+struct AsyncDrawing; // eve-async.cpp
+struct AsyncDrawingDelete
+{
+    void operator()(AsyncDrawing* async) const;
+};
+
 } // namespace EveLib
 
 // --- The chip context (one allocation in EveCreate) -------------------------------------
@@ -637,6 +643,12 @@ struct EveChip
     uint32_t widthCapacity;
     uint32_t heightCapacity;
     int drawing;
+
+    // Drawing on the renderer thread (eve-async.cpp, EveSetAsyncDrawing): the chip queues what it would draw,
+    // a shadow chip draws it. Declared last: the renderer stops before anything else goes
+    EveConfig config;                      // as created: the shadow is made from it
+    bool asyncDrawing = false;
+    std::unique_ptr<EveLib::AsyncDrawing, EveLib::AsyncDrawingDelete> async;
 };
 
 namespace EveLib
@@ -748,6 +760,8 @@ void GetCoproView(const EveChip& chip, EveCoproView& out);
 void DrawingReset(EveChip& chip);             // handles and derived drawing state
 uint32_t FrameLinesDue(const EveChip& chip);  // visible lines of the frame in flight passed so far
 void CatchUp(EveChip& chip);                  // draw every line sampled up to now
+// The lines of the frame in flight up to `due`: drawn (draw), or passed without drawing (CatchUp's work)
+void DrawLinesTo(EveChip& chip, uint32_t due, bool draw);
 void FrameStart(EveChip& chip);               // new frame: nothing drawn yet
 void DisplayListSwapped(EveChip& chip, bool changed); // a new active list (changed: other words)
 void DrawingInvalidate(EveChip& chip);        // derived drawing state is stale (restore)
@@ -758,6 +772,24 @@ void LoadRomFontHandle(EveChip& chip, uint32_t handle, uint32_t font);
 void SetHandleFromMetrics(BitmapHandle& h, uint32_t format, uint32_t stride, uint32_t width, uint32_t height,
                           uint32_t source);
 bool InitDrawing(EveChip& chip);               // allocate the derived drawing buffers
+
+// --- Drawing on the renderer thread (eve-async.cpp) -------------------------------------------------
+
+// Queued instead of drawn while chip.asyncDrawing: lines up to `due`, a frame start / end, a swap
+void AsyncLines(EveChip& chip, uint32_t due, bool draw);
+void AsyncFrameStart(EveChip& chip);
+void AsyncFrameEnd(EveChip& chip);
+void AsyncSwapped(EveChip& chip, bool changed);
+// The drawing state is stale (DrawingInvalidate): the next operation carries all of RAM_G and the list
+void AsyncInvalidate(EveChip& chip);
+// The chip's handles and context (and the metrics) are the truth again (reset, state load): the shadow takes them
+void AsyncTakeDrawingState(EveChip& chip, bool metrics);
+// Wait until the renderer drew everything queued (no-op off, or on the renderer thread)
+void AsyncWait(const EveChip& chip);
+// The chip whose drawing state (handles, line costs, metrics, kept lines) is current: the shadow after a wait
+const EveChip& DrawingChip(const EveChip& chip);
+// REG_TAG as the drawing left it, into the chip's register (a host read)
+void AsyncSyncTag(EveChip& chip);
 
 // --- VDAC4 3D (eve-vdac4-3d.cpp) ---------------------------------------------------------------
 

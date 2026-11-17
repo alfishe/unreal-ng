@@ -98,6 +98,7 @@
         Json::Value& threads = block("threads", "The ESP app's jobs and the Tang / FT812 work they hand over (host time)");
         field(threads, "esp_thread", "boolean", "Jobs on the runtime's worker thread ([VDAC4] EspThread)");
         field(threads, "ft_thread", "boolean", "The Tang's work for the jobs on its own thread ([VDAC4] FtThread)");
+        field(threads, "ft_draw_thread", "boolean", "The FT812 draws on its renderer thread now ([VDAC4] FtDrawThread)");
         field(threads, "esp_latency_ms", "integer", "ms the app's outputs reach the firmware after its job ([VDAC4] EspLatencyMs)");
         field(threads, "esp_jobs", "integer", "Advances run as jobs since power-on");
         field(threads, "esp_threaded_jobs", "integer", "Of them on the worker thread");

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "esprom.h"
 
@@ -85,6 +86,19 @@ RomTrap RomTrapByName(const char* name)
             return entry.trap;
     }
     return RomTrap::Unknown;
+}
+
+/// The trap kind of each ROM trap table entry, resolved once (the guest calls some of them, `__divsf3`, a million
+/// times in a few seconds: a name lookup per call was 7 % of the ESP's host time)
+RomTrap RomTrapAt(uint32_t index)
+{
+    static const std::vector<RomTrap> kByIndex = [] {
+        std::vector<RomTrap> table(kEspRomTrapCount);
+        for (size_t i = 0; i < kEspRomTrapCount; ++i)
+            table[i] = RomTrapByName(kEspRomTraps[i].name);
+        return table;
+    }();
+    return kByIndex[index];
 }
 
 int16_t PcmSample(float value)
@@ -522,7 +536,7 @@ bool EspAppHost::HandleTrap(Task& task, uint32_t pc)
 
 bool EspAppHost::HandleRomTrap(Task& task, uint32_t index)
 {
-    const RomTrap trap = RomTrapByName(kEspRomTraps[index].name);
+    const RomTrap trap = RomTrapAt(index);
     IEspCpu& cpu = *_cpu;
     auto sleepUs = [&](uint64_t us) {
         task.wakeUs = _nowUs + _sliceUsedCycles / _mhz + std::max<uint64_t>(us, 1000);

@@ -78,6 +78,73 @@ TEST_F(Vdac2Card_Test, BootAndMemoryThroughTheZControllerPorts)
     EXPECT_EQ(Read(kRamG + 0x1234, data.size()), data);
 }
 
+/// A whole SPI transaction (EveHostCard::Transaction, the VDAC4 Tang's word path) does what select / exchange /
+/// select do byte by byte: the same memory, the same register effects, the same INT_N edge at the same tact, the
+/// same bytes read back
+TEST_F(Vdac2Card_Test, TransactionMatchesTheBytePath)
+{
+    Boot();
+    auto word = [](uint8_t command, uint32_t address, uint32_t value, bool read) {
+        std::vector<uint8_t> mosi = {static_cast<uint8_t>(command | ((address >> 16) & 0x3F)),
+                                     static_cast<uint8_t>(address >> 8), static_cast<uint8_t>(address)};
+        if (read)
+            mosi.push_back(0);  // dummy
+        for (int i = 0; i < 4; i++)
+            mosi.push_back(read ? 0 : static_cast<uint8_t>(value >> (8 * i)));
+        return mosi;
+    };
+    struct Seen
+    {
+        std::vector<uint32_t> edges;  ///< as tacts after the run's start
+        uint32_t flags = 0;
+        uint32_t memory = 0;
+    };
+    auto run = [&](bool whole) {
+        auto transfer = [&](const std::vector<uint8_t>& mosi) {
+            std::vector<uint8_t> miso(mosi.size());
+            if (whole)
+            {
+                Card()->Transaction(mosi.data(), miso.data(), mosi.size());
+            }
+            else
+            {
+                Card()->select(true);
+                for (size_t i = 0; i < mosi.size(); i++)
+                    miso[i] = Card()->exchange(mosi[i]);
+                Card()->select(false);
+            }
+            return miso;
+        };
+        Seen seen;
+        _decoder->CatchUpEngine();  // the card's clock is the engine's raster
+        transfer(word(0x00, kRegIntFlags, 0, true));  // whatever boot left pending
+        const uint32_t start = _position;
+        transfer(word(0x80, kRamG + 0x100 + (whole ? 4 : 0), whole ? 0x5A5AA5A5u : 0x12345678u, false));
+        transfer(word(0x80, kRegIntMask, kIntSwap, false));
+        transfer(word(0x80, kRegDlswap, kDlswapFrame, false));  // no scan: swapped at once, INT_SWAP pending
+        transfer(word(0x80, kRegIntEn, 1, false));              // INT_N falls inside this transaction
+        const std::vector<uint8_t> flags = transfer(word(0x00, kRegIntFlags, 0, true));  // clear on read: released
+        seen.flags = flags[4] | (flags[5] << 8) | (flags[6] << 16) | (static_cast<uint32_t>(flags[7]) << 24);
+        transfer(word(0x80, kRegIntEn, 0, false));
+        const std::vector<uint8_t> mem = transfer(word(0x00, kRamG + 0x100 + (whole ? 4 : 0), 0, true));
+        seen.memory = mem[4] | (mem[5] << 8) | (mem[6] << 16) | (static_cast<uint32_t>(mem[7]) << 24);
+        uint32_t edges[8];
+        const size_t count = Card()->TakeIntEdges(_position, edges, 8);
+        for (size_t i = 0; i < count; i++)
+            seen.edges.push_back(edges[i] - start);
+        return seen;
+    };
+    const Seen bytes = run(false);
+    Tick(1000);
+    const Seen whole = run(true);
+    EXPECT_EQ(bytes.flags & kIntSwap, kIntSwap);
+    EXPECT_EQ(whole.flags, bytes.flags);
+    EXPECT_EQ(bytes.memory, 0x12345678u);
+    EXPECT_EQ(whole.memory, 0x5A5AA5A5u);
+    ASSERT_EQ(bytes.edges.size(), 1u) << "INT_EN with INT_SWAP pending pulls INT_N low once";
+    EXPECT_EQ(whole.edges, bytes.edges);
+}
+
 /// D2 selects the FT812 only: with #77 = #02 the chip sees nothing and MISO
 /// is the SD line (no card inserted: #FF)
 TEST_F(Vdac2Card_Test, DeselectedChipIgnoresTheBus)

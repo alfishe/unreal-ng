@@ -115,6 +115,7 @@ public:
         std::string capturePath;                 ///< .evr capture from power-on ("" = none)
         uint32_t lineBudgetMargin = 10;          ///< percent, 0..50
         uint32_t model = 0;                      ///< EveModel (0 = EVE_MODEL_FT812)
+        bool drawThread = false;                 ///< draw on the library's renderer thread (EveSetAsyncDrawing)
     };
 
     /// `rasterInFrame` returns the raster tact inside the current frame
@@ -156,7 +157,9 @@ public:
     uint16_t PictureWidth() const { return _pictureWidth; }
     uint16_t PictureHeight() const { return _pictureHeight; }
     /// FT812 frames latched to the Screen since the card was fitted
-    uint64_t LatchedFrames() const { return _latchedFrames; }
+    uint64_t LatchedFrames() const { return _latchedFrames.load(); }
+    /// The chip draws on its renderer thread now (Params::drawThread, not while capturing or in a TTD replay)
+    bool DrawingOnThread() const { return _async; }
 
     /// region <Bus capture (.evr replay stream, vdac2-test-corpus.md §4)>
     /// Start writing everything on the FT812's bus to `path`. On a running
@@ -206,6 +209,10 @@ public:
     /// region <SpiDevice>
     void select(bool selected) override;
     uint8_t exchange(uint8_t mosi) override;
+    /// One whole SPI transaction (select, `count` bytes, deselect) at the current time: what select / exchange /
+    /// select do byte by byte, with the clock caught up once and the next event planned once (no time passes
+    /// inside a transaction). `miso` may be null. A capture or a device history takes the byte path
+    void Transaction(const uint8_t* mosi, uint8_t* miso, size_t count);
     /// endregion
 
     /// region <TTD (line-budget-metrics.md §3.4)>
@@ -281,6 +288,12 @@ private:
     bool Drawing() const;
     /// The chip's frame buffer (ARGB8888) into the presented picture (RGBA8888)
     void ConvertFrameToPicture();
+    /// The drawing on the renderer thread when wanted (Params::drawThread), on this thread for a capture
+    /// (it hashes the frame buffer at the frame event) and a TTD replay (it composes pictures from it)
+    bool AsyncWanted() const;
+    void ConfigureAsync();
+    /// The renderer finished a frame (on its thread): present it as OnChipFrame does
+    static void OnRendererFrame(void* user, uint64_t frame, int drawn);
 
     EmulatorContext* _context;
     Params _params;
@@ -302,11 +315,15 @@ private:
     bool _showing = false;
     bool _drawing = false;         // the chip was told to draw (EveSetOutput)
     uint64_t _chipFrames = 0;      // EveCompletedFrames seen last
-    uint64_t _latchedFrames = 0;
+    std::atomic<uint64_t> _latchedFrames{0};
     std::vector<uint32_t> _chipFrame;
     std::vector<uint8_t> _picture;
     uint16_t _pictureWidth = 0;
     uint16_t _pictureHeight = 0;
+    // The drawing on the library's renderer thread: it presents the frames (OnRendererFrame), the buffers
+    // above are resized only after it is idle (EveSetOutput waits, ConfigureOutput waits first)
+    bool _async = false;
+    std::atomic<bool> _asyncPresent{false};  // _showing as of the last output setup, for the renderer
 
     // [VDAC2] CaptureFile: the bus traffic as an .evr replay stream; while
     // capturing, the chip draws every frame so the stream carries frame hashes

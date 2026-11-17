@@ -89,6 +89,24 @@ void EveSetOutput(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels,
                   uint32_t widthCapacity, uint32_t heightCapacity, int drawing);
 uint64_t EveCompletedFrames(const EveChip* chip); /* frames fully scanned out */
 
+/* Drawing on a thread of its own. On: the chip keeps all its timing, coprocessor and registers on the
+   caller's thread and queues what it would draw, with a copy of the inputs of that moment; a renderer thread
+   draws it into the frame buffer. The picture, the line costs, the metrics and REG_TAG are those of the
+   drawing on the caller's thread, whatever the renderer's pace (the producer runs at most two frames ahead).
+   onFrame (may be NULL) is called on the renderer thread at each frame end, after the frame's last line is
+   drawn and its metrics folded; the frame buffer holds that frame until it returns. `drawn` = 0: the frame
+   was passed without drawing (EveSetOutput drawing = 0). The calls that read the drawing's state
+   (EveSaveState, EveGetLineCost, EveGetFrameMetrics, EveProbePixel, a host read of REG_TAG) wait for the
+   renderer; EveSetOutput with another buffer or size waits too, so the old buffer is free when it returns.
+   They may be called from onFrame without a wait. Off: waits, the drawing's state comes back to the chip.
+   0 = done; 1 (EveLastError) if the renderer could not start. Turn it off before EveDestroy when onFrame
+   uses the host's objects. */
+typedef void (*EveFrameCallback)(void* user, uint64_t frame, int drawn);
+int EveSetAsyncDrawing(EveChip* chip, int on, EveFrameCallback onFrame, void* user);
+int EveAsyncDrawing(const EveChip* chip);
+/* Wait until the renderer has drawn everything queued (no-op when off) */
+void EveDrawingBarrier(EveChip* chip);
+
 /* --- State ------------------------------------------------------------------------- */
 
 size_t EveStateSize(const EveChip* chip);          /* fixed for the chip's lifetime */

@@ -11,6 +11,7 @@
 #include <eve/eve.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -97,6 +98,7 @@ EveHostCard::~EveHostCard()
         _context->pScreen->ClearExternalPicture();
     if (_chip)
     {
+        EveSetAsyncDrawing(_chip, 0, nullptr, nullptr);  // the renderer presents into this card
         _capture.Close(EveTotalClocks(_chip));
         EveDestroy(_chip);
     }
@@ -169,6 +171,10 @@ void EveHostCard::OnFrameEnd()
 {
     AdvanceTo(_time.frameBase + kFrameTacts);
     _time.frameBase += kFrameTacts;
+    // The FT812 frames finished by now are on the Screen at the machine's frame end, as with the drawing on
+    // this thread (a screenshot after a pause, a test's picture)
+    if (_async)
+        EveDrawingBarrier(_chip);
 }
 
 void EveHostCard::Synchronize()
@@ -192,6 +198,8 @@ void EveHostCard::AdvanceTo(uint64_t absoluteRaster)
     // Drawing() changed: a TTD replay started or ended, a capture, measure-always
     if (_drawing != Drawing())
         ConfigureOutput();
+    if (_async != AsyncWanted())
+        ConfigureAsync();
 
     while (_time.position < absoluteRaster)
     {
@@ -322,6 +330,7 @@ bool EveHostCard::ConfigureOutput()
     const bool resized = width != _pictureWidth || height != _pictureHeight || _picture.empty();
     if (resized)
     {
+        EveDrawingBarrier(_chip);  // the renderer may still draw into the old buffers
         _pictureWidth = width;
         _pictureHeight = height;
         const size_t pixels = static_cast<size_t>(width) * height;
@@ -331,6 +340,7 @@ bool EveHostCard::ConfigureOutput()
             _picture[i * 4 + 3] = 0xFF;  // opaque black
     }
     _drawing = Drawing();
+    _asyncPresent.store(_showing);
     EveSetOutput(_chip, _chipFrame.data(), width, width, height, _drawing ? 1 : 0);
     return resized;
 }
@@ -377,8 +387,8 @@ void EveHostCard::OnChipFrame()
         PublishPicture();
         return;
     }
-    if (!drew)
-        return;  // nothing new was drawn: the Screen keeps its last frame
+    if (!drew || _async)
+        return;  // nothing new was drawn: the Screen keeps its last frame; or the renderer presents it
 
     ConvertFrameToPicture();
     // Not from a throwaway TTD replay (it composes a position's picture and publishes it itself): a latch there
@@ -390,19 +400,65 @@ void EveHostCard::OnChipFrame()
         KeepPresentedMetrics(false);  // the FT812 Debug window shows what the monitor shows
 }
 
+bool EveHostCard::AsyncWanted() const
+{
+    return _params.drawThread && _chip && !_capture.IsOpen() && !(_context && _context->ttdReplayActive);
+}
+
+void EveHostCard::ConfigureAsync()
+{
+    const bool want = AsyncWanted();
+    if (EveSetAsyncDrawing(_chip, want ? 1 : 0, &EveHostCard::OnRendererFrame, this) != 0)
+    {
+        MLOGWARNING("%s: the FT812 draws on the emulation thread: %s", _params.name, EveLastError());
+        _params.drawThread = false;
+        return;
+    }
+    _async = want;
+}
+
+void EveHostCard::OnRendererFrame(void* user, uint64_t /*frame*/, int drawn)
+{
+    // OnChipFrame's presentation, on the renderer thread once the frame's last line is drawn. The buffers are
+    // not resized meanwhile (ConfigureOutput waits for the renderer first)
+    auto* card = static_cast<EveHostCard*>(user);
+    if (!drawn || !card->_asyncPresent.load())
+        return;
+    card->ConvertFrameToPicture();
+    if (Screen* screen = card->_context ? card->_context->pScreen : nullptr;
+        screen && !(card->_context && card->_context->ttdReplayActive))
+        screen->LatchExternalFrame();
+    card->_latchedFrames++;
+    if (card->_measureAlways.load())
+        card->KeepPresentedMetrics(false);  // the library answers the renderer without waiting
+}
+
 void EveHostCard::ConvertFrameToPicture()
 {
-    // ARGB8888 (0xAARRGGBB) -> the framebuffer's RGBA8888 (bytes R, G, B, A)
-    // SIMD-CANDIDATE(VDAC2-1): a byte shuffle per pixel, 786 432 pixels at 1024 x 768
+    // ARGB8888 (0xAARRGGBB) -> the framebuffer's RGBA8888 (bytes R, G, B, A), whole words so the compiler
+    // vectorises it
     const size_t pixels = _chipFrame.size();
+    const uint32_t* in = _chipFrame.data();
     uint8_t* out = _picture.data();
-    for (size_t i = 0; i < pixels; i++)
+    if constexpr (std::endian::native == std::endian::little)
     {
-        const uint32_t argb = _chipFrame[i];
-        out[i * 4 + 0] = static_cast<uint8_t>(argb >> 16);
-        out[i * 4 + 1] = static_cast<uint8_t>(argb >> 8);
-        out[i * 4 + 2] = static_cast<uint8_t>(argb);
-        out[i * 4 + 3] = 0xFF;
+        for (size_t i = 0; i < pixels; i++)
+        {
+            const uint32_t argb = in[i];
+            const uint32_t rgba = ((argb >> 16) & 0xFFu) | (argb & 0xFF00u) | ((argb & 0xFFu) << 16) | 0xFF000000u;
+            std::memcpy(out + i * 4, &rgba, 4);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < pixels; i++)
+        {
+            const uint32_t argb = in[i];
+            out[i * 4 + 0] = static_cast<uint8_t>(argb >> 16);
+            out[i * 4 + 1] = static_cast<uint8_t>(argb >> 8);
+            out[i * 4 + 2] = static_cast<uint8_t>(argb);
+            out[i * 4 + 3] = 0xFF;
+        }
     }
 }
 
@@ -804,6 +860,7 @@ void EveHostCard::TTDPrepareComposedPicture(bool frameTarget)
     // previous frame. The library draws lines lazily (at a frame end or before a
     // memory write); handing it the output again draws every line due by now
     ConfigureOutput();
+    EveDrawingBarrier(_chip);  // the lines due drawn by the renderer
     if (_chipFrame.size() * 4 == _picture.size())
         ConvertFrameToPicture();
     KeepPresentedMetrics(true);  // with the lines of the frame in flight drawn so far
@@ -882,6 +939,37 @@ uint8_t EveHostCard::exchange(uint8_t mosi)
     return miso;
 }
 
+void EveHostCard::Transaction(const uint8_t* mosi, uint8_t* miso, size_t count)
+{
+    if (!_chip || (_capture.IsOpen() && CaptureLive()) || _history.On())
+    {
+        // Not the virtual calls: a subclass's select / exchange is its own bus, not this chip's
+        EveHostCard::select(true);
+        for (size_t i = 0; i < count; i++)
+        {
+            const uint8_t value = EveHostCard::exchange(mosi[i]);
+            if (miso)
+                miso[i] = value;
+        }
+        EveHostCard::select(false);
+        return;
+    }
+    Synchronize();
+    EveSelect(_chip, 1);
+    SampleInt(_time.position);
+    for (size_t i = 0; i < count; i++)
+    {
+        const uint8_t value = EveExchange(_chip, mosi[i]);
+        if (miso)
+            miso[i] = value;
+        // A register byte can raise or release INT_N: sampled per byte as the byte path does
+        SampleInt(_time.position);
+    }
+    EveSelect(_chip, 0);
+    SampleInt(_time.position);
+    PlanNextEvent();
+}
+
 #else // ENABLE_VDAC2
 
 // A build without the FT812 library: the decoder never fits a card (a
@@ -913,6 +1001,12 @@ void EveHostCard::ReadFrameMetrics(Vdac2Control::FrameMetrics& out, bool, bool) 
 bool EveHostCard::PresentedFrameMetrics(Vdac2Control::FrameMetrics&) const { return false; }
 void EveHostCard::select(bool) {}
 uint8_t EveHostCard::exchange(uint8_t) { return 0xFF; }
+void EveHostCard::Transaction(const uint8_t*, uint8_t* miso, size_t count)
+{
+    if (miso)
+        for (size_t i = 0; i < count; i++)
+            miso[i] = 0xFF;
+}
 std::vector<ttd::TTDTimeField> EveHostCard::TtdTimeFields() { return {}; }
 size_t EveHostCard::TtdStateSize() const { return 0; }
 void EveHostCard::TtdSaveState(uint8_t*) const {}
