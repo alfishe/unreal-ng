@@ -377,3 +377,10 @@ GSFirmwareIdentity IdentifyGSFirmware(const GeneralSoundCard& card)
     identity.profile = FindGSFirmwareProfile(identity.sha256);
     return identity;
 }
+
+const GSFirmwareProfile* GSFirmwareProfileOf(const GeneralSoundCard& card)
+{
+    if (card.implementation() == GSCardImplementation::LW)
+        return GSFirmwareProfiles()[1];
+    return IdentifyGSFirmware(card).profile;
+}

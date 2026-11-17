@@ -1,0 +1,1 @@
+lz48 : incbin './decrunch/lzDataTest.bin' : lzclose : lafin : save './decrunch/lzDataTest.l48',0,lafin 

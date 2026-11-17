@@ -67,6 +67,14 @@ Example, a host action ([command-interface.md §16](./command-interface.md#16-ho
 ← {"op":"result","t":"call","rid":1,"status":200,"body":{"ok":true,"action":"run.pause_toggle","message":"Emulator paused","result":{…}}}
 ```
 
+A polled device read is a call too, with no topic when it never loads the emulation thread; for example the TS-Conf
+VDAC4 board state ([command-interface.md](./command-interface.md), `vdac4 state`):
+
+```json
+→ {"op":"call","rid":4,"method":"GET","path":"/api/v1/emulator/0f3a…/vdac4/state?log=5"}
+← {"op":"result","t":"call","rid":4,"status":200,"body":{"tang":{"personality":"ft",…},"esp":{"phase":"running",…},"app":{"running":true,"name":"DOOM",…},"link":{…},"packets":{…},"audio":{…},"log":[…]}}
+```
+
 The TTD branch routes are calls like any other (`PATCH` included), for example a switch to another branch of the
 history ([webapi-interface.md](./webapi-interface.md), TTD branches):
 

@@ -78,6 +78,7 @@ bool FromFifo(const EveChip& chip)
     switch (c.command)
     {
     case kCmdLoadimage: return (c.params[1] & kOptMediafifo) != 0;
+    case kCmdLoadimageBox: return false; // VDAC4: OPT_MEDIAFIFO is refused at the start
     case kCmdPlayvideo: return (c.params[0] & kOptMediafifo) != 0;
     default: return true; // CMD_VIDEOSTART / CMD_VIDEOFRAME read the media FIFO
     }
@@ -280,13 +281,18 @@ bool DecodeImage(EveChip& chip, bool remember, bool mono)
     if (decoder->Probe(decoder->user, file, size, &info) != EVE_DECODE_OK)
         return false;
     const uint32_t pixels = info.width * info.height;
-    if (info.width == 0 || info.height == 0 || info.width > kImageMaxWidth || info.height > kImageMaxHeight)
+    if (info.width == 0 || info.height == 0)
+        return false;
+    // FT812: the limits seen on the card; VDAC4: each side below 2048, any pixel count (ft_image.c)
+    const bool sizeOk = chip.vdac4 ? info.width < kVdac4ImageSideLimit && info.height < kVdac4ImageSideLimit
+                                   : info.width <= kImageMaxWidth && info.height <= kImageMaxHeight;
+    if (!sizeOk)
         return false;
     uint32_t format = kFormatRgb565;
     if (kind == FileKind::Png)
     {
         // PNG: bit depth 8, no Adam-7, gray + alpha unsupported [PG §5.19].
-        if (info.bitDepth != kBitsPerByte || info.interlaced || pixels > kPngMaxPixels ||
+        if (info.bitDepth != kBitsPerByte || info.interlaced || (!chip.vdac4 && pixels > kPngMaxPixels) ||
             size <= kPngColorTypeOffset || file[kPngColorTypeOffset] == kPngGrayAlpha)
             return false;
         switch (info.layout)
@@ -302,11 +308,20 @@ bool DecodeImage(EveChip& chip, bool remember, bool mono)
     else
     {
         // Baseline JFIF only: progressive and CMYK fail (spec §7.5).
-        if (info.progressive || info.cmyk || info.bitDepth != kBitsPerByte || pixels > kJpegMaxPixels)
+        if (info.progressive || info.cmyk || info.bitDepth != kBitsPerByte || (!chip.vdac4 && pixels > kJpegMaxPixels))
             return false;
         format = (info.layout == EVE_IMAGE_GRAY8 || mono) ? kFormatL8 : kFormatRgb565;
     }
     const size_t bytes = static_cast<size_t>(pixels) * Channels(info.layout);
+    if (bytes > chip.imageBufferBytes)
+    {
+        // VDAC4: an image beyond the FT812 limits the buffer was made for
+        std::unique_ptr<uint8_t[]> larger(new (std::nothrow) uint8_t[bytes]);
+        if (!larger)
+            return false;
+        chip.imageBuffer = std::move(larger);
+        chip.imageBufferBytes = bytes;
+    }
     if (decoder->Decode(decoder->user, file, size, chip.imageBuffer.get(), bytes, chip.imagePalette,
                         kPaletteEntries) != EVE_DECODE_OK)
         return false;
@@ -341,6 +356,8 @@ uint32_t PaletteBytes(const CoproState& c)
 // Byte `offset` of the converted output (palette first for indexed images).
 uint8_t OutputByte(const EveChip& chip, uint32_t offset)
 {
+    if (chip.vdac4 && chip.vdac4State.boxScaled)
+        return chip.vdac4Scaled[offset];
     const CoproState& c = chip.state.copro;
     const uint32_t format = ImageFormat(c);
     const uint32_t paletteBytes = PaletteBytes(c);
@@ -372,6 +389,218 @@ uint8_t OutputByte(const EveChip& chip, uint32_t offset)
     }
 }
 
+// --- VDAC4 CMD_LOADIMAGE_BOX (ft_image.c box_target, area_*) ---------------------------------------
+
+bool MonoOption(const CoproState& c);
+constexpr uint32_t kHalfWordShift = 16, kHighFieldShiftImage = 16;
+constexpr uint32_t kVdac4UnsupportedOption = 7; // FTC_IMG_U_OPTION
+
+constexpr uint32_t kBoxMaxSide = 2048; // IMG_WMAX: sides up to 2047
+
+bool HasAlpha(uint32_t format)
+{
+    return format == kFormatArgb4 || format == kFormatPaletted4444;
+}
+
+// The size the box allows: true as is; false with *tw x *th to downscale to; a fault (no room)
+// when not even a pixel fits.
+enum class BoxFit { AsIs, Scale, NoRoom };
+
+BoxFit BoxTarget(uint32_t w, uint32_t h, uint32_t nat, uint32_t bpp, uint32_t boxW, uint32_t boxH, uint32_t room,
+                 uint32_t& tw, uint32_t& th)
+{
+    if (w <= boxW && h <= boxH && w < kBoxMaxSide && h < kBoxMaxSide && nat <= room)
+        return BoxFit::AsIs;
+    const uint32_t bw = boxW < kBoxMaxSide ? boxW : kBoxMaxSide - 1;
+    const uint32_t bh = boxH < kBoxMaxSide ? boxH : kBoxMaxSide - 1;
+    uint32_t ow = w, oh = h;
+    if (ow > bw || oh > bh)
+    {
+        if (static_cast<uint64_t>(w) * bh >= static_cast<uint64_t>(h) * bw)
+        {
+            ow = bw;
+            oh = static_cast<uint32_t>((static_cast<uint64_t>(h) * bw + w / 2) / w);
+        }
+        else
+        {
+            oh = bh;
+            ow = static_cast<uint32_t>((static_cast<uint64_t>(w) * bh + h / 2) / h);
+        }
+    }
+    ow = ow == 0 ? 1 : ow;
+    oh = oh == 0 ? 1 : oh;
+    // Not in room: smaller than the box, same proportions
+    while (static_cast<uint64_t>(ow) * oh * bpp > room && (ow > 1 || oh > 1))
+    {
+        const uint32_t nw = ow * 15u / 16u, nh = oh * 15u / 16u;
+        ow = nw != 0 ? nw : 1;
+        oh = nh != 0 ? nh : 1;
+    }
+    if (static_cast<uint64_t>(ow) * oh * bpp > room)
+        return BoxFit::NoRoom;
+    tw = ow;
+    th = oh;
+    return BoxFit::Scale;
+}
+
+uint32_t To8(float v)
+{
+    return v <= 0.0f ? 0u : v >= 254.5f ? 255u : static_cast<uint32_t>(v + 0.5f);
+}
+
+// Downscale by area (Pillow BOX, ft_image.c area_row / area_px): the source pixel x covers
+// [x ow, (x + 1) ow), the output pixel X [X sw, (X + 1) sw); integer sums along x, float sums
+// along y, alpha premultiplied; the channels go into the format by truncation.
+void ScaleByArea(EveChip& chip, uint32_t sw, uint32_t sh, uint32_t ow, uint32_t oh, uint32_t format, bool mono)
+{
+    const CoproState& c = chip.state.copro;
+    const EveImageLayout layout = ImageLayout(c);
+    const uint32_t channels = Channels(layout);
+    const uint8_t* image = chip.imageBuffer.get();
+    // Channels of the sums: gray 1, RGB 3, with alpha 4 (premultiplied)
+    const bool alpha = HasAlpha(format);
+    const uint32_t n = format == kFormatL8 ? 1 : alpha ? 4 : 3;
+    uint32_t palette[kPaletteEntries][4] = {};
+    if (layout == EVE_IMAGE_INDEXED8)
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+        {
+            const uint32_t e = chip.imagePalette[i];
+            const uint32_t a = alpha ? e >> 24 : 0, r = (e >> 16) & 0xFF, g = (e >> 8) & 0xFF, b = e & 0xFF;
+            palette[i][0] = alpha ? r * a : r;
+            palette[i][1] = alpha ? g * a : g;
+            palette[i][2] = alpha ? b * a : b;
+            palette[i][3] = a;
+        }
+    const auto load = [&](const uint8_t* row, uint32_t x, uint32_t* v) {
+        const uint8_t* p = row + static_cast<size_t>(x) * channels;
+        if (layout == EVE_IMAGE_INDEXED8)
+        {
+            for (uint32_t k = 0; k < 4; ++k)
+                v[k] = palette[p[0]][k];
+            return;
+        }
+        if (n == 1)
+        {
+            v[0] = channels == 1 ? p[0] : (mono ? Luma(p[0], p[1], p[2]) : p[0]);
+            v[1] = v[2] = v[3] = 0;
+            return;
+        }
+        if (n == 3)
+        {
+            v[0] = p[0];
+            v[1] = p[1];
+            v[2] = p[2];
+            v[3] = 0;
+            return;
+        }
+        v[3] = p[3];
+        v[0] = p[0] * v[3];
+        v[1] = p[1] * v[3];
+        v[2] = p[2] * v[3];
+    };
+    const uint32_t obpp = format == kFormatL8 ? 1 : 2;
+    chip.vdac4Scaled.reset(new uint8_t[static_cast<size_t>(ow) * oh * obpp]);
+    uint8_t* out = chip.vdac4Scaled.get();
+    std::unique_ptr<float[]> vacc(new float[static_cast<size_t>(ow) * n]());
+    const float k = 1.0f / (static_cast<float>(sw) * static_cast<float>(sh));
+    uint32_t oy = 0;
+    for (uint32_t sy = 0; sy < sh && oy < oh; ++sy)
+    {
+        const uint8_t* row = image + static_cast<size_t>(sy) * sw * channels;
+        const uint32_t y0 = sy * oh, y1 = y0 + oh, ybound = (oy + 1) * sh;
+        const uint32_t wy = y1 > ybound ? ybound - y0 : oh;
+        const float f1 = static_cast<float>(wy), f2 = static_cast<float>(oh - wy);
+        const bool end = y1 >= ybound;
+        float* v = vacc.get();
+        uint8_t* o = out + static_cast<size_t>(oy) * ow * obpp;
+        for (uint32_t X = 0, x = 0, sb = ow, lo = 0; X < ow; X++, v += n, lo += sw)
+        {
+            const uint32_t hi = lo + sw;
+            uint32_t cv[4], t[4], in[4] = {0, 0, 0, 0};
+            uint32_t w = sb - lo;
+            load(row, x, cv);
+            for (uint32_t j = 0; j < 4; ++j)
+                t[j] = cv[j] * w;
+            for (x++, sb += ow; sb <= hi; x++, sb += ow)
+            {
+                load(row, x, cv);
+                for (uint32_t j = 0; j < 4; ++j)
+                    in[j] += cv[j];
+            }
+            for (uint32_t j = 0; j < 4; ++j)
+                t[j] += in[j] * ow;
+            if (sb - ow < hi)
+            {
+                load(row, x, cv);
+                w = hi - (sb - ow);
+                for (uint32_t j = 0; j < 4; ++j)
+                    t[j] += cv[j] * w;
+            }
+            if (!end)
+            {
+                for (uint32_t j = 0; j < n; ++j)
+                    v[j] += static_cast<float>(t[j]) * f1;
+                continue;
+            }
+            float e[4] = {};
+            for (uint32_t j = 0; j < n; ++j)
+            {
+                e[j] = v[j] + static_cast<float>(t[j]) * f1;
+                v[j] = static_cast<float>(t[j]) * f2;
+            }
+            uint32_t r = 0, g = 0, b = 0, al = 255;
+            if (n == 1)
+                r = g = b = To8(e[0] * k);
+            else if (n == 3)
+            {
+                r = To8(e[0] * k);
+                g = To8(e[1] * k);
+                b = To8(e[2] * k);
+            }
+            else
+            {
+                al = To8(e[3] * k);
+                const float ia = e[3] > 0.0f ? 1.0f / e[3] : 0.0f;
+                r = To8(e[0] * ia);
+                g = To8(e[1] * ia);
+                b = To8(e[2] * ia);
+            }
+            if (format == kFormatL8)
+                *o++ = static_cast<uint8_t>(r);
+            else
+            {
+                const uint32_t word = format == kFormatArgb4
+                                          ? ((al >> 4) << 12) | ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)
+                                          : ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+                *o++ = static_cast<uint8_t>(word);
+                *o++ = static_cast<uint8_t>(word >> 8);
+            }
+        }
+        if (end)
+            ++oy;
+    }
+}
+
+// After a decode of a CMD_LOADIMAGE_BOX image that is downscaled: the scaled output.
+void RescaleBox(EveChip& chip)
+{
+    const CoproState& c = chip.state.copro;
+    const Vdac4State& v = chip.vdac4State;
+    ScaleByArea(chip, v.sourceWidth, v.sourceHeight, c.flightWidth, c.flightHeight, ImageFormat(c), MonoOption(c));
+}
+
+void SetImageInfo(EveChip& chip, uint32_t sourceWidth, uint32_t sourceHeight)
+{
+    const CoproState& c = chip.state.copro;
+    const uint32_t format = ImageFormat(c);
+    const uint32_t stride = Indexed(format) ? c.flightWidth : c.flightWidth * BytesPerPixel(format);
+    uint32_t* info = chip.vdac4State.imageInfo;
+    info[0] = sourceWidth | (sourceHeight << kHighFieldShiftImage);
+    info[1] = c.flightWidth | (c.flightHeight << kHighFieldShiftImage);
+    info[2] = format | (HasAlpha(format) ? 1u << kBitsPerByte : 0) | (stride << kHighFieldShiftImage);
+    info[3] = PaletteBytes(c);
+}
+
 bool QueueImageWords(EveChip& chip)
 {
     const CoproState& c = chip.state.copro;
@@ -381,7 +610,7 @@ bool QueueImageWords(EveChip& chip)
     uint32_t width = c.flightWidth;
     uint32_t height = c.flightHeight;
     uint32_t scale = 1;
-    if ((c.params[1] & kOptFullscreen) && kLoadImageFullscreenScales)
+    if ((c.params[1] & kOptFullscreen) && kLoadImageFullscreenScales && c.command != kCmdLoadimageBox)
     {
         const uint32_t sx = RegGet(chip, Reg::Hsize) / width;
         const uint32_t sy = RegGet(chip, Reg::Vsize) / height;
@@ -443,7 +672,7 @@ StepPlan LoadImagePlan(EveChip& chip)
 
 bool MonoOption(const CoproState& c)
 {
-    return c.command == kCmdLoadimage && (c.params[1] & kOptMono) != 0;
+    return (c.command == kCmdLoadimage || c.command == kCmdLoadimageBox) && (c.params[1] & kOptMono) != 0;
 }
 
 // Decode the collected file and prepare to write its pixels at `address`; false: faulted.
@@ -455,9 +684,40 @@ bool StartWriting(EveChip& chip, uint32_t address, uint8_t nextStage)
         CoproFaultNow(chip, CoproFault::InvalidImage);
         return false;
     }
+    if (chip.vdac4)
+        chip.vdac4State.boxScaled = 0;
+    if (c.command == kCmdLoadimageBox)
+    {
+        // VDAC4: as is when it fits the box and the room, else downscaled by area
+        const uint32_t format = ImageFormat(c);
+        const bool png = Kind(chip.regions[RegionInflight].base, c.inputBytes) == FileKind::Png;
+        const uint32_t nat = PaletteBytes(c) + c.flightWidth * c.flightHeight * BytesPerPixel(format);
+        const bool gray = format == kFormatL8;
+        const uint32_t bpp = png ? (HasAlpha(format) ? 2u : gray ? 1u : 2u) : (gray ? 1u : 2u);
+        uint32_t tw = 0, th = 0;
+        const BoxFit fit = BoxTarget(c.flightWidth, c.flightHeight, nat, bpp, c.params[2] & 0xFFFF,
+                                     c.params[2] >> kHalfWordShift, c.params[3] & ~3u, tw, th);
+        if (fit == BoxFit::NoRoom)
+        {
+            Vdac4ImageFault(chip, Vdac4ImageError::NoRoom, bpp);
+            return false;
+        }
+        Vdac4State& v = chip.vdac4State;
+        v.sourceWidth = c.flightWidth;
+        v.sourceHeight = c.flightHeight;
+        if (fit == BoxFit::Scale)
+        {
+            const uint32_t scaled = gray ? kFormatL8 : HasAlpha(format) ? kFormatArgb4 : kFormatRgb565;
+            c.imageFormat = scaled | (c.imageFormat & ~((1u << kBitsPerByte) - 1));
+            c.flightWidth = tw;
+            c.flightHeight = th;
+            v.boxScaled = 1;
+            RescaleBox(chip);
+        }
+    }
     const uint32_t bytes = PaletteBytes(c) + c.flightWidth * c.flightHeight * BytesPerPixel(ImageFormat(c));
     // Output beyond RAM_G is "unpredictable" [PG §5.19]: the emulator faults.
-    if (static_cast<uint64_t>(address) + bytes > kRamGSize)
+    if (static_cast<uint64_t>(address) + bytes > chip.ramGLimit)
     {
         CoproFaultNow(chip, CoproFault::InvalidImage);
         return false;
@@ -481,10 +741,15 @@ StepPlan WritePlan(const EveChip& chip)
 bool WritePixels(EveChip& chip, uint32_t units)
 {
     CoproState& c = chip.state.copro;
-    if (!chip.imageDecoded && !DecodeImage(chip, false, MonoOption(c)))
+    if (!chip.imageDecoded)
     {
-        CoproFaultNow(chip, CoproFault::InvalidImage);
-        return false;
+        if (!DecodeImage(chip, false, MonoOption(c)))
+        {
+            CoproFaultNow(chip, CoproFault::InvalidImage);
+            return false;
+        }
+        if (chip.vdac4 && chip.vdac4State.boxScaled)
+            RescaleBox(chip); // after a state load: the scaled output again
     }
     for (uint32_t i = 0; i < units; ++i)
         BusWrite(chip, c.writeAddress + c.done + i, OutputByte(chip, c.done + i));
@@ -538,6 +803,16 @@ void LoadImageApply(EveChip& chip, uint32_t units)
         c.imageWidth = c.flightWidth;
         c.imageHeight = c.flightHeight;
         chip.imageDecoded = false;
+        if (chip.vdac4)
+        {
+            const Vdac4State& v = chip.vdac4State;
+            const bool box = c.command == kCmdLoadimageBox;
+            if (box)
+                c.imageAddress = c.params[0]; // CMD_GETPROPS: the start of the output
+            SetImageInfo(chip, box ? v.sourceWidth : c.flightWidth, box ? v.sourceHeight : c.flightHeight);
+            chip.vdac4State.boxScaled = 0;
+            chip.vdac4Scaled.reset();
+        }
         c.stage = kEmit;
         c.total = 0;
         c.done = 0;
@@ -1149,7 +1424,30 @@ bool MediaBegin(EveChip& chip)
         RegSet(chip, Reg::MediafifoRead, 0);
         RegSet(chip, Reg::MediafifoWrite, 0);
         return true;
+    case kCmdLoadimageBox:
+        // VDAC4 (ft_image.c ftc_img_begin_req): no media FIFO, the box is not empty
+        if (c.params[1] & kOptMediafifo)
+        {
+            Vdac4ImageFault(chip, Vdac4ImageError::Unsupported, kVdac4UnsupportedOption);
+            return false;
+        }
+        if ((c.params[2] & 0xFFFF) == 0 || (c.params[2] >> kHalfWordShift) == 0)
+        {
+            Vdac4ImageFault(chip, Vdac4ImageError::Size, 0);
+            return false;
+        }
+        c.stage = kCollect;
+        c.scanPos = 0;
+        c.scanEntropy = 0;
+        c.inputBytes = 0;
+        chip.imageDecoded = false;
+        return false;
     case kCmdLoadimage:
+        if (chip.vdac4 && (c.params[1] & kOptMediafifo))
+        {
+            CoproFaultNow(chip, CoproFault::UnknownCommand); // the BL616 has no media FIFO image path
+            return false;
+        }
         c.stage = kCollect;
         c.scanPos = 0;
         c.scanEntropy = 0;
@@ -1175,7 +1473,8 @@ StepPlan MediaPlan(EveChip& chip)
 {
     switch (chip.state.copro.command)
     {
-    case kCmdLoadimage: return LoadImagePlan(chip);
+    case kCmdLoadimage:
+    case kCmdLoadimageBox: return LoadImagePlan(chip);
     case kCmdVideostart:
     case kCmdVideoframe:
     case kCmdPlayvideo: return VideoPlan(chip);
@@ -1188,6 +1487,7 @@ void MediaApply(EveChip& chip, uint32_t units)
     switch (chip.state.copro.command)
     {
     case kCmdLoadimage:
+    case kCmdLoadimageBox:
         LoadImageApply(chip, units);
         break;
     case kCmdVideostart:

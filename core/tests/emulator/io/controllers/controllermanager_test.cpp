@@ -357,6 +357,20 @@ TEST_F(ControllerManager_Test, HostSource_KeysReachTheSprinterPs2Keyboard)
     _emulator->RunNFrames(1);
     EXPECT_FALSE(stream.IsHeld(PcKey::Delete));
     EXPECT_FALSE(stream.IsHeld(PcKey::PageUp));
+
+    // The PC game keys after them (`pc.escape` 0xE6 .. `pc.f12` 0xF6): rows 9 to 12
+    source->keys = {0xE6, 0xE7, 0xE9, 0xF6};
+    _emulator->RunNFrames(1);
+    EXPECT_TRUE(stream.IsHeld(PcKey::Escape));
+    EXPECT_TRUE(stream.IsHeld(PcKey::Tab));
+    EXPECT_TRUE(stream.IsHeld(PcKey::LeftAlt));
+    EXPECT_TRUE(stream.IsHeld(PcKey::Function12));
+    EXPECT_EQ(_manager->HostKeys(9), 0x16) << "Escape bit 1, Tab bit 2, Alt bit 4";
+    EXPECT_EQ(_manager->HostKeys(12), 0x04) << "F12: the 23rd key, row 12 bit 2";
+    source->keys.clear();
+    _emulator->RunNFrames(1);
+    EXPECT_FALSE(stream.IsHeld(PcKey::Escape));
+    EXPECT_FALSE(stream.IsHeld(PcKey::Function12));
 }
 
 // Boot-bound (~15 ms): one 48K, four frames

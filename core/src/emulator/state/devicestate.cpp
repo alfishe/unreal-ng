@@ -746,6 +746,25 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
     ret["data_from_host"] = int(gs->getDataFromHost());
     ret["data_to_host"] = int(gs->getDataToHost());
     ret["page"] = int(gs->getMPAG());  // MPAG banking latch (GS design §2.3)
+    // What the host's conversation is at (gs-debugger design §6.4, F3): the command log's decoder, so only while the
+    // log records; and the debugger's last send (F6) to the machine's card
+    if (const GSCommandLog* log = gs->commandLog())
+    {
+        StateNode protocol = StateNode::Object();
+        log->State().ToState(protocol);
+        if (!log->On())
+            protocol["device"] = log->History().Device();
+        ret["protocol"] = protocol;
+    }
+    if (const std::shared_ptr<GSHostDriver> driver = sm && sm->getGeneralSound() == gs ? sm->gsHostDriver() : nullptr)
+    {
+        if (const std::optional<GSConversation> last = driver->Find(0))
+        {
+            StateNode send = StateNode::Object();
+            last->ToState(send);
+            ret["last_send"] = send;
+        }
+    }
 
     StateNode channels = StateNode::Array();
     for (int i = 0; i < gs->channelCount(); i++)

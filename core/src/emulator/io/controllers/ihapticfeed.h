@@ -35,6 +35,10 @@ struct HapticWatch
 {
     uint16_t address = 0;
     uint16_t page = 0xFFFF;  ///< 0xFFFF: `address` through the current mapping; else the RAM page, `address & #3FFF`
+    /// `cpu: esp`: a byte of the app a coprocessor runs (the TS-Conf VDAC4 board's ESP32 app, DOOM), `espAddress` an
+    /// address of the app's ELF image (PortDecoder::PeekEspAppByte); `address` and `page` unused
+    bool esp = false;
+    uint32_t espAddress = 0;
 };
 
 /// A sample stream the DSP filters read (haptics.md §4 source selectors)

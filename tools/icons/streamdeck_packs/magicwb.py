@@ -16,6 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
+import streamdeck_glyphs  # noqa: E402
 import streamdeck_pixel as sp  # noqa: E402
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -1133,6 +1134,242 @@ DRAW = {
     'status.offline': lambda c: (plug(c), c.solid(c.m.thick([(4, 28), (27, 3)], 3), 'w', bevel=False)),
     'status.hold': stopwatch,
 }
+
+
+# ---------------------------------------------------------------------------
+# The ZX Spectrum 48K keyboard: one glyph per key (streamdeck_glyphs.ZX_KEYS). The key's legend big in white at the top
+# left, the red symbol-shift legend small at the bottom right; the keyword is the key's label, not drawn.
+# ---------------------------------------------------------------------------
+
+# The red legends: a bold pixel font in the manner of the Spectrum's own (2-pixel stems, 1-pixel bars), 7 rows, each
+# glyph as wide as it needs; only the characters of the 48K's red legends.
+ZX_RED_FONT = {
+    '!': ['11', '11', '11', '11', '11', '00', '11'],
+    '@': ['011110', '110011', '110111', '110111', '110110', '110000', '011110'],
+    '#': ['011011', '011011', '111111', '011011', '111111', '011011', '011011'],
+    '$': ['00100', '01111', '11000', '01110', '00011', '11110', '00100'],
+    '%': ['11000', '11001', '00011', '00110', '01100', '11011', '10011'],
+    '&': ['011100', '110110', '110110', '011100', '110111', '110110', '011011'],
+    "'": ['011', '011', '110', '000', '000', '000', '000'],
+    '(': ['011', '110', '110', '110', '110', '110', '011'],
+    ')': ['110', '011', '011', '011', '011', '011', '110'],
+    '_': ['00000', '00000', '00000', '00000', '00000', '00000', '11111'],
+    '<': ['00011', '00110', '01100', '11000', '01100', '00110', '00011'],
+    '>': ['11000', '01100', '00110', '00011', '00110', '01100', '11000'],
+    '=': ['00000', '00000', '11111', '00000', '11111', '00000', '00000'],
+    '-': ['00000', '00000', '00000', '11111', '00000', '00000', '00000'],
+    '+': ['000000', '001100', '001100', '111111', '001100', '001100', '000000'],
+    '*': ['000000', '110011', '011110', '111111', '011110', '110011', '000000'],
+    '/': ['00011', '00011', '00110', '01100', '01100', '11000', '11000'],
+    '?': ['01110', '11011', '00011', '00110', '01100', '00000', '01100'],
+    ':': ['00', '11', '11', '00', '11', '11', '00'],
+    ';': ['000', '011', '011', '000', '011', '011', '110'],
+    ',': ['000', '000', '000', '000', '011', '011', '110'],
+    '.': ['00', '00', '00', '00', '00', '11', '11'],
+    '"': ['11011', '11011', '11011', '00000', '00000', '00000', '00000'],
+    '\u00a3': ['001110', '011011', '011000', '111110', '011000', '011000', '111111'],
+    '\u2191': ['001100', '011110', '111111', '001100', '001100', '001100', '001100'],
+    'A': ['01110', '11011', '11011', '11111', '11011', '11011', '11011'],
+    'D': ['11110', '11011', '11011', '11011', '11011', '11011', '11110'],
+    'E': ['11111', '11000', '11000', '11110', '11000', '11000', '11111'],
+    'H': ['11011', '11011', '11011', '11111', '11011', '11011', '11011'],
+    'N': ['110011', '111011', '111011', '110111', '110111', '110011', '110011'],
+    'O': ['01110', '11011', '11011', '11011', '11011', '11011', '01110'],
+    'P': ['11110', '11011', '11011', '11110', '11000', '11000', '11000'],
+    'R': ['11110', '11011', '11011', '11110', '11011', '11011', '11011'],
+    'S': ['01111', '11000', '11000', '01110', '00011', '00011', '11110'],
+    'T': ['111111', '001100', '001100', '001100', '001100', '001100', '001100'],
+}
+
+ZX_ROWS = (3, 2, 2, 3, 2, 2, 3)  # the big legend: FONT_4X7 rows stretched to 17 (top, middle, bottom bars 3 thick)
+# The big legend: FONT_4X7 stretched to 12 x 17 (ZX_ROWS), except the letters whose diagonals do not survive the
+# stretch: drawn by hand on the 12 x 17 grid, 3-pixel stems and bars like the rest.
+ZX_TALL_ROWS = (1, 4, 6, 8, 11, 13, 15)  # the middle row of each ZX_ROWS band
+ZX_BIG = {
+    'K': [
+        '###......###', '###.....###.', '###....###..', '###...###...',
+        '###...###...', '###..###....', '###.###.....', '#######.....',
+        '########....', '###..###....', '###...###...', '###...###...',
+        '###....###..', '###....###..', '###.....###.', '###.....###.',
+        '###......###',
+    ],
+    'M': [
+        '####....####', '####....####', '#####..#####', '#####..#####',
+        '###.####.###', '###.####.###', '###..##..###', '###..##..###',
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###',
+    ],
+    'N': [
+        '####.....###', '####.....###', '#####....###', '#####....###',
+        '######...###', '######...###', '###.###..###', '###.###..###',
+        '###..###.###', '###..###.###', '###..###.###', '###...######',
+        '###...######', '###....#####', '###....#####', '###.....####',
+        '###.....####',
+    ],
+    'Q': [
+        '...######...', '...######...', '...######...', '###......###',
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###', '###......###', '###.###..###', '###..###.###',
+        '###...######', '###....#####', '...#######..', '...########.',
+        '...######.##',
+    ],
+    'R': [
+        '#########...', '#########...', '#########...', '###......###',
+        '###......###', '###......###', '###......###', '#########...',
+        '#########...', '#########...', '###..###....', '###...###...',
+        '###...###...', '###....###..', '###....###..', '###.....###.',
+        '###......###',
+    ],
+    'V': [
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###', '###......###', '###......###', '.###....###.',
+        '.###....###.', '.###....###.', '..###..###..', '..###..###..',
+        '...######...', '...######...', '...######...', '....####....',
+        '....####....',
+    ],
+    'W': [
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###', '###......###', '###......###', '###......###',
+        '###......###', '###..##..###', '###..##..###', '###.####.###',
+        '###.####.###', '#####..#####', '#####..#####', '####....####',
+        '####....####',
+    ],
+    'X': [
+        '###......###', '###......###', '.###....###.', '.###....###.',
+        '..###..###..', '..###..###..', '...######...', '....####....',
+        '....####....', '....####....', '...######...', '..###..###..',
+        '..###..###..', '.###....###.', '.###....###.', '###......###',
+        '###......###',
+    ],
+    'Y': [
+        '###......###', '###......###', '.###....###.', '.###....###.',
+        '..###..###..', '..###..###..', '...######...', '....####....',
+        '....####....', '....####....', '....####....', '....####....',
+        '....####....', '....####....', '....####....', '....####....',
+        '....####....',
+    ],
+    'Z': [
+        '############', '############', '############', '.........###',
+        '........###.', '.......###..', '......###...', '.....###....',
+        '.....###....', '....###.....', '...###......', '..###.......',
+        '.###........', '###.........', '############', '############',
+        '############',
+    ],
+    '4': [
+        '.......###..', '......####..', '.....#####..', '....######..',
+        '...###.###..', '...###.###..', '..###..###..', '.###...###..',
+        '.###...###..', '###....###..', '############', '############',
+        '############', '.......###..', '.......###..', '.......###..',
+        '.......###..',
+    ],
+    '7': [
+        '############', '############', '############', '.........###',
+        '........###.', '........###.', '.......###..', '.......###..',
+        '......###...', '......###...', '.....###....', '.....###....',
+        '....###.....', '....###.....', '....###.....', '....###.....',
+        '....###.....',
+    ],
+}
+
+
+def zx_mask(c, cells):
+    """A 32-grid boolean array as a mask of the canvas `c` (32 px, or the vector packs' 256)."""
+    k = c.c.shape[0] // N
+    return np.kron(cells, np.ones((k, k), bool)).astype(bool)
+
+
+def zx_big(ch, x, y):
+    """One big legend character (12 x 17) at (x, y) on the grid: ZX_BIG, else FONT_4X7 3 pixels per column and
+    ZX_ROWS pixels per row."""
+    m = np.zeros((N, N), bool)
+    if ch in ZX_BIG:
+        for j, row in enumerate(ZX_BIG[ch]):
+            m[y + j, x:x + 12] = [b == '#' for b in row]
+        return m
+    for j, row in enumerate(sp.FONT_4X7[ch]):
+        y0 = y + sum(ZX_ROWS[:j])
+        for i, bit in enumerate(row):
+            if bit == '1':
+                m[y0:y0 + ZX_ROWS[j], x + 3 * i:x + 3 * i + 3] = True
+    return m
+
+
+def zx_big_tall(ch, x, y):
+    """The big legend for tall pixels: 7 font rows of two grid rows each (12 x 14); a hand-drawn ZX_BIG letter by the
+    middle row of each ZX_ROWS band."""
+    m = np.zeros((N, N), bool)
+    if ch not in ZX_BIG:
+        return zx_text(ch, x, y, sx=3, sy=2)
+    for j, at in enumerate(ZX_TALL_ROWS):
+        m[y + 2 * j:y + 2 * j + 2, x:x + 12] = [b == '#' for b in ZX_BIG[ch][at]]
+    return m
+
+
+def zx_text(text, x, y, font=sp.FONT_4X7, sx=1, sy=1):
+    """`text` in a pixel font, each font pixel sx x sy grid pixels, the top left at (x, y)."""
+    m = np.zeros((N, N), bool)
+    for ch in text:
+        for j, row in enumerate(font[ch]):
+            for i, bit in enumerate(row):
+                if bit == '1':
+                    m[y + j * sy:y + (j + 1) * sy, x + i * sx:x + (i + 1) * sx] = True
+        x += (len(font[ch][0]) + 1) * sx
+    return m
+
+
+def tall_pixels(c):
+    """Workbench 1.3 squashes each pair of rows into one tall pixel: there the legends are drawn two rows per font
+    row on even rows (squashed back to the font exactly), the big legend at the plain font's double size."""
+    return getattr(getattr(c, 'skin', None), 'tall_pixels', False)
+
+
+def zx_key(c, main, red):
+    tall = tall_pixels(c)
+    big = zx_big_tall(main, 4, 2) if tall else zx_big(main, 4, 3)
+    c.solid(zx_mask(c, big), 'w', bevel=False)
+    if not red:
+        return
+    if tall:  # as tall as the big legend there (7 rows): the thin font keeps it the lesser one
+        zx_thin(c, zx_text(red, 28 - sp.text_width(red), 18, sy=2), 'r')
+    else:
+        small = zx_text(red, 28 - sp.text_width(red, font=ZX_RED_FONT), 22, ZX_RED_FONT)
+        c.solid(zx_mask(c, small), 'r', bevel=False, outline=False)
+
+
+def zx_thin(c, m, col):
+    """Thin pixel text: on the pixel packs a black drop shadow (MagicWB's text), on the smooth ones flat (there a black
+    detail on the backdrop would turn light)."""
+    if isinstance(c, sp.Canvas):
+        dy = 2 if tall_pixels(c) else 1
+        c.c[np.roll(np.roll(m, 1, 1), dy, 0) & ~m] = 'k'
+    c.solid(zx_mask(c, m), col, bevel=False, outline=False)
+
+
+def zx_words(c, lines):
+    """Words (text, colour, y), each centred; two rows per font row on tall pixels."""
+    tall = tall_pixels(c)
+    for text, col, y in lines:
+        zx_thin(c, zx_text(text, (N - sp.text_width(text)) // 2, y, sy=2 if tall else 1), col)
+
+
+def zx_word_key(c, gid):
+    """ENTER, CAPS SHIFT, SYMBOL SHIFT (red, like the key) and SPACE (with its red BREAK): the words of the key."""
+    tall = tall_pixels(c)
+    y1, y2 = (2, 18) if tall else (7, 18)
+    if gid == 'zx.enter':
+        zx_words(c, [('ENTER', 'w', 2 if tall else 5)])
+        c.solid(c.m.poly(sp.arrow_pts(20, 22, 8, 22, 4, 10, 5)) | c.m.rect(19, 17 if tall else 14, 21, 23), 'w',
+                bevel=False)
+    else:
+        words = {'zx.caps': ('CAPS', 'SHIFT', 'w', 'w'), 'zx.symbol': ('SYMBOL', 'SHIFT', 'r', 'r'),
+                 'zx.space': ('SPACE', 'BREAK', 'w', 'r')}[gid]
+        zx_words(c, [(words[0], words[2], y1), (words[1], words[3], y2)])
+
+
+for _gid, _main, _red in streamdeck_glyphs.ZX_KEYS:
+    DRAW[_gid] = ((lambda c, m=_main, r=_red: zx_key(c, m, r)) if len(_main) == 1 else
+                  (lambda c, g=_gid: zx_word_key(c, g)))
 
 
 def main():

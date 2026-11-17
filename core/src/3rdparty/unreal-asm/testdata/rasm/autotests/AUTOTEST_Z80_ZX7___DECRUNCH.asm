@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call dzx7_turbo : jr #FE : include 'decrunch/dzx7_turbo.asm' : org #C000 : incbin './decrunch/lzDataTest.zx7' 

@@ -1,0 +1,1 @@
+utf8remap 'é',50 : defb 'é' : assert $==1

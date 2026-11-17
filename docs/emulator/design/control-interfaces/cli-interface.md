@@ -139,6 +139,8 @@ state next pixel <x> <y> [sx]  ZX Spectrum Next pixel inspector (last captured f
 next layer-capture [on|off|status]  ZX Spectrum Next: switch / show the per-layer record of the screen (on by default; `state next layer-capture` is the same)
 next nextreg <reg> <value> [nextreg|port|internal]  ZX Spectrum Next: write a NextREG through the board's write choke point (the journal sees it; `nextreg` = the NEXTREG instruction, `port` = OUT #243B / #253B)
 state sprinter [ports|port <hex>|text|video|palette [k]|ring|bios [<name> ...]]  Sprinter Sp2000 reports; bios <3.04|3.06|3.07|file> selects
+vdac4 state [log N]     TS-Conf VDAC4 board (TSL-VDAC4): Tang personality / FT_CFG, ESP phase / boots / errors, the app, link, audio, threads (ESP jobs and FT work: modes, latency, counters, host time), the last N ESP log lines (default 10, at most 256); `vdac4 status` the same; `vdac4 log [N]` the log only (default 50). No board: "VDAC4: <reason>"
+vdac4 esp-memory <address> [size] [app]   hex dump of the VDAC4 ESP's memory (size default 64, at most 4096); `app`: the address is one of the running app's ELF image (haptic probes `cpu: esp`)
 memory regions          Device memory regions (the Sprinter's video RAM "vram", the TS-Conf palette "cram" and sprite table "sfile", the CMOS clock's "cmos", the ZX-Evo AVR's "eeprom"); memory region read|write|save|load <name> ...
 mixer [<source> [muted=0|1] [solo=0|1] [volume=0..1] [gain_db=..]]  Per-device audio mixer (beeper, ay1, covox, gs, ...)
 mixer <source>                                    One row and its channels (mute, solo, volume, peak where metered)

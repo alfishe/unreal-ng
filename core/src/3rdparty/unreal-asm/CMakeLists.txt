@@ -5,7 +5,7 @@
 # Embedded use: add_subdirectory(3rdparty/unreal-asm) and link `unreal-asm`. Standalone:
 #   cmake -S . -B build -G Ninja -DUNREAL_ASM_TESTS=ON && ninja -C build && ./build/unreal-asm-tests
 cmake_minimum_required(VERSION 3.16)
-project(unreal-asm LANGUAGES CXX)
+project(unreal-asm LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -99,7 +99,16 @@ add_library(unreal-asm STATIC
     src/dialects/zasm/zasmfrontend.cpp
     src/dialects/fantasm/fantasmfrontend.cpp
     src/dialects/zmac/zmacfrontend.cpp
+    src/dialects/rasm/rasmbackend.cpp
     src/dialects/rasm/rasmfrontend.cpp
+    src/dialects/rasm/engine/rasmdata.cpp
+    src/dialects/rasm/engine/rasminstructions.cpp
+    src/dialects/rasm/engine/rasmprepro.cpp
+    src/dialects/rasm/engine/rasmexpr.cpp
+    src/dialects/rasm/engine/rasmassemble.cpp
+    src/dialects/rasm/engine/rasmdirectives.cpp
+    src/dialects/rasm/engine/rasmdirectives2.cpp
+    src/dialects/rasm/engine/rasmassembly.cpp
     src/dialects/specasm/specasmfrontend.cpp
     src/dialects/odin/odinfrontend.cpp
     src/dialects/zasm/zasmcompound.cpp
@@ -138,10 +147,61 @@ add_library(unreal-asm STATIC
     src/symbols/bundles/bundles.cpp
     src/sync/reader.cpp
     src/sync/session.cpp
+    src/compress/compress.cpp
+    src/compress/rasmcrunchers.cpp
 )
 target_include_directories(unreal-asm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(unreal-asm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_options(unreal-asm PRIVATE ${UNREAL_ASM_WARNINGS})
+# rasm data helpers reproduce rasm's floating point bit for bit: no implicit fused multiply-add (the explicit std::fma
+# calls are where rasm's reference build fuses)
+set_source_files_properties(src/dialects/rasm/engine/rasmdata.cpp PROPERTIES
+    COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
+# The project's warnings for its C++; the C sources are the vendored compressors below
+target_compile_options(unreal-asm PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${UNREAL_ASM_WARNINGS}>)
+
+# rasm's crunchers (include/unrealasm/compress.h, src/compress/): the compressor sources rasm 3.3.x links, unmodified,
+# each with its LICENSE. lz4unit.c and exomizerunit.c compile rasm's single-file lz4.h and exomizer.h (renaming
+# their external symbols); libdivsufsort is the one copy apultra, lzsa and salvador share, as in rasm's makefile.
+set(UNREAL_ASM_COMPRESS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/compress)
+set(UNREAL_ASM_COMPRESS_C_SOURCES
+    ${UNREAL_ASM_COMPRESS_DIR}/lz4/lz4unit.c
+    ${UNREAL_ASM_COMPRESS_DIR}/exomizer/exomizerunit.c
+    ${UNREAL_ASM_COMPRESS_DIR}/salvador/expand.c
+    ${UNREAL_ASM_COMPRESS_DIR}/salvador/matchfinder.c
+    ${UNREAL_ASM_COMPRESS_DIR}/salvador/shrink.c
+    ${UNREAL_ASM_COMPRESS_DIR}/apultra/expand.c
+    ${UNREAL_ASM_COMPRESS_DIR}/apultra/matchfinder.c
+    ${UNREAL_ASM_COMPRESS_DIR}/apultra/shrink.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/dictionary.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/expand_block_v1.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/expand_block_v2.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/expand_context.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/expand_inmem.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/frame.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/matchfinder.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/shrink_block_v1.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/shrink_block_v2.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/shrink_context.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/shrink_inmem.c
+    ${UNREAL_ASM_COMPRESS_DIR}/lzsa/stream.c
+    ${UNREAL_ASM_COMPRESS_DIR}/libdivsufsort/lib/divsufsort.c
+    ${UNREAL_ASM_COMPRESS_DIR}/libdivsufsort/lib/divsufsort_utils.c
+    ${UNREAL_ASM_COMPRESS_DIR}/libdivsufsort/lib/sssort.c
+    ${UNREAL_ASM_COMPRESS_DIR}/libdivsufsort/lib/trsort.c
+)
+target_sources(unreal-asm PRIVATE ${UNREAL_ASM_COMPRESS_C_SOURCES})
+# Vendored code is compiled with its warnings off (it is not ours to fix), only these files. No fused multiply-add:
+# exomizer scores its paths in float, the same output on every platform.
+if (MSVC)
+    set(UNREAL_ASM_COMPRESS_C_FLAGS /W0)
+else()
+    set(UNREAL_ASM_COMPRESS_C_FLAGS -w -ffp-contract=off)
+endif()
+set_source_files_properties(${UNREAL_ASM_COMPRESS_C_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "${UNREAL_ASM_COMPRESS_C_FLAGS}"
+    INCLUDE_DIRECTORIES "${UNREAL_ASM_COMPRESS_DIR}/libdivsufsort/include"
+    # libdivsufsort's external names carry a prefix: zstd ships another libdivsufsort with the same ones
+    COMPILE_DEFINITIONS "divsufsort_init=unrealasm_divsufsort_init;divsufsort_destroy=unrealasm_divsufsort_destroy;divsufsort_build_array=unrealasm_divsufsort_build_array;divbwt=unrealasm_divbwt;divsufsort_version=unrealasm_divsufsort_version;bw_transform=unrealasm_bw_transform;inverse_bw_transform=unrealasm_inverse_bw_transform;sufcheck=unrealasm_sufcheck;sa_search=unrealasm_sa_search;sa_simplesearch=unrealasm_sa_simplesearch;sssort=unrealasm_sssort;trsort=unrealasm_trsort")
 
 # The tools read and write disk images through unreal-disk (the library itself does not depend on it): embedded it is
 # the emulator's; standalone it is the sibling checkout
@@ -205,6 +265,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/stormbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/tasmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zxasmbackend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/rasmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/masmbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/gensbackend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zeusbackend_test.cpp
@@ -229,6 +290,10 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/zasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/fantasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/zmacrasmfrontend_test.cpp
+        ${UNREAL_ASM_DIR}/tests/rasmdata_test.cpp
+        ${UNREAL_ASM_DIR}/tests/rasminstructions_test.cpp
+        ${UNREAL_ASM_DIR}/tests/rasmengine_test.cpp
+        ${UNREAL_ASM_DIR}/tests/rasmfrontend_test.cpp
         ${UNREAL_ASM_DIR}/tests/odinspecasm_test.cpp
         ${UNREAL_ASM_DIR}/tests/lasergenius_test.cpp
         ${UNREAL_ASM_DIR}/tests/pasm_test.cpp
@@ -248,6 +313,7 @@ function(unrealasm_add_tests)
         ${UNREAL_ASM_DIR}/tests/symbols/live_test.cpp
         ${UNREAL_ASM_DIR}/tests/sync_test.cpp
         ${UNREAL_ASM_DIR}/tests/diskfiles_test.cpp
+        ${UNREAL_ASM_DIR}/tests/compress_test.cpp
     )
     target_link_libraries(unreal-asm-tests PRIVATE unreal-asm unreal-asm-tools-common gtest)
     target_include_directories(unreal-asm-tests PRIVATE ${UNREAL_ASM_DIR}/src ${UNREAL_ASM_DIR}/tests)

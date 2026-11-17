@@ -39,10 +39,18 @@ public:
     // in place (the runtime's reload), take Ids() before and pass them.
     void Rebind(const Scenario& s);
     void Rebind(const Scenario& s, const std::vector<std::string>& old);
+    // A wide menu (Node::width over the deck's columns): the first of its columns the deck shows. Every move to
+    // another menu starts it at 0; ScrollBy moves it within [0, width - window] and says whether it moved.
+    [[nodiscard]] int Scroll() const
+    {
+        return _scroll;
+    }
+    bool ScrollBy(int columns, const Model& m);
 
 private:
     const Scenario* _s;
     std::vector<const Node*> _stack;
+    int _scroll = 0;
 };
 
 // What the device shows for the navigator's current menu.
@@ -55,12 +63,16 @@ struct Page
     const Strip* strip = nullptr;
     std::vector<std::string> path;  // titles, root first
     int autoExit = 0;
+    int scroll = 0;  // a wide menu: its first column on the window's first column
+    int width = 0;   // a wide menu: its columns (0: as wide as the deck)
+    int visibleCols = 0;  // a wide menu: the window's columns
+    int windowFirst = 0;  // a wide menu: the deck's column the window starts at
 };
 [[nodiscard]] Page Layout(const Scenario& s, const Navigator& nav, const Model& m);
 
 // What the page means, as compact JSON for agents (no image analysis needed):
-//   {menu, path:[{id,title}], breadcrumbs, back_key, can_back,
-//    keys:[{key,row,col,role:item|back,id,type,title,label,tags,long,kind,action,then,state,on,context}],
+//   {menu, path:[{id,title}], breadcrumbs, back_key, can_back, scroll?:{column, width, window:[first, last]},
+//    keys:[{key,row,col,at?,pinned?,role:item|back,id,type,title,label,tags,long,kind,action,then,state,on,context}],
 //    dials:[{index,label,turn,press,press_turn}], strip, context}
 // Empty keys are left out. `toggles` = node id -> on (toggles and state-bound faces); `context` = the surface context
 // of the path (its innermost menu declaring one).

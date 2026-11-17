@@ -1,0 +1,1 @@
+ rst z,#38: rst nz,#38: rst c,#38: rst nc,#38: jr z,$+1: jr nz,$+1: jr c,$+1: jr nc,$+1 

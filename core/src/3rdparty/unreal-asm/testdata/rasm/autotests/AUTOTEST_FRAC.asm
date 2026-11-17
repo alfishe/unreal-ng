@@ -1,0 +1,1 @@
+mavar=frac(5.5):assert mavar==0.5:assert frac(6.6)==0.6:assert frac(1.1)==0.1:assert frac(1)==0:assert frac(100000)==0:nop

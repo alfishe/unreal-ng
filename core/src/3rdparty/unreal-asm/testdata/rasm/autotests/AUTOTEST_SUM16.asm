@@ -1,0 +1,1 @@
+ tot=0: repeat 256: v=rnd(256): defb v: tot+=v: rend: sum16 0,256: defw tot

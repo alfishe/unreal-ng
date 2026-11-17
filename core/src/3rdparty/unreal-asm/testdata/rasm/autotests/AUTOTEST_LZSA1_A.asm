@@ -1,0 +1,1 @@
+lzsa1 : incbin 'autotest_include.raw' : lzclose

@@ -343,6 +343,11 @@ bool ParseCondition(const JsonValue& spec, HapticSource& source, std::string& er
         return false;
     if (source.condition.empty())
         return true;
+    if (source.esp)
+    {
+        error = where + ": 'if' is checked on the main CPU; a 'cpu: esp' probe takes 'when' / 'value' / 'mask'";
+        return false;
+    }
     std::string why;
     if (const HapticConditionCheck check = g_conditionCheck.load(std::memory_order_acquire))
         if (!check(source.condition, source.ConditionTrigger(), why))
@@ -459,9 +464,38 @@ bool ParseSourceBody(const std::string& name, const JsonValue& spec, HapticSourc
         }
         source.word = word->AsBool();
     }
-    if (!ParseAddress(spec, source, error, where))
+    std::string cpu;
+    if (!Text(spec, "cpu", cpu, error, where))
         return false;
-    if (source.word && (source.page != 0xFFFF ? source.address == 0x3FFF : source.address == 0xFFFF))
+    if (cpu == "esp")
+    {
+        // The ESP app's memory is read at the frame end only: no breakpoint taps on that CPU
+        if (!source.IsProbe())
+        {
+            error = where + ": 'cpu: esp' takes the frame-end probes only (value, frame, write without each_write)";
+            return false;
+        }
+        const JsonValue* value = spec.Find("address");
+        unsigned long address = 0;
+        if (value != nullptr && value->IsNumber() && value->AsNumber() >= 0 && value->AsNumber() <= 0xFFFFFFFF)
+            address = static_cast<unsigned long>(value->AsNumber());
+        else if (value == nullptr || !value->IsString() || !ParseNumberText(value->AsString(), address) ||
+                 address > 0xFFFFFFFFul || address == 0)
+        {
+            error = where + ": 'address' of a 'cpu: esp' probe is an address of the app's ELF image";
+            return false;
+        }
+        source.esp = true;
+        source.espAddress = static_cast<uint32_t>(address);
+    }
+    else if (!cpu.empty() && cpu != "main")
+    {
+        error = where + ": 'cpu' is main or esp";
+        return false;
+    }
+    else if (!ParseAddress(spec, source, error, where))
+        return false;
+    if (!source.esp && source.word && (source.page != 0xFFFF ? source.address == 0x3FFF : source.address == 0xFFFF))
     {
         error = where + ": a 'word' needs its second byte in the same page";
         return false;

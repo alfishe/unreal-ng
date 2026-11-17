@@ -1,0 +1,1 @@
+org #100 : include './decrunch/dzx0_fast.asm' : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call unzx0 : jr #FE : unzx0 decompresszx0 (void) : org #C000 : incbin './decrunch/lzDataTest.zx0' 

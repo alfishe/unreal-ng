@@ -1,0 +1,1 @@
+ nop : mycode other tartine ldir : defw tartine,other, mycode : assert tartine==other && other==mycode && mycode==1 && $==9

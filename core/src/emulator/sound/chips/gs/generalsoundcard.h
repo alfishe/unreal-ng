@@ -412,6 +412,16 @@ public:
     {
         return _commandLog;
     }
+    /// The byte automation's last readData returned, and how many it has read (the debugger's send, gshostdriver.h,
+    /// takes its replies by them). Emulation thread
+    uint8_t lastAutomationRead() const
+    {
+        return _automationRead;
+    }
+    uint32_t automationReads() const
+    {
+        return _automationReads;
+    }
     /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
     history::DeviceHistory<ExecRecord>* execHistory() const
     {
@@ -568,6 +578,14 @@ protected:
     /// The command log's hooks (gscommandlog.h): one null test and a relaxed load while it is off. Called before
     /// the access changes the mailbox
     GSCommandLog* _commandLog = nullptr;
+    uint8_t _automationRead = 0;
+    uint32_t _automationReads = 0;
+    /// readData's value, for lastAutomationRead
+    void noteAutomationRead(uint8_t value)
+    {
+        _automationRead = value;
+        _automationReads++;
+    }
     bool commandLogOn()
     {
         return _commandLog && _commandLog->On();

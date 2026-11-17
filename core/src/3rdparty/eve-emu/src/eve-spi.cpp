@@ -24,6 +24,12 @@ bool IsActive(const EveChip& chip)
     return chip.state.power.mode == PowerMode::Active;
 }
 
+// VDAC4: the registers are being rewritten after a core reset (ft_core.sv clearing)
+bool Sweeping(const EveChip& chip)
+{
+    return chip.vdac4 && chip.vdac4State.resetSweepLeft != 0;
+}
+
 void RecomputeClock(EveChip& chip)
 {
     PowerState& power = chip.state.power;
@@ -141,6 +147,11 @@ void StartAccess(EveChip& chip)
     }
     if (prefix == 0x00)
     {
+        if (Sweeping(chip))
+        {
+            spi.phase = SpiPhase::Ignore; // VDAC4: reads in the reset sweep return 0
+            return;
+        }
         spi.phase = SpiPhase::ReadDummy;
         spi.dummyLeft = 1;
         if (kSpiWidthExtraDummy && (RegGet(chip, Reg::SpiWidth) & 4))
@@ -224,7 +235,8 @@ uint8_t SpiExchange(EveChip& chip, uint8_t mosi)
         return value;
     }
     case SpiPhase::WriteData:
-        BusWrite(chip, spi.address, mosi);
+        if (!Sweeping(chip))
+            BusWrite(chip, spi.address, mosi); // VDAC4: bytes in the reset sweep are dropped
         spi.address = NextWriteAddress(chip, spi.address);
         ++spi.bytes;
         return kMisoUndefinedValue;
@@ -234,7 +246,7 @@ uint8_t SpiExchange(EveChip& chip, uint8_t mosi)
     }
     if (spi.phase == SpiPhase::Ignore && spi.headerCount < 3)
         spi.header[spi.headerCount++] = mosi;
-    return kMisoUndefinedValue;
+    return chip.vdac4 && spi.phase == SpiPhase::Ignore ? 0 : kMisoUndefinedValue; // VDAC4: H_IGNORE drives 0
 }
 
 void InitClock(EveChip& chip)

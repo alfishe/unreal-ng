@@ -1,0 +1,1 @@
+org #C000 : nop : limit #f000:org #FF00 : norecess : lzx0 : defs 512 : lzclose : jr norecess

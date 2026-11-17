@@ -1,0 +1,1 @@
+ld a,-5: ld bc,-0x3918:ld de,0+-#3918:ld de,-#3918:var1=-5+6:var2=-#3918+#3919:assert var1+var2==2

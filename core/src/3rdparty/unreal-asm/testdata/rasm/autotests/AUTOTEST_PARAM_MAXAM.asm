@@ -1,0 +1,1 @@
+aaa=10+5*3 : assert aaa==45 : nop

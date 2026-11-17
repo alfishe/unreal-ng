@@ -1,0 +1,1 @@
+ macro unemacro: nop: endm: global_label: ld hl, .table: .table

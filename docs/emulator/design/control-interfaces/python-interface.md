@@ -384,6 +384,22 @@ class Emulator:
         tile, bitmap_x, bitmap_y, palette, words), active_sprites, cram (256
         cells: value, rgb). available=False on other machines"""
 
+    def vdac4_state(self, log: int = 50) -> dict:
+        """TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3), the keys of GET /vdac4/state: tang {personality,
+        armed, esp_host, ram_g_3mb, ft_cfg}, esp {phase, ms, boots, boot_nonce, last_step, last_error, resources,
+        clock_restarts, clock_offset_us}, app {running, module, name, version, command_first, command_last,
+        error}, link {pending_from_z80, pending_to_z80, send_blocked, bad_checksums, resyncs, dropped_frames},
+        packets {count, recent [{command, length, ms}]}, audio {input_rate, output_rate, queued, underruns,
+        dropped, sound}, threads {esp_thread, ft_thread, esp_latency_ms, esp_jobs, esp_threaded_jobs, esp_waits,
+        esp_wait_ms, esp_job_ms, ft_ops, ft_reads, ft_apply_ms, ft_producer_wait_ms, ft_owner_waits,
+        ft_owner_wait_ms}, log (the last `log` ESP lines, at most 256). RuntimeError with the reason without
+        the board"""
+
+    def vdac4_esp_memory(self, address: int, size: int = 16, app: bool = False) -> bytes:
+        """The VDAC4 ESP32's memory (GET /vdac4/esp/memory): `size` bytes (at most 4096) from `address`, a
+        D-bus / I-bus / SRAM address, or with app=True an address of the running app's ELF image (as a haptic
+        probe `cpu: esp` takes it; app.sections of vdac4_state lists the image). RuntimeError with the reason"""
+
     def network_state(self) -> dict:
         """Network adapters: card (ZXNETUSB ports, W5300 registers and sockets), virtual network (DHCP leases,
         sockets, guest servers, counters, recent activity); available=False without an adapter"""

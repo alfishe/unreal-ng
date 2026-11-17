@@ -376,7 +376,7 @@ void Runtime::Render(bool force)
                     shown = ShownLocked(*f.value);
                     h = Mix(Mix(h, HashStr(shown->text) + 13), static_cast<std::size_t>(shown->level) + 17);
                 }
-                const bool unavailable = !UnavailableLocked(n->action).empty();
+                const bool unavailable = !UnavailableLocked(n->action).empty() || ScrollStuck(*n);
                 h = Mix(h, unavailable ? 29 : 31);
                 if (force || h != _sentKey[static_cast<size_t>(k)])
                 {
@@ -400,6 +400,7 @@ void Runtime::Render(bool force)
             std::size_t h = Mix(HashStr(JoinPath(_page.path)), static_cast<std::size_t>(_page.crumbs));
             if (_page.strip)
                 h = Mix(h, HashStr(_page.strip->content + _page.strip->text + _page.strip->image));
+            h = Mix(h, static_cast<std::size_t>(_page.scroll) + 11);
             for (const Dial* d : _page.dials)
                 h = Mix(h, d ? HashStr(d->label) + 1 : 0);
             if (bannerOn)
@@ -416,6 +417,10 @@ void Runtime::Render(bool force)
             if (NowMs() < _dialHintUntil)
                 live.dialHint = _dialHint;
             live.bannerInfo = _bannerInfo;
+            for (const auto& [zone, release] : _latched)
+                live.latched.push_back(zone);
+            if (NowMs() < _stripTappedUntil)
+                live.tapped = _stripTapped;
             h = Mix(h, HashStr(live.Key()) + 5);
             double left = -1;  // auto exit countdown: redrawn at 30 fps so the bar glides
             if (_page.autoExit > 0 && _nav.Depth() > 0)
@@ -516,11 +521,14 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             if (e.index < 0 || e.index >= _m.keys)
                 return;
             _pressed[static_cast<size_t>(e.index)] = false;
+            bool releasedHold = false;
             if (auto held = _holds.find(e.index); held != _holds.end())
             {  // the release of a held action (hold: true): the job the press made, on whatever page shows now
                 Job release = std::move(held->second);
                 _holds.erase(held);
                 Enqueue(std::move(release));
+                ReleaseLatches(false);  // a one-shot shift of the strip went with this key
+                releasedHold = true;
             }
             if (auto armed = _longArmed.find(e.index); armed != _longArmed.end())
             {
@@ -536,6 +544,8 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 }
                 _longArmed.erase(armed);
             }
+            if (!releasedHold && e.index != _page.backKey && _downAt.count(e.index) && !_latched.empty())
+                ReleaseLatches(true);  // a tapped key: the shift lets go once the tap has played
             if (e.index == _page.backKey && _downAt.count(e.index))
             {
                 const bool hold = now - _downAt[e.index] >= _opt.holdMs;
@@ -608,6 +618,7 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 Job release = std::move(held->second);
                 _holds.erase(held);
                 Enqueue(std::move(release));
+                ReleaseLatches(false);
             }
             if (auto held = _dialHeld.find(e.index); held != _dialHeld.end())
             {
@@ -624,6 +635,12 @@ void Runtime::Handle(const Event& e, std::int64_t now)
                 onNoticeTap();  // NOT PAIRED / REVOKED: the tap pairs
                 break;
             }
+            if (_page.strip && _page.strip->content == "keys")
+            {
+                if (const int zone = StripKeyHit(*_page.strip, _m.lcdLogicalW, e.x); zone >= 0)
+                    TapStripKey(zone, now);
+                break;
+            }
             if (SeekOnTimeline(e.x, e.x, false))
                 break;
             if (_page.crumbs == Crumbs::Strip)
@@ -638,6 +655,12 @@ void Runtime::Handle(const Event& e, std::int64_t now)
             }
             break;
         case EventType::LcdSwipe:
+            if (_page.width > 0)
+            {  // a wide menu: the window follows the finger (a swipe to the left shows the columns on the right)
+                if (e.x2 != e.x && _nav.ScrollBy(e.x2 < e.x ? 1 : -1, _m))
+                    _page = Layout(_s, _nav, _m);
+                break;
+            }
             if (SeekOnTimeline(e.x, e.x2, true))
                 break;
             if (e.x2 > e.x + 40 && _nav.Back())
@@ -659,6 +682,57 @@ void Runtime::Handle(const Event& e, std::int64_t now)
     }
 }
 
+// A tap on a strip key zone. A plain zone runs its action once (a key's tap); a latch zone (a shift) holds its action
+// until the next key is let go, a second tap lets it go, and a second latch tapped while one holds goes with it as one
+// combination (CAPS + SYMBOL: extended mode), then all of them let go.
+void Runtime::TapStripKey(int zone, std::int64_t now)
+{
+    const StripKey& z = _page.strip->keys[static_cast<size_t>(zone)];
+    if (!z.tap)
+        return;
+    _stripTapped = zone, _stripTappedUntil = now + 150;
+    const std::string node = "strip " + z.label;
+    const bool holds = z.tap->kind == "action" || z.tap->kind == "gui";
+    if (z.latch && holds)
+    {
+        if (auto it = _latched.find(zone); it != _latched.end())
+        {
+            Job release = std::move(it->second);
+            _latched.erase(it);
+            Enqueue(std::move(release));
+            return;
+        }
+        Job press{*z.tap, node, json::object(), "stay"};
+        press.phase = 1;
+        Job release = press;
+        release.phase = -1;
+        Enqueue(std::move(press));
+        if (_latched.empty())
+        {
+            _latched.emplace(zone, std::move(release));
+            return;
+        }
+        // with the latched ones: down together for a few frames, then everything lets go
+        Enqueue({Action{"delay", {{"kind", "delay"}, {"ms", 60}}}, node, json::object(), "stay"});
+        Enqueue(std::move(release));
+        ReleaseLatches(false);
+        return;
+    }
+    Enqueue({*z.tap, node, json::object(), "stay"});
+    ReleaseLatches(true);
+}
+
+void Runtime::ReleaseLatches(bool afterTap)
+{
+    if (_latched.empty())
+        return;
+    if (afterTap)  // a tap plays for a few frames on the host: the shift stays down through them
+        Enqueue({Action{"delay", {{"kind", "delay"}, {"ms", 100}}}, "strip latch", json::object(), "stay"});
+    for (auto& [zone, release] : _latched)
+        Enqueue(std::move(release));
+    _latched.clear();
+}
+
 // The host's reason an action cannot run now ("" = it can, or nobody said): the actions.unavailable readout
 std::string Runtime::UnavailableLocked(const Action& a) const
 {
@@ -669,6 +743,18 @@ std::string Runtime::UnavailableLocked(const Action& a) const
         return {};
     const auto r = it->second.find(a.spec.value("id", ""));
     return r != it->second.end() && r->is_string() ? r->get<std::string>() : std::string();
+}
+
+// A scroll key of a wide menu (nav to: scroll, a fixed `by`) at the end it moves towards: drawn as unavailable
+bool Runtime::ScrollStuck(const Node& n) const
+{
+    if (_page.width <= 0 || n.IsMenu() || n.action.kind != "nav" || n.action.spec.value("to", "") != "scroll")
+        return false;
+    const json& by = n.action.spec.contains("by") ? n.action.spec["by"] : json();
+    if (!by.is_number_integer())
+        return false;  // $ticks: a dial's, no key
+    const int step = by.get<int>();
+    return (step < 0 && _page.scroll <= 0) || (step > 0 && _page.scroll >= _page.width - _page.visibleCols);
 }
 
 // An unavailable action's key: the face at a third of its light, so it reads as off but stays recognisable
@@ -915,7 +1001,7 @@ void Runtime::RunJob(Job& j)
     if (!dir.empty())
         vars["__dir"] = dir;
     ActionResult r;
-    if (_opt.dryRun)
+    if (_opt.dryRun && j.action.kind != "nav")  // a nav step moves only the deck: a dry run plays it too
         r = {true, "dry run: " + j.action.kind + " " + j.action.spec.dump()};
     else
     {
@@ -965,6 +1051,14 @@ void Runtime::ApplyNav(const json& r)
     }
     else if (to == "node")
         moved = _nav.GoTo(r.value("node", ""));
+    else if (to == "scroll")
+    {
+        // a wide menu's window (a dial turning, or REST): the same menu, so no menu change (status, context stay)
+        const json by = r.value("by", json(0));
+        if (_nav.ScrollBy(by.is_number() ? by.get<int>() : 0, _m))
+            _page = Layout(_s, _nav, _m);
+        return;
+    }
     else if (to == "scenario" && onSwitchScenario)
         onSwitchScenario(r.value("file", ""));
     else if (to == "context")
@@ -1104,6 +1198,7 @@ void Runtime::FailureBanner(const Job& j, const std::string& message)
 
 void Runtime::NoteMenu()
 {
+    ReleaseLatches(false);  // a shift latched on the strip belongs to the page that showed it
     if (onPathChanged)
         onPathChanged(_s.name, _nav.Ids());
     _status.clear();  // a readout belongs to the menu that showed it

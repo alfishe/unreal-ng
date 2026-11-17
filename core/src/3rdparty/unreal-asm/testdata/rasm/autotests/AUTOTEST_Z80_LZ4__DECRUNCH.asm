@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,#C000 : ld de,#1000 : ld bc,14160 : call unlz4 : jr #FE : unlz4 include 'decrunch/lz4_docent.asm' : org #C000 : incbin './decrunch/lzDataTest.lz4' 
