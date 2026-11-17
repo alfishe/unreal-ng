@@ -924,6 +924,7 @@ uint8_t SoundChip_GSLightweight::readData()
     flush();
     const uint8_t value = _mb.dataToHost;
     logHostReplyRead(value, true);
+    noteAutomationRead(value);
     _mb.status &= 0x7F;
     pumpReply();
     return value;

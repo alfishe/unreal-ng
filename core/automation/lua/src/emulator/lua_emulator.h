@@ -5898,6 +5898,49 @@ public:
 
         lua.set_function("gs_send_data", [submitGS](int byte) { return submitGS(ttd::TTDInputKind::GSData, byte); });
 
+        // The debugger's send (gs-debugger design §6.4, F6): queued, each byte when the card may take it, the replies
+        // read and named by the firmware profile. Returns the send (state "queued"; gs_conversation(id) later), or
+        // {error = ...}. Never waits: a script may run on the thread that runs the steps
+        lua.set_function("gs_send", [this](sol::this_state s, int command, sol::optional<sol::table> opts) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSSendRequest request;
+            request.command = static_cast<uint8_t>(command);
+            bool ok = command >= 0 && command <= 255;
+            if (ok && opts)
+            {
+                const auto byte = [&ok](sol::object v, std::optional<uint8_t>& out) {
+                    if (v.get_type() == sol::type::lua_nil)
+                        return;
+                    ok = ok && v.is<int>() && v.as<int>() >= 0 && v.as<int>() <= 255;
+                    if (ok)
+                        out = static_cast<uint8_t>(v.as<int>());
+                };
+                byte((*opts)["pre"], request.pre);
+                byte((*opts)["replies"], request.replies);
+                if (sol::optional<sol::table> params = (*opts)["params"])
+                {
+                    for (size_t i = 1; ok && i <= params->size(); i++)
+                    {
+                        std::optional<uint8_t> b;
+                        byte((*params)[i], b);
+                        if (ok && b)
+                            request.params.push_back(*b);
+                    }
+                }
+            }
+            if (!ok)
+            {
+                StateNode error = StateNode::Object();
+                error["error"] = std::string("gs_send(command, {pre =, params = {...}, replies =}): bytes 0..255");
+                return StateNodeToLua(s, error);
+            }
+            return StateNodeToLua(s, GSSend(ctx, request, 0).body);
+        });
+        lua.set_function("gs_conversation", [this](sol::this_state s, sol::optional<uint32_t> id) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, GSConversationRead(ctx, id.value_or(0)).body);
+        });
+
         // Reads are peeks: no host read cycle (read_data leaves status bit 7
         // set) and the card is not stepped
         lua.set_function("gs_read_data", [this]() -> int {

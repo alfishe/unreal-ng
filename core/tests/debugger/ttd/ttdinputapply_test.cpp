@@ -173,7 +173,7 @@ TEST_F(TTDInputApply_Test, AbsentDeviceLeavesTheEventUnapplied)
     for (auto kind : {TTDInputKind::Key, TTDInputKind::KeyboardReset, TTDInputKind::MouseMove,
                       TTDInputKind::MouseButtons, TTDInputKind::MouseWheel, TTDInputKind::MouseCounters,
                       TTDInputKind::GSCommand, TTDInputKind::GSData, TTDInputKind::GSNmi,
-                      TTDInputKind::GSResetCard, TTDInputKind::GSReset})
+                      TTDInputKind::GSResetCard, TTDInputKind::GSReset, TTDInputKind::GSReadData})
     {
         EXPECT_FALSE(ApplyInputEvent(Event(kind), none)) << "kind " << static_cast<int>(kind);
     }
@@ -242,6 +242,13 @@ TEST_F(TTDInputApplyGS_Test, EachKindDrivesTheCard)
     ASSERT_TRUE(ApplyInputEvent(GS(TTDInputKind::GSData, 0xA5), devices));
     EXPECT_EQ(gs->getDataFromHost(), 0xA5);
     EXPECT_NE(gs->getStatusRaw() & 0x80, 0) << "OUT #B3 sets the data flag";
+
+    // IN #B3: the data flag cleared, the byte read kept for the debugger's send
+    const uint32_t reads = gs->automationReads();
+    ASSERT_TRUE(ApplyInputEvent(GS(TTDInputKind::GSReadData), devices));
+    EXPECT_EQ(gs->getStatusRaw() & 0x80, 0) << "IN #B3 clears the data flag";
+    EXPECT_EQ(gs->automationReads(), reads + 1);
+    ASSERT_TRUE(ApplyInputEvent(GS(TTDInputKind::GSData, 0xA5), devices));
 
     // #33 bit 7: the card restarts, the host mailbox (external flip-flops) survives
     ASSERT_TRUE(ApplyInputEvent(GS(TTDInputKind::GSResetCard), devices));

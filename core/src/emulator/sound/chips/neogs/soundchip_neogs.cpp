@@ -1211,6 +1211,7 @@ uint8_t SoundChip_NeoGS::readData()
 {
     hostPortSync();
     logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F;
     return _mb.dataToHost;
 }

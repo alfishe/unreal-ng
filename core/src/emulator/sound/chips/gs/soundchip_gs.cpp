@@ -660,6 +660,7 @@ uint8_t SoundChip_GeneralSound::readData()
 {
     flush();
     logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F; // IN #B3: clear bit7
     return _mb.dataToHost;
 }

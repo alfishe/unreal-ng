@@ -1314,6 +1314,8 @@ void SoundManager::handleFrameStart()
         {
             _gs->setSynthesisSuppressed(suppressed || !_feature_sound_enabled);
             _gs->handleFrameStart();
+            if (_gsHostDriver && _gsHostDriver->Active()) [[unlikely]]
+                _gsHostDriver->Frame(*_gs);
         }
 
         // Covox frame start runs in every mode: its idle-channel decay writes
@@ -2326,6 +2328,8 @@ void SoundManager::attachGeneralSoundHistory()
             _context, &_context->histories, [context = _context]() { return GSHistoryDevice(context) + ".commands"; });
     }
     _gs->attachCommandLog(_gsCommandLog.get());
+    if (!_gsHostDriver)
+        _gsHostDriver = std::make_shared<GSHostDriver>(_context);
 }
 
 GeneralSoundCard* SoundManager::createGeneralSoundCard(GSTypeKind kind) const
@@ -2636,6 +2640,7 @@ bool SoundManager::attachToPorts()
             _gsExecHistory.reset();
         }
         _gsCommandLog.reset();
+        _gsHostDriver.reset();
         if (_context->pDebugManager)
             _context->pDebugManager->OnGeneralSoundCardCreated();  // the hooks' card is gone
         _devices.erase(std::remove_if(_devices.begin(), _devices.end(),
