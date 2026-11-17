@@ -27,6 +27,7 @@
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/io/tape/tape.h"
+#include "emulator/machinevariants.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/state/devicestate.h"
@@ -598,9 +599,12 @@ void HandheldMenu::machineRows(std::vector<Row>& list) const
     if (emulator != nullptr)
     {
         const CONFIG& config = machineContext()->config;
-        for (const TMemModel& m : EmulatorManager::GetInstance()->GetAvailableModels())
-            if (m.Model == config.mem_model)
-                model = QStringLiteral("%1 %2K").arg(QString::fromUtf8(m.FullName)).arg(config.ramsize);
+        if (const MachineVariant* variant = MachineVariants::Of(config))
+            model = QString::fromUtf8(variant->title);
+        else
+            for (const TMemModel& m : EmulatorManager::GetInstance()->GetAvailableModels())
+                if (m.Model == config.mem_model)
+                    model = QStringLiteral("%1 %2K").arg(QString::fromUtf8(m.FullName)).arg(config.ramsize);
         speed = QStringLiteral("%1×").arg(static_cast<int>(emulator->GetSpeedMultiplier()));
         turbo = emulator->IsTurboMode();
     }
@@ -1192,6 +1196,8 @@ void HandheldMenu::openModelPicker()
     _picker.warning = tr("Changing the model restarts the machine");
     auto keys = std::make_shared<std::vector<std::pair<std::string, int>>>();
     const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
+    EmulatorContext* current = machineContext();
+    const MachineVariant* currentVariant = current != nullptr ? MachineVariants::Of(current->config) : nullptr;
     for (const TMemModel& model : EmulatorManager::GetInstance()->GetAvailableModels())
     {
         if (!Config::IsModelCreatable(model) || model.FullName == nullptr || model.ShortName == nullptr)
@@ -1204,13 +1210,25 @@ void HandheldMenu::openModelPicker()
         {
             if ((model.AvailRAMs & static_cast<unsigned>(ram)) == 0)
                 continue;
-            if (EmulatorContext* context = machineContext();
-                context != nullptr && model.Model == context->config.mem_model && static_cast<int>(context->config.ramsize) == ram)
+            if (current != nullptr && currentVariant == nullptr && model.Model == current->config.mem_model &&
+                static_cast<int>(current->config.ramsize) == ram)
                 _picker.row = static_cast<int>(_picker.items.size());
             _picker.items.push_back(count == 1 ? QString::fromUtf8(model.FullName)
                                                : QStringLiteral("%1 %2K").arg(QString::fromUtf8(model.FullName)).arg(ram));
             keys->push_back({model.ShortName, ram});
         }
+    }
+    // Machine variants (TS-Conf + VDAC2): a base model with a fixed board, offered like the Qt Machine menu does,
+    // only the ones this build can create
+    for (const MachineVariant& variant : MachineVariants::All())
+    {
+        const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
+        if (base == nullptr || !Config::IsModelCreatable(*base) || !variant.supported(nullptr))
+            continue;
+        if (currentVariant == &variant)
+            _picker.row = static_cast<int>(_picker.items.size());
+        _picker.items.push_back(QString::fromUtf8(variant.title));
+        keys->push_back({variant.name, static_cast<int>(variant.ramKb)});
     }
     const QPointer<HandheldMenu> self(this);
     _picker.chosen = [self, keys](int index) {

@@ -385,6 +385,9 @@ private:
     /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
     /// else the plan's default, else the slot chooser (the call ends there and
     /// comes back with the pick); unattended callers take the first entry
+    /// Open a snapshot through the actions worker (media.open): a NEX first boots a fresh Next's NextZXOS, which takes
+    /// seconds; the GUI thread is never blocked, a refusal is shown when the worker answers
+    void openSnapshotAsync(const QString& filePath);
     void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
                      const std::string& slot = {});
     void refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin);
