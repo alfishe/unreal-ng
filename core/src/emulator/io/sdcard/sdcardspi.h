@@ -188,6 +188,8 @@ public:
     history::DeviceHistory<SdHistoryRecord>* History() { return _history ? &**_history : nullptr; }
     /// The state name for a report: power_on, idle, ready
     const char* stateName() const;
+    /// The protocol mode for a report: command, read_multi, wait_token, receive_data
+    const char* modeName() const;
 
     /// Bus analyzer: the tap of the bus the card sits on and its slot there (nullptr: none). The tap knows the
     /// card back (automation sets its timing through it)

@@ -31,6 +31,7 @@
 #include <debugger/pchistory/pchistory.h>
 #include <debugger/ports/portwrite.h>
 #include <debugger/snapshot/debugsnapshot.h>
+#include <debugger/boards/debugboards.h>
 #include <debugger/breakpoints/breakpointmanager.h>
 #include <debugger/breakpoints/breakpointselection.h>
 #include <debugger/targets/cpuview.h>
@@ -3402,6 +3403,62 @@ void EmulatorAPI::putSelectedCpu(const HttpRequestPtr& req, std::function<void(c
     resp->setStatusCode(code);
     addCorsHeaders(resp);
     callback(resp);
+}
+
+namespace
+{
+void ReplyBoard(const DebugBoardReply& reply, std::function<void(const HttpResponsePtr&)>& callback)
+{
+    Json::Value body = StateNodeToJson(reply.body);
+    if (reply.status != 200)
+    {
+        body["error"] = reply.status == 404 ? "Not Found" : reply.status == 409 ? "Conflict" : reply.status == 400 ? "Bad Request" : "Unprocessable";
+        body["message"] = reply.text;
+    }
+    auto resp = HttpResponse::newHttpJsonResponse(body);
+    resp->setStatusCode(static_cast<HttpStatusCode>(reply.status));
+    addCorsHeaders(resp);
+    callback(resp);
+}
+} // namespace
+
+/// @brief GET /api/v1/emulator/{id}/debug/boards - the device boards the machine has now (debugger-model widget
+/// catalog §4): {boards: [{id, title, device, cpu, available, actions[]}]}
+void EmulatorAPI::getDebugBoards(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                 const std::string& id) const
+{
+    (void)req;
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    ReplyBoard(DebugBoards::List(emulator->GetContext()), callback);
+}
+
+/// @brief GET /api/v1/emulator/{id}/debug/boards/{board} - one board, its layout and values (?values=1: the values only)
+void EmulatorAPI::getDebugBoard(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                const std::string& id, const std::string& board) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    const std::string values = req->getParameter("values");
+    ReplyBoard(DebugBoards::Read(emulator->GetContext(), board, values == "1" || values == "true"), callback);
+}
+
+/// @brief POST /api/v1/emulator/{id}/debug/boards/{board}/actions/{action} {"arg": "..."} - a board's action: neogs_sd
+/// insert (arg: an image or a host folder) / eject through the media manager's slot sd.ngs, neogs_flash save
+void EmulatorAPI::postDebugBoardAction(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id, const std::string& board, const std::string& action) const
+{
+    auto emulator = getEmulatorOrError(id, callback);
+    if (!emulator) return;
+    std::string arg = req->getParameter("arg");
+    if (const auto json = req->getJsonObject())
+    {
+        if ((*json)["arg"].isString())
+            arg = (*json)["arg"].asString();
+        else if ((*json)["path"].isString())
+            arg = (*json)["path"].asString();
+    }
+    ReplyBoard(DebugBoards::Action(emulator->GetContext(), board, action, arg), callback);
 }
 
 void EmulatorAPI::getDisasm(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,

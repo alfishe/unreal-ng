@@ -157,7 +157,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_send", "gs_conversation",
                                "gs_switch_personality", "gs_dump_module", "gs_sd_insert", "gs_sd_eject", "gs_flash_save",
-                               "gs_stereo_mode",
+                               "gs_stereo_mode", "board_action",
                                "rom_flash_status", "rom_flash_save", "rom_flash_discard",
                                "slots_catalog", "slots_matrix", "slots_plug", "slots_remove", "slots_set",
                                "network_configure", "switches", "switch"})
@@ -196,6 +196,9 @@ void RegisterEmulatorManage(ToolRegistry& registry)
         "refused while TTD records), 'gs_stereo_mode' (needs 'mode': 'separated' as on the board, 'gs' 50% "
         "cross-feed like the classic GS, or 'mono'; applied at the next frame); 'gs_dump_module' writes the last completed COM30..D2 module "
         "upload to a file (optional 'path', defaults to 'gs-module-dump.mod'). "
+        "'board_action' runs a device board's action (inspect_state aspect 'boards' lists them): 'board' the board, "
+        "'operation' its action, 'path' the argument - board neogs_sd: insert (path: an SD image or a host folder) / "
+        "eject through the media manager's slot sd.ngs, board neogs_flash: save. "
         "ZX-Evo flash ROM (TS-Conf, ATM3; GET/POST /memory/rom/flash): 'rom_flash_status' reports the saved flash "
         "(the file zxevo-flash-<machine>-<ROM image SHA-256>.rom in the settings folder, unsaved changes, files of "
         "other ROM images that are not used), 'rom_flash_save' writes it now, 'rom_flash_discard' deletes it (the "
@@ -324,7 +327,12 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["path"]["type"] = "string";
     schema["properties"]["path"]["description"] =
         "File path: optional for gs_dump_module (defaults to 'gs-module-dump.mod' in the server's working directory), "
-        "required for gs_sd_insert (the SD card image)";
+        "required for gs_sd_insert (the SD card image); board_action: the action's argument (neogs_sd insert: an "
+        "image or a host folder)";
+    schema["properties"]["board"]["type"] = "string";
+    schema["properties"]["board"]["description"] = "board_action: the board (neogs_sd, neogs_flash; inspect_state aspect 'boards')";
+    schema["properties"]["operation"]["type"] = "string";
+    schema["properties"]["operation"]["description"] = "board_action: the board's action (neogs_sd: insert, eject; neogs_flash: save)";
     schema["properties"]["slot"]["type"] = "string";
     schema["properties"]["slot"]["description"] =
         "slots_plug / slots_remove / slots_set: the slot - ay-socket, <bus>.<n> (zxbus.1, edge.1), <bus>.next, or auto "
@@ -849,6 +857,32 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         }
                         done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
                     });
+                }
+                else if (action == "board_action")
+                {
+                    // A device board's action (core DebugBoards): POST /debug/boards/{board}/actions/{operation}
+                    if (!args["board"].isString() || !args["operation"].isString())
+                    {
+                        done(ToolResult::Error("Action 'board_action' requires 'board' and 'operation' (e.g. board "
+                                               "neogs_sd, operation insert, path <image or folder>)"));
+                        return;
+                    }
+                    Json::Value body(Json::objectValue);
+                    if (args["path"].isString())
+                        body["arg"] = args["path"].asString();
+                    caller.Call("POST", Endpoint(id, "/debug/boards/" + args["board"].asString() + "/actions/" + args["operation"].asString()),
+                                &body, [done](int status, Json::Value response) {
+                                    if (status >= 200 && status < 300)
+                                    {
+                                        std::string message = "Board " + response.get("board", "").asString() + " " +
+                                                              response.get("action", "").asString() +
+                                                              (response.isMember("arg") ? " " + response["arg"].asString() : std::string()) +
+                                                              ": " + response.get("status", "").asString();
+                                        done(ToolResult::Ok(std::move(message), std::move(response)));
+                                        return;
+                                    }
+                                    done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(response)));
+                                });
                 }
                 else
                 {
@@ -2337,6 +2371,61 @@ void RegisterControlExecution(ToolRegistry& registry)
 namespace
 {
 
+/// A device board (GET /debug/boards/{id}) as lines: its groups, each control's label and value as the control type
+/// shows it (hex, the set bits named, on / off), then its actions
+std::string BoardText(const Json::Value& board)
+{
+    std::ostringstream out;
+    out << board["title"].asString() << (board["available"].asBool() ? "" : " (not available)");
+    for (const Json::Value& column : board["columns"])
+    {
+        for (const Json::Value& group : column["groups"])
+        {
+            out << "\n  " << group["title"].asString() << (group.isMember("raw") ? "  " + group["raw"].asString() : std::string());
+            for (const Json::Value& c : group["controls"])
+            {
+                const std::string type = c["type"].asString();
+                const Json::Value& v = c["value"];
+                char hex[16];
+                std::string value;
+                if (type == "hex8" || type == "hex16" || type == "hex21" || type == "bits")
+                {
+                    std::snprintf(hex, sizeof(hex), "#%0*X", type == "hex16" ? 4 : type == "hex21" ? 6 : 2, v.asUInt());
+                    value = hex;
+                    if (type == "bits")
+                    {
+                        std::string set;
+                        for (Json::ArrayIndex bit = 0; bit < c["names"].size() && bit < 8; bit++)
+                            if ((v.asUInt() >> bit) & 1 && !c["names"][bit].asString().empty())
+                                set += (set.empty() ? "" : " ") + c["names"][bit].asString();
+                        value += " [" + set + "]";
+                    }
+                }
+                else if (type == "bool" || type == "led")
+                    value = v.asBool() ? (type == "led" ? "on" : "yes") : (type == "led" ? "off" : "no");
+                else if (type == "bar")
+                    value = std::to_string(v.asInt64()) + "/" + std::to_string(c["max"].asInt64());
+                else if (v.isDouble())
+                {
+                    std::snprintf(hex, sizeof(hex), "%.2f", v.asDouble());
+                    value = hex;
+                }
+                else
+                    value = v.isString() ? v.asString() : std::to_string(v.asInt64());
+                out << "\n    " << c["label"].asString() << ": " << value
+                    << (c.isMember("note") ? "  (" + c["note"].asString() + ")" : std::string());
+            }
+        }
+    }
+    if (!board["actions"].empty())
+    {
+        out << "\n  actions (emulator_manage board_action):";
+        for (const Json::Value& a : board["actions"])
+            out << " " << a["id"].asString() << (a.isMember("param") ? " <" + a["param"].asString() + ">" : std::string());
+    }
+    return out.str();
+}
+
 /// One-line summary of a GET /ttd/status body (shared by inspect_state's
 /// 'ttd' aspect and time_travel's 'status' action). When a GET /ttd/position
 /// body was merged in as "position", the current frame is named too.
@@ -2522,7 +2611,9 @@ void RegisterInspectState(ToolRegistry& registry)
                                "ttd", "contention", "tsconf", "tsconf_tsu", "next", "next_regs", "next_mmu", "next_reg_journal", "next_sd", "next_divmmc", "next_nmi", "next_magic_port", "next_audio", "next_input", "next_uart", "next_dma", "next_video", "next_palette", "next_ports", "next_nextreg", "next_copper", "next_sprites", "next_pixel", "sprinter", "sprinter_ports", "sprinter_text",
                                "sprinter_video", "sprinter_palette", "sprinter_sound_ring", "sprinter_bios", "sprinter_zx_mode",
                                "sprinter_pld_journal", "memory_region", "video_changes", "audio_mixer", "snapshot", "pchist", "slots",
-                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices"})
+                               "audio_multisound", "audio_midi", "execution", "monitor", "audio_wildsound", "devices",
+                               "boards", "board.gs", "board.neogs", "board.neogs_dma", "board.neogs_sd", "board.neogs_mp3",
+                               "board.neogs_flash"})
     {
         allowed.append(aspect);
     }
@@ -2562,6 +2653,11 @@ void RegisterInspectState(ToolRegistry& registry)
         "/api/v1/emulator/{id}/network/traffic?since=&adapter=&kind=&last=[&format=pcapng], control with POST "
         "{action: clear | start (path: a pcapng file, unbounded) | stop | ring | stream (port: a live pcapng stream for "
         "Wireshark, 0 = any free port) | stream-stop}), "
+        "'boards' = the device boards the machine has now (GET /debug/boards: a device's hardware as data, with the "
+        "board's actions), 'board.<id>' = one board with its values, by groups (GET /debug/boards/{id}): board.gs (the "
+        "classic GS card), board.neogs (GSCFG0, paging, clock, DAC, output, interrupts, SPI, SSTAT, LED, mailbox, "
+        "firmware), board.neogs_dma (the DMA modules, ZX-DMA), board.neogs_sd (the slot sd.ngs: medium, protocol; "
+        "emulator_manage board_action insert / eject), board.neogs_mp3 (the decoder, SCI registers), board.neogs_flash; "
         "'audio_wildsound' = the Sprinter ISA Wild Sound (mode AY / XM, stream command and position, storage, the "
         "uploaded track, the XM player's position and channels, both AY chips), "
         "'audio_multisound' = the ZX-MultiSound card (options, the built-ins its slot shadows, CPLD latches, the YM2203 "
@@ -2844,11 +2940,12 @@ void RegisterInspectState(ToolRegistry& registry)
                     aspect != "sprinter_zx_mode" && aspect != "sprinter_pld_journal" &&
                     aspect != "memory_region" && aspect != "video_changes" && aspect != "audio_mixer" && aspect != "snapshot" && aspect != "pchist" &&
                     aspect != "slots" && aspect != "audio_multisound" && aspect != "audio_midi" && aspect != "execution" &&
-                    aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices")
+                    aspect != "monitor" && aspect != "audio_wildsound" && aspect != "devices" && aspect != "boards" &&
+                    aspect.rfind("board.", 0) != 0)
                 {
                     done(ToolResult::Error("Unknown aspect '" + aspect +
                                             "'. Valid: machine, registers, memory, memory_map, disasm, stack, breakpoints, memory_banks, paging, ports, video, "
-                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices"));
+                                            "screen, screen_flash, screen_attributes, screen_ocr, screen_image, screen_digest, timing, video_layout, video_text, rom, audio_ay, audio_fm, audio_gs, audio_covox, audio_moonsound, audio_opl4_fm, audio_opl4_pcm, fdc, ide, cdaudio, rtc, profi, isa, mouse, ttd, contention, tsconf, tsconf_tsu, sprinter, sprinter_ports, sprinter_text, sprinter_video, sprinter_palette, sprinter_sound_ring, sprinter_bios, sprinter_zx_mode, sprinter_pld_journal, memory_region, video_changes, audio_mixer, snapshot, pchist, slots, audio_multisound, audio_midi, execution, monitor, audio_wildsound, devices, boards, board.<id>"));
                     return;
                 }
             }
@@ -3555,6 +3652,18 @@ void RegisterInspectState(ToolRegistry& registry)
                             // 404 = no GS fitted ([SOUND] GSType selects the card)
                             steps.push_back([&caller, id, aspect](Json::Value& acc, std::function<void(bool)> next) {
                                 caller.Call("GET", Endpoint(id, "/state/audio/gs"), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
+                                    if (status == 200) acc[aspect] = std::move(body);
+                                    else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
+                                    next(true);
+                                });
+                            });
+                        }
+                        else if (aspect == "boards" || aspect.rfind("board.", 0) == 0)
+                        {
+                            // Device boards via the WebAPI (core DebugBoards); a missing board answers 404 with the list
+                            const std::string path = aspect == "boards" ? "/debug/boards" : "/debug/boards/" + aspect.substr(6);
+                            steps.push_back([&caller, id, aspect, path](Json::Value& acc, std::function<void(bool)> next) {
+                                caller.Call("GET", Endpoint(id, path), nullptr, [aspect, &acc, next](int status, Json::Value body) mutable {
                                     if (status == 200) acc[aspect] = std::move(body);
                                     else { acc[aspect] = Json::Value(Json::objectValue); acc[aspect]["available"] = false; acc[aspect]["description"] = body.isMember("message") ? body["message"] : Json::Value("unavailable"); }
                                     next(true);
@@ -4695,6 +4804,27 @@ void RegisterInspectState(ToolRegistry& registry)
                                         out << "\n  ch" << i << ": sample " << gsChannels[i]["sample"].asUInt()
                                             << " vol " << gsChannels[i]["volume"].asUInt();
                                 }
+                            }
+                            else if (aspect == "boards")
+                            {
+                                out << "\n[boards]";
+                                for (const Json::Value& b : value["boards"])
+                                {
+                                    out << "\n  " << b["id"].asString() << " - " << b["title"].asString() << " (cpu "
+                                        << b["cpu"].asString() << (b["available"].asBool() ? "" : ", not available") << ")";
+                                    for (const Json::Value& a : b["actions"])
+                                        out << (&a == &b["actions"][0] ? "; actions:" : ",") << " " << a["id"].asString()
+                                            << (a.isMember("param") ? " <" + a["param"].asString() + ">" : std::string());
+                                }
+                                if (value["boards"].empty())
+                                    out << value.get("description", " none (no device publishes a board on this machine)").asString();
+                            }
+                            else if (aspect.rfind("board.", 0) == 0)
+                            {
+                                if (value.isMember("available") && !value["available"].asBool() && !value.isMember("columns"))
+                                    out << "\n[" << aspect << "] " << value["description"].asString();
+                                else
+                                    out << "\n[" << aspect << "] " << BoardText(value);
                             }
                             else if (aspect == "audio_moonsound" || aspect == "audio_opl4_fm" || aspect == "audio_opl4_pcm")
                             {

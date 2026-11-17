@@ -146,6 +146,8 @@ private:
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
     void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
+    // Device boards: board list | board <id> [values] | board <id> <action> [arg] (core DebugBoards)
+    void HandleBoard(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
     bool RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);

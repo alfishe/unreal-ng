@@ -1086,6 +1086,54 @@ struct GSFirmwareStateView
 - **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card). The Qt
   panel (U2).
 
+### 6.5 Device boards (N4, N8)
+
+The card's hardware as boards of the debugger model ([widget catalog](../2026-09-28-debugger-model/widget-catalog.md)
+§4.4-§4.7, [protocol](../2026-09-28-debugger-model/protocol.md) §3.10, §6.4): a layout of columns, groups and
+controls with their values, rendered by any front-end with one generic renderer.
+
+**As built (phase 4, item 5a: N4, N8).**
+
+- **Core.** `DebugBoards` (`core/src/debugger/boards/debugboards.h`): `List`, `Read` (layout and values, or the
+  values only), `Action`; `DebugBoardBuilder` writes the catalog's schema (`hex8`, `hex16`, `hex21`, `dec`,
+  `counter`, `rate`, `bool`, `led`, `text`, `bits` with the bit names, `enum` with its values, `bar` with min / max)
+  and a text form for the planes.
+  - No plugin registry yet (debug-plugins.md §3): the boards come from the GS slot's card, the only device that
+    publishes any. A plugin registry replaces the switch in `DebugBoards::Build` when a second device publishes one.
+  - Built on read from the card's report getters, side-effect free, the same reading as the GS report
+    (`DeviceState::Gs`): nothing runs while nobody reads.
+- **Boards.**
+  - `gs` (classic GS and the lightweight player): MPAG with the RAM pages it maps, the four channels, the mailbox
+    (`status` as bits C / D), the firmware (ready, the profile's title and SHA-256).
+  - `neogs`: GSCFG0 as bits (NOROM, RAMRO, 8CHANS, EXPAG, CLK0 / CLK1, PAN4CH, INV7B), the four window pages and
+    whether each shows flash, MPAG, the clock, the eight channels and the audio mode, the output level per side and
+    the listening mode, INTENA / INTREQ / TIM_FREQ with the timer rate, SCTRL, SSTAT (computed as the card's
+    `IN (#12)` reads it, without the read's SPI catch-up), the LED, the mailbox, the firmware.
+  - `neogs_dma`: per module (zx, sd, mp3) selected, running, the 21-bit address and its page; the ZX-DMA detail
+    (mode, watch, latch, pending, the byte counters, waits, late starts, the overlay).
+  - `neogs_sd`: the slot `sd.ngs` as the media manager reports it (source, image or folder, write protect, pending,
+    unsaved changes) and the card's protocol (initialized, state, mode, last command and argument, blocks read and
+    written). Actions `insert <path>` (an image or a host folder) and `eject`: `NeoGSRequestSdInsert` /
+    `NeoGSRequestSdEject`, the media manager's rules (at once while not running, else at the next frame boundary;
+    while TTD records, an event of the recording).
+  - `neogs_mp3` (`available` only with a decoder fitted): chip, running, DREQ, rate, channels, decode time, input
+    fill of 2048, PCM queued, gain, frames, samples, bytes received, the 16 SCI registers.
+  - `neogs_flash`: title, modified, mode (read / busy / command), vendor, write mode, the persist path. Action `save`.
+  - `NeoGSStateInfo` grew the fields these show (SSTAT, the DAC levels, the SD protocol and write mode, the decoder's
+    queue, counters, gain and SCI registers, the flash's mode, vendor, write mode and path); each is on a board.
+- **Planes.** WebAPI `GET /debug/boards`, `GET /debug/boards/{board}` (`?values=1`), `POST
+  /debug/boards/{board}/actions/{action}` (`{"arg": ...}`), OpenAPI; CLI `board [list]`, `board <id> [values]`,
+  `board <id> <action> [arg]`; MCP `inspect_state` aspects `boards` and `board.<id>` (the text lists every control
+  with its value), `emulator_manage` `board_action` (`board`, `operation`, `path`); Lua `boards()`, `board(id,
+  values)`, `board_action(id, action, arg)`; Python the same.
+- **Tests.** `DebugBoards_Test`: the classic card's board and its values, the unknown board naming the boards; the
+  NeoGS boards against `neogsState`; a host folder inserted through the SD board is the slot's medium, eject, the
+  refusals (no path 400, no action 404, no file 422). MCP: `test_the_neogs_boards`.
+- **Not done.** Writing a board control (`PUT /debug/boards/{id}/{control}`): the controls the card's program owns
+  are not automation's to change (neogs-automation-design.md §7.1). The counters the catalog lists beside the state
+  (DMA transactions, SD commands and errors, MP3 drops, flash operations, clock switches) come with the statistics
+  (N7, item 5b). MPAGEX is not latched by the card model. A MultiSound slot's card has no boards. The Qt renderer.
+
 ## 7. Front-ends
 
 > **Revision 2.** The front-end side of the debugger is now the debugger

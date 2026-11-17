@@ -606,9 +606,14 @@ void SoundChip_NeoGS::loadROM(const std::string& flashPath)
 
 bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
 {
+    static const char* const kWriteModes[] = {"session", "persist", "off"};
     out = NeoGSStateInfo{};
     out.flashTitle = _flashTitle;
     out.flashModified = _flash.modified();
+    out.flashMode = _flash.busyUntil() != INT64_MAX ? "busy" : _flash.arrayMode() ? "read" : "command";
+    out.flashVendor = _config.flashId == NeoGSConfig::FlashId::AMD ? "AMD" : "ST";
+    out.flashWriteMode = kWriteModes[static_cast<int>(_config.flashWrite) % 3];
+    out.flashPersistPath = _flashPersistPath;
     out.gscfg0 = _gscfg0;
     out.clockHz = cardClockHz();
     for (int w = 0; w < 4; w++)
@@ -619,11 +624,23 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     out.mpag = _mem.lastMpag();
     out.ledOn = ledOn();
     out.readyForCommands = isReadyForCommands();
+    out.dacLeft = dacLevel(false);
+    out.dacRight = dacLevel(true);
     out.intEnable = _irq.enable();
     out.intRequest = _irq.readRequest();
     out.timFreq = _irq.timFreq();
     out.sctrl = _spi.readSctrl();
     out.sdPresent = sdCardPresent();
+    out.sdWriteMode = kWriteModes[static_cast<int>(_config.sdWrite) % 3];
+    out.sdWriteProtect = _sdWriteProtect;
+    if (_sd)
+    {
+        out.sdInitialized = _sd->initialized();
+        out.sdState = _sd->stateName();
+        out.sdMode = _sd->modeName();
+        out.sdLastCommand = _sd->lastCommand();
+        out.sdLastArgument = _sd->lastArgument();
+    }
     if (out.sdPresent)
     {
         out.sdPath = sdCardImage();
@@ -636,13 +653,24 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     if (_mp3)
     {
         out.mp3Chip = _mp3->chip() == Vs10xxDecoder::Chip::VS1011 ? "VS1011" : "VS1001";
+        out.mp3Running = _mp3->running();
         out.mp3Dreq = _mp3->running() && _mp3->inputFill() + Vs10xxDecoder::DREQ_FREE <= Vs10xxDecoder::INPUT_FIFO;
         out.mp3Rate = _mp3->streamRate();
         out.mp3Channels = _mp3->streamChannels();
         out.mp3Frames = _mp3->framesDecoded();
         out.mp3DecodeSeconds = _mp3->streamRate() ? static_cast<uint32_t>(_mp3->samplesPlayed() / _mp3->streamRate()) : 0;
         out.mp3InputFill = _mp3->inputFill();
+        out.mp3PcmQueued = _mp3->pcmQueued();
+        out.mp3SamplesPlayed = _mp3->samplesPlayed();
+        out.mp3BytesReceived = _mp3->bytesReceived();
+        out.mp3Gain = _config.mp3Gain;
+        for (int r = 0; r < 16; r++)
+            out.mp3Sci[r] = _mp3->reg(r);
     }
+    // SSTAT as the card's IN (#12) would read it, without the read's SPI catch-up: {0000, MCRDY, SD_WP, SD_DET, DREQ},
+    // WP and DET low-active
+    out.sstat = static_cast<uint8_t>((_spi.busy(NeoGSSpi::MC, _runner.now()) ? 0 : 0x08) | (_sdWriteProtect ? 0 : 0x04) |
+                                     (out.sdPresent ? 0 : 0x02) | (out.mp3Dreq ? 0x01 : 0));
     out.dmaSelect = _dma.moduleSelect();
     for (int m = 0; m < 3; m++)
     {

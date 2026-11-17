@@ -100,6 +100,13 @@ command, the parameters and replies due, an upload's bytes) while the command lo
 (`device_history {"action":"config","device":"zxbus.1.commands","mode":"ring"}`; off: "no protocol
 state").
 
+The card's hardware as boards: `inspect_state {"aspects":["boards"]}` lists them (`gs` on the classic card;
+`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`, `neogs_flash` on NeoGS), `{"aspects":["board.neogs"]}` reads one
+control by control (GSCFG0 and SSTAT bits named, pages, clock, channels, interrupts, mailbox). The SD card through its
+board: `emulator_manage {"action":"board_action","board":"neogs_sd","operation":"insert","path":"<image or folder>"}`
+(`operation` `eject`; board `neogs_flash`, operation `save`); `media {"action":"list"}` shows it in `sd.ngs`. WebAPI
+`GET /debug/boards/{id}?values=1` gives `{values: {control: value}}` for polling.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

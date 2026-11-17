@@ -4,6 +4,7 @@ breakpoints (the NeoGS of the PENTAGON), a card stop parks the machine and wait 
 the lists are per CPU, the card refuses what it has not (NextREG, the host's events), and its registers, memory and code
 are read and written with cpu "gs" (core CpuView), and it steps (RunControl::CardStep)"""
 
+import os
 import re
 import time
 
@@ -402,6 +403,44 @@ def test_the_card_cpu_runs_to_the_cursor(s):
     r = s.call('control_execution', {'action': 'run_until_pc', 'pc': pc, 'cpu': 'ms'}, ok=False)
     expect(r.is_error, 'no MultiSound card', r.text)
     clear(s)
+
+
+def test_the_neogs_boards(s):
+    """Device boards (gs-debugger N4, N8): the NeoGS card publishes its hardware as boards, read with their values in
+    the text; a host folder inserted through the SD board is the medium of the slot sd.ngs in the media list. Last in
+    the block: the card's medium is put back"""
+    r = s.call('inspect_state', {'aspects': ['boards']})
+    for board in ('neogs', 'neogs_dma', 'neogs_sd', 'neogs_mp3', 'neogs_flash'):
+        expect(board in r.text, 'board %s listed' % board, r.text)
+    expect('insert <path>' in r.text, 'the SD board offers insert', r.text)
+    r = s.call('inspect_state', {'aspects': ['board.neogs']})
+    expect('GSCFG0=#' in r.text and 'SSTAT' in r.text and 'Mailbox' in r.text, 'the card board with its values', r.text)
+    r = s.call('inspect_state', {'aspects': ['board.nothing']}, ok=False)
+    expect('No board' in r.text and 'neogs_sd' in r.text, 'an unknown board names the boards', r.text)
+
+    before = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/debug/boards/neogs_sd?values=1'})
+    values = (before.structured or {}).get('body', {}).get('values', {})
+    original = values.get('source', '') if values.get('present') else ''
+
+    folder = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'scratch',
+                                          'mcp-verify', 'neogs-sd-folder'))
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, 'README.TXT'), 'w') as f:
+        f.write('a host folder as the NeoGS SD card\n')
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    r = s.call('emulator_manage', {'action': 'board_action', 'board': 'neogs_sd', 'operation': 'insert', 'path': folder})
+    expect('Board neogs_sd insert' in r.text, 'inserted through the board', r.text)
+    r = s.call('media', {'action': 'list'})
+    expect('sd.ngs' in r.text and 'neogs-sd-folder' in r.text, 'the media list shows the folder in sd.ngs', r.text)
+    r = s.call('inspect_state', {'aspects': ['board.neogs_sd']})
+    expect('kind: folder' in r.text, 'the board shows a folder', r.text)
+
+    r = s.call('emulator_manage', {'action': 'board_action', 'board': 'neogs_sd', 'operation': 'eject'})
+    expect('eject' in r.text, 'ejected through the board', r.text)
+    r = s.call('emulator_manage', {'action': 'board_action', 'board': 'neogs_sd', 'operation': 'format'}, ok=False)
+    expect(r.is_error and 'no action' in r.text, 'an unknown action is refused', r.text)
+    if original:
+        s.call('emulator_manage', {'action': 'board_action', 'board': 'neogs_sd', 'operation': 'insert', 'path': original})
 
 
 if __name__ == '__main__':

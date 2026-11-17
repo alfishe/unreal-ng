@@ -637,6 +637,14 @@ card catches up (a host port access or the frame end). The reply names the card'
 steps of the paused machine, so its state is the one at the main CPU's moment. Every
 plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
 
+`board [list]`, `board <id> [values]` and `board <id> <action> [arg]` read the device boards: a device's hardware as
+groups of named controls with their values (the GS slot's card publishes `gs`, or on NeoGS `neogs`, `neogs_dma`,
+`neogs_sd`, `neogs_mp3`, `neogs_flash`). `board neogs_sd insert <image or folder>` and `board neogs_sd eject` go to the
+media manager's slot `sd.ngs`, `board neogs_flash save` saves the flash. Every plane: WebAPI `GET /debug/boards`,
+`GET /debug/boards/{id}` (`?values=1`), `POST /debug/boards/{id}/actions/{action}`; MCP `inspect_state` aspects
+`boards` / `board.<id>` and `emulator_manage` `board_action`; Lua and Python `boards()`, `board(id)`,
+`board_action(id, action, arg)` ([gs-debugger design §6.5](../../../inprogress/2026-09-27-gs-debugger/design.md#65-device-boards-n4-n8)).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:

@@ -484,6 +484,17 @@ const char* SdCardSpi::stateName() const
     return _state == State::PowerOn ? "power_on" : (_state == State::Idle ? "idle" : "ready");
 }
 
+const char* SdCardSpi::modeName() const
+{
+    switch (_mode)
+    {
+        case Mode::ReadMulti: return "read_multi";
+        case Mode::WaitToken: return "wait_token";
+        case Mode::ReceiveData: return "receive_data";
+        default: return "command";
+    }
+}
+
 void SdCardSpi::checkCommandStart(uint8_t index, bool answerPending, bool busyPending)
 {
     // The host starts a command while the card is still busy after a write (a real card ignores it), or still sending

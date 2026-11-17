@@ -25,6 +25,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include <algorithm>
 #include <sol/sol.hpp>
@@ -5934,6 +5935,21 @@ public:
                 return StateNodeToLua(s, error);
             }
             return StateNodeToLua(s, GSSend(ctx, request, 0).body);
+        });
+        // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards;
+        // a refused read or action is {error = ...}
+        lua.set_function("boards", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::List(ctx).body["boards"]);
+        });
+        lua.set_function("board", [this](sol::this_state s, const std::string& id, sol::optional<bool> values) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::Read(ctx, id, values.value_or(false)).body);
+        });
+        lua.set_function("board_action", [this](sol::this_state s, const std::string& id, const std::string& action,
+                                                sol::optional<std::string> arg) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::Action(ctx, id, action, arg.value_or("")).body);
         });
         lua.set_function("gs_conversation", [this](sol::this_state s, sol::optional<uint32_t> id) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
