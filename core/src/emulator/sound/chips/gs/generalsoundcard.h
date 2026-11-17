@@ -31,6 +31,7 @@
 #include "emulator/platform.h"          // GSTypeKind
 #include "emulator/ports/portdecoder.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/sound/chips/gs/gscommandlog.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
@@ -399,6 +400,18 @@ public:
         _execHistory = history;
         _execContext = context;
     }
+    /// The command log the card's host accesses feed (`<slot>.commands`, gscommandlog.h): the machine's
+    /// (SoundManager) or the slot card's; nullptr detaches. The emulation thread parked
+    void attachCommandLog(GSCommandLog* log)
+    {
+        _commandLog = log;
+        if (log)
+            log->Bind(this);
+    }
+    GSCommandLog* commandLog() const
+    {
+        return _commandLog;
+    }
     /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
     history::DeviceHistory<ExecRecord>* execHistory() const
     {
@@ -550,6 +563,40 @@ protected:
     bool _hostGainUnity = true;   ///< every gain at unity: the output path is the card's own, untouched
     bool _hostGainDirty = false;  ///< a gain changed: the card emits its level again at the next frame start
     /// endregion </Host channel gains>
+
+protected:
+    /// The command log's hooks (gscommandlog.h): one null test and a relaxed load while it is off. Called before
+    /// the access changes the mailbox
+    GSCommandLog* _commandLog = nullptr;
+    bool commandLogOn()
+    {
+        return _commandLog && _commandLog->On();
+    }
+    void logHostCommand(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostCommand(value, automation);
+    }
+    void logHostData(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostData(value, automation);
+    }
+    void logHostReplyRead(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostReplyRead(value, automation);
+    }
+    void logHostReset()
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostReset();
+    }
+    void logFrame()
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->Frame();
+    }
 
 protected:
     /// Before a card run (the card on a boundary): the execution history switched on or off since the last run puts

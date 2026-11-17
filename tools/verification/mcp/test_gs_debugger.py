@@ -210,6 +210,24 @@ def test_the_card_names_its_firmware(s):
     expect('bundle:gs:' not in r.text, 'no firmware symbols for the card CPU', r.text)
 
 
+def test_the_command_log_is_a_device_history(s):
+    """The host's GS commands (gs-debugger design §6.3): `<slot>.commands` in device_history, off until configured; a
+    port write of the host's (#B3 then #BB) is a data and a command record, each with its text. The NeoGS runs its own
+    firmware: no profile, the records raw"""
+    r = s.call('device_history', {'action': 'list'})
+    logs = sorted(set(re.findall(r'([\w-]+(?:\.[\w-]+)*\.commands)\b', r.text)))
+    expect(logs, 'a command log among the histories', r.text)
+    device = logs[0]
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'ring'})
+    for port, value in (('0xB3', '0x05'), ('0xBB', '0x2C')):
+        w = s.call('invoke_api', {'method': 'POST', 'path': '/api/v1/emulator/{id}/ports/out',
+                                  'body': {'port': port, 'value': value}}, ok=False)
+        expect(not w.is_error, 'the host port written', w.text)
+    r = s.call('device_history', {'action': 'read', 'device': device, 'last': 16})
+    expect('#2C' in r.text and 'data #05' in r.text, 'a data and a command record, decoded to text', r.text)
+    s.call('device_history', {'action': 'config', 'device': device, 'mode': 'off'})
+
+
 def test_the_card_cpu_from_python(s):
     """Python's cpu= on the register, memory and code functions; memory_map('gs') the windows; ms is a RuntimeError"""
     clear(s)
