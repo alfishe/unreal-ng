@@ -457,6 +457,16 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
+    // A card's controller (MGT +D) the same way; none on most machines
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+    {
+        const WD1793* fdc = _context->cardFdcs[i];
+        if (!fdc->IsStepInert())
+            return false;
+        if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+            ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && !fdc->IsAsleep())
+            return false;
+    }
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
     // its edges into the sound per step, the floppy controller runs its state machine per step

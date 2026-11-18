@@ -11,6 +11,7 @@
 #include "emulator/io/fdc/trdoscatalog.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
+#include "emulator/slots/cards/plusd/plusdautostart.h"
 
 namespace
 {
@@ -85,7 +86,18 @@ bool IsIsdosBootDisk(DiskImage& image)
 }
 }  // namespace
 
-DiskAutostart::DiskAutostart(EmulatorContext* context) : _context(context) {}
+DiskAutostart::DiskAutostart(EmulatorContext* context)
+    : _context(context), _plusd(std::make_unique<PlusDAutostart>(context))
+{
+}
+
+DiskAutostart::~DiskAutostart() = default;
+
+void DiskAutostart::OnFrame()
+{
+    if (_plusd->IsPending())
+        _plusd->OnFrame();
+}
 
 bool DiskAutostart::IsTrdosCapable(std::string* reason) const
 {
@@ -311,6 +323,7 @@ void DiskAutostart::HandleServiceMenuIdle()
 
 void DiskAutostart::Disarm()
 {
+    _plusd->Disarm();
     _serviceStage = ServiceStage::Idle;
     _armed = false;
     _coldStartFinishPending = false;

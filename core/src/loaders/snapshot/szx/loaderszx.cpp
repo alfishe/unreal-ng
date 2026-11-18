@@ -22,6 +22,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/memory/memory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
@@ -263,6 +264,8 @@ snapshot::Image LoaderSZX::BuildImage(const Stage& stage, const std::string& pat
     };
     if (stage.beta)
         add("szx:B128", "beta128", kBeta128Size, "Beta 128 interface and its WD1793");
+    if (stage.plusd)
+        add("szx:PLSD", "plusd", kPlusDSize + stage.plusd->ram.size(), "MGT +D interface, its WD1772 and 8K RAM");
     for (const BetaDisk& d : stage.betaDisks)
         add("szx:BDSK", "disk", d.image.size(), (d.image.empty() ? "linked " + d.fileName : std::string("embedded")) +
                                                     ", drive " + std::to_string(d.drive));
@@ -448,6 +451,31 @@ bool LoaderSZX::CommitImage(EmulatorContext* context, const snapshot::Image& ima
         else
         {
             report.Add("B128", Outcome::Ignored, "this machine has no Beta 128 interface");
+        }
+    }
+
+    // MGT +D: paging, the control latch, the WD1772's task registers and the 8K RAM
+    if (stage.plusd)
+    {
+        if (PlusDCard* card = PlusDCard::Find(context))
+        {
+            const PlusD& d = *stage.plusd;
+            PlusDCard::SnapshotRegisters registers;
+            registers.paged = (d.flags & kPlusDPaged) != 0;
+            registers.stepIn = !(d.flags & kPlusDSeekLower);
+            registers.control = d.control;
+            registers.track = d.track;
+            registers.sector = d.sector;
+            registers.data = d.data;
+            registers.status = d.status;
+            card->RestoreSnapshot(registers, d.ram.size() == kPlusDRamSize ? d.ram.data() : nullptr);
+            report.Add("PLSD", Outcome::Approximated,
+                       std::string(registers.paged ? "paged in" : "paged out") +
+                           ", latch, registers and RAM; a command in flight is not in the format");
+        }
+        else
+        {
+            report.Add("PLSD", Outcome::Ignored, "this machine has no +D interface (a 48K-PLUSD or 128K-PLUSD has)");
         }
     }
 
@@ -1139,6 +1167,22 @@ bool LoaderSZX::Capture(EmulatorContext* context, Stage& stage, std::string& err
         beta.data = fdc.getDataRegister();
         beta.status = fdc.getStatusRegister();
         stage.beta = beta;
+    }
+
+    // PLSD when a +D card is fitted
+    if (const PlusDCard* card = PlusDCard::Find(context))
+    {
+        const PlusDCard::SnapshotRegisters r = card->CaptureSnapshot();
+        PlusD plusd;
+        plusd.flags = (r.paged ? kPlusDPaged : 0) | (r.stepIn ? 0 : kPlusDSeekLower);
+        plusd.control = r.control;
+        plusd.drives = static_cast<uint8_t>(PlusDCard::kDrives);
+        plusd.track = r.track;
+        plusd.sector = r.sector;
+        plusd.data = r.data;
+        plusd.status = r.status;
+        plusd.ram.assign(card->RamData(), card->RamData() + kPlusDRamSize);
+        stage.plusd = std::move(plusd);
     }
 
     CaptureMedia(context, stage);

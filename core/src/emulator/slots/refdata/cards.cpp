@@ -358,6 +358,29 @@ constexpr Src kKempstonCardSources[] = { Src::ZxspKempstonJoy, Src::MameKempjoy,
 
 // endregion
 
+// region <plusd (docs/inprogress/2026-11-15-mgt-plus-d/hardware-reference.md): MGT +D, low-byte decode (Fuse), no IORQGE>
+
+// The FDC registers, the control latch, the paging port and the printer port. #E7: a read pages the +D in (the card
+// leaves the data bus alone), a write pages it out
+constexpr PortClaim kPlusDClaims[] = {
+    { .mask = 0x00FF, .match = 0x00E3, .dir = Dir::InOut, .port = 0x00E3 },
+    { .mask = 0x00FF, .match = 0x00EB, .dir = Dir::InOut, .port = 0x00EB },
+    { .mask = 0x00FF, .match = 0x00F3, .dir = Dir::InOut, .port = 0x00F3 },
+    { .mask = 0x00FF, .match = 0x00FB, .dir = Dir::InOut, .port = 0x00FB },
+    { .mask = 0x00FF, .match = 0x00EF, .dir = Dir::Out, .port = 0x00EF },
+    { .mask = 0x00FF, .match = 0x00E7, .dir = Dir::InOut, .port = 0x00E7 },
+    { .mask = 0x00FF, .match = 0x00F7, .dir = Dir::InOut, .port = 0x00F7 },
+};
+
+constexpr FunctionUse kPlusDFunctions[] = {
+    { .function = Function::DiskMgt },
+};
+
+constexpr const char* kPlusDMedia[] = { "fdd.plusd1", "fdd.plusd2" };
+constexpr Src kPlusDSources[] = { Src::FusePlusD, Src::MameMgt };
+
+// endregion
+
 constexpr CardDef kCards[] = {
     { .id = "ay", .name = "machine's own AY (socket default)", .bus = BusKind::AySocket, .needs = kNone,
       .socketDefault = true, .portsNote = "host decode",
@@ -401,6 +424,9 @@ constexpr CardDef kCards[] = {
       .functions = kZxnetusbFunctions, .claims = kZxnetusbClaims, .sources = kZxnetusbSources },
     { .id = "zx-wifi", .name = "ZX-WiFi (izzx)", .bus = BusKind::ZxBus, .needs = Sig(BusSignal::Iorqge),
       .options = kWifiOptions, .functions = kWifiFunctions, .claims = kWifiClaims, .sources = kWifiSources },
+    { .id = "plusd", .name = "MGT +D disk interface", .bus = BusKind::SinclairEdge,
+      .needs = BusSignal::RdRom | BusSignal::M1 | BusSignal::Nmi, .functions = kPlusDFunctions,
+      .claims = kPlusDClaims, .media = kPlusDMedia, .sources = kPlusDSources },
 };
 
 } // namespace
