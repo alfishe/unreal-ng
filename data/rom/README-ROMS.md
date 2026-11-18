@@ -83,6 +83,11 @@ that the emulator works out of the box, on the following basis:
   vers 1.27" of the 8035 on the PROFI-XT board, **reconstructed**: the only known dump (speccy4ever
   `PROFI_XT-9A8E2686.ROM`) never enables interrupts and so receives no key; 5 bytes at `02Eh`-`032h` are replaced.
   The patch, why, and how it was checked: [`profixt/README.md`](profixt/README.md). CRC32 `59C7A98C`.
+* **Pentagon 2.666 LE ROM set** (`p2666/p2666.rom`, 96 KB, CRC32 `54B5A266`, SHA-256
+  `8be7465ac0f7ef775f9c509dc88c06ee684eb42d75cffb7fd1ea023254ce86f7`): the six 16 KB images the board's MCU uploads
+  into RAM pages `#48..#4C` and page 5, in that order: Gluk Reset Service, TR-DOS 6.11E, BASIC 128 (= `128_low.rom`),
+  BASIC 48 (= `48for128.rom`), FATALL 0.25 and the boot logo. From
+  [koe1234/pentagon_2_666_le](https://github.com/koe1234/pentagon_2_666_le) `LE/PAE_MCU/rom/` (revision `e808402`).
 * **Scorpion GMX flash images** (`gmx.rom`, `gmx644.rom`): the whole 512 KB flash of the GMX card (loader, FPGA
   schemes, eight 64 KB ROM planes). `gmx.rom` (CRC32 `00DF8568`) is "GMX Boot Rom 1.2 V. 5.00" (TMgmx Loader V1.20,
   MOA 1998). `gmx644.rom` (CRC32 `0F84E542`, MD5 `3e07fc606947eef4348c79d2bde4a974`, SHA-256
@@ -91,7 +96,7 @@ that the emulator works out of the box, on the following basis:
   2022-2025) with FAT32 and Z-Controller support, from the ZS ProfROM group (<https://t.me/ZS_ProfRom>). Copied
   unchanged from the web Unreal Speccy's `rom/gmx644.zip` (<https://www.zxby.org/unreal/>, archive dated 2026-10-28,
   fetched 2026-10-30). OSZ needs this image. Page map: `docs/inprogress/2026-10-07-gmx/roms.md`.
-* **MGT disk interface ROMs** (8 KB each, unused until the +D card lands: `docs/inprogress/2026-11-15-mgt-plus-d/`):
+* **MGT disk interface ROMs** (8 KB each; `gdos-pd.rom` is the +D card's ROM: `48K-PLUSD`, `128K-PLUSD`, `.recipe/machines/plusd.md`):
   `gdos-pd.rom` is the +D G+DOS v1a boot ROM (CRC32 `569F7E55`, SHA-1 `6b841dc5797ef7eb219ad455cd1e434ca3b9d30d`,
   SHA-256 `1529d74f90df9c75b7297ce2f9762b7a6fc85e6b0ee9218c82dd6bc39035e454`; MAME `plusd_g.rom`, Fuse `plusd.rom`);
   `gdos.rom` is the DISCiPLE GDOS v3 ROM (CRC32 `82047489`, SHA-1 `9a75ed4b293f968985be4c9aa893cd88276d1ced`,

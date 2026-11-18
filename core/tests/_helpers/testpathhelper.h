@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -155,6 +156,10 @@ public:
         DWORD length = GetModuleFileNameA(nullptr, path, MAX_PATH);
         if (length > 0 && length < MAX_PATH)
         {
+            // The module path keeps the drive spelling of the launch ("c:\..."); FileHelper::AbsolutePath reports it
+            // upper-case, so every fixture path derived from here does too
+            if (length >= 2 && path[1] == ':')
+                path[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(path[0])));
             return fs::path(path).parent_path();
         }
 #endif

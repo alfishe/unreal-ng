@@ -594,6 +594,12 @@ std::string FileHelper::AbsolutePath(const std::string& path, bool resolveSymlin
     }
 
     result = LexicallyNormalPath(result);
+#ifdef _WIN32
+    // One spelling of the drive whether the path exists or not: the final-path API below reports it upper-case, a
+    // working directory or an argument may carry "c:"
+    if (HasDriveLetter(result))
+        result[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(result[0])));
+#endif
 
     if (resolveSymlinks && (FileExists(result) || FolderExists(result)))
     {

@@ -41,7 +41,10 @@ struct Options;
 ///   motor, write protect, geometry). +3 uPD765A (`controller` says which):
 ///   phase, main status register, the command in hand with its C H R N,
 ///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
-///   and seek state, and drives A and B.
+///   and seek state, and drives A and B. Pentagon 2.666 LE (no floppy
+///   controller): its FPGA's WD1793 imitation on the RAM disk - registers,
+///   status bits, the command in hand, the system register, the head, the
+///   RAM disk's pages and drive A.
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
 struct NextSdJournalQuery;   // emulator/io/z80n/nextsdjournal.h
 struct NextDivMmcJournalQuery;  // emulator/io/z80n/nextdivmmcjournal.h
@@ -327,6 +330,10 @@ StateNode SprinterPaging(EmulatorContext* context);
 /// INT type), #7EFD (ROM plane, turbo, 640x200, Magic blocked), #78FD and the #8000 page, #DFFD and the #C000 page,
 /// the scroll start (#7AFD / #7CFD), #1FFD bit 2 and the Magic-button freeze. `available` false on other models
 StateNode GmxPaging(EmulatorContext* context);
+/// Pentagon 2.666 LE: #xx77 (video mode, 28 MHz, CP/M), #EFF7 (P16, 128 mode, RAM 0, turbo0, CMOS), the clock, DOS,
+/// the active window map (#7FFD bit 4) with each window's register, kind and page, the other map's registers.
+/// `available` false on other models
+StateNode P2666Paging(EmulatorContext* context);
 /// The text of the picture's text squares (80 x 32: BIOS SETUP, DSS) from the mode table - the
 /// Sprinter has no ZX screen to OCR; graphics squares read as spaces
 StateNode SprinterText(EmulatorContext* context);

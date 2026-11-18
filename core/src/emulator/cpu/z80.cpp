@@ -1109,6 +1109,13 @@ void Z80::RecomputeFrameTiming()
     _frameLimit = state.BaseToCpuT(config.frame);
     _intStart = state.BaseToCpuT(config.intstart);
     _intEnd = state.BaseToCpuT(config.intstart + config.intlen);
+    uint32_t boardStart = 0;
+    uint32_t boardEnd = 0;
+    if (_context->pPortDecoder && _context->pPortDecoder->FrameIntWindow(boardStart, boardEnd))
+    {
+        _intStart = boardStart;
+        _intEnd = boardEnd;
+    }
 
     // INT window crossing the frame end: its tail lives at the start of the
     // next frame (raised there by BeginFrame), so the in-frame end wraps

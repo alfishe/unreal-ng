@@ -61,6 +61,8 @@ protected:
 
     uint32_t _rgbaColors[256];       // Colors when no Flash or Flash is in blinking=OFF state
     uint32_t _rgbaFlashColors[256];  // Colors when Flash is in blinking=ON state
+    uint32_t _rgbaBorderColors[16] = {};  // Border colour of each border index (bit 3 = bright, 16 colour borders)
+    uint32_t _paletteSeen[16] = {};       // EmulatorState::atm.palette as RefreshProgrammablePalette last built the tables
 
     // Plane B values per attribute byte (ZX DLSS): the same ink/paper choice as
     // _rgbaColors/_rgbaFlashColors, encoded as Screen::kPlaneB* describes
@@ -165,6 +167,7 @@ public:
     void SetVideoMode(VideoModeEnum mode) override;
 
     void SetBorderColor(uint8_t color) override;
+    void RefreshProgrammablePalette() override;
 
     /// @brief ZX DLSS plane B on/off: also swaps the ZX range renderer for its
     /// plane-B variant (no per-pixel check on the disabled path)

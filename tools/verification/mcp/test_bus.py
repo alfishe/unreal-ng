@@ -4,6 +4,7 @@ finding with the program's PC, the DMA's bytes as the DMA's), the SD card timing
 values are asserted by the core tests (busanalyzer_test.cpp); this checks what only the live MCP shows: the text an agent reads."""
 
 import os
+import sys
 
 from mcplib import main, expect
 
@@ -72,4 +73,4 @@ def test_sd_timing_export_and_refusals(s):
 
 
 if __name__ == '__main__':
-    main(globals())
+    sys.exit(main(globals()))

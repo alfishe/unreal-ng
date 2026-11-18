@@ -1,6 +1,7 @@
 #include "filehelper_test.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -235,8 +236,9 @@ TEST_F(FileHelper_Test, AbsolutePath_NonPlatformSpecific)
         string result = FileHelper::AbsolutePath(testPaths[i]);
         std::string expected = reference[i];
 #ifdef _WIN32
-        // On Windows a rooted path without drive letter lives on the current drive and uses backslashes
+        // On Windows a rooted path without drive letter lives on the current drive (upper-case) and uses backslashes
         expected = std::filesystem::current_path().root_name().string() + FileHelper::NormalizePath(expected, '\\');
+        expected[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(expected[0])));
 #endif
         ASSERT_EQ(result, expected) << "Test path: " << testPaths[i];
     }
@@ -1030,10 +1032,18 @@ namespace
         return kIsWindows ? windows : posix;
     }
 
-    /// Current working directory, native separators, no trailing separator
+    /// AbsolutePath spells the drive letter upper-case whatever the launch used ("c:" from a lower-case cwd)
+    std::string UpperDrive(std::string path)
+    {
+        if (kIsWindows && path.size() >= 2 && path[1] == ':')
+            path[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(path[0])));
+        return path;
+    }
+
+    /// Current working directory as AbsolutePath reports it: native separators, no trailing separator
     std::string Cwd()
     {
-        std::string cwd = std::filesystem::current_path().string();
+        std::string cwd = UpperDrive(std::filesystem::current_path().string());
         while (cwd.size() > 1 && (cwd.back() == '\\' || cwd.back() == '/'))
             cwd.pop_back();
         return cwd;
@@ -1051,7 +1061,7 @@ namespace
     /// "C:" on Windows (the drive of the current directory), "" elsewhere
     std::string CurrentDrive()
     {
-        return kIsWindows ? std::filesystem::current_path().root_name().string() : std::string();
+        return kIsWindows ? UpperDrive(std::filesystem::current_path().root_name().string()) : std::string();
     }
 
     /// Home directory, no trailing separator, "" when unknown

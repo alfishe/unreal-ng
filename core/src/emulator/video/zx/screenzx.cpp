@@ -1,10 +1,12 @@
 #include "screenzx.h"
+#include "emulator/video/p2666/p2666geometry.h"
 #include "emulator/video/videofamily.h"
 #include "emulator/video/zx/cellexpand.h"
 #include "emulator/video/zx/zxgeometry.h"
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 
 #include "common/stringhelper.h"
 #include "emulator/cpu/core.h"
@@ -32,6 +34,11 @@ ScreenZX::~ScreenZX()
 void ScreenZX::InitFrame()
 {
     Screen::InitFrame();
+
+    // A palette restored behind the decoder's back (snapshot, TTD seek): the colour tables follow it
+    if (_context != nullptr && _context->config.mem_model == MM_P2666 &&
+        std::memcmp(_paletteSeen, _context->emulatorState.atm.palette, sizeof(_paletteSeen)) != 0)
+        RefreshProgrammablePalette();
 
     Z80* cpu = (_context && _context->pCore) ? _context->pCore->GetZ80() : nullptr;
     const bool on = _eventsEnabled && cpu && _memory && FamilyOf(_mode) == VideoFamily::Zx && !cpu->portInterceptor;
@@ -165,11 +172,38 @@ void ScreenZX::CreateTables()
         _planeBPaper[idx] = static_cast<uint16_t>(kPlaneBRoleScreen | (paper << 8) | idx);
     }
 
+    // Border colours: the ink colours of the 8 border indices (the bright half repeats them; a machine with a
+    // programmable palette builds all 16 in RefreshProgrammablePalette)
+    for (int idx = 0; idx < 16; idx++)
+        _rgbaBorderColors[idx] = _rgbaColors[idx & 0x07];
+    RefreshProgrammablePalette();
+
     // Initialize latched border color from palette (default border = 0/black)
-    _latchedBorderColorRGBA = _rgbaColors[0];
+    _latchedBorderColorRGBA = _rgbaBorderColors[0];
 
     // Screen mode dependent
     CreateTimingTable();
+}
+
+/// Machines whose ZX mode goes through a 16-entry programmable palette (Pentagon 2.666 LE: every mode, the border
+/// included, hardware-reference.md §6.2): ink, paper and border from EmulatorState::atm.palette, index = colour +
+/// bright * 8. Other machines keep the fixed ZX colours of CreateTables
+void ScreenZX::RefreshProgrammablePalette()
+{
+    if (_context == nullptr || _context->config.mem_model != MM_P2666)
+        return;
+    const uint32_t* palette = _context->emulatorState.atm.palette;
+    for (int idx = 0; idx < 0x100; idx++)
+    {
+        const int bright = (idx & 0x40) ? 8 : 0;
+        _rgbaColors[idx] = palette[(idx & 0x07) | bright];
+        _rgbaFlashColors[idx] = palette[((idx >> 3) & 0x07) | bright];
+    }
+    for (int idx = 0; idx < 16; idx++)
+        _rgbaBorderColors[idx] = palette[idx];
+    std::memcpy(_paletteSeen, palette, sizeof(_paletteSeen));
+    // The border latch takes the new colour of its index
+    _latchedBorderColorRGBA = _rgbaBorderColors[_latchedBorderColorIndex & 0x0F];
 }
 
 // Pre-calculate render position based on t-states
@@ -320,8 +354,8 @@ void ScreenZX::CreateTstateLUT()
                 entry.framebufferX = static_cast<uint16_t>(framebufferX);
                 entry.framebufferY = static_cast<uint16_t>(framebufferY);
 
-                // Check if within ZX screen area (using timing boundaries)
-                if (t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
+                // Check if within ZX screen area (using timing boundaries); a hidden paper is border
+                if (!_paperHidden && t >= _rasterState.screenAreaStart && t <= _rasterState.screenAreaEnd)
                 {
                     const uint16_t pixelX = pixelInLine;  // Use pixel position for screen detection
 
@@ -687,7 +721,7 @@ uint32_t ScreenZX::GetPixelOrBorderColorForTState(uint32_t tstate)
     else
     {
         // It's border
-        result = _rgbaColors[_borderColor];
+        result = _rgbaBorderColors[_borderColor & 0x0F];
     }
 
     return result;
@@ -806,15 +840,18 @@ void ScreenZX::SetBorderColor(uint8_t color)
     if (_mode == M_PENTAGON128K || _mode == M_PMC || _mode == M_P16 ||
         _mode == M_P384 || _mode == M_PHR)
     {
-        uint32_t nextT = _prevTstate + 1;
-        if (nextT < _rasterState.maxFrameTiming)
+        // Pentagon 2.666 LE: the border goes through the line buffer border_buf and shows 3.25 T after the FE latch
+        // (P2666Geometry::kBorderHoldT), measured on zx_main in ghdl
+        const uint32_t hold = _geometryModel == MM_P2666 ? P2666Geometry::kBorderHoldT : 1;
+        const uint32_t lastOld = std::min<uint32_t>(_prevTstate + hold, _rasterState.maxFrameTiming - 1);
+        if (lastOld > _prevTstate)
         {
-            Draw(nextT);  // Render T+1 with OLD color
-            _prevTstate = nextT;
+            DrawRange(_prevTstate + 1, lastOld);  // Render T+1 (.. T+hold) with OLD color
+            _prevTstate = lastOld;
         }
     }
 
-    _borderColor = color & 0b0000'0111;
+    _borderColor = color & _borderMask;
     NoteVideoWrite();
 
     // The event rule: this step is drawn at its end as well, as the per-step draw would (Screen::NoteStepEnd)
@@ -931,7 +968,7 @@ void ScreenZX::DrawRangeZXImpl(uint32_t fromTstate, uint32_t toTstate)
     const uint8_t borderStep = _rasterState.borderUpdateTStates;
     const uint8_t borderPhase = borderStep / 2;
     const uint8_t borderColor = _borderColor;
-    const uint32_t borderColorRGBA = inkColors[borderColor];
+    const uint32_t borderColorRGBA = _rgbaBorderColors[borderColor & 0x0F];
 
     // ULA latches: pixel + attribute bytes once per 8-pixel cell (HDL
     // fetch-latch-shift), border color at 4T phase 2 on Ferranti ULAs
@@ -1145,7 +1182,7 @@ void ScreenZX::DrawOriginal(uint32_t tstate)
                 // Render border
                 // It is guaranteed that border pixels are within the same line
                 int framebufferOffset = destY * rasterDescriptor.fullFrameWidth + destX;
-                uint32_t borderColor = _rgbaColors[_borderColor];
+                uint32_t borderColor = _rgbaBorderColors[_borderColor & 0x0F];
                 *(framebufferARGB + framebufferOffset) = borderColor;
                 *(framebufferARGB + framebufferOffset + 1) = borderColor;
             }
@@ -1192,7 +1229,7 @@ void ScreenZX::DrawLUT_Ternary(uint32_t tstate)
     }
     else
     {
-        uint32_t borderColor = _rgbaColors[_borderColor];
+        uint32_t borderColor = _rgbaBorderColors[_borderColor & 0x0F];
         framebufferARGB[framebufferOffset] = borderColor;
         framebufferARGB[framebufferOffset + 1] = borderColor;
     }
@@ -1337,7 +1374,7 @@ void ScreenZX::RenderFrameBatch()
     // across the whole frame instead so ScreenHQ=OFF still produces correct
     // output (DrawRange dispatches to the family renderer).
     if (_mode == M_ATM16 || _mode == M_ATMHR || _mode == M_ATMTX || _mode == M_ATMTL ||
-        _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR || _mode == M_GMX)
+        _mode == M_P16 || _mode == M_PMC || _mode == M_PROFIHR || _mode == M_GMX || _paperHidden)
     {
         if (_framebuffer.memoryBuffer == nullptr)
             return;
@@ -1367,7 +1404,7 @@ void ScreenZX::FillBorderWithColor(uint8_t color)
 void ScreenZX::FillBorderWithColor_Original(uint8_t color)
 {
     // Get RGBA color from palette by index
-    const uint32_t borderColor = _rgbaColors[color];
+    const uint32_t borderColor = _rgbaBorderColors[color & 0x0F];
 
     uint32_t* framebufferARGB = static_cast<uint32_t*>(static_cast<void*>(_framebuffer.memoryBuffer));
     [[maybe_unused]] const size_t framebufferARGBSizePixels = _framebuffer.memoryBufferSize / sizeof(uint32_t);
@@ -1428,7 +1465,7 @@ void ScreenZX::FillBorderWithColor_Original(uint8_t color)
 /// @brief Optimized implementation - row-based std::fill_n (5-8x faster)
 void ScreenZX::FillBorderWithColor_Optimized(uint8_t color)
 {
-    const uint32_t borderColor = _rgbaColors[color];
+    const uint32_t borderColor = _rgbaBorderColors[color & 0x0F];
     uint32_t* fb = reinterpret_cast<uint32_t*>(_framebuffer.memoryBuffer);
 
     if (fb == nullptr)

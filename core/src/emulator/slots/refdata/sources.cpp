@@ -148,6 +148,10 @@ constexpr SourceRef kSources[] = {
       "docs/inprogress/2026-10-03-zx-bus-slots/research-machines.md" },
     { Src::RepoSlotsResearchCards, "unreal-ng: ZX-bus slots research, cards",
       "docs/inprogress/2026-10-03-zx-bus-slots/research-cards.md" },
+    { Src::KoePentagon2666, "koe, Pentagon 2.666 LE: FPGA sources (LE/PAE_FPGA/PaE.vhd)",
+      "https://github.com/koe1234/pentagon_2_666_le" },
+    { Src::RepoPentagon2666, "unreal-ng: Pentagon 2.666 LE hardware reference",
+      "docs/inprogress/2026-11-11-pentagon-2666-le/hardware-reference.md" },
 };
 
 } // namespace

@@ -4,6 +4,7 @@ copper-instruction breakpoints (control_execution bp_add / bp_list). The values 
 live MCP shows: the aspect text, the parameters, the type names and the refusals."""
 
 import json
+import sys
 
 from mcplib import main, expect
 
@@ -67,4 +68,4 @@ def test_next_breakpoint_types(s):
 
 
 if __name__ == '__main__':
-    main(globals())
+    sys.exit(main(globals()))
