@@ -4546,6 +4546,30 @@ void RegisterInspectState(ToolRegistry& registry)
                             {
                                 if (value.isMember("available") && !value["available"].asBool())
                                     out << "\n[fdc] " << value["description"].asString();
+                                else if (value.isMember("ram_disk"))
+                                {
+                                    // Pentagon 2.666 LE: the FPGA's WD1793 imitation on the RAM disk (no floppy controller)
+                                    const Json::Value& regs = value["registers"];
+                                    const Json::Value& sys = value["system_register"];
+                                    char line[256];
+                                    snprintf(line, sizeof(line),
+                                             ": %s, command #%02X, status #%02X track %u sector %u data #%02X%s%s, "
+                                             "system_register #%02X (drive %u side %u%s), head cylinder %u, ram_disk pages #%02X-#%02X",
+                                             value["phase"].asCString(), regs["command"].asUInt(), regs["status"].asUInt(),
+                                             regs["track"].asUInt(), regs["sector"].asUInt(), regs["data"].asUInt(),
+                                             value["signals"]["intrq"].asBool() ? ", INTRQ" : "",
+                                             value["signals"]["drq"].asBool() ? ", DRQ" : "", sys["value"].asUInt(),
+                                             sys["drive"].asUInt(), sys["side"].asUInt(), sys["reset_held"].asBool() ? ", reset held" : "",
+                                             value["head_cylinder"].asUInt(), value["ram_disk"]["first_page"].asUInt(),
+                                             value["ram_disk"]["last_page"].asUInt());
+                                    out << "\n[fdc] " << value["controller"].asString() << line;
+                                    const Json::Value& drives = value["drives"];
+                                    for (Json::ArrayIndex i = 0; i < drives.size(); ++i)
+                                        if (drives[i]["present"].asBool() && drives[i]["inserted"].asBool())
+                                            out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
+                                                << " track " << drives[i]["track"].asInt()
+                                                << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                }
                                 else if (value.isMember("phase"))
                                 {
                                     // +3 uPD765A
