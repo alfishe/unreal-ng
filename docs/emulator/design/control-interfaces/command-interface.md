@@ -3284,6 +3284,51 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 
 There is no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N` / `--scanlines L`. A dial or a key steps through the history in a unit with the action `ttd.seek_by` (`unit`: frames, seconds, batch, instructions, tstates, scanlines, bookmarks) and `ttd.unit_back` / `ttd.unit_forward` (see §16).
 
+#### TTD on a sound card's CPU
+
+The history is also browsed on the CPU of a sound card: the General Sound / NeoGS (`--cpu gs` or `neogs`) and the
+ZX-MultiSound's GS (`--cpu ms` or `multisound`). The card counts its instructions; a count is a position in the
+history, so the card is seeked, stepped and reverse-continued like the main CPU
+([gs-debugger design §8](../../../inprogress/2026-09-27-gs-debugger/design.md)).
+
+- **Every card move is a replay to a card instruction count.** The frame whose checkpoint is the latest at or
+  before the count is replayed; the card is caught up to that count and kept there.
+- **The main CPU** stands at its last completed instruction at or before the card's moment, with its registers
+  there, plus the T-states the card's moment is into its next instruction (`t_offset`; `inside` when the moment is
+  within one, e.g. inside an LDIR step). The reply's `frame` / `tinframe` are that boundary.
+- **Running on** (run, resume, a frame, a main-CPU step) first lets the main CPU reach its boundary with the card
+  as the boundary has it, then runs both as recorded. Any main-CPU move ends the card position.
+- **Status and position** list every card CPU in `cards[]`: `cpu`, `known`, `instruction` (the count; `null` for a
+  recording made before the count existed), `pc`, `card_position` (the machine stands at a card position),
+  `caught_up`, and while at a card position `main {frame, tinframe, pc, t_offset, inside}`.
+
+| Verb (`TTDControl`) | Options with `cpu` | What it does |
+|---|---|---|
+| `seek` | `cpu`, `instruction` (required) | The card at that instruction count |
+| `step-instruction` | `cpu`, `dir` (`back` / `forward`), `count` (default 1) | N card instructions back or forward |
+| `reverse-step` | `cpu`, `count` (required) | N card instructions back |
+| `reverse-continue` | `cpu`, `max_frames` (default 1000) | Back to the latest earlier hit of the card's own breakpoints (`bp ... --cpu gs`); the hits are found by replay, the breakpoints' hit counts stay as they were and taps do not fire |
+
+The reply: `cpu`, `status` (`ok`, `at_start`, `at_end`, `no_hit`, `no_card`, `no_count`, `no_history`,
+`no_breakpoints`, `failed`), `reached`, `from`, `target`, `message` (when nothing moved), `card` (the readout above),
+`frame`, `tinframe`, `state`, `check`; reverse-continue adds `searched_frames`, `truncated` and
+`breakpoint {id, kind, address}`. `at_start` / `at_end` / `no_hit` are answers (HTTP 200, `reached: false`, the
+machine where it was); `no_card`, `no_count`, `no_history`, `no_breakpoints` are 409; a bad option is 400 (an
+unknown `cpu`; `instruction` or `max_frames` without `cpu`; another unit with `cpu`). `cpu main` is the main CPU's
+verb as before.
+
+| Plane | Seek | Step | Reverse continue | Readout |
+|---|---|---|---|---|
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back` / `si-forward --cpu gs [--count N]`, `ttd reverse-step --cpu gs [--count N]` | `ttd reverse-continue --cpu gs [--max-frames N]` | `ttd position` (a `Card gs:` line) |
+| WebAPI / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}`, `POST /ttd/reverse-step {cpu, count}` | `POST /ttd/reverse-continue {cpu, max_frames}` | `GET /ttd/position`, `GET /ttd/status` (`cards`) |
+| MCP `time_travel` | `card_seek` (`cpu`, `instruction`) | `card_step` (`cpu`, `count`; negative: back) | `card_reverse_continue` (`cpu`, `max_frames`) | `card_position` (`cpu` optional) |
+| Lua | `ttd_card_seek(cpu, n)` | `ttd_card_step(cpu [, n])` | `ttd_card_reverse_continue(cpu [, max_frames])` | `ttd_card_position([cpu])` |
+| Python | `emu.ttd_card_seek(cpu, instruction)` | `emu.ttd_card_step(cpu, n=1)` | `emu.ttd_card_reverse_continue(cpu, max_frames=None)` | `emu.ttd_card_position(cpu=None)` |
+
+Example: `ttd si-back --cpu gs --count 5` prints `TTD: gs at instruction 1200 (from 1205)` and
+`  Card gs: instruction 1200, PC #0A3C (card position; main CPU at frame 12 t 30411, PC #8009, +7 T inside its
+instruction)`.
+
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
 The file is the engine's session file (schema 2): a container of records with a

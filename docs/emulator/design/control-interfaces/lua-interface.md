@@ -1260,6 +1260,17 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+
+-- On a sound card's CPU ("gs" / "neogs", "ms" / "multisound"; command-interface.md -> TTD on a sound card's CPU):
+-- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
+ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
+ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
+                                     --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
+ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
+                                     --    main = {frame, tinframe, pc, t_offset, inside} }; nil: no such card
+ttd_card_position()                  --> every card CPU (an array)
+-- A bad request (unknown cpu) answers { ok = false, error = "..." }
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })

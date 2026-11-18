@@ -1507,6 +1507,36 @@ public:
     ttd::TTDReverseStepOverResult ReverseStepOver();
 
     // -----------------------------------------------------------------------
+    // Card CPU positions (gs-debugger design §8; owner decision 2026-11-17, Q2 of the phase-3 TDD). A position on
+    // the CPU of a sound card (DebugCpuId GS: General Sound or NeoGS; MultiSoundGS: the MultiSound's GS) is its
+    // instruction count. Every move is a replay: the frame whose checkpoint holds the largest count at or below the
+    // target is replayed in tight mode until the card reaches it (GSCardTarget's scan), the main CPU is put at its
+    // last instruction boundary at or before the card's moment, and the card's copy from the scan is loaded. The card
+    // position stays until the machine moves: a run first puts the card back as the seek to that boundary left it
+    // (the main CPU finishes its instruction with the card behind it, as recorded).
+    // -----------------------------------------------------------------------
+
+    /// Where @p cpu's card stands now (a read: nothing runs); known false without a card with a CPU or a count
+    ttd::TTDCardPosition CardPositionNow(DebugCpuId cpu) const;
+    /// The machine stands at a card position (of any card)
+    bool AtCardPosition() const;
+    /// Seek to the moment @p cpu's card has run @p instruction instructions (at the boundary of the next one)
+    ttd::TTDCardMoveResult SeekToCardInstruction(DebugCpuId cpu, uint64_t instruction);
+    /// @p delta card instructions forward (> 0) or back (< 0) from the card's count now: at a main position the count
+    /// of the card run up to the main CPU's moment
+    ttd::TTDCardMoveResult StepCardInstructions(DebugCpuId cpu, int64_t delta);
+    /// Frames a card reverse continue replays at most by default
+    static constexpr uint64_t kCardReverseMaxFrames = 1000;
+    /// Back to the newest hit of @p cpu's card breakpoints (its own breakpoint manager, as a live run stops on them)
+    /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
+    /// answer says so (NoHit, NoBreakpoints)
+    ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
+    /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
+    /// parking the machine)
+    std::vector<ttd::TTDCardPosition> PublishedCardPositions() const;
+
+    // -----------------------------------------------------------------------
     // Phase 4 reverse execution (extends single-opcode step helpers with
     // multi-step / reverse-continue primitives).
     //
@@ -1805,6 +1835,31 @@ private:
     /// (which legitimately seeks during Recording — it controls the timeline
     /// truncation itself, so the sorted invariant is preserved).
     bool SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult);
+
+    /// region <Card CPU positions (ttdcontrollercardpositions.cpp)>
+    /// The card position the machine stands at: the card's copy from the scan, its state as the seek to the main
+    /// boundary left it (put back before the machine runs), the readout. Null: none
+    struct CardStand;
+    std::shared_ptr<CardStand> _cardStand;
+    /// The card's count at frame @p frame's checkpoint on the active lineage (a restore: the machine moves there);
+    /// false when the frame is out of the history (before: it precedes the earliest kept frame) or has no count
+    bool CardCountAtFrame(DebugCpuId cpu, uint64_t frame, uint64_t& count, bool& before);
+    /// The latest frame of [first, last] whose checkpoint count is at or below @p instruction, from @p hint
+    bool FindCardStartFrame(DebugCpuId cpu, uint64_t instruction, uint64_t hint, uint64_t& frame,
+                            ttd::TTDCardMoveResult& result);
+    /// The move itself (SeekToCardInstruction's body, inside an operation)
+    void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
+    /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
+    void LeaveCardStand();
+    /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again
+    void ReapplyCardStand();
+    /// The card position for PublishedCardPositions (at the end of every move)
+    void PublishCardReadouts();
+    mutable std::mutex _cardReadoutMutex;
+    std::vector<ttd::TTDCardPosition> _cardReadouts;
+    /// endregion </Card CPU positions>
 
     // -----------------------------------------------------------------------
     // Internal seek helpers (Phase 2 Item 4; parent TTD §8.1 step 3)
@@ -2199,6 +2254,8 @@ private:
         std::vector<uint8_t> framebuffer;
         std::vector<uint16_t> planeB;      ///< ZX DLSS plane B, rendered in the same pass as the pixels
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
+        /// The card position the caller stood at (a read that replays elsewhere comes back to it)
+        std::shared_ptr<CardStand> cardStand;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable

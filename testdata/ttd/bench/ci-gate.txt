@@ -10,6 +10,7 @@
 # ATM3/idle rows updated 2026-11-14 (6de779c75, ZX-Evo ERS floppy boot): with no NVRAM file the machine starts with the EVO Reset Service defaults (virtual drive on D, CRC valid) instead of blank CMOS, so the idle ROM takes another path: RAM, compression, DS12887, ATM paging and Beta Disk rows moved.
 # 48K/idle and PENTAGON/game bm7_file rows updated 2026-11-15 (Z80 Q latch per instruction class, qregister.h): the checkpoints carry the corrected Q, the compressed file moved by 3 / 5 bytes; no other row changed.
 # bm7_file rows updated 2026-11-17 (F3, chunked streams): the header declares the chunked twins of the write journal and the holder streams (stream 0x8000 + S, "chunked-<name>"), 102 bytes more in every file; no other row changed.
+# ATM3/idle, PENTAGON/idle and PENTAGON/game rows updated 2026-11-17 (card-positions, gs-debugger design §8): the NeoGS blob (id 12) carries the card CPU's instruction count, which advances every frame: the device-blob, bm3_ram_payload and NeoGS bm9 rows grow by ~6 bytes per frame, the file by ~5 (first NeoGS blob +13 / +14 bytes); no other row moved beyond its tolerance.
 48K/idle bm2_work_compress_calls_opf 1.033333 0
 48K/idle bm2_work_compress_input_bpf 4232.533333 0
 48K/idle bm2_work_decoded_opf 0.000000 0
@@ -71,7 +72,7 @@ ATM3/idle bm2_work_compress_calls_opf 0.816667 0
 ATM3/idle bm2_work_compress_input_bpf 3345.066667 0
 ATM3/idle bm2_work_decoded_opf 0.000000 0
 ATM3/idle bm2_work_delta_base_bpf 41984.000000 0
-ATM3/idle bm2_work_device_blobs_bpf 163.900000 0
+ATM3/idle bm2_work_device_blobs_bpf 169.550000 0
 ATM3/idle bm2_work_device_state_bpf 43647.000000 0
 ATM3/idle bm2_work_pages_visited_opf 0.000000 0
 ATM3/idle bm2_work_scanned_bpf 69632.000000 0
@@ -83,13 +84,13 @@ ATM3/idle bm3_device_regions_bpf 0.000000 0
 ATM3/idle bm3_input_journal_bpf 0.000000 0
 ATM3/idle bm3_journal_writes_opf 0.000000 0
 ATM3/idle bm3_page_refs_bpf 2954.533333 25
-ATM3/idle bm3_ram_payload_bpf 6613.816667 0
+ATM3/idle bm3_ram_payload_bpf 6619.583333 0
 ATM3/idle bm3_total_bpf 65097.966667 25
 ATM3/idle bm3_write_journal_bpf 735.766667 25
 ATM3/idle bm4_resident_bpf 98911.466667 25
 ATM3/idle bm4_resident_bytes 5934688.000000 25
-ATM3/idle bm7_file_bpf 5949.333333 0
-ATM3/idle bm7_file_bytes 356960.000000 0
+ATM3/idle bm7_file_bpf 5954.850000 0
+ATM3/idle bm7_file_bytes 357291.000000 0
 ATM3/idle bm9_device.atachannel_bpf 0.850000 0
 ATM3/idle bm9_device.atachannel_bytes 4256.000000 0
 ATM3/idle bm9_device.atachannel_first_bytes 51.000000 0
@@ -174,10 +175,10 @@ ATM3/idle bm9_device.uart_bpf 0.666667 0
 ATM3/idle bm9_device.uart_bytes 932.000000 0
 ATM3/idle bm9_device.uart_first_bytes 40.000000 0
 ATM3/idle bm9_device.uart_steady_bpf 0.000000 0
-ATM3/idle bm9_device.zxbus.1.neogs_bpf 38.916667 0
+ATM3/idle bm9_device.zxbus.1.neogs_bpf 44.683333 0
 ATM3/idle bm9_device.zxbus.1.neogs_bytes 21660.000000 0
-ATM3/idle bm9_device.zxbus.1.neogs_first_bytes 315.000000 0
-ATM3/idle bm9_device.zxbus.1.neogs_steady_bpf 34.237288 0
+ATM3/idle bm9_device.zxbus.1.neogs_first_bytes 328.000000 0
+ATM3/idle bm9_device.zxbus.1.neogs_steady_bpf 39.881356 0
 ATM3/idle bm9_device.zxbus.2.moonsound_bpf 51.450000 0
 ATM3/idle bm9_device.zxbus.2.moonsound_bytes 4562.000000 0
 ATM3/idle bm9_device.zxbus.2.moonsound_first_bytes 407.000000 0
@@ -212,7 +213,7 @@ PENTAGON/game bm2_work_compress_calls_opf 5.766667 0
 PENTAGON/game bm2_work_compress_input_bpf 23620.266667 0
 PENTAGON/game bm2_work_decoded_opf 0.000000 0
 PENTAGON/game bm2_work_delta_base_bpf 35089.066667 0
-PENTAGON/game bm2_work_device_blobs_bpf 196.283333 0
+PENTAGON/game bm2_work_device_blobs_bpf 202.050000 0
 PENTAGON/game bm2_work_device_state_bpf 32665.000000 0
 PENTAGON/game bm2_work_pages_visited_opf 0.000000 0
 PENTAGON/game bm2_work_scanned_bpf 34406.400000 0
@@ -224,13 +225,13 @@ PENTAGON/game bm3_device_regions_bpf 0.000000 0
 PENTAGON/game bm3_input_journal_bpf 2.666667 0
 PENTAGON/game bm3_journal_writes_opf 0.000000 0
 PENTAGON/game bm3_page_refs_bpf 1458.450000 25
-PENTAGON/game bm3_ram_payload_bpf 3002.900000 0
+PENTAGON/game bm3_ram_payload_bpf 3008.783333 0
 PENTAGON/game bm3_total_bpf 80760.800000 25
 PENTAGON/game bm3_write_journal_bpf 5902.616667 25
 PENTAGON/game bm4_resident_bpf 104389.133333 25
 PENTAGON/game bm4_resident_bytes 6263348.000000 25
-PENTAGON/game bm7_file_bpf 6749.300000 0
-PENTAGON/game bm7_file_bytes 404958.000000 0
+PENTAGON/game bm7_file_bpf 6755.066667 0
+PENTAGON/game bm7_file_bytes 405304.000000 0
 PENTAGON/game bm9_device.atachannel_bpf 0.700000 0
 PENTAGON/game bm9_device.atachannel_bytes 4256.000000 0
 PENTAGON/game bm9_device.atachannel_first_bytes 42.000000 0
@@ -271,10 +272,10 @@ PENTAGON/game bm9_device.tape_bpf 0.400000 0
 PENTAGON/game bm9_device.tape_bytes 75.000000 0
 PENTAGON/game bm9_device.tape_first_bytes 24.000000 0
 PENTAGON/game bm9_device.tape_steady_bpf 0.000000 0
-PENTAGON/game bm9_device.zxbus.1.neogs_bpf 36.350000 0
+PENTAGON/game bm9_device.zxbus.1.neogs_bpf 42.233333 0
 PENTAGON/game bm9_device.zxbus.1.neogs_bytes 21660.000000 0
-PENTAGON/game bm9_device.zxbus.1.neogs_first_bytes 305.000000 0
-PENTAGON/game bm9_device.zxbus.1.neogs_steady_bpf 31.796610 0
+PENTAGON/game bm9_device.zxbus.1.neogs_first_bytes 318.000000 0
+PENTAGON/game bm9_device.zxbus.1.neogs_steady_bpf 37.559322 0
 PENTAGON/game bm9_device.zxbus.2.moonsound_bpf 45.133333 0
 PENTAGON/game bm9_device.zxbus.2.moonsound_bytes 4562.000000 0
 PENTAGON/game bm9_device.zxbus.2.moonsound_first_bytes 413.000000 0
@@ -301,7 +302,7 @@ PENTAGON/idle bm2_work_compress_calls_opf 1.083333 0
 PENTAGON/idle bm2_work_compress_input_bpf 4437.333333 0
 PENTAGON/idle bm2_work_decoded_opf 0.000000 0
 PENTAGON/idle bm2_work_delta_base_bpf 23347.200000 0
-PENTAGON/idle bm2_work_device_blobs_bpf 172.983333 0
+PENTAGON/idle bm2_work_device_blobs_bpf 178.750000 0
 PENTAGON/idle bm2_work_device_state_bpf 32665.000000 0
 PENTAGON/idle bm2_work_pages_visited_opf 0.000000 0
 PENTAGON/idle bm2_work_scanned_bpf 16384.000000 0
@@ -313,13 +314,13 @@ PENTAGON/idle bm3_device_regions_bpf 0.000000 0
 PENTAGON/idle bm3_input_journal_bpf 0.000000 0
 PENTAGON/idle bm3_journal_writes_opf 0.000000 0
 PENTAGON/idle bm3_page_refs_bpf 1458.450000 25
-PENTAGON/idle bm3_ram_payload_bpf 1216.016667 0
+PENTAGON/idle bm3_ram_payload_bpf 1221.916667 0
 PENTAGON/idle bm3_total_bpf 56486.816667 25
 PENTAGON/idle bm3_write_journal_bpf 421.216667 25
 PENTAGON/idle bm4_resident_bpf 77564.866667 25
 PENTAGON/idle bm4_resident_bytes 4653892.000000 25
-PENTAGON/idle bm7_file_bpf 978.816667 0
-PENTAGON/idle bm7_file_bytes 58729.000000 0
+PENTAGON/idle bm7_file_bpf 983.800000 0
+PENTAGON/idle bm7_file_bytes 59028.000000 0
 PENTAGON/idle bm9_device.atachannel_bpf 0.700000 0
 PENTAGON/idle bm9_device.atachannel_bytes 4256.000000 0
 PENTAGON/idle bm9_device.atachannel_first_bytes 42.000000 0
@@ -360,10 +361,10 @@ PENTAGON/idle bm9_device.tape_bpf 0.400000 0
 PENTAGON/idle bm9_device.tape_bytes 75.000000 0
 PENTAGON/idle bm9_device.tape_first_bytes 24.000000 0
 PENTAGON/idle bm9_device.tape_steady_bpf 0.000000 0
-PENTAGON/idle bm9_device.zxbus.1.neogs_bpf 35.683333 0
+PENTAGON/idle bm9_device.zxbus.1.neogs_bpf 41.583333 0
 PENTAGON/idle bm9_device.zxbus.1.neogs_bytes 21660.000000 0
-PENTAGON/idle bm9_device.zxbus.1.neogs_first_bytes 314.000000 0
-PENTAGON/idle bm9_device.zxbus.1.neogs_steady_bpf 30.966102 0
+PENTAGON/idle bm9_device.zxbus.1.neogs_first_bytes 328.000000 0
+PENTAGON/idle bm9_device.zxbus.1.neogs_steady_bpf 36.728814 0
 PENTAGON/idle bm9_device.zxbus.2.moonsound_bpf 44.533333 0
 PENTAGON/idle bm9_device.zxbus.2.moonsound_bytes 4562.000000 0
 PENTAGON/idle bm9_device.zxbus.2.moonsound_first_bytes 402.000000 0

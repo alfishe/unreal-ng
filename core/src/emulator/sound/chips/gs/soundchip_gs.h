@@ -182,7 +182,16 @@ public:
     /// "is the GS coprocessor doing anything at all" (CLI/WebAPI/MCP/Lua/Python
     /// all read this via getActivityCounters()).
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
-    void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
+    void resetActivityCounters() override
+    {
+        _instructionCountOffset += static_cast<int64_t>(_activityCounters.cpuSteps);   // the count goes on
+        _activityCounters = GSActivityCounters{};
+    }
+    bool cardInstructionCount(uint64_t& count) const override
+    {
+        count = _activityCounters.cpuSteps + static_cast<uint64_t>(_instructionCountOffset);
+        return _instructionCountKnown;
+    }
 
     /// Structured event trace (host ports, GS-side ports, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session model
@@ -309,6 +318,9 @@ public:
 
     /// Fixed part of the TTD blob (everything except the RAM image)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
+    /// The card CPU's instruction count in the fixed part: a little-endian u64, then its flag byte (1: present)
+    static constexpr size_t TTD_COUNT_OFFSET = 59;
+    static constexpr size_t TTD_COUNT_FLAG_OFFSET = 67;
 
     /// Time-travel engine region (Phase 1, Step 6): the card RAM (128-512 KB);
     /// the engine's blob is the fixed state only
@@ -538,6 +550,9 @@ private:
 
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;
+    // The instruction count (cardInstructionCount) = cpuSteps + this; false after a TTD blob without a count
+    int64_t _instructionCountOffset = 0;
+    bool _instructionCountKnown = true;
     GSPortTraceRecorder _portTrace;
     IGSBusObserver* _busObserver = nullptr;
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus

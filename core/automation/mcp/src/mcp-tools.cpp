@@ -5890,6 +5890,49 @@ std::string FormatFrameRuns(const Json::Value& frames)
     return out;
 }
 
+/// A card CPU's readout (the position verb's cards[], a card move's card), one line
+std::string FormatCardReadout(const Json::Value& card)
+{
+    std::string text = "Card " + card["cpu"].asString() + ": ";
+    if (!card.get("known", false).asBool())
+        return text + "no instruction count (a recording made before them)";
+    const Json::Value& main = card["main"];
+    text += "instruction " + std::to_string(card["instruction"].asUInt64()) + ", PC " + Hex16(card["pc"].asUInt());
+    if (card.get("card_position", false).asBool())
+    {
+        text += " (card position; main CPU at " + FormatTimePoint(main["frame"], main["tinframe"]) + " PC " +
+                Hex16(main["pc"].asUInt());
+        if (main.get("inside", false).asBool())
+            text += ", " + std::to_string(main["t_offset"].asUInt()) + " T into its next instruction";
+        text += ")";
+    }
+    else
+        text += " (as the card last ran)";
+    return text;
+}
+
+/// A card move's reply (seek / step-instruction / reverse-continue with cpu)
+std::string FormatCardMove(const Json::Value& b)
+{
+    std::string text;
+    if (b.get("reached", false).asBool())
+    {
+        text = b["cpu"].asString() + " at card instruction " + std::to_string(b["target"].asUInt64()) + " (from " +
+               std::to_string(b["from"].asUInt64()) + ")";
+        if (b.isMember("breakpoint"))
+            text += ": breakpoint " + std::to_string(b["breakpoint"]["id"].asUInt()) + " (" +
+                    b["breakpoint"]["kind"].asString() + " " + Hex16(b["breakpoint"]["address"].asUInt()) + ")";
+    }
+    else
+        text = b["cpu"].asString() + " did not move (" + b["status"].asString() + "): " + b["message"].asString();
+    if (b.isMember("searched_frames"))
+        text += "; searched " + std::to_string(b["searched_frames"].asUInt64()) + " frame(s)" +
+                (b.get("truncated", false).asBool() ? " (max_frames reached)" : "");
+    if (b.isMember("card"))
+        text += "\n" + FormatCardReadout(b["card"]);
+    return text;
+}
+
 void RegisterTimeTravel(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -5904,7 +5947,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "branch_switch", "branch_update", "branch_delete", "branch_prune", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
-                               "memory_at", "memory_diff"})
+                               "memory_at", "memory_diff", "card_seek", "card_step", "card_reverse_continue",
+                               "card_position"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -5918,6 +5962,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
+        "on a sound card's CPU ('cpu' gs / neogs / ms / multisound; the main CPU follows by replay, shown at its last "
+        "completed instruction with the T-states into the next): 'card_seek' (to card 'instruction', its count), "
+        "'card_step' ('count' card instructions, negative: back), 'card_reverse_continue' (back to the card's "
+        "previous breakpoint hit, its own breakpoints; 'max_frames' bounds the search, default 1000), "
+        "'card_position' (each card's instruction, PC and where the main CPU stands), "
         "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_step_over' (one instruction back, "
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
@@ -6207,7 +6256,21 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines)";
+    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines); "
+                                                   "card_step: card instructions to step (negative: back; default 1)";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* cpu : {"gs", "neogs", "ms", "multisound"})
+        schema["properties"]["cpu"]["enum"].append(cpu);
+    schema["properties"]["cpu"]["description"] =
+        "card_seek / card_step / card_reverse_continue / card_position: the sound card's CPU (gs and neogs: the "
+        "General Sound slot; ms and multisound: the ZX-MultiSound's GS)";
+    schema["properties"]["instruction"]["type"] = "integer";
+    schema["properties"]["instruction"]["description"] =
+        "card_seek: the card CPU's instruction count to stand at (card_position and every card reply name it)";
+    schema["properties"]["max_frames"]["type"] = "integer";
+    schema["properties"]["max_frames"]["description"] =
+        "card_reverse_continue: frames searched back at most (default 1000); truncated in the reply when reached";
     schema["properties"]["scanlines"]["type"] = "integer";
     schema["properties"]["scanlines"]["description"] =
         "reverse_step: scanlines to step back (the machine's line length each); lands on the nearest instruction start "
@@ -6632,6 +6695,52 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     return;
                 }
             }
+            else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue" ||
+                     action == "card_position")
+            {
+                const std::string cpu = args.get("cpu", "").asString();
+                if (cpu.empty() && action != "card_position")
+                {
+                    done(ToolResult::Error("Action '" + action + "' requires 'cpu': gs, neogs, ms or multisound"));
+                    return;
+                }
+                if (!cpu.empty())
+                    (*body)["cpu"] = cpu;
+                if (action == "card_seek")
+                {
+                    if (!args.isMember("instruction"))
+                    {
+                        done(ToolResult::Error("Action 'card_seek' requires 'instruction' (the card CPU's instruction "
+                                               "count; card_position shows the current one)"));
+                        return;
+                    }
+                    if (!CopyNumber(args, "instruction", *body, error))
+                    {
+                        done(ToolResult::Error(error));
+                        return;
+                    }
+                }
+                else if (action == "card_step")
+                {
+                    const Json::Value count = args.isMember("count") ? NumericOrHex(args["count"]) : Json::Value(1);
+                    if (count.isNull() || !count.isInt64() || count.asInt64() == 0)
+                    {
+                        done(ToolResult::Error("'count' must be a non-zero integer (negative: back)"));
+                        return;
+                    }
+                    const int64_t n = count.asInt64();
+                    (*body)["dir"] = n < 0 ? "back" : "forward";
+                    (*body)["count"] = static_cast<Json::UInt64>(n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n));
+                }
+                else if (action == "card_reverse_continue")
+                {
+                    if (!CopyNumber(args, "max_frames", *body, error))
+                    {
+                        done(ToolResult::Error(error));
+                        return;
+                    }
+                }
+            }
             else if (action == "probe_frames")
             {
                 if (!args["probes"].isArray() || args["probes"].empty())
@@ -6955,6 +7064,42 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
                                FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
+                }
+                else if (action == "card_position")
+                {
+                    const std::string wanted = body->get("cpu", "").asString();
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/position"), nullptr, caller, [wanted](const Json::Value& b) {
+                        std::string text = "Main CPU at " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) +
+                                           " (state " + b["state"].asString() + ")";
+                        bool any = false;
+                        for (const Json::Value& card : b["cards"])
+                        {
+                            const std::string cpu = card["cpu"].asString();
+                            const bool match = wanted.empty() || wanted == cpu ||
+                                               (cpu == "gs" && wanted == "neogs") || (cpu == "ms" && wanted == "multisound");
+                            if (!match)
+                                continue;
+                            any = true;
+                            text += "\n" + FormatCardReadout(card);
+                        }
+                        if (!any)
+                            text += wanted.empty() ? "\nNo sound card with a CPU" : "\nNo card CPU '" + wanted + "'";
+                        return text;
+                    }, done);
+                }
+                else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue")
+                {
+                    const std::string route = action == "card_seek"   ? "/ttd/seek"
+                                              : action == "card_step" ? "/ttd/step-instruction"
+                                                                      : "/ttd/reverse-continue";
+                    CallAndSummarize("POST", Endpoint(id, route), body.get(), caller, [](const Json::Value& b) {
+                        return FormatCardMove(b) + FormatCheck(b);
+                    }, [done](ToolResult result) {
+                        // Nothing moved (the history's end, no hit): an error the model cannot read as a move
+                        if (!result.isError && !result.structured.get("reached", true).asBool())
+                            result = ToolResult::Error(FormatCardMove(result.structured));
+                        done(std::move(result));
+                    });
                 }
                 else if (action == "reverse_step_over")
                 {

@@ -737,6 +737,10 @@
     schemas["TTDStatusResponse"]["description"] =
         "Snapshot of the TTD recorder session for the requested emulator instance";
     schemas["TTDStatusResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["type"] = "array";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["items"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["description"] =
+        "Both CPUs: the main CPU's place is the position, each sound card CPU's here (as GET /ttd/position)";
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("detached");
@@ -1126,6 +1130,19 @@
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
             "TD-4 bookmark label to seek to (alternative to frame). Unknown "
             "labels get a 404.";
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it only instruction is taken.";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["type"] = "integer";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["format"] = "uint64";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["description"] =
+        "With cpu: the card CPU's instruction count to stand at (TTDCardPosition.instruction)";
 
     schemas["TTDSeekResponse"]["type"] = "object";
     schemas["TTDSeekResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1258,6 +1275,61 @@
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDPositionResponse"]["properties"]["cards"]["type"] = "array";
+    schemas["TTDPositionResponse"]["properties"]["cards"]["items"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDPositionResponse"]["properties"]["cards"]["description"] =
+        "Each sound card CPU's readout as the last move left it (empty: no card with a CPU)";
+
+    // ---------------------------------------------------------------------
+    // Card positions (gs-debugger design §8)
+    // ---------------------------------------------------------------------
+    schemas["TTDCardPosition"]["type"] = "object";
+    schemas["TTDCardPosition"]["description"] =
+        "A sound card CPU's place. card_position: the machine stands at a card instruction (a card move put it "
+        "there); the main CPU is then at its last completed instruction (main.frame / main.tinframe, main.pc) and "
+        "main.t_offset T-states into the next (inside: > 0). Otherwise the card's count and PC are where it last ran.";
+    schemas["TTDCardPosition"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDCardPosition"]["properties"]["known"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["known"]["description"] =
+        "The card has an instruction count (false: a recording made before them is loaded)";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["format"] = "uint64";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["nullable"] = true;
+    schemas["TTDCardPosition"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["card_position"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["caught_up"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["main"]["type"] = "object";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["t_offset"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["inside"]["type"] = "boolean";
+
+    schemas["TTDCardMoveResponse"]["type"] = "object";
+    schemas["TTDCardMoveResponse"]["description"] =
+        "Response of seek / step-instruction / reverse-step / reverse-continue with cpu naming a card. reached false "
+        "with status at_start, at_end or no_hit is an answer (HTTP 200: nothing moved); no_card, no_count, "
+        "no_history and no_breakpoints are refused (409), failed is 500.";
+    schemas["TTDCardMoveResponse"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDCardMoveResponse"]["properties"]["status"]["type"] = "string";
+    for (const char* status : {"ok", "no_card", "no_count", "no_history", "at_start", "at_end", "no_breakpoints",
+                               "no_hit", "failed"})
+        schemas["TTDCardMoveResponse"]["properties"]["status"]["enum"].append(status);
+    schemas["TTDCardMoveResponse"]["properties"]["reached"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["from"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["from"]["description"] = "The card's instruction count before the move";
+    schemas["TTDCardMoveResponse"]["properties"]["target"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["target"]["description"] = "The instruction count moved to";
+    schemas["TTDCardMoveResponse"]["properties"]["message"]["type"] = "string";
+    schemas["TTDCardMoveResponse"]["properties"]["card"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDCardMoveResponse"]["properties"]["searched_frames"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["type"] = "object";
+    schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["description"] =
+        "reverse-continue: the card breakpoint hit (id, kind, address)";
+    schemas["TTDCardMoveResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
 
     // ---------------------------------------------------------------------
     // GET /ttd/markers response
@@ -1932,6 +2004,19 @@
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("forward");
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("fwd");
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["default"] = "back";
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it dir and count are taken.";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["format"] = "uint64";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["description"] =
+        "With cpu: card instructions to step (default 1)";
 
     schemas["TTDStepInstructionResponse"]["type"] = "object";
     schemas["TTDStepInstructionResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1961,6 +2046,15 @@
     schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["format"] = "uint32";
     schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["description"] =
         "Number of scanlines to step back: the machine's t_line T-states each (lands at nearest M1 <= target).";
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it only count (card instructions back) is taken.";
 
     schemas["TTDReverseStepResponse"]["type"] = "object";
     schemas["TTDReverseStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -2012,9 +2106,9 @@
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][0]["maximum"] = 65535;
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][1]["type"] = "string";
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["description"] =
-        "Non-empty list of reverse breakpoint PCs (required), 0..65535 each: a number, or a string "
+        "Non-empty list of reverse breakpoint PCs (required on the main CPU; not taken with a card 'cpu', whose "
+        "own breakpoints are the targets), 0..65535 each: a number, or a string "
         "(decimal, \"0x..\", \"#..\" or \"$..\"). A bad entry is a 400.";
-    schemas["TTDReverseContinueRequest"]["required"].append("pcs");
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
@@ -2043,6 +2137,19 @@
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["type"] = "integer";
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["format"] = "uint64";
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. Back to the card's previous hit of its own breakpoints; with it only max_frames is taken (pcs is not needed).";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["description"] =
+        "With cpu: frames searched back at most (default 1000); truncated in the reply when reached";
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
     schemas["TTDReverseContinueResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";

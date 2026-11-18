@@ -6731,6 +6731,52 @@ public:
             return reply.Ok() && reply.body.find("stepped")->b;
         });
 
+        // -----------------------------------------------------------------
+        // Positions on a sound card's CPU (gs-debugger design §8): cpu "gs" / "neogs" / "ms" / "multisound"; the
+        // main CPU follows by replay. Each returns the move's reply: status ("ok", "at_start", "no_hit", ...),
+        // reached, from, target, card = {instruction, pc, card_position, main = {frame, tinframe, pc, t_offset,
+        // inside}}; on a refusal ok = false and error
+        // -----------------------------------------------------------------
+
+        // ttd_card_seek(cpu, instruction): the card at its instruction count
+        lua.set_function("ttd_card_seek", [this](sol::this_state ts, const std::string& cpu, uint64_t instruction) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("seek", {{"cpu", cpu}, {"instruction", std::to_string(instruction)}})));
+        });
+
+        // ttd_card_step(cpu [, n]): n card instructions forward (negative: back; default 1)
+        lua.set_function("ttd_card_step", [this](sol::this_state ts, const std::string& cpu, sol::optional<int64_t> nOpt) -> sol::object {
+            const int64_t n = nOpt.value_or(1);
+            const uint64_t count = n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu},
+                                                                                {"dir", n < 0 ? "back" : "forward"},
+                                                                                {"count", std::to_string(count)}})));
+        });
+
+        // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
+        lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
+                                                             sol::optional<uint64_t> maxFrames) -> sol::object {
+            std::map<std::string, std::string> options{{"cpu", cpu}};
+            if (maxFrames)
+                options["max_frames"] = std::to_string(*maxFrames);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("reverse-continue", options)));
+        });
+
+        // ttd_card_position([cpu]): the card's readout (position verb's cards[]); every card's array without cpu,
+        // nil for a cpu without a card
+        lua.set_function("ttd_card_position", [this](sol::this_state ts, sol::optional<std::string> cpu) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("position");
+            const StateNode* cards = reply.Ok() ? reply.body.find("cards") : nullptr;
+            if (!cpu)
+                return StateNodeToLua(ts, cards ? *cards : StateNode::Array());
+            std::string name = *cpu;
+            DebugCpuId id = DebugCpuId::Main;
+            if (cards && DebugManager::ParseCpuName(name, id))
+                for (const StateNode& card : cards->items)
+                    if (card.find("cpu")->s == DebugCpuName(id))
+                        return StateNodeToLua(ts, card);
+            return sol::make_object(ts, sol::lua_nil);
+        });
+
         // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
         lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
                                                         sol::optional<sol::table> optionsTable) -> sol::object {

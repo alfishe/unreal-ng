@@ -762,6 +762,7 @@ void EmulatorAPI::probeFramesTTD(const HttpRequestPtr& req, std::function<void(c
 ///
 /// Body: { "pcs": [int, ...], "phys_page"?, "all"?, "limit"?, "before_frame"?, "before_tin"?, "before"?,
 ///         "from_frame"? }  — non-empty list of reverse breakpoints; the rest narrow the walk.
+///       or { "cpu": "gs", "max_frames"? }  — on a sound card's CPU: back to its breakpoints' previous hit (no pcs)
 ///
 /// Response: { "matched": bool, "pc": int, "frame": int, "tinframe": int, "t": int, "phys_page": int|"rom",
 ///             "blocked_by_marker"?: { ... } }; with all: { "hits": [...], "count", "truncated", "next_before"? }
@@ -769,9 +770,11 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const
 {
-    // pcs: a JSON array of addresses; the verb takes them as one comma list
+    // pcs: a JSON array of addresses; the verb takes them as one comma list. On a sound card's CPU (`cpu`, gs-debugger
+    // design §8) the card's own breakpoints are the targets: no pcs, TTDControl checks the options
     auto json = req->getJsonObject();
-    if (!json || !json->isMember("pcs") || !(*json)["pcs"].isArray())
+    const bool onCard = json && json->isMember("cpu") && !json->isMember("pcs");
+    if (!json || (!onCard && (!json->isMember("pcs") || !(*json)["pcs"].isArray())))
     {
         Json::Value error;
         error["error"]   = "Bad Request";
@@ -782,11 +785,16 @@ void EmulatorAPI::reverseContinueTTD(const HttpRequestPtr& req,
         callback(resp);
         return;
     }
-    std::string pcs;
-    for (const Json::Value& pc : (*json)["pcs"])
-        pcs += (pcs.empty() ? "" : ",") + (pc.isString() ? pc.asString() : pc.isIntegral() ? pc.asString() : std::string("?"));
-    // The other members (phys_page, all, limit, before_frame, before_tin, before, from_frame) are scalars
-    std::map<std::string, std::string> options{{"pcs", pcs}};
+    std::map<std::string, std::string> options;
+    if (!onCard)
+    {
+        std::string pcs;
+        for (const Json::Value& pc : (*json)["pcs"])
+            pcs += (pcs.empty() ? "" : ",") + (pc.isString() ? pc.asString() : pc.isIntegral() ? pc.asString() : std::string("?"));
+        options["pcs"] = pcs;
+    }
+    // The other members (phys_page, all, limit, before_frame, before_tin, before, from_frame; cpu, max_frames) are
+    // scalars
     for (const std::string& name : json->getMemberNames())
     {
         const Json::Value& v = (*json)[name];
