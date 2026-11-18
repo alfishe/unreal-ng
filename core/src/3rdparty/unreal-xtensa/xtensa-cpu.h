@@ -80,9 +80,10 @@
 #include <unordered_map>
 #include <vector>
 
-// POC 051: the block JIT (xtensa-jit-a64.cpp), arm64 hosts with GCC / Clang only; off unless UNREAL_XTENSA_JIT=1
+// POC 051: the region JIT (xtensa-jit.inc) on arm64 and x86_64 hosts (macOS, Linux, Windows; GCC, Clang, MSVC); off
+// unless UNREAL_XTENSA_JIT=1
 #if !defined(UNREAL_XTENSA_JIT)
-#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64)
 #define UNREAL_XTENSA_JIT 1
 #else
 #define UNREAL_XTENSA_JIT 0

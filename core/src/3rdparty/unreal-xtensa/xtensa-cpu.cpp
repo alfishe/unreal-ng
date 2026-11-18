@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace xtensa
@@ -1851,4 +1852,4 @@ stopped:
 
 } // namespace xtensa
 
-#include "xtensa-jit-a64.inc"
+#include "xtensa-jit.inc"
