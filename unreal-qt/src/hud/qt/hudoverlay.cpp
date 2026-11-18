@@ -281,7 +281,7 @@ QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer
     auto it = _imageCache.find(buf.get());
     if (it != _imageCache.end())
     {
-        return it->second;
+        return it->second.image;
     }
 
     QImage::Format qfmt = QImage::Format_RGBA8888;
@@ -292,7 +292,9 @@ QImage HudOverlay::getImageFromBuffer(const std::shared_ptr<const HudImageBuffer
 
     QImage img(buf->data(), buf->width(), buf->height(), buf->stride(), qfmt);
     QImage copy = img.copy();
-    _imageCache[buf.get()] = copy;
+    if (_imageCache.size() >= kImageCacheMaxSize)
+        _imageCache.clear();
+    _imageCache[buf.get()] = CachedImage{buf, copy};
     return copy;
 }
 
