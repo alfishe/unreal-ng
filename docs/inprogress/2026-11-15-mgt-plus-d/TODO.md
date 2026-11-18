@@ -1,6 +1,8 @@
 # MGT +D: TODO
 
-Status: **P0-P4 done** (P4.5 2026-11-18). Branch `plusd-interface`, worktree `scratch/wt-plusd`.
+Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18): the card, the autostart, the
+`48K-PLUSD` / `128K-PLUSD` machines in the Sinclair family of the Qt and handheld menus, the recipe
+`.recipe/machines/plusd.md`. Open: P5 (the `basic` param on the planes), P6.
 
 ## Phases
 
