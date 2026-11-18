@@ -21,6 +21,7 @@
 #include "debugger/watch/framewatch.h"
 #include "emulator.h"
 #include "emulator/notifications.h"
+#include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/tape/tape.h"
 #include "emulator/io/tape/tapeturbocontroller.h"
@@ -536,6 +537,10 @@ void MainLoop::CompleteFrame()
         _context->pDebugManager->GetCommandTyper()->OnFrame();
     }
 
+    // The MGT +D autostart's steps (they type through the command typer)
+    if (_context->pDiskAutostart)
+        _context->pDiskAutostart->OnFrame();
+
     // Release timed mouse clicks (automation) at frame boundaries
     if (_context->pDebugManager && _context->pDebugManager->GetMouseManager())
     {
@@ -674,6 +679,8 @@ void MainLoop::OnCPUStep()
     }
 
     _context->pBetaDisk->handleStep();
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+        _context->cardFdcs[i]->handleStep();
     _context->pTape->handleStep();  // Process tape audio each step
     _context->pSoundManager->handleStep();
 }
@@ -791,6 +798,17 @@ void MainLoop::OnFrameEnd()
         catch (const std::exception& e)
         {
             MLOGERROR("BetaDisk::handleFrameEnd failed: %s", e.what());
+        }
+    }
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+    {
+        try
+        {
+            _context->cardFdcs[i]->handleFrameEnd();
+        }
+        catch (const std::exception& e)
+        {
+            MLOGERROR("Card FDC::handleFrameEnd failed: %s", e.what());
         }
     }
 

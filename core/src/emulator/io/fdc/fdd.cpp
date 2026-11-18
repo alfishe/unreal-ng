@@ -88,7 +88,10 @@ DiskImage::Track* FDD::trackUnderHeadForWrite(uint8_t side)
     }
     if (cylinder >= MAX_CYLINDERS)
         return nullptr;
-    FloppyDriveSlot::BeforeImageGrow(_context, _driveID, *_diskImage);  // the undo log (TTD) keeps the size first
+    if (_slotId.empty())
+        FloppyDriveSlot::BeforeImageGrow(_context, _driveID, *_diskImage);
+    else
+        FloppyDriveSlot::BeforeImageGrow(_context, _slotId, *_diskImage);  // the undo log (TTD) keeps the size first
     if (!_diskImage->growCylinders(static_cast<uint8_t>(cylinder + 1)))
         return nullptr;
     return _diskImage->getTrackForCylinderAndSide(cylinder, side);

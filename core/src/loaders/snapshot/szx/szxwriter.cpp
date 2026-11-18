@@ -83,6 +83,18 @@ std::vector<uint8_t> SzxWriter::Write(const Stage& stage)
         Block(out, kBeta128, body);
     }
 
+    if (stage.plusd)
+    {
+        const PlusD& d = *stage.plusd;
+        std::vector<uint8_t> body;
+        Put32(body, d.flags & ~kPlusDCompressed);  // the RAM goes uncompressed
+        Put32(body, static_cast<uint32_t>(d.ram.size()));
+        Put32(body, 0);                            // no custom ROM written
+        body.insert(body.end(), {kPlusDRomGdos, d.control, d.drives, d.track, d.sector, d.data, d.status});
+        body.insert(body.end(), d.ram.begin(), d.ram.end());
+        Block(out, kPlusD, body);
+    }
+
     // BDSK after B128, as the format lists them
     for (const BetaDisk& disk : stage.betaDisks)
     {

@@ -9,6 +9,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
@@ -470,6 +471,10 @@ bool CaptureImage(EmulatorContext& context, const MachineView& view, Image& out)
     out.paging.p1FFD = view.p1FFD;
     out.paging.pEFF7 = view.pEFF7;
     out.trdosPaged = (state.flags & CF_TRDOS) != 0;
+    // An MGT +D: its paging, as the .z80 v3 hardware 3 / 6 keep it (SZX writes the whole card: LoaderSZX::Capture)
+    if (const PlusDCard* plusd = PlusDCard::Find(&context))
+        out.extensions.push_back({"capture", "plusd", 2, plusd->IsPaged() ? "MGT +D, paged in" : "MGT +D, paged out",
+                                  {static_cast<uint8_t>(plusd->IsPaged() ? 1 : 0), 16}});
 
     Cpu& cpu = out.cpu;
     cpu.af = z.af;

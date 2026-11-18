@@ -15,6 +15,7 @@
 #include "unrealdisk/floppyformats.h"
 #include "unrealdisk/isdosfs.h"
 #include "unrealdisk/loaders/loader_trd.h"
+#include "unrealdisk/gdosfs.h"
 #include "unrealdisk/mb01fs.h"
 #include "unrealdisk/mb02fs.h"
 #include "unrealdisk/mdosfs.h"
@@ -385,6 +386,51 @@ bool ParseTrdosName(const std::string& path, std::string& name, char& type)
         name.pop_back();
     return !name.empty() && name.size() <= 8;
 }
+
+/// G+DOS (MGT +D), read only: a flat directory, a file named as G+DOS shows it (trailing blanks cut)
+struct GdosDriver : DiskFs::Driver
+{
+    explicit GdosDriver(DiskImage& image) : fs(image) {}
+
+    bool All(std::vector<DiskFsEntry>& out, std::vector<std::string>&, std::string& error) override
+    {
+        std::vector<GdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (const GdosFile& f : files)
+        {
+            DiskFsEntry e;
+            e.name = e.path = Ascii(f.name);
+            e.size = f.length;
+            e.start = f.type == 1 ? f.autostart : f.start;
+            e.attributes = std::string(f.hidden ? "H" : "") + (f.protect ? "P" : "");
+            e.fields = {{"type", f.type}, {"sectors", f.sectors}, {"track", f.track}, {"sector", f.sector},
+                        {"slot", f.slot}};
+            if (f.HasTapeHeader())
+                e.fields.emplace_back("param", f.param);
+            out.push_back(std::move(e));
+        }
+        return true;
+    }
+
+    bool Read(const std::string& path, std::vector<uint8_t>& data, std::vector<uint8_t>*, std::string& error) override
+    {
+        std::vector<GdosFile> files;
+        if (!fs.List(files, error))
+            return false;
+        for (int pass = 0; pass < 2; pass++)
+            for (const GdosFile& f : files)
+            {
+                const std::string name = Ascii(f.name);
+                if (pass == 0 ? name == path : Lower(name) == Lower(path))
+                    return fs.Read(f, data, error);
+            }
+        error = "no " + path + " on the G+DOS disk";
+        return false;
+    }
+
+    GdosFileSystem fs;
+};
 
 struct TrdosDriver : DiskFs::Driver
 {
@@ -2211,6 +2257,18 @@ void DiskFs::Probe()
                 fat = true;
                 add(std::move(v), std::move(driver));
             }
+        }
+        // G+DOS (MGT +D): 10 x 512-byte sectors, the directory on cylinders 0-3 of side 0 (no boot sector, no BPB)
+        if (!fat && GdosFileSystem(*_floppy).IsGdos())
+        {
+            GdosFileSystem gdos(*_floppy);
+            DiskFsVolume v;
+            v.id = v.fs = "gdos";
+            v.system = "G+DOS";
+            v.bytes = gdos.Bytes();
+            v.freeBytes = static_cast<int64_t>(gdos.FreeSectors()) * GdosFileSystem::kDataPerSector;
+            add(std::move(v), std::make_unique<GdosDriver>(*_floppy));
+            return;
         }
         if (!fat && Plus3FileSystem(*_floppy).IsPlus3())
         {

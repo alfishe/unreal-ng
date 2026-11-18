@@ -189,6 +189,35 @@ public:
     // BDI - Beta Disk Interface controller instance
     WD1793* pBetaDisk = nullptr;
 
+    // Floppy controllers of edge-connector cards (MGT +D: a WD1772), stepped like pBetaDisk. A card adds its controller
+    // when it attaches and removes it before it is deleted; cardFdcCount == 0 on every machine without such a card
+    static constexpr size_t kMaxCardFdcs = 2;
+    WD1793* cardFdcs[kMaxCardFdcs] = {};
+    size_t cardFdcCount = 0;
+    bool AddCardFdc(WD1793* fdc)
+    {
+        if (!fdc || cardFdcCount >= kMaxCardFdcs)
+            return false;
+        for (size_t i = 0; i < cardFdcCount; i++)
+            if (cardFdcs[i] == fdc)
+                return true;
+        cardFdcs[cardFdcCount++] = fdc;
+        return true;
+    }
+    void RemoveCardFdc(WD1793* fdc)
+    {
+        for (size_t i = 0; i < cardFdcCount; i++)
+        {
+            if (cardFdcs[i] == fdc)
+            {
+                for (size_t j = i + 1; j < cardFdcCount; j++)
+                    cardFdcs[j - 1] = cardFdcs[j];
+                cardFdcs[--cardFdcCount] = nullptr;
+                return;
+            }
+        }
+    }
+
     // ZX Spectrum +3 floppy controller (NEC uPD765A); nullptr on every other model
     UPD765* pUPD765 = nullptr;
 

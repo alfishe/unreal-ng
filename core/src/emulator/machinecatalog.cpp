@@ -25,7 +25,7 @@ struct FamilyDef
 const std::vector<FamilyDef>& FamilyDefs()
 {
     static const std::vector<FamilyDef> defs = {
-        {"sinclair", "Sinclair", {"48K", "48K-BETA128", "128k", "PLUS2", "PLUS2A", "PLUS3"}},
+        {"sinclair", "Sinclair", {"48K", "48K-BETA128", "48K-PLUSD", "128k", "128K-PLUSD", "PLUS2", "PLUS2A", "PLUS3"}},
         {"pentagon", "Pentagon", {"PENTAGON", "P2666"}},
         {"atm", "ATM Turbo", {"ATM450", "ATM710"}},
         {"zx-evo", "ZX-Evo", {"ATM3", "TSL", "TSL-VDAC2", "TSL-VDAC4"}},

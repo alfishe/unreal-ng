@@ -188,6 +188,9 @@ protected:
     /// The emulator's own operations, run by the coordinator (stage: where the TTD session effect lands)
     void ResetNow(bool hardReset, coordinator::OpStage& stage);
     bool AutostartNow(AutostartRequest& request, coordinator::OpStage& stage);
+    bool AutostartPlusDNow(AutostartRequest& request, coordinator::OpStage& stage);
+    /// An MGT disk goes to the +D's drive (`slotId` set): "" or the refusal (no +D, a drive the +D has not)
+    std::string MgtDriveSlot(const std::string& path, uint8_t drive, std::string& slotId) const;
     bool LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage);
     snapshot::SaveResult _lastSaveResult;
 
@@ -780,6 +783,13 @@ public:
         bool started = false;  // Machine was reset into TR-DOS to run the disk
         bool ttdSessionEnded = false;  // The boot ended the TTD session (D42; a black box starts a new one)
         std::string message;   // Human readable outcome (says so when the TTD session ended)
+        // An MGT disk on the +D (PlusDAutostart): the plan (run, run+load, system-disk+load, mount), the start
+        // command it types, where G+DOS comes from (disk, system-disk). The steps run after the call returns: their
+        // progress is DiskAutostart::PlusD().GetStatus() (`state fdc` autostart)
+        std::string plan;
+        std::string command;
+        std::string dos;
+        std::string basic;  // MGT: the BASIC the steps run in: "48", "128" (the 128K's menu, then 128 BASIC)
     };
 
     /// Mount a disk image and, when the machine can run TR-DOS, quick-reset straight into TR-DOS so the
@@ -788,7 +798,13 @@ public:
     /// @param drive Must be 0 (A) - TR-DOS/Beta 128's own "RUN boot" convention only ever boots from drive
     ///              A, this is a hardware constraint, not a missing feature. Any other value is a hard
     ///              failure (`mounted=false`, `message` explains why) rather than a silent fallback to A.
-    DiskAutostartResult AutostartDisk(const std::string& path, uint8_t drive = 0);
+    /// @param basic MGT on the +D only: "" = the machine's own (48 BASIC on a 48K; on a 128K the reset goes to its
+    ///              menu and the steps choose 128 BASIC), "48" = 48 BASIC on any machine (a 128K user's choice for
+    ///              48K works), "128" = 128 BASIC (refused on a 48K)
+    DiskAutostartResult AutostartDisk(const std::string& path, uint8_t drive = 0, const std::string& basic = "");
+
+    /// The file is an MGT image (by its probe: 819200 bytes of 80 x 2 x 10 x 512)
+    static bool IsMgtDisk(const std::string& path);
 
     /// Result of SaveDisk()
     struct DiskSaveResult

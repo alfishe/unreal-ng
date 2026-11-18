@@ -212,6 +212,7 @@ enum class TTDDeviceType : uint16_t
     P2666Sound = 72,    ///< Pentagon 2.666 LE: both YM2149 cores, Covox, the beeper bits
     P2666BetaDisk = 73, ///< Pentagon 2.666 LE: the RAM-disk Beta Disk emulator (its disk bytes ride with the RAM)
     P2666Uart = 74,     ///< Pentagon 2.666 LE: the UART, its FIFOs and the line in flight
+    PlusD = 75,         ///< an MGT +D card (slot-built, "<slot>.plusd"): paging, latches, 8K RAM, its WD1772 and drives
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");
