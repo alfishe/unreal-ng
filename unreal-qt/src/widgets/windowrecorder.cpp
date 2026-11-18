@@ -12,6 +12,8 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -58,6 +60,70 @@ QString FfmpegVfrSwitch(const QString& ffmpeg)
     if (help.state() != QProcess::NotRunning)
         help.kill();
     return cache[ffmpeg] = fpsMode ? QStringLiteral("-fps_mode") : QStringLiteral("-vsync");
+}
+
+// The picture goes to ffmpeg as Matroska: uncompressed B,G,R,A frames, each in its own cluster with its time in
+// microseconds. A picture held for several frames (a still screen, a writer that falls behind) is sent once, its
+// next picture's time says how long it lasts: nothing of the repeats crosses the pipe
+
+/// EBML's variable-length size: the shortest one that fits (all ones is "unknown", never used for a known size)
+QByteArray EbmlSize(uint64_t size)
+{
+    int length = 1;
+    while (length < 8 && size >= (uint64_t{1} << (7 * length)) - 1)
+        length++;
+    QByteArray out(length, '\0');
+    const uint64_t coded = size | (uint64_t{1} << (7 * length));
+    for (int i = 0; i < length; i++)
+        out[length - 1 - i] = static_cast<char>((coded >> (8 * i)) & 0xFF);
+    return out;
+}
+
+QByteArray EbmlElement(uint32_t id, const QByteArray& payload)
+{
+    QByteArray out;
+    for (int shift = 24; shift >= 0; shift -= 8)
+        if ((id >> shift) != 0)
+            out.append(static_cast<char>((id >> shift) & 0xFF));
+    return out + EbmlSize(static_cast<uint64_t>(payload.size())) + payload;
+}
+
+QByteArray EbmlUint(uint32_t id, uint64_t value)
+{
+    QByteArray payload;
+    do
+    {
+        payload.prepend(static_cast<char>(value & 0xFF));
+        value >>= 8;
+    } while (value != 0);
+    return EbmlElement(id, payload);
+}
+
+/// The file's start: one video track of width x height B,G,R,A frames, times in microseconds, the segment's size
+/// unknown (it is a stream)
+QByteArray MatroskaStreamHeader(int width, int height)
+{
+    const QByteArray ebml = EbmlElement(0x1A45DFA3, EbmlUint(0x4286, 1) + EbmlUint(0x42F7, 1) + EbmlUint(0x42F2, 4) +
+                                                        EbmlUint(0x42F3, 8) + EbmlElement(0x4282, "matroska") +
+                                                        EbmlUint(0x4287, 4) + EbmlUint(0x4285, 2));
+    const QByteArray info =
+        EbmlElement(0x1549A966, EbmlUint(0x2AD7B1, 1000) + EbmlElement(0x4D80, "unreal-ng") + EbmlElement(0x5741, "unreal-ng"));
+    const QByteArray video = EbmlElement(0xE0, EbmlUint(0xB0, static_cast<uint64_t>(width)) +
+                                                   EbmlUint(0xBA, static_cast<uint64_t>(height)) +
+                                                   EbmlElement(0x2EB524, "BGRA"));
+    const QByteArray track = EbmlElement(0xAE, EbmlUint(0xD7, 1) + EbmlUint(0x73C5, 1) + EbmlUint(0x83, 1) +
+                                                   EbmlElement(0x86, "V_UNCOMPRESSED") + video);
+    const QByteArray segment = QByteArray::fromHex("18538067") + QByteArray::fromHex("01FFFFFFFFFFFFFF");
+    return ebml + segment + info + EbmlElement(0x1654AE6B, track);
+}
+
+/// One frame's cluster up to its pixels (the `bytes` of the picture follow it): the time, a key frame of track 1
+QByteArray MatroskaFrameHeader(uint64_t timeUs, qsizetype bytes)
+{
+    const QByteArray block = QByteArray::fromHex("81000080");  // track 1, relative time 0, key frame
+    const QByteArray simpleBlock = QByteArray::fromHex("A3") + EbmlSize(static_cast<uint64_t>(block.size() + bytes)) + block;
+    const QByteArray body = EbmlUint(0xE7, timeUs) + simpleBlock;
+    return QByteArray::fromHex("1F43B675") + EbmlSize(static_cast<uint64_t>(body.size() + bytes)) + body;
 }
 
 /// The GPU encoder ffmpeg offers for the codec, found rather than assumed: the build lists it AND a real trial
@@ -310,7 +376,8 @@ struct WindowRecorder::Writer
         const bool swap = picture.format() == QImage::Format_RGBA8888;
         const bool same = picture.format() == QImage::Format_ARGB32_Premultiplied ||
                           picture.format() == QImage::Format_ARGB32 || picture.format() == QImage::Format_RGB32;
-        if (scale != 1 || frame.format() != QImage::Format_ARGB32 || (!swap && !same))
+        const bool bgra = frame.format() == QImage::Format_ARGB32 || frame.format() == QImage::Format_ARGB32_Premultiplied;
+        if (scale != 1 || !bgra || (!swap && !same))
             return false;
         if (picture.width() > frame.width() || picture.height() > frame.height() ||
             std::abs(picture.width() - screenRect.width()) > 4 || std::abs(picture.height() - screenRect.height()) > 4)
@@ -511,8 +578,63 @@ struct WindowRecorder::Writer
         };
         if (!failure.empty())
             failed = true;
+        else
+            process.write(MatroskaStreamHeader(size.width(), size.height()));
         encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
+
+        // The last picture sent and its frame: a picture equal to it is not sent (a still screen; it only lengthens
+        // the one before), unless a quarter second went by (seeking wants a frame that often)
+        QImage lastSent;
+        uint64_t lastSentFrame = 0;
+        const uint64_t resendFrames = std::max<uint64_t>(1, static_cast<uint64_t>(fps / 4));
+        // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
+        // takeQueuedSound): the picture is never ahead of its sound
+        auto feedSound = [&]() -> bool {
+            std::deque<QByteArray> queued;
+            takeQueuedSound(queued);
+            for (QByteArray& chunk : queued)
+            {
+                if (!fifoPath.isEmpty())
+                    backlog.push_back(std::move(chunk));
+                else if (sound.write(chunk) != chunk.size())
+                {
+                    fail("Cannot write the sound: " + sound.errorString().toStdString());
+                    return false;
+                }
+            }
+            if (pumpSound())
+                return true;
+            fail("ffmpeg stopped taking the sound");
+            return false;
+        };
+        // One picture into ffmpeg at its frame's time. No event loop here: the bytes go to ffmpeg only while we wait,
+        // and ffmpeg's pace is the pace. Wait in short slices, the sound flowing meanwhile, until the whole frame is
+        // in the pipe. A slow ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits
+        // for is fed here, so that is not a lack of it): the recording fails instead of hanging
+        auto sendFrame = [&](const QImage& frame, uint64_t frameIndex) {
+            const uint64_t timeUs = static_cast<uint64_t>(std::llround(static_cast<double>(frameIndex) * 1e6 / fps));
+            process.write(MatroskaFrameHeader(timeUs, frame.sizeInBytes()));
+            process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
+            int stalledMs = 0;
+            bool taken = false;
+            while (process.state() == QProcess::Running && stalledMs < 15000)
+            {
+                const bool progress = process.waitForBytesWritten(100);
+                if (progress && process.bytesToWrite() == 0)  // the whole frame is in the pipe
+                {
+                    taken = true;
+                    break;
+                }
+                stalledMs = progress ? 0 : stalledMs + 100;
+                if (!feedSound())
+                    break;
+            }
+            if (!taken || process.state() != QProcess::Running)
+                fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
+            lastSent = frame;
+            lastSentFrame = frameIndex;
+        };
 
         for (;;)
         {
@@ -548,59 +670,25 @@ struct WindowRecorder::Writer
             }
             if (job.picture.isNull() || !failure.empty())
                 continue;
-            // The sound queued behind this picture goes to ffmpeg ahead of it, and again while it waits (see
-            // takeQueuedSound): the picture is never ahead of its sound
-            auto feedSound = [&]() -> bool {
-                std::deque<QByteArray> queued;
-                takeQueuedSound(queued);
-                for (QByteArray& chunk : queued)
-                {
-                    if (!fifoPath.isEmpty())
-                        backlog.push_back(std::move(chunk));
-                    else if (sound.write(chunk) != chunk.size())
-                    {
-                        fail("Cannot write the sound: " + sound.errorString().toStdString());
-                        return false;
-                    }
-                }
-                if (pumpSound())
-                    return true;
-                fail("ffmpeg stopped taking the sound");
-                return false;
-            };
             const int64_t pictureStartUs = sinceCreatedUs();
-            const QImage frame = compose(job);
-            for (uint32_t i = 0; i < job.repeat && failure.empty(); i++)
-            {
-                if (!feedSound())
-                    break;
-                process.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
-                // No event loop here: the bytes go to ffmpeg only while we wait, and ffmpeg's pace is the pace
-                // Wait in short slices, the sound flowing meanwhile, until the whole frame is in the pipe. A slow
-                // ffmpeg keeps taking bytes; one that took nothing for 15 s is stuck (the sound it waits for is fed
-                // here, so that is not a lack of it): the recording fails instead of hanging
-                int stalledMs = 0;
-                bool taken = false;
-                while (process.state() == QProcess::Running && stalledMs < 15000)
-                {
-                    const bool progress = process.waitForBytesWritten(100);
-                    if (progress && process.bytesToWrite() == 0)  // the whole frame is in the pipe
-                    {
-                        taken = true;
-                        break;
-                    }
-                    stalledMs = progress ? 0 : stalledMs + 100;
-                    if (!feedSound())
-                        break;
-                }
-                if (!taken || process.state() != QProcess::Running)
-                    fail("ffmpeg stopped taking frames: " + process.errorString().toStdString());
-                framesDone++;
-                if (!pumpSound())
-                    fail("ffmpeg stopped taking the sound");
-            }
+            // B,G,R,A bytes on a little-endian host: the stream's order. Premultiplied, QPainter's own format (the
+            // keyboard drawn into plain ARGB32 took most of a frame's time at 1080p); the frame is opaque, so the bytes
+            // are the same
+            QImage frame(size, QImage::Format_ARGB32_Premultiplied);
+            composeInto(frame, job);
+            const bool same = !lastSent.isNull() && job.frameStart < lastSentFrame + resendFrames &&
+                              std::memcmp(frame.constBits(), lastSent.constBits(),
+                                          static_cast<size_t>(frame.sizeInBytes())) == 0;
+            if (feedSound() && !same)
+                sendFrame(frame, job.frameStart);
+            framesDone = job.frameStart + job.repeat;
+            if (!pumpSound())
+                fail("ffmpeg stopped taking the sound");
             pictureHandled(pictureStartUs);
         }
+        // The last picture once more at the last frame's time: the picture lasts to the end of the sound
+        if (failure.empty() && !lastSent.isNull() && mux.frames > lastSentFrame + 1)
+            sendFrame(lastSent, mux.frames - 1);
 
         sound.close();
         std::string result = failure;
@@ -831,6 +919,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         return false;
     const int scale = std::clamp(request.scale, 1, 4);
     QSize picture(grab.width * scale, grab.height * scale);
+    const QSize nativePicture = picture;
     const int keyboardAspectHeight = _keyboardId.empty() ? 0 : _keyboard->renderImage(1000).height();
     if (request.frameWidth > 0 && request.frameHeight > 0)
     {
@@ -881,7 +970,6 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
 
     // The machine's frame rate, exact (3500000/71680 on a Pentagon): the sound's clock is the same frames
     const unsigned tstatesPerFrame = context->config.frame;
-    QString rate = QString::number(request.fps);
     _fps = request.fps;
     if (request.fps == 0)
     {
@@ -890,7 +978,6 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             error = "The machine reports no frame length";
             return false;
         }
-        rate = QString("%1/%2").arg(static_cast<qulonglong>(CPU_CLOCK_RATE)).arg(tstatesPerFrame);
         _fps = static_cast<double>(CPU_CLOCK_RATE) / tstatesPerFrame;
     }
     _sampleRate = request.audio ? static_cast<uint32_t>(context->pSoundManager->getCoreRate()) : 0;
@@ -921,13 +1008,61 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         }
     }
 
-    QStringList args{"-v",      "error", "-y",  "-f",  "rawvideo", "-pix_fmt", "rgba", "-s",
-                     QString("%1x%2").arg(_size.width()).arg(_size.height()), "-r", rate,
-                     "-i",      "-"};
+    // What ffmpeg gets: the frame's content (picture and keyboard, without the empty border) at the picture's own
+    // size, scaled to the frame and bordered by ffmpeg. A 1080p frame is 8 MB, a pipe takes about a hundred MB a
+    // second on a loaded machine: the frames themselves did not fit through, the native picture does (four to
+    // twelve times less). The keyboard is drawn at its size there, so it is scaled with the picture
+    QSize pipeSize = _size;
+    QRect pipeScreen = _screenRect;
+    QRect pipeKeyboard = _keyboardRect;
+    QString pipeFilter;
+    if (!native)
+    {
+        QRect content = _keyboardRect.isEmpty() ? _screenRect : _screenRect.united(_keyboardRect);
+        content = content.intersected(QRect(QPoint(0, 0), _size));
+        content.setLeft(content.left() & ~1);  // even edges and sides: any encoder's chroma
+        content.setTop(content.top() & ~1);
+        content.setWidth(content.width() & ~1);
+        content.setHeight(content.height() & ~1);
+        const double factor = static_cast<double>(_screenRect.width()) / nativePicture.width();
+        const double shrink = factor > 1.01 ? factor : 1.0;
+        pipeSize = QSize(std::max(2, static_cast<int>(std::lround(content.width() / shrink)) & ~1),
+                         std::max(2, static_cast<int>(std::lround(content.height() / shrink)) & ~1));
+        const auto toPipe = [&](const QRect& rect) {
+            if (rect.isEmpty())
+                return QRect(0, pipeSize.height(), pipeSize.width(), 0);
+            const int x = static_cast<int>(std::lround((rect.x() - content.x()) / shrink));
+            const int y = static_cast<int>(std::lround((rect.y() - content.y()) / shrink));
+            const int w = static_cast<int>(std::lround(rect.width() / shrink));
+            const int h = static_cast<int>(std::lround(rect.height() / shrink));
+            return QRect(x, y, std::min(w, pipeSize.width() - x), std::min(h, pipeSize.height() - y));
+        };
+        pipeScreen = shrink > 1.0 ? QRect(toPipe(_screenRect).topLeft(), nativePicture) : toPipe(_screenRect);
+        pipeScreen = pipeScreen.intersected(QRect(QPoint(0, 0), pipeSize));
+        pipeKeyboard = toPipe(_keyboardRect);
+        QStringList filters;
+        if (pipeSize != content.size())
+            filters << QString("scale=%1:%2:flags=bicubic").arg(content.width()).arg(content.height());
+        if (content.size() != _size)
+            filters << QString("pad=%1:%2:%3:%4:color=0x%5")
+                           .arg(_size.width())
+                           .arg(_size.height())
+                           .arg(content.x())
+                           .arg(content.y())
+                           .arg(kBackground.rgb() & 0xFFFFFF, 6, 16, QChar('0'));
+        pipeFilter = filters.join(',');
+    }
+
+    // The picture in Matroska with each frame's time (see MatroskaStreamHeader), the output's frame rate variable:
+    // those times, microsecond-exact, are the file's
+    QStringList args{"-v", "error", "-y", "-f", "matroska", "-i", "-"};
     QString hardwareEncoder;
     if (!fifo.isEmpty())
         args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
+    if (!pipeFilter.isEmpty())
+        args << "-vf" << pipeFilter;
+    args << FfmpegVfrSwitch(ffmpeg) << "vfr" << "-enc_time_base" << "1:1000000";
     if (request.codec == "prores")
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
     else if (request.hardware && !(hardwareEncoder = FfmpegHardwareEncoder(ffmpeg, request.codec == "h265")).isEmpty())
@@ -954,14 +1089,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     }
     else
     {
-        // Software: x264 / x265 4:4:4. A frame equal to the one before is not encoded: it only lengthens that one
-        // (variable frame rate, the times stay those of the emulated frames). That is most of the frames a writer
-        // that falls behind gets (the picture repeated for the frames it owes), and every frame of a still screen.
-        // The thresholds are zero, so one changed pixel is a new frame (the defaults drop small changes, a
-        // bullet, a cursor); max=12 keeps four frames a second at least (seeking; the picture's last change is
-        // at most a quarter second before the end of the sound)
-        args << "-vf" << "mpdecimate=hi=0:lo=0:frac=0:max=12" << FfmpegVfrSwitch(ffmpeg) << "vfr";
-        // Presets measured at 1080p (M1 Ultra, loaded): x264 veryfast 33 fps, ultrafast 42; x265 veryfast 3.4,
+        // Software: x264 / x265 4:4:4. Presets measured at 1080p (M1 Ultra, loaded): x264 veryfast 33 fps, ultrafast 42; x265 veryfast 3.4,
         // ultrafast 7.6. Above the native picture the fastest preset; x265 always (far from real time either way)
         const bool large = static_cast<qint64>(_size.width()) * _size.height() > 1000000;
         if (request.codec == "h265")
@@ -984,9 +1112,9 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     auto writer = std::make_shared<Writer>();
     writer->ffmpeg = ffmpeg;
     writer->args = args;
-    writer->size = _size;
-    writer->screenRect = _screenRect;
-    writer->keyboardRect = _keyboardRect;
+    writer->size = native ? _size : pipeSize;
+    writer->screenRect = native ? _screenRect : pipeScreen;
+    writer->keyboardRect = native ? _keyboardRect : pipeKeyboard;
     writer->scale = std::clamp(request.scale, 1, 4);
     writer->mux.ffmpeg = ffmpeg;
     writer->mux.path = path;
@@ -1147,7 +1275,7 @@ void WindowRecorder::onRefreshed()
     if (!_keyboardId.empty() && _keyboard)
     {
         _keyboard->refresh();
-        _keyboardDelay.emplace_back(target, _keyboard->renderImage(_keyboardRect.width()));
+        _keyboardDelay.emplace_back(target, _keyboard->renderImage(_writer->keyboardRect.width()));
         while (_keyboardDelay.size() > 1 && _keyboardDelay[1].first + delay <= target)
             _keyboardDelay.pop_front();
     }
