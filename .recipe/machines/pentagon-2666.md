@@ -32,6 +32,11 @@ inspect_state {"aspects":["paging"]}   # .paging.p2666: #xx77, #EFF7, clock, DOS
 A disk in drive A goes into the RAM disk (pages `#76` down; images over 41 pages are refused). `[P2666]
 BetaDisk=wd1793` gives the plain WD1793 with drives A..D instead.
 
+The board has no floppy controller (manual 2.9). `inspect_state {"aspects":["fdc"]}` (CLI `state fdc`, WebAPI
+`/state/fdc`, Lua / Python `fdc_state()`) reports the FPGA's WD1793 imitation on the RAM disk: registers, status,
+`phase` (every level-set command flag: a step written during a restore reads `restore+step`), INTRQ / DRQ, the
+system register `#FF` (drive, reset, side), the head cylinder, the RAM-disk pages and drive A.
+
 ## WebAPI
 
 ```bash
