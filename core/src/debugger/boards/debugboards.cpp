@@ -1,5 +1,6 @@
 #include "debugboards.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <optional>
 #include <sstream>
@@ -9,6 +10,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/chips/neogs/neogsmedia.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
 #include "emulator/sound/soundmanager.h"
@@ -434,8 +436,88 @@ int MediaStatus(NeoGSMediaResult r)
 namespace DebugBoards
 {
 
-std::vector<DebugBoardBuilder> Build(EmulatorContext* context)
+namespace
 {
+/// The leaves of a statistics section as controls: counters, rates, state (ids are the paths in the block)
+void StatsControls(DebugBoardBuilder& b, const StateNode& node, const std::string& id, const std::string& label,
+                   const std::vector<std::string>& counters, bool rates)
+{
+    if (node.isObject())
+    {
+        for (const auto& [key, value] : node.members)
+            StatsControls(b, value, id + "." + key, label.empty() ? key : label + "." + key, counters, rates);
+        return;
+    }
+    if (node.isArray())
+    {
+        for (size_t i = 0; i < node.items.size(); i++)
+            StatsControls(b, node.items[i], id + "[" + std::to_string(i) + "]", label + "[" + std::to_string(i) + "]",
+                          counters, rates);
+        return;
+    }
+    switch (node.kind)
+    {
+        case StateNode::Kind::Bool: b.Bool(id, label, node.b); break;
+        case StateNode::Kind::Int:
+            if (std::find(counters.begin(), counters.end(), id) != counters.end())
+                b.Counter(id, label, static_cast<uint64_t>(node.i));
+            else
+                b.Dec(id, label, node.i);
+            break;
+        case StateNode::Kind::Double:
+            if (rates)
+                b.Rate(id, label, node.d, "per second");
+            else
+            {
+                char text[32];
+                std::snprintf(text, sizeof text, "%.2f", node.d);
+                b.Text(id, label, text);
+            }
+            break;
+        case StateNode::Kind::String: b.Text(id, label, node.s); break;
+        default: break;
+    }
+}
+
+/// The Stats widget (gs-debugger N7): the GS slot's published statistics block (gsslotstats.h), the same numbers as
+/// `GET /state/audio/gs/stats` in the same frame. A running machine shows it from the first frame end after the read
+DebugBoardBuilder StatsBoard(EmulatorContext* context, const GeneralSoundCard& gs, bool read)
+{
+    if (!read)
+        return DebugBoardBuilder("gs_stats", "GS slot statistics", gs.deviceDescription(), gs.hasCoprocessor() ? "gs" : "main", true);
+    const GSStatsReply stats = GSStatsRead(context, GSStatsQuery{});
+    const bool ready = stats.status == 200 && !stats.pending;
+    DebugBoardBuilder b("gs_stats", "GS slot statistics", gs.deviceDescription(), gs.hasCoprocessor() ? "gs" : "main", ready);
+    b.Column();
+    if (!ready)
+    {
+        b.Group("Statistics").Text("status", "status", stats.text, "read again after a frame end");
+        return b;
+    }
+    const StateNode* frame = stats.body.find("frame");
+    const StateNode* age = stats.body.find("age_frames");
+    b.Group("Block", frame ? "frame " + std::to_string(frame->i) : "")
+        .Text("implementation", "card", stats.body.find("implementation")->s)
+        .Dec("frame", "frame", frame ? frame->i : 0, "the publisher's frame count")
+        .Dec("age_frames", "age", age ? age->i : 0, "frames since it was collected")
+        .Bool("replaying", "replaying", stats.body.find("replaying")->b, "collected while TTD replays");
+    int groups = 1;
+    for (const auto& [name, section] : stats.body.members)
+    {
+        if (!section.isObject())
+            continue;
+        if (groups++ % 4 == 0)
+            b.Column();
+        b.Group(name);
+        StatsControls(b, section, name, "", stats.counters, name == "rates");
+    }
+    return b;
+}
+} // namespace
+
+std::vector<DebugBoardBuilder> Build(EmulatorContext* context, const std::string& statsBoard)
+{
+    const bool readStats = statsBoard == "gs_stats";
     std::vector<DebugBoardBuilder> boards;
     SoundManager* sm = context ? context->pSoundManager : nullptr;
     const GeneralSoundCard* gs = sm ? sm->getGeneralSound() : nullptr;
@@ -445,6 +527,7 @@ std::vector<DebugBoardBuilder> Build(EmulatorContext* context)
     if (!gs->neogsState(s))
     {
         boards.push_back(GsBoard(*gs));
+        boards.push_back(StatsBoard(context, *gs, readStats));
         return boards;
     }
     boards.push_back(NeoGsBoard(*gs, s, sm));
@@ -452,6 +535,7 @@ std::vector<DebugBoardBuilder> Build(EmulatorContext* context)
     boards.push_back(NeoGsSdBoard(context, *gs, s));
     boards.push_back(NeoGsMp3Board(*gs, s));
     boards.push_back(NeoGsFlashBoard(*gs, s));
+    boards.push_back(StatsBoard(context, *gs, readStats));
     return boards;
 }
 
@@ -461,7 +545,7 @@ DebugBoardReply List(EmulatorContext* context)
     reply.body = StateNode::Object();
     StateNode list = StateNode::Array();
     std::ostringstream text;
-    for (const DebugBoardBuilder& b : Build(context))
+    for (const DebugBoardBuilder& b : Build(context, ""))
     {
         StateNode summary = b.Summary();
         text << b.Id() << " - " << summary["title"].s << " (cpu " << summary["cpu"].s << ")"
@@ -477,7 +561,7 @@ DebugBoardReply List(EmulatorContext* context)
 
 DebugBoardReply Read(EmulatorContext* context, const std::string& id, bool valuesOnly)
 {
-    const std::vector<DebugBoardBuilder> boards = Build(context);
+    const std::vector<DebugBoardBuilder> boards = Build(context, id);
     for (const DebugBoardBuilder& b : boards)
     {
         if (b.Id() != id)
@@ -492,7 +576,7 @@ DebugBoardReply Read(EmulatorContext* context, const std::string& id, bool value
 
 DebugBoardReply Action(EmulatorContext* context, const std::string& id, const std::string& action, const std::string& arg)
 {
-    const std::vector<DebugBoardBuilder> boards = Build(context);
+    const std::vector<DebugBoardBuilder> boards = Build(context, "");
     bool found = false;
     for (const DebugBoardBuilder& b : boards)
         found = found || b.Id() == id;

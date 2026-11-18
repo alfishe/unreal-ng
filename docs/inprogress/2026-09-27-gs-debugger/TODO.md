@@ -168,6 +168,11 @@ fixed RAM window, 3: high ROM at `#C000`).
      WebAPI / MCP / Lua / Python, `GSHostDriver_Test`. Design §6.4 "As built". Left: firmware objects (F5, phase
      6), a MultiSound card's send, Qt.
 5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
+   - 5a done (17c5a3e40): the boards and the SD board over `sd.ngs`, design §6.5.
+   - 5b done (2026-11-18, uncommitted): the statistics block, the `gs_stats` board, every plane; design §6.6,
+     neogs-automation-design.md §10. Checked: `core-tests` (GS, NeoGS, boards, MCP filters), `unreal-qt` zero
+     warnings, live `test_gs_debugger.py` 15/15. Left: the benchmarks of neogs-automation-design.md §5.4, the gcc
+     check.
 
 ### Later
 

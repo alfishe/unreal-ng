@@ -405,6 +405,38 @@ def test_the_card_cpu_runs_to_the_cursor(s):
     clear(s)
 
 
+def test_the_slot_statistics(s):
+    """The GS slot's statistics (gs-debugger N7): a running machine answers from the next frame end, rates and the
+    NeoGS sections in the text; a baseline from gs_reset_counters counts the commands sent after it; a section the
+    card has not names the card's; the Stats board lists the same block"""
+    s.call('control_execution', {'action': 'resume'}, ok=False)
+    r = s.call('inspect_state', {'aspects': ['audio_gs_stats']})
+    expect('GS slot stats: ngs' in r.text and 'mailbox:' in r.text and 'dma:' in r.text and 'sd:' in r.text,
+           'the block with the NeoGS sections', r.text)
+    r = s.call('inspect_state', {'aspects': ['audio_gs_stats'], 'gs_stats_fresh': True})
+    expect('cpu_steps' in r.text and '/s' in r.text, 'a fresh block has the rates', r.text)
+
+    r = s.call('emulator_manage', {'action': 'gs_reset_counters'})
+    m = re.search(r'baseline (\d+)', r.text)
+    expect(m is not None, 'gs_reset_counters names the baseline', r.text)
+    baseline = int(m.group(1))
+    s.call('emulator_manage', {'action': 'gs_send_command', 'value': 0x00})  # applied by the running machine
+    s.call('inspect_state', {'aspects': ['audio_gs_stats.mailbox'], 'gs_stats_fresh': True})
+    s.call('control_execution', {'action': 'pause'}, ok=False)
+    r = s.call('inspect_state', {'aspects': ['audio_gs_stats.mailbox'], 'gs_stats_since': baseline})
+    expect('since baseline %d' % baseline in r.text and 'host_commands 1' in r.text,
+           'the commands since the baseline', r.text)
+    r = s.call('invoke_api', {'method': 'GET', 'path': '/api/v1/emulator/{id}/state/audio/gs/stats/errors'})
+    errors = (r.structured or {}).get('body', {}).get('errors', {})
+    expect('total' in errors and 'sd_crc' in errors, 'the error counters with their total', r.text)
+
+    r = s.call('inspect_state', {'aspects': ['audio_gs_stats.player']})
+    expect('no section' in r.text and 'Sections: card, mailbox' in r.text, 'a missing section names the card\'s',
+           r.text)
+    r = s.call('inspect_state', {'aspects': ['board.gs_stats']})
+    expect('mailbox' in r.text and 'host_commands' in r.text, 'the Stats board', r.text)
+
+
 def test_the_neogs_boards(s):
     """Device boards (gs-debugger N4, N8): the NeoGS card publishes its hardware as boards, read with their values in
     the text; a host folder inserted through the SD board is the medium of the slot sd.ngs in the media list. Last in

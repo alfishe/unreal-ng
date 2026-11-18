@@ -216,6 +216,8 @@ enum class GSCpuRegister : uint8_t
     AF, BC, DE, HL, AFAlt, BCAlt, DEAlt, HLAlt, IX, IY, SP, PC, I, R, IM, IFF1, IFF2, MEMPTR
 };
 
+class GSStatsWriter;
+
 class GeneralSoundCard : public PortDevice, public ttd::TTDSerializable
 {
 public:
@@ -363,6 +365,10 @@ public:
     {
         return channel >= 0 && channel < kMaxHostChannels ? _hostGain[channel] : 32768;
     }
+
+    /// The card's own sections of the statistics block (gsslotstats.h), after the common ones: on the machine thread
+    /// at a frame end, or while the machine is paused
+    virtual void collectStats(GSStatsWriter& sections) const { (void)sections; }
 
     /// NeoGS extras (other cards: false / no-op)
     virtual bool neogsState(NeoGSStateInfo& out) const

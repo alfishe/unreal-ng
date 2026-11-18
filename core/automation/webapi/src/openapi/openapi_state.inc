@@ -904,7 +904,9 @@
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
         "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary. "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
-        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame. "
+        "reset_counters stores the statistics counters as a baseline and returns its id ('baseline'; read with "
+        "GET state/audio/gs/stats?since=<baseline>); nothing on the card changes.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -927,6 +929,8 @@
                                                                ["properties"]["action"]["enum"].append("read_status");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("read_data");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("reset_counters");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["value"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]

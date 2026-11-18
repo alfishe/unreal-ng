@@ -1,6 +1,7 @@
 # GS-slot automation: state, statistics and control - design
 
-Status: design, not implemented (2026-09-28).
+Status: statistics built (2026-11-17, gs-debugger N7), see section 10 "As built"; the LW sections, the
+NeoGS aliases and actions and `gs watch` are not done. Design 2026-09-28.
 Covers every card the GS slot can hold: the **classic GS** (LLE, Z80 +
 firmware), the **lightweight player** (LW) and **NeoGS**. One mechanism, one
 set of surfaces; each card fills in the sections it has.
@@ -386,3 +387,48 @@ sections per card.
 5. CLI, MCP, Lua, Python; docs.
 
 Each step keeps the suite green on its own.
+
+## 10. As built (2026-11-17)
+
+Built as the gs-debugger's N7 (TODO item 5b). Differences from the design above:
+
+- **Code.** `core/src/emulator/sound/chips/gs/gsslotstats.{h,cpp}`: `GSStatsWriter` (sections, counters by dotted
+  path), `GSCollectStats` (the common sections), `GSStatsPublisher` (owned by `SoundManager`, `gsStats()`), and
+  `GSStatsRead` / `GSStatsResetCounters` / `GSStatsText`, which every plane calls (the planes call the core function,
+  as `GSSend` and the boards do, rather than forwarding to the WebAPI). The card's own sections:
+  `GeneralSoundCard::collectStats(GSStatsWriter&)`, overridden by NeoGS.
+- **Counters.** In `GSActivityCounters`, on all three cards: `hostStatusPolls`, `cardCommandsRead`, `cardCommandAcks`,
+  `cardDataIn`, `cardDataOut`, `cardStatusPolls` (not on LW), `commandOverwrites`, `dataOverwrites`, `resetsCold`,
+  `resetsHost`, `nmiRequests`. NeoGS: `NeoGSCounters` (interrupts by source: timer, SD DMA, MP3 DMA, none; clock
+  switches; SD inserts and ejects; flash saves), `NeoGSDma::Counters` per module (starts, completions, aborts,
+  errors, bytes, stall clocks, the last transaction), `NeoGSSpi::Counters` per master (bytes, restarts),
+  `SdCardSpi::Counters` (commands and app commands by index, illegal, CRC, out of range, write errors),
+  `Vs10xxDecoder::Counters` (bytes while busy, dropped, resync bytes, underruns, SCI reads and writes),
+  `Flash29F040B::Counters` (bytes programmed, program failures, sectors erased, chip erases).
+- **Publishing.** `SoundManager::publishGsStats` after each `handleFrameEnd` of the card. Without a reader in the last
+  100 frames it costs one relaxed load and a store of the frame count. A paused or stopped machine (and a read on
+  the machine thread) is collected on the reader's thread. A running one answers from the next frame end: the WebAPI
+  polls every 10 ms on its event loop (503 after 500 ms); CLI, Lua and Python wait up to 500 ms on a condition
+  variable. A block older than 100 frames is not returned.
+- **Rates.** Over a ring of the last 50 published frames (seconds from `frame_duration_us`): `commands`,
+  `data_bytes`, `interrupts`, `cpu_steps`, `dac_fetches`, `zx_dma_bytes`, `sd_dma_bytes`, `mp3_dma_bytes`,
+  `sd_bytes`, `mp3_bytes`, with `window_frames`. `cpu_steps` per second stands in for the measured `card MHz`. The
+  ring starts over when the card changes or nobody reads.
+- **Errors.** Computed at read time from the (baselined) counters: `command_overwrites`, `data_overwrites`,
+  `interrupts_coalesced`, `param_queue_overflows` (LW), `zx_bytes_dropped`, `dma_aborts`, `sd_dma_errors`,
+  `sd_illegal`, `sd_crc`, `sd_write_errors`, `mp3_dropped`, `mp3_resyncs`, `flash_program_failures`, `total`.
+- **Baselines.** The last 16 are kept; a counter below its baseline (a new card) counts from zero.
+- **Surfaces.** WebAPI `GET /state/audio/gs/stats[/{section}]?since=&fresh=1` (with `text`), `POST
+  /control/audio/gs` `reset_counters`, OpenAPI; CLI `gs stats [section] [--since B] [--fresh]`, `gs stats reset`;
+  MCP `inspect_state` aspects `audio_gs_stats` and `audio_gs_stats.<section>` (`gs_stats_since`, `gs_stats_fresh`),
+  `emulator_manage` `gs_reset_counters`; Lua `gs_stats(section, since)`, `gs_reset_counters()`; Python the same. The
+  debugger's Stats widget is the board `gs_stats` (core DebugBoards), built from the same block.
+- **Tests.** `GSSlotStats_Test`: the classic card's mailbox counters and an overwrite, no NeoGS sections and the 404
+  naming the card's; a baseline; LW without `cpu`; publishing only while read, the stop 100 frames after the read,
+  the rates; the machine's frame ends; NeoGS sections and the Stats board against the read. MCP:
+  `InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline`, live `test_gs_debugger.py`
+  `test_the_slot_statistics`.
+- **Not done.** The LW `player` / `module` sections (4.6: the sequencer has no getters for them yet); the
+  `/neogs` aliases and `neogs ...` CLI names; `gs watch`; the NeoGS actions `zxdma_watch` and `mp3_gain`; DMA
+  `busy_clocks`; the last transaction's clocks and frame; the per-card stats test files of section 8 (one
+  `gsslotstats_test.cpp` instead) and The Link's acceptance rate; the benchmarks of 5.4.

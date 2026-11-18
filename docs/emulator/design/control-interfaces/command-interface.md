@@ -645,6 +645,17 @@ media manager's slot `sd.ngs`, `board neogs_flash save` saves the flash. Every p
 `boards` / `board.<id>` and `emulator_manage` `board_action`; Lua and Python `boards()`, `board(id)`,
 `board_action(id, action, arg)` ([gs-debugger design §6.5](../../../inprogress/2026-09-27-gs-debugger/design.md#65-device-boards-n4-n8)).
 
+`gs stats [section] [--since <id>] [--fresh]` reads the GS slot's statistics: what the fitted card did, one block for
+every card - `card` (resets), `mailbox` (both sides: host commands, data and status polls, the card's reads and acks,
+overwrites), `interrupts`, `cpu`, `audio`; on NeoGS also `dma` (transactions per module), `spi`, `sd` (commands by
+index, errors), `mp3`, `flash`; `rates` per second over the last 50 frames and `errors` with their total. A running
+machine answers from the next frame end (a read keeps the block published for 2 s). `gs stats reset` stores a
+baseline and prints its id; `--since <id>` reads the counters since then (the machine keeps counting). Every plane:
+WebAPI `GET /state/audio/gs/stats[/{section}]?since=&fresh=1`, `POST /control/audio/gs` `reset_counters`; MCP
+`inspect_state` aspect `audio_gs_stats[.<section>]` (`gs_stats_since`, `gs_stats_fresh`) and `emulator_manage`
+`gs_reset_counters`; Lua and Python `gs_stats(section, since)`, `gs_reset_counters()`; the debugger's board
+`gs_stats` ([neogs-automation-design §10](../../../inprogress/2026-09-19-general-sound/neogs-automation-design.md#10-as-built-2026-11-17)).
+
 #### 3.1 Memory Commands
 
 The `memory` command provides unified access to emulator memory with two addressing modes:

@@ -332,6 +332,9 @@ void SdCardSpi::respondR1(uint8_t r1)
     for (int i = 0; i < ncr; i++)
         _out.push_back(0xFF);
     _out.push_back(r1);
+    _counters.illegal += (r1 & R1_ILLEGAL) ? 1 : 0;
+    _counters.crcErrors += (r1 & R1_CRC_ERROR) ? 1 : 0;
+    _counters.outOfRange += (r1 & (R1_ADDRESS | R1_PARAMETER)) ? 1 : 0;
     if ((r1 & R1_CRC_ERROR) && tapChecking()) [[unlikely]]
         _tap->Finding(BusRule::CrcError, _tapSlot, r1);
 }
@@ -454,7 +457,10 @@ void SdCardSpi::finishWrite()
 {
     const bool ok = _writeMode != WriteMode::Off && writeBlock(_writeBlock, _rx.data());
     if (!ok)
+    {
         _wpViolation = _writeMode == WriteMode::Off;
+        _counters.writeErrors++;
+    }
     _out.push_back(ok ? DATA_ACCEPTED : DATA_WRITE_ERROR);
     queueBusy(WRITE_BUSY_BYTES, kWriteMinUs, kWriteMaxUs, kWriteSlowUs);
     if (ok)
@@ -634,6 +640,7 @@ void SdCardSpi::onCommandBody()
 
     if (_onCommand)
         _onCommand(index);
+    (app ? _counters.appCommands : _counters.commands)[index]++;
 
     // CRC: always for CMD0 and CMD8, for everything once CMD59 enabled it
     if ((_crcOn || index == 0 || index == 8) && !crcValid)

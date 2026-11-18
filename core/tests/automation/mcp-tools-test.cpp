@@ -2140,6 +2140,37 @@ TEST_F(McpTools_Test, InspectState_BoardAspect_ShowsEveryControlInTheText)
     EXPECT_NE(result.text.find("Board neogs_sd insert /sd: done"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
+{
+    // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its
+    // query; the text is the server's lines, and gs_reset_counters names the baseline
+    Json::Value stats;
+    stats["implementation"] = "ngs";
+    stats["mailbox"]["host_commands"] = 1;
+    stats["text"] = "GS slot stats: ngs, frame 9, since baseline 3\nmailbox: host_commands 1\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"] = {200, stats};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_stats.mailbox");
+    args["gs_stats_since"] = 3;
+    args["gs_stats_fresh"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"));
+    EXPECT_NE(result.text.find("[audio_gs_stats.mailbox] GS slot stats: ngs"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("mailbox: host_commands 1"), std::string::npos) << result.text;
+
+    Json::Value baseline;
+    baseline["baseline"] = 4;
+    baseline["frame"] = 12;
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, baseline};
+    Json::Value manage;
+    manage["action"] = "gs_reset_counters";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("GS statistics baseline 4 at frame 12"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
 {
     // One endpoint; the summary names fitment, counters and the routing answer (D-2)

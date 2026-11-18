@@ -57,6 +57,18 @@ namespace ttd
 enum class TTDExternalEventKind : uint8_t;
 }
 
+/// The card's own counters beside its devices' (neogs-automation-design.md §4.1, §4.3, §4.9, §4.11): statistics,
+/// not machine state (no snapshot)
+struct NeoGSCounters
+{
+    uint64_t interrupts[3] = {};   // accepted, by source: timer, SD DMA, MP3 DMA (the request the acknowledge served)
+    uint64_t interruptsNoSource = 0; // accepted with no enabled request left (IM 2 vector #FF)
+    uint64_t clockSwitches = 0;    // GSCFG0 clock changes applied
+    uint64_t sdInserts = 0;
+    uint64_t sdEjects = 0;
+    uint64_t flashSaves = 0;
+};
+
 class SoundChip_NeoGS : public GeneralSoundCard, public ttd::ITTDRegionSource, private NeoGSDma::Host,
                         private NeoGSZxDma::Host
 {
@@ -285,6 +297,7 @@ public:
         return !sdCardPresent() ? std::string() : _sdSlotRegistered ? _sdSource : _sd->path();
     }
     bool neogsState(NeoGSStateInfo& out) const override;
+    void collectStats(GSStatsWriter& sections) const override;
     bool peekCardMemory(uint16_t addr, uint8_t& out) const override
     {
         out = _mem.peek(addr);
@@ -624,6 +637,7 @@ private:
 
     GSUploadCapture _upload;
     GSActivityCounters _activityCounters;
+    NeoGSCounters _counters;
     GSPortTraceRecorder _portTrace;
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
 };

@@ -81,8 +81,9 @@ DebugBoardReply Read(EmulatorContext* context, const std::string& id, bool value
 /// A board's action: `neogs_sd` insert <path> / eject, `neogs_flash` save
 DebugBoardReply Action(EmulatorContext* context, const std::string& id, const std::string& action, const std::string& arg);
 
-/// The boards as built now (tests; the planes use List / Read)
-std::vector<DebugBoardBuilder> Build(EmulatorContext* context);
+/// The boards as built now (tests; the planes use List / Read). @p statsBoard "": the statistics board `gs_stats`
+/// without its values (reading them turns the stats publishing on), "gs_stats" with them
+std::vector<DebugBoardBuilder> Build(EmulatorContext* context, const std::string& statsBoard = "gs_stats");
 /// A board (Build's layout) as lines: "group: label value ..."
 std::string Text(const StateNode& board);
 } // namespace DebugBoards

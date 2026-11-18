@@ -62,6 +62,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -5578,6 +5579,39 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
+            // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
+            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since) -> py::object {
+                GSStatsQuery query;
+                query.section = section;
+                query.since = since;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release; // a running machine answers from the next frame end
+                    reply = GSStatsRead(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The GS slot's statistics: the block or one section (card, mailbox, interrupts, cpu, audio, dma, spi, sd, "
+               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters", py::arg("section") = "",
+               py::arg("since") = 0)
+            .def("gs_reset_counters", [](Emulator& self) -> py::object {
+                GSStatsQuery query;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = GSStatsResetCounters(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
             // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards
             .def("boards", [](Emulator& self) -> py::object {
                 return StateNodeToPy(DebugBoards::List(self.GetContext()).body["boards"]);

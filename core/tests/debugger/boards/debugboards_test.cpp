@@ -62,7 +62,8 @@ protected:
     std::string Ids() const
     {
         std::string ids;
-        for (const StateNode& b : DebugBoards::List(_ctx).body.find("boards")->items)
+        const DebugBoardReply list = DebugBoards::List(_ctx); // the items live in it
+        for (const StateNode& b : list.body.find("boards")->items)
             ids += (ids.empty() ? "" : " ") + b.find("id")->s;
         return ids;
     }
@@ -73,7 +74,7 @@ protected:
 /// The classic card: one board, its mailbox and channels; another id is not found and the error lists the boards
 TEST_F(DebugBoards_Test, TheClassicCardPublishesTheGsBoard)
 {
-    EXPECT_EQ(Ids(), "gs");
+    EXPECT_EQ(Ids(), "gs gs_stats");
     const DebugBoardReply board = DebugBoards::Read(_ctx, "gs");
     ASSERT_EQ(board.status, 200) << board.text;
     EXPECT_EQ(board.body.find("cpu")->s, "gs");
@@ -95,7 +96,7 @@ TEST_F(DebugBoards_Test, TheClassicCardPublishesTheGsBoard)
 TEST_F(DebugBoards_Test, TheNeoGSBoardsCarryTheCardsState)
 {
     ASSERT_TRUE(FitNeoGSWithSd(_ctx, _image->path()));
-    EXPECT_EQ(Ids(), "neogs neogs_dma neogs_sd neogs_mp3 neogs_flash");
+    EXPECT_EQ(Ids(), "neogs neogs_dma neogs_sd neogs_mp3 neogs_flash gs_stats");
     _emulator->RunNFrames(3, /*skipBreakpoints=*/true);
 
     NeoGSStateInfo s;

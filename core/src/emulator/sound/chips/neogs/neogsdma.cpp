@@ -70,11 +70,20 @@ void NeoGSDma::writeRegister(int reg, uint8_t value, int64_t now)
             _regs[m][3] = static_cast<uint8_t>(value & 0x80);
             if (!wasRunning && running(m))
             {
+                _counters[m].starts++;
+                _startAddress[m] = address(m);
                 _host.dmaStarted(m);
                 start(m, now);
             }
             else if (wasRunning && !running(m))
+            {
+                // The ZX module's work is the window CST is set; the others are cut off
+                if (m == ZX)
+                    _counters[m].completions++;
+                else
+                    _counters[m].aborts++;
                 finish(m, false); // aborted: no interrupt
+            }
             return;
         }
     }
@@ -96,6 +105,7 @@ void NeoGSDma::start(Module m, int64_t now)
                 _mp3Buffer[i] = _mem.ram()[(base + static_cast<uint32_t>(i)) % _mem.ramSize()];
             advanceAddress(MP3, BLOCK);
             const int64_t burst = static_cast<int64_t>(BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS) * _host.dmaUnitsPerCycle();
+            _counters[MP3].stallClocks += BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS;
             _host.dmaStall(burst);
             _mp3Phase = Phase::Mp3Send;
             _mp3Sent = 0;
@@ -176,6 +186,7 @@ void NeoGSDma::runSd(int64_t now)
             if (token != 0xFE)
             {
                 // Not a data token: stop with nothing written, still an interrupt
+                _counters[SD].errors++;
                 finish(SD, true);
                 return;
             }
@@ -201,6 +212,12 @@ void NeoGSDma::runSd(int64_t now)
         _host.dmaRamWritten(base, BLOCK);
         advanceAddress(SD, BLOCK);
         _bytesMoved += BLOCK;
+        Counters& c = _counters[SD];
+        c.completions++;
+        c.bytes += BLOCK;
+        c.stallClocks += BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS;
+        c.lastAddress = _startAddress[SD];
+        c.lastBytes = BLOCK;
         const int64_t burst = static_cast<int64_t>(BLOCK * BURST_CLOCKS_PER_BYTE + GRANT_OVERHEAD_CLOCKS) * _host.dmaUnitsPerCycle();
         _host.dmaStall(burst);
         // Done at the end of the burst
@@ -218,7 +235,7 @@ void NeoGSDma::runMp3(int64_t now)
     if (_mp3Phase != Phase::Mp3Send || !_mp3)
     {
         if (_mp3Phase == Phase::Mp3Send)
-            finish(MP3, true); // no decoder fitted: the bytes go nowhere
+            completeMp3(); // no decoder fitted: the bytes go nowhere
         return;
     }
     // One byte per MD byte time while DREQ is up; otherwise look again later
@@ -233,14 +250,24 @@ void NeoGSDma::runMp3(int64_t now)
         }
         (_mp3Data ? _mp3Data : _mp3->sdi())->exchange(_mp3Buffer[_mp3Sent++]);
         _bytesMoved++;
+        _counters[MP3].bytes++;
         t += byteTime;
     }
     if (_mp3Sent >= BLOCK)
     {
-        finish(MP3, true);
+        completeMp3();
         return;
     }
     _mp3At = t;
+}
+
+void NeoGSDma::completeMp3()
+{
+    Counters& c = _counters[MP3];
+    c.completions++;
+    c.lastAddress = _startAddress[MP3];
+    c.lastBytes = static_cast<uint32_t>(_mp3Sent);
+    finish(MP3, true);
 }
 
 /// region <State snapshot>

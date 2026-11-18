@@ -1131,8 +1131,28 @@ controls with their values, rendered by any front-end with one generic renderer.
   refusals (no path 400, no action 404, no file 422). MCP: `test_the_neogs_boards`.
 - **Not done.** Writing a board control (`PUT /debug/boards/{id}/{control}`): the controls the card's program owns
   are not automation's to change (neogs-automation-design.md §7.1). The counters the catalog lists beside the state
-  (DMA transactions, SD commands and errors, MP3 drops, flash operations, clock switches) come with the statistics
-  (N7, item 5b). MPAGEX is not latched by the card model. A MultiSound slot's card has no boards. The Qt renderer.
+  (DMA transactions, SD commands and errors, MP3 drops, flash operations, clock switches) are in the statistics
+  (§6.6), not on these boards. MPAGEX is not latched by the card model. A MultiSound slot's card has no boards. The
+  Qt renderer.
+
+### 6.6 Card statistics (N7)
+
+As built (2026-11-17, TODO item 5b): the `GSSlotStats` block of
+[neogs-automation-design.md](../2026-09-19-general-sound/neogs-automation-design.md) §10, one block for every card in
+the GS slot.
+
+- **The Stats widget** is the board `gs_stats`: its groups are the block's sections (card, mailbox, interrupts, cpu,
+  audio; on NeoGS dma, spi, sd, mp3, flash; rates, errors), its controls the leaves (counters as `counter`, rates as
+  `rate`). It is built from the same published block as `GET /state/audio/gs/stats`, so both show the same numbers
+  for the same frame (`frame`, `age_frames`).
+- **Cost.** The counters are plain increments where the event already happens; the block is collected at frame ends
+  only for 100 frames after a read. Listing the boards, reading another board or running an action does not read the
+  block (`DebugBoards::Build` builds `gs_stats` without values then), so only a client that shows the statistics
+  keeps the publishing on.
+- **On a running machine** the first read of the board after a quiet spell answers "not available" with the reason
+  (no frame end since the read); the next one, a frame later, has the block. The WebAPI read waits for it.
+- **Not done.** The LW `player` / `module` sections, the NeoGS aliases and actions, `gs watch` (§10 there). The Qt
+  renderer.
 
 ## 7. Front-ends
 

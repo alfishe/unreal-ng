@@ -158,6 +158,18 @@ public:
     void truncatedByte() override;
 
     /// Diagnostics
+    /// Commands and errors (neogs-automation-design.md §4.9): statistics, not machine state (no snapshot)
+    struct Counters
+    {
+        std::array<uint64_t, 64> commands{};     // CMDn the card took in SPI mode, by index
+        std::array<uint64_t, 64> appCommands{};  // ACMDn, by index
+        uint64_t illegal = 0;     // R1 illegal command
+        uint64_t crcErrors = 0;   // R1 CRC error
+        uint64_t outOfRange = 0;  // R1 address or parameter error
+        uint64_t writeErrors = 0; // a data block refused (write protected, past the end, a host write error)
+    };
+    const Counters& counters() const { return _counters; }
+
     uint64_t blocksRead() const { return _blocksRead; }
     uint64_t blocksWritten() const { return _blocksWritten; }
     uint8_t lastCommand() const { return _lastCommand; }
@@ -282,6 +294,7 @@ private:
 
     uint64_t _blocksRead = 0;
     uint64_t _blocksWritten = 0;
+    Counters _counters;
 
     // Timing profile (state v2). A delay runs after `_out` drains: each exchange returns `value` until it
     // ends (on the clock, else after `bytesLeft` bytes), then `block` is queued if `thenBlock`

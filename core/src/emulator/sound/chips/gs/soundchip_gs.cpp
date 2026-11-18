@@ -91,6 +91,8 @@ void SoundChip_GeneralSound::setSynthesisSuppressed(bool suppressed)
 void SoundChip_GeneralSound::reset()
 {
     resetCard();
+    _activityCounters.resetsHost--; // a power-on, not a #33 pulse
+    _activityCounters.resetsCold++;
 
     // Host mailbox and the external DAC/volume latches flip back to their
     // power-on state (resetCard - the #33 pulse - leaves them alone: they are
@@ -111,6 +113,7 @@ void SoundChip_GeneralSound::reset()
 
 void SoundChip_GeneralSound::resetCard()
 {
+    _activityCounters.resetsHost++;
     if (_cpu)
         Z80CpuReset(_cpu);
     if (_debugHooks) [[unlikely]]
@@ -575,6 +578,7 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
             return _mb.dataToHost;
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
+            _activityCounters.hostStatusPolls++;
             traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
             return _mb.status | 0x7E;
         default:
@@ -600,6 +604,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             }
             if (value & 0x40)
             {
+                _activityCounters.nmiRequests++;
                 _nmiPending = true;
                 flush();
                 return;
@@ -635,6 +640,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
 void SoundChip_GeneralSound::onHostDataWrite(uint8_t value)
 {
     _activityCounters.hostDataWritten++;
+    _activityCounters.dataOverwrites += _mb.status >> 7;
     _mb.dataFromHost = value;
     _mb.status |= 0x80;
     _upload.onData(value, _ram.size());
@@ -643,6 +649,7 @@ void SoundChip_GeneralSound::onHostDataWrite(uint8_t value)
 void SoundChip_GeneralSound::onHostCommandWrite(uint8_t value)
 {
     _activityCounters.hostCommandsReceived++;
+    _activityCounters.commandOverwrites += _mb.status & 0x01;
     _mb.commandFromHost = value;
     _mb.status |= 0x01;
     _upload.onCommand(value);
@@ -683,6 +690,7 @@ void SoundChip_GeneralSound::triggerNMI()
 {
     if (!_profile.controlPort)
         return; // the NMI line is driven by #33 bit 6 only
+    _activityCounters.nmiRequests++;
     _nmiPending = true;
     flush();
 }
@@ -772,11 +780,11 @@ uint8_t SoundChip_GeneralSound::gsInDecode(uint16_t port)
     switch (port & 0x00FF)
     {
         // Exact original semantics (Unreal gsz80.cpp z80gs::in / ZXMAK2):
-        case 0x01: return _mb.commandFromHost; // COMRG: no flag change (RSCOM 0x05 clears bit0)
-        case 0x02: _mb.status &= 0x7F; return _mb.dataFromHost; // DATRG: clear bit7, return host byte
+        case 0x01: _activityCounters.cardCommandsRead++; return _mb.commandFromHost; // COMRG: no flag change (RSCOM 0x05 clears bit0)
+        case 0x02: _activityCounters.cardDataIn++; _mb.status &= 0x7F; return _mb.dataFromHost; // DATRG: clear bit7, return host byte
         case 0x03: _mb.status |= 0x80; _mb.dataToHost = 0xFF; return 0xFF; // OUTRG read: set bit7
-        case 0x04: return _mb.status; // FLAGS
-        case 0x05: _mb.status &= 0xFE; return 0xFF; // RSCOM: clear bit0
+        case 0x04: _activityCounters.cardStatusPolls++; return _mb.status; // FLAGS
+        case 0x05: _activityCounters.cardCommandAcks++; _mb.status &= 0xFE; return 0xFF; // RSCOM: clear bit0
         // gspage in the original is rol8(MPAG,1), so (gspage<<7)&0x80 == raw MPAG bit7
         case 0x0A: applyPort0A(); return 0xFF;
         case 0x0B: applyPort0B(0); return 0xFF;
@@ -795,8 +803,13 @@ void SoundChip_GeneralSound::gsOut(uint16_t port, uint8_t value)
             applyBanking();
             return;
         case 0x02: _mb.status &= 0x7F; return; // DATRG write: clear bit7
-        case 0x03: _mb.status |= 0x80; _mb.dataToHost = value; return; // OUTRG: set bit7, latch reply
-        case 0x05: _mb.status &= 0xFE; return; // RSCOM: clear bit0
+        case 0x03: // OUTRG: set bit7, latch reply
+            _activityCounters.cardDataOut++;
+            _activityCounters.dataOverwrites += _mb.status >> 7;
+            _mb.status |= 0x80;
+            _mb.dataToHost = value;
+            return;
+        case 0x05: _activityCounters.cardCommandAcks++; _mb.status &= 0xFE; return; // RSCOM: clear bit0
         case 0x06:
         case 0x07:
         case 0x08:
@@ -829,11 +842,11 @@ uint8_t SoundChip_GeneralSound::gsInMultiSoundDecode(uint16_t port)
     const uint8_t undecoded = _profile.undecodedPortRead;
     switch (port & 0x0F)
     {
-        case 0x01: return _mb.commandFromHost;
-        case 0x02: _mb.status &= 0x7F; return _mb.dataFromHost;
+        case 0x01: _activityCounters.cardCommandsRead++; return _mb.commandFromHost;
+        case 0x02: _activityCounters.cardDataIn++; _mb.status &= 0x7F; return _mb.dataFromHost;
         case 0x03: _mb.status |= 0x80; return undecoded; // the flag edge fires; the reply register is write-only
-        case 0x04: return static_cast<uint8_t>(_mb.status | 0x7E); // {data flag, 111111, command flag}
-        case 0x05: _mb.status &= 0xFE; return undecoded;
+        case 0x04: _activityCounters.cardStatusPolls++; return static_cast<uint8_t>(_mb.status | 0x7E); // {data flag, 111111, command flag}
+        case 0x05: _activityCounters.cardCommandAcks++; _mb.status &= 0xFE; return undecoded;
         case 0x0A: applyPort0A(); return undecoded;
         case 0x0B: applyPort0B(3); return undecoded;
         default: return undecoded;
@@ -850,8 +863,13 @@ void SoundChip_GeneralSound::gsOutMultiSound(uint16_t port, uint8_t value)
     {
         case 0x00: _mpag = value; applyBanking(); return;
         case 0x02: _mb.status &= 0x7F; return;
-        case 0x03: _mb.status |= 0x80; _mb.dataToHost = value; return;
-        case 0x05: _mb.status &= 0xFE; return;
+        case 0x03:
+            _activityCounters.cardDataOut++;
+            _activityCounters.dataOverwrites += _mb.status >> 7;
+            _mb.status |= 0x80;
+            _mb.dataToHost = value;
+            return;
+        case 0x05: _activityCounters.cardCommandAcks++; _mb.status &= 0xFE; return;
         case 0x06:
         case 0x07:
         case 0x08:
