@@ -3299,6 +3299,13 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                                          QString::fromStdString(snapshot::ZXPolyRefusal(filePath.right(3).toLower().toStdString())));
                     break;
                 }
+                // A NEX runs under NextZXOS: the launcher boots a fresh Next first (seconds of firmware), so it runs on
+                // the actions worker as the handheld menu's open does, never blocking this thread
+                if (filePath.toLower().endsWith(".nex"))
+                {
+                    openSnapshotAsync(filePath);
+                    break;
+                }
                 SnapshotLauncher::Need need;
                 std::string error;
                 if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))
@@ -3356,6 +3363,45 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "Unsupported file type:" << filePath;
             break;
     };
+}
+
+void MainWindow::openSnapshotAsync(const QString& filePath)
+{
+    if (!_emulator)
+        return;
+    StateNode params = StateNode::Object();
+    params["path"] = StateNode(filePath.toStdString());
+    params["kind"] = StateNode(std::string("snapshot"));
+    params["switch_model"] = StateNode(true);  // choosing the file here is the explicit request for its machine
+    actions::ActionValue value;
+    value.params = std::move(params);
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:open";
+    origin.client = "open dialog";
+    statusBar()->showMessage(tr("Opening %1...").arg(QFileInfo(filePath).fileName()));
+    QPointer<MainWindow> self(this);
+    actions::ActionRegistry::Instance().Submit(
+        "media.open", std::move(value), _emulator->GetId(), std::move(origin), [self](actions::ActionResult result) {
+            const bool ok = result.ok;
+            const QString text = QString::fromStdString(result.message);
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, ok, text] {
+                    if (!self)
+                        return;
+                    self->statusBar()->clearMessage();
+                    if (!ok)
+                    {
+                        QMessageBox::warning(self, tr("Load Snapshot"), text);
+                        return;
+                    }
+                    if (self->_statusBarManager)
+                        self->_statusBarManager->resetFpsMeasurement();  // the snapshot replaces the frame counter
+                    self->_lastFrameCount = 0;
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,

@@ -546,8 +546,10 @@ void Cpu::SetTrapRange(uint32_t base, uint32_t size)
 
 void Cpu::SetCallSentinel(uint32_t pc)
 {
+    // Hosts set the sentinel before every call into the guest, almost always the same one: the decoded blocks already
+    // stop before it, dropping them would decode the whole working set again at every call
     if (pc == sentinel_)
-        return; // the blocks already stop before it (the host sets the same sentinel at every call)
+        return;
     sentinel_ = pc;
     InvalidateCode();
 }

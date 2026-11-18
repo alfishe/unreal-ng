@@ -373,6 +373,23 @@ TEST_F(XtensaCpu_Test, HostCallsNestThroughTraps)
     EXPECT_EQ(Call(kSum8, {1, 2, 3, 4, 5, 6, 7, 8}), 36u);
 }
 
+TEST_F(XtensaCpu_Test, SameCallSentinelKeepsDecodedBlocks)
+{
+    // The ESP host sets the sentinel before every call: the same one must not drop the decoded blocks
+    EXPECT_EQ(Call(kSum8, {1, 2, 3, 4, 5, 6, 7, 8}), 36u);
+    const size_t blocks = cpu.BlockCount();
+    ASSERT_GT(blocks, 0u);
+    cpu.SetCallSentinel(cpu.CallSentinel());
+    EXPECT_EQ(cpu.BlockCount(), blocks);
+    EXPECT_EQ(Call(kSum8, {1, 2, 3, 4, 5, 6, 7, 8}), 36u);
+    EXPECT_EQ(cpu.BlockCount(), blocks);
+
+    // A new sentinel drops them (a block may end only at the old one); calls return to it (Call stops at AtCallReturn)
+    cpu.SetCallSentinel(cpu.CallSentinel() + 0x10);
+    EXPECT_EQ(cpu.BlockCount(), 0u);
+    EXPECT_EQ(Call(kSum8, {1, 2, 3, 4, 5, 6, 7, 8}), 36u);
+}
+
 TEST_F(XtensaCpu_Test, BeginCallDepthIsBounded)
 {
     std::vector<uint32_t> a = {0, 0, 0};

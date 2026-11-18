@@ -11,6 +11,7 @@
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
 #include "emulator/video/next/nextlayerimage.h"
@@ -1150,6 +1151,21 @@ public:
         lua.set_function("emu_count", []() -> int {
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
+        });
+
+        // The machines grouped family -> machine -> RAM size (MachineCatalog, as GET /emulator/machines):
+        // machines([all], [id]) -> {families = {...}, current = {...}?}
+        lua.set_function("machines", [](sol::optional<bool> all, sol::optional<std::string> id, sol::this_state state) {
+            std::string current;
+            uint32_t ramKb = 0;
+            if (id && !id->empty())
+                if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(*id))
+                {
+                    current = MachineCatalog::NameOf(*emulator);
+                    ramKb = EmulatorManager::GetMachineIdentity(*emulator).RamKb;
+                }
+            return StateNodeToLua(state, all.value_or(false) ? MachineCatalog::ToState(MachineCatalog::All(), current, ramKb)
+                                                             : MachineCatalog::ToState(MachineCatalog::Creatable(), current, ramKb));
         });
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point

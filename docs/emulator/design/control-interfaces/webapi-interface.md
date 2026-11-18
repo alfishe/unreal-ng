@@ -68,6 +68,7 @@ The WebAPI implements the same command semantics as other interfaces (CLI, Pytho
 
 | WebAPI Endpoint | CLI Equivalent | Notes |
 | :--- | :--- | :--- |
+| `GET /emulator/machines` | `machines` | The machines grouped family -> machine -> RAM size: the tree clients (handheld, Android, MCP) build their machine picker from |
 | `GET /emulator/models` | — | Returns available Spectrum models for programmatic discovery; CLI users specify model in `create` command |
 | `DELETE /emulator/{id}` | `stop` | Explicit remove endpoint; CLI's `stop` command stops and removes instance |
 | `POST /emulator/{id}/start` | `resume` | Start an existing initialized emulator; CLI uses `resume` after `create` |
@@ -286,6 +287,34 @@ Entries that conflict (two cards with one job) refuse the machine with a `400` n
   "available_models_endpoint": "/api/v1/emulator/models"
 }
 ```
+
+### 5b. Machines by family
+**Endpoint**: `GET /api/v1/emulator/machines[?all=true][&id=<emulator>]`  
+**Description**: The machines grouped family -> machine -> RAM size (`MachineCatalog`), in menu order: the one tree
+every client builds its machine picker from (the Qt Machine menu and the handheld Model picker read the same catalog).
+Creatable machines only, families left empty dropped; `all=true` gives every one. A machine's `name` is what
+`POST /emulator/start` / `mach.start` take as `model` (a model, a variant or a ZX-Poly configuration). With `id`,
+`current` places that emulator's machine (404 for an unknown id). Every entry of `GET /emulator/models` carries its
+`family` id too.
+
+```json
+{
+  "families": [
+    { "id": "atm", "title": "ATM Turbo", "machines": [
+      { "name": "ATM450", "title": "ATM-Turbo v4.50", "kind": "model", "base_model": "ATM450",
+        "ram_sizes_kb": [512, 1024], "default_ram_kb": 512, "creatable": true },
+      { "name": "ATM710", "title": "ATM-Turbo 2+ v7.10", "kind": "model", "base_model": "ATM710",
+        "ram_sizes_kb": [128, 256, 512, 1024], "default_ram_kb": 1024, "creatable": true } ] },
+    { "id": "zx-evo", "title": "ZX-Evo", "machines": [
+      { "name": "TSL-VDAC2", "title": "TS-Conf + VDAC2 (FT812)", "description": "...", "kind": "variant",
+        "base_model": "TSL", "ram_sizes_kb": [4096], "default_ram_kb": 4096, "creatable": true } ] }
+  ],
+  "current": { "family": "atm", "machine": "ATM710", "ram_kb": 1024 }
+}
+```
+
+A client shows a level only when it has more than one entry (a family of one machine is that machine, a machine of one
+RAM size has no RAM level), as the Qt menu and the handheld picker do.
 
 ### 5a. List Models (runtime-authoritative)
 **Endpoint**: `GET /api/v1/emulator/models`  
