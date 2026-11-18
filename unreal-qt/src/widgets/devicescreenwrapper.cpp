@@ -231,6 +231,23 @@ QRectF DeviceScreenWrapper::pictureSourceRect() const
     return {};
 }
 
+namespace
+{
+/// The software screen as drawn, with or without its child widgets: the HUD is one (QWidget::grab takes children
+/// too, so a recording or a "no HUD" grab showed it)
+QPixmap GrabSoftwareScreen(QWidget* screen, bool children)
+{
+    if (children)
+        return screen->grab();
+    const qreal ratio = screen->devicePixelRatioF();
+    QPixmap pixmap((QSizeF(screen->size()) * ratio).toSize());
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::black);
+    screen->render(&pixmap, QPoint(), QRegion(), QWidget::DrawWindowBackground);
+    return pixmap;
+}
+}  // namespace
+
 bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, int pictureHeight)
 {
     if (_useGPU && _gpuWindow)
@@ -241,7 +258,7 @@ bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, i
     }
     else if (_software)
     {
-        const QPixmap pixmap = _software->grab();
+        const QPixmap pixmap = GrabSoftwareScreen(_software, false);
         image = pixmap.toImage();
         const QWidget* parent = _software->parentWidget();
         const QRect picture = parent ? _software->geometry() : QRect(QPoint(0, 0), _software->size());
@@ -277,7 +294,7 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
     else if (_software)
     {
         // The widget keeps the picture's shape inside its parent (fitToParent): the widget is the picture
-        const QPixmap pixmap = _software->grab();
+        const QPixmap pixmap = GrabSoftwareScreen(_software, hud);
         image = pixmap.toImage();
         ratio = pixmap.devicePixelRatio();
         const QWidget* parent = _software->parentWidget();

@@ -141,6 +141,14 @@ TEST(WindowRecording_Test, WordsMakeARequest)
     error.clear();
     EXPECT_FALSE(WindowRecording::ApplyWord(request, "fit", "2x", error));
     error.clear();
+    EXPECT_FALSE(request.ffmpegOnly) << "the Mac's own writer by default";
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "engine", "FFmpeg", error));
+    EXPECT_TRUE(request.ffmpegOnly);
+    EXPECT_TRUE(WindowRecording::ApplyWord(request, "engine", "native", error));
+    EXPECT_FALSE(request.ffmpegOnly);
+    EXPECT_FALSE(WindowRecording::ApplyWord(request, "engine", "gpu", error));
+    EXPECT_NE(error.find("native or ffmpeg"), std::string::npos) << error;
+    error.clear();
     EXPECT_TRUE(WindowRecording::ApplyWord(request, "codec", "H265", error));
     EXPECT_EQ(request.codec, "h265");
 
