@@ -38,21 +38,25 @@ void P2666BetaDisk::ResetRegisters()
 
 /// region <State (reports)>
 
-const char* P2666BetaDisk::Phase() const
+std::string P2666BetaDisk::Phase() const
 {
-    if (_restore)
-        return "restore";
-    if (_seek)
-        return "seek";
-    if (_step)
-        return "step";
-    if (_readAddr)
-        return "read address";
-    if (_read)
-        return _trackCmd ? "read track" : "read sector";
-    if (_write)
-        return _trackCmd ? "write track" : "write sector";
-    return "idle";
+    // The FPGA's command flags are level-set: a type I command written while another runs adds its flag to the running
+    // one (restore+step), so every flag that is up is named
+    std::string phase;
+    const auto add = [&](bool up, const char* name) {
+        if (!up)
+            return;
+        if (!phase.empty())
+            phase += '+';
+        phase += name;
+    };
+    add(_restore, "restore");
+    add(_seek, "seek");
+    add(_step, "step");
+    add(_readAddr, "read address");
+    add(_read, _trackCmd ? "read track" : "read sector");
+    add(_write, _trackCmd ? "write track" : "write sector");
+    return phase.empty() ? "idle" : phase;
 }
 
 /// endregion

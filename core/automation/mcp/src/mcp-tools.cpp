@@ -4553,7 +4553,7 @@ void RegisterInspectState(ToolRegistry& registry)
                                     const Json::Value& sys = value["system_register"];
                                     char line[256];
                                     snprintf(line, sizeof(line),
-                                             ": %s, command #%02X, status #%02X track %u sector %u data #%02X%s%s, "
+                                             ": phase %s, command #%02X, status #%02X track %u sector %u data #%02X%s%s, "
                                              "system_register #%02X (drive %u side %u%s), head cylinder %u, ram_disk pages #%02X-#%02X",
                                              value["phase"].asCString(), regs["command"].asUInt(), regs["status"].asUInt(),
                                              regs["track"].asUInt(), regs["sector"].asUInt(), regs["data"].asUInt(),

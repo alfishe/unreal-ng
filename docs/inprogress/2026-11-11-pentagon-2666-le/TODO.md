@@ -37,6 +37,10 @@ See [README.md](README.md).
         `/state/memory`, CLI `paging` / `state memory`, Lua / Python `paging_state()`, MCP `inspect_state paging`,
         OpenAPI text, the node in the MCP paging text; MCP resource `unreal://machine/p2666`; the model in the MCP
         model list
+  - [x] Disk controller report (2026-11-18): `state fdc` on every plane reports the RAM-disk Beta Disk (no floppy
+        controller on the board, manual 2.9): registers, status, `phase` (every level-set flag, `restore+step`),
+        INTRQ / DRQ, system register, head, RAM-disk pages, drive A; WebAPI disk info `fdc_state`; MCP text line;
+        tests `DeviceStateFdc_Test.P2666ReportsTheRamDiskBetaDisk`, live `test_p2666.py`
   - [x] Qt menu: the model comes from `Config::IsModelCreatable` (no list to edit); check on a build
   - [x] `.recipe/machines/pentagon-2666.md`, `.recipe/_common/machines.md` row, `.recipe/README.md` row,
         `data/rom/README-ROMS.md` entry; slots refdata ZX-BUS note (`ebl`)

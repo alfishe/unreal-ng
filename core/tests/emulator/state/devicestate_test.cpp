@@ -315,6 +315,10 @@ TEST(DeviceStateFdc_Test, P2666ReportsTheRamDiskBetaDisk)
     EXPECT_EQ(At(At(fdc, "ram_disk"), "last_page").i, 0x76);
     EXPECT_EQ(At(fdc, "drives").size(), 1u) << "drive A only";
 
+    // A step written while the seek runs adds its flag (the FPGA's flags are level-set): both are named
+    ramDisk->WriteRegister(0, 0x20, edge);
+    EXPECT_EQ(At(DeviceState::Fdc(context), "phase").s, "seek+step");
+
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
