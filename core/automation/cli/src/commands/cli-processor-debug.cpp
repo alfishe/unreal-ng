@@ -40,6 +40,29 @@ std::string StepStopLine(const Emulator& emulator)
        << ") at $" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << stop.address << CLIProcessor::NEWLINE;
     return ss.str();
 }
+
+/// "--cpu gs" / "--cpu ms" in a label command: that card CPU's own labels (gs-debugger design §6.2), the pair taken out
+/// of `args`; else the main CPU's. Null with the reason for an unknown name or a CPU the machine does not have
+LabelManager* LabelsOf(EmulatorContext* ctx, std::vector<std::string>& args, std::string& error)
+{
+    DebugCpuId cpu = DebugCpuId::Main;
+    for (size_t i = 0; i + 1 < args.size(); i++)
+        if (args[i] == "--cpu")
+        {
+            if (!DebugManager::ParseCpuName(args[i + 1], cpu))
+            {
+                error = "Error: unknown cpu '" + args[i + 1] + "' (main, gs, ms)";
+                return nullptr;
+            }
+            args.erase(args.begin() + static_cast<std::ptrdiff_t>(i), args.begin() + static_cast<std::ptrdiff_t>(i) + 2);
+            break;
+        }
+    LabelManager* labels = ctx->pDebugManager->GetLabelManager(cpu);
+    if (!labels)
+        error = cpu == DebugCpuId::Main ? "Label manager not available."
+                                        : "Error: no " + std::string(DebugCpuName(cpu)) + " CPU in this emulator";
+    return labels;
+}
 }  // namespace
 
 // "Error: Run-control held by <surface>" while another surface (GDB) holds run control: the one rule for every
@@ -1206,7 +1229,7 @@ void CLIProcessor::HandleDisasmPage(const ClientSession& session, const std::vec
 // Label/Symbol Management Commands
 // ============================================================================
 
-void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<std::string>& arguments)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1222,10 +1245,13 @@ void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<s
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // --cpu gs / ms: the card CPU's own labels
+    std::vector<std::string> args = arguments;
+    std::string error;
+    LabelManager* labelMgr = LabelsOf(ctx, args, error);
     if (!labelMgr)
     {
-        session.SendResponse("Label manager not available.");
+        session.SendResponse(error);
         return;
     }
 
@@ -1238,6 +1264,7 @@ void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<s
         ss << "  label remove <name>             - Remove label" << NEWLINE;
         ss << "  label toggle <name>             - Toggle active state" << NEWLINE;
         ss << "  label resolve <name|addr>       - Resolve name or address to label(s)" << NEWLINE;
+        ss << "  (--cpu gs|ms: the sound card CPU's own labels)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -1430,7 +1457,7 @@ void CLIProcessor::HandleLabel(const ClientSession& session, const std::vector<s
     }
 }
 
-void CLIProcessor::HandleLabels(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleLabels(const ClientSession& session, const std::vector<std::string>& arguments)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1446,10 +1473,13 @@ void CLIProcessor::HandleLabels(const ClientSession& session, const std::vector<
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // --cpu gs / ms: the card CPU's own labels
+    std::vector<std::string> args = arguments;
+    std::string error;
+    LabelManager* labelMgr = LabelsOf(ctx, args, error);
     if (!labelMgr)
     {
-        session.SendResponse("Label manager not available.");
+        session.SendResponse(error);
         return;
     }
 
@@ -1492,7 +1522,7 @@ void CLIProcessor::HandleLabels(const ClientSession& session, const std::vector<
     session.SendResponse(ss.str());
 }
 
-void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector<std::string>& args)
+void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector<std::string>& arguments)
 {
     auto emulator = GetSelectedEmulator(session);
     if (!emulator)
@@ -1508,10 +1538,13 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // --cpu gs / ms: the card CPU's own labels
+    std::vector<std::string> args = arguments;
+    std::string error;
+    LabelManager* labelMgr = LabelsOf(ctx, args, error);
     if (!labelMgr)
     {
-        session.SendResponse("Label manager not available.");
+        session.SendResponse(error);
         return;
     }
 
@@ -1534,7 +1567,7 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
         ss << "  symbols scan                    - Label tables of assemblers in RAM (ALASM, XAS)" << NEWLINE;
         ss << "  symbols import-live [--scanner s] [--page n] [--offset n] [--set s] [--policy p]" << NEWLINE;
         ss << "  symbols import-source <source|image|disk:A/NAME.T> [--main NAME] [--set s] [--generated]  - labels of a source" << NEWLINE;
-        ss << "  (add --json for the reply as JSON)" << NEWLINE;
+        ss << "  (add --json for the reply as JSON; --cpu gs|ms: the sound card CPU's own store)" << NEWLINE;
         session.SendResponse(ss.str());
         return;
     }
@@ -1544,7 +1577,7 @@ void CLIProcessor::HandleSymbols(const ClientSession& session, const std::vector
     if (subcmd == "formats" || subcmd == "detect" || subcmd == "sets" || subcmd == "set" || subcmd == "drop" ||
         subcmd == "import" || subcmd == "export" || subcmd == "scan" || subcmd == "import-live" || subcmd == "import-source")
     {
-        HandleSymbolVerb(session, ctx, args);
+        HandleSymbolVerb(session, ctx, arguments);
         return;
     }
 

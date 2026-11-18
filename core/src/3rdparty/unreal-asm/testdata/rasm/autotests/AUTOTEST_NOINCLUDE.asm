@@ -1,0 +1,1 @@
+truc equ 0:if truc:include'bite':endif:nop

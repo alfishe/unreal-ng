@@ -35,6 +35,9 @@ public:
     // Get available models
     ADD_METHOD_TO(EmulatorAPI::getModels, "/api/v1/emulator/models", drogon::Get);
 
+    // The machines grouped family -> machine -> RAM size: the tree clients build their machine picker from
+    ADD_METHOD_TO(EmulatorAPI::getMachines, "/api/v1/emulator/machines", drogon::Get);
+
     // Create a new emulator (without starting)
     ADD_METHOD_TO(EmulatorAPI::createEmulator, "/api/v1/emulator/create", drogon::Post);
 
@@ -681,6 +684,9 @@ public:
     ADD_METHOD_TO(EmulatorAPI::vdac2CaptureStatus, "/api/v1/emulator/{id}/vdac2/capture/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::vdac2Metrics, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::vdac2MetricsSet, "/api/v1/emulator/{id}/vdac2/metrics", drogon::Put);
+    // TS-Conf VDAC4 board: Tang, ESP and app state with the ESP log (implementation: api/vdac4_api.cpp)
+    ADD_METHOD_TO(EmulatorAPI::vdac4State, "/api/v1/emulator/{id}/vdac4/state", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::vdac4EspMemory, "/api/v1/emulator/{id}/vdac4/esp/memory", drogon::Get);
 
     // Unified profiler control (all profilers at once)
     ADD_METHOD_TO(EmulatorAPI::unifiedProfilerStart, "/api/v1/emulator/{id}/profiler/start", drogon::Post);
@@ -871,6 +877,10 @@ public:
     // Get available models
     void getModels(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
+
+    // The machines grouped family -> machine -> RAM size (MachineCatalog)
+    void getMachines(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& callback) const;
 
     // Create a new emulator
     void createEmulator(const drogon::HttpRequestPtr& req,
@@ -2301,6 +2311,11 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                       const std::string& id) const;
     void vdac2MetricsSet(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
+    // TS-Conf VDAC4 board state (implementation: api/vdac4_api.cpp)
+    void vdac4State(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                    const std::string& id) const;
+    void vdac4EspMemory(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
     // endregion Profiler Commands Methods
 

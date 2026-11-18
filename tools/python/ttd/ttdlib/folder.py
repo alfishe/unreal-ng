@@ -224,7 +224,7 @@ def append_deletes(data: bytes, lines: List[int]) -> bytes:
     # Re-emit the complete parts as stored, then the new one: the result is what an append to an intact file gives
     w = ContainerWriter.like(c)
     for part in good:
-        for rec in part.records:
+        for rec in part.physical:
             w.add_stored(rec.stream_id, rec.flags, stored_payload(c, rec), rec.raw_size)
         w.end_part(part.first_frame, part.frame_count, part.branch, part.dependencies, part.extra)
     for line in lines:
@@ -344,7 +344,7 @@ def join_files(files: List[Path]) -> bytes:
         for part in c.parts:
             if part.damaged:
                 raise TtdError(f"{f}, part {part.index}: {part.damage}")
-            for rec in part.records:
+            for rec in part.physical:
                 try:
                     stored = stored_payload(c, rec)
                 except TtdError as e:

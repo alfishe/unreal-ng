@@ -2467,6 +2467,99 @@ TEST_F(McpTools_Test, AnalyzePerformance_Vdac2LineBudgetSet_PutsAndValidates)
     EXPECT_TRUE(RunTool(*_registry, "analyze_performance", empty, *_caller).isError);
 }
 
+TEST_F(McpTools_Test, Vdac4State_GetsStateAndSummarizes)
+{
+    Json::Value reply;
+    reply["tang"]["personality"] = "ft";
+    reply["tang"]["armed"] = true;
+    reply["tang"]["esp_host"] = true;
+    reply["tang"]["ram_g_3mb"] = false;
+    reply["esp"]["phase"] = "running";
+    reply["esp"]["ms"] = 12345;
+    reply["esp"]["boots"] = 1;
+    reply["esp"]["last_error"] = "";
+    reply["app"]["running"] = true;
+    reply["app"]["module"] = "doom.zm";
+    reply["app"]["name"] = "DOOM";
+    reply["app"]["version"] = "1.2";
+    reply["app"]["error"] = "";
+    reply["packets"]["count"] = 77;
+    reply["audio"]["input_rate"] = 11025;
+    reply["audio"]["output_rate"] = 48000;
+    reply["audio"]["underruns"] = 3;
+    reply["threads"]["esp_thread"] = true;
+    reply["threads"]["ft_draw_thread"] = true;
+    reply["threads"]["esp_latency_ms"] = 4;
+    reply["threads"]["esp_jobs"] = 2000;
+    for (int i = 0; i < 12; ++i)
+        reply["log"].append("line " + std::to_string(i));
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/state?log=12"] = {200, reply};
+
+    Json::Value args;
+    args["log"] = 12;
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/vdac4/state?log=12"));
+    EXPECT_NE(result.text.find("Tang personality ft, armed, ESP host"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ESP: running, 12345 ms"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("running \"DOOM\" 1.2 (doom.zm)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("11025 Hz -> 48000 Hz"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("underruns 3"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("ESP jobs on a worker, FT work inline, FT drawing on its renderer thread, latency 4 ms; 2000 jobs"), std::string::npos)
+        << result.text;
+    // the text keeps the last 10 lines, structuredContent all 12
+    EXPECT_NE(result.text.find("Log (last 10 of 12)"), std::string::npos) << result.text;
+    EXPECT_EQ(result.text.find("line 1\n"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("line 11"), std::string::npos) << result.text;
+    EXPECT_EQ(result.structured["log"].size(), 12u);
+}
+
+TEST_F(McpTools_Test, Vdac4State_NoBoardAndBadLogAreErrors)
+{
+    Json::Value refusal;
+    refusal["error"] = "No VDAC4 Board";
+    refusal["message"] = "not a TS-Conf machine";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/state?log=50"] = {409, refusal};
+
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_state", Json::Value(Json::objectValue), *_caller);
+    ASSERT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("No VDAC4 Board: not a TS-Conf machine"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("TSL-VDAC4"), std::string::npos) << result.text;
+
+    Json::Value bad;
+    bad["log"] = -1;
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_state", bad, *_caller).isError);
+}
+
+TEST_F(McpTools_Test, Vdac4EspMemory_DumpsTheAppBytes)
+{
+    Json::Value reply;
+    reply["address"] = 0x1234;
+    reply["size"] = 18;
+    reply["app"] = true;
+    reply["hex"] = "000102030405060708090a0b0c0d0e0f6411";
+    _caller->routes["GET /api/v1/emulator/emu-1/vdac4/esp/memory?address=0x1234&size=18&app=1"] = {200, reply};
+
+    Json::Value args;
+    args["address"] = "0x1234";
+    args["size"] = 18;
+    args["app"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "vdac4_esp_memory", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("18 bytes at 0x1234 of the app's ELF image"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("00001234: 00 01 02"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("00001244: 64 11"), std::string::npos) << "the second line: " << result.text;
+    EXPECT_EQ(result.structured["hex"].asString(), reply["hex"].asString());
+
+    Json::Value missing(Json::objectValue);
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_esp_memory", missing, *_caller).isError) << "the address is required";
+    Json::Value big;
+    big["address"] = "0";
+    big["size"] = 5000;
+    EXPECT_TRUE(RunTool(*_registry, "vdac4_esp_memory", big, *_caller).isError);
+}
+
 TEST_F(McpTools_Test, AnalyzePerformance_MemoryCounters_ListsCellsInText)
 {
     Json::Value reply;
@@ -2593,6 +2686,46 @@ TEST_F(McpTools_Test, ManageSymbols_SetsImportExport_MapToTheSymbolRoutes)
     Json::Value missing;
     missing["action"] = "export";
     EXPECT_TRUE(RunTool(*_registry, "manage_symbols", missing, *_caller).isError);
+}
+
+/// manage_symbols cpu: a sound card CPU's labels and sets go as ?cpu= / body cpu; the main CPU's listing actions refuse it
+TEST_F(McpTools_Test, ManageSymbols_Cpu_NamesTheCardsLabels)
+{
+    for (const char* route : {"GET /api/v1/emulator/emu-1/labels?cpu=gs", "GET /api/v1/emulator/emu-1/labels/resolve?name=COMINT&cpu=gs",
+                              "GET /api/v1/emulator/emu-1/symbols/sets?cpu=gs", "POST /api/v1/emulator/emu-1/symbols/import"})
+        _caller->routes[route] = {200, Json::Value(Json::objectValue)};
+
+    Json::Value args;
+    args["action"] = "list";
+    args["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels?cpu=gs"));
+
+    args["action"] = "resolve";
+    args["name"] = "COMINT";
+    RunTool(*_registry, "manage_symbols", args, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/labels/resolve?name=COMINT&cpu=gs"));
+
+    Json::Value sets;
+    sets["action"] = "sets";
+    sets["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", sets, *_caller);
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/symbols/sets?cpu=gs"));
+
+    Json::Value import;
+    import["action"] = "import";
+    import["path"] = "/x/gs.map";
+    import["cpu"] = "gs";
+    RunTool(*_registry, "manage_symbols", import, *_caller);
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/symbols/import");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs");
+
+    Json::Value listing;
+    listing["action"] = "source_at";
+    listing["address"] = "0x026B";
+    listing["cpu"] = "gs";
+    EXPECT_TRUE(RunTool(*_registry, "manage_symbols", listing, *_caller).isError);
 }
 
 TEST_F(McpTools_Test, AsmSource_ActionsMapToTheAsmRoutes)
@@ -4181,6 +4314,149 @@ TEST_F(McpTools_Test, TimeTravel_ReverseStepOver_PostsTheVerbAndSaysWhatItDid)
     EXPECT_NE(result.text.find("12"), std::string::npos) << result.text;
 }
 
+/// A card move's reply as the WebAPI answers it (TTDControl CardMove)
+static Json::Value CardMoveReply(bool reached, const char* status, uint64_t from, uint64_t target)
+{
+    Json::Value reply;
+    reply["cpu"] = "gs";
+    reply["status"] = status;
+    reply["reached"] = reached;
+    reply["from"] = static_cast<Json::UInt64>(from);
+    reply["target"] = static_cast<Json::UInt64>(target);
+    if (!reached)
+        reply["message"] = "card instruction 3 is before the history: it starts at card instruction 900";
+    reply["card"]["cpu"] = "gs";
+    reply["card"]["known"] = true;
+    reply["card"]["instruction"] = static_cast<Json::UInt64>(reached ? target : from);
+    reply["card"]["pc"] = 0x0A3C;
+    reply["card"]["card_position"] = true;
+    reply["card"]["caught_up"] = true;
+    reply["card"]["main"]["frame"] = 12;
+    reply["card"]["main"]["tinframe"] = 30411;
+    reply["card"]["main"]["pc"] = 0x8009;
+    reply["card"]["main"]["t_offset"] = 7;
+    reply["card"]["main"]["inside"] = true;
+    reply["frame"] = 12;
+    reply["tinframe"] = 30411;
+    return reply;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardSeek_PostsCpuAndInstructionAndSaysWhereBothCpusStand)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {200, CardMoveReply(true, "ok", 1000, 1205)};
+
+    Json::Value missing;
+    missing["action"] = "card_seek";
+    missing["instruction"] = 1205;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "cpu is required";
+    Json::Value noInstruction;
+    noInstruction["action"] = "card_seek";
+    noInstruction["cpu"] = "gs";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", noInstruction, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value args;
+    args["action"] = "card_seek";
+    args["cpu"] = "gs";
+    args["instruction"] = 1205;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs");
+    EXPECT_EQ(call->body["instruction"].asUInt64(), 1205u);
+    EXPECT_FALSE(call->body.isMember("frame"));
+    // An agent may read only the text: the card's instruction and PC, the main CPU's boundary and offset
+    EXPECT_NE(result.text.find("gs at card instruction 1205 (from 1000)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x0A3C"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x8009"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("7 T into its next instruction"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardStep_ANegativeCountStepsBack)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, CardMoveReply(true, "ok", 1205, 1200)};
+    Json::Value zero;
+    zero["action"] = "card_step";
+    zero["cpu"] = "gs";
+    zero["count"] = 0;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", zero, *_caller).isError);
+
+    Json::Value args;
+    args["action"] = "card_step";
+    args["cpu"] = "neogs";
+    args["count"] = -5;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "neogs");
+    EXPECT_EQ(call->body["dir"].asString(), "back");
+    EXPECT_EQ(call->body["count"].asUInt64(), 5u);
+
+    Json::Value one;
+    one["action"] = "card_step";
+    one["cpu"] = "gs";
+    ASSERT_FALSE(RunTool(*_registry, "time_travel", one, *_caller).isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    EXPECT_EQ(call->body["dir"].asString(), "forward");
+    EXPECT_EQ(call->body["count"].asUInt64(), 1u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardReverseContinue_NoHitIsAnErrorTheModelReads)
+{
+    Json::Value reply = CardMoveReply(false, "no_hit", 1205, 0);
+    reply["message"] = "no hit of cpu gs's breakpoints before card instruction 1205 in the history";
+    reply["searched_frames"] = 7;
+    reply["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "card_reverse_continue";
+    args["cpu"] = "gs";
+    args["max_frames"] = 50;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["max_frames"].asUInt64(), 50u);
+    EXPECT_FALSE(call->body.isMember("pcs"));
+    EXPECT_NE(result.text.find("did not move (no_hit)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("searched 7 frame(s)"), std::string::npos) << result.text;
+
+    Json::Value hit = CardMoveReply(true, "ok", 1205, 1100);
+    hit["breakpoint"]["id"] = 3;
+    hit["breakpoint"]["kind"] = "execute";
+    hit["breakpoint"]["address"] = 0x0A3C;
+    hit["searched_frames"] = 1;
+    hit["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, hit};
+    const mcp::ToolResult found = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(found.isError) << found.text;
+    EXPECT_NE(found.text.find("breakpoint 3 (execute 0x0A3C)"), std::string::npos) << found.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardPosition_ReadsThePositionsCards)
+{
+    Json::Value position;
+    position["current"]["frame"] = 12;
+    position["current"]["tinframe"] = 30411;
+    position["state"] = "detached";
+    position["cards"].append(CardMoveReply(true, "ok", 0, 1205)["card"]);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/position"] = {200, position};
+
+    Json::Value args;
+    args["action"] = "card_position";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Card gs: instruction 1205, PC 0x0A3C (card position"), std::string::npos) << result.text;
+
+    args["cpu"] = "multisound";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("No card CPU 'multisound'"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)
 {
     Json::Value reply;
@@ -4588,6 +4864,34 @@ TEST_F(McpTools_Test, TimeTravel_DumpFailure_IsError)
     EXPECT_NE(result.text.find("no session"), std::string::npos) << result.text;
 }
 
+/// F3: a refused dump's text names the real reason and the status (an agent sees only the text)
+TEST_F(McpTools_Test, TimeTravel_DumpRefused_TextNamesTheReason)
+{
+    for (const auto& [status, message] :
+         {std::pair<int, std::string>{409, "Cannot open file: /ro/s.ttd (/ro/s.ttd.partial: cannot create: Permission denied)"},
+          std::pair<int, std::string>{507, "writing the index failed: No space left on device (the partial file "
+                                           "/tmp/s.ttd.partial was removed)"}})
+    {
+        Json::Value failed;
+        failed["ok"] = false;
+        failed["error"] = status == 507 ? "Insufficient Storage" : "Conflict";
+        failed["message"] = message;
+        failed["reason"] = status == 507 ? "no_space" : "io";
+        failed["partial_removed"] = status == 507;
+        _caller->routes["POST /api/v1/emulator/emu-1/ttd/dump"] = {status, failed};
+
+        Json::Value args;
+        args["action"] = "dump";
+        args["path"] = "/tmp/s.ttd";
+        mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+
+        EXPECT_TRUE(result.isError);
+        EXPECT_NE(result.text.find(std::to_string(status)), std::string::npos) << result.text;
+        EXPECT_NE(result.text.find(status == 507 ? "No space left on device" : "Permission denied"), std::string::npos)
+            << result.text;
+    }
+}
+
 TEST_F(McpTools_Test, TimeTravel_DumpWithoutPath_RejectsBeforeAnyCall)
 {
     Json::Value args;
@@ -4805,6 +5109,19 @@ TEST_F(McpTools_Test, EmulatorManage_TransferState_PostsToOrModel)
     EXPECT_EQ(call2->body["model"].asString(), "PENTAGON");
     EXPECT_EQ(call2->body["ram_size"].asUInt(), 512u);
     EXPECT_FALSE(call2->body.isMember("to"));
+    EXPECT_FALSE(call2->body.isMember("start")) << "omitted: the route's default";
+
+    // The route's other options, as every surface has them (W0b parity)
+    create["symbolic_id"] = "fork";
+    create["start"] = false;
+    create["keep_frame_position"] = false;
+    RunTool(*_registry, "emulator_manage", create, *_caller);
+    const auto* call3 = _caller->Last("POST", "/api/v1/emulator/emu-1/snapshot/transfer");
+    ASSERT_NE(call3, nullptr);
+    EXPECT_EQ(call3->body["symbolic_id"].asString(), "fork");
+    EXPECT_FALSE(call3->body["start"].asBool());
+    ASSERT_TRUE(call3->body.isMember("keep_frame_position"));
+    EXPECT_FALSE(call3->body["keep_frame_position"].asBool());
 }
 
 TEST_F(McpTools_Test, EmulatorManage_TransferState_NeedsExactlyOneDestination)

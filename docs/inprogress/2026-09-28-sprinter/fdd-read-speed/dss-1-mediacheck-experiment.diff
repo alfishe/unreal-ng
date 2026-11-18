@@ -1,0 +1,20 @@
+diff --git a/DSS/drivers/media/fdd-drv.asm b/DSS/drivers/media/fdd-drv.asm
+index 585aa97..328bc42 100644
+--- a/DSS/drivers/media/fdd-drv.asm
++++ b/DSS/drivers/media/fdd-drv.asm
+@@ -205,14 +205,7 @@ Close:		XOR	A
+ 
+ 
+ ;!FIXIT проверять ВГ93 когда (если) это станет возможным
+-MediaCheck:	CALL	Open
+-		RET	C
+-		IF NON_REMOVABLE_FDD	
+-		 XOR	A
+-		ELSE
+-		 LD	A,#FF
+-		 OR	A
+-		ENDIF
++MediaCheck:	XOR	A		; EXPERIMENT: the disk is never changed, the drive is not touched
+ 		RET 
+ ;	;	;
+ 

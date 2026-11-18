@@ -1,0 +1,1 @@
+struct COORD: x   db #77: y   db #78: endstruct: struct COORD obj_coord, 5: struct st1:  ch1 defw #0201: ch2 defb #03: endstruct: struct metast1: struct st1 pr1: struct st1 pr2: endstruct: struct metast1 bigst 

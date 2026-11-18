@@ -313,6 +313,9 @@ protected:
     EmulatorContext* _context;
     bool _z80nMode = false;     // decode the ZX Spectrum Next (Z80N) ED-prefixed extensions
     static inline thread_local bool t_noLabels = false;  // NoLabelsScope
+    static inline thread_local LabelManager* t_labels = nullptr;  // LabelsScope
+    /// The labels a listing shows on this thread: none under NoLabelsScope, a LabelsScope's, else the main CPU's
+    LabelManager* Labels() const;
     /// endregion </Fields>
 
 public:
@@ -339,6 +342,20 @@ public:
         bool _previous;
     };
     static bool LabelsOffOnThisThread() { return t_noLabels; }
+
+    /// Another CPU's labels on this thread while it lives (a card CPU's listing, CpuView::Disasm): instructions and
+    /// operands are named from them, not from the main CPU's
+    class LabelsScope
+    {
+    public:
+        explicit LabelsScope(LabelManager* labels) : _previous(t_labels) { t_labels = labels; }
+        ~LabelsScope() { t_labels = _previous; }
+        LabelsScope(const LabelsScope&) = delete;
+        LabelsScope& operator=(const LabelsScope&) = delete;
+
+    private:
+        LabelManager* _previous;
+    };
 
     /// How a listing reads. The default is the listing of every surface: "ld hl,#4000", and a label shown for a
     /// 16-bit immediate equal to a labelled address ("ld hl,START (#0000)")

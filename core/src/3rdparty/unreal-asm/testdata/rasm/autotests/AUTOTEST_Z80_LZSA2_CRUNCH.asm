@@ -1,0 +1,1 @@
+inclzsa2 './decrunch/lzDataTest.bin' : save './decrunch/lzDataTest.lzsa2',0,$ 

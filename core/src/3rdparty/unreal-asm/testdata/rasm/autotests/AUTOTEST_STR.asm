@@ -1,0 +1,1 @@
+CHARSET " !#$%&'()*+,-./0123456789:;<=>?ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^~abcdefghijklmnopqrstuvwxyzéè{}|",0 : grouik STR 'REGION' : charset : defb 'REGION'

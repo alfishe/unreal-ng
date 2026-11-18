@@ -80,7 +80,7 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
-constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
+constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, SPG, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
@@ -696,6 +696,17 @@ struct CONFIG
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
+	bool ts_vdac4 = false;			// [MISC] TS_VDAC4: the VDAC4 board on the VDAC2 firmware build (ts_vdac = 7): Tang FPGA (FT812 core) + ESP32-S3 (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+	uint8_t vdac4_ramg_mb = 2;		// [VDAC4] RamG: RAM_G at power-on, 2 or 3 (MB); the ESP / apps switch it through FT_CFG
+	uint16_t vdac4_esp_boot_ms = 400;	// [VDAC4] EspBootMs: ESP boot after power-on (it arms the Tang then)
+	uint16_t vdac4_load_delay_ms = 174;	// [VDAC4] LoadDelayMs: Tang slot switch to the FT812 core
+	uint16_t vdac4_esp_mhz = 240;		// [VDAC4] EspMhz: ESP core clock (one instruction per cycle)
+	bool vdac4_esp_thread = true;		// [VDAC4] EspThread: the ESP app's jobs on a worker thread (same results either way)
+	bool vdac4_ft_thread = false;		// [VDAC4] FtThread: the Tang / FT812 work of the ESP's jobs on a thread of its own
+	bool vdac4_ft_draw_thread = true;	// [VDAC4] FtDrawThread: the FT812's drawing on its renderer thread (same picture)
+	uint8_t vdac4_esp_latency_ms = 4;	// [VDAC4] EspLatencyMs: 1..16 ms the app's outputs reach the firmware after its job
+	char vdac4_esp_cache[FILENAME_MAX] = {};	// [VDAC4] EspCache: ESP module cache directory; empty = <data dir>/vdac4/zm
+	char vdac4_esp_log[FILENAME_MAX] = {};		// [VDAC4] EspLog: ESP app log file; empty = off
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;

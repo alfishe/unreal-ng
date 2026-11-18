@@ -59,6 +59,9 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 ```
 
 ### Machine Identity and Lifecycle
+`machines([all], [id])` returns the machines grouped family -> machine -> RAM size as a table, the same tree as WebAPI
+`GET /api/v1/emulator/machines` (with `id`, `current` places that instance's machine).
+
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
 **ZX-Poly** (four synchronized instances of one model, through the same
@@ -557,6 +560,8 @@ r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frame
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
+v4 = vdac4_state(20)         -- TS-Conf VDAC4 board: tang {personality, ft_cfg, ...}, esp {phase, boots, last_error, clock_restarts, ...}, app {running, name, version, error, ...}, link, packets {count, recent}, audio {input_rate, underruns, ...}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_wait_ms, ft_ops, ...}, log (last 20 ESP lines; default 50, max 256); {error="..."} without the board
+m = vdac4_esp_memory(0x3fc8a000, 64, true)  -- the VDAC4 ESP's memory (size default 16, at most 4096; true: an address of the running app's ELF image, as a haptic probe `cpu: esp` takes it): {address, size, app, bytes, hex} or {error}
 sp = sprinter_state()       -- Sprinter Sp2000: pld (module Standard / Game, selected_by, why, game), decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
@@ -1088,6 +1093,34 @@ run_frames(500)
 print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 0 desyncs
 ```
 
+### Machine State Transfer
+
+`transfer_state{...}` moves this machine's running state (the selected one, or the machine the interpreter is bound to)
+into another instance, in memory - the verb of every plane (`StateTransferControl`; WebAPI `POST
+/emulator/{id}/snapshot/transfer`, CLI `snapshot transfer`, [automation.md](../../../features/automation.md#machine-state-transfer)).
+
+| Key | Meaning |
+|:--|:--|
+| `to` | an existing instance (id) |
+| `model`, `ram_size`, `symbolic_id` | or a new instance of that model (RAM in KB, default the model's) |
+| `check` | with `to`: only report what would move, nothing changes |
+| `keep_frame_position` | keep the in-frame position when both models share the frame geometry (default `true`) |
+| `start` | new instance: start it (default: when this machine runs and is not paused) |
+
+It returns the WebAPI's report as a table - `ok`, `mode` (`"clone"` / `"cross-model"`), `reason`, `items`
+(`{name, status, detail}`, status `copied` / `dropped` / `refused` / `note`), `copied`, `dropped`, `refused`,
+`summary`, `source_id`, `target_id`, `created`, `state`, `model`, `ram_kb` - with `ok = false` for a refused transfer
+(nothing changed). Without a report (no such target, the machine state coordinator refuses, a bad request) it returns
+`nil, "<error>: <message>"`.
+
+```lua
+local r = transfer_state{to = other_id, check = true}
+if r.ok then r = transfer_state{to = other_id} end
+print(r.summary)
+local fork = transfer_state{model = "PENTAGON", ram_size = 512}
+print(fork.target_id, fork.mode, fork.copied, fork.dropped)
+```
+
 ### Time-Travel Debugging
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -1113,8 +1146,10 @@ ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_b
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
-ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
-                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history in memory
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields;
+                                       --   with a recording folder the rest stays seekable on disk:
+                                       --   evicted_to_disk_*, read_back_* fields; without one it is released)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
@@ -1228,6 +1263,17 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+
+-- On a sound card's CPU ("gs" / "neogs", "ms" / "multisound"; command-interface.md -> TTD on a sound card's CPU):
+-- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
+ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
+ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
+                                     --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
+ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
+                                     --    main = {frame, tinframe, pc, t_offset, inside} }; nil: no such card
+ttd_card_position()                  --> every card CPU (an array)
+-- A bad request (unknown cpu) answers { ok = false, error = "..." }
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
@@ -1356,8 +1402,11 @@ ttd_branch_prune{run = "r1", dry_run = false}   -- deletes; the active lineage a
 **Sessions on disk:**
 
 ```lua
-ttd_dump("/tmp/session.ttd")               --> bool; every branch
-ttd_dump("/tmp/line.ttd", true)            --> bool; only the active branch's lineage, one linear history
+ttd_dump("/tmp/session.ttd")               --> true; every branch
+ttd_dump("/tmp/line.ttd", true)            --> true; only the active branch's lineage, one linear history
+-- A failure: false and the reason, the system's words ("... cannot create: Permission denied"; "disk full" only
+-- for a full disk); the partial file (<path>.partial) is removed and a file already under the name stays
+local ok, why = ttd_dump("/no/such/folder/s.ttd")   --> false, "Cannot open file: ... No such file or directory)"
 ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
@@ -1620,7 +1669,8 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
                                      --   hardware, fit, picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
                                      --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
-                                     --   audio, sample_rate, audio_samples }, or { ok = false, error, kind }
+                                     --   audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms, first_frame_ms,
+                                     --   slowest_frame_ms }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran
 emu.window_record_stop()             -- finish the file (waits for ffmpeg, muxes the sound in); its last status
 emu.window_record_status()           -- the recording's status; headless { ok = false, error, kind = "no-window" }

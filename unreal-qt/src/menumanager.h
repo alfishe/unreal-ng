@@ -31,6 +31,11 @@ public:
     {
         return _machineControllersMenu;
     }
+    /// Machine > Transfer State To: empty until it opens (the owner fills it on aboutToShow, StateTransferChoices::Fill)
+    QMenu* machineTransferMenu() const
+    {
+        return _machineTransferMenu;
+    }
 
     // Update menu states based on active emulator
     // Queries emulator directly - no state duplication!
@@ -314,6 +319,7 @@ private:
     QAction* _networkWindowAction = nullptr;
     QAction* _slotsWindowAction = nullptr;
     QMenu* _machineControllersMenu = nullptr;
+    QMenu* _machineTransferMenu = nullptr;
     QAction* _nextLayersAction = nullptr;
     QAction* _osdKeyboardAction = nullptr;
     QAction* _midiActivityAction = nullptr;
@@ -355,6 +361,7 @@ private:
     std::vector<QAction*> _machineModelActions;
     std::vector<QAction*> _zxpolyConfigurationActions;  // data: the configuration name (ZXPolyGroup::Configurations)
     std::vector<QAction*> _machineVariantActions;  // machine variants (MachineVariants): TS-Conf + VDAC2
+    std::vector<QMenu*> _machineFamilyMenus;       // a submenu per machine family (MachineCatalog), bold when current
     QString _currentModelShortName;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;

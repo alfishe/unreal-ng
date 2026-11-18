@@ -719,10 +719,16 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
     
-    if (!context->pTape->EnsureImageLoaded() || !context->pTape->SeekToBlock(blockIndex)) {
+    // A tape loaded while a TTD recording runs lands at the next frame boundary: its seek is queued till then
+    const TapeSeekResult seek = context->pTape->Seek(blockIndex);
+    if (seek == TapeSeekResult::OutOfRange) {
         ret["status"] = "error";
         ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
         code = HttpStatusCode::k400BadRequest;
+    } else if (seek == TapeSeekResult::Queued) {
+        ret["status"] = "success";
+        ret["message"] = "Seek to block " + std::to_string(blockIndex) + " when the tape is in";
+        ret["queued"] = true;
     } else {
         // Resulting position — the leading fields of the full snapshot
         Json::Value snapshot = buildTapeSnapshot(context);

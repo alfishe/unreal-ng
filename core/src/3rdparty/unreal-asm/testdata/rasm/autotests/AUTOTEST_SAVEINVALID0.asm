@@ -1,0 +1,1 @@
+repeat 256,x : defb x-1 : rend : save 'rasmoutput.bin',0,$

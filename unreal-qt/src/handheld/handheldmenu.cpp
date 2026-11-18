@@ -181,6 +181,7 @@ QString BrowserIcon(HandheldBrowser::Kind kind, const QString& name)
         case HandheldBrowser::Kind::Tape: return QStringLiteral("tape");
         case HandheldBrowser::Kind::Disk: return QStringLiteral("disk");
         case HandheldBrowser::Kind::File: return QStringLiteral("file");
+        case HandheldBrowser::Kind::ThisFolder: return QStringLiteral("folder");
     }
     return QStringLiteral("file");
 }
@@ -430,7 +431,15 @@ void HandheldMenu::Back()
             _hasBrowser = false;
     }
     else if (_hasPicker)
+    {
         _hasPicker = false;
+        if (_picker.back)
+        {
+            const std::function<void()> back = std::move(_picker.back);
+            back();  // opens the level above
+            return;
+        }
+    }
     else if (_inPage)
         _inPage = false;
     else
@@ -597,9 +606,11 @@ void HandheldMenu::machineRows(std::vector<Row>& list) const
     if (emulator != nullptr)
     {
         const CONFIG& config = machineContext()->config;
-        for (const TMemModel& m : EmulatorManager::GetInstance()->GetAvailableModels())
-            if (m.Model == config.mem_model)
-                model = QStringLiteral("%1 %2K").arg(QString::fromUtf8(m.FullName)).arg(config.ramsize);
+        // As the picker names it (MachineCatalog): a variant by its title, a model with its RAM size when it has several
+        const std::vector<MachineFamily>& all = MachineCatalog::All();
+        if (const MachinePlace place = MachineCatalog::Locate(all, MachineCatalog::NameOf(*emulator)); place.family >= 0)
+            model = QString::fromStdString(MachineCatalog::Title(
+                all[static_cast<size_t>(place.family)].machines[static_cast<size_t>(place.machine)], config.ramsize));
         speed = QStringLiteral("%1×").arg(static_cast<int>(emulator->GetSpeedMultiplier()));
         turbo = emulator->IsTurboMode();
     }
@@ -928,9 +939,9 @@ void HandheldMenu::quickSlot(const char* op, int slot)
 // region <Media>
 
 void HandheldMenu::openBrowser(HandheldBrowser::Filter filter, const QString& title,
-                               std::function<void(const QString&)> chosen)
+                               std::function<void(const QString&)> chosen, bool folders)
 {
-    _browser.Open(filter);
+    _browser.Open(filter, folders);
     _browserRow = 0;
     _browserTitle = title;
     _browserChosen = std::move(chosen);
@@ -1018,7 +1029,10 @@ void HandheldMenu::openMediumActions(const std::string& slot, int kind)
     const HandheldBrowser::Filter filter = mediaKind == MediaKind::Tape     ? HandheldBrowser::Filter::Tape
                                            : mediaKind == MediaKind::Floppy ? HandheldBrowser::Filter::Disk
                                                                             : HandheldBrowser::Filter::All;
-    actions.push_back({info->present ? tr("Replace…") : tr("Insert…"), [self, slot, filter, label, mediaKind] {
+    // A block slot that takes a host folder (an SD card, a hard disk: the folder shown as a FAT volume) offers the folder
+    // itself: R-Type VDAC2 reads its .PAC files from the SD card its folder is
+    const bool folders = info->descriptor.acceptsFolder && mediaKind == MediaKind::Block;
+    actions.push_back({info->present ? tr("Replace…") : tr("Insert…"), [self, slot, filter, label, mediaKind, folders] {
                            self->openBrowser(filter, tr("Insert into %1").arg(label), [self, slot, mediaKind](const QString& path) {
                                StateNode p = StateNode::Object();
                                p["path"] = StateNode(path.toStdString());
@@ -1041,7 +1055,7 @@ void HandheldMenu::openMediumActions(const std::string& slot, int kind)
                                        self->_status = tr("Inserted %1").arg(QFileInfo(path).fileName());
                                    }
                                });
-                           });
+                           }, folders);
                        }});
     if (info->present)
     {
@@ -1183,46 +1197,150 @@ void HandheldMenu::openActions(const QString& title, std::vector<std::pair<QStri
 
 void HandheldMenu::openModelPicker()
 {
+    // The machines by family (MachineCatalog, the tree the Qt Machine menu and the WebAPI give): family -> machine ->
+    // RAM size, each a picker level with B back up; a level with one entry is skipped
+    _machineTree = MachineCatalog::Creatable();
+    _machineHere = {};
+    _machineHereRamKb = 0;
+    if (Emulator* emulator = _hooks.emulator ? _hooks.emulator() : nullptr)
+    {
+        _machineHere = MachineCatalog::Locate(_machineTree, MachineCatalog::NameOf(*emulator));
+        if (EmulatorContext* context = machineContext())
+            _machineHereRamKb = context->config.ramsize;
+    }
+    openFamilyPicker(std::max(_machineHere.family, 0));
+}
+
+void HandheldMenu::openFamilyPicker(int row)
+{
     _picker = Picker{};
     _picker.title = tr("Model");
     _picker.warning = tr("Changing the model restarts the machine");
-    auto keys = std::make_shared<std::vector<std::pair<std::string, int>>>();
-    const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
-    for (const TMemModel& model : EmulatorManager::GetInstance()->GetAvailableModels())
-    {
-        if (!Config::IsModelCreatable(model) || model.FullName == nullptr || model.ShortName == nullptr)
-            continue;
-        int count = 0;
-        for (const int ram : ramSizes)
-            if ((model.AvailRAMs & static_cast<unsigned>(ram)) != 0)
-                ++count;
-        for (const int ram : ramSizes)
-        {
-            if ((model.AvailRAMs & static_cast<unsigned>(ram)) == 0)
-                continue;
-            if (EmulatorContext* context = machineContext();
-                context != nullptr && model.Model == context->config.mem_model && static_cast<int>(context->config.ramsize) == ram)
-                _picker.row = static_cast<int>(_picker.items.size());
-            _picker.items.push_back(count == 1 ? QString::fromUtf8(model.FullName)
-                                               : QStringLiteral("%1 %2K").arg(QString::fromUtf8(model.FullName)).arg(ram));
-            keys->push_back({model.ShortName, ram});
-        }
-    }
+    for (const MachineFamily& family : _machineTree)
+        // A family of one machine with one RAM size is that machine
+        _picker.items.push_back(family.machines.size() == 1 && family.machines.front().ramSizesKb.size() == 1
+                                    ? QString::fromStdString(family.machines.front().title)
+                                    : QString::fromStdString(family.title) + QStringLiteral("  ›"));
+    _picker.row = row;
     const QPointer<HandheldMenu> self(this);
-    _picker.chosen = [self, keys](int index) {
+    _picker.chosen = [self](int index) {
         if (!self)
             return;
-        StateNode params = StateNode::Object();
-        params["model"] = StateNode((*keys)[static_cast<size_t>(index)].first);
-        params["ram_kb"] = StateNode((*keys)[static_cast<size_t>(index)].second);
-        params["replace"] = StateNode(true);
-        self->submit("mach.start", std::move(params), [self](bool ok, const QString&, const StateNode&) {
-            if (self && ok)
-                self->Close();  // the new machine starts running; its pictures replace the old one
-        });
+        const size_t family = static_cast<size_t>(index);
+        const MachineFamily& chosen = self->_machineTree[family];
+        if (chosen.machines.size() > 1)
+            self->openMachinePicker(family, self->_machineHere.family == index ? std::max(self->_machineHere.machine, 0) : 0);
+        else
+            self->openRamPicker(family, 0);
     };
     _hasPicker = !_picker.items.empty();
     emitState();
+}
+
+void HandheldMenu::openMachinePicker(size_t family, int row)
+{
+    const MachineFamily& here = _machineTree[family];
+    _picker = Picker{};
+    _picker.title = QString::fromStdString(here.title);
+    _picker.warning = tr("Changing the model restarts the machine");
+    for (const MachineEntry& machine : here.machines)
+        _picker.items.push_back(QString::fromStdString(machine.title) +
+                                (machine.ramSizesKb.size() > 1 ? QStringLiteral("  ›") : QString()));
+    _picker.row = row;
+    const QPointer<HandheldMenu> self(this);
+    _picker.chosen = [self, family](int index) {
+        if (self)
+            self->openRamPicker(family, static_cast<size_t>(index));
+    };
+    _picker.back = [self, family] {
+        if (self)
+            self->openFamilyPicker(static_cast<int>(family));
+    };
+    addMachineWaysUp(tr("Model"), _picker.back, {});
+    _hasPicker = true;
+    emitState();
+}
+
+void HandheldMenu::openRamPicker(size_t family, size_t machine)
+{
+    const MachineFamily& inFamily = _machineTree[family];
+    const MachineEntry& here = inFamily.machines[machine];
+    if (here.ramSizesKb.size() == 1)
+    {
+        startMachine(here.name, here.ramSizesKb.front());
+        return;
+    }
+    _picker = Picker{};
+    _picker.title = QString::fromStdString(here.title);
+    _picker.warning = tr("Changing the model restarts the machine");
+    const bool current = _machineHere.family == static_cast<int>(family) && _machineHere.machine == static_cast<int>(machine);
+    for (const uint32_t ram : here.ramSizesKb)
+    {
+        if (ram == (current ? _machineHereRamKb : here.defaultRamKb))
+            _picker.row = static_cast<int>(_picker.items.size());
+        _picker.items.push_back(ram >= 1024 && ram % 1024 == 0 ? QStringLiteral("%1 MB").arg(ram / 1024)
+                                                               : QStringLiteral("%1K").arg(ram));
+    }
+    const QPointer<HandheldMenu> self(this);
+    const std::string name = here.name;
+    const std::vector<uint32_t> sizes = here.ramSizesKb;
+    _picker.chosen = [self, name, sizes](int index) {
+        if (self)
+            self->startMachine(name, sizes[static_cast<size_t>(index)]);
+    };
+    const bool oneMachine = inFamily.machines.size() == 1;
+    _picker.back = [self, family, machine, oneMachine] {
+        if (!self)
+            return;
+        if (oneMachine)
+            self->openFamilyPicker(static_cast<int>(family));
+        else
+            self->openMachinePicker(family, static_cast<int>(machine));
+    };
+    std::function<void()> top;
+    if (!oneMachine)
+        top = [self, family] {
+            if (self)
+                self->openFamilyPicker(static_cast<int>(family));
+        };
+    addMachineWaysUp(oneMachine ? tr("Model") : QString::fromStdString(inFamily.title), _picker.back, std::move(top));
+    _hasPicker = true;
+    emitState();
+}
+
+void HandheldMenu::addMachineWaysUp(const QString& upTitle, std::function<void()> up, std::function<void()> top)
+{
+    std::vector<QString> labels;
+    std::vector<std::function<void()>> ways;
+    if (top)
+    {
+        labels.push_back(QStringLiteral(".   ") + tr("Model"));
+        ways.push_back(std::move(top));
+    }
+    labels.push_back(QStringLiteral("..  ") + upTitle);
+    ways.push_back(std::move(up));
+    _picker.items.insert(_picker.items.begin(), labels.begin(), labels.end());
+    const int shift = static_cast<int>(ways.size());
+    _picker.row += shift;  // the cursor stays on the machine or size it was on
+    _picker.chosen = [ways = std::move(ways), chosen = std::move(_picker.chosen), shift](int index) {
+        if (index < shift)
+            ways[static_cast<size_t>(index)]();
+        else if (chosen)
+            chosen(index - shift);
+    };
+}
+
+void HandheldMenu::startMachine(const std::string& name, uint32_t ramKb)
+{
+    StateNode params = StateNode::Object();
+    params["model"] = StateNode(name);
+    params["ram_kb"] = StateNode(ramKb);
+    params["replace"] = StateNode(true);
+    const QPointer<HandheldMenu> self(this);
+    submit("mach.start", std::move(params), [self](bool ok, const QString&, const StateNode&) {
+        if (self && ok)
+            self->Close();  // the new machine starts running; its pictures replace the old one
+    });
 }
 
 void HandheldMenu::openSpeedPicker()

@@ -62,7 +62,7 @@ protected:
     std::shared_ptr<Emulator> _emulator;
     EmulatorContext* _context = nullptr;
     ttd::TimeTravelController* _ttd = nullptr;
-    Vdac2Card* _card = nullptr;
+    EveHostCard* _card = nullptr;
 
     void SetUp() override
     {
@@ -73,7 +73,7 @@ protected:
         ASSERT_NE(_ttd, nullptr);
         auto* decoder = dynamic_cast<PortDecoder_TSConf*>(_context->pPortDecoder);
         ASSERT_NE(decoder, nullptr);
-        _card = decoder->GetVdac2Card();
+        _card = decoder->GetEveCard();
         ASSERT_NE(_card, nullptr);
         ASSERT_TRUE(_card->IsReady());
 

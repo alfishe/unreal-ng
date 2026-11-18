@@ -1167,8 +1167,10 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
         return;
     }
 
-    // A memory address is a number or a label's name (its CPU address); a port or a line is a number
-    LabelManager* labels = ctx->pDebugManager->GetLabelManager();
+    // A memory address is a number or a label's name (its CPU address, from the breakpoint CPU's labels); a port or a
+    // line is a number
+    LabelManager* labels =
+        ctx->pDebugManager->GetLabelManager(bpm->Target() ? bpm->Target()->Id() : DebugCpuId::Main);
     auto parseAddress = [&](const Json::Value& field, uint32_t& out) {
         if (ParseJsonUInt(field, 0xFFFF, out))
             return true;
@@ -3707,7 +3709,11 @@ void EmulatorAPI::getLabels(const HttpRequestPtr& req, std::function<void(const 
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (!labelMgr)
     {
         Json::Value error;
@@ -3792,7 +3798,11 @@ void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const H
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (!labelMgr)
     {
         Json::Value error;
@@ -3860,7 +3870,7 @@ void EmulatorAPI::addLabel(const HttpRequestPtr& req, std::function<void(const H
 }
 
 /// @brief GET /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::getLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::getLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                            const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3879,7 +3889,11 @@ void EmulatorAPI::getLabel(const HttpRequestPtr& /*req*/, std::function<void(con
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
 
     if (!label)
@@ -3916,7 +3930,7 @@ void EmulatorAPI::getLabel(const HttpRequestPtr& /*req*/, std::function<void(con
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels/{name}
-void EmulatorAPI::removeLabel(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::removeLabel(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id, const std::string& name) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -3935,7 +3949,11 @@ void EmulatorAPI::removeLabel(const HttpRequestPtr& /*req*/, std::function<void(
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (labelMgr && labelMgr->RemoveLabel(name))
     {
         Json::Value ret;
@@ -3978,7 +3996,11 @@ void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     auto label = labelMgr ? labelMgr->GetLabelByName(name) : nullptr;
 
     if (!label)
@@ -4015,7 +4037,7 @@ void EmulatorAPI::updateLabel(const HttpRequestPtr& req, std::function<void(cons
 }
 
 /// @brief DELETE /api/v1/emulator/{id}/labels
-void EmulatorAPI::clearLabels(const HttpRequestPtr& /*req*/, std::function<void(const HttpResponsePtr&)>&& callback,
+void EmulatorAPI::clearLabels(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                               const std::string& id) const
 {
     auto emulator = getEmulatorOrError(id, callback);
@@ -4034,7 +4056,11 @@ void EmulatorAPI::clearLabels(const HttpRequestPtr& /*req*/, std::function<void(
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (labelMgr)
         labelMgr->ClearAllLabels();
 
@@ -4067,7 +4093,11 @@ void EmulatorAPI::loadSymbols(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (!labelMgr)
     {
         Json::Value error;
@@ -4137,7 +4167,11 @@ void EmulatorAPI::saveSymbols(const HttpRequestPtr& req, std::function<void(cons
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (!labelMgr)
     {
         Json::Value error;
@@ -4229,7 +4263,11 @@ void EmulatorAPI::resolveLabel(const HttpRequestPtr& req, std::function<void(con
         return;
     }
 
-    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager();
+    // ?cpu= (or the body's "cpu"): a card CPU's own labels (gs-debugger design §6.2)
+    DebugCpuId cpu = DebugCpuId::Main;
+    if (!CpuOrError(emulator, req, callback, cpu))
+        return;
+    LabelManager* labelMgr = ctx->pDebugManager->GetLabelManager(cpu);
     if (!labelMgr)
     {
         Json::Value error;

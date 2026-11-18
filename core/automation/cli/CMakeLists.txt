@@ -56,6 +56,7 @@ set(SOURCES
     src/commands/cli-processor-profiler.cpp
     src/commands/cli-processor-porttrace.cpp
     src/commands/cli-processor-vdac2.cpp
+    src/commands/cli-processor-vdac4.cpp
     src/commands/cli-processor-bus.cpp
     src/commands/cli-processor-keyboard.cpp
     src/commands/cli-processor-mouse.cpp

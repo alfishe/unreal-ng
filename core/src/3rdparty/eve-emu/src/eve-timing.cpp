@@ -37,7 +37,10 @@ void FrameEvent(EveChip& chip)
     ++scan.frames;
     RegSet(chip, Reg::Frames, static_cast<uint32_t>(scan.frames));
     ++scan.completedFrames;
-    FoldFrameMetrics(chip);
+    if (chip.asyncDrawing)
+        AsyncFrameEnd(chip); // the renderer folds the metrics of the lines it drew
+    else
+        FoldFrameMetrics(chip);
 }
 
 void EndOfLine(EveChip& chip)
@@ -114,6 +117,12 @@ bool ScanRunning(const EveChip& chip)
 
 void Advance(EveChip& chip, uint64_t clocks)
 {
+    if (chip.vdac4 && chip.vdac4State.resetSweepLeft != 0)
+    {
+        // The reset sweep runs on the core clock, also while the chip sleeps
+        uint32_t& left = chip.vdac4State.resetSweepLeft;
+        left = clocks >= left ? 0 : left - static_cast<uint32_t>(clocks);
+    }
     if (!ClockRunning(chip))
         return;
     while (clocks > 0)
@@ -173,6 +182,8 @@ void ApplySwap(EveChip& chip)
     scan.dlswapPending = 0;
     RegSet(chip, Reg::Dlswap, 0);
     RaiseInterrupt(chip, kIntSwap);
+    if (chip.vdac4)
+        chip.vdac4State.lastSwapClock = chip.state.totalClocks + 1;
     DisplayListSwapped(chip, changed);
     CoproSwapDone(chip);
 }

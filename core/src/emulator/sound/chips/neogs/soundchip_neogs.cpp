@@ -1011,6 +1011,7 @@ int64_t SoundChip_NeoGS::hostLead() const
 void SoundChip_NeoGS::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
     // Nominal base, not the card's actual time: the card ends a frame up to one
     // instruction past it, and that overshoot must not pile up frame after frame.
     // Taken against the previous ZX anchor, so before the anchor moves
@@ -1125,6 +1126,7 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
     {
         case 0xB3: // reply byte; the data bit clears after the cycle
             hostPortSync();
+            logHostReplyRead(_mb.dataToHost);
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
@@ -1150,6 +1152,7 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
             {
                 case 0x80:
                     hostPortSync();
+                    logHostReset();
                     resetCard();
                     return;
                 case 0x40:
@@ -1166,12 +1169,14 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3:
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             onHostDataWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB:
             hostPortSync();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             onHostCommandWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
             return;
@@ -1205,6 +1210,8 @@ uint8_t SoundChip_NeoGS::readStatus()
 uint8_t SoundChip_NeoGS::readData()
 {
     hostPortSync();
+    logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F;
     return _mb.dataToHost;
 }
@@ -1212,12 +1219,14 @@ uint8_t SoundChip_NeoGS::readData()
 void SoundChip_NeoGS::sendCommand(uint8_t command)
 {
     hostPortSync();
+    logHostCommand(command, true);
     onHostCommandWrite(command);
 }
 
 void SoundChip_NeoGS::sendData(uint8_t data)
 {
     hostPortSync();
+    logHostData(data, true);
     onHostDataWrite(data);
 }
 
@@ -1551,6 +1560,13 @@ uint32_t SoundChip_NeoGS::cardPageCount(CardPage::Kind kind) const
     }
 }
 
+const uint8_t* SoundChip_NeoGS::cardRomPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * NeoGSMemory::PAGE_SIZE > Flash29F040B::SIZE)
+        return nullptr;
+    return _flash.data() + static_cast<size_t>(page) * NeoGSMemory::PAGE_SIZE;
+}
+
 bool SoundChip_NeoGS::cardRegisters(Z80CpuRegisters& out) const
 {
     if (!_cpu)
@@ -1601,6 +1617,7 @@ void SoundChip_NeoGS::restoreMailbox(const GSForwardMailbox& snapshot)
 void SoundChip_NeoGS::accumulateActivityCounters(const GSActivityCounters& other)
 {
     accumulateGSActivityCounters(_activityCounters, other);
+    _instructionCountOffset -= static_cast<int64_t>(other.cpuSteps);   // the folded steps are not this card's
 }
 
 bool SoundChip_NeoGS::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
@@ -1718,6 +1735,13 @@ void SoundChip_NeoGS::serializeFixedState(uint8_t* dst) const
 
     _flash.saveState(dst + 200); // 200..231
     put64(dst + 232, _nextTimerCrystal);
+    // 240..247 + 248: the card CPU's instruction count and its flag (TTDHashState leaves them out: a position)
+    uint64_t count = 0;
+    if (cardInstructionCount(count))
+    {
+        putU64(dst + TTD_COUNT_OFFSET, count);
+        dst[TTD_COUNT_FLAG_OFFSET] = 1;
+    }
 }
 
 void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const
@@ -1821,6 +1845,10 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
 
     _flash.loadState(src + 200);
     _nextTimerCrystal = get64(src + 232);
+    _instructionCountKnown = src[TTD_COUNT_FLAG_OFFSET] == 1;
+    if (_instructionCountKnown)
+        _instructionCountOffset =
+            static_cast<int64_t>(get64(src + TTD_COUNT_OFFSET)) - static_cast<int64_t>(_activityCounters.cpuSteps);
     _sd->loadState(src + TTD_SD_OFFSET);
     if (_mp3)
         _mp3->loadState(src + TTD_MP3_OFFSET);
@@ -1886,6 +1914,7 @@ uint64_t SoundChip_NeoGS::TTDHashState() const
 {
     std::vector<uint8_t> blob(TTD_DEVICE_STATE_END);
     serializeFixedState(blob.data());
+    std::fill_n(blob.begin() + TTD_COUNT_OFFSET, 9, static_cast<uint8_t>(0));   // the instruction count: a position
     serializeDeviceState(blob.data() + TTD_SD_OFFSET, true);
     uint64_t hash = 14695981039346656037ull;
     for (const uint8_t byte : blob)

@@ -67,6 +67,14 @@ Example, a host action ([command-interface.md §16](./command-interface.md#16-ho
 ← {"op":"result","t":"call","rid":1,"status":200,"body":{"ok":true,"action":"run.pause_toggle","message":"Emulator paused","result":{…}}}
 ```
 
+A polled device read is a call too, with no topic when it never loads the emulation thread; for example the TS-Conf
+VDAC4 board state ([command-interface.md](./command-interface.md), `vdac4 state`):
+
+```json
+→ {"op":"call","rid":4,"method":"GET","path":"/api/v1/emulator/0f3a…/vdac4/state?log=5"}
+← {"op":"result","t":"call","rid":4,"status":200,"body":{"tang":{"personality":"ft",…},"esp":{"phase":"running",…},"app":{"running":true,"name":"DOOM",…},"link":{…},"packets":{…},"audio":{…},"log":[…]}}
+```
+
 The TTD branch routes are calls like any other (`PATCH` included), for example a switch to another branch of the
 history ([webapi-interface.md](./webapi-interface.md), TTD branches):
 
@@ -123,6 +131,20 @@ of one graphics region, base64 in `png`); they are calls, there is no L2 topic (
 structure is there). L3 (`findings`, `review`, `experiment`, `cover`) are calls too; `experiment` and `cover` answer
 when their runs are done, on their own analysis instances (the socket's other calls go on meanwhile).
 
+### Machine state transfer
+
+`POST /api/v1/emulator/{id}/snapshot/transfer` ([automation.md → Machine State Transfer](../../../features/automation.md#machine-state-transfer))
+is a call like every REST route: the same handler (`StateTransferControl`, shared with the CLI, Lua, Python, MCP and
+the Qt menu), the same report and status. There is no transfer topic: a new instance appears on the `instances` topic
+(`emulator`), and the target's run state on `run.state`.
+
+```json
+→ {"op":"call","rid":20,"method":"POST","path":"/api/v1/emulator/0/snapshot/transfer","body":{"to":"1","check":true}}
+← {"op":"result","t":"call","rid":20,"status":200,"body":{"ok":true,"mode":"cross-model","check":true,"copied":9,…,"summary":"transfer: ok (cross-model)\n…"}}
+→ {"op":"call","rid":21,"method":"POST","path":"/api/v1/emulator/0/snapshot/transfer","body":{"model":"PENTAGON","ram_size":512}}
+← {"op":"result","t":"call","rid":21,"status":201,"body":{"ok":true,"created":true,"target_id":"5c1e…","model":"PENTAGON","ram_kb":512,…}}
+```
+
 ## 3. Topics
 
 ```json
@@ -161,7 +183,7 @@ when their runs are done, on their own analysis instances (the socket's other ca
 | `media.slots` | per instance every media slot `{slots [{id, kind, present, pending, name, format, dirty, changed_units, protect}], loaded, dirty}` (`GET /api/v1/monitor/media.slots`) | none | implemented |
 | `recording.state` | per instance `{available, enabled, recording, paused, mode, file, frames, duration_s, emulated_s, file_bytes, fps}` (`GET /api/v1/monitor/recording.state`) | none | implemented |
 | `debug.labels` | per instance `{total, sets [{id, title, enabled, symbols}]}` (`GET /api/v1/monitor/debug.labels`) | none | implemented |
-| `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
+| `ttd.status` | per instance `{state, recording, history, frame, first, end, frames, checkpoints, memory_bytes, history_bytes, page_store_bytes, bookmarks, write_journal_records, input_events, evicted_checkpoints, evicted_to_disk_segments, evicted_to_disk_checkpoints, read_back_segments, read_back_bytes, read_back_loads, read_back_hits}`: the cursor's fields at the rate, the sizes refreshed every 2 s (`GET /api/v1/monitor/ttd.status`; the full status is `GET …/ttd/status`) | none | implemented |
 | `debug.analyzers` | per instance the profilers' session states `{opcode, memory, calltrace, coverage {available, recording, instructions}, cpuprofile, pchist}` (`GET /api/v1/monitor/debug.analyzers`) | none | implemented |
 | `debug.markup` | per instance the [memory markup](../../../inprogress/2026-11-05-software-metadata-profile/README.md) `{available, revision, runtime (facts, facts-physical, coverage, none), layers [{layer, source, claims, entries, comments}]}` lowest first (`GET /api/v1/monitor/debug.markup`); a new value on every layer change (a mark, a comment, a clear, a profile laid over) and every L2 build | none | implemented (2026-11-05) |
 | `controllers.state` | per instance `{connectors [{id, kind, device, plugged, fixed}], plugged}` (`GET /api/v1/monitor/controllers.state`) | none | implemented |

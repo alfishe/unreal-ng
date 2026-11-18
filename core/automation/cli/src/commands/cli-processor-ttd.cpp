@@ -26,6 +26,7 @@
 ///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
 ///   ttd replay-check [F [G]]   — replay each frame and compare it with the next checkpoint
 ///   ttd seek-check [on|off]    — every seek also replay-checks the frame it lands in
+///   ttd ... --cpu gs|ms        — seek, si-back / si-forward, reverse-step and reverse-continue on a sound card's CPU
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -39,6 +40,7 @@
 #include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/ttdcausechain.h>
 #include <debugger/ttd/ttdcontrol.h>
+#include "cli-ttd-cards.h"
 #include <debugger/ttd/ttdsession.h>
 #include <debugger/ttd/ttdbookmarks.h>
 #include <debugger/ttd/ttdexternalevents.h>
@@ -480,6 +482,12 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "    a keyboard read shows the half-rows it selects (rows) and the keys it saw down" << NEWLINE;
     ss << "  ttd step-instruction <back|fwd>  Step one instruction (aliases: si-back, si-forward)" << NEWLINE;
     ss << NEWLINE;
+    ss << "Sound card CPU positions (--cpu gs|neogs|ms|multisound; the main CPU follows by replay):" << NEWLINE;
+    ss << "  ttd seek --cpu gs <instruction>  The card at its instruction count (ttd position shows it)" << NEWLINE;
+    ss << "  ttd si-back --cpu gs [--count N] / ttd si-forward --cpu gs [--count N]   N card instructions" << NEWLINE;
+    ss << "  ttd reverse-step --cpu gs [--count N]                                     N card instructions back" << NEWLINE;
+    ss << "  ttd reverse-continue --cpu gs [--max-frames N]   Back to the card's previous breakpoint hit" << NEWLINE;
+    ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
     ss << "  ttd reverse-step-over            Step back over a routine (its return before): back to its CALL" << NEWLINE;
@@ -573,6 +581,12 @@ void CLIProcessor::HandleTTDStatus(const ClientSession& session, EmulatorContext
     if (info.historyLimitBytes != 0)
         ss << info.historyLimitBytes << " bytes";
     ss << " (" << info.historyBytes << " bytes held, " << info.evictedCheckpoints << " oldest released)" << NEWLINE;
+    ss << "  Disk tier:              " << (info.diskTierActive ? "on" : "off") << ", "
+       << info.evictedToDiskSegments << " segments (" << info.evictedToDiskCheckpoints
+       << " checkpoints) on disk only" << NEWLINE;
+    ss << "  Read-back cache:        " << info.readBackSegments << "/" << info.readBackCapacity << " segments, "
+       << info.readBackBytes << " bytes; " << info.readBackLoads << " loads, " << info.readBackHits << " hits, "
+       << info.readBackFailures << " failures" << NEWLINE;
     ss << NEWLINE;
     ss << "  Write journal:          " << (info.writeJournalEnabled ? "on" : "off") << ", "
        << info.writeJournalRecords << " records (" << info.writeJournalBytes << " bytes in memory)" << NEWLINE;
@@ -831,6 +845,10 @@ void CLIProcessor::HandleTTDHistoryLimit(const ClientSession& session, EmulatorC
     ss << "  History: frames " << info.sessionStartFrame << " .. " << info.currentEndFrame << ", "
        << info.checkpointCount << " checkpoints, " << info.historyBytes << " bytes held, " << info.evictedCheckpoints
        << " oldest released" << NEWLINE;
+    ss << "  Disk tier: " << (info.diskTierActive ? "on" : "off") << ", " << info.evictedToDiskSegments
+       << " segments (" << info.evictedToDiskCheckpoints << " checkpoints) on disk only; read-back cache "
+       << info.readBackSegments << "/" << info.readBackCapacity << " segments, " << info.readBackBytes << " bytes"
+       << NEWLINE;
     session.SendResponse(ss.str());
 }
 
@@ -861,8 +879,23 @@ void CLIProcessor::HandleTTDInvalidate(const ClientSession& session, EmulatorCon
 }
 
 void CLIProcessor::HandleTTDSeek(const ClientSession& session, EmulatorContext* context,
-                                  const std::vector<std::string>& args)
+                                  const std::vector<std::string>& argsIn)
 {
+    // `ttd seek --cpu gs <instruction>`: a card position (the card's instruction count)
+    std::vector<std::string> args = argsIn;
+    if (const std::string cpu = CliTTDCards::TakeCpuFlag(args); !cpu.empty())
+    {
+        if (args.size() < 2)
+        {
+            session.SendResponse(std::string("Error: Missing instruction argument") + NEWLINE +
+                                 "Usage: ttd seek --cpu <gs|ms> <instruction>" + NEWLINE);
+            return;
+        }
+        session.SendResponse(CliTTDCards::FormatCardMove(
+            ttd::TTDControl(context).Execute({"seek", {{"cpu", cpu}, {"instruction", args[1]}}}), NEWLINE));
+        return;
+    }
+
     // TD-4: `ttd seek --bookmark <label>` (alias -b) resolves the label to
     // its stored position; everything else is a coordinate seek.
     std::string bookmarkLabel;
@@ -1376,6 +1409,9 @@ void CLIProcessor::HandleTTDPosition(const ClientSession& session, EmulatorConte
        << NEWLINE;
     if (fps)
         ss << "  Fps:     " << fps->d << NEWLINE;
+    if (const StateNode* cards = reply.body.find("cards"))
+        for (const StateNode& card : cards->items)
+            ss << CliTTDCards::FormatCardLine(card, NEWLINE);
 
     session.SendResponse(ss.str());
 }
@@ -1694,8 +1730,10 @@ void CLIProcessor::HandleTTDFindLast(const ClientSession& session, EmulatorConte
 }
 
 void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
-                                             const std::vector<std::string>& args)
+                                             const std::vector<std::string>& argsIn)
 {
+    std::vector<std::string> args = argsIn;
+    const std::string cardCpu = CliTTDCards::TakeCpuFlag(args);
     // Determine direction from subcommand or explicit arg.
     bool forward = false;
     if (!args.empty())
@@ -1707,6 +1745,16 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
             forward = false;
         else if (args.size() > 1 && (args[1] == "forward" || args[1] == "fwd"))
             forward = true;
+    }
+    if (!cardCpu.empty())
+    {
+        // `ttd si-back --cpu gs [--count N]`: N card instructions (the main CPU follows by replay)
+        std::map<std::string, std::string> options{{"cpu", cardCpu}, {"dir", forward ? "forward" : "back"}};
+        for (size_t i = 1; i + 1 < args.size(); ++i)
+            if (args[i] == "--count")
+                options["count"] = args[i + 1];
+        session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"step-instruction", options}), NEWLINE));
+        return;
     }
 
     const ttd::TTDReply reply =
@@ -1744,9 +1792,24 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
             options["tstates"] = args[++i];
         else if (tok == "--scanlines" && i + 1 < args.size())
             options["scanlines"] = args[++i];
+        else if (tok == "--cpu" && i + 1 < args.size())
+            options["cpu"] = args[++i];
     }
-    if (options.empty())
+    if (!options.count("tstates") && !options.count("scanlines") && !options.count("count"))
         options["count"] = "1";
+    if (const auto cpu = options.find("cpu"); cpu != options.end())
+    {
+        std::string lower = cpu->second;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower == "main")
+            options.erase(cpu);
+        else
+        {
+            // `ttd reverse-step --cpu gs [--count N]`: N card instructions back
+            session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"reverse-step", options}), NEWLINE));
+            return;
+        }
+    }
 
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step", options});
     if (!reply.Ok())
@@ -1793,8 +1856,21 @@ void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, Emulat
 }
 
 void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
-                                             const std::vector<std::string>& args)
+                                             const std::vector<std::string>& argsIn)
 {
+    // `ttd reverse-continue --cpu gs [--max-frames N]`: back to the card CPU's previous breakpoint hit (its own
+    // breakpoints: bp ... --cpu gs)
+    std::vector<std::string> args = argsIn;
+    if (const std::string cpu = CliTTDCards::TakeCpuFlag(args); !cpu.empty())
+    {
+        std::map<std::string, std::string> options{{"cpu", cpu}};
+        for (size_t i = 1; i + 1 < args.size(); ++i)
+            if (args[i] == "--max-frames")
+                options["max_frames"] = args[i + 1];
+        session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"reverse-continue", options}), NEWLINE));
+        return;
+    }
+
     // One or more --pc <V> arguments, then the page, bounds and the --all list
     static const std::map<std::string, std::string> flags = {
         {"--phys-page", "phys_page"},   {"--before-frame", "before_frame"}, {"--before-tin", "before_tin"},

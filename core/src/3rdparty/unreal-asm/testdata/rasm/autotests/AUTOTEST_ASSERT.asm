@@ -1,0 +1,1 @@
+ macro zem,nom,adr: overflow equ $-{adr}: assert $<{adr},{nom}: nop: mend: zem 'bidule',#2FFF : macro zem2,nom,adr: overflow2 equ $-{adr}: assert $<{adr},{nom},{adr},overflow2: nop: mend: zem2 'bidule',#2FFF : macro zem3,nom,adr: overflow3 equ $-{adr}: assert $<{adr},{nom},{hex}{adr},overflow3: nop: mend: zem3 'bidule',#2FFF 

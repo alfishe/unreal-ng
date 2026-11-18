@@ -1,0 +1,1 @@
+struct MyStruct: val defb: endstruct: assert {sizeof}UnknownStruct==1 

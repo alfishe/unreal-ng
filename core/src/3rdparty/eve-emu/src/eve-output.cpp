@@ -151,7 +151,12 @@ void EveSetOutput(EveChip* chip, uint32_t* framebuffer, uint32_t stridePixels, u
     const int on = (drawing != 0 && framebuffer != nullptr) ? 1 : 0;
     if (framebuffer != chip->framebuffer || stridePixels != chip->stridePixels || widthCapacity != chip->widthCapacity ||
         heightCapacity != chip->heightCapacity || on != chip->drawing)
+    {
         ++chip->outputVersion; // kept lines live in the old buffer
+        if (framebuffer != chip->framebuffer || widthCapacity != chip->widthCapacity ||
+            heightCapacity != chip->heightCapacity)
+            AsyncWait(*chip);  // the renderer is done with the old buffer when this returns
+    }
     chip->framebuffer = framebuffer;
     chip->stridePixels = stridePixels;
     chip->widthCapacity = widthCapacity;

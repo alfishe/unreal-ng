@@ -1,0 +1,1 @@
+lzx0 : incbin './decrunch/lzDataTest.bin' : lzclose : lafin : save './decrunch/lzDataTest.zx0',0,lafin 

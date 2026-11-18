@@ -66,12 +66,19 @@ bool CheckHapticCondition(const std::string& text, uint8_t trigger, std::string&
 /// v3: the host key overlay (8 half-rows) after the connectors
 constexpr uint8_t kControllersTTDVersion = 3;
 constexpr size_t kHostKeyRows = 8;
-/// The PC-only keys of a profile (`pc.delete` .. `pc.pagedown`, controllers/router/zxkeys.h; codes 0xE0..) have no place
-/// in the ZX matrix. They ride the same HostKeys events as rows 8 and 9 (five to a row), are held outside the TTD blob and
-/// its hash (their format stays v3) and reach a PS/2 sink only
+/// The PC-only keys of a profile (`pc.delete` .. `pc.f12`, controllers/router/zxkeys.cpp; codes 0xE0..) have no place
+/// in the ZX matrix. They ride the same HostKeys events as rows 8 to 12 (five to a row), are held outside the TTD blob and
+/// its hash (their format stays v3) and reach a PS/2 sink only. The order is the codes' order: append, never reorder
 constexpr uint8_t kPcOnlyKeyBase = 0xE0;
-constexpr size_t kPcOnlyRows = 2;
-constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete, PcKey::Insert, PcKey::End, PcKey::Home, PcKey::PageUp, PcKey::PageDown};
+constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete,    PcKey::Insert,     PcKey::End,        PcKey::Home,
+                                 PcKey::PageUp,    PcKey::PageDown,   PcKey::Escape,     PcKey::Tab,
+                                 PcKey::Backspace, PcKey::LeftAlt,    PcKey::LeftCtrl,   PcKey::Function1,
+                                 PcKey::Function2, PcKey::Function3,  PcKey::Function4,  PcKey::Function5,
+                                 PcKey::Function6, PcKey::Function7,  PcKey::Function8,  PcKey::Function9,
+                                 PcKey::Function10, PcKey::Function11, PcKey::Function12};
+constexpr size_t kPcOnlyRows = (std::size(kPcOnlyKeys) + 4) / 5;
+static_assert(kPcOnlyKeyBase + std::size(kPcOnlyKeys) <= 0x100, "the PC-only key codes end at 0xFF");
+static_assert(kPcOnlyRows == 5, "ControllerManager::_pcOnlyKeys holds the PC-only rows");
 
 /// The key each control bit holds (kRight, kLeft, kDown, kUp, kFire), per wiring
 constexpr ZXKeysEnum kSinclair1Keys[5] = {ZXKEY_7, ZXKEY_6, ZXKEY_8, ZXKEY_9, ZXKEY_0};
@@ -876,7 +883,12 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         for (const HapticWatch& watch : _hapticWatches)
         {
             uint8_t value = 0;
-            if (watch.page == 0xFFFF)
+            if (watch.esp)
+            {
+                if (_context->pPortDecoder == nullptr || !_context->pPortDecoder->PeekEspAppByte(watch.espAddress, value))
+                    value = 0;  // no app (yet): the byte reads 0, as a page not mapped does
+            }
+            else if (watch.page == 0xFFFF)
                 value = memory->DirectReadFromZ80Memory(watch.address);
             else if (const uint8_t* page = memory->RAMPageAddress(watch.page))
                 value = page[watch.address & 0x3FFF];

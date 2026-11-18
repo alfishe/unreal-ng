@@ -49,15 +49,9 @@ popups or docks. So the chip, the tree and the fork popup became:
 - **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard relocks
   every 250 ms: the two made the panel flicker).
 
-Not done yet:
-
-- the main window's status bar;
-- the menu items and keys below;
-- the lane filters (creator / tags / run);
-- edits in the past.
-
-A rename, note, tag or pin changes the session in memory; for a folder session it is not yet written to
-`branches.tdx`, which has no update record.
+Not built (the owner closed the work 2026-11-16; [DONE.md](DONE.md)): the main window's status bar, the lane
+filters (creator / tags / run), edits in the past from the panel, and writing a rename, note, tag or pin of a folder
+session to `branches.tdx` (it has no update record; a save from memory keeps them).
 
 Keyboard: `Ctrl+Alt+B` previous branch (the one left last), `Ctrl+Alt+Shift+B` the tree. Assigned through the action
 catalogue like the other TTD actions. As built: the debugger keyboard profile (`profiles/debug/keyboard-default.yaml`)

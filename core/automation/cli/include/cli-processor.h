@@ -270,6 +270,10 @@ private:
     void ShowBusHelp(const ClientSession& session);
     void HandleVdac2Metrics(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void ShowVdac2Help(const ClientSession& session);
+    // TS-Conf VDAC4 board (Tang + ESP32-S3) state (cli-processor-vdac4.cpp)
+    void HandleVdac4(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVdac4EspMemory(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowVdac4Help(const ClientSession& session);
 
 
     // Settings command handlers
@@ -333,6 +337,8 @@ private:
     void HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
     void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
+    /// machines [all]: the machines grouped family -> machine -> RAM size (MachineCatalog)
+    void HandleMachines(const ClientSession& session, const std::vector<std::string>& args);
     /// model <name> [--ram <kb>] [--stranded save|discard|keep]: switch the
     /// selected emulator's model; the media follow (ModelSwitch)
     void HandleModel(const ClientSession& session, const std::vector<std::string>& args);
@@ -456,6 +462,8 @@ private:
     void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
     /// snapshot formats - which formats this machine can be saved in right now, and why not
     void HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator);
+    void HandleSnapshotTransfer(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                                const std::vector<std::string>& args);
     void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                                const std::vector<std::string>& args);
 

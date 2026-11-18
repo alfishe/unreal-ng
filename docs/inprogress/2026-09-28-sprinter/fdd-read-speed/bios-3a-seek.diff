@@ -1,0 +1,29 @@
+diff --git a/src/bios/exp/EXTENDED/FDD_DRIVER.asm b/src/bios/exp/EXTENDED/FDD_DRIVER.asm
+index bf74c2f..a0e7e3d 100644
+--- a/src/bios/exp/EXTENDED/FDD_DRIVER.asm
++++ b/src/bios/exp/EXTENDED/FDD_DRIVER.asm
+@@ -651,21 +651,15 @@ SEEK:		LD	XL,A
+ 		 OUT	(FDC_93.DrvCTRL),A
+ 		 IN	A,(FDC_93.Track)
+ 		 CP	C
+-		 CALL	NZ,P50ms
++		 RET	Z		; on the track already: only the side was selected, no SEEK
+ 		 LD	A,C
+ 		 OUT	(FDC_93.Data),A
+-		 IN	A,(FDC_93.Track)
+-		 CP	C
+-		EX	AF,AF'	;R.TRACK==PHISICAL TRACK
+-		LD	A,#18	;!HARDCODE CMD КР1818ВГ93
++		LD	A,#18		; SEEK (no delay before the step: the WD1793 needs none)
+ 		CALL	EXECOM
+ 		RET	C
+-		EX	AF,AF'
+ 		 LD	A,C
+ 		 OUT	(FDC_93.Track),A
+-		 RET	Z
+-.STOL:		 CALL	P50ms
+-		RET 
++.STOL:		 JP	P50ms		; head settle after the step
+ ;
+ ;P750ms	 LD	 B,3
+ ;PMS2	 LD	 A,255

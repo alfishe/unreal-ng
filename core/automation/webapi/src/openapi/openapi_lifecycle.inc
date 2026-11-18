@@ -42,6 +42,35 @@
          ["models_creatable"]["description"] =
         "Model short names a create request can succeed with, ZX-Poly configuration names included";
 
+    // GET /api/v1/emulator/machines
+    {
+        Json::Value& op = paths["/api/v1/emulator/machines"]["get"];
+        op["summary"] = "Machines grouped family -> machine -> RAM size";
+        op["description"] =
+            "The tree clients build their machine picker from (MachineCatalog). Each family has an id, a title and its "
+            "machines in menu order; a machine has the name a create request uses (model, variant or ZX-Poly "
+            "configuration), a title, kind (model|variant|zxpoly), base_model, ram_sizes_kb, default_ram_kb, "
+            "creatable. Creatable machines only unless all=true; with id, 'current' gives that emulator's family, "
+            "machine and ram_kb.";
+        op["tags"].append("Emulator Management");
+        Json::Value all;
+        all["name"] = "all";
+        all["in"] = "query";
+        all["required"] = false;
+        all["schema"]["type"] = "boolean";
+        all["description"] = "Every machine, also the ones this build cannot create";
+        op["parameters"].append(all);
+        Json::Value id;
+        id["name"] = "id";
+        id["in"] = "query";
+        id["required"] = false;
+        id["schema"]["type"] = "string";
+        id["description"] = "Emulator id: its machine is placed as 'current'";
+        op["parameters"].append(id);
+        op["responses"]["200"]["description"] = "{families: [{id, title, machines: [...]}], current?}";
+        op["responses"]["404"]["description"] = "No emulator with that id";
+    }
+
     // GET /api/v1/emulator/models
     paths["/api/v1/emulator/models"]["get"]["summary"] = "Get available emulator models";
     paths["/api/v1/emulator/models"]["get"]["tags"].append("Emulator Management");
@@ -71,6 +100,10 @@
          ["models"]["items"]["properties"]["available_ram_sizes_kb"]["items"]["type"] = "integer";
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["creatable"]["type"] = "boolean";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["family"]["type"] = "string";
+    paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
+         ["models"]["items"]["properties"]["family"]["description"] = "Family id (GET /emulator/machines gives the tree)";
     paths["/api/v1/emulator/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]
          ["models"]["items"]["properties"]["creatable"]["description"] =
         "Whether a create request for this model is expected to succeed on this build";

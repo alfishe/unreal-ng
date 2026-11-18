@@ -150,10 +150,13 @@
         op["summary"] = "Set or read the TTD history limit";
         op["tags"].append("Time-Travel Debug");
         op["description"] =
-            "Bounds the recorded history: while recording, the oldest checkpoints (one per frame) are released "
-            "once there are more than `frames` of them or their data exceeds `bytes`. The session start moves "
-            "forward; the input, port, external-event and bookmark records before it go too, so a session saved "
-            "after a release loads and replays its remaining frames exactly. Two checkpoints always stay.\n\n"
+            "Bounds the recorded history in memory. With a recording folder nothing is released: segments outside "
+            "the window leave memory once their file is complete and a seek reads one back into the read-back "
+            "cache; the session start does not move and the journals stay. Without one, while recording, the "
+            "oldest checkpoints (one per frame) are released once there are more than `frames` of them or their "
+            "data exceeds `bytes`; the session start moves forward and the input, port, external-event and "
+            "bookmark records before it go too, so a session saved after a release loads and replays its "
+            "remaining frames exactly. Two checkpoints always stay.\n\n"
             "Body (each field optional; a missing one keeps its value; 0 = no limit; an empty body only reports): "
             "`frames` (integer), `bytes` (integer). While recording the limit applies at once, otherwise from "
             "the next recorded frame. The limit stays for later recordings of this instance. Default: no limit.";
@@ -175,13 +178,22 @@
         op["responses"]["200"]["description"] = "The limit now in force and the history it bounds";
         r["type"] = "object";
         for (const char* name : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
-                                 "checkpoint_count", "session_start_frame", "current_end_frame"})
+                                 "checkpoint_count", "session_start_frame", "current_end_frame",
+                                 "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                 "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                 "read_back_failures"})
         {
             r["properties"][name]["type"] = "integer";
             r["properties"][name]["format"] = "uint64";
         }
         r["properties"]["history_bytes"]["description"] = "Checkpoint data held now (what `bytes` bounds)";
-        r["properties"]["evicted_checkpoints"]["description"] = "Checkpoints released by the limit in this session";
+        r["properties"]["evicted_checkpoints"]["description"] =
+            "Checkpoints released by the limit in this session (no recording folder)";
+        r["properties"]["disk_tier_active"]["type"] = "boolean";
+        r["properties"]["disk_tier_active"]["description"] =
+            "With a recording folder the limit moves segments to disk; the whole session stays seekable";
+        r["properties"]["evicted_to_disk_segments"]["description"] = "Segments held on disk only now";
+        r["properties"]["read_back_segments"]["description"] = "The read-back cache's segments";
         r["properties"]["state"]["type"] = "string";
         op["responses"]["400"]["description"] = "frames or bytes is not a non-negative integer";
         op["responses"]["404"]["description"] = "Emulator instance not found";
@@ -294,7 +306,10 @@
         "response carries halt_reason=\"external_event\" and a blocking_marker "
         "payload describing the barrier (a bookmark never is one). Use resume "
         "to continue past a barrier by truncating history at the current "
-        "position.";
+        "position. With cpu naming a sound card's CPU (gs, neogs, ms, "
+        "multisound) and instruction, the machine stands at that card "
+        "instruction instead (a TTDCardMoveResponse; the same cpu option "
+        "works on step-instruction, reverse-step and reverse-continue).";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["required"] = true;
@@ -1074,7 +1089,10 @@
         "point; matched=false when no PC in the list was visited. A blocking "
         "external-event marker may also short-circuit the scan; the response then "
         "carries blocked_by_marker {kind, reason, frame, tinframe}. pcs entries "
-        "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\").";
+        "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\"). "
+        "With cpu naming a sound card's CPU (and no pcs): back to that card's "
+        "previous hit of its own breakpoints (a TTDCardMoveResponse; status "
+        "no_hit when there is none within max_frames).";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["required"] = true;

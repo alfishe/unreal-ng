@@ -111,6 +111,7 @@ matches; it names the recipe(s) for that action.
 | Starting a game from its title screen (which keys / joystick) | [analysis/game-start-input.md](analysis/game-start-input.md) | memory-counters, port-trace, input/joystick |
 | Building, installing or driving Unreal NG on a Steam Deck (the bundle, Game Mode, the Steam library, a Stream Deck on its USB-C, screenshots with gamescopectl) | [testing/steamdeck.md](testing/steamdeck.md) | everything else |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
+| A test that crashes or fails only in CI's gcc job (`build-gcc-latest`): which test, the job's conditions, the `gcc:16` container repro, gdb, checking the fix | [testing/ci-gcc-crash.md](testing/ci-gcc-crash.md) | everything else |
 | Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/steamdeck.md](testing/steamdeck.md) | Unreal NG on a Steam Deck: build the bundle, install or update it, start it in Game Mode through Steam, screenshots of the composed screen, a Stream Deck on the Deck's USB-C, logs |
 | [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
@@ -260,6 +261,7 @@ call.
 |:--|:--|
 | [testing/webapi-verification.md](testing/webapi-verification.md) | Verifying a WebAPI change end to end |
 | [testing/host-profiling.md](testing/host-profiling.md) | Where the emulator spends its host CPU time (macOS xctrace): a repeatable load, record, reports per function / source line / callee / thread |
+| [testing/ci-gcc-crash.md](testing/ci-gcc-crash.md) | A crash only CI's gcc job sees: the crashed test from the interleaved shard log, the job's conditions, reproducing in `gcc:16` with gdb, checking the fix there |
 | [testing/video-modes.md](testing/video-modes.md) | Which video mode a machine is in, how to reach the others on every platform, and `tools/verification/video/check_video_modes.py`: where the frame, the window, a video wall tile or a recording disagree with what the machine says |
 
 ### `articles/` — full workflows that combine recipes

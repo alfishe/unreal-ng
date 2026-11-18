@@ -764,8 +764,8 @@ void Inspector::BuildNode(const QString& id)
         const json strip = n.value("strip", json::object());
         auto* content = new QComboBox;
         content->addItems({QStringLiteral("title"), QStringLiteral("text"), QStringLiteral("breadcrumbs"),
-                           QStringLiteral("image"), QStringLiteral("none")});
-        content->setCurrentText(Qs(strip.value("content", "title")));
+                           QStringLiteral("image"), QStringLiteral("keys"), QStringLiteral("none")});
+        content->setCurrentText(Qs(strip.value("content", "title")));  // keys: the zones in the JSON below
         form->addRow(QStringLiteral("Strip"), content);
         connect(content, &QComboBox::currentTextChanged, this, [this](const QString& t) {
             Patch(QStringLiteral("Strip"), {{"strip", {{"content", t.toStdString()}}}});

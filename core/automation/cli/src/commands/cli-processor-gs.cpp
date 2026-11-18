@@ -14,6 +14,7 @@
 #include <optional>
 #include <sstream>
 
+#include "emulator/sound/chips/gs/gshostdriver.h"
 #include "cli-processor.h"
 #include <emulator/state/devicestate.h>
 
@@ -210,6 +211,10 @@ std::optional<uint8_t> parseByteArg(const std::string& text)
 ///   gs send_data <byte>               - OUT #B3
 ///   gs read_status                    - IN #BB value, peeked (no side effects)
 ///   gs read_data                      - IN #B3 value, peeked (bit 7 not cleared)
+///   gs send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]
+///                                     - the debugger's send (gs-debugger design §6.4, F6): each byte when the
+///                                       card may take it, the replies read, decoded by the firmware profile
+///   gs conversation [id]              - a send by id (none: the last)
 /// Writes, resets and NMI are live input: applied on the machine's thread at
 /// the next instruction boundary (while paused: when execution continues)
 ///   gs switch_personality <z80|lle|lw|lightweight|ngs|neogs> - the card in the GS slot replaced (slots gs: a restart)
@@ -238,7 +243,8 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
 
     static const char* kUsage =
         "Usage: gs <reset|reset_card|nmi|send_command <byte>|send_data <byte>|"
-        "read_status|read_data|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
+        "read_status|read_data|send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>]|"
+        "conversation [id]|switch_personality <z80|lle|lw|lightweight|ngs|neogs>|dump_module [path]|"
         "sd_insert <image>|sd_eject|flash_save|stereo_mode <separated|gs|mono>>";
 
     if (args.empty())
@@ -304,6 +310,60 @@ void CLIProcessor::HandleGS(const ClientSession& session, const std::vector<std:
         // Peek: the status data bit is left set, the card is not stepped
         const uint8_t value = gs->getDataToHost();
         ss << "GS data: 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)value << std::dec << NEWLINE;
+    }
+    else if (sub == "send")
+    {
+        GSSendRequest request;
+        uint32_t waitMs = 1000;
+        std::string bad = args.size() < 2 ? std::string("no command") : std::string();
+        if (bad.empty())
+        {
+            if (auto command = parseByteArg(args[1]))
+                request.command = *command;
+            else
+                bad = args[1];
+        }
+        for (size_t i = 2; bad.empty() && i < args.size(); i++)
+        {
+            const std::string& arg = args[i];
+            std::optional<uint8_t> byte;
+            if (arg.rfind("pre=", 0) == 0 && (byte = parseByteArg(arg.substr(4))))
+                request.pre = *byte;
+            else if (arg.rfind("replies=", 0) == 0 && (byte = parseByteArg(arg.substr(8))))
+                request.replies = *byte;
+            else if (arg.rfind("wait=", 0) == 0 && arg.size() > 5 && arg.size() <= 10 &&
+                     arg.find_first_not_of("0123456789", 5) == std::string::npos)
+                waitMs = static_cast<uint32_t>(std::stoul(arg.substr(5)));
+            else if (arg.find('=') == std::string::npos && (byte = parseByteArg(arg)))
+                request.params.push_back(*byte);
+            else
+                bad = arg;
+        }
+        if (!bad.empty())
+        {
+            ss << "Error: gs send <command> [pre=<byte>] [<param> ...] [replies=<n>] [wait=<ms>] (bad: " << bad << ")"
+               << NEWLINE;
+        }
+        else
+        {
+            const GSSendReply reply = GSSend(context, request, std::min<uint32_t>(waitMs, 10000));
+            if (reply.status == 200)
+                ss << "GS send " << reply.id << ": " << reply.text << NEWLINE;
+            else
+                ss << "Error: " << reply.text << NEWLINE;
+        }
+    }
+    else if (sub == "conversation")
+    {
+        uint32_t sendId = 0;
+        if (args.size() >= 2 && !args[1].empty() && args[1].size() <= 9 &&
+            args[1].find_first_not_of("0123456789") == std::string::npos)
+            sendId = static_cast<uint32_t>(std::stoul(args[1]));
+        const GSSendReply reply = GSConversationRead(context, sendId);
+        if (reply.status == 200)
+            ss << "GS send " << reply.id << ": " << reply.text << NEWLINE;
+        else
+            ss << "Error: " << reply.text << NEWLINE;
     }
     else if (sub == "switch_personality")
     {

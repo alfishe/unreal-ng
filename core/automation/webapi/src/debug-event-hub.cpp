@@ -465,6 +465,8 @@ void DebugEventHub::OnLabelsChanged(Message* message)
         return;
     Json::Value event;
     event["event"] = "labels_changed";
+    if (payload->cpu != "main")
+        event["cpu"] = payload->cpu;
     Publish(payload->emulatorId.toString(), kTopicDebug, event);
 }
 

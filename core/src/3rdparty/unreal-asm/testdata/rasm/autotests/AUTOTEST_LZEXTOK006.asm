@@ -1,0 +1,1 @@
+buildcpr: bank 0: org #FF00 : org #A000,$ : norecess: lzx0: defs 512,0: lzclose:org $:defs 64:jp norecess

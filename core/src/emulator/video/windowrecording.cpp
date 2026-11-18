@@ -207,6 +207,10 @@ StateNode Report(const WindowRecordingStatus& s)
     node["sample_rate"] = static_cast<uint64_t>(s.sampleRate);
     node["audio_samples"] = s.audioSamples;
     node["frames_pending"] = s.framesPending;
+    node["writer_start_ms"] = s.writerStartMs;
+    node["encoder_ready_ms"] = s.encoderReadyMs;
+    node["first_frame_ms"] = s.firstFrameMs;
+    node["slowest_frame_ms"] = s.slowestFrameMs;
     return node;
 }
 

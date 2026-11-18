@@ -85,9 +85,10 @@ void HandheldBrowser::AddRecent(const QString& path)
     QSettings().setValue(kRecentKey, recent);
 }
 
-void HandheldBrowser::Open(Filter filter)
+void HandheldBrowser::Open(Filter filter, bool folders)
 {
     _filter = filter;
+    _folders = folders;
     _root.clear();
     _focusAfterMove = 0;
     const QSettings settings;
@@ -182,6 +183,8 @@ void HandheldBrowser::listFolder(const QString& folder)
     _folder = QDir(folder).absolutePath();
     _entries.clear();
     _entries.push_back({Kind::Up, Tr(".. (up)"), {}, {}});
+    if (_folders)
+        _entries.push_back({Kind::ThisFolder, Tr("Insert this folder"), _folder, QDir(_folder).dirName()});
     QDir dir(_folder);
     for (const QFileInfo& info : dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase))
         _entries.push_back({Kind::Folder, info.fileName(), info.absoluteFilePath(), {}});
@@ -218,6 +221,15 @@ QString HandheldBrowser::Activate(int index)
         case Kind::Up:
             Up();
             return {};
+        case Kind::ThisFolder:
+        {
+            // Next time the browser opens in this folder
+            QSettings settings;
+            settings.setValue(kLastFolderKey, entry.path);
+            settings.setValue(kLastRootKey, _root);
+            settings.remove(kLastFileKey);
+            return entry.path;
+        }
         case Kind::Snapshot:
         case Kind::Tape:
         case Kind::Disk:

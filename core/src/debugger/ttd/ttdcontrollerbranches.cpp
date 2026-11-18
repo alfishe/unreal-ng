@@ -694,6 +694,8 @@ void TimeTravelController::ReleaseBranchLines(const std::vector<uint32_t>& remov
         }
         if (_engine->HasLine(id) && !_engine->ReleaseLine(id, error))
             MLOGWARNING("TimeTravelController::DeleteBranch — engine line %u: %s", id, error.c_str());
+        for (auto it = _segmentFiles.lower_bound({id, 0}); it != _segmentFiles.end() && it->first.first == id;)
+            it = _segmentFiles.erase(it);   // its segments are gone from memory and from the read back
         if (id < _lastVisited.size())
             _lastVisited[id].reset();
     }

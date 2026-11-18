@@ -1,0 +1,13 @@
+{
+  "file": "session-chunked.ttd",
+  "record_limit": 4096,
+  "checkpoints": 30,
+  "write_records": 6000,
+  "write_journal_chunks": 12,
+  "write_journal_bytes": 48771,
+  "write_journal_crc32c": 847368610,
+  "holder_stream": 17,
+  "holder_chunks": 3,
+  "holder_bytes": 10000,
+  "holder_crc32c": 3805672214
+}

@@ -65,8 +65,14 @@ constexpr struct
 {
     const char* name;
     uint8_t code;
-} kPcOnly[] = {{"pc.delete", kPcOnlyKeyBase},   {"pc.insert", kPcOnlyKeyBase + 1}, {"pc.end", kPcOnlyKeyBase + 2},
-               {"pc.home", kPcOnlyKeyBase + 3}, {"pc.pageup", kPcOnlyKeyBase + 4}, {"pc.pagedown", kPcOnlyKeyBase + 5}};
+} kPcOnly[] = {{"pc.delete", kPcOnlyKeyBase},       {"pc.insert", kPcOnlyKeyBase + 1},  {"pc.end", kPcOnlyKeyBase + 2},
+               {"pc.home", kPcOnlyKeyBase + 3},     {"pc.pageup", kPcOnlyKeyBase + 4},  {"pc.pagedown", kPcOnlyKeyBase + 5},
+               {"pc.escape", kPcOnlyKeyBase + 6},   {"pc.esc", kPcOnlyKeyBase + 6},     {"pc.tab", kPcOnlyKeyBase + 7},
+               {"pc.backspace", kPcOnlyKeyBase + 8}, {"pc.alt", kPcOnlyKeyBase + 9},    {"pc.ctrl", kPcOnlyKeyBase + 10},
+               {"pc.f1", kPcOnlyKeyBase + 11},      {"pc.f2", kPcOnlyKeyBase + 12},     {"pc.f3", kPcOnlyKeyBase + 13},
+               {"pc.f4", kPcOnlyKeyBase + 14},      {"pc.f5", kPcOnlyKeyBase + 15},     {"pc.f6", kPcOnlyKeyBase + 16},
+               {"pc.f7", kPcOnlyKeyBase + 17},      {"pc.f8", kPcOnlyKeyBase + 18},     {"pc.f9", kPcOnlyKeyBase + 19},
+               {"pc.f10", kPcOnlyKeyBase + 20},     {"pc.f11", kPcOnlyKeyBase + 21},    {"pc.f12", kPcOnlyKeyBase + 22}};
 
 bool OneName(const std::string& name, std::vector<uint8_t>& keys)
 {

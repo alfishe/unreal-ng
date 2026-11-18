@@ -862,6 +862,16 @@ public:
     /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
     virtual bool HasMachineMouse() const { return false; }
 
+    /// A byte of the app a coprocessor of the machine runs, at an address of the app's ELF image (the TS-Conf
+    /// VDAC4 board's ESP32: DOOM-VDAC4, R-Type VDAC4). No side effects; emulation thread (the haptic probes'
+    /// `cpu: esp`, read at the frame end). False: no such coprocessor, no app running, or the address outside its image
+    virtual bool PeekEspAppByte(uint32_t address, uint8_t& value) const
+    {
+        (void)address;
+        (void)value;
+        return false;
+    }
+
     /// Pads beyond the Kempston byte: the ZX Next's two joystick connectors, 12 buttons each. A connector's state: bit 0 right, 1 left, 2 down,
     /// 3 up, 4 B (fire), 5 C, 6 A, 7 START, 8 Y, 9 Z, 10 X, 11 MODE (zxnext.vhd i_JOY_LEFT / i_JOY_RIGHT). Connector 0 is the left one (the
     /// host's pad: its low byte is the Kempston device), 1 the right one. Default: no pads

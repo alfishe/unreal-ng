@@ -18,7 +18,7 @@
 #include "debugger/ttd/engine/ttdregiontracker.h"
 #include "debugger/ttd/ttdserializable.h"
 
-class Vdac2Card;
+class EveHostCard;
 
 namespace ttd
 {
@@ -29,7 +29,7 @@ namespace ttd
 class TTDVdac2Memory : public TTDSerializable, public ITTDRegionSource
 {
 public:
-    explicit TTDVdac2Memory(Vdac2Card& card) : _card(card) {}
+    explicit TTDVdac2Memory(EveHostCard& card) : _card(card) {}
 
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
@@ -51,7 +51,7 @@ public:
 
 private:
     static constexpr size_t kMaxRegions = 7;   ///< RAM_G, DL0, DL1, REG, CMD, SPECIAL, INFLIGHT
-    Vdac2Card& _card;
+    EveHostCard& _card;
     TTDRegionTracker _trackers[kMaxRegions];
     size_t _regionCount = 0;
     bool _armed = false;
@@ -60,7 +60,7 @@ private:
 class TTDVdac2 : public TTDSerializable
 {
 public:
-    explicit TTDVdac2(Vdac2Card& card) : _card(card) {}
+    explicit TTDVdac2(EveHostCard& card) : _card(card) {}
 
     size_t TTDStateSize() const override;
     void TTDSaveState(uint8_t* dst) const override;
@@ -71,7 +71,7 @@ public:
     TTDDeviceDescriptor TTDDescribe() const override;
 
 private:
-    Vdac2Card& _card;
+    EveHostCard& _card;
 };
 
 }  // namespace ttd

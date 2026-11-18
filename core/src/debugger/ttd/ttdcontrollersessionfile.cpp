@@ -6,7 +6,9 @@
 /// kept compatible.
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <cstring>
 #include <iterator>
@@ -41,20 +43,57 @@ public:
     explicit OStreamSink(std::ostream& out) : _out(out) {}
     bool Write(const uint8_t* data, size_t size) override
     {
+        errno = 0;
         _out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         _size += size;
-        return static_cast<bool>(_out);
+        return Check();
     }
     bool Sync() override
     {
+        errno = 0;
         _out.flush();
-        return static_cast<bool>(_out);
+        return Check();
     }
     uint64_t Size() const override { return _size; }
+    std::string LastError() const override { return _error; }
+    bool LastErrorNoSpace() const override { return _noSpace; }
 
 private:
+    /// A failed stream keeps errno's reason when the system gave one (a file stream's write sets it)
+    bool Check()
+    {
+        if (_out)
+            return true;
+        const int code = errno;
+        _error = code != 0 ? std::string(std::strerror(code)) : std::string("the stream refused the write");
+        _noSpace = code == ENOSPC
+#ifdef EDQUOT
+                   || code == EDQUOT
+#endif
+            ;
+        return false;
+    }
+
     std::ostream& _out;
     uint64_t _size = 0;
+    std::string _error;
+    bool _noSpace = false;
+};
+
+/// A dump's file: every byte through TTDFileSink (the system's reason on a refused write), made durable once at
+/// the end rather than at every part as a recording's segment is
+class DumpFileSink : public ITTDByteSink
+{
+public:
+    explicit DumpFileSink(TTDFileSink& file) : _file(file) {}
+    bool Write(const uint8_t* data, size_t size) override { return _file.Write(data, size); }
+    bool Sync() override { return true; }
+    uint64_t Size() const override { return _file.Size(); }
+    std::string LastError() const override { return _file.LastError(); }
+    bool LastErrorNoSpace() const override { return _file.LastErrorNoSpace(); }
+
+private:
+    TTDFileSink& _file;
 };
 
 /// A whole stream as a byte source (the container reader seeks)
@@ -149,10 +188,77 @@ std::vector<TTDHolderStream> TimeTravelController::SessionHolderStreams(bool dec
 
 bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err, bool lineageOnly)
 {
+    OStreamSink sink(out);
+    return SaveSessionTo(sink, err, lineageOnly, nullptr);
+}
+
+TimeTravelController::DumpResult TimeTravelController::DumpSession(const std::string& path, bool lineageOnly)
+{
+    DumpResult result;
+    // Written beside the target and renamed when complete (the recording join's rule): a failed dump leaves no
+    // half file under the name, and a file already there stays until the new one is whole
+    const std::string temp = path + ".partial";
+    const std::filesystem::path tempFs = FileHelper::ToFsPath(temp);
+    std::error_code ec;
+    std::filesystem::remove(tempFs, ec);
+    auto removePartial = [&]() {
+        std::error_code removeError;
+        result.partialRemoved = std::filesystem::remove(tempFs, removeError) && !removeError;
+        if (result.partialRemoved)
+            result.error += " (the partial file " + temp + " was removed)";
+    };
+    {
+        TTDFileSink file(temp);
+        if (!file.Valid())
+        {
+            // "cannot create: Permission denied" / "No such file or directory" / "No space left on device"
+            result.error = "Cannot open file: " + path + " (" + temp + ": " + file.Error() + ")";
+            result.failure = TTDWriteFailure::Io;
+            return result;
+        }
+        DumpFileSink sink(file);
+        std::string err;
+        TTDWriteFailure failure = TTDWriteFailure::None;
+        bool ok = SaveSessionTo(sink, err, lineageOnly, &failure);
+        if (ok && !file.Sync())
+        {
+            ok = false;
+            err = "making the file durable failed: " + file.LastError();
+            failure = file.LastErrorNoSpace() ? TTDWriteFailure::NoSpace : TTDWriteFailure::Io;
+        }
+        result.bytes = file.Size();
+        file.Close();
+        if (!ok)
+        {
+            result.error = err;
+            result.failure = failure == TTDWriteFailure::None ? TTDWriteFailure::Layout : failure;
+            removePartial();
+            return result;
+        }
+    }
+    std::filesystem::rename(tempFs, FileHelper::ToFsPath(path), ec);
+    if (ec)
+    {
+        result.error = "cannot rename " + temp + " to " + path + ": " + ec.message();
+        result.failure = TTDWriteFailure::Io;
+        removePartial();
+        return result;
+    }
+    result.ok = true;
+    return result;
+}
+
+bool TimeTravelController::SaveSessionTo(ITTDByteSink& sink, std::string& err, bool lineageOnly,
+                                         TTDWriteFailure* failure)
+{
+    if (failure)
+        *failure = TTDWriteFailure::None;
     const SessionOperation op{*this, SessionOperation::Kind::Read};
     if (_line->timeline.empty() || !_engine->IsSessionOpen())
     {
         err = "no session to save";
+        if (failure)
+            *failure = TTDWriteFailure::Layout;
         return false;
     }
     // While recording, the current frame's journals go in too
@@ -172,8 +278,17 @@ bool TimeTravelController::SerializeSession(std::ostream& out, std::string& err,
     else if (_branches.HasBranches())
         AddBranchesToSave(params);
 
-    OStreamSink sink(out);
-    return TTDSessionFile::Save(*_engine, sink, err, params);
+    // Two tiers: the file holds every segment, those on disk only are read back for the save (memory peaks here)
+    if (!ReadBackAll(err))
+    {
+        ReleaseAllReadBack();
+        if (failure)
+            *failure = TTDWriteFailure::Layout;
+        return false;
+    }
+    const bool saved = TTDSessionFile::Save(*_engine, sink, err, params, failure);
+    ReleaseAllReadBack();
+    return saved;
 }
 
 void TimeTravelController::AddLineageToSave(TTDSessionSaveParams& params)
@@ -403,6 +518,7 @@ void TimeTravelController::CommitLoadedSession(std::unique_ptr<TimeTravelEngine>
     _engine = std::move(loaded);
     _shadowEngine = _engine.get();
     _replayEngine = _engine.get();
+    _engine->SetSegmentLoader([this](uint32_t line, size_t segment) { return LoadSegmentFromFile(line, segment); });
     ApplyHistoryPolicy();
     RegisterScreenshotStream(*_engine);
 

@@ -59,6 +59,7 @@ int TTDControlErrorHttpStatus(TTDControlError error)
         case TTDControlError::NotFound: return 404;
         case TTDControlError::Conflict: return 409;
         case TTDControlError::Internal: return 500;
+        case TTDControlError::InsufficientStorage: return 507;
     }
     return 500;
 }
@@ -73,6 +74,7 @@ const char* TTDControlErrorPhrase(TTDControlError error)
         case TTDControlError::NotFound: return "Not Found";
         case TTDControlError::Conflict: return "Conflict";
         case TTDControlError::Internal: return "Internal Error";
+        case TTDControlError::InsufficientStorage: return "Insufficient Storage";
     }
     return "Internal Error";
 }
@@ -302,6 +304,20 @@ StateNode CheckNode(const TTDRestoreResult& check)
     node["issues"] = issues;
     return node;
 }
+
+/// The two tiers' counters (P3): the memory report of status and history-limit replies on every plane
+void AddDiskTier(StateNode& body, const TTDSessionInfo& info)
+{
+    body["disk_tier_active"] = info.diskTierActive;
+    body["evicted_to_disk_segments"] = info.evictedToDiskSegments;
+    body["evicted_to_disk_checkpoints"] = info.evictedToDiskCheckpoints;
+    body["read_back_segments"] = info.readBackSegments;
+    body["read_back_bytes"] = info.readBackBytes;
+    body["read_back_capacity"] = info.readBackCapacity;
+    body["read_back_loads"] = info.readBackLoads;
+    body["read_back_hits"] = info.readBackHits;
+    body["read_back_failures"] = info.readBackFailures;
+}
 }  // namespace
 
 /// region <Backends>
@@ -352,6 +368,12 @@ private:
     TTDReply Resume(const TTDRequest& request);
     TTDReply StepInstruction(const TTDRequest& request);
     TTDReply ReverseStep(const TTDRequest& request);
+    /// The card CPU a move names (`cpu`: gs / neogs / ms / multisound; main or absent: the main CPU). False with
+    /// @p fail when the name is unknown
+    static bool CardCpuOf(const TTDRequest& request, std::optional<DebugCpuId>& cpu, TTDReply& fail);
+    /// The moves on a card CPU (gs-debugger design §8): seek to a card instruction, step by N either way, reverse
+    /// continue to the card's previous breakpoint hit
+    TTDReply CardMove(const std::string& verb, DebugCpuId cpu, const TTDRequest& request);
     TTDReply ReverseStepOver();
     TTDReply Markers();
     TTDReply Timeline(const TTDRequest& request);
@@ -479,10 +501,10 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"history-limit", {"frames", "bytes"}},
         {"journal", {"enabled"}},
         {"journal-build", {"from_frame", "to_frame"}},
-        {"seek", {"frame", "tinframe", "bookmark"}},
+        {"seek", {"frame", "tinframe", "bookmark", "cpu", "instruction"}},
         {"resume", {"frame", "tinframe", "media"}},
-        {"step-instruction", {"dir"}},
-        {"reverse-step", {"count", "tstates", "scanlines"}},
+        {"step-instruction", {"dir", "cpu", "count"}},
+        {"reverse-step", {"count", "tstates", "scanlines", "cpu"}},
         {"bookmarks", {"tag", "text"}},
         {"bookmark-add", {"label", "frame", "tinframe", "note", "tags", "watch", "context"}},
         {"bookmark-note", {"label", "note", "append", "tags", "add_tags", "remove_tags", "rename"}},
@@ -492,7 +514,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
         {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "limit", "before_frame", "before_tin", "before",
-                              "from_frame"}},
+                              "from_frame", "cpu", "max_frames"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
@@ -602,6 +624,24 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return Fail(TTDControlError::Conflict,
                     "the machine is stopped inside the sound card's run (a General Sound breakpoint or step): "
                     "run or step the machine out of it first, then move in time");
+    // A move on a card CPU (the `cpu` option naming a card)
+    if (verb == "seek" || verb == "step-instruction" || verb == "reverse-step" || verb == "reverse-continue")
+    {
+        std::optional<DebugCpuId> cpu;
+        if (TTDReply fail; !CardCpuOf(request, cpu, fail))
+            return fail;
+        if (cpu)
+            return AsOperation(OpKind::TimelineSeek, verb, request,
+                               [&]() { return WithCheck(CardMove(verb, *cpu, request)); });
+        const char* cardOnly = Option(request, "instruction")  ? "instruction"
+                               : Option(request, "max_frames") ? "max_frames"
+                               : verb == "step-instruction" && Option(request, "count") ? "count"
+                                                                                        : nullptr;
+        if (cardOnly)
+            return Fail(TTDControlError::BadRequest, std::string("'") + cardOnly +
+                                                         "' needs 'cpu' naming a sound card's CPU (gs, neogs, ms "
+                                                         "or multisound)");
+    }
     if (verb == "start")
         return AsOperation(OpKind::TtdStart, verb, request, [&]() { return Start(request); });
     if (verb == "stop")
@@ -769,6 +809,34 @@ StateNode BranchNode(const TTDBranchInfo& b, const TTDSessionInfo& info)
     return node;
 }
 
+/// A card CPU's place (gs-debugger design §8): its instruction count and PC, and where the main CPU stands beside it
+StateNode CardPositionNode(const TTDCardPosition& p)
+{
+    StateNode node = StateNode::Object();
+    node["cpu"] = DebugCpuName(p.cpu);
+    node["known"] = p.known;
+    node["instruction"] = p.known ? StateNode(p.instruction) : StateNode();
+    node["pc"] = static_cast<unsigned>(p.pc);
+    node["card_position"] = p.cardPosition;
+    node["caught_up"] = p.caughtUp;
+    StateNode main = TimePointNode(p.mainBoundary);
+    main["pc"] = static_cast<unsigned>(p.mainPc);
+    main["t_offset"] = static_cast<unsigned>(p.tOffset);
+    main["inside"] = p.inside;
+    node["main"] = main;
+    return node;
+}
+
+/// Every card CPU's readout as the last move left it (an empty array: no card with a CPU)
+StateNode CardsNode(const TimeTravelController* manager)
+{
+    StateNode cards = StateNode::Array();
+    if (manager)
+        for (const TTDCardPosition& p : manager->PublishedCardPositions())
+            cards.push(CardPositionNode(p));
+    return cards;
+}
+
 StateNode StatusBodyOf(const TimeTravelController* manager)
 {
     StateNode ret = StateNode::Object();
@@ -782,8 +850,12 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
             ret[key] = 0;
         ret["input_history_complete"] = true;
         ret["port_journal_active"] = false;
-        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints"})
+        for (const char* key : {"history_limit_frames", "history_limit_bytes", "history_bytes", "evicted_checkpoints",
+                                "evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                                "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                                "read_back_failures"})
             ret[key] = 0;
+        ret["disk_tier_active"] = false;
         ret["port_journal_off_reason"] = StateNode();
         for (const char* key : {"port_read_count", "port_write_count", "port_journal_bytes",
                                 "port_replay_value_mismatches", "port_replay_divergences", "seek_checks",
@@ -798,8 +870,10 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
         ret["earliest"] = StateNode();
         ret["black_box"] = false;
         ret["recording_folder"] = StateNode();
+        ret["cards"] = StateNode::Array();
         return ret;
     }
+    ret["cards"] = CardsNode(manager);   // both CPUs: the main CPU's place is the position, the cards' here
 
     const TTDSessionInfo info = manager->ReadSessionInfo();
     ret["state"] = TTDSessionStateToString(info.state);
@@ -824,6 +898,7 @@ StateNode StatusBodyOf(const TimeTravelController* manager)
     ret["history_limit_bytes"] = info.historyLimitBytes;
     ret["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     ret["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(ret, info);
     ret["port_journal_off_reason"] = StringOrNull(info.portJournalOffReason);
     ret["port_read_count"] = static_cast<uint64_t>(info.portReadCount);
     ret["port_write_count"] = static_cast<uint64_t>(info.portWriteCount);
@@ -1032,6 +1107,7 @@ TTDReply TTDControlBackend::HistoryLimit(const TTDRequest& request)
     reply.body["history_limit_bytes"] = info.historyLimitBytes;
     reply.body["history_bytes"] = static_cast<uint64_t>(info.historyBytes);
     reply.body["evicted_checkpoints"] = static_cast<uint64_t>(info.evictedCheckpoints);
+    AddDiskTier(reply.body, info);
     reply.body["checkpoint_count"] = static_cast<uint64_t>(info.checkpointCount);
     reply.body["session_start_frame"] = info.sessionStartFrame;
     reply.body["current_end_frame"] = info.currentEndFrame;
@@ -1127,6 +1203,8 @@ TTDReply TTDControlBackend::Position()
     reply.body["first_frame"] = cursor.first;
     reply.body["paused"] = cursor.paused;
     reply.body["fps"] = TTDFrameRate(_context);
+    // The card CPUs (gs-debugger design §8): at a card position its readout says so, with the main CPU beside it
+    reply.body["cards"] = CardsNode(_manager);
     return reply;
 }
 
@@ -1438,6 +1516,140 @@ TTDReply TTDControlBackend::ReverseStep(const TTDRequest& request)
     if (scanlinesText)
         reply.body["tstates"] = n * lineT;
     AddPosition(reply.body, _manager->CurrentPosition());
+    return reply;
+}
+
+bool TTDControlBackend::CardCpuOf(const TTDRequest& request, std::optional<DebugCpuId>& cpu, TTDReply& fail)
+{
+    cpu.reset();
+    const std::string* text = Option(request, "cpu");
+    if (!text)
+        return true;
+    std::string name = *text;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    DebugCpuId id = DebugCpuId::Main;
+    if (!DebugManager::ParseCpuName(name, id))
+    {
+        fail = Fail(TTDControlError::BadRequest,
+                    "Unknown cpu '" + *text + "' (main, gs, neogs, ms or multisound)");
+        return false;
+    }
+    if (IsCardCpu(id))
+        cpu = id;
+    return true;
+}
+
+TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, const TTDRequest& request)
+{
+    // What each verb takes on a card CPU
+    static const std::map<std::string, std::set<std::string>> cardOptions = {
+        {"seek", {"cpu", "instruction"}},
+        {"step-instruction", {"cpu", "dir", "count"}},
+        {"reverse-step", {"cpu", "count"}},
+        {"reverse-continue", {"cpu", "max_frames"}},
+    };
+    const std::set<std::string>& allowed = cardOptions.at(verb);
+    for (const auto& [name, value] : request.options)
+    {
+        (void)value;
+        if (!allowed.count(name))
+        {
+            std::string list;
+            for (const std::string& o : allowed)
+                list += (list.empty() ? "" : ", ") + o;
+            return Fail(TTDControlError::BadRequest,
+                        "'" + verb + "' on a card CPU has no option '" + name + "' (options: " + list + ")");
+        }
+    }
+
+    TTDCardMoveResult result;
+    if (verb == "seek")
+    {
+        const std::string* text = Option(request, "instruction");
+        uint64_t instruction = 0;
+        if (!text)
+            return Fail(TTDControlError::BadRequest, "Missing required field: instruction (the card's instruction count)");
+        if (!ParseU64(*text, instruction))
+            return Fail(TTDControlError::BadRequest, "instruction must be a non-negative integer");
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        result = _manager->SeekToCardInstruction(cpu, instruction);
+    }
+    else if (verb == "step-instruction" || verb == "reverse-step")
+    {
+        bool forward = false;
+        if (const std::string* dir = Option(request, "dir"))
+        {
+            if (*dir == "forward" || *dir == "fwd")
+                forward = true;
+            else if (*dir != "back")
+                return Fail(TTDControlError::BadRequest, "dir must be back or forward");
+        }
+        uint64_t count = 1;
+        const std::string* countText = Option(request, "count");
+        if (verb == "reverse-step" && !countText)
+            return Fail(TTDControlError::BadRequest, "Missing required field: 'count'");
+        if (countText && (!ParseU64(*countText, count) || count == 0 || count > static_cast<uint64_t>(INT64_MAX)))
+            return Fail(TTDControlError::BadRequest, "count must be a positive integer");
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        const int64_t delta = forward ? static_cast<int64_t>(count) : -static_cast<int64_t>(count);
+        result = _manager->StepCardInstructions(cpu, delta);
+    }
+    else
+    {
+        uint64_t maxFrames = TimeTravelController::kCardReverseMaxFrames;
+        if (const std::string* text = Option(request, "max_frames");
+            text && (!ParseU64(*text, maxFrames) || maxFrames == 0))
+            return Fail(TTDControlError::BadRequest, "max_frames must be a positive integer");
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        result = _manager->ReverseContinueCard(cpu, maxFrames);
+    }
+    NotifyFrameRefresh();
+
+    StateNode body = StateNode::Object();
+    body["cpu"] = DebugCpuName(cpu);
+    body["status"] = TTDCardMoveStatusName(result.status);
+    body["reached"] = result.Ok();
+    body["from"] = result.from;
+    body["target"] = result.target;
+    if (!result.message.empty())
+        body["message"] = result.message;
+    body["card"] = CardPositionNode(result.position);
+    if (verb == "reverse-continue")
+    {
+        body["searched_frames"] = result.searchedFrames;
+        body["truncated"] = result.truncated;
+        if (result.Ok())
+        {
+            StateNode hit = StateNode::Object();
+            hit["id"] = static_cast<unsigned>(result.breakpointId);
+            hit["kind"] = BreakpointHitKindName(static_cast<BreakpointHitKind>(result.hitKind));
+            hit["address"] = static_cast<unsigned>(result.hitAddress);
+            body["breakpoint"] = hit;
+        }
+    }
+    AddPosition(body, _manager->CurrentPosition());
+    body["state"] = TTDSessionStateToString(_manager->GetState());
+    using Status = TTDCardMoveResult::Status;
+    switch (result.status)
+    {
+        case Status::Ok:
+        case Status::AtStart:
+        case Status::AtEnd:
+        case Status::NoHit:
+            break;   // an answer: reached false names where the history or the search ends
+        case Status::Failed:
+            return Fail(TTDControlError::Internal, result.message, body);
+        default:
+            return Fail(TTDControlError::Conflict, result.message, body);
+    }
+    TTDReply reply;
+    reply.body = body;
     return reply;
 }
 
@@ -5129,27 +5341,33 @@ TTDReply TTDControlBackend::Dump(const TTDRequest& request)
     bool lineage = false;
     if (const std::string* l = Option(request, "lineage"); l && !ParseBool(*l, lineage))
         return Fail(TTDControlError::BadRequest, "lineage must be true or false");
-    // UTF-8 path: FileHelper turns it into the host's form (non-ASCII names on Windows)
-    std::ofstream out(FileHelper::ToFsPath(*path), std::ios::binary);
-    if (!out.is_open())
-    {
-        StateNode body = StateNode::Object();
-        body["ok"] = false;
-        return Fail(TTDControlError::Conflict, "Cannot open file: " + *path, body);
-    }
-    std::string err;
-    // lineage: the active branch's lineage as one linear history; otherwise every branch (Q-9)
-    const bool ok = _manager->SerializeSession(out, err, lineage);
-    const auto bytes = out.tellp();
+    // lineage: the active branch's lineage as one linear history; otherwise every branch (Q-9). Written as
+    // "<path>.partial" and renamed when complete: a failed dump removes what it wrote and says so (F3)
+    const TimeTravelController::DumpResult result = _manager->DumpSession(*path, lineage);
     StateNode body = StateNode::Object();
-    body["ok"] = ok;
-    if (!ok)
+    body["ok"] = result.ok;
+    if (!result.ok)
     {
-        body["error"] = err;
-        return Fail(TTDControlError::Conflict, err, body);
+        // The status by the reason: 409 nothing to dump or the file system refused the file (the system's words
+        // in the text), 507 the disk or the quota is full, 500 a limit of the format (the sizes in the text)
+        TTDControlError status = TTDControlError::Conflict;
+        const char* reason = "io";
+        switch (result.failure)
+        {
+            case TTDWriteFailure::NoSpace: status = TTDControlError::InsufficientStorage; reason = "no_space"; break;
+            case TTDWriteFailure::TooLarge: status = TTDControlError::Internal; reason = "too_large"; break;
+            case TTDWriteFailure::Layout: reason = "session"; break;
+            case TTDWriteFailure::Io:
+            case TTDWriteFailure::None: break;
+        }
+        body["error"] = result.error;
+        body["reason"] = reason;
+        body["path"] = *path;
+        body["partial_removed"] = result.partialRemoved;
+        return Fail(status, result.error, body);
     }
     body["path"] = *path;
-    body["bytes"] = static_cast<int64_t>(bytes);
+    body["bytes"] = static_cast<int64_t>(result.bytes);
     TTDReply reply;
     reply.body = body;
     return reply;

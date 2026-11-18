@@ -19,6 +19,7 @@
 #include <emulator/execution/runcontrol.h>
 #include <emulator/zxpoly/zxpolygroup.h>
 #include <emulator/machinenames.h>
+#include <emulator/machinecatalog.h>
 #include <emulator/machinevariants.h>
 #include <emulator/media/modelswitch.h>
 #include <emulator/slots/slotcontrol.h>
@@ -395,6 +396,7 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             // clients filter machine lists instead of discovering unsupported
             // models one failed request at a time.
             modelInfo["creatable"] = Config::IsModelCreatable(model);
+            modelInfo["family"] = MachineCatalog::FamilyOf(model.ShortName);  // GET /emulator/machines: the tree
 
             modelsArray.append(modelInfo);
         }
@@ -411,6 +413,7 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             modelInfo["base_model"] = std::string(configuration.baseModel);
             modelInfo["default_ram_kb"] = base ? base->defaultRAM : 0;
             modelInfo["creatable"] = base != nullptr && Config::IsModelCreatable(*base);
+            modelInfo["family"] = MachineCatalog::FamilyOf(configuration.name);
             modelsArray.append(modelInfo);
         }
 
@@ -426,6 +429,7 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
             modelInfo["base_model"] = std::string(variant.baseModel);
             modelInfo["default_ram_kb"] = variant.ramKb;
             modelInfo["creatable"] = base != nullptr && Config::IsModelCreatable(*base) && variant.supported(nullptr);
+            modelInfo["family"] = MachineCatalog::FamilyOf(variant.name);
             modelsArray.append(modelInfo);
         }
 
@@ -447,6 +451,39 @@ void EmulatorAPI::getModels(const HttpRequestPtr& req, std::function<void(const 
         addCorsHeaders(resp);
         callback(resp);
     }
+}
+
+/// @brief GET /api/v1/emulator/machines[?all=true][&id=<emulator>]
+/// @brief The machines grouped family -> machine -> RAM size (MachineCatalog): the one tree every client builds its
+/// machine picker from. Creatable machines only unless all=true; with id, "current" places that emulator's machine
+void EmulatorAPI::getMachines(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) const
+{
+    const std::string allParam = req->getParameter("all");
+    const bool all = allParam == "true" || allParam == "1";
+    std::string current;
+    uint32_t currentRamKb = 0;
+    if (const std::string id = req->getParameter("id"); !id.empty())
+    {
+        auto emulator = EmulatorManager::GetInstance()->GetEmulator(id);
+        if (!emulator)
+        {
+            Json::Value error;
+            error["error"] = "Not Found";
+            error["message"] = "Emulator not found: " + id;
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k404NotFound);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        current = MachineCatalog::NameOf(*emulator);
+        currentRamKb = EmulatorManager::GetMachineIdentity(*emulator).RamKb;
+    }
+    const StateNode tree = all ? MachineCatalog::ToState(MachineCatalog::All(), current, currentRamKb)
+                               : MachineCatalog::ToState(MachineCatalog::Creatable(), current, currentRamKb);
+    auto resp = HttpResponse::newHttpJsonResponse(StateNodeToJson(tree));
+    addCorsHeaders(resp);
+    callback(resp);
 }
 
 /// @brief GET /api/v1/emulator/status

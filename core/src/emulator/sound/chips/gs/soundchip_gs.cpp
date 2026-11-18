@@ -414,6 +414,7 @@ void SoundChip_GeneralSound::traceIdle(uint16_t head, int64_t start, uint64_t it
 void SoundChip_GeneralSound::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
 
     // Frame-relative bases (Unreal init_gs_frame): the ZX tact counter and
     // the GS cycle accumulator are snapshotted so host-multiplier changes
@@ -566,6 +567,7 @@ uint8_t SoundChip_GeneralSound::portDeviceInMethod(uint16_t port)
     {
         case 0xB3: // GSDAT: bit7 clears, the GS->ZX byte returns
             flush();
+            logHostReplyRead(_mb.dataToHost);
             _mb.status &= 0x7F;  // Original Unreal: clear bit7 directly
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, _mb.dataToHost, false);
@@ -591,6 +593,7 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_CONTROL, value, true);
             if (value & 0x80)
             {
+                logHostReset();
                 resetCard();
                 flush(); // re-execute the elapsed frame time from reset state
                 return;
@@ -609,12 +612,14 @@ void SoundChip_GeneralSound::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3: // GSDAT write: latch byte, raise bit7
             flush();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             onHostDataWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostDataWrite, value);
             return;
         case 0xBB: // GSCOM write: latch command, raise bit0
             flush();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             onHostCommandWrite(value);
             GSReportHostEvent(_context, GSCardEvent::HostCommandWrite, value);
             return;
@@ -654,6 +659,8 @@ uint8_t SoundChip_GeneralSound::readStatus()
 uint8_t SoundChip_GeneralSound::readData()
 {
     flush();
+    logHostReplyRead(_mb.dataToHost, true);
+    noteAutomationRead(_mb.dataToHost);
     _mb.status &= 0x7F; // IN #B3: clear bit7
     return _mb.dataToHost;
 }
@@ -661,12 +668,14 @@ uint8_t SoundChip_GeneralSound::readData()
 void SoundChip_GeneralSound::sendCommand(uint8_t command)
 {
     flush();
+    logHostCommand(command, true);
     onHostCommandWrite(command);
 }
 
 void SoundChip_GeneralSound::sendData(uint8_t data)
 {
     flush();
+    logHostData(data, true);
     onHostDataWrite(data);
 }
 
@@ -698,6 +707,7 @@ void SoundChip_GeneralSound::restoreMailbox(const GSForwardMailbox& snapshot)
 void SoundChip_GeneralSound::accumulateActivityCounters(const GSActivityCounters& other)
 {
     accumulateGSActivityCounters(_activityCounters, other);
+    _instructionCountOffset -= static_cast<int64_t>(other.cpuSteps);   // the folded steps are not this card's
 }
 
 bool SoundChip_GeneralSound::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
@@ -1166,6 +1176,13 @@ uint32_t SoundChip_GeneralSound::cardPageCount(CardPage::Kind kind) const
     }
 }
 
+const uint8_t* SoundChip_GeneralSound::cardRomPage(uint32_t page) const
+{
+    if (!_cpu || (static_cast<size_t>(page) + 1) * PAGE_SIZE > _rom.size())
+        return nullptr;
+    return _rom.data() + static_cast<size_t>(page) * PAGE_SIZE;
+}
+
 bool SoundChip_GeneralSound::cardRegisters(Z80CpuRegisters& out) const
 {
     if (!_cpu)
@@ -1305,6 +1322,15 @@ void SoundChip_GeneralSound::serializeFixedState(uint8_t* dst) const
     // dst[59..94]: queue-era slots, reserved (zero) for layout compatibility
     std::fill_n(&dst[59], 36, static_cast<uint8_t>(0));
 
+    // dst[59..66] + dst[67]: the card CPU's instruction count and its flag (1: present; a blob of a recording made
+    // before the count has 0 there). TTDHashState leaves them out: the count is a position, not a trajectory
+    uint64_t count = 0;
+    if (cardInstructionCount(count))
+    {
+        gsTtdWrite64(&dst[TTD_COUNT_OFFSET], static_cast<int64_t>(count));
+        dst[TTD_COUNT_FLAG_OFFSET] = 1;
+    }
+
     // dst[77..88]: the current frame's timeline (handleFrameStart bases). A
     // checkpoint is taken inside a started frame - at its first instruction
     // for per-frame checkpoints, anywhere for a recording's baseline - so the
@@ -1386,7 +1412,11 @@ void SoundChip_GeneralSound::loadFixedState(const uint8_t* src)
     regs.nmiInProgress = z80[34];
     Z80CpuSetRegisters(_cpu, &regs);
 
-    // src[59..94]: queue-era slots, ignored
+    // src[59..66] + src[67]: the instruction count (see serializeFixedState); the rest of 59..94 is ignored
+    _instructionCountKnown = src[TTD_COUNT_FLAG_OFFSET] == 1;
+    if (_instructionCountKnown)
+        _instructionCountOffset =
+            gsTtdRead64(&src[TTD_COUNT_OFFSET]) - static_cast<int64_t>(_activityCounters.cpuSteps);
 }
 
 void SoundChip_GeneralSound::finishLoad(const uint8_t* src)
@@ -1419,6 +1449,7 @@ uint64_t SoundChip_GeneralSound::TTDHashState() const
     // hash via _channelVol/_channelData)
     uint8_t blob[TTD_FIXED_STATE_SIZE];
     serializeFixedState(blob);
+    std::fill_n(&blob[TTD_COUNT_OFFSET], 9, static_cast<uint8_t>(0));   // the instruction count: a position
 
     uint64_t hash = 14695981039346656037ull; // FNV-1a offset basis
     for (size_t i = 0; i < TTD_FIXED_STATE_SIZE; i++)

@@ -259,9 +259,17 @@ public:
     /// `maxFrames` frames (a ring; its segments are an eighth of the window,
     /// so it holds up to 1/8 more), and drops segments while the store holds
     /// more than `maxBytes`. 0 = no limit for that measure (the default for
-    /// both). What stays is a complete, shorter session starting at a
-    /// segment's baseline; the journals are cut to the new start.
+    /// both). Without a recording folder what stays is a complete, shorter
+    /// session starting at a segment's baseline; the journals are cut to the
+    /// new start. With one (the two tiers, P3) the limits only move segments
+    /// whose file is complete out of memory: the whole session stays seekable,
+    /// a restore reads an evicted segment back (the read-back cache).
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
+    /// Two tiers: the read-back cache's capacity in segments (default 4, at least 1)
+    void SetReadBackCapacity(size_t segments);
+    /// Tests (T-C10): completed segment files are held back from the eviction while @p hold is set; clearing it
+    /// offers them
+    void HoldSegmentFilesForTesting(bool hold);
     /// Bytes of history held now: the engine's piece store and the first
     /// checkpoint's device blobs (what the byte limit measures)
     uint64_t HistoryBytes() const;
@@ -386,6 +394,20 @@ public:
     /// lineage's bookmarks on the trunk, no coverage index (each branch's starts at its fork)
     /// @return false with @p err set when there is no session or a write fails
     bool SerializeSession(std::ostream& out, std::string& err, bool lineageOnly = false);
+
+    /// What DumpSession did
+    struct DumpResult
+    {
+        bool ok = false;
+        std::string error;                              ///< the reason, naming the file and the system's words
+        TTDWriteFailure failure = TTDWriteFailure::None;   ///< its kind (the HTTP status of the dump)
+        uint64_t bytes = 0;                             ///< the file's size (ok)
+        bool partialRemoved = false;                    ///< a failed dump removed what it had written
+    };
+    /// @brief Write the session to the file @p path (SerializeSession's content). The file is written as
+    /// "<path>.partial" and renamed to @p path when complete: a failed dump leaves no file that looks like a
+    /// session (it removes the partial one and says so) and an existing @p path stays as it was
+    DumpResult DumpSession(const std::string& path, bool lineageOnly = false);
 
     /// @brief Replace the session by the one in @p in, an engine session file.
     /// Refused, leaving the current session as it was, when the file is
@@ -1485,6 +1507,36 @@ public:
     ttd::TTDReverseStepOverResult ReverseStepOver();
 
     // -----------------------------------------------------------------------
+    // Card CPU positions (gs-debugger design §8; owner decision 2026-11-17, Q2 of the phase-3 TDD). A position on
+    // the CPU of a sound card (DebugCpuId GS: General Sound or NeoGS; MultiSoundGS: the MultiSound's GS) is its
+    // instruction count. Every move is a replay: the frame whose checkpoint holds the largest count at or below the
+    // target is replayed in tight mode until the card reaches it (GSCardTarget's scan), the main CPU is put at its
+    // last instruction boundary at or before the card's moment, and the card's copy from the scan is loaded. The card
+    // position stays until the machine moves: a run first puts the card back as the seek to that boundary left it
+    // (the main CPU finishes its instruction with the card behind it, as recorded).
+    // -----------------------------------------------------------------------
+
+    /// Where @p cpu's card stands now (a read: nothing runs); known false without a card with a CPU or a count
+    ttd::TTDCardPosition CardPositionNow(DebugCpuId cpu) const;
+    /// The machine stands at a card position (of any card)
+    bool AtCardPosition() const;
+    /// Seek to the moment @p cpu's card has run @p instruction instructions (at the boundary of the next one)
+    ttd::TTDCardMoveResult SeekToCardInstruction(DebugCpuId cpu, uint64_t instruction);
+    /// @p delta card instructions forward (> 0) or back (< 0) from the card's count now: at a main position the count
+    /// of the card run up to the main CPU's moment
+    ttd::TTDCardMoveResult StepCardInstructions(DebugCpuId cpu, int64_t delta);
+    /// Frames a card reverse continue replays at most by default
+    static constexpr uint64_t kCardReverseMaxFrames = 1000;
+    /// Back to the newest hit of @p cpu's card breakpoints (its own breakpoint manager, as a live run stops on them)
+    /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
+    /// answer says so (NoHit, NoBreakpoints)
+    ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
+    /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
+    /// parking the machine)
+    std::vector<ttd::TTDCardPosition> PublishedCardPositions() const;
+
+    // -----------------------------------------------------------------------
     // Phase 4 reverse execution (extends single-opcode step helpers with
     // multi-step / reverse-continue primitives).
     //
@@ -1783,6 +1835,31 @@ private:
     /// (which legitimately seeks during Recording — it controls the timeline
     /// truncation itself, so the sorted invariant is preserved).
     bool SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult);
+
+    /// region <Card CPU positions (ttdcontrollercardpositions.cpp)>
+    /// The card position the machine stands at: the card's copy from the scan, its state as the seek to the main
+    /// boundary left it (put back before the machine runs), the readout. Null: none
+    struct CardStand;
+    std::shared_ptr<CardStand> _cardStand;
+    /// The card's count at frame @p frame's checkpoint on the active lineage (a restore: the machine moves there);
+    /// false when the frame is out of the history (before: it precedes the earliest kept frame) or has no count
+    bool CardCountAtFrame(DebugCpuId cpu, uint64_t frame, uint64_t& count, bool& before);
+    /// The latest frame of [first, last] whose checkpoint count is at or below @p instruction, from @p hint
+    bool FindCardStartFrame(DebugCpuId cpu, uint64_t instruction, uint64_t hint, uint64_t& frame,
+                            ttd::TTDCardMoveResult& result);
+    /// The move itself (SeekToCardInstruction's body, inside an operation)
+    void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
+    /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
+    void LeaveCardStand();
+    /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again
+    void ReapplyCardStand();
+    /// The card position for PublishedCardPositions (at the end of every move)
+    void PublishCardReadouts();
+    mutable std::mutex _cardReadoutMutex;
+    std::vector<ttd::TTDCardPosition> _cardReadouts;
+    /// endregion </Card CPU positions>
 
     // -----------------------------------------------------------------------
     // Internal seek helpers (Phase 2 Item 4; parent TTD §8.1 step 3)
@@ -2177,6 +2254,8 @@ private:
         std::vector<uint8_t> framebuffer;
         std::vector<uint16_t> planeB;      ///< ZX DLSS plane B, rendered in the same pass as the pixels
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
+        /// The card position the caller stood at (a read that replays elsewhere comes back to it)
+        std::shared_ptr<CardStand> cardStand;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -2305,6 +2384,7 @@ private:
     std::set<uint32_t> _shadowLinesWithFiles;    ///< lines with a file in the folder
     TTDSessionSaveParams _shadowParams;          ///< the folder's files: identity, holder streams, branch records
     bool _shadowFilesStopped = false;            ///< writing failed: no new writer until the session's next folder
+    uint64_t _shadowFolderSerial = UINT64_MAX;   ///< the engine's segments begun when the folder was made
     bool _shadowDiskStop = false;                ///< the disk is full: the recording stops at the frame's end (S-7)
     TTDDiskSpace _shadowDiskSpace = TTDDiskSpace::Ok;
     std::function<uint64_t(const std::string&)> _freeSpaceProbe;
@@ -2444,6 +2524,34 @@ private:
     std::atomic<uint64_t> _historyLimitFrames{0};
     std::atomic<uint64_t> _historyLimitBytes{0};
     uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
+
+    /// Two tiers (P3, architecture.md §5.3-5.4): with a recording folder the limits move segments out of memory,
+    /// their files keep them, and a restore reads one back into the read-back cache
+    std::map<std::pair<uint32_t, size_t>, std::string> _segmentFiles;   ///< (line, first checkpoint): complete file
+    uint64_t _segmentFilesSerial = 0;          ///< files completed (EnforceHistoryLimit's cheap check)
+    uint64_t _tierCheckedFiles = UINT64_MAX;   ///< _segmentFilesSerial at the last full check
+    uint64_t _tierCheckedSegment = UINT64_MAX; ///< segments begun at the last full check
+    size_t _readBackCapacity = 4;              ///< the read-back cache's segments
+    bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
+    uint64_t _readBackLoads = 0;               ///< segments read back from their files
+    uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
+    bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
+    std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;
+    /// The disk tier works: a folder whose files are written, an engine that records
+    bool DiskTierActive() const;
+    /// The limits with the disk tier: evict segments with a complete file outside the memory window
+    void EnforceDiskTier(uint64_t frames, uint64_t bytes);
+    /// The engine's loader: read line @p line's segment @p segment back from its file
+    bool LoadSegmentFromFile(uint32_t line, size_t segment);
+    /// The read-back cache back to its capacity (least recently used first), keeping @p keep (line, segment)
+    void TrimReadBackCache(std::pair<uint32_t, size_t> keep);
+    /// A completed segment file of @p line (the writer's callback)
+    void NoteSegmentFile(uint32_t line, const std::string& path, size_t firstCheckpoint);
+    /// Read back every evicted segment (Save and Check read the whole session); ReleaseAllReadBack trims again
+    bool ReadBackAll(std::string& error);
+    /// SerializeSession and DumpSession: the session into @p sink, @p failure the kind of a failed write
+    bool SaveSessionTo(ITTDByteSink& sink, std::string& err, bool lineageOnly, TTDWriteFailure* failure);
+    void ReleaseAllReadBack();
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _line->timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);
 

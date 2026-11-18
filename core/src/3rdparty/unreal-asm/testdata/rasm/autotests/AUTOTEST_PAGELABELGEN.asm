@@ -1,0 +1,1 @@
+buildsna: bank: cpt=5: ld bc,{page}miam{cpt}: bank cpt: nop: miam{cpt} nop: assert {page}miam{cpt}==0x7FC5 

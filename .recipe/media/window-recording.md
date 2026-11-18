@@ -46,6 +46,13 @@ temporal processing) and the machine's sound; the keyboard is not drawn (use `ke
   so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
   4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
   a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+  ffmpeg gets the picture as Matroska (uncompressed BGRA, each frame with its emulated time, variable frame rate):
+  a picture held for several frames (a still screen, the frames a lagging writer owes) is sent once, and a picture
+  equal to the one before is not sent (one changed pixel is a new one; four frames a second at least). The frame's
+  content goes at the picture's own size and ffmpeg scales it to the chosen frame (FHD, 4K) and adds the border:
+  a raw 1080p frame is 8 MB, more than a pipe carries 50 times a second. The keyboard under the picture is drawn at
+  that size too and scaled with it. Above the native picture x264 uses its `ultrafast` preset, x265 always does
+  (x265 4:4:4 1080p is still several times slower than real time: use the GPU, or H.264).
 - With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
   end. Stop returns at once; a slow encoder is waited for, never killed.
 - Same folder and `unreal_<time>` name as the raw recording. The choice is remembered (`windowSource` in the
@@ -82,7 +89,9 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.
 - **Status** (`GET video/window/record`) / **stop** (`video/window/record/stop`): `{recording, path, keyboard, frames,
-  width, height, fps, audio, sample_rate, audio_samples}`. Stop waits for ffmpeg, then muxes the sound in (the
+  width, height, fps, audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms,
+  first_frame_ms, slowest_frame_ms}` (the last four: where the time went, ms since the start; a late or stalled
+  recording shows there whether the writer got the CPU, the encoder start or a frame was slow). Stop waits for ffmpeg, then muxes the sound in (the
   picture copied, not re-encoded: seconds). Meanwhile the picture is in `.<name>.video.<ext>` and the sound in
   `.<name>.sound.s16le` beside the file; a failed mux leaves both and names them.
 - **The HUD** ("Remote control" and the like) is never in the file; the keys the program holds light up on the

@@ -47,18 +47,23 @@ bool TTDRecordingWriter::Close(const TimeTravelEngine& engine, size_t end)
     _sink.reset();
     ++_segment;
     if (ok && _onClosed)
-        _onClosed(_openPath);
+        _onClosed(_openPath, _first);
     return ok;
 }
 
 bool TTDRecordingWriter::Begin(const TimeTravelEngine& engine, std::string& error)
 {
-    if (engine.Segments().empty())
+    return BeginAt(engine, engine.Segments().empty() ? 0 : engine.Segments().size() - 1, error);
+}
+
+bool TTDRecordingWriter::BeginAt(const TimeTravelEngine& engine, size_t segment, std::string& error)
+{
+    if (engine.Segments().empty() || segment >= engine.Segments().size())
     {
         error = "the session has no checkpoint yet";
         return false;
     }
-    if (!Open(engine, engine.Segments().back().firstCheckpoint, error))
+    if (!Open(engine, engine.Segments()[segment].firstCheckpoint, error))
     {
         _error = error;
         return false;
@@ -225,13 +230,14 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
                     break;
                 }
                 std::vector<uint8_t> stored;
-                for (const TTDRecordRef& record : part.records)
+                // As stored: a chunked stream's records one by one
+                for (const TTDRecordRef& record : part.physical)
                     if (!reader.ReadStored(record, stored, &error) ||
                         !writer.AddStoredRecord(record.streamId, record.flags, stored.data(), stored.size(),
                                                 record.rawSize))
                     {
                         if (error.empty())
-                            error = "the joined file could not be written";
+                            error = "the joined file could not be written: " + writer.Error().text;
                         ok = false;
                         break;
                     }
@@ -246,7 +252,7 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
                     end.dependencies.push_back(partBase + d);
                 if (!writer.EndPart(end))
                 {
-                    error = "the joined file could not be written";
+                    error = "the joined file could not be written: " + writer.Error().text;
                     ok = false;
                     break;
                 }
@@ -255,7 +261,7 @@ bool JoinSessionFiles(const std::vector<std::string>& files, const std::string& 
         }
         ok = ok && writer.Finalize();
         if (!ok && error.empty())
-            error = "the joined file could not be written";
+            error = "the joined file could not be written: " + writer.Error().text;
         sink.Close();
     }
     if (ok)

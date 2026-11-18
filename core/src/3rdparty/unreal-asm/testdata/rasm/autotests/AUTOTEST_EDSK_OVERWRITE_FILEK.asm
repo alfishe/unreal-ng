@@ -1,0 +1,1 @@
+EDSK create,'rasmoutput_test.dsk',DATA,OVERWRITE:bank:save 'crash.bin',0,20000,DSK,'rasmoutput_test.dsk':save 'crash.bin',0,8700,DSK,'rasmoutput_test.dsk':save 'rdd.bin',0,100,DSK,'rasmoutput_test.dsk'

@@ -1,0 +1,1 @@
+ label1 nop: macro label1: nop: mend: nop

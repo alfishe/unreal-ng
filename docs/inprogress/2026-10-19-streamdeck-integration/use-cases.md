@@ -137,6 +137,10 @@ Playing and watching: big obvious keys, nothing that needs the debugger.
 - U1.4 Keys a game needs: `input.key` (SPACE, ENTER, BREAK, Y / N, digits, letters), `input.release_all`
 - U1.5 Kempston mouse: `feature.toggle kempstonmouse`, `input.mouse_button`, `input.mouse_release`
 - U1.6 Pause for a break (C1.1); skip a slow load (C2)
+- U1.7 The whole keyboard on the deck: one deck key per Spectrum key, the rows as on the 48K (`input.key`, held); a
+  deck narrower than ten keys shows a window of the columns between pinned edge keys (scroll keys, home, ENTER, the
+  shifts) that the scroll keys, a dial turn or a swipe move; CAPS SHIFT, SPACE and SYMBOL SHIFT on the strip (the
+  shifts latch for the next key) and on the dials (held while pressed)
 
 ### U2. Undo a mistake
 - U2.1 A dial back through the history: `ttd.seek_by` (dial, `unit` seconds); press: continue from there (the TTD

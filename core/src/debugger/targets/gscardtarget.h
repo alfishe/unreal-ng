@@ -25,6 +25,7 @@
 
 class BreakpointManager;
 class GeneralSoundCard;
+class LabelManager;
 class EmulatorContext;
 
 class GSCardTarget final : public IDebugTarget, public IGSDebugHooks
@@ -42,6 +43,11 @@ public:
 
     /// The card CPU's breakpoints (memory, ports, card events)
     BreakpointManager* GetBreakpointManager() { return _breakpoints.get(); }
+    /// The card CPU's labels (gs-debugger design §6.2): its own store, page-tied by the card's map; the shipped
+    /// firmware symbols (data/symbols/gs/manifest.json) join it when the card's ROM page 0 matches a bundle
+    LabelManager* GetLabelManager() { return _labels.get(); }
+    /// The bundles of the card's ROM into the labels (at each card creation); the bundle sets now there
+    std::vector<std::string> ApplySymbolBundles();
 
     /// The slot's card was created or replaced (SoundManager): the hooks go to the new card when they are wanted
     void OnCardCreated();
@@ -88,11 +94,89 @@ public:
     void CancelStep();
     bool StepArmed() const { return _stepKind.load(std::memory_order_acquire) != StepKind::None; }
     /// Debugged with a stop (a stopping breakpoint, an armed step): the machine runs in tight mode for it
-    bool WantsTight() const { return _stopWanted.load(std::memory_order_acquire) || StepArmed(); }
+    bool WantsTight() const
+    {
+        return _stopWanted.load(std::memory_order_acquire) || StepArmed() || _scanning.load(std::memory_order_acquire);
+    }
     /// The machine is parked inside the card's run (a card breakpoint or step): the next instruction is the
     /// boundary's
     bool ParkedInside() const { return _parkedInside.load(std::memory_order_acquire); }
     /// endregion </Steps>
+
+    /// region <TTD card scans (gs-debugger design §8): a replay that finds a card instruction>
+    /// A card's whole state: its TTD blob and the memory it gives the engine as regions (NeoGS RAM and flash are no
+    /// part of its blob). A card position keeps one, and so does the scan's capture
+    struct CardState
+    {
+        std::vector<uint8_t> blob;
+        std::vector<std::vector<uint8_t>> regions;
+        bool valid = false;
+    };
+    static bool SaveCardState(GeneralSoundCard* card, CardState& out);
+    /// Puts @p state back into @p card (the regions' trackers marked written, then the blob); false when it does not fit
+    static bool LoadCardState(GeneralSoundCard* card, const CardState& state);
+
+    /// What a scan saw at the card instruction it waited for (the boundary before it: count instructions done)
+    struct ScanCapture
+    {
+        bool captured = false;
+        uint64_t count = 0;
+        uint16_t pc = 0;
+        int64_t cardTime = 0;
+        CardState state;
+        // The main CPU at that moment, inside the card's run
+        uint64_t frameCounter = 0;   ///< emulatorState.frame_counter (the frame-end catch-up: the next frame's)
+        uint32_t t = 0;              ///< z80.t
+        uint32_t instrStartT = 0;    ///< the start of the instruction the card's moment is in
+        uint32_t ttdInstrStart = 0;  ///< instrStartT in TTD units (TtdTInFrame)
+        uint16_t m1pc = 0;           ///< that instruction's PC
+        bool catchingUp = false;     ///< tight mode's catch-up at a main instruction start (DebugManager::CatchingUp)
+        bool frameEnd = false;       ///< the card's frame-end catch-up (GeneralSoundCard::inFrameEndCatchUp)
+    };
+    /// A breakpoint hit a scan saw (BeginScan with breakpoints): where the card would park for it
+    struct ScanHit
+    {
+        bool hit = false;
+        uint64_t count = 0;   ///< the boundary the card parks at: count instructions done
+        uint16_t breakpointId = 0xFFFF;
+        uint16_t address = 0;
+        uint8_t value = 0;
+        BreakpointHitKind kind = BreakpointHitKind::Execute;
+        uint16_t pc = 0;
+    };
+    /// Starts a scan of a TTD replay (the machine held): the card runs its debug loop in tight mode, nothing parks
+    /// and no step ends. `captureAt`: the count whose boundary is copied (UINT64_MAX: none). `breakpoints`: this
+    /// target's breakpoints are evaluated as a live run would (BreakpointManager::BeginReplayEvaluate) and the newest
+    /// hit before `hitsBefore` is kept
+    void BeginScan(uint64_t captureAt, bool breakpoints = false, uint64_t hitsBefore = UINT64_MAX);
+    /// Ends it: the breakpoints' counts back as they were, hooks and tight mode as wanted again
+    void EndScan();
+    bool Scanning() const { return _scanning.load(std::memory_order_acquire); }
+    const ScanCapture& Capture() const { return _capture; }
+    /// The newest hit before `hitsBefore` and the number of hits the scan saw
+    ScanHit LastScanHit() const { return _scanLastHit; }
+    uint64_t ScanHitCount() const { return _scanHits; }
+    /// The first boundary the scan saw was past `captureAt` (the count lies before the replay's start)
+    bool ScanStartedPast() const { return _scanStartedPast; }
+    /// An active breakpoint that stops (what a reverse continue looks for)
+    bool HasStoppingBreakpoints() const { return _stopWanted.load(std::memory_order_acquire); }
+    /// RAII: a scan for one replay
+    class ScanScope
+    {
+    public:
+        ScanScope(GSCardTarget& target, uint64_t captureAt, bool breakpoints = false, uint64_t hitsBefore = UINT64_MAX)
+            : _target(target)
+        {
+            _target.BeginScan(captureAt, breakpoints, hitsBefore);
+        }
+        ~ScanScope() { _target.EndScan(); }
+        ScanScope(const ScanScope&) = delete;
+        ScanScope& operator=(const ScanScope&) = delete;
+
+    private:
+        GSCardTarget& _target;
+    };
+    /// endregion </TTD card scans>
 
     // IDebugTarget
     DebugCpuId Id() const override { return _id; }
@@ -150,11 +234,16 @@ private:
     uint64_t CardFrame(const GeneralSoundCard* card) const;
     /// A replayed read substitution for this access, if one waits
     bool ReplayRead(ttd::TTDCardEdit::Kind kind, uint16_t address, uint8_t& value);
+    /// A scan's boundary (beforeStep while scanning): its breakpoint hits and the capture
+    void ScanBoundary(GeneralSoundCard* card, uint16_t pc);
+    /// A scan's hit at the boundary with `count` instructions done
+    void ScanNoteHit(const Stop& stop, uint64_t count);
 
     EmulatorContext* _context = nullptr;
     DebugCpuId _id = DebugCpuId::GS;
     std::function<GeneralSoundCard*()> _cardSource;
     std::unique_ptr<BreakpointManager> _breakpoints;
+    std::unique_ptr<LabelManager> _labels;
     bool _wanted = false;                    // an active breakpoint asks for the hooks
     std::atomic<bool> _stopWanted{false};    // an active breakpoint stops (tight mode)
     struct LiveEdit
@@ -177,6 +266,16 @@ private:
     bool _stepReturning = false;             // Out: the instruction now running is a return
     uint16_t _stepReturnSp = 0;              // Out: SP before that return
     std::atomic<bool> _parkedInside{false};  // inside Park's call: the machine waits in the card's run
+    // A TTD card scan (BeginScan): set and read with the machine held, on its thread during the replay
+    std::atomic<bool> _scanning{false};
+    bool _scanBreakpoints = false;
+    uint64_t _scanCaptureAt = UINT64_MAX;
+    uint64_t _scanHitsBefore = UINT64_MAX;
+    bool _scanStartedPast = false;
+    bool _scanSawBoundary = false;
+    ScanCapture _capture;
+    ScanHit _scanLastHit;
+    uint64_t _scanHits = 0;
 };
 
 /// The host side of the mailbox (the main CPU's access to #B3 / #BB, inside its instruction): a host-side event

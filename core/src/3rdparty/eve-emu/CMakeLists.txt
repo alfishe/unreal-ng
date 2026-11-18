@@ -79,6 +79,7 @@ set(EVE_SOURCES
     src/eve-registers.cpp
     src/eve-timing.cpp
     src/eve-dl.cpp
+    src/eve-async.cpp
     src/eve-aa-table.cpp
     src/eve-raster.cpp
     src/eve-bitmap.cpp
@@ -89,6 +90,7 @@ set(EVE_SOURCES
     src/eve-copro-matrix.cpp
     src/eve-copro-text.cpp
     src/eve-copro-media.cpp
+    src/eve-vdac4-3d.cpp
     src/eve-audio.cpp
     src/eve-state.cpp
     src/eve-debug.cpp
@@ -112,6 +114,9 @@ target_include_directories(eve-emu
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/vendor
             ${CMAKE_CURRENT_SOURCE_DIR}/vendor/config)
 target_compile_features(eve-emu PUBLIC cxx_std_17)
+# The renderer thread of EveSetAsyncDrawing
+find_package(Threads REQUIRED)
+target_link_libraries(eve-emu PUBLIC Threads::Threads)
 if(NOT EVE_SIMD)
     target_compile_definitions(eve-emu PRIVATE EVE_NO_SIMD=1)
 endif()

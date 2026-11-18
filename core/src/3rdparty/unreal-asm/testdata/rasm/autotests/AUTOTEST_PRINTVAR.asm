@@ -1,0 +1,1 @@
+label1:   macro test, param:        print 'param {param}', {hex}{param}:    endm::    test label1: nop

@@ -2,6 +2,7 @@
 
 #include <QActionGroup>
 #include <QApplication>
+#include <QFont>
 #include <QMessageBox>
 #include <QSettings>
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include "emulator/ports/portdecoder.h"
 #include "emulator/platform.h"
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/machinevariants.h"
 #include "emulator/capture/recordingcontrol.h"
 #include "emulator/media/recentfiles.h"
@@ -783,146 +785,92 @@ void MenuManager::createMachineMenu()
     _machineModelGroup = new QActionGroup(this);
     _machineModelGroup->setExclusive(true);
 
-    // Get available models from EmulatorManager
-    EmulatorManager* manager = EmulatorManager::GetInstance();
-    if (!manager)
-        return;
-
-    std::vector<TMemModel> models = manager->GetAvailableModels();
-    const int ramSizes[] = {48, 128, 256, 512, 1024, 2048, 4096};
-
-    // The models this build can create (a port decoder and a config folder: Config::IsModelCreatable). KAY, QUORUM,
-    // LSY256 and PHOENIX are in the model table but have neither yet, so they stay out of the menu
-
-    for (const auto& model : models)
-    {
-        // Skip the models this build cannot create
-        if (!Config::IsModelCreatable(model))
-            continue;
-
-        QString shortName = QString::fromUtf8(model.ShortName);
-        QString baseName = QString::fromUtf8(model.FullName);
-
-        // Skip models with empty names (shouldn't happen, but guard against it)
-        if (baseName.isEmpty() || shortName.isEmpty())
+    // The machines grouped family -> machine -> RAM size (MachineCatalog, the tree every surface reads): a submenu per
+    // family, a machine with several RAM sizes a submenu of them; a level with one entry is skipped (Sprinter is an
+    // entry of its own). Only what this build can create (Config::IsModelCreatable, a variant's libraries)
+    const auto addMachineAction = [this](QMenu* menu, const MachineEntry& machine, uint32_t ram, const QString& text) {
+        QAction* action = menu->addAction(text);
+        action->setCheckable(true);
+        _machineModelGroup->addAction(action);
+        const QString name = QString::fromStdString(machine.name);
+        const QString title = QString::fromStdString(MachineCatalog::Title(machine, ram));
+        if (machine.kind == MachineKind::ZXPoly)
         {
-            qWarning() << "MenuManager::createMachineMenu - Skipping model with empty name:"
-                       << "FullName=" << baseName << "ShortName=" << shortName;
-            continue;
-        }
-
-        // Count available RAM sizes for this model
-        int ramCount = 0;
-        for (int ram : ramSizes)
-        {
-            if (model.AvailRAMs & ram)
-                ramCount++;
-        }
-
-        // Skip models with no matching RAM sizes
-        if (ramCount == 0)
-        {
-            qWarning() << "MenuManager::createMachineMenu - Skipping model with no valid RAM sizes:"
-                       << baseName << "AvailRAMs=" << model.AvailRAMs;
-            continue;
-        }
-
-        // If only one RAM option, show just the model name
-        if (ramCount == 1)
-        {
-            QAction* action = _machineMenu->addAction(baseName);
-            action->setCheckable(true);
-            // Store as "MODEL:RAM" for parsing
-            action->setData(QString("%1:%2").arg(shortName).arg(model.defaultRAM));
-            action->setStatusTip(tr("Switch to %1").arg(baseName));
-            _machineModelGroup->addAction(action);
-            _machineModelActions.push_back(action);
-
-            connect(action, &QAction::triggered, this, [this, shortName, ram = model.defaultRAM]() {
-                QString key = QString("%1:%2").arg(shortName).arg(ram);
-                if (key != _currentModelShortName)
-                {
-                    emit machineModelChangeRequested(key);
-                }
+            // Four synchronized machines, started bare (File -> Open ZX-Poly... loads an edition)
+            action->setData(name);
+            action->setStatusTip(tr("Switch to ZX-Poly: four synchronized %1 machines").arg(QString::fromStdString(machine.baseModel)));
+            _zxpolyConfigurationActions.push_back(action);
+            connect(action, &QAction::triggered, this, [this, name]() {
+                if (_currentModelShortName != name)
+                    emit zxpolyConfigurationRequested(name);
             });
+            return;
         }
-        else
-        {
-            // Multiple RAM options - create entry for each
-            for (int ram : ramSizes)
-            {
-                if (!(model.AvailRAMs & ram))
-                    continue;
-
-                QString displayName = QString("%1 %2K").arg(baseName).arg(ram);
-                QAction* action = _machineMenu->addAction(displayName);
-                action->setCheckable(true);
-                action->setData(QString("%1:%2").arg(shortName).arg(ram));
-                action->setStatusTip(tr("Switch to %1 with %2K RAM").arg(baseName).arg(ram));
-                _machineModelGroup->addAction(action);
-                _machineModelActions.push_back(action);
-
-                connect(action, &QAction::triggered, this, [this, shortName, ram]() {
-                    QString key = QString("%1:%2").arg(shortName).arg(ram);
-                    if (key != _currentModelShortName)
-                    {
-                        emit machineModelChangeRequested(key);
-                    }
-                });
-            }
-        }
-    }
-
-    // ZX-Poly configurations: four synchronized instances of a base model,
-    // started as the bare machine (File -> Open ZX-Poly... loads an edition)
-    _machineMenu->addSeparator();
-    for (const ZXPolyGroup::Configuration& configuration : ZXPolyGroup::Configurations())
-    {
-        const TMemModel* base = Config::FindModelByShortName(configuration.baseModel);
-        if (base == nullptr || !Config::IsModelCreatable(*base))
-            continue;
-
-        const QString name = QString::fromUtf8(configuration.name);
-        QAction* action = _machineMenu->addAction(QString::fromUtf8(configuration.title));
-        action->setCheckable(true);
-        action->setData(name);
-        action->setStatusTip(tr("Switch to ZX-Poly: four synchronized %1 machines")
-                                 .arg(QString::fromUtf8(base->FullName)));
-        _machineModelGroup->addAction(action);
-        _zxpolyConfigurationActions.push_back(action);
-
-        connect(action, &QAction::triggered, this, [this, name]() {
-            if (_currentModelShortName != name)
-                emit zxpolyConfigurationRequested(name);
-        });
-    }
-
-    // Machine variants: a base model with a fixed board (TS-Conf + VDAC2), switched
-    // to like any model; only the ones this build can create
-    bool variantSeparator = false;
-    for (const MachineVariant& variant : MachineVariants::All())
-    {
-        const TMemModel* base = Config::FindModelByShortName(variant.baseModel);
-        if (base == nullptr || !Config::IsModelCreatable(*base) || !variant.supported(nullptr))
-            continue;
-        if (!variantSeparator)
-        {
-            _machineMenu->addSeparator();
-            variantSeparator = true;
-        }
-        const QString key = QString("%1:%2").arg(QString::fromUtf8(variant.name)).arg(variant.ramKb);
-        QAction* action = _machineMenu->addAction(QString::fromUtf8(variant.title));
-        action->setCheckable(true);
+        const QString key = QString("%1:%2").arg(name).arg(ram);  // "MODEL:RAM", as the model switch parses it
         action->setData(key);
-        action->setStatusTip(QString::fromUtf8(variant.description));
-        _machineModelGroup->addAction(action);
-        _machineVariantActions.push_back(action);
-
+        action->setStatusTip(machine.description.empty() ? tr("Switch to %1").arg(title)
+                                                         : QString::fromStdString(machine.description));
+        (machine.kind == MachineKind::Variant ? _machineVariantActions : _machineModelActions).push_back(action);
         connect(action, &QAction::triggered, this, [this, key]() {
             if (key != _currentModelShortName)
                 emit machineModelChangeRequested(key);
         });
+    };
+    // The RAM sizes of a machine into a menu: "128K", "512K"... (the machine's title is the menu's)
+    const auto addRamActions = [&addMachineAction](QMenu* menu, const MachineEntry& machine) {
+        for (const uint32_t ram : machine.ramSizesKb)
+            addMachineAction(menu, machine, ram, QString("%1K").arg(ram));
+    };
+
+    for (const MachineFamily& family : MachineCatalog::Creatable())
+    {
+        const QString familyTitle = QString::fromStdString(family.title);
+        if (family.machines.size() == 1 && family.machines.front().ramSizesKb.size() == 1)
+        {
+            const MachineEntry& machine = family.machines.front();
+            addMachineAction(_machineMenu, machine, machine.defaultRamKb, QString::fromStdString(machine.title));
+            continue;
+        }
+        QMenu* familyMenu = _machineMenu->addMenu(familyTitle);
+        _machineFamilyMenus.push_back(familyMenu);
+        if (family.machines.size() == 1)
+        {
+            addRamActions(familyMenu, family.machines.front());
+            continue;
+        }
+        for (const MachineEntry& machine : family.machines)
+        {
+            const QString title = QString::fromStdString(machine.title);
+            if (machine.ramSizesKb.size() == 1)
+                addMachineAction(familyMenu, machine, machine.ramSizesKb.front(), title);
+            else
+                addRamActions(familyMenu->addMenu(title), machine);
+        }
     }
+    // The current machine's family and machine submenus are shown bold: the check mark is inside them
+    connect(_machineMenu, &QMenu::aboutToShow, this, [this]() {
+        for (QMenu* familyMenu : _machineFamilyMenus)
+        {
+            bool familyCurrent = false;
+            for (QAction* action : familyMenu->actions())
+            {
+                bool current = action->isChecked();
+                if (QMenu* sub = action->menu())
+                {
+                    current = false;
+                    for (QAction* ramAction : sub->actions())
+                        current = current || ramAction->isChecked();
+                    QFont font = action->font();
+                    font.setBold(current);
+                    action->setFont(font);
+                }
+                familyCurrent = familyCurrent || current;
+            }
+            QFont font = familyMenu->menuAction()->font();
+            font.setBold(familyCurrent);
+            familyMenu->menuAction()->setFont(font);
+        }
+    });
 
     // Set default selection (first entry)
     if (!_machineModelActions.empty())
@@ -943,6 +891,10 @@ void MenuManager::createMachineMenu()
     // main window fills it each time it opens
     _machineControllersMenu = _machineMenu->addMenu(tr("C&ontrollers"));
     _machineControllersMenu->setStatusTip(tr("Plug a joystick into a connector, swap the joystick ports"));
+    // The running state into another open instance or a new machine of a model, in memory (model what-if W0b); the main
+    // window fills it each time it opens
+    _machineTransferMenu = _machineMenu->addMenu(tr("Transfer S&tate To"));
+    _machineTransferMenu->setStatusTip(tr("Move this machine's running state into another open instance or a new machine"));
 
     _machineMenu->addSeparator();
 

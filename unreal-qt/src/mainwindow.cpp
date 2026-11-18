@@ -7,6 +7,7 @@
 #include "loaders/snapshot/snapshotpipeline.h"
 #include "emulator/slots/slotcontrol.h"
 #include "emulator/savesnapshotchoices.h"
+#include "emulator/statetransferchoices.h"
 #include <algorithm>
 
 #include "emulator/media/mediacontrol.h"
@@ -1003,6 +1004,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     if (QMenu* controllers = _menuManager->machineControllersMenu())
         connect(controllers, &QMenu::aboutToShow, this,
                 [this, controllers] { controllersmenu::Fill(controllers, _hostControllers); });
+    if (QMenu* transfer = _menuManager->machineTransferMenu())
+        connect(transfer, &QMenu::aboutToShow, this, [this, transfer] {
+            StateTransferChoices::Fill(transfer, _emulator ? _emulator->GetId() : std::string(),
+                                       [this](const StateTransferRequest& request) { transferMachineState(request); });
+        });
     // ui-ux.md §8: the DEBUG tag in the HUD as well, while the HUD is on
     connect(_statusBarManager, &StatusBarManager::controllerDebugLayerChanged, this, [this](bool held) {
         if (!_hudModel)
@@ -3293,6 +3299,13 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                                          QString::fromStdString(snapshot::ZXPolyRefusal(filePath.right(3).toLower().toStdString())));
                     break;
                 }
+                // A NEX runs under NextZXOS: the launcher boots a fresh Next first (seconds of firmware), so it runs on
+                // the actions worker as the handheld menu's open does, never blocking this thread
+                if (filePath.toLower().endsWith(".nex"))
+                {
+                    openSnapshotAsync(filePath);
+                    break;
+                }
                 SnapshotLauncher::Need need;
                 std::string error;
                 if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))
@@ -3350,6 +3363,45 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "Unsupported file type:" << filePath;
             break;
     };
+}
+
+void MainWindow::openSnapshotAsync(const QString& filePath)
+{
+    if (!_emulator)
+        return;
+    StateNode params = StateNode::Object();
+    params["path"] = StateNode(filePath.toStdString());
+    params["kind"] = StateNode(std::string("snapshot"));
+    params["switch_model"] = StateNode(true);  // choosing the file here is the explicit request for its machine
+    actions::ActionValue value;
+    value.params = std::move(params);
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:open";
+    origin.client = "open dialog";
+    statusBar()->showMessage(tr("Opening %1...").arg(QFileInfo(filePath).fileName()));
+    QPointer<MainWindow> self(this);
+    actions::ActionRegistry::Instance().Submit(
+        "media.open", std::move(value), _emulator->GetId(), std::move(origin), [self](actions::ActionResult result) {
+            const bool ok = result.ok;
+            const QString text = QString::fromStdString(result.message);
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, ok, text] {
+                    if (!self)
+                        return;
+                    self->statusBar()->clearMessage();
+                    if (!ok)
+                    {
+                        QMessageBox::warning(self, tr("Load Snapshot"), text);
+                        return;
+                    }
+                    if (self->_statusBarManager)
+                        self->_statusBarManager->resetFpsMeasurement();  // the snapshot replaces the frame counter
+                    self->_lastFrameCount = 0;
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
@@ -4995,6 +5047,43 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
 
     qInfo() << "MainWindow::switchMachineModel() - Successfully switched to model:" << displayName;
     return true;
+}
+
+void MainWindow::transferMachineState(const StateTransferRequest& request)
+{
+    const QString title = tr("Transfer State");
+    StateTransferRequest run = request;
+    if (!run.to.empty())
+    {
+        // An open instance: what would move first, the user decides (the check-only mode every surface has)
+        StateTransferRequest check = request;
+        check.check = true;
+        const StateTransferReply checked = StateTransferControl::Execute(check);
+        if (!checked.Ok())
+        {
+            QMessageBox::warning(this, title, StateTransferChoices::ReportText(checked));
+            return;
+        }
+        if (QMessageBox::question(this, title,
+                                  tr("%1\n\nThe target's own state is replaced. Transfer?")
+                                      .arg(StateTransferChoices::ReportText(checked)),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+    }
+
+    const StateTransferReply reply = StateTransferControl::Execute(run);
+    if (!reply.Ok() || !reply.target)
+    {
+        QMessageBox::warning(this, title, StateTransferChoices::ReportText(reply));
+        return;
+    }
+    QMessageBox box(QMessageBox::Information, title, StateTransferChoices::ReportText(reply), QMessageBox::NoButton, this);
+    QPushButton* show = box.addButton(tr("Show It Here"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    // This window then shows the target; the machine it showed keeps running headless, as after any adoption
+    if (box.clickedButton() == show)
+        adoptEmulator(reply.target, EmulatorOrigin::Adopted);
 }
 
 #ifdef ENABLE_RECORDING

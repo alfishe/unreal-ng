@@ -141,6 +141,12 @@ FONT_4X7 = {
     '*': ['0000', '1001', '0110', '1111', '0110', '1001', '0000'],
     '_': ['0000', '0000', '0000', '0000', '0000', '0000', '1111'],
     '$': ['0010', '0111', '1010', '0110', '0101', '1110', '0100'],
+    '@': ['0110', '1001', '1011', '1011', '1011', '1000', '0111'],
+    '&': ['0100', '1010', '1010', '0100', '1011', '1010', '0101'],
+    '"': ['1010', '1010', '1010', '0000', '0000', '0000', '0000'],
+    ';': ['0000', '0110', '0110', '0000', '0110', '0010', '0100'],
+    '\u00a3': ['0011', '0100', '0100', '1110', '0100', '0100', '1111'],  # pound sign
+    '\u2191': ['0110', '1111', '1111', '0110', '0110', '0110', '0110'],  # up arrow (the Spectrum's ^)
 }
 
 
@@ -211,28 +217,29 @@ class Canvas:
                 err += dx
                 y0 += sy
 
-    def text(self, s, x, y, c, scale=1, gap=1):
+    def text(self, s, x, y, c, scale=1, gap=1, font=None):
+        self.c[self.text_mask(s, x, y, scale, gap, font)] = c
+
+    def text_mask(self, s, x, y, scale=1, gap=1, font=None):
+        """Mask of `s` in `font` (FONT_4X7 by default; a glyph's width is its row length) at the top-left (x, y)."""
+        m = np.zeros((self.n, self.n), bool)
         for ch in s.upper():
-            rows = FONT_4X7[ch]
+            rows = (font or FONT_4X7)[ch]
             for j, row in enumerate(rows):
                 for i, bit in enumerate(row):
                     if bit == '1':
-                        for a in range(scale):
-                            for b in range(scale):
-                                self.px(x + i * scale + a, y + j * scale + b, c)
-            x += (4 + gap) * scale
-
-    def text_mask(self, s, x, y, scale=1, gap=1):
-        m = np.zeros((self.n, self.n), bool)
-        for ch in s.upper():
-            for j, row in enumerate(FONT_4X7[ch]):
-                for i, bit in enumerate(row):
-                    if bit == '1':
-                        m[y + j * scale:y + (j + 1) * scale, x + i * scale:x + (i + 1) * scale] = True
-            x += (4 + gap) * scale
+                        m[max(0, y + j * scale):max(0, y + (j + 1) * scale),
+                          max(0, x + i * scale):max(0, x + (i + 1) * scale)] = True
+            x += (len(rows[0]) + gap) * scale
         return m
 
     def image(self, palette):
         im = Image.new('RGB', (self.n, self.n))
         im.putdata([palette[k] for k in self.c.flatten()])
         return im
+
+
+def text_width(s, scale=1, gap=1, font=None):
+    """Width in pixels of `s` drawn by Canvas.text."""
+    w = sum(len((font or FONT_4X7)[ch][0]) + gap for ch in s.upper()) - gap
+    return max(0, w) * scale
