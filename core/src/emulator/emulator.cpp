@@ -1865,6 +1865,7 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
                            : edge.reason == "watch"  ? DebugStop::Reason::Watch
                                                      : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
+        _lastStop.serial++;
         {
             std::lock_guard<std::mutex> causes(_edgeCausesMutex);
             _edgeCauses.emplace_back(edge.seq, _pendingPauseCause);
@@ -3485,10 +3486,15 @@ Emulator::DirectStepScope::~DirectStepScope()
     {
         if (_emulator._context && _emulator._context->pDebugManager)
             _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
+        // A time travel replay (a seek, a step in the past) runs the machine directly but is no stop of the
+        // debugger's: the stop before it stays the last one (a debugger would otherwise take every move in time for
+        // a main CPU step and bring that tab to the front)
+        if (!(_emulator._context && _emulator._context->ttdReplayActive))
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
+            _emulator._lastStop.serial++;
         }
         // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())

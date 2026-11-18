@@ -245,6 +245,8 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     m_paused = e->debug_paused();
     m_serial = e->debug_serial();
+    //The stop before the window: taken (the tab its caller asked for stays)
+    if (e->loaded) m_stop_serial = e->debug_stop_serial();
     refresh_all(true);
     mark_all();
     if (e->loaded) m_ttd->poll(true);
@@ -760,11 +762,16 @@ void DebuggerWindow::on_debug_event()
     const bool paused = e->debug_paused() && !e->debug_stepping();
     m_paused = paused;
     if (paused) {
-        //A stop of a processor (a breakpoint, a step) brings its tab to the front. Not in ecat: a pause, or a move in
-        //time (a card's Step Back in the past), names none: the tab in front stays
-        const int reason = e->debug_stop_reason();
-        CPU * c = e->debug_stop_cpu();
-        if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+        //A stop of a processor (a breakpoint, a step) brings its tab to the front, once. Not in ecat: the events
+        //after it (a move in time, a card's Step Back in the past, an edit, the stop's own event delivered late) find
+        //the same stop and leave the tab in front; a pause names no processor
+        const uint64_t stop = e->debug_stop_serial();
+        if (stop != m_stop_serial) {
+            m_stop_serial = stop;
+            const int reason = e->debug_stop_reason();
+            CPU * c = e->debug_stop_cpu();
+            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+        }
         refresh_all(true);
         if (CpuPane * p = pane()) p->code->setFocus();
     }

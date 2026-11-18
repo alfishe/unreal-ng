@@ -628,8 +628,10 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
               TtdControls::describe_card(unknown) == "ms: no instruction counts in this recording",
           "ttd card: readout without a card position, without counts");
 
-    // The card's tab in front: the back steps are the card's (the stop events of the moves before are taken first)
-    wait_for([]() { return false; }, 300);
+    // The card's tab in front: the back steps are the card's. The last stop first taken by the window (its event may
+    // come late, under load seconds late): a stop brings its processor's tab to the front once, when taken
+    check(wait_for([m, dw]() { return dw->taken_stop() == m->debug_stop_serial(); }, 15000),
+          "ttd card: the window has taken the last stop");
     dw->select_cpu(gs);
     QApplication::processEvents();
     ttd->poll(true);
@@ -647,8 +649,8 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     QJsonObject c1 = card();
     check(c1.value("card_position").toBool() && count(c1) + 1 == n0 && said.count == 0, "ttd card: Step Back, one card instruction");
     check(gs->get_pc() == (unsigned int)c1.value("pc").toInteger(), "ttd card: the card's tab shows the card at the position");
-    // The move's stop event names no processor: the card's tab stays in front
-    wait_for([]() { return false; }, 300);
+    // A move in time is no stop: its events, and any late one of the stop before, find the stop taken, and the
+    // card's tab stays in front
     QApplication::processEvents();
     check(dw->current_cpu() == gs && ttd->card_cpu() == name, "ttd card: the card's tab stays in front after the move");
     check(cpu->get_pc() == (unsigned int)c1.value("main").toObject().value("pc").toInteger(),

@@ -115,8 +115,10 @@ TEST_F(DebugSnapshot_Test, StepsMoveSeqAndThePreviousStop)
     Z80State previous;
     EXPECT_FALSE(_emulator->PreviousStopRegisters(previous)) << "nothing ran yet";
     const uint64_t seq = _emulator->DebugSeq();
+    const uint64_t stops = _emulator->LastStop().serial;
     _emulator->RunSingleCPUCycle(true);
     EXPECT_GE(_emulator->DebugSeq(), seq + 2) << "a run start and a stop";
+    EXPECT_EQ(_emulator->LastStop().serial, stops + 1) << "the stop's number: one more";
     ASSERT_TRUE(_emulator->PreviousStopRegisters(previous));
     EXPECT_EQ(previous.pc, 0x8000) << "the registers before the step";
     EXPECT_EQ(_z80->pc, 0x8001);
@@ -125,12 +127,14 @@ TEST_F(DebugSnapshot_Test, StepsMoveSeqAndThePreviousStop)
     EXPECT_EQ(previous.pc, 0x8001) << "the previous stop, not the first";
     EXPECT_EQ(DebugSnapshot::RegistersOf(previous).find("special")->find("pc")->i, 0x8001);
     EXPECT_EQ(_emulator->LastStop().reason, Emulator::DebugStop::Reason::Step);
+    EXPECT_EQ(_emulator->LastStop().serial, stops + 2) << "two steps, two stops";
 
     const uint64_t quiet = _emulator->DebugSeq();
     DebugSnapshot::Registers(_context);
     EXPECT_EQ(_emulator->DebugSeq(), quiet) << "reading changes nothing";
     _emulator->EditMemoryFromTool("test", [this]() { Poke(0x9000, {0x55}); });
     EXPECT_GT(_emulator->DebugSeq(), quiet) << "a tool edit counts";
+    EXPECT_EQ(_emulator->LastStop().serial, stops + 2) << "an edit is no stop: a debugger takes the step once";
 }
 
 // --- The whole snapshot (Build) ---------------------------------------------------------------------------------
@@ -213,6 +217,8 @@ TEST_F(DebugSnapshot_Test, PausedAndRunningMachines)
     ASSERT_TRUE(paused.error.empty()) << paused.error;
     EXPECT_EQ(paused.snapshot.find("consistency")->s, "paused");
     EXPECT_EQ(paused.snapshot.find("pause")->find("reason")->s, "pause");
+    EXPECT_EQ(static_cast<uint64_t>(paused.snapshot.find("pause")->find("serial")->i), _emulator->LastStop().serial);
+    EXPECT_GE(_emulator->LastStop().serial, 1u) << "the pause is a stop";
     EXPECT_EQ(paused.snapshot.find("prev_regs")->kind, StateNode::Kind::Null) << "StartAsync is no resume";
     const uint64_t seq = static_cast<uint64_t>(paused.snapshot.find("seq")->i);
     EXPECT_EQ(static_cast<uint64_t>(DebugSnapshot::Build(_emulator.get(), options).snapshot.find("seq")->i), seq)
