@@ -831,6 +831,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         saveViewSettings();
     });
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
+    // The title names the running configuration: "unreal-ng — ATM-Turbo 2+ v7.10 512K"
+    connect(_menuManager, &MenuManager::currentMachineChanged, this, [this](const QString& machine) {
+        setWindowTitle(machine.isEmpty() ? QStringLiteral("unreal-ng[*]") : QStringLiteral("unreal-ng[*] — %1").arg(machine));
+    });
     connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING

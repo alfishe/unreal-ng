@@ -254,4 +254,16 @@ std::string Title(const MachineEntry& machine, uint32_t ramKb)
     return machine.title + " " + std::to_string(ramKb) + "K";
 }
 
+std::string TitleOf(Emulator& emulator)
+{
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(emulator);
+    if (!identity.Valid)
+        return {};
+    const std::vector<MachineFamily>& all = All();
+    const MachinePlace place = Locate(all, NameOf(emulator));
+    if (place.family < 0)
+        return identity.Model;
+    return Title(all[static_cast<size_t>(place.family)].machines[static_cast<size_t>(place.machine)], identity.RamKb);
+}
+
 } // namespace MachineCatalog

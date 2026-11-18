@@ -822,6 +822,11 @@ void MenuManager::createMachineMenu()
             addMachineAction(menu, machine, ram, QString("%1K").arg(ram));
     };
 
+    // The running configuration, read only: the check mark sits in a submenu, this says it at a glance
+    _currentMachineAction = _machineMenu->addAction(tr("No machine"));
+    _currentMachineAction->setEnabled(false);
+    _machineMenu->addSeparator();
+
     for (const MachineFamily& family : MachineCatalog::Creatable())
     {
         const QString familyTitle = QString::fromStdString(family.title);
@@ -1043,6 +1048,16 @@ void MenuManager::setAutostartDisksChecked(bool checked)
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
 {
+    // The read-only "current configuration" entry and the window title follow the running machine
+    const QString current = activeEmulator ? QString::fromStdString(MachineCatalog::TitleOf(*activeEmulator)) : QString();
+    if (_currentMachineAction)
+        _currentMachineAction->setText(current.isEmpty() ? tr("No machine") : current);
+    if (current != _currentMachineTitle)
+    {
+        _currentMachineTitle = current;
+        emit currentMachineChanged(current);
+    }
+
     if (!activeEmulator)
         return;
 
