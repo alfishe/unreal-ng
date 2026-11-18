@@ -80,6 +80,15 @@
 #include <unordered_map>
 #include <vector>
 
+// POC 051: the block JIT (xtensa-jit-a64.cpp), arm64 hosts with GCC / Clang only; off unless UNREAL_XTENSA_JIT=1
+#if !defined(UNREAL_XTENSA_JIT)
+#if defined(__aarch64__) && (defined(__GNUC__) || defined(__clang__))
+#define UNREAL_XTENSA_JIT 1
+#else
+#define UNREAL_XTENSA_JIT 0
+#endif
+#endif
+
 namespace xtensa
 {
 
@@ -214,6 +223,26 @@ public:
 
     // ---- statistics ----
     size_t BlockCount() const { return blockMap_.size(); }
+#ifdef UNREAL_XTENSA_PROFILE
+    /// POC 051 (compile-time only): per-block entries and executed instructions, as text lines
+    /// "pc len entries insns lastop ops..." (ops: the block's mnemonics), retired blocks folded in
+    void DumpProfile(const char* path) const;
+#endif
+
+#if UNREAL_XTENSA_JIT
+    /// POC 051: the block JIT on / off and after how many entries a block is compiled
+    void SetJit(bool on, uint32_t hot);
+    struct JitStats
+    {
+        uint64_t compiles = 0;
+        uint64_t rejected = 0;
+        uint64_t flushes = 0;
+        uint64_t bytes = 0;
+        uint64_t calls = 0;
+        uint64_t insns = 0; ///< instructions the compiled prefixes ran
+    };
+    const JitStats& GetJitStats() const { return jitStats_; }
+#endif
 
 private:
     struct PageEntry;
@@ -269,6 +298,34 @@ private:
     Block* lookup_[kLookupSize] = {};
     static constexpr uint32_t kMaxBlockInsns = 64;
     Insn partial_[kMaxBlockInsns + 1]; ///< a block cut short (budget, loop end inside) plus its BlockEnd
+
+#ifdef UNREAL_XTENSA_PROFILE
+    struct ProfileEntry
+    {
+        uint32_t len = 0;
+        uint64_t entries = 0;
+        uint64_t insns = 0;
+        std::vector<uint16_t> ops;
+    };
+    void ProfileFold(const Block& b);
+    std::unordered_map<uint32_t, ProfileEntry> profileRetired_;
+    Block* profileLast_ = nullptr;
+    uint64_t profileMark_ = 0;
+#endif
+
+#if UNREAL_XTENSA_JIT
+    struct JitArena;
+    struct JitArenaDelete
+    {
+        void operator()(JitArena* a) const;
+    };
+    void* JitCompile(Block& b);
+    void JitInitFromEnv();
+    bool jitOn_ = false;
+    uint32_t jitHot_ = 8;
+    std::unique_ptr<JitArena, JitArenaDelete> jitArena_;
+    JitStats jitStats_;
+#endif
 
     uint32_t trapBase_ = 0;
     uint32_t trapSize_ = 0;

@@ -1,5 +1,6 @@
 #include "espxtensacpu.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include "3rdparty/unreal-xtensa/xtensa-cpu.h"
@@ -13,6 +14,18 @@ namespace
 class EspXtensaCpu final : public IEspCpu
 {
 public:
+#if UNREAL_XTENSA_JIT
+    ~EspXtensaCpu() override
+    {
+        // POC 051: what the block JIT did
+        const xtensa::Cpu::JitStats& s = _cpu.GetJitStats();
+        if (s.compiles)
+            std::fprintf(stderr, "xtensa-jit: compiles %llu rejected %llu flushes %llu bytes %llu calls %llu insns %llu\n",
+                         static_cast<unsigned long long>(s.compiles), static_cast<unsigned long long>(s.rejected),
+                         static_cast<unsigned long long>(s.flushes), static_cast<unsigned long long>(s.bytes),
+                         static_cast<unsigned long long>(s.calls), static_cast<unsigned long long>(s.insns));
+    }
+#endif
     void Map(uint32_t base, uint32_t size, uint8_t* host, bool executable) override
     {
         const uint32_t flags = xtensa::RegionRead | xtensa::RegionWrite | (executable ? xtensa::RegionExec : 0u);
@@ -27,6 +40,9 @@ public:
         _cpu.InvalidateCode();
     }
 
+#ifdef UNREAL_XTENSA_PROFILE
+    void DumpProfile(const char* path) override { _cpu.DumpProfile(path); }
+#endif
     Result Run(uint64_t maxInstructions) override
     {
         const xtensa::RunResult run = _cpu.Run(maxInstructions);

@@ -3,6 +3,7 @@
 #include "xtensa-cpu.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace xtensa
@@ -32,6 +33,15 @@ struct Cpu::Block
     uint32_t count = 0;    ///< instructions, not counting the BlockEnd pseudo-op at insns[count]
     uint8_t maxGroup = 0;
     std::vector<Insn> insns;
+#if UNREAL_XTENSA_JIT
+    void* jit = nullptr;   ///< compiled prefix (POC 051)
+    uint32_t hot = 0;
+    bool jitTried = false;
+#endif
+#ifdef UNREAL_XTENSA_PROFILE
+    uint64_t profileEntries = 0;
+    uint64_t profileInsns = 0;
+#endif
 };
 
 const char* StopReasonName(StopReason reason)
@@ -166,6 +176,9 @@ inline uint32_t Rotr16(uint32_t ws, uint32_t n)
 Cpu::Cpu()
 {
     UpdateSafeGroups();
+#if UNREAL_XTENSA_JIT
+    JitInitFromEnv();
+#endif
 }
 
 Cpu::~Cpu() = default;
@@ -326,6 +339,14 @@ void Cpu::CodeWriteCheck(PageEntry& e, uint32_t addr, int size)
         const uint32_t o = off + static_cast<uint32_t>(i);
         if (o < 4096 && (e.code->bits[o >> 6] >> (o & 63)) & 1)
         {
+#ifdef UNREAL_XTENSA_PROFILE
+            // POC 051: which guest stores hit decoded code (each one drops every block)
+            static uint64_t hits = 0;
+            if (++hits <= 40 || (hits & (hits - 1)) == 0)
+                std::fprintf(stderr, "xtensa: code write #%llu at %08x pc %08x blocks %zu\n",
+                             static_cast<unsigned long long>(hits), addr + static_cast<uint32_t>(i), state_.pc,
+                             blockMap_.size());
+#endif
             InvalidateCode();
             codeModified_ = true;
             return;
@@ -404,8 +425,59 @@ uint8_t* Cpu::HostPointer(uint32_t addr, uint32_t size, uint32_t flags)
     return p;
 }
 
+#ifdef UNREAL_XTENSA_PROFILE
+void Cpu::ProfileFold(const Block& b)
+{
+    if (b.profileEntries == 0)
+        return;
+    ProfileEntry& e = profileRetired_[b.start];
+    e.len = b.count;
+    e.entries += b.profileEntries;
+    e.insns += b.profileInsns;
+    if (e.ops.empty())
+        for (uint32_t i = 0; i < b.count; ++i)
+            e.ops.push_back(static_cast<uint16_t>(b.insns[i].op));
+}
+
+void Cpu::DumpProfile(const char* path) const
+{
+    std::unordered_map<uint32_t, ProfileEntry> all = profileRetired_;
+    for (const auto& kv : blockMap_)
+    {
+        const Block& b = *kv.second;
+        if (b.profileEntries == 0)
+            continue;
+        ProfileEntry& e = all[b.start];
+        e.len = b.count;
+        e.entries += b.profileEntries;
+        e.insns += b.profileInsns;
+        if (e.ops.empty())
+            for (uint32_t i = 0; i < b.count; ++i)
+                e.ops.push_back(static_cast<uint16_t>(b.insns[i].op));
+    }
+    FILE* f = std::fopen(path, "w");
+    if (!f)
+        return;
+    for (const auto& kv : all)
+    {
+        const ProfileEntry& e = kv.second;
+        std::fprintf(f, "%08x %u %llu %llu", kv.first, e.len, static_cast<unsigned long long>(e.entries),
+                     static_cast<unsigned long long>(e.insns));
+        for (uint16_t op : e.ops)
+            std::fprintf(f, " %s", Mnemonic(static_cast<Op>(op)));
+        std::fprintf(f, "\n");
+    }
+    std::fclose(f);
+}
+#endif
+
 void Cpu::InvalidateCode()
 {
+#ifdef UNREAL_XTENSA_PROFILE
+    profileLast_ = nullptr;
+    for (auto& kv : blockMap_)
+        ProfileFold(*kv.second);
+#endif
     for (auto& kv : blockMap_)
         retired_.push_back(std::move(kv.second));
     blockMap_.clear();
@@ -474,6 +546,8 @@ void Cpu::SetTrapRange(uint32_t base, uint32_t size)
 
 void Cpu::SetCallSentinel(uint32_t pc)
 {
+    if (pc == sentinel_)
+        return; // the blocks already stop before it (the host sets the same sentinel at every call)
     sentinel_ = pc;
     InvalidateCode();
 }
@@ -873,7 +947,15 @@ RunResult Cpu::Run(uint64_t maxInstructions)
                 break;
             }
         }
+#ifdef UNREAL_XTENSA_PROFILE
+        profileLast_ = nullptr;
+#endif
         const ExecOut out = Exec(b, maxInstructions, executed);
+#ifdef UNREAL_XTENSA_PROFILE
+        if (profileLast_)
+            profileLast_->profileInsns += executed - profileMark_;
+        profileLast_ = nullptr;
+#endif
         if (out.stop != StopReason::None)
         {
             res.reason = out.stop;
@@ -999,6 +1081,13 @@ Cpu::ExecOut Cpu::Exec(Block* b, uint64_t maxInstructions, uint64_t& executed)
 
 enterBlock:
 {
+#ifdef UNREAL_XTENSA_PROFILE
+    if (profileLast_)
+        profileLast_->profileInsns += executed - profileMark_;
+    profileLast_ = b;
+    profileMark_ = executed;
+    ++b->profileEntries;
+#endif
     wb4 = st.windowBase * 4;
     uint32_t count = b->count;
     bool cut = false;
@@ -1032,6 +1121,30 @@ enterBlock:
     ip = begin;
 #if UNREAL_XTENSA_THREADED
     table = b->maxGroup > safeGroups_ ? kCheckHandlers : kHandlers;
+#if UNREAL_XTENSA_JIT
+    // POC 051: the compiled prefix, where the interpreter would run the whole block without the window check
+    if (jitOn_ && !cut && table == kHandlers)
+    {
+        if (!b->jit && !b->jitTried && ++b->hot >= jitHot_)
+        {
+            b->jitTried = true;
+            b->jit = JitCompile(*b);
+        }
+        if (b->jit)
+        {
+            using JitFn = uint64_t (*)(uint32_t*, uint32_t, CpuState*, const void*);
+            const uint64_t r = reinterpret_cast<JitFn>(b->jit)(ar, wb4, &st, l1_);
+            ++jitStats_.calls;
+            jitStats_.insns += (r & 0xFF) + ((r >> 8) & 1);
+            ip = begin + (r & 0xFF);
+            if (r & 0x100)
+            {
+                nextPc = static_cast<uint32_t>(r >> 32);
+                goto taken;
+            }
+        }
+    }
+#endif
 #else
     checkMode = b->maxGroup > safeGroups_;
 #endif
@@ -1664,3 +1777,5 @@ stopped:
 #endif
 
 } // namespace xtensa
+
+#include "xtensa-jit-a64.inc"
