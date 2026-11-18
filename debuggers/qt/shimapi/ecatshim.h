@@ -245,6 +245,9 @@ public:
     virtual unsigned int debug_serial() const = 0;
     virtual CPU * debug_stop_cpu() const = 0;
     virtual int debug_stop_reason() const = 0;
+    // The last stop's number, one more at every stop: an event that finds it unchanged (a move in time, an edit, the
+    // stop's own event delivered late) is no new stop, and brings no processor's tab to the front
+    virtual uint64_t debug_stop_serial() const = 0;
     // A card CPU's stop: where the main CPU stood at the card's moment, its instruction's progress
     // ("main #8123: T 9 of 11, port write; 2 T past the card"); empty for any other stop
     virtual std::string debug_stop_main_text() const { return std::string(); }

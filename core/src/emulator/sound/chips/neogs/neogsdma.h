@@ -41,6 +41,19 @@ class NeoGSDma
 public:
     enum Module : uint8_t { ZX = 0, SD = 1, MP3 = 2 };
 
+    /// Transactions per module (neogs-automation-design.md §4.7): statistics, not machine state (no snapshot)
+    struct Counters
+    {
+        uint64_t starts = 0;       // CST 0 -> 1
+        uint64_t completions = 0;  // SD: a block in RAM; MP3: a burst sent; ZX: CST 1 -> 0
+        uint64_t aborts = 0;       // SD / MP3: CST cleared before the end
+        uint64_t errors = 0;       // SD: a first byte other than the #FE token (still an interrupt)
+        uint64_t bytes = 0;        // moved by the module (ZX: in NeoGSZxDma)
+        uint64_t stallClocks = 0;  // card clocks the CPU was held off the bus
+        uint32_t lastAddress = 0;  // the last completed transaction: its start address and bytes
+        uint32_t lastBytes = 0;
+    };
+
     /// What the card lends the modules
     struct Host
     {
@@ -84,6 +97,7 @@ public:
     void run(int64_t now);
     /// Bytes the SD and MP3 modules have moved so far (statistics, not state)
     uint64_t bytesMoved() const { return _bytesMoved; }
+    const Counters& counters(Module m) const { return _counters[m]; }
     /// The card clock changed at `now`: the modules count card clocks, so the
     /// time left to their next step is rescaled from the old clock to the new
     void onClockChange(int64_t now, int64_t oldUnitsPerCycle, int64_t newUnitsPerCycle);
@@ -108,6 +122,7 @@ private:
     void finish(Module m, bool raiseInterrupt);
     void runSd(int64_t now);
     void runMp3(int64_t now);
+    void completeMp3();
 
     Host& _host;
     NeoGSMemory& _mem;
@@ -128,4 +143,6 @@ private:
     uint8_t _mp3Buffer[BLOCK] = {};
     int _mp3Sent = 0;
     uint64_t _bytesMoved = 0; // statistics for the UI (HUD activity), not machine state
+    Counters _counters[3];
+    uint32_t _startAddress[3] = {};
 };

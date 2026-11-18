@@ -138,9 +138,13 @@ uint8_t Vs10xxDecoder::SciPort::exchange(uint8_t mosi)
             break;
         case 3:
             if (_op == 0x03)
+            {
+                _owner._counters.controlReads++;
                 miso = static_cast<uint8_t>(_owner.readRegister(_addr));
+            }
             else if (_op == 0x02)
             {
+                _owner._counters.controlWrites++;
                 _owner.writeRegister(_addr, static_cast<uint16_t>((_hi << 8) | mosi));
                 if (_owner.onSciWrite) [[unlikely]]
                     _owner.onSciWrite(_addr, static_cast<uint16_t>((_hi << 8) | mosi));
@@ -201,8 +205,12 @@ uint8_t Vs10xxDecoder::SdiPort::exchange(uint8_t mosi)
     d._bytesReceived++;
     if (d._level == Level::Stub)
         return 0xFF; // accepted and dropped: DREQ stays up
+    if (INPUT_FIFO - d._fifo.size() < DREQ_FREE)
+        d._counters.bytesWhileBusy++;
     if (d._fifo.size() < INPUT_FIFO)
         d._fifo.push_back(mosi);
+    else
+        d._counters.bytesDropped++;
     return 0xFF;
 }
 
@@ -267,6 +275,7 @@ bool Vs10xxDecoder::decodeNextFrame()
         if (length == 0)
         {
             _fifo.pop_front(); // junk: resynchronise byte by byte
+            _counters.resyncBytes++;
             continue;
         }
         if (length < 0 || _fifo.size() < static_cast<size_t>(length))
@@ -359,6 +368,8 @@ void Vs10xxDecoder::advance(int64_t now)
         if (pcmQueued() == 0 && !decodeNextFrame())
         {
             _playFraction = 0; // underrun: time passes, nothing plays, DECODE_TIME freezes
+            _counters.underruns += _underrun ? 0 : 1;
+            _underrun = true;
             break;
         }
         const size_t take = std::min(owed, pcmQueued());
@@ -366,6 +377,7 @@ void Vs10xxDecoder::advance(int64_t now)
                        _pcm.begin() + static_cast<std::ptrdiff_t>(_pcmRead + take * 2));
         _pcmRead += take * 2;
         _samplesPlayed += take;
+        _underrun = false;
         owed -= take;
         if (pcmQueued() < PCM_LOW_WATER)
             decodeNextFrame();

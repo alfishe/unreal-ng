@@ -2079,6 +2079,98 @@ TEST_F(McpTools_Test, InspectState_DevicesAspect_ListsTheReportsWithTheirAspects
     EXPECT_NE(result.text.find("fdc: Disk controller, aspect fdc"), std::string::npos) << result.text;
 }
 
+TEST_F(McpTools_Test, InspectState_BoardAspect_ShowsEveryControlInTheText)
+{
+    // A device board (GET /debug/boards/{id}): the text names each group and each control with its value as its type
+    // shows it - the agent may see only the text
+    Json::Value board;
+    board["id"] = "neogs";
+    board["title"] = "NeoGS card hardware";
+    board["available"] = true;
+    Json::Value control;
+    control["id"] = "gscfg0";
+    control["label"] = "GSCFG0";
+    control["type"] = "bits";
+    control["value"] = 0x05;
+    for (const char* name : {"NOROM", "RAMRO", "8CHANS", "EXPAG", "CLK0", "CLK1", "PAN4CH", "INV7B"})
+        control["names"].append(name);
+    Json::Value group;
+    group["title"] = "Config";
+    group["raw"] = "GSCFG0=#05";
+    group["controls"].append(control);
+    control = Json::Value();
+    control["id"] = "led_on";
+    control["label"] = "LED";
+    control["type"] = "led";
+    control["value"] = true;
+    group["controls"].append(control);
+    Json::Value column;
+    column["groups"].append(group);
+    board["columns"].append(column);
+    Json::Value action;
+    action["id"] = "save";
+    action["title"] = "Save the flash";
+    board["actions"].append(action);
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/boards/neogs"] = {200, board};
+
+    Json::Value args;
+    args["aspects"].append("board.neogs");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/debug/boards/neogs"));
+    EXPECT_NE(result.text.find("Config  GSCFG0=#05"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("GSCFG0: #05 [NOROM 8CHANS]"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("LED: on"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("actions (emulator_manage board_action): save"), std::string::npos) << result.text;
+
+    // The action goes to the board's route with its argument
+    Json::Value done;
+    done["board"] = "neogs_sd";
+    done["action"] = "insert";
+    done["arg"] = "/sd";
+    done["status"] = "done";
+    _caller->routes["POST /api/v1/emulator/emu-1/debug/boards/neogs_sd/actions/insert"] = {200, done};
+    Json::Value manage;
+    manage["action"] = "board_action";
+    manage["board"] = "neogs_sd";
+    manage["operation"] = "insert";
+    manage["path"] = "/sd";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Board neogs_sd insert /sd: done"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
+{
+    // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its
+    // query; the text is the server's lines, and gs_reset_counters names the baseline
+    Json::Value stats;
+    stats["implementation"] = "ngs";
+    stats["mailbox"]["host_commands"] = 1;
+    stats["text"] = "GS slot stats: ngs, frame 9, since baseline 3\nmailbox: host_commands 1\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"] = {200, stats};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_stats.mailbox");
+    args["gs_stats_since"] = 3;
+    args["gs_stats_fresh"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"));
+    EXPECT_NE(result.text.find("[audio_gs_stats.mailbox] GS slot stats: ngs"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("mailbox: host_commands 1"), std::string::npos) << result.text;
+
+    Json::Value baseline;
+    baseline["baseline"] = 4;
+    baseline["frame"] = 12;
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, baseline};
+    Json::Value manage;
+    manage["action"] = "gs_reset_counters";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("GS statistics baseline 4 at frame 12"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
 {
     // One endpoint; the summary names fitment, counters and the routing answer (D-2)

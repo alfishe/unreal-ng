@@ -137,6 +137,10 @@ struct NeoGSStateInfo
     // Card
     std::string flashTitle;
     bool flashModified = false;
+    const char* flashMode = "read";   // read | busy (a program or erase running) | command (autoselect, a failed state)
+    const char* flashVendor = "ST";   // ST | AMD
+    const char* flashWriteMode = "session"; // session | persist | off
+    std::string flashPersistPath;
     uint8_t gscfg0 = 0;
     uint32_t clockHz = 0;
     uint8_t pages[4] = {};
@@ -144,27 +148,44 @@ struct NeoGSStateInfo
     uint8_t mpag = 0;
     bool ledOn = false;
     bool readyForCommands = false;
+    // Output: the DAC's level now, before the line output's coupling (dacLevel)
+    int32_t dacLeft = 0;
+    int32_t dacRight = 0;
     // Interrupts
     uint8_t intEnable = 0;
     uint8_t intRequest = 0;
     uint8_t timFreq = 0;
     // SPI / SD card
     uint8_t sctrl = 0;
+    uint8_t sstat = 0;                // as the card reads #12 now: MCRDY, /SD_WP, /SD_DET, DREQ
     bool sdPresent = false;
     std::string sdPath;
     bool sdSdhc = false;
     uint64_t sdSizeBytes = 0;
     uint64_t sdBlocksRead = 0;
     uint64_t sdBlocksWritten = 0;
+    bool sdInitialized = false;       // ACMD41 done
+    const char* sdState = "power_on"; // power_on | idle | ready
+    const char* sdMode = "command";   // command | read_multi | wait_token | receive_data
+    uint8_t sdLastCommand = 0;
+    uint32_t sdLastArgument = 0;
+    const char* sdWriteMode = "session"; // session | persist | off
+    bool sdWriteProtect = false;      // the slot's switch (SSTAT bit 2)
     // MP3 decoder
     bool mp3Fitted = false;
     const char* mp3Chip = "";
+    bool mp3Running = false;
     bool mp3Dreq = false;
     uint32_t mp3Rate = 0;
     int mp3Channels = 0;
     uint64_t mp3Frames = 0;
     uint32_t mp3DecodeSeconds = 0;
     size_t mp3InputFill = 0;
+    size_t mp3PcmQueued = 0;          // decoded frames not played yet
+    uint64_t mp3SamplesPlayed = 0;
+    uint64_t mp3BytesReceived = 0;
+    double mp3Gain = 1.0;             // [NGS] MP3Gain
+    uint16_t mp3Sci[16] = {};         // the SCI registers: MODE, STATUS, BASS, CLOCKF, DECODE_TIME, AUDATA, WRAM, ...
     // DMA (0 ZX, 1 SD, 2 MP3)
     uint8_t dmaSelect = 0;
     bool dmaRunning[3] = {};
@@ -194,6 +215,8 @@ enum class GSCpuRegister : uint8_t
 {
     AF, BC, DE, HL, AFAlt, BCAlt, DEAlt, HLAlt, IX, IY, SP, PC, I, R, IM, IFF1, IFF2, MEMPTR
 };
+
+class GSStatsWriter;
 
 class GeneralSoundCard : public PortDevice, public ttd::TTDSerializable
 {
@@ -342,6 +365,10 @@ public:
     {
         return channel >= 0 && channel < kMaxHostChannels ? _hostGain[channel] : 32768;
     }
+
+    /// The card's own sections of the statistics block (gsslotstats.h), after the common ones: on the machine thread
+    /// at a frame end, or while the machine is paused
+    virtual void collectStats(GSStatsWriter& sections) const { (void)sections; }
 
     /// NeoGS extras (other cards: false / no-op)
     virtual bool neogsState(NeoGSStateInfo& out) const

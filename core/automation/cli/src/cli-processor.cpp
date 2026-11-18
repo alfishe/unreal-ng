@@ -127,6 +127,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"debug-wait", &CLIProcessor::HandleDebugWait},  // Long-poll on the debugger snapshot's seq
                         {"pchist", &CLIProcessor::HandlePcHistory},      // PC history with pages (PcHistory)
                         {"selected-cpu", &CLIProcessor::HandleSelectedCpu},  // The CPU front-ends show (CpuView::SetSelected)
+                        {"board", &CLIProcessor::HandleBoard},  // Device boards (DebugBoards)
+                        {"boards", &CLIProcessor::HandleBoard},
                         {"registers", &CLIProcessor::HandleRegisters},
                         {"debugmode", &CLIProcessor::HandleDebugMode},
 
@@ -719,6 +721,8 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  out <port> <value> - Write a port like a CPU OUT (paging, TS-Conf registers); no breakpoints, a TTD tool edit" << NEWLINE;
     oss << "  pchist [depth] | pchist on|off - PC history: the newest instructions with their window's page" << NEWLINE;
     oss << "  selected-cpu [main|gs|ms] - The CPU the front-ends show; a card shown follows the main CPU's steps" << NEWLINE;
+    oss << "  board [list] | board <id> [values] | board <id> <action> [arg] - Device boards (gs, neogs, neogs_dma, "
+           "neogs_sd, neogs_mp3, neogs_flash); neogs_sd insert <image|folder> / eject, neogs_flash save" << NEWLINE;
     oss << "  debug-wait [since] [--timeout ms] - Wait until something a debugger shows changes (a stop, a run start, an edit)" << NEWLINE;
     oss << "  registers     - Show CPU registers" << NEWLINE;
     oss << NEWLINE;

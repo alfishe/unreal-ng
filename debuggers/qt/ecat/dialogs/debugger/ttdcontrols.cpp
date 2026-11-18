@@ -7,6 +7,7 @@
 #include <QActionGroup>
 #include <QFileDialog>
 #include <QInputDialog>
+#include <QKeySequence>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMenu>
@@ -49,12 +50,17 @@ uint64_t frame_of(const QJsonValue &point)
 
 } // namespace
 
-TtdControls::TtdControls(QWidget * window, QToolBar * toolbar, Emulator * e, std::function<CPU *()> main_cpu)
-    : QObject(window), m_window(window), e(e), m_main_cpu(std::move(main_cpu))
+TtdControls::TtdControls(QWidget * window, QToolBar * toolbar, Emulator * e, std::function<CPU *()> main_cpu,
+                         std::function<CPU *()> current_cpu)
+    : QObject(window), m_window(window), e(e), m_main_cpu(std::move(main_cpu)), m_current_cpu(std::move(current_cpu))
 {
     confirm = [this](const QString &title, const QString &text) {
         return QMessageBox::question(m_window, title, text, QMessageBox::Yes | QMessageBox::No, QMessageBox::No) ==
                QMessageBox::Yes;
+    };
+    inform = [this](const QString &title, const QString &text, bool warning) {
+        if (warning) QMessageBox::warning(m_window, title, text);
+        else QMessageBox::information(m_window, title, text);
     };
 
     m_group.push_back(toolbar->addSeparator());
@@ -100,8 +106,7 @@ bool TtdControls::call(const std::string &verb, std::map<std::string, std::strin
     const Emulator::TtdAnswer a = e->ttd_call(verb, options);
     const QJsonObject o = QJsonDocument::fromJson(QByteArray::fromStdString(a.json)).object();
     if (out) *out = o;
-    if (!a.ok && !title.isEmpty())
-        QMessageBox::warning(m_window, title, o.value("message").toString(tr("The emulator did not answer.")));
+    if (!a.ok && !title.isEmpty() && inform) inform(title, o.value("message").toString(tr("The emulator did not answer.")), true);
     return a.ok;
 }
 
@@ -113,6 +118,7 @@ void TtdControls::poll(bool force)
     m_state.clear();
     m_branch_part.clear();
     m_fork_part.clear();
+    m_card_part.clear();
     m_branches.clear();
     m_branch_list = QJsonObject();
 
@@ -152,6 +158,14 @@ void TtdControls::poll(bool force)
             if (forks != 0)
                 m_fork_part = forks == 1 ? tr("fork here: 1 other future") : tr("fork here: %1 other futures").arg(forks);
         }
+
+        //The card CPUs (gs-debugger design §8): a card position names both CPUs whatever tab is in front; else the
+        //card in front says where it stands
+        for (const QJsonValue &v : m_position.value("cards").toArray())
+            if (v.toObject().value("card_position").toBool()) m_card_part = describe_card(v.toObject());
+        if (m_card_part.isEmpty())
+            if (const QString cpu = card_cpu(); !cpu.isEmpty())
+                if (const QJsonObject card = card_readout(cpu); !card.isEmpty()) m_card_part = describe_card(card);
     }
     set_shown(history);
     update_actions();
@@ -161,7 +175,7 @@ void TtdControls::poll(bool force)
 QString TtdControls::moment() const
 {
     QStringList parts;
-    for (const QString &p : {m_state, m_branch_part, m_fork_part})
+    for (const QString &p : {m_state, m_card_part, m_branch_part, m_fork_part})
         if (!p.isEmpty()) parts << p;
     return parts.join(QString(" ") + QChar(0x00B7) + " ");
 }
@@ -192,11 +206,33 @@ void TtdControls::update_actions()
     const bool at_start = detached && frame <= (uint64_t)m_status.value("session_start_frame").toInteger();
     CPU * cpu = m_main_cpu ? m_main_cpu() : nullptr;
     const bool any_breakpoint = cpu != nullptr && !cpu->get_breakpoints().empty();
+    //A card's tab in front: the back steps are the card's. The frame of the main CPU's start is no limit for them
+    //(the card may have run in it); the core answers at its first position (at_start)
+    const QString card = card_cpu();
+    const bool on_card = !card.isEmpty();
+    const QString shift_f7 = QKeySequence(Qt::SHIFT | Qt::Key_F7).toString(QKeySequence::NativeText);
+    const QString shift_f8 = QKeySequence(Qt::SHIFT | Qt::Key_F8).toString(QKeySequence::NativeText);
+    const QString shift_f9 = QKeySequence(Qt::SHIFT | Qt::Key_F9).toString(QKeySequence::NativeText);
 
-    m_step_back->setEnabled(live && !at_start);
-    m_step_over_back->setEnabled(live && !at_start);
+    m_step_back->setEnabled(live && (on_card || !at_start));
+    m_step_over_back->setEnabled(live && !at_start && !on_card);
     m_frame_back->setEnabled(live && !at_start);
-    m_run_back->setEnabled(live && !at_start && any_breakpoint);
+    //The card's breakpoints of any kind count for the card (the core refuses when none is active)
+    m_run_back->setEnabled(live && (on_card || (!at_start && any_breakpoint)));
+    if (on_card) {
+        m_step_back->setToolTip(tr("Step Back: one %1 instruction back in the recorded history (%2)").arg(card, shift_f7));
+        m_step_back->setStatusTip(tr("One %1 instruction back in the recorded history").arg(card));
+        m_step_over_back->setToolTip(tr("Step Over Back: the main CPU's only (the card steps back by instructions) (%1)")
+                                         .arg(shift_f8));
+        m_run_back->setToolTip(tr("Run Back: back to the previous hit of a %1 breakpoint (%2)").arg(card, shift_f9));
+        m_run_back->setStatusTip(tr("Back to the previous hit of a %1 breakpoint").arg(card));
+    } else {
+        m_step_back->setToolTip(tr("Step Back") + " (" + shift_f7 + ")");
+        m_step_back->setStatusTip(tr("One instruction back in the recorded history"));
+        m_step_over_back->setToolTip(tr("Step Over Back") + " (" + shift_f8 + ")");
+        m_run_back->setToolTip(tr("Run Back") + " (" + shift_f9 + ")");
+        m_run_back->setStatusTip(tr("Back to the last time a breakpoint's address ran"));
+    }
     //Records on from here: never while it records already (rule 7: only this button and Start Rec record)
     m_branch_here->setEnabled(live && !recording);
     const bool fork = detached && frame < end;
@@ -228,9 +264,94 @@ bool TtdControls::move(const std::string &verb, std::map<std::string, std::strin
     return true;
 }
 
+QString TtdControls::card_cpu() const
+{
+    CPU * current = m_current_cpu ? m_current_cpu() : nullptr;
+    CPU * main = m_main_cpu ? m_main_cpu() : nullptr;
+    if (current == nullptr || current == main) return QString();
+    //The adapters name a card's CPU as the surfaces do: "gs" (the General Sound slot, NeoGS too), "ms" (MultiSound)
+    const QString name = QString::fromStdString(current->name);
+    return (name == "gs" || name == "ms") ? name : QString();
+}
+
+QJsonObject TtdControls::card_readout(const QString &cpu) const
+{
+    for (const QJsonValue &v : m_position.value("cards").toArray())
+        if (v.toObject().value("cpu").toString() == cpu) return v.toObject();
+    return QJsonObject();
+}
+
+QString TtdControls::describe_card(const QJsonObject &card)
+{
+    const QString cpu = card.value("cpu").toString();
+    if (!card.value("known").toBool()) return tr("%1: no instruction counts in this recording").arg(cpu);
+    QString text = tr("%1 at instruction %2, PC %3")
+                       .arg(cpu)
+                       .arg((qulonglong)card.value("instruction").toInteger())
+                       .arg(hex4((unsigned int)card.value("pc").toInteger()));
+    if (!card.value("card_position").toBool()) return text;
+    //The main CPU at its last completed instruction; inside the next one by the T-states the card is ahead
+    const QJsonObject main = card.value("main").toObject();
+    const QString pc = hex4((unsigned int)main.value("pc").toInteger());
+    if (main.value("inside").toBool())
+        text += tr("; main CPU PC %1, +%2 T into the next instruction").arg(pc).arg(main.value("t_offset").toInteger());
+    else
+        text += tr("; main CPU PC %1, at its instruction boundary").arg(pc);
+    return text;
+}
+
+bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
+                            const QString &title)
+{
+    options["cpu"] = cpu.toStdString();
+    QJsonObject answer;
+    //A refusal (no card, no counts, no history, no breakpoints) is said here: its text is the core's
+    if (!call(verb, std::move(options), &answer)) {
+        m_last_result = title + ": " + answer.value("message").toString(tr("The emulator did not answer."));
+        if (inform) inform(title, answer.value("message").toString(tr("The emulator did not answer.")), true);
+        poll(true);
+        return false;
+    }
+    //An answer that moved nothing (at_start, at_end, no_hit): the machine stays where it was
+    if (!answer.value("reached").toBool()) {
+        m_last_result = title + ": " + answer.value("message").toString(tr("nothing moved"));
+        if (inform) inform(title, answer.value("message").toString(tr("Nothing moved.")), false);
+        poll(true);
+        return false;
+    }
+    const QJsonObject card = answer.value("card").toObject();
+    m_last_result = tr("%1: %2 at instruction %3 (from %4)")
+                        .arg(title, cpu)
+                        .arg((qulonglong)card.value("instruction").toInteger())
+                        .arg((qulonglong)answer.value("from").toInteger());
+    const QJsonObject hit = answer.value("breakpoint").toObject();
+    if (!hit.isEmpty())
+        m_last_result = tr("Run Back: %1 at the breakpoint %2 (instruction %3)")
+                            .arg(cpu, hex4((unsigned int)hit.value("address").toInteger()))
+                            .arg((qulonglong)card.value("instruction").toInteger());
+    poll(true);
+    emit moved();
+    return true;
+}
+
+bool TtdControls::step_forward()
+{
+    const QString card = card_cpu();
+    if (card.isEmpty() || !m_shown || !m_live) return false;
+    //In the past only (rule 3: forward actions there replay); live, the card's own step runs
+    poll(true);
+    if (!m_shown || m_status.value("state").toString() != "detached") return false;
+    card_move(card, "step-instruction", {{"dir", "forward"}}, tr("Step"));
+    return true;
+}
+
 void TtdControls::step_back()
 {
-    if (m_step_back->isEnabled()) move("step-instruction", {{"dir", "back"}}, tr("Step Back"));
+    if (!m_step_back->isEnabled()) return;
+    if (const QString card = card_cpu(); !card.isEmpty())
+        card_move(card, "step-instruction", {{"dir", "back"}}, tr("Step Back"));
+    else
+        move("step-instruction", {{"dir", "back"}}, tr("Step Back"));
 }
 
 void TtdControls::step_over_back()
@@ -246,6 +367,12 @@ void TtdControls::frame_back()
 void TtdControls::run_back()
 {
     if (!m_shown || !m_live) return;
+    //The card's: back to the previous hit of its own breakpoints (found by replay; their hit counts stay)
+    if (const QString card = card_cpu(); !card.isEmpty()) {
+        card_move(card, "reverse-continue", {}, tr("Run Back"));
+        update_actions();
+        return;
+    }
     CPU * cpu = m_main_cpu ? m_main_cpu() : nullptr;
     std::vector<unsigned int> addresses = cpu ? cpu->get_breakpoints() : std::vector<unsigned int>{};
     std::sort(addresses.begin(), addresses.end());
@@ -254,7 +381,7 @@ void TtdControls::run_back()
     QStringList pcs;
     for (unsigned int a : addresses) pcs << hex4(a);
     if (pcs.isEmpty()) {
-        QMessageBox::information(m_window, tr("Run Back"), tr("Run Back stops at the breakpoints: there is none."));
+        if (inform) inform(tr("Run Back"), tr("Run Back stops at the breakpoints: there is none."), false);
         return;
     }
     //Not found: the machine stays where it is and the answer says so (matched false)
@@ -264,7 +391,7 @@ void TtdControls::run_back()
         m_last_result = tr("Run Back: at the breakpoint %1").arg(hex4((unsigned int)answer.value("pc").toInteger()));
     else {
         m_last_result = tr("Run Back: no breakpoint was reached earlier in the history");
-        QMessageBox::information(m_window, tr("Run Back"), m_last_result);
+        if (inform) inform(tr("Run Back"), m_last_result, false);
     }
     update_actions();
 }

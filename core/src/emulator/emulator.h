@@ -242,6 +242,10 @@ public:
             Watch,        ///< an armed frame watch held at a frame end (framewatch::Manager::LastPause says which)
         } reason = Reason::None;
         BreakpointStop breakpoint;
+        /// The stop's number: one more at every stop. An event that comes after it without a stop of its own (a
+        /// time travel move, an edit, a late delivery of the stop's own event) finds it unchanged: a debugger brings
+        /// a processor's view to the front once per stop, not once per event
+        uint64_t serial = 0;
     };
 
 private:

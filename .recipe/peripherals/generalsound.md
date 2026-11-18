@@ -100,6 +100,21 @@ command, the parameters and replies due, an upload's bytes) while the command lo
 (`device_history {"action":"config","device":"zxbus.1.commands","mode":"ring"}`; off: "no protocol
 state").
 
+The card's hardware as boards: `inspect_state {"aspects":["boards"]}` lists them (`gs` on the classic card;
+`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`, `neogs_flash` on NeoGS), `{"aspects":["board.neogs"]}` reads one
+control by control (GSCFG0 and SSTAT bits named, pages, clock, channels, interrupts, mailbox). The SD card through its
+board: `emulator_manage {"action":"board_action","board":"neogs_sd","operation":"insert","path":"<image or folder>"}`
+(`operation` `eject`; board `neogs_flash`, operation `save`); `media {"action":"list"}` shows it in `sd.ngs`. WebAPI
+`GET /debug/boards/{id}?values=1` gives `{values: {control: value}}` for polling.
+
+What the card did, as counters: `inspect_state {"aspects":["audio_gs_stats"]}` (or `audio_gs_stats.mailbox`,
+`.dma`, `.sd`, `.errors`, `.rates`...): both mailbox sides (`host_commands` vs `card_commands_read` /
+`card_command_acks`, `command_overwrites` = a command written over an unread one), interrupts, on NeoGS every DMA
+transaction, SD commands by index and errors, MP3 drops and resyncs, flash programs; `errors.total` is the one number
+to watch. For "how many during this action": `emulator_manage {"action":"gs_reset_counters"}` returns a baseline,
+then read with `"gs_stats_since": <baseline>`. Rates (`commands`, `zx_dma_bytes`, `cpu_steps` per second) need the
+machine running; add `"gs_stats_fresh": true` for a block from after the call.
+
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on
 activity counters (CPU steps, interrupts, DAC pushes) plus the last `limit`

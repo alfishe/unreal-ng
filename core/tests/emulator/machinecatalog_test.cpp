@@ -7,6 +7,8 @@
 #include <string>
 
 #include "emulator/config.h"
+#include "emulator/emulator.h"
+#include "emulator/emulatormanager.h"
 #include "emulator/machinecatalog.h"
 #include "emulator/machinevariants.h"
 #include "emulator/platform.h"
@@ -88,4 +90,24 @@ TEST(MachineCatalog_Test, TheMenuTreeHoldsOnlyCreatableMachines)
     }
     EXPECT_EQ(FamilyOfIn(menu, "PENTAGON"), "pentagon");
     EXPECT_EQ(FamilyOfIn(menu, "KAY"), "") << "no port decoder or config folder yet";
+}
+
+TEST(MachineCatalog_Test, TitleOfNamesTheRunningConfiguration)
+{
+    // What the Machine menu's read-only entry, the window title and the handheld Model row show
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    std::string error;
+    auto atm = manager->CreateEmulatorWithModelAndRAM("catalog-title", "ATM710", 512, LoggerLevel::LogError, &error);
+    ASSERT_NE(atm, nullptr) << error;
+    EXPECT_EQ(MachineCatalog::TitleOf(*atm), "ATM-Turbo 2+ v7.10 512K") << "a machine of several RAM sizes names its size";
+    manager->RemoveEmulator(atm->GetUUID());
+
+    auto spectrum = manager->CreateEmulatorWithModel("catalog-title", "48K", LoggerLevel::LogError, &error);
+    ASSERT_NE(spectrum, nullptr) << error;
+    const MachinePlace place = MachineCatalog::Locate(MachineCatalog::All(), "48K");
+    ASSERT_GE(place.family, 0);
+    EXPECT_EQ(MachineCatalog::TitleOf(*spectrum),
+              MachineCatalog::All()[static_cast<size_t>(place.family)].machines[static_cast<size_t>(place.machine)].title)
+        << "one RAM size: the title alone";
+    manager->RemoveEmulator(spectrum->GetUUID());
 }

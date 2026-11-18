@@ -116,6 +116,8 @@ void Flash29F040B::finishIfDone(int64_t now)
             _modified = true;
             _changes++;
             _mode = ((old & _programValue) != _programValue) ? Mode::Failed : Mode::Read;
+            _counters.bytesProgrammed++;
+            _counters.programFailures += _mode == Mode::Failed ? 1 : 0;
         }
     }
 }
@@ -242,6 +244,7 @@ void Flash29F040B::write(uint32_t offset, uint8_t value, int64_t now)
         case Mode::EraseUnlock2:
             if (value == 0x10 && low == kUnlockAddr1)
             {
+                _counters.chipErases++;
                 _eraseSectors = 0xFF;
                 _erasing = true;
                 _statusData = 0;
@@ -251,6 +254,7 @@ void Flash29F040B::write(uint32_t offset, uint8_t value, int64_t now)
             }
             if (value == 0x30)
             {
+                _counters.sectorsErased++;
                 _eraseSectors = static_cast<uint8_t>(1u << (offset / SECTOR_SIZE));
                 _erasing = true;
                 _statusData = 0;
@@ -266,7 +270,9 @@ void Flash29F040B::write(uint32_t offset, uint8_t value, int64_t now)
             // ignored here (erase suspend is not modelled - nothing uses it)
             if (value == 0x30)
             {
-                _eraseSectors |= static_cast<uint8_t>(1u << (offset / SECTOR_SIZE));
+                const uint8_t bit = static_cast<uint8_t>(1u << (offset / SECTOR_SIZE));
+                _counters.sectorsErased += (_eraseSectors & bit) ? 0 : 1;
+                _eraseSectors |= bit;
                 _windowEnd = now + static_cast<int64_t>(kEraseWindowSeconds * _unitsPerSecond);
             }
             return;

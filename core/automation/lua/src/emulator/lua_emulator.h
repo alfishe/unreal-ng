@@ -26,6 +26,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include <algorithm>
 #include <sol/sol.hpp>
@@ -72,6 +73,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include "../../../temporalstatus.h"
 #include "emulator/video/viewportcontrol.h"
@@ -5984,9 +5986,41 @@ public:
             }
             return StateNodeToLua(s, GSSend(ctx, request, 0).body);
         });
+        // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards;
+        // a refused read or action is {error = ...}
+        lua.set_function("boards", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::List(ctx).body["boards"]);
+        });
+        lua.set_function("board", [this](sol::this_state s, const std::string& id, sol::optional<bool> values) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::Read(ctx, id, values.value_or(false)).body);
+        });
+        lua.set_function("board_action", [this](sol::this_state s, const std::string& id, const std::string& action,
+                                                sol::optional<std::string> arg) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            return StateNodeToLua(s, DebugBoards::Action(ctx, id, action, arg.value_or("")).body);
+        });
         lua.set_function("gs_conversation", [this](sol::this_state s, sol::optional<uint32_t> id) -> sol::object {
             EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
             return StateNodeToLua(s, GSConversationRead(ctx, id.value_or(0)).body);
+        });
+        // The GS slot's statistics (gsslotstats.h, gs-debugger N7): the block or one section, counters since a
+        // baseline; a running machine answers from the next frame end (at most 500 ms; {error} after that)
+        lua.set_function("gs_stats", [this](sol::this_state s, sol::optional<std::string> section,
+                                            sol::optional<uint32_t> since) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSStatsQuery query;
+            query.section = section.value_or("");
+            query.since = since.value_or(0);
+            query.waitMs = 500;
+            return StateNodeToLua(s, GSStatsRead(ctx, query).body);
+        });
+        lua.set_function("gs_reset_counters", [this](sol::this_state s) -> sol::object {
+            EmulatorContext* ctx = effectiveEmulator() ? effectiveEmulator()->GetContext() : nullptr;
+            GSStatsQuery query;
+            query.waitMs = 500;
+            return StateNodeToLua(s, GSStatsResetCounters(ctx, query).body);
         });
 
         // Reads are peeks: no host read cycle (read_data leaves status bit 7

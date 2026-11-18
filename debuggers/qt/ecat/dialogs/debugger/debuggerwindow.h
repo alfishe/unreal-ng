@@ -51,6 +51,9 @@ public:
     double zoom() const;
     //The processor whose tab is in front
     CPU * current_cpu();
+    //The last stop the window has taken (not in ecat): its number (Emulator::debug_stop_serial). A stop brings its
+    //processor's tab to the front once, when the window takes it; the events after it leave the tab alone
+    uint64_t taken_stop() const { return m_stop_serial; }
 
     //The GUI control plane's way in (guiplane/, not in ecat): the listing and the dump of the processor in front;
     //shown: the dump's tab in front
@@ -137,6 +140,7 @@ private:
     TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
     bool m_paused;
+    uint64_t m_stop_serial = 0;
     bool m_online = true;
     bool follow_online();
     AddressRouter * m_router;

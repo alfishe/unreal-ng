@@ -16,6 +16,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
@@ -63,6 +64,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -5645,6 +5647,60 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
+            // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
+            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since) -> py::object {
+                GSStatsQuery query;
+                query.section = section;
+                query.since = since;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release; // a running machine answers from the next frame end
+                    reply = GSStatsRead(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The GS slot's statistics: the block or one section (card, mailbox, interrupts, cpu, audio, dma, spi, sd, "
+               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters", py::arg("section") = "",
+               py::arg("since") = 0)
+            .def("gs_reset_counters", [](Emulator& self) -> py::object {
+                GSStatsQuery query;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = GSStatsResetCounters(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
+            // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards
+            .def("boards", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DebugBoards::List(self.GetContext()).body["boards"]);
+            }, "The device boards the machine has now: [{id, title, device, cpu, available, actions}]")
+            .def("board", [](Emulator& self, const std::string& id, bool values) -> py::object {
+                const DebugBoardReply reply = DebugBoards::Read(self.GetContext(), id, values);
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "One device board: its layout and values (values=True: {id, available, values})", py::arg("id"),
+               py::arg("values") = false)
+            .def("board_action", [](Emulator& self, const std::string& id, const std::string& action,
+                                    const std::string& arg) -> py::object {
+                const DebugBoardReply reply = DebugBoards::Action(self.GetContext(), id, action, arg);
+                if (reply.status == 400 || reply.status == 404)
+                    throw py::value_error(reply.text);
+                if (reply.status != 200)
+                    throw std::runtime_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A board's action: neogs_sd insert <image or folder> / eject (the media manager's slot sd.ngs), "
+               "neogs_flash save", py::arg("id"), py::arg("action"), py::arg("arg") = std::string())
             .def("gs_read_data", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;

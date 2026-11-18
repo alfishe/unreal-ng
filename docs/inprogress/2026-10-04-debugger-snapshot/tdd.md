@@ -99,7 +99,7 @@ rendered from the same bytes.
 | `seq` | grows by one at every stop, run start and tool edit of this emulator; equal `seq` = nothing changed | new counter in `Emulator` |
 | `cpu` | `z80` (the field exists so the sound card CPUs can be added later without breaking clients) | - |
 | `state` | `paused` \| `running` | `Emulator::IsPaused` |
-| `pause` | why it stopped last: `pause`, `breakpoint` (+ `breakpoint_id`), `step` | the last `PauseEvent` (protocol §3.16) |
+| `pause` | why it stopped last: `pause`, `breakpoint` (+ `breakpoint_id`), `step`; `serial` grows by one at every stop (not at a run start, a tool edit or a time travel move): a client that sees it unchanged has taken this stop already | the last `PauseEvent` (protocol §3.16) |
 | `consistency` | `paused` (read while parked) or `frame` (read at a frame boundary of a running machine) | §4.3 |
 | `regs` | exactly the `GET /registers` object | shared builder, §4.4 |
 | `prev_regs` | the registers at the previous stop, for "what changed" highlighting | §4.5 |
