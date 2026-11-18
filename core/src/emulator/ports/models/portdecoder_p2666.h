@@ -135,6 +135,9 @@ public:
     P2666Audio& GetAudio() { return *_audio; }
     /// The Beta Disk emulator on the RAM disk (HR §5.6, P4 default); null with [P2666] BetaDisk=wd1793 (path A)
     P2666BetaDisk* GetRamDisk() { return _ramDisk ? &_beta : nullptr; }
+    const P2666BetaDisk* GetRamDisk() const { return _ramDisk ? &_beta : nullptr; }
+    /// mainclk edges now: the time the RAM-disk controller's status is read at (reports)
+    uint64_t BoardEdge() const { return Edge(); }
     /// The FPGA's UART on #F8EF..#FFEF (HR §5.7): the machine's serial port, its INT ANDed into the frame INT
     P2666Uart& GetUart() { return _uart; }
     const P2666Uart& GetUart() const { return _uart; }

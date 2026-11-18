@@ -36,6 +36,27 @@ void P2666BetaDisk::ResetRegisters()
 
 /// endregion
 
+/// region <State (reports)>
+
+const char* P2666BetaDisk::Phase() const
+{
+    if (_restore)
+        return "restore";
+    if (_seek)
+        return "seek";
+    if (_step)
+        return "step";
+    if (_readAddr)
+        return "read address";
+    if (_read)
+        return _trackCmd ? "read track" : "read sector";
+    if (_write)
+        return _trackCmd ? "write track" : "write sector";
+    return "idle";
+}
+
+/// endregion
+
 /// region <The controller's time>
 
 bool P2666BetaDisk::IndexPulse(uint64_t edge) const

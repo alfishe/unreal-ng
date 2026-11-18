@@ -69,6 +69,15 @@ public:
     uint8_t Position() const { return _position; }
     bool Intrq() const { return _intrq; }
     bool Drq() const { return _drq; }
+    uint8_t Command() const { return _command; }
+    uint8_t Data() const { return _data; }
+    /// The status register as a read at `edge` would return it, without running the controller or clearing INTRQ
+    uint8_t StatusAt(uint64_t edge) const { return Status(edge); }
+    /// What the controller is doing: restore, seek, step, read address, read sector / track, write sector / track
+    /// while the flag of that command is set (read / write stay set after the data phase, as in the VHDL), else idle
+    const char* Phase() const;
+    /// A type I command (or none) is the last: status bits 1 and 2 are index and track 0, else DRQ and lost data
+    bool TypeIStatus() const { return !(_readAddr || _read || _write); }
     /// endregion
 
 private:

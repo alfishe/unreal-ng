@@ -41,7 +41,10 @@ struct Options;
 ///   motor, write protect, geometry). +3 uPD765A (`controller` says which):
 ///   phase, main status register, the command in hand with its C H R N,
 ///   result bytes, ST0-ST2 decoded, SPECIFY times, the four units' cylinder
-///   and seek state, and drives A and B.
+///   and seek state, and drives A and B. Pentagon 2.666 LE (no floppy
+///   controller): its FPGA's WD1793 imitation on the RAM disk - registers,
+///   status bits, the command in hand, the system register, the head, the
+///   RAM disk's pages and drive A.
 struct NextRegJournalQuery;  // emulator/io/z80n/nextregjournal.h
 struct NextSdJournalQuery;   // emulator/io/z80n/nextsdjournal.h
 struct NextDivMmcJournalQuery;  // emulator/io/z80n/nextdivmmcjournal.h

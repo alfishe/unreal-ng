@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Pentagon 2.666 LE: the model in create, the `p2666` node of inspect_state paging (Gluk's clock,
-the window map), a snapshot load into the board's Pentagon 128 form, and the machine resource. The values are
+the window map), the disk controller (the RAM-disk Beta Disk), a snapshot load into the board's Pentagon 128 form, and the machine resource. The values are
 asserted by the core tests (P2666Snapshot_Test, P2666Ttd_Test); this checks what only the live MCP shows."""
 
 import os
@@ -19,6 +19,15 @@ def test_create_and_paging_node(s):
         expect(key in r.text, 'the node names ' + key, r.text[:3000])
     # fresh_machine runs 100 frames: Gluk has set its own clock by then (its CMOS setting), whichever of the three
     expect(any('cpu_mhz %s,' % mhz in r.text for mhz in ('3.5', '14', '28')), 'the clock in the text', r.text[:3000])
+
+
+def test_fdc_is_the_ram_disk_beta_disk(s):
+    # No floppy controller on the board: the report is the FPGA's WD1793 imitation on the RAM disk
+    s.fresh_machine('P2666')
+    r = s.call('inspect_state', {'aspects': ['fdc']})
+    expect('P2666 Beta Disk emulator' in r.text, 'the RAM-disk controller, not the WD1793', r.text[:2000])
+    for key in ('system_register', 'ram_disk', 'phase'):
+        expect(key in r.text, 'the report names ' + key, r.text[:2000])
 
 
 def test_snapshot_loads_as_a_pentagon_128(s):

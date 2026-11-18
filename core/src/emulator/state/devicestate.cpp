@@ -27,6 +27,7 @@
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
@@ -418,6 +419,64 @@ StateNode BytesArray(const uint8_t* bytes, size_t count)
 }
 
 /// NEC uPD765A (+3): phase, main status, the command in hand, status bytes, SPECIFY times, units, drives
+/// The Pentagon 2.666 LE's Beta Disk emulator (betadisk.vhd): the WD1793 registers as the CPU reads them, the
+/// command in hand, the system register, the head, and drive A (the image the RAM disk holds)
+StateNode P2666BetaDiskNode(EmulatorContext* context, const P2666BetaDisk& fdc, uint64_t edge)
+{
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["controller"] = "P2666 Beta Disk emulator (WD1793 imitation on the RAM disk)";
+
+    const uint8_t status = fdc.StatusAt(edge);
+    StateNode regs = StateNode::Object();
+    regs["command"] = int(fdc.Command());
+    regs["track"] = int(fdc.Track());
+    regs["sector"] = int(fdc.Sector());
+    regs["data"] = int(fdc.Data());
+    regs["status"] = int(status);
+    ret["registers"] = regs;
+
+    // betadisk.vhd:169-177: never not ready, write protected, record not found, CRC error or lost data
+    const bool type1 = fdc.TypeIStatus();
+    StateNode sb = StateNode::Object();
+    sb["busy"] = (status & 0x01) != 0;
+    if (type1)
+    {
+        sb["index"] = (status & 0x02) != 0;
+        sb["track0"] = (status & 0x04) != 0;
+        sb["head_loaded"] = (status & 0x20) != 0;
+    }
+    else
+        sb["drq"] = (status & 0x02) != 0;
+    ret["status_bits"] = sb;
+
+    ret["phase"] = fdc.Phase();
+    StateNode sig = StateNode::Object();
+    sig["intrq"] = fdc.Intrq();
+    sig["drq"] = fdc.Drq();
+    ret["signals"] = sig;
+
+    // betadisk_reg (#FF in DOS): drive 1..0 (only A = 00 takes commands), reset 2 (0 = held), side 4 (1 = side 0)
+    const uint8_t system = fdc.System();
+    StateNode sys = StateNode::Object();
+    sys["value"] = int(system);
+    sys["drive"] = int(system & 0x03);
+    sys["reset_held"] = (system & 0x04) == 0;
+    sys["side"] = (system & 0x10) ? 0 : 1;
+    ret["system_register"] = sys;
+    ret["selected_drive"] = int(system & 0x03);
+    ret["head_cylinder"] = int(fdc.Position());
+
+    StateNode ram = StateNode::Object();
+    ram["first_page"] = int(P2666BetaDisk::kFirstPage);
+    ram["last_page"] = int(P2666BetaDisk::kLastPage);
+    ram["order"] = "cylinder 0 in the last page, downwards";
+    ret["ram_disk"] = ram;
+
+    ret["drives"] = DrivesNode(context, 1);
+    return ret;
+}
+
 StateNode Upd765Node(EmulatorContext* context, const UPD765& fdc)
 {
     const UPD765::Snapshot s = fdc.getSnapshot();
@@ -1323,6 +1382,13 @@ StateNode Fdc(EmulatorContext* context)
     // The +3 has its own controller; the WD1793 object exists on every model but is not wired there
     if (context && context->pUPD765)
         return Upd765Node(context, *context->pUPD765);
+    // The Pentagon 2.666 LE has no floppy controller: its FPGA imitates a WD1793 over the RAM disk (unless
+    // [P2666] BetaDisk=wd1793 wires the WD1793 instead)
+    if (const auto* p2666 = context ? dynamic_cast<const PortDecoderP2666*>(context->pPortDecoder) : nullptr)
+    {
+        if (const P2666BetaDisk* ramDisk = p2666->GetRamDisk())
+            return P2666BetaDiskNode(context, *ramDisk, p2666->BoardEdge());
+    }
 
     const WD1793* fdc = context ? context->pBetaDisk : nullptr;  // const: picks the register getters, not the computing overloads
     if (!fdc)
