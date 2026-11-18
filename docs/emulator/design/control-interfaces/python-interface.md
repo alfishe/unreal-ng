@@ -1712,6 +1712,16 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
 
+# On a sound card's CPU ('gs' / 'neogs', 'ms' / 'multisound'; command-interface.md -> TTD on a sound card's CPU):
+# the TTDControl reply as a dict (cpu, status, reached, from, target, card, frame, tinframe, ...)
+emu.ttd_card_seek('gs', 123456)            # the card at its instruction count; the main CPU follows by replay
+emu.ttd_card_step('gs', -5)                # 5 card instructions back (positive: forward; default 1)
+emu.ttd_card_reverse_continue('gs', max_frames=200)  # back to the card's previous breakpoint hit
+emu.ttd_card_position('gs')                # {'cpu', 'known', 'instruction', 'pc', 'card_position', 'caught_up',
+                                           #  'main': {'frame', 'tinframe', 'pc', 't_offset', 'inside'}}; None: no card
+emu.ttd_card_position()                    # every card CPU (a list)
+# An unknown cpu raises ValueError; a refused move answers {'ok': False, 'error': ...}
+
 # One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
 hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
 # {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],

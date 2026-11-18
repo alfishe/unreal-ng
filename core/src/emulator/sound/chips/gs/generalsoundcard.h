@@ -503,6 +503,17 @@ public:
     virtual const GSActivityCounters& getActivityCounters() const = 0;
     virtual void resetActivityCounters() = 0;
 
+    /// The card CPU's instruction count, a part of the card's state (TTD card positions, design §8 of
+    /// docs/inprogress/2026-09-27-gs-debugger/design.md): the instructions the card has run, the idle sleep's included.
+    /// It is the always-on cpuSteps counter plus an offset that keeps it apart from the counters' resets and folds, so
+    /// it costs nothing per instruction. The TTD blob carries it; after a blob without it (a recording made before)
+    /// it is unknown. False: unknown, or a card without a CPU (the lightweight personality)
+    virtual bool cardInstructionCount(uint64_t& count) const
+    {
+        (void)count;
+        return false;
+    }
+
     /// Structured event trace (host ports, card-side activity, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session
     /// model but scoped to this card. See gsporttrace.h.

@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "debugger/targets/debugcpuid.h"
 #include "debugger/ttd/timetravelhooks.h"
 #include "ttdcheckpoint.h"
 #include "ttdcoverageindex.h"
@@ -746,4 +747,71 @@ struct TTDReverseStepOverResult
     TTDTimePoint arrivedAt{};         ///< moved: the moment it stands at
     TTDExternalEvent blockingMarker{};   ///< callOutOfReach because of a barrier: the marker
 };
+
+/// @brief Where a sound card's CPU stands in a session (gs-debugger design §8, owner decision 2026-11-17).
+///
+/// A card position: the card has run `instruction` instructions and stands at the boundary of the next one. The
+/// main CPU is then shown at its last instruction boundary at or before the card's moment (`mainBoundary`, its
+/// registers those there) and `tOffset` T-states into the instruction it runs (`mainPc`); a run from there lets
+/// that instruction finish first. Without a card position (a main one) the card is where its lazy run left it
+/// (`caughtUp` false: it may stand behind the main CPU; a card step first runs it up to the main CPU's moment).
+struct TTDCardPosition
+{
+    bool known = false;               ///< the card has a CPU and an instruction count
+    DebugCpuId cpu = DebugCpuId::GS;
+    bool cardPosition = false;        ///< the machine stands at a card position (a card seek or step put it there)
+    uint64_t instruction = 0;         ///< card instructions run (GeneralSoundCard::cardInstructionCount)
+    uint16_t pc = 0;                  ///< the card's next instruction
+    int64_t cardTime = 0;             ///< in the card's unit
+    bool caughtUp = false;            ///< the card stands at the main CPU's moment (a card position always does)
+    TTDTimePoint mainBoundary{};      ///< the main CPU's last instruction boundary (where it stands)
+    uint16_t mainPc = 0;              ///< the main instruction the card's moment is in (cardPosition)
+    uint32_t tOffset = 0;             ///< main T-states from mainBoundary to the card's moment (rounded)
+    bool inside = false;              ///< the card's moment lies inside that instruction (tOffset > 0)
+};
+
+/// @brief What a card seek, card step or card reverse continue did (TimeTravelController::SeekToCardInstruction,
+/// StepCardInstructions, ReverseContinueCard).
+struct TTDCardMoveResult
+{
+    enum class Status : uint8_t
+    {
+        Ok,
+        NoCard,          ///< no card with a CPU for that target
+        NoCount,         ///< the recording has no card instruction counts (made before them)
+        NoHistory,       ///< no recorded history
+        AtStart,         ///< before the earliest card position the history holds
+        AtEnd,           ///< past the session's end (the live end)
+        NoBreakpoints,   ///< reverse continue: the card CPU has no active stopping breakpoint
+        NoHit,           ///< reverse continue: no hit in the frames searched (the machine stayed)
+        Failed,          ///< the replay did not reach the instruction (named in message)
+    };
+    Status status = Status::Failed;
+    std::string message;              ///< why not (status != Ok)
+    uint64_t from = 0;                ///< the card's count where the move started
+    uint64_t target = 0;              ///< the count asked for
+    TTDCardPosition position;         ///< where the machine stands after it (moved or not)
+    uint64_t searchedFrames = 0;      ///< reverse continue: frames replayed
+    bool truncated = false;           ///< reverse continue: stopped at max_frames with older history left
+    uint16_t breakpointId = 0xFFFF;   ///< reverse continue: the hit's breakpoint
+    uint8_t hitKind = 0;              ///< BreakpointHitKind of the hit
+    uint16_t hitAddress = 0;          ///< the hit's PC, memory address, port or event kind
+    bool Ok() const { return status == Status::Ok; }
+};
+
+inline const char* TTDCardMoveStatusName(TTDCardMoveResult::Status status)
+{
+    switch (status)
+    {
+        case TTDCardMoveResult::Status::Ok: return "ok";
+        case TTDCardMoveResult::Status::NoCard: return "no_card";
+        case TTDCardMoveResult::Status::NoCount: return "no_count";
+        case TTDCardMoveResult::Status::NoHistory: return "no_history";
+        case TTDCardMoveResult::Status::AtStart: return "at_start";
+        case TTDCardMoveResult::Status::AtEnd: return "at_end";
+        case TTDCardMoveResult::Status::NoBreakpoints: return "no_breakpoints";
+        case TTDCardMoveResult::Status::NoHit: return "no_hit";
+        default: return "failed";
+    }
+}
 }  // namespace ttd

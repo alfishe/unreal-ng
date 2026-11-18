@@ -4314,6 +4314,149 @@ TEST_F(McpTools_Test, TimeTravel_ReverseStepOver_PostsTheVerbAndSaysWhatItDid)
     EXPECT_NE(result.text.find("12"), std::string::npos) << result.text;
 }
 
+/// A card move's reply as the WebAPI answers it (TTDControl CardMove)
+static Json::Value CardMoveReply(bool reached, const char* status, uint64_t from, uint64_t target)
+{
+    Json::Value reply;
+    reply["cpu"] = "gs";
+    reply["status"] = status;
+    reply["reached"] = reached;
+    reply["from"] = static_cast<Json::UInt64>(from);
+    reply["target"] = static_cast<Json::UInt64>(target);
+    if (!reached)
+        reply["message"] = "card instruction 3 is before the history: it starts at card instruction 900";
+    reply["card"]["cpu"] = "gs";
+    reply["card"]["known"] = true;
+    reply["card"]["instruction"] = static_cast<Json::UInt64>(reached ? target : from);
+    reply["card"]["pc"] = 0x0A3C;
+    reply["card"]["card_position"] = true;
+    reply["card"]["caught_up"] = true;
+    reply["card"]["main"]["frame"] = 12;
+    reply["card"]["main"]["tinframe"] = 30411;
+    reply["card"]["main"]["pc"] = 0x8009;
+    reply["card"]["main"]["t_offset"] = 7;
+    reply["card"]["main"]["inside"] = true;
+    reply["frame"] = 12;
+    reply["tinframe"] = 30411;
+    return reply;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardSeek_PostsCpuAndInstructionAndSaysWhereBothCpusStand)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {200, CardMoveReply(true, "ok", 1000, 1205)};
+
+    Json::Value missing;
+    missing["action"] = "card_seek";
+    missing["instruction"] = 1205;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "cpu is required";
+    Json::Value noInstruction;
+    noInstruction["action"] = "card_seek";
+    noInstruction["cpu"] = "gs";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", noInstruction, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value args;
+    args["action"] = "card_seek";
+    args["cpu"] = "gs";
+    args["instruction"] = 1205;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs");
+    EXPECT_EQ(call->body["instruction"].asUInt64(), 1205u);
+    EXPECT_FALSE(call->body.isMember("frame"));
+    // An agent may read only the text: the card's instruction and PC, the main CPU's boundary and offset
+    EXPECT_NE(result.text.find("gs at card instruction 1205 (from 1000)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x0A3C"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x8009"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("7 T into its next instruction"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardStep_ANegativeCountStepsBack)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, CardMoveReply(true, "ok", 1205, 1200)};
+    Json::Value zero;
+    zero["action"] = "card_step";
+    zero["cpu"] = "gs";
+    zero["count"] = 0;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", zero, *_caller).isError);
+
+    Json::Value args;
+    args["action"] = "card_step";
+    args["cpu"] = "neogs";
+    args["count"] = -5;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "neogs");
+    EXPECT_EQ(call->body["dir"].asString(), "back");
+    EXPECT_EQ(call->body["count"].asUInt64(), 5u);
+
+    Json::Value one;
+    one["action"] = "card_step";
+    one["cpu"] = "gs";
+    ASSERT_FALSE(RunTool(*_registry, "time_travel", one, *_caller).isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    EXPECT_EQ(call->body["dir"].asString(), "forward");
+    EXPECT_EQ(call->body["count"].asUInt64(), 1u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardReverseContinue_NoHitIsAnErrorTheModelReads)
+{
+    Json::Value reply = CardMoveReply(false, "no_hit", 1205, 0);
+    reply["message"] = "no hit of cpu gs's breakpoints before card instruction 1205 in the history";
+    reply["searched_frames"] = 7;
+    reply["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "card_reverse_continue";
+    args["cpu"] = "gs";
+    args["max_frames"] = 50;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["max_frames"].asUInt64(), 50u);
+    EXPECT_FALSE(call->body.isMember("pcs"));
+    EXPECT_NE(result.text.find("did not move (no_hit)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("searched 7 frame(s)"), std::string::npos) << result.text;
+
+    Json::Value hit = CardMoveReply(true, "ok", 1205, 1100);
+    hit["breakpoint"]["id"] = 3;
+    hit["breakpoint"]["kind"] = "execute";
+    hit["breakpoint"]["address"] = 0x0A3C;
+    hit["searched_frames"] = 1;
+    hit["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, hit};
+    const mcp::ToolResult found = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(found.isError) << found.text;
+    EXPECT_NE(found.text.find("breakpoint 3 (execute 0x0A3C)"), std::string::npos) << found.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardPosition_ReadsThePositionsCards)
+{
+    Json::Value position;
+    position["current"]["frame"] = 12;
+    position["current"]["tinframe"] = 30411;
+    position["state"] = "detached";
+    position["cards"].append(CardMoveReply(true, "ok", 0, 1205)["card"]);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/position"] = {200, position};
+
+    Json::Value args;
+    args["action"] = "card_position";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Card gs: instruction 1205, PC 0x0A3C (card position"), std::string::npos) << result.text;
+
+    args["cpu"] = "multisound";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("No card CPU 'multisound'"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)
 {
     Json::Value reply;

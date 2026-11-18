@@ -306,7 +306,10 @@
         "response carries halt_reason=\"external_event\" and a blocking_marker "
         "payload describing the barrier (a bookmark never is one). Use resume "
         "to continue past a barrier by truncating history at the current "
-        "position.";
+        "position. With cpu naming a sound card's CPU (gs, neogs, ms, "
+        "multisound) and instruction, the machine stands at that card "
+        "instruction instead (a TTDCardMoveResponse; the same cpu option "
+        "works on step-instruction, reverse-step and reverse-continue).";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/seek"]["post"]["parameters"][0]["required"] = true;
@@ -1086,7 +1089,10 @@
         "point; matched=false when no PC in the list was visited. A blocking "
         "external-event marker may also short-circuit the scan; the response then "
         "carries blocked_by_marker {kind, reason, frame, tinframe}. pcs entries "
-        "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\").";
+        "may be numbers or strings (decimal, \"0x..\", \"#..\", \"$..\"). "
+        "With cpu naming a sound card's CPU (and no pcs): back to that card's "
+        "previous hit of its own breakpoints (a TTDCardMoveResponse; status "
+        "no_hit when there is none within max_frames).";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/reverse-continue"]["post"]["parameters"][0]["required"] = true;

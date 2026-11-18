@@ -418,6 +418,20 @@ inline ttd::TTDReply TtdRunPy(Emulator& self, const std::string& verb, std::map<
     return ttd::TTDControl(self.GetContext()).Execute({verb, std::move(options)});
 }
 
+/// A card move's reply as a script sees it: the body; a refusal with ok False and error; a bad request raises
+inline pybind11::object TtdCardReplyPy(const ttd::TTDReply& reply)
+{
+    if (reply.error == ttd::TTDControlError::BadRequest)
+        throw pybind11::value_error(reply.message);
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
+}
+
 /// The reply's body; a failure raises RuntimeError with the message, as the bindings always did
 inline const StateNode& TtdBodyOrThrow(const ttd::TTDReply& reply)
 {
@@ -7072,6 +7086,47 @@ namespace PythonBindings
                "limit, before_frame / before_tin or before "
                "(at or before), from_frame (not older)",
                py::arg("pcs"))
+
+            // Positions on a sound card's CPU (gs-debugger design §8): cpu "gs" / "neogs" / "ms" / "multisound"; the
+            // main CPU follows by replay. Each returns the move's reply dict (status, reached, from, target, card);
+            // a refusal has ok False and error; an unknown cpu or a bad value raises ValueError
+            .def("ttd_card_seek", [](Emulator& self, const std::string& cpu, uint64_t instruction) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "seek", {{"cpu", cpu}, {"instruction", std::to_string(instruction)}}));
+            }, "Move to a sound card CPU's instruction count (the main CPU follows by replay)",
+               py::arg("cpu"), py::arg("instruction"))
+
+            .def("ttd_card_step", [](Emulator& self, const std::string& cpu, int64_t n) -> py::object {
+                const uint64_t count = n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu},
+                                                                          {"dir", n < 0 ? "back" : "forward"},
+                                                                          {"count", std::to_string(count)}}));
+            }, "Step a sound card's CPU by n instructions (negative: back)",
+               py::arg("cpu"), py::arg("n") = 1)
+
+            .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
+                std::map<std::string, std::string> options{{"cpu", cpu}};
+                if (maxFrames)
+                    options["max_frames"] = std::to_string(*maxFrames);
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-continue", options));
+            }, "Back to a sound card CPU's previous breakpoint hit (status no_hit when there is none)",
+               py::arg("cpu"), py::arg("max_frames") = py::none())
+
+            .def("ttd_card_position", [](Emulator& self, std::optional<std::string> cpu) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "position");
+                const StateNode* cards = reply.Ok() ? reply.body.find("cards") : nullptr;
+                if (!cpu)
+                    return StateNodeToPy(cards ? *cards : StateNode::Array());
+                DebugCpuId id = DebugCpuId::Main;
+                if (!DebugManager::ParseCpuName(*cpu, id))
+                    throw py::value_error("Unknown cpu '" + *cpu + "' (main, gs, neogs, ms or multisound)");
+                if (cards)
+                    for (const StateNode& card : cards->items)
+                        if (card.find("cpu")->s == DebugCpuName(id))
+                            return StateNodeToPy(card);
+                return py::none();
+            }, "A sound card CPU's readout (instruction, pc, card_position, main); all cards' list without cpu; None "
+               "for a cpu without a card",
+               py::arg("cpu") = py::none())
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
                                           uint32_t addrFrom, uint32_t addrTo, py::object pageObj, py::object spaceObj) -> py::object {

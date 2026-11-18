@@ -220,6 +220,8 @@ struct Digests
 // Trace re-recorded 2026-11-01: the idle poll loop sleeps with the trace on, each sleep one `idle` event in place of
 // its FLAGS reads (audio, state and counters unchanged).
 // Trace re-recorded 2026-11-05: a card read records the byte the card got (COMRG: the host's command), not 0.
+// State re-recorded 2026-11-17: the TTD blob carries the card's instruction count (bytes 59-67, a TTD position on
+// the card's CPU, gs-debugger design §8); audio, trace and counters unchanged.
 // When the pinned values need re-recording (a deliberate behaviour change),
 // run with GS_GOLDEN_PRINT=1 and paste the printed values
 void check(const char* name, const Digests& got, const Digests& want)
@@ -267,7 +269,7 @@ TEST(SoundChip_GeneralSound_Golden, BootUploadPlayResetNmi)
 
     EXPECT_GT(h.nonSilentSamples, 10000u) << "the scenario must actually play";
     check("BootUploadPlayResetNmi", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xa7dc0245f27e0bb3ull, 0x16317c84cee781a9ull, 0x9044413a7c0b0b9eull, 0x8bc1d5adc309962full});
+          {0xa7dc0245f27e0bb3ull, 0x16317c84cee781a9ull, 0xd4a390dc2e1e89f5ull, 0x8bc1d5adc309962full});
 }
 
 TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
@@ -281,5 +283,5 @@ TEST(SoundChip_GeneralSound_Golden, ModuleReplayOntoFreshCard)
 
     EXPECT_GT(h.nonSilentSamples, 1000u) << "the replayed module must play";
     check("ModuleReplayOntoFreshCard", {h.audio.h, h.traceDigest(), h.stateDigest(), h.countersDigest()},
-          {0xa3f89720af874f35ull, 0x6916fe244b57d0e3ull, 0x6d1cb0799e73d1fdull, 0x18326fcab465ea49ull});
+          {0xa3f89720af874f35ull, 0x6916fe244b57d0e3ull, 0x472646290bf93662ull, 0x18326fcab465ea49ull});
 }

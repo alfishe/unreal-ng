@@ -12,7 +12,9 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/ttd/engine/ttdregiontracker.h"
 #include "emulator/cpu/core.h"
+#include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
@@ -91,7 +93,7 @@ void GSCardTarget::Attach()
 {
     GeneralSoundCard* card = Card();
     // A waiting edit is made at a boundary of the debug loop too, and an armed step parks at one
-    GeneralSoundCard* want = _wanted || !_live.empty() || !_replay.empty() || StepArmed() ? card : nullptr;
+    GeneralSoundCard* want = _wanted || !_live.empty() || !_replay.empty() || StepArmed() || Scanning() ? card : nullptr;
     if (want == _attached)
         return;
     if (_attached && _attached == card)
@@ -357,6 +359,13 @@ void GSCardTarget::beforeStep(uint16_t pc)
                 pc = regs.pc;  // a set_reg moved it
         }
     }
+    // A TTD scan: nothing parks, no step ends; its hits and its capture
+    if (_scanning.load(std::memory_order_relaxed)) [[unlikely]]
+    {
+        if (GeneralSoundCard* card = Card())
+            ScanBoundary(card, pc);
+        return;
+    }
     bool parked = false;
     if (_pending.hit) [[unlikely]]
     {
@@ -384,6 +393,9 @@ void GSCardTarget::beforeStep(uint16_t pc)
 
 void GSCardTarget::endRun(uint16_t pc)
 {
+    // A scan's pending hit waits for the next boundary (or the scan's end): where a live run would park
+    if (_scanning.load(std::memory_order_relaxed)) [[unlikely]]
+        return;
     if (_pending.hit)
     {
         const Stop stop = _pending;
@@ -668,3 +680,162 @@ void GSReportHostEvent(EmulatorContext* context, GSCardEvent kind, uint8_t value
     if (id != BRK_INVALID) [[unlikely]]
         context->pEmulator->OnBreakpointHit(id, static_cast<uint16_t>(kind), BreakpointHitKind::Event);
 }
+
+/// region <TTD card scans>
+
+bool GSCardTarget::SaveCardState(GeneralSoundCard* card, CardState& out)
+{
+    out.valid = false;
+    if (!card)
+        return false;
+    out.blob.resize(card->TTDStateSize());
+    if (!out.blob.empty())
+        card->TTDSaveState(out.blob.data());
+    out.regions.clear();
+    if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(card))
+    {
+        std::vector<ttd::TTDDeviceRegion> regions;
+        source->TTDRegions(regions);
+        for (const ttd::TTDDeviceRegion& region : regions)
+        {
+            const uint8_t* memory = region.desc.memory;
+            out.regions.emplace_back(memory ? memory : nullptr, memory ? memory + region.desc.bytes : nullptr);
+        }
+    }
+    out.valid = true;
+    return true;
+}
+
+bool GSCardTarget::LoadCardState(GeneralSoundCard* card, const CardState& state)
+{
+    if (!card || !state.valid || state.blob.size() != card->TTDStateSize())
+        return false;
+    if (auto* source = dynamic_cast<ttd::ITTDRegionSource*>(card))
+    {
+        std::vector<ttd::TTDDeviceRegion> regions;
+        source->TTDRegions(regions);
+        if (regions.size() != state.regions.size())
+            return false;
+        for (size_t i = 0; i < regions.size(); i++)
+        {
+            uint8_t* memory = regions[i].desc.memory;
+            if (!memory || state.regions[i].size() != regions[i].desc.bytes)
+                continue;
+            std::memcpy(memory, state.regions[i].data(), state.regions[i].size());
+            // The engine's next capture stores what the copy wrote (a restore after it decodes it again)
+            if (regions[i].tracker)
+                regions[i].tracker->MarkAll();
+        }
+    }
+    if (!state.blob.empty())
+        card->TTDLoadState(state.blob.data());
+    return true;
+}
+
+void GSCardTarget::BeginScan(uint64_t captureAt, bool breakpoints, uint64_t hitsBefore)
+{
+    _scanCaptureAt = captureAt;
+    _scanHitsBefore = hitsBefore;
+    _scanBreakpoints = breakpoints;
+    _scanStartedPast = false;
+    _scanSawBoundary = false;
+    _capture = ScanCapture{};
+    _scanLastHit = ScanHit{};
+    _scanHits = 0;
+    _pending = Stop{};
+    if (breakpoints)
+        _breakpoints->BeginReplayEvaluate();
+    _scanning.store(true, std::memory_order_release);
+    Attach();
+    UpdateTight();
+}
+
+void GSCardTarget::EndScan()
+{
+    if (!_scanning.load(std::memory_order_acquire))
+        return;
+    // A bus or event hit of the last instruction run: the card parks for it at its next boundary, which has this count
+    if (_scanBreakpoints && _pending.hit)
+    {
+        uint64_t count = 0;
+        GeneralSoundCard* card = Card();
+        if (card && card->cardInstructionCount(count))
+            ScanNoteHit(_pending, count);
+    }
+    _pending = Stop{};
+    if (_scanBreakpoints)
+        _breakpoints->EndReplayEvaluate();
+    _scanBreakpoints = false;
+    _scanning.store(false, std::memory_order_release);
+    Attach();
+    UpdateTight();
+}
+
+void GSCardTarget::ScanNoteHit(const Stop& stop, uint64_t count)
+{
+    _scanHits++;
+    if (count >= _scanHitsBefore || (_scanLastHit.hit && count < _scanLastHit.count))
+        return;
+    _scanLastHit.hit = true;
+    _scanLastHit.count = count;
+    _scanLastHit.breakpointId = stop.breakpointId;
+    _scanLastHit.address = stop.address;
+    _scanLastHit.value = stop.value;
+    _scanLastHit.kind = stop.kind;
+    _scanLastHit.pc = stop.pc;
+}
+
+void GSCardTarget::ScanBoundary(GeneralSoundCard* card, uint16_t pc)
+{
+    uint64_t count = 0;
+    if (!card->cardInstructionCount(count))
+        return;
+    if (_scanBreakpoints)
+    {
+        // A bus or event hit of the instruction just run parks here, then an execution breakpoint at this PC
+        if (_pending.hit)
+        {
+            ScanNoteHit(_pending, count);
+            _pending = Stop{};
+        }
+        const uint16_t id = _breakpoints->HandlePCChange(pc);
+        if (id != BRK_INVALID)
+        {
+            Stop stop;
+            stop.hit = true;
+            stop.breakpointId = id;
+            stop.address = pc;
+            stop.kind = BreakpointHitKind::Execute;
+            stop.pc = pc;
+            ScanNoteHit(stop, count);
+        }
+    }
+    if (!_scanSawBoundary)
+    {
+        _scanSawBoundary = true;
+        _scanStartedPast = _scanCaptureAt != UINT64_MAX && count > _scanCaptureAt;
+    }
+    if (_capture.captured || count != _scanCaptureAt)
+        return;
+    _capture.captured = true;
+    _capture.count = count;
+    _capture.pc = pc;
+    _capture.cardTime = card->cardTime();
+    SaveCardState(card, _capture.state);
+    if (_context)
+    {
+        const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+        _capture.frameCounter = _context->emulatorState.frame_counter;
+        if (z80)
+        {
+            _capture.t = z80->t;
+            _capture.instrStartT = z80->instrStartT;
+            _capture.ttdInstrStart = _context->emulatorState.TtdTInFrame(z80->instrStartT);
+            _capture.m1pc = z80->m1_pc;
+        }
+        _capture.catchingUp = _context->pDebugManager && _context->pDebugManager->CatchingUp();
+    }
+    _capture.frameEnd = card->inFrameEndCatchUp();
+}
+
+/// endregion </TTD card scans>
