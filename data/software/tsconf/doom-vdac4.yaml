@@ -1,0 +1,73 @@
+# DOOM-VDAC4 1.1 (doomgeneric on the ESP32-S3 of the TS-Conf VDAC4 board, the TSL-VDAC4 model): `DOOM/_DOOM.SPG` with
+# DOOM.ELF and a WAD beside it. The Z80 launcher uploads DOOM.ELF to the ESP and feeds it the PS/2 keys, the Kempston
+# mouse and joystick and the WAD; the game runs on the ESP. Matched by the launcher's hash whether the host loads it or
+# the machine starts it from the SD card (Wild Commander: GuestProgramWatch sees the SPG read).
+#
+# Controls (the game's README): arrows / W A S D move and turn, Q / E strafe, Ctrl fires, Space opens, Shift runs, Esc
+# the menu, Backspace back, Enter selects, Tab the map, 1..7 the weapons, the Kempston mouse turns. The PC keys reach
+# the game through the PS/2 controller (`pc.*`: Escape, Tab, Ctrl, Backspace have no place on the ZX matrix). The
+# layout is the twin-stick one: the left stick moves and strafes, the right stick (the mouse X) turns, the D-pad has
+# the arrows (menus and the classic keys), R2 fires, L2 runs. doomgeneric binds no next / previous weapon key by
+# default, so the weapons sit on buttons of their own.
+#
+# Events (haptics.md §5, `cpu: esp`): the fields of players[0] (player_t, doomgeneric d_player.h), read at the frame
+# end from the ESP app, by the addresses of DOOM.ELF 1.1's image (sha256 a7fa833c...). Found with vdac4_esp_memory:
+# - players[0] at 0x6b7ac: the one place outside the static table where maxammo {200, 50, 300, 50} sits 180 bytes into
+#   a player_t, with the demo's health / armor / kills around it, then 100 % health and 50 bullets in a new game.
+# - demoplayback at 0x6b770: of the words 1 in two dumps of the attract demo and 0 in two dumps of a game (minus the
+#   ones that flip with the menu over the demo), the one in g_game.c's globals beside players[]. The rules play in a
+#   game only, not in the demo behind the title.
+# The ammo bytes are the low bytes (a backpack's 256 -> 255 reads as an increase, one shot missed); the fist and the
+# chainsaw use no ammo, so they play nothing.
+schema: 1
+kind: play
+id: builtin/game/doom-vdac4
+label: DOOM (VDAC4)
+match:
+  machines: [TSL]
+  file_sha256: ["ba973b20dfa75cbbfb7026c706df0438257a6b49070907c8af42c408a2b60b0b"]
+layers:
+  play:
+    "dpad.*":     { none: true }
+    dpad.up:      { key: UP, label: Forward / menu up }
+    dpad.down:    { key: DOWN, label: Back / menu down }
+    dpad.left:    { key: LEFT, label: Turn left }
+    dpad.right:   { key: RIGHT, label: Turn right }
+    lstick:       { none: true }
+    lstick.up:    { key: UP, label: Forward }
+    lstick.down:  { key: DOWN, label: Back }
+    lstick.left:  { key: Q, label: Strafe left }
+    lstick.right: { key: E, label: Strafe right }
+    rstick.x:     { mouse: dx, label: Turn }
+    rstick.y:     { none: true }
+    rt.click:     { key: SYM, label: Fire }
+    lt.click:     { key: CAPS, label: Run }
+    south:        { key: "SPACE+ENTER", label: Use / select }
+    east:         { key: pc.backspace, label: Back }
+    north:        { key: pc.tab, label: Map }
+    west:         { key: "2", label: Pistol }
+    lb:           { key: "3", label: Shotgun }
+    rb:           { key: "4", label: Chaingun }
+    lstick.click: { key: "5", label: Rocket launcher }
+    rstick.click: { key: "6", label: Plasma rifle }
+    paddle.p1:    { key: "1", label: Fist / chainsaw }
+    paddle.p2:    { key: "7", label: BFG 9000 }
+    menu:         { key: pc.escape, label: Menu }
+events:
+  demo:      { probe: value, cpu: esp, address: "0x6b770" }
+  bullet:    { probe: write, cpu: esp, address: "0x6b850", when: decreased }
+  shell:     { probe: write, cpu: esp, address: "0x6b854", when: decreased }
+  cell:      { probe: write, cpu: esp, address: "0x6b858", when: decreased }
+  rocket:    { probe: write, cpu: esp, address: "0x6b85c", when: decreased }
+  hurt:      { probe: write, cpu: esp, address: "0x6b890", when: increased }
+  pickup:    { probe: write, cpu: esp, address: "0x6b894", when: increased }
+  died:      { probe: write, cpu: esp, address: "0x6b7b0", when: "==", value: 1 }
+haptics:
+  rules:
+    - { on: bullet, play: shot, target: trigger.right|handle.high, if: { source: demo, equals: 0 } }
+    - { on: shell, play: knock, target: trigger.right|handle.low, if: { source: demo, equals: 0 } }
+    - { on: cell, play: shot, target: trigger.right|handle.high, if: { source: demo, equals: 0 } }
+    - { on: rocket, play: thump, if: { source: demo, equals: 0 } }
+    - { on: hurt, play: hit, if: { source: demo, equals: 0 } }
+    - { on: pickup, play: pickup, if: { source: demo, equals: 0 } }
+    - { on: died, play: life-lost, if: { source: demo, equals: 0 } }

@@ -1,0 +1,1 @@
+incexo './decrunch/lzDataTest.bin' : save './decrunch/lzDataTest.exo',0,$ 

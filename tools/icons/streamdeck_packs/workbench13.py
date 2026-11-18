@@ -22,6 +22,7 @@ RED = (221, 34, 34)  # the record marker, beyond the four 1.3 colours
 
 class Workbench13(reskin.Skin):
     steps = 1
+    tall_pixels = True  # drawings that care (the ZX keyboard's legends) draw two rows per detail row
     bg = BLUE
     bg_on = ORANGE
     flats = {'k': BLACK, 'd': BLACK, 'w': WHITE, 'l': WHITE, 'b': ORANGE, 'e': ORANGE, 'r': RED}

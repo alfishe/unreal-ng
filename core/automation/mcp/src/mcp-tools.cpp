@@ -30,6 +30,7 @@
 #include "mcp-symbols.h"
 #include "mcp-asm.h"
 #include "mcp-signature.h"
+#include "mcp-vdac4.h"
 #include "mcp-tool-utils.h"
 
 #include "../../common/answerbudget.h"  // max_chars, read by the dispatcher (header only)
@@ -152,7 +153,7 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["type"] = "object";
     schema["properties"]["action"]["type"] = "string";
     schema["properties"]["action"]["enum"] = Json::Value(Json::arrayValue);
-    for (const char* action : {"create", "switch_model", "list", "list_models", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
+    for (const char* action : {"create", "switch_model", "list", "list_models", "list_machines", "server", "status", "operations", "zxpoly_status", "start", "stop", "pause", "resume", "reset", "destroy",
                                "transfer_state",
                                "gs_reset", "gs_reset_card", "gs_nmi", "gs_send_command", "gs_send_data", "gs_read_status", "gs_read_data",
                                "gs_send", "gs_conversation",
@@ -167,14 +168,17 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["action"]["description"] =
         "Lifecycle operation. 'reset' is soft (the reset button) unless 'hard': true (a power cycle). 'create' makes a new running instance (fails with a reason on models this build "
         "cannot create — no silent fallback); 'list' shows all instances with their machine identity; "
-        "'list_models' enumerates hardware models with creatable flags; 'server' reports the build fingerprint "
+        "'list_models' enumerates hardware models with creatable flags; 'list_machines' gives them grouped by "
+        "family -> machine -> RAM size, the creatable ones ('all': true for every one; with a 'target' id that instance's "
+        "machine is placed as 'current'); 'server' reports the build fingerprint "
         "and models_creatable; 'status' reports one instance's details; 'operations' its operation log (who reset, "
         "loaded a snapshot, inserted / ejected media, when, with which result - refusals included; 'since' / 'limit'). "
         "'switch_model' replaces the target with "
         "a new instance of 'model' (new id; the machine state is lost, the media follow into the same slots with "
         "their unsaved writes; media with unsaved writes the new model has no slot for need 'stranded'; a ZX-Poly "
         "configuration name as 'model' switches to that machine). 'transfer_state' copies the target's running "
-        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size') "
+        "state in memory into another instance: 'to' names an existing one, or 'model' (+ optional 'ram_size', "
+        "'symbolic_id', 'start') "
         "creates a new one with the source's sound cards; same model = full clone, another model = what it can "
         "express (pages, CPU, paging, TSFM / GS / NeoGS RAM+flash / MoonSound SRAM ...); refused with a per-item "
         "reason when the target cannot hold the state; 'check': true (with 'to') only decides; floppies and the tape follow as clean in-memory copies with a postfixed path, SD / HDD / CD are NOT moved. 'create' with 'zxpoly': true starts a "
@@ -224,6 +228,8 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance (auto-created when none exists)";
+    schema["properties"]["all"]["type"] = "boolean";
+    schema["properties"]["all"]["description"] = "list_machines: every machine, also the ones this build cannot create";
     schema["properties"]["model"]["type"] = "string";
     schema["properties"]["model"]["description"] =
         "Hardware model short name for 'create' / 'switch_model' / 'transfer_state' (new destination) — e.g. 48K, 128k, PLUS2, PLUS2A, "
@@ -289,6 +295,14 @@ void RegisterEmulatorManage(ToolRegistry& registry)
     schema["properties"]["check"]["type"] = "boolean";
     schema["properties"]["check"]["description"] =
         "transfer_state with 'to': only report whether the transfer is possible and what would move; nothing changes";
+    schema["properties"]["keep_frame_position"]["type"] = "boolean";
+    schema["properties"]["keep_frame_position"]["description"] =
+        "transfer_state: keep the source's in-frame position when both models share the frame geometry (default true)";
+    schema["properties"]["symbolic_id"]["type"] = "string";
+    schema["properties"]["symbolic_id"]["description"] = "transfer_state with 'model': the new instance's symbolic id";
+    schema["properties"]["start"]["type"] = "boolean";
+    schema["properties"]["start"]["description"] =
+        "transfer_state with 'model': start the new instance (default: when the source is running and not paused)";
     schema["properties"]["zxpoly"]["type"] = "boolean";
     schema["properties"]["zxpoly"]["description"] =
         "For 'create': start a ZX-Poly machine (four synchronized instances of 'model'; default PENTAGON)";
@@ -420,6 +434,54 @@ void RegisterEmulatorManage(ToolRegistry& registry)
             if (action == "list_models")
             {
                 ForwardCall("GET", "/api/v1/emulator/models", nullptr, caller, "Available hardware models", done);
+                return;
+            }
+
+            if (action == "list_machines")
+            {
+                std::string path = "/api/v1/emulator/machines";
+                std::string query;
+                if (args.isMember("all") && args["all"].asBool())
+                    query += "all=true";
+                if (const std::string target = args.get("target", "").asString(); !target.empty() && target != "auto")
+                    query += (query.empty() ? "" : "&") + std::string("id=") + target;
+                if (!query.empty())
+                    path += "?" + query;
+                // The tree as text too (an agent may see only the text): a family per line, its machines with
+                // their RAM sizes, the current one marked
+                caller.Call("GET", path, nullptr, [done](int status, Json::Value body) {
+                    if (status != 200)
+                    {
+                        done(ToolResult::Error("HTTP " + std::to_string(status) + ": " + DescribeErrorBody(body)));
+                        return;
+                    }
+                    const Json::Value& current = body["current"];
+                    std::ostringstream out;
+                    out << "Machines by family (start one: create / switch_model with model = the name):";
+                    for (const Json::Value& family : body["families"])
+                    {
+                        out << "\n" << family["title"].asString() << " [" << family["id"].asString() << "]:";
+                        bool first = true;
+                        for (const Json::Value& machine : family["machines"])
+                        {
+                            out << (first ? " " : ", ") << machine["name"].asString();
+                            first = false;
+                            const Json::Value& sizes = machine["ram_sizes_kb"];
+                            if (sizes.size() > 1)
+                            {
+                                out << " (";
+                                for (Json::ArrayIndex i = 0; i < sizes.size(); ++i)
+                                    out << (i ? "/" : "") << sizes[i].asUInt();
+                                out << "K)";
+                            }
+                            if (!machine["creatable"].asBool())
+                                out << " (not creatable)";
+                            if (current.isObject() && current["machine"].asString() == machine["name"].asString())
+                                out << " <- current, " << current["ram_kb"].asUInt() << "K";
+                        }
+                    }
+                    done(ToolResult::Ok(out.str(), std::move(body)));
+                });
                 return;
             }
 
@@ -623,6 +685,13 @@ void RegisterEmulatorManage(ToolRegistry& registry)
                         body["ram_size"] = args["ram_size"].asUInt();
                     if (args.isMember("check") && args["check"].asBool())
                         body["check"] = true;
+                    if (args.isMember("keep_frame_position") && args["keep_frame_position"].isBool())
+                        body["keep_frame_position"] = args["keep_frame_position"].asBool();
+                    if (hasModel && args.isMember("symbolic_id") && args["symbolic_id"].isString() &&
+                        !args["symbolic_id"].asString().empty())
+                        body["symbolic_id"] = args["symbolic_id"].asString();
+                    if (hasModel && args.isMember("start") && args["start"].isBool())
+                        body["start"] = args["start"].asBool();
                     caller.Call("POST", Endpoint(id, "/snapshot/transfer"), &body, [id, done](int status, Json::Value response) {
                         // The report carries the per-item reasons on success and on refusal alike
                         const std::string summary = response.get("summary", "").asString();
@@ -6052,6 +6121,49 @@ std::string FormatFrameRuns(const Json::Value& frames)
     return out;
 }
 
+/// A card CPU's readout (the position verb's cards[], a card move's card), one line
+std::string FormatCardReadout(const Json::Value& card)
+{
+    std::string text = "Card " + card["cpu"].asString() + ": ";
+    if (!card.get("known", false).asBool())
+        return text + "no instruction count (a recording made before them)";
+    const Json::Value& main = card["main"];
+    text += "instruction " + std::to_string(card["instruction"].asUInt64()) + ", PC " + Hex16(card["pc"].asUInt());
+    if (card.get("card_position", false).asBool())
+    {
+        text += " (card position; main CPU at " + FormatTimePoint(main["frame"], main["tinframe"]) + " PC " +
+                Hex16(main["pc"].asUInt());
+        if (main.get("inside", false).asBool())
+            text += ", " + std::to_string(main["t_offset"].asUInt()) + " T into its next instruction";
+        text += ")";
+    }
+    else
+        text += " (as the card last ran)";
+    return text;
+}
+
+/// A card move's reply (seek / step-instruction / reverse-continue with cpu)
+std::string FormatCardMove(const Json::Value& b)
+{
+    std::string text;
+    if (b.get("reached", false).asBool())
+    {
+        text = b["cpu"].asString() + " at card instruction " + std::to_string(b["target"].asUInt64()) + " (from " +
+               std::to_string(b["from"].asUInt64()) + ")";
+        if (b.isMember("breakpoint"))
+            text += ": breakpoint " + std::to_string(b["breakpoint"]["id"].asUInt()) + " (" +
+                    b["breakpoint"]["kind"].asString() + " " + Hex16(b["breakpoint"]["address"].asUInt()) + ")";
+    }
+    else
+        text = b["cpu"].asString() + " did not move (" + b["status"].asString() + "): " + b["message"].asString();
+    if (b.isMember("searched_frames"))
+        text += "; searched " + std::to_string(b["searched_frames"].asUInt64()) + " frame(s)" +
+                (b.get("truncated", false).asBool() ? " (max_frames reached)" : "");
+    if (b.isMember("card"))
+        text += "\n" + FormatCardReadout(b["card"]);
+    return text;
+}
+
 void RegisterTimeTravel(ToolRegistry& registry)
 {
     Json::Value schema;
@@ -6066,7 +6178,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "branch_switch", "branch_update", "branch_delete", "branch_prune", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
-                               "memory_at", "memory_diff"})
+                               "memory_at", "memory_diff", "card_seek", "card_step", "card_reverse_continue",
+                               "card_position"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -6080,6 +6193,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "paused point continues it, 'stop' ends it): "
         "'seek' (frame + optional tinframe), "
         "'step_back_frame'/'step_forward_frame', 'step_back_instruction'/'step_forward_instruction', "
+        "on a sound card's CPU ('cpu' gs / neogs / ms / multisound; the main CPU follows by replay, shown at its last "
+        "completed instruction with the T-states into the next): 'card_seek' (to card 'instruction', its count), "
+        "'card_step' ('count' card instructions, negative: back), 'card_reverse_continue' (back to the card's "
+        "previous breakpoint hit, its own breakpoints; 'max_frames' bounds the search, default 1000), "
+        "'card_position' (each card's instruction, PC and where the main CPU stands), "
         "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_step_over' (one instruction back, "
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
@@ -6369,7 +6487,21 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "on the engine (the frame's final state and picture); give 0 for the frame's start. memory_at: a point inside "
         "'frame' (default 0 = the frame's start; ram, vram and cache only: the frame's writes up to it are applied)";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines)";
+    schema["properties"]["count"]["description"] = "reverse_step: number of instructions to step back (give count, tstates OR scanlines); "
+                                                   "card_step: card instructions to step (negative: back; default 1)";
+    schema["properties"]["cpu"]["type"] = "string";
+    schema["properties"]["cpu"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* cpu : {"gs", "neogs", "ms", "multisound"})
+        schema["properties"]["cpu"]["enum"].append(cpu);
+    schema["properties"]["cpu"]["description"] =
+        "card_seek / card_step / card_reverse_continue / card_position: the sound card's CPU (gs and neogs: the "
+        "General Sound slot; ms and multisound: the ZX-MultiSound's GS)";
+    schema["properties"]["instruction"]["type"] = "integer";
+    schema["properties"]["instruction"]["description"] =
+        "card_seek: the card CPU's instruction count to stand at (card_position and every card reply name it)";
+    schema["properties"]["max_frames"]["type"] = "integer";
+    schema["properties"]["max_frames"]["description"] =
+        "card_reverse_continue: frames searched back at most (default 1000); truncated in the reply when reached";
     schema["properties"]["scanlines"]["type"] = "integer";
     schema["properties"]["scanlines"]["description"] =
         "reverse_step: scanlines to step back (the machine's line length each); lands on the nearest instruction start "
@@ -6794,6 +6926,52 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     return;
                 }
             }
+            else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue" ||
+                     action == "card_position")
+            {
+                const std::string cpu = args.get("cpu", "").asString();
+                if (cpu.empty() && action != "card_position")
+                {
+                    done(ToolResult::Error("Action '" + action + "' requires 'cpu': gs, neogs, ms or multisound"));
+                    return;
+                }
+                if (!cpu.empty())
+                    (*body)["cpu"] = cpu;
+                if (action == "card_seek")
+                {
+                    if (!args.isMember("instruction"))
+                    {
+                        done(ToolResult::Error("Action 'card_seek' requires 'instruction' (the card CPU's instruction "
+                                               "count; card_position shows the current one)"));
+                        return;
+                    }
+                    if (!CopyNumber(args, "instruction", *body, error))
+                    {
+                        done(ToolResult::Error(error));
+                        return;
+                    }
+                }
+                else if (action == "card_step")
+                {
+                    const Json::Value count = args.isMember("count") ? NumericOrHex(args["count"]) : Json::Value(1);
+                    if (count.isNull() || !count.isInt64() || count.asInt64() == 0)
+                    {
+                        done(ToolResult::Error("'count' must be a non-zero integer (negative: back)"));
+                        return;
+                    }
+                    const int64_t n = count.asInt64();
+                    (*body)["dir"] = n < 0 ? "back" : "forward";
+                    (*body)["count"] = static_cast<Json::UInt64>(n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n));
+                }
+                else if (action == "card_reverse_continue")
+                {
+                    if (!CopyNumber(args, "max_frames", *body, error))
+                    {
+                        done(ToolResult::Error(error));
+                        return;
+                    }
+                }
+            }
             else if (action == "probe_frames")
             {
                 if (!args["probes"].isArray() || args["probes"].empty())
@@ -7117,6 +7295,42 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         return std::string(b["reached"].asBool() ? "Stepped back to " : "Could not step back fully; at ") +
                                FormatTimePoint(b["frame"], b["tinframe"]) + FormatCheck(b);
                     }, done);
+                }
+                else if (action == "card_position")
+                {
+                    const std::string wanted = body->get("cpu", "").asString();
+                    CallAndSummarize("GET", Endpoint(id, "/ttd/position"), nullptr, caller, [wanted](const Json::Value& b) {
+                        std::string text = "Main CPU at " + FormatTimePoint(b["current"]["frame"], b["current"]["tinframe"]) +
+                                           " (state " + b["state"].asString() + ")";
+                        bool any = false;
+                        for (const Json::Value& card : b["cards"])
+                        {
+                            const std::string cpu = card["cpu"].asString();
+                            const bool match = wanted.empty() || wanted == cpu ||
+                                               (cpu == "gs" && wanted == "neogs") || (cpu == "ms" && wanted == "multisound");
+                            if (!match)
+                                continue;
+                            any = true;
+                            text += "\n" + FormatCardReadout(card);
+                        }
+                        if (!any)
+                            text += wanted.empty() ? "\nNo sound card with a CPU" : "\nNo card CPU '" + wanted + "'";
+                        return text;
+                    }, done);
+                }
+                else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue")
+                {
+                    const std::string route = action == "card_seek"   ? "/ttd/seek"
+                                              : action == "card_step" ? "/ttd/step-instruction"
+                                                                      : "/ttd/reverse-continue";
+                    CallAndSummarize("POST", Endpoint(id, route), body.get(), caller, [](const Json::Value& b) {
+                        return FormatCardMove(b) + FormatCheck(b);
+                    }, [done](ToolResult result) {
+                        // Nothing moved (the history's end, no hit): an error the model cannot read as a move
+                        if (!result.isError && !result.structured.get("reached", true).asBool())
+                            result = ToolResult::Error(FormatCardMove(result.structured));
+                        done(std::move(result));
+                    });
                 }
                 else if (action == "reverse_step_over")
                 {
@@ -8604,6 +8818,8 @@ std::unique_ptr<ToolRegistry> BuildFullRegistry(IApiCaller::Ptr caller)
     RegisterDeviceHistory(*registry);
     // audio_mixer: the mixer's rows and channels, the levels, the sound settings
     RegisterAudioMixer(*registry);
+    // vdac4_state: the TS-Conf VDAC4 board (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §10.2)
+    RegisterVdac4State(*registry);
 
     // gui_<interface>, gui_list, gui_state: the GUI control plane's methods, when the program registered them before
     // the start (gui-control-plane design §4.10)

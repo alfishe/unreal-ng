@@ -1,0 +1,1 @@
+ utf8remap 'é',' ': struct ustruct: lab defb 'édouard': endstruct: assert {sizeof}ustruct==7: struct ustruct edouard: assert $==7

@@ -1,0 +1,1 @@
+org #100 : include './decrunch/unlzsa1_fast.asm' : ld sp,#38 : ld hl,#C000 : ld de,#1000 : call unlzsa1 : jr #FE : unlzsa1 DecompressLZSA1 (void) : org #C000 : incbin './decrunch/lzDataTest.lzsa1' 

@@ -1,0 +1,173 @@
+# input	algorithm	origin	outcome	expected file (crunched only); written by crunchcheck.py
+@big	Lz4	incbin	crunched	big.Lz4.bin
+@big	Lz48	incbin	crunched	big.Lz48.bin
+@big	Lz49	incbin	crunched	big.Lz49.bin
+@big	Zx0	incbin	crunched	big.Zx0.bin
+@big	Zx0Backward	incbin	crunched	big.Zx0Backward.bin
+@big	ApUltra	incbin	crunched	big.ApUltra.bin
+@big	Lzsa1	incbin	error	
+@big	Lzsa2	incbin	error	
+empty.bin	Lz4	incbin	empty	
+empty.bin	Lz4	section	empty	
+empty.bin	Lz48	incbin	empty	
+empty.bin	Lz48	section	empty	
+empty.bin	Lz49	incbin	empty	
+empty.bin	Lz49	section	empty	
+empty.bin	Zx7	incbin	empty	
+empty.bin	Zx7	section	empty	
+empty.bin	Zx0	incbin	empty	
+empty.bin	Zx0	section	empty	
+empty.bin	Zx0Backward	incbin	empty	
+empty.bin	Zx0Backward	section	empty	
+empty.bin	Exomizer	incbin	empty	
+empty.bin	Exomizer	section	empty	
+empty.bin	ApUltra	incbin	empty	
+empty.bin	ApUltra	section	empty	
+empty.bin	Lzsa1	incbin	empty	
+empty.bin	Lzsa1	section	empty	
+empty.bin	Lzsa2	incbin	empty	
+empty.bin	Lzsa2	section	empty	
+lzdatatest.bin	Lz4	incbin	crunched	crc32:111536c2:14160
+lzdatatest.bin	Lz4	section	crunched	crc32:111536c2:14160
+lzdatatest.bin	Lz48	incbin	crunched	crc32:d02f8866:14167
+lzdatatest.bin	Lz48	section	crunched	crc32:d02f8866:14167
+lzdatatest.bin	Lz49	incbin	crunched	crc32:a47ee440:13493
+lzdatatest.bin	Lz49	section	crunched	crc32:a47ee440:13493
+lzdatatest.bin	Zx7	incbin	crunched	crc32:b1006527:11853
+lzdatatest.bin	Zx7	section	crunched	crc32:b1006527:11853
+lzdatatest.bin	Zx0	incbin	crunched	crc32:a7906391:10860
+lzdatatest.bin	Zx0	section	crunched	crc32:a7906391:10860
+lzdatatest.bin	Zx0Backward	incbin	crunched	crc32:a5fd0fde:10851
+lzdatatest.bin	Zx0Backward	section	crunched	crc32:a5fd0fde:10851
+lzdatatest.bin	Exomizer	incbin	crunched	crc32:d013cda3:11162
+lzdatatest.bin	Exomizer	section	crunched	crc32:d013cda3:11162
+lzdatatest.bin	ApUltra	incbin	crunched	crc32:a5aa69a9:11032
+lzdatatest.bin	ApUltra	section	crunched	crc32:a5aa69a9:11032
+lzdatatest.bin	Lzsa1	incbin	crunched	crc32:1c8e8b0e:13835
+lzdatatest.bin	Lzsa1	section	crunched	crc32:1c8e8b0e:13835
+lzdatatest.bin	Lzsa2	incbin	crunched	crc32:7cd93fb0:11555
+lzdatatest.bin	Lzsa2	section	crunched	crc32:7cd93fb0:11555
+one.bin	Lz4	incbin	error	
+one.bin	Lz4	section	raw	
+one.bin	Lz48	incbin	error	
+one.bin	Lz48	section	raw	
+one.bin	Lz49	incbin	error	
+one.bin	Lz49	section	raw	
+one.bin	Zx7	incbin	error	
+one.bin	Zx7	section	raw	
+one.bin	Zx0	incbin	error	
+one.bin	Zx0	section	raw	
+one.bin	Zx0Backward	incbin	crash	
+one.bin	Zx0Backward	section	raw	
+one.bin	Exomizer	incbin	error	
+one.bin	Exomizer	section	raw	
+one.bin	ApUltra	incbin	error	
+one.bin	ApUltra	section	raw	
+one.bin	Lzsa1	incbin	error	
+one.bin	Lzsa1	section	raw	
+one.bin	Lzsa2	incbin	error	
+one.bin	Lzsa2	section	raw	
+random.bin	Lz4	incbin	error	
+random.bin	Lz4	section	raw	
+random.bin	Lz48	incbin	error	
+random.bin	Lz48	section	raw	
+random.bin	Lz49	incbin	error	
+random.bin	Lz49	section	raw	
+random.bin	Zx7	incbin	error	
+random.bin	Zx7	section	raw	
+random.bin	Zx0	incbin	error	
+random.bin	Zx0	section	raw	
+random.bin	Zx0Backward	incbin	crash	
+random.bin	Zx0Backward	section	reversed	
+random.bin	Exomizer	incbin	error	
+random.bin	Exomizer	section	raw	
+random.bin	ApUltra	incbin	error	
+random.bin	ApUltra	section	raw	
+random.bin	Lzsa1	incbin	error	
+random.bin	Lzsa1	section	raw	
+random.bin	Lzsa2	incbin	error	
+random.bin	Lzsa2	section	raw	
+rom20k.bin	Lz4	incbin	crunched	crc32:a06d70de:17985
+rom20k.bin	Lz4	section	crunched	crc32:a06d70de:17985
+rom20k.bin	Lz48	incbin	crunched	crc32:6868c2e1:17937
+rom20k.bin	Lz48	section	crunched	crc32:6868c2e1:17937
+rom20k.bin	Lz49	incbin	crunched	crc32:15a9ba75:17907
+rom20k.bin	Lz49	section	crunched	crc32:15a9ba75:17907
+rom20k.bin	Zx7	incbin	crunched	crc32:da39c571:16428
+rom20k.bin	Zx7	section	crunched	crc32:da39c571:16428
+rom20k.bin	Zx0	incbin	crunched	crc32:ab51c1a6:15562
+rom20k.bin	Zx0	section	crunched	crc32:ab51c1a6:15562
+rom20k.bin	Zx0Backward	incbin	crunched	crc32:b5502968:15526
+rom20k.bin	Zx0Backward	section	crunched	crc32:b5502968:15526
+rom20k.bin	Exomizer	incbin	crunched	crc32:6eda292e:15540
+rom20k.bin	Exomizer	section	crunched	crc32:6eda292e:15540
+rom20k.bin	ApUltra	incbin	crunched	crc32:50775dd8:15634
+rom20k.bin	ApUltra	section	crunched	crc32:50775dd8:15634
+rom20k.bin	Lzsa1	incbin	crunched	crc32:a377831b:18185
+rom20k.bin	Lzsa1	section	crunched	crc32:a377831b:18185
+rom20k.bin	Lzsa2	incbin	crunched	crc32:049cf124:16216
+rom20k.bin	Lzsa2	section	crunched	crc32:049cf124:16216
+seventeen.bin	Lz4	incbin	crunched	seventeen.Lz4.bin
+seventeen.bin	Lz4	section	crunched	seventeen.Lz4.bin
+seventeen.bin	Lz48	incbin	crunched	seventeen.Lz48.bin
+seventeen.bin	Lz48	section	crunched	seventeen.Lz48.bin
+seventeen.bin	Lz49	incbin	crunched	seventeen.Lz49.bin
+seventeen.bin	Lz49	section	crunched	seventeen.Lz49.bin
+seventeen.bin	Zx7	incbin	crunched	seventeen.Zx7.bin
+seventeen.bin	Zx7	section	crunched	seventeen.Zx7.bin
+seventeen.bin	Zx0	incbin	crunched	seventeen.Zx0.bin
+seventeen.bin	Zx0	section	crunched	seventeen.Zx0.bin
+seventeen.bin	Zx0Backward	incbin	crunched	seventeen.Zx0Backward.bin
+seventeen.bin	Zx0Backward	section	crunched	seventeen.Zx0Backward.bin
+seventeen.bin	Exomizer	incbin	error	
+seventeen.bin	Exomizer	section	raw	
+seventeen.bin	ApUltra	incbin	crunched	seventeen.ApUltra.bin
+seventeen.bin	ApUltra	section	crunched	seventeen.ApUltra.bin
+seventeen.bin	Lzsa1	incbin	crunched	seventeen.Lzsa1.bin
+seventeen.bin	Lzsa1	section	crunched	seventeen.Lzsa1.bin
+seventeen.bin	Lzsa2	incbin	crunched	seventeen.Lzsa2.bin
+seventeen.bin	Lzsa2	section	crunched	seventeen.Lzsa2.bin
+text.bin	Lz4	incbin	crunched	text.Lz4.bin
+text.bin	Lz4	section	crunched	text.Lz4.bin
+text.bin	Lz48	incbin	crunched	text.Lz48.bin
+text.bin	Lz48	section	crunched	text.Lz48.bin
+text.bin	Lz49	incbin	crunched	text.Lz49.bin
+text.bin	Lz49	section	crunched	text.Lz49.bin
+text.bin	Zx7	incbin	crunched	text.Zx7.bin
+text.bin	Zx7	section	crunched	text.Zx7.bin
+text.bin	Zx0	incbin	crunched	text.Zx0.bin
+text.bin	Zx0	section	crunched	text.Zx0.bin
+text.bin	Zx0Backward	incbin	crunched	text.Zx0Backward.bin
+text.bin	Zx0Backward	section	crunched	text.Zx0Backward.bin
+text.bin	Exomizer	incbin	crunched	text.Exomizer.bin
+text.bin	Exomizer	section	crunched	text.Exomizer.bin
+text.bin	ApUltra	incbin	crunched	text.ApUltra.bin
+text.bin	ApUltra	section	crunched	text.ApUltra.bin
+text.bin	Lzsa1	incbin	crunched	text.Lzsa1.bin
+text.bin	Lzsa1	section	crunched	text.Lzsa1.bin
+text.bin	Lzsa1	section/minmatch=3	crunched	text.Lzsa1.minmatch3.bin
+text.bin	Lzsa1	section/minmatch=4	crunched	text.Lzsa1.minmatch4.bin
+text.bin	Lzsa2	incbin	crunched	text.Lzsa2.bin
+text.bin	Lzsa2	section	crunched	text.Lzsa2.bin
+text.bin	Lzsa2	section/minmatch=3	crunched	text.Lzsa2.minmatch3.bin
+text.bin	Lzsa2	section/minmatch=5	crunched	text.Lzsa2.minmatch5.bin
+zeros4k.bin	Lz4	incbin	crunched	zeros4k.Lz4.bin
+zeros4k.bin	Lz4	section	crunched	zeros4k.Lz4.bin
+zeros4k.bin	Lz48	incbin	crunched	zeros4k.Lz48.bin
+zeros4k.bin	Lz48	section	crunched	zeros4k.Lz48.bin
+zeros4k.bin	Lz49	incbin	crunched	zeros4k.Lz49.bin
+zeros4k.bin	Lz49	section	crunched	zeros4k.Lz49.bin
+zeros4k.bin	Zx7	incbin	crunched	zeros4k.Zx7.bin
+zeros4k.bin	Zx7	section	crunched	zeros4k.Zx7.bin
+zeros4k.bin	Zx0	incbin	crunched	zeros4k.Zx0.bin
+zeros4k.bin	Zx0	section	crunched	zeros4k.Zx0.bin
+zeros4k.bin	Zx0Backward	incbin	crunched	zeros4k.Zx0Backward.bin
+zeros4k.bin	Zx0Backward	section	crunched	zeros4k.Zx0Backward.bin
+zeros4k.bin	Exomizer	incbin	crunched	zeros4k.Exomizer.bin
+zeros4k.bin	Exomizer	section	crunched	zeros4k.Exomizer.bin
+zeros4k.bin	ApUltra	incbin	crunched	zeros4k.ApUltra.bin
+zeros4k.bin	ApUltra	section	crunched	zeros4k.ApUltra.bin
+zeros4k.bin	Lzsa1	incbin	crunched	zeros4k.Lzsa1.bin
+zeros4k.bin	Lzsa1	section	crunched	zeros4k.Lzsa1.bin
+zeros4k.bin	Lzsa2	incbin	crunched	zeros4k.Lzsa2.bin
+zeros4k.bin	Lzsa2	section	crunched	zeros4k.Lzsa2.bin

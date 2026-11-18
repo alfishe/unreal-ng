@@ -63,6 +63,7 @@ class ControllersDialog;
 class ControllerToast;
 class GuiActions;
 class SlotChangeController;
+struct StateTransferRequest;
 class SlotsWindow;
 class NextLayersWindow;
 class HandheldMenu;
@@ -279,6 +280,9 @@ private slots:
     /// Replace the running machine by `modelName` / `ramSize` (the media follow);
     /// no question asked. False when it did not happen (the user was told why)
     bool switchMachineModel(const std::string& modelName, uint32_t ramSize);
+    /// Machine > Transfer State To: an open instance is checked first and the user confirms what would move; a new
+    /// machine is created at once. The report shows what was copied, dropped or refused, and offers to show the target
+    void transferMachineState(const StateTransferRequest& request);
     /// Play an RZX recording: another model is replaced by the recording's first
     /// (as for an SZX); false when it did not start (the user was told why)
     bool playRzxFile(const std::string& file);
@@ -385,6 +389,9 @@ private:
     /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
     /// else the plan's default, else the slot chooser (the call ends there and
     /// comes back with the pick); unattended callers take the first entry
+    /// Open a snapshot through the actions worker (media.open): a NEX first boots a fresh Next's NextZXOS, which takes
+    /// seconds; the GUI thread is never blocked, a refusal is shown when the worker answers
+    void openSnapshotAsync(const QString& filePath);
     void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
                      const std::string& slot = {});
     void refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin);

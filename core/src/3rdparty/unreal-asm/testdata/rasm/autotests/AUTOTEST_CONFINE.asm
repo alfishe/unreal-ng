@@ -1,0 +1,1 @@
+org 0: nop: org 250: confine 10: defb #aa: org 500: confine 12: defb #bb: assert $<512 

@@ -1,0 +1,1 @@
+ macro DEBUG_INK0, coul:        out (c), a: endm: ifndef NDEBUG:DEBUG_BORDER_NOPS = 0: endif

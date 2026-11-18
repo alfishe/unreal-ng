@@ -1,0 +1,1 @@
+repeat:glop=rnd(20):until glop==10:nop

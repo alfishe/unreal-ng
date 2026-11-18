@@ -1,0 +1,1 @@
+machin5=50: idx=5: zob=1: if machin{idx}==50 : nop : else : zob=0 : endif:ifdef machin{idx} : nop : else : zob=0 : endif:ifndef machin{idx} : zob=0 : else : nop : endif:ifused machin{idx} : nop: else : zob=0 : endif:ifnused machin{idx} : zob=0 : else : nop : endif: assert zob==1

@@ -26,6 +26,16 @@
 # incomplete last part is dropped; a damaged part makes it and the parts that
 # depend on it unreachable.
 #
+# A record holds at most 1 GiB raw (kMaxRecordRaw). A larger payload of a
+# stream S (the write journal of a long session, a holder stream) is stored as
+# several records of S's chunked twin, stream S | 0x8000, declared in the
+# header as ancillary with S's layout and the name "chunked-" + S's name: back
+# to back in one part, consecutive sequence numbers, every record but the last
+# flagged continued (bit 2). A reader joins them into S's one payload; a
+# reader that does not know the twin skips it as an unknown ancillary stream
+# and reads the file as one without S's payload (never a chunk as the whole).
+# A run cut before its last record makes the part damaged.
+#
 # Payloads flagged compressed are zstd frames (the frame records its content
 # size). Kaitai has no zstd process: the stream payload types below describe
 # the bytes after decompression (`payload_*`), to be applied by the reader.
@@ -106,7 +116,8 @@ types:
           0 container (part ends), 1 pieces, 3 checkpoints, 5 events,
           6 configuration, 7 write journal, 13 bus reads, 14 bus writes,
           15 bus vectors, 16 media (sector) reads; 0x0100-0x01FF frame-boundary
-          streams; 0x0200-0x02FF reserved (branches); 0x0300-0x03FF reserved (groups)
+          streams; 0x0200-0x02FF reserved (branches); 0x0300-0x03FF reserved (groups);
+          0x8000 + S the chunked twin of stream S (ancillary)
       - id: layout_version
         type: u2
       - id: kind
@@ -232,7 +243,9 @@ types:
         type: u2
       - id: flags
         type: u2
-        doc: bit 0 payload zstd-compressed, bit 1 part-end record
+        doc: |
+          bit 0 payload zstd-compressed, bit 1 part-end record, bit 2 continued (a chunked twin's record
+          whose payload goes on in the next record)
       - id: part_index
         type: u4
       - id: sequence

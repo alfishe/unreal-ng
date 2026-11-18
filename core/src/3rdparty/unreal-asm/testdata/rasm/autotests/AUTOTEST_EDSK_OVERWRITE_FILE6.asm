@@ -1,0 +1,1 @@
+defs 512,#CC:defs 512,#BB:edsk check,'rasmoutput_test.dsk','11:#C9',512,0:edsk check,'rasmoutput_test.dsk','11:#C5',512,512:edsk check,'rasmoutput_test.dsk','5:#C8',512,512:edsk check,'rasmoutput_test.dsk','0:#C8',512,512:

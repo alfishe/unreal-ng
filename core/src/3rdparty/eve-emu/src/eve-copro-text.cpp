@@ -126,12 +126,32 @@ bool QueueBitmapWords(EveChip& chip, uint32_t source, uint32_t format, uint32_t 
 struct FontMetrics
 {
     uint32_t block, format, stride, width, height, data;
+    bool none; // VDAC4: no metric block (widths and fields read as 0)
 };
+
+// VDAC4 (ft_copro.c text_metrics): fonts 16...31 through the current ROM_FONTROOT, fonts 0...15
+// from CMD_SETFONT, any other font (or font pointer 0) has no metrics.
+bool Vdac4FontBlock(const EveChip& chip, uint32_t font, uint32_t& block)
+{
+    if (font >= kFirstRomFont && font < kHandleCount)
+    {
+        block = ReadMemory32(chip, kRomFontRootAddress) + kFontMetricSize * (font - kFirstRomFont);
+        return true;
+    }
+    block = font < kFirstRomFont ? chip.state.copro.fontPointers[font] & ~3u : 0;
+    return block != 0;
+}
 
 FontMetrics Metrics(const EveChip& chip, uint32_t font)
 {
     FontMetrics m{};
-    m.block = chip.state.copro.fontPointers[font % kHandleCount];
+    if (chip.vdac4 && !Vdac4FontBlock(chip, font, m.block))
+    {
+        m.none = true;
+        return m;
+    }
+    if (!chip.vdac4)
+        m.block = chip.state.copro.fontPointers[font % kHandleCount];
     m.format = ReadMemory32(chip, m.block + kFontMetricFormat);
     m.stride = ReadMemory32(chip, m.block + kFontMetricStride);
     m.width = ReadMemory32(chip, m.block + kFontMetricWidth);
@@ -142,7 +162,62 @@ FontMetrics Metrics(const EveChip& chip, uint32_t font)
 
 uint32_t CharWidth(const EveChip& chip, const FontMetrics& m, uint8_t character)
 {
+    if (chip.vdac4)
+        return m.none ? 0 : BusPeek(chip, m.block + (character & kCellMask)); // the BL616 masks to 7 bits
     return character < kFontWidths ? BusPeek(chip, m.block + character) : 0;
+}
+
+// VDAC4: the metrics are usable (ft_copro.c rom_root_ok, metrics_ok): some printable character
+// has a width, format <= 31, stride, width and height not 0; a ROM font's glyphs in the ROM.
+bool Vdac4MetricsReady(const EveChip& chip, uint32_t font)
+{
+    constexpr uint32_t kFirstPrintable = 32, kLastPrintable = 126, kMaxFormat = 31;
+    constexpr uint32_t kRomGlyphsStart = 0x200000;
+    const bool rom = font >= kFirstRomFont && font < kHandleCount;
+    if (rom)
+    {
+        const uint32_t root = ReadMemory32(chip, kRomFontRootAddress);
+        if (root < kRomGlyphsStart || root + kFontMetricSize * kFirstRomFont > kRomFontRootAddress || (root & 3) != 0)
+            return false;
+    }
+    uint32_t block = 0;
+    if (!Vdac4FontBlock(chip, font, block))
+        return true; // no font: drawn with zero metrics at once, as the FT812
+    bool widths = false;
+    for (uint32_t ch = kFirstPrintable; ch <= kLastPrintable && !widths; ++ch)
+        widths = BusPeek(chip, block + ch) != 0;
+    if (!widths || ReadMemory32(chip, block + kFontMetricFormat) > kMaxFormat ||
+        ReadMemory32(chip, block + kFontMetricStride) == 0 || ReadMemory32(chip, block + kFontMetricWidth) == 0 ||
+        ReadMemory32(chip, block + kFontMetricHeight) == 0)
+        return false;
+    const uint32_t data = ReadMemory32(chip, block + kFontMetricData);
+    return !rom || (data >= kRomGlyphsStart && data < kRomEnd);
+}
+
+uint64_t MillisecondsToClocks(const EveChip& chip, uint64_t ms)
+{
+    return ms * chip.state.power.systemClockHz / kMillisecondsPerSecond;
+}
+
+// VDAC4: CMD_TEXT / CMD_NUMBER may draw now: the metrics are usable, or it is too late to wait
+// for them (6 s after the coprocessor reset and 1 s after the wait began; ft_copro.c text_ready).
+bool Vdac4TextReady(EveChip& chip)
+{
+    Vdac4State& v = chip.vdac4State;
+    const uint32_t font = static_cast<uint16_t>(Low16(chip.state.copro.params[1]));
+    const uint64_t now = chip.state.totalClocks;
+    if (!v.textWaiting)
+    {
+        v.textWaiting = 1;
+        v.textWaitStart = now;
+    }
+    if (Vdac4MetricsReady(chip, font) || (now - v.romWaitStart >= MillisecondsToClocks(chip, kVdac4RomWaitMs) &&
+                                          now - v.textWaitStart >= MillisecondsToClocks(chip, kVdac4TextRetryMs)))
+    {
+        v.textWaiting = 0;
+        return true;
+    }
+    return false;
 }
 
 // The words of a string drawn with a font at (x, y): SAVE_CONTEXT, VERTEX_FORMAT(2),
@@ -157,7 +232,15 @@ bool QueueText(EveChip& chip, int32_t x, int32_t y, uint32_t font, uint32_t opti
     for (uint32_t i = 0; i < length; ++i)
         width += static_cast<int32_t>(CharWidth(chip, m, text[i]));
     // OPT_RIGHTX: x is the rightmost pixel [PG §5.41].
-    if (options & kOptRightX)
+    if (chip.vdac4)
+    {
+        // The BL616 (ft_copro.c text_emit): no shift for an empty string, CENTERX by (w - 1) / 2
+        if (length != 0 && (options & kOptRightX))
+            x -= width - 1;
+        else if (length != 0 && (options & kOptCenterX))
+            x -= (width - 1) >> 1;
+    }
+    else if (options & kOptRightX)
         x -= width - 1;
     else if (options & kOptCenterX)
         x -= width / 2;
@@ -269,6 +352,27 @@ uint32_t FormatNumber(const EveChip& chip, uint32_t value, uint32_t options, uin
     if (base < kMinBase || base > kMaxBase)
         base = kDefaultNumberBase;
     const bool negative = (options & kOptSigned) && static_cast<int32_t>(value) < 0;
+    if (chip.vdac4)
+    {
+        // The BL616 (ft_copro.c number_text): exactly `width` digits when the width (0...31) is
+        // set - leading zeros, higher digits dropped - else as many as needed
+        uint32_t v = negative ? 0u - value : value;
+        const uint32_t want = options & kOptWidthMask;
+        uint8_t digits[kOptWidthMask + 1];
+        uint32_t count = 0;
+        do
+        {
+            const uint32_t digit = v % base;
+            digits[count++] = static_cast<uint8_t>(digit < kDigitsBelowTen ? '0' + digit : 'A' + digit - kDigitsBelowTen);
+            v /= base;
+        } while (want != 0 ? count < want : v != 0);
+        uint32_t length = 0;
+        if (negative)
+            out[length++] = '-';
+        while (count > 0)
+            out[length++] = digits[--count];
+        return length;
+    }
     uint64_t magnitude = negative ? static_cast<uint64_t>(-static_cast<int64_t>(static_cast<int32_t>(value))) : value;
     uint8_t digits[kMaxDigits];
     uint32_t count = 0;
@@ -305,6 +409,78 @@ bool QueueSetbitmap(EveChip& chip)
     return QueueWords(chip, words, sizeof(words) / sizeof(words[0]));
 }
 
+// VDAC4 CMD_PROGRESS (ft_copro.c progress, as bt8xxemu draws it): the bar is a wide line, with
+// a white and a black edge line unless OPT_FLAT, then the background colour line and the value.
+bool QueueProgress(EveChip& chip)
+{
+    constexpr uint32_t kOpColorRgb = 0x04, kOpLineWidth = 0x0E, kBeginLines = 3, kOptFlat = 256;
+    constexpr uint32_t kLineWidthMask = 0xFFF, kWhiteRgb = 0xFFFFFF;
+    constexpr int32_t kSub = 4; // VERTEX_FORMAT(2): 1/4 pixel
+    const CoproState& c = chip.state.copro;
+    const int32_t x = Low16(c.params[0]), y = High16(c.params[0]);
+    const int32_t w = Low16(c.params[1]), h = High16(c.params[1]);
+    const uint32_t options = c.params[2] & 0xFFFF, value = c.params[2] >> kHalfWordBits;
+    const uint32_t range = c.params[3] & 0xFFFF;
+    const bool vertical = !(w > h);
+    const int32_t t = vertical ? w : h;
+    const int32_t a = kSub * (vertical ? y : x), len = kSub * (vertical ? h : w);
+    const int32_t cc = vertical ? kSub * x + 2 * w : kSub * y + 2 * h;
+    const int32_t vb = range != 0 ? a + static_cast<int32_t>((static_cast<int64_t>(len) * value) / range) : a - 1;
+    const auto v2f = [](int32_t vx, int32_t vy) {
+        return kVertex2fTag | ((static_cast<uint32_t>(vx) & kVertex2fMask) << kVertex2fXShift) |
+               (static_cast<uint32_t>(vy) & kVertex2fMask);
+    };
+    // Along the bar u, across it v
+    const auto pv = [&](int32_t u, int32_t v) { return vertical ? v2f(v, u) : v2f(u, v); };
+    uint32_t words[24];
+    uint32_t n = 0;
+    words[n++] = Dl(kOpSaveContext, 0);
+    words[n++] = Dl(kOpVertexFormat, kTextVertexFormat);
+    words[n++] = Dl(kOpLineWidth, static_cast<uint32_t>(8 * t) & kLineWidthMask);
+    words[n++] = Dl(kOpBegin, kBeginLines);
+    if (!(options & kOptFlat))
+    {
+        words[n++] = Dl(kOpColorRgb, kWhiteRgb);
+        words[n++] = pv(a + 2, cc + 2);
+        words[n++] = pv(a + len + 2, cc + 2);
+        words[n++] = Dl(kOpColorRgb, 0);
+        words[n++] = pv(a - 3, cc - 3);
+        words[n++] = pv(a + len - 3, cc - 3);
+    }
+    words[n++] = Dl(kOpColorRgb, c.bgColor & kWhiteRgb);
+    words[n++] = pv(a, cc);
+    words[n++] = pv(a + len, cc);
+    words[n++] = Dl(kOpRestoreContext, 0);
+    words[n++] = Dl(kOpSaveContext, 0);
+    words[n++] = Dl(kOpVertexFormat, kTextVertexFormat);
+    words[n++] = Dl(kOpLineWidth, static_cast<uint32_t>(7 * t) & kLineWidthMask);
+    words[n++] = pv(a, cc);
+    words[n++] = pv(vb, cc);
+    words[n++] = Dl(kOpRestoreContext, 0);
+    return QueueWords(chip, words, n);
+}
+
+// VDAC4 text wait stages (CoproState::stage of CMD_TEXT / CMD_NUMBER; the FT812 leaves it 0).
+constexpr uint8_t kStageNumberPending = 1; // CMD_NUMBER: words not generated yet
+constexpr uint8_t kStageNumberGo = 2;      // CMD_NUMBER: metrics usable, generate the words
+constexpr uint8_t kStageTextWait = 3;      // CMD_TEXT: polling the metrics
+
+StepPlan Vdac4WaitStep(const EveChip& chip)
+{
+    const uint64_t clocks = MillisecondsToClocks(chip, kVdac4TextPollMs);
+    return StepPlan{true, 0, clocks != 0 ? clocks : 1};
+}
+
+bool QueueNumber(EveChip& chip)
+{
+    const CoproState& c = chip.state.copro;
+    uint8_t text[kMaxDigits + 1];
+    const uint32_t options = static_cast<uint16_t>(High16(c.params[1]));
+    const uint32_t length = FormatNumber(chip, c.params[2], options, text);
+    return QueueText(chip, Low16(c.params[0]), High16(c.params[0]), static_cast<uint16_t>(Low16(c.params[1])),
+                     options, text, length);
+}
+
 // Find the NUL that ends the string in the ring; false while it has not arrived.
 bool StringLength(const EveChip& chip, uint32_t& length)
 {
@@ -328,19 +504,27 @@ bool TextBegin(EveChip& chip)
     case kCmdText:
         return false; // the string follows
     case kCmdNumber:
-    {
-        uint8_t text[kMaxDigits + 1];
-        const uint32_t options = static_cast<uint16_t>(High16(c.params[1]));
-        const uint32_t length = FormatNumber(chip, c.params[2], options, text);
-        if (!QueueText(chip, Low16(c.params[0]), High16(c.params[0]), static_cast<uint16_t>(Low16(c.params[1])),
-                       options, text, length))
+        if (chip.vdac4)
+        {
+            c.stage = kStageNumberPending; // may wait for the font metrics first
             return false;
+        }
+        QueueNumber(chip);
         return false; // emitted as its cost elapses
-    }
     case kCmdSetfont:
+        if (chip.vdac4)
+        {
+            // The BL616 keeps pointers of fonts 0...15 only (ft_copro.c CMD_SETFONT)
+            if (c.params[0] < kFirstRomFont)
+                c.fontPointers[c.params[0]] = c.params[1];
+            return true;
+        }
         c.fontPointers[c.params[0] % kHandleCount] = c.params[1];
         c.fontFirstChar[c.params[0] % kHandleCount] = 0;
         return true;
+    case kCmdProgress:
+        QueueProgress(chip);
+        return false;
     case kCmdSetfont2:
     {
         const uint32_t font = c.params[0] % kHandleCount;
@@ -391,7 +575,20 @@ StepPlan TextPlan(EveChip& chip)
             c.phase = EVE_COPRO_WAITING_DATA;
             return NotReady();
         }
+        if (chip.vdac4 && !Vdac4TextReady(chip))
+        {
+            c.stage = kStageTextWait;
+            return Vdac4WaitStep(chip);
+        }
+        c.stage = 0;
         return StepPlan{true, length + 1, 0};
+    }
+    if (c.command == kCmdNumber && c.stage == kStageNumberPending)
+    {
+        if (!Vdac4TextReady(chip))
+            return Vdac4WaitStep(chip);
+        c.stage = kStageNumberGo;
+        return StepPlan{true, 0, 0};
     }
     return EmitPlan(chip);
 }
@@ -401,6 +598,11 @@ void TextApply(EveChip& chip, uint32_t units)
     CoproState& c = chip.state.copro;
     if (c.command == kCmdText && !c.generated)
     {
+        if (c.stage == kStageTextWait)
+        {
+            c.stage = 0; // a poll interval passed: check the metrics again
+            return;
+        }
         // Read the string (units bytes with its NUL), consume it, generate the words.
         uint8_t text[kMaxString];
         const uint32_t length = units - 1;
@@ -408,10 +610,21 @@ void TextApply(EveChip& chip, uint32_t units)
         ConsumeRingData(chip, units);
         AlignRing(chip);
         c.generated = 1;
+        // VDAC4: the BL616 draws the first FTC_TEXT_MAX characters
+        const uint32_t drawn = chip.vdac4 && length > kVdac4TextMax ? kVdac4TextMax : length;
         if (!QueueText(chip, Low16(c.params[0]), High16(c.params[0]), static_cast<uint16_t>(Low16(c.params[1])),
-                       static_cast<uint16_t>(High16(c.params[1])), text, length))
+                       static_cast<uint16_t>(High16(c.params[1])), text, drawn))
             return;
         return;
+    }
+    if (c.command == kCmdNumber && c.stage != 0)
+    {
+        if (c.stage == kStageNumberGo)
+        {
+            c.stage = 0;
+            QueueNumber(chip);
+        }
+        return; // kStageNumberPending: a poll interval passed
     }
     EmitApply(chip, units);
 }

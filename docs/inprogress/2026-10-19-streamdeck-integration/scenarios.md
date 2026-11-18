@@ -311,6 +311,27 @@ after a machine start in place.
 **Read-only menus.** `"readonly": true` on a menu (spec `readonly: true`): its keys only show - a press does
 nothing (no action, no press look), so the values of a monitoring page never flicker under a finger; the back key still
 goes back. The product scenario's monitoring page is one.
+
+**Wide menus.** `"width": 10` on a menu (spec `width: 10`): its keys take columns `0..width-1`, the deck shows a window
+of its own columns (the + XL nine of ten). A step `{"kind": "nav", "to": "scroll", "by": n}` moves the window `n`
+columns (a dial's turn: `"by": "$ticks"`), clamped to the menu; a swipe on the strip moves it a column the finger's
+way (a swipe to the left shows the columns on the right). Moving the window is no menu change: the context, the status
+and the held keys stay; leaving the menu starts it at the first column again. A wide menu keeps no back key (it would
+scroll away: `back: false`); a long press on the strip goes home. `"window": [first, last]` keeps the window to those
+deck columns; a key with `"pin": true` takes its `at` as the deck's slot outside the window and never scrolls (scroll
+keys `{"kind": "nav", "to": "scroll", "by": -1}` / `1`, drawn dimmed at the end they move towards; home; shifts).
+`GET /page` gives `scroll: {column, width, window}`, each key's slot in the menu (`at`) and `pinned` on pinned keys.
+The product scenario's keyboard page is one: the 48K's ten columns, seven at a time on the middle deck columns, the
+scroll keys in the edge columns' middle rows, home and ENTER above them, CAPS SHIFT and SYMBOL SHIFT below.
+
+**Strip keys.** `"strip": {"content": "keys", "keys": [{"label", "span"?, "latch"?, "do"}]}`: the strip is a row of
+touch keys instead of the title, the status and the timeline (a message still comes over it). Zones share the width
+by `span` (default 1; six spans of one put a zone above each dial of the + XL). A tap runs the zone's step once (an
+`input.key` taps the key). A `latch` zone (a shift) holds its action from a tap until the next key is let go (a deck
+key, a dial press, a plain zone: a one-shot shift, lit while it holds); tapped again it lets go; a second latch zone
+tapped while one holds goes down with it for a few frames and both let go (CAPS SHIFT then SYMBOL SHIFT: the
+Spectrum's extended mode). Leaving the menu lets every latch go. The spec writes a zone's step in the key form
+(`{label: SPACE, span: 4, action: input.key, value: {key: space}}`), the project as `do`.
 ## 8. Example
 
 ```json

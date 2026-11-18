@@ -44,7 +44,7 @@ TEST(MachineVariants_Test, TsConfVdac2IsCreatedByName)
     EXPECT_EQ(context->config.ide_scheme, IDE_NONE);
     auto* decoder = dynamic_cast<PortDecoder_TSConf*>(context->pPortDecoder);
     ASSERT_NE(decoder, nullptr);
-    EXPECT_NE(decoder->GetVdac2Card(), nullptr) << "the card is fitted";
+    EXPECT_NE(decoder->GetEveCard(), nullptr) << "the card is fitted";
     const MachineIdentity identity = EmulatorManager::GetMachineIdentity(*emulator);
     EXPECT_EQ(identity.Model, "TSL");
     EXPECT_EQ(identity.Variant, "TSL-VDAC2");

@@ -1,0 +1,1 @@
+unglobal: nop: .prox: nop: module un: deuxglobal: nop: .prox: nop: djnz .prox: nop: doublon: nop: module deux: troisglobal: nop:  .prox: nop: djnz .prox: nop: doublon: nop: assert doublon>troisglobal: endmodule: jr un_doublon: jr deux_doublon: jr un_deuxglobal.prox: jr deux_troisglobal.prox 

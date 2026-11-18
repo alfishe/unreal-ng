@@ -1,0 +1,1 @@
+bank: edsk readfile,'rasmoutput_test.dsk','g4k.bin': assert $==4096:bank: edsk readfile,'rasmoutput_test.dsk','g16k.bin': assert $==16384:bank: edsk readfile,'rasmoutput_test.dsk','g36k.bin': assert $==1024*36:bank: edsk readfile,'rasmoutput_test.dsk','g16k.bin',4096 : assert $==16384-4096

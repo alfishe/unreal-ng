@@ -1,0 +1,8 @@
+__getreent _exit _write _sbrk _read _lseek _kill _gettimeofday _getpid _fstat _close _isatty
+malloc calloc realloc free _malloc_r _calloc_r _realloc_r _free_r heap_caps_malloc heap_caps_calloc heap_caps_free
+usleep sleep exit close clock_gettime
+pthread_create pthread_attr_init pthread_attr_setstacksize pthread_detach pthread_join pthread_exit
+getopt_long optind opterr optarg optopt
+zm_host_log_line zm_host_task_exit zm_host_return
+zm_host_link_read zm_host_link_write zm_host_delay zm_host_millis zm_host_ft_read zm_host_ft_write zm_host_ft_opened
+__divsf3 __ieee754_sqrtf

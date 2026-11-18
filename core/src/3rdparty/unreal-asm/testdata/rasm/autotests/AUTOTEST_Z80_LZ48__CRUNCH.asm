@@ -1,0 +1,1 @@
+incl48 './decrunch/lzDataTest.bin' : save './decrunch/lzDataTest.l48',0,$ 

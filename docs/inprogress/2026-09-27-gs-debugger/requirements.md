@@ -373,6 +373,11 @@ sequenceDiagram
 | D3 | P1 | The command log (F1) is part of the recorded history: seeking back shows the log up to that point; nothing after it. | Seek to frame 200; the log ends at frame 200. |
 | D4 | P2 | Card breakpoints participate in reverse search (reverse continue stops at the previous hit of a card breakpoint). | Reverse continue from frame 400 stops at the previous `#31` command. |
 
+**Status 2026-11-17 (branch `card-positions`, not landed):** D1 and D4 are built in the core and on every plane
+(design §8 "As built"; [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu)),
+with the D1 check as a test (`TTD_CardPositions_Test`, GS, NeoGS and the MultiSound GS) and the 7 MHz main turbo
+case. D2 and D3 are not part of it. The UI is a second agent's.
+
 ### 4.8 Automation, protocols and user interface
 
 | ID | Pri | Requirement | Check |

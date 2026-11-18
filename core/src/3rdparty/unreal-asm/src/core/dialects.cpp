@@ -36,6 +36,7 @@
 #include "dialects/zasm/zasmfrontend.h"
 #include "dialects/fantasm/fantasmfrontend.h"
 #include "dialects/zmac/zmacfrontend.h"
+#include "dialects/rasm/rasmbackend.h"
 #include "dialects/rasm/rasmfrontend.h"
 #include "dialects/specasm/specasmfrontend.h"
 #include "dialects/odin/odinfrontend.h"
@@ -86,6 +87,7 @@ const DialectRegistry& DialectRegistry::Builtin()
         r.Add(std::make_unique<dialects::StormBackend>());
         r.Add(std::make_unique<dialects::TasmBackend>());
         r.Add(std::make_unique<dialects::ZxasmBackend>());
+        r.Add(std::make_unique<dialects::RasmBackend>());
         r.Add(std::make_unique<dialects::MasmBackend>());
         r.Add(std::make_unique<dialects::GensBackend>());
         r.Add(std::make_unique<dialects::ZeusBackend>());

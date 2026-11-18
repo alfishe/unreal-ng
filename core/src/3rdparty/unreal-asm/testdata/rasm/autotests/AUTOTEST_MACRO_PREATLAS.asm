@@ -1,0 +1,1 @@
+macro 	 truc: xor a: mend: macro 	 bidule machin: ld hl,{machin}:mend: macro 	 encore,leparam: ld hl,{leparam}: mend: macro 	 space1 p1: ld hl,{p1}:mend: macro 	 space2 , 	p2: ld hl,{p2}: mend: macro 	 space3, p3: ld hl,{p3}: mend: truc: bidule 12: encore 50: space1 33: space2 99: space3 77

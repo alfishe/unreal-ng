@@ -1,0 +1,18 @@
+strerror memset memcpy strlen strtod strrchr strchr strcmp strtol strcspn strncat
+puts putchar fputc fputs printf vfprintf fprintf fwrite
+usleep sleep exit close
+malloc calloc realloc free
+clock_gettime strftime
+pthread_create pthread_attr_init pthread_attr_setstacksize pthread_detach pthread_join pthread_exit
+__errno __getreent _ctype_
+__ltdf2 __fixunsdfsi __gtdf2 __floatunsidf __divdf3
+getopt_long optind opterr optarg optopt
+setjmp longjmp
+memmove memcmp memchr strncmp strcpy strncpy strcat strstr strnlen strcasecmp strncasecmp
+snprintf vsnprintf sprintf qsort abs labs atoi strtoul rand srand
+sinf cosf tanf atanf atan2f powf expf exp2f logf log2f log10f sqrtf floorf ceilf roundf truncf fmodf lrintf lroundf
+sin cos tan atan atan2 pow exp log log10 sqrt floor ceil fmod fabs ldexp frexp acos asin acosh asinh atanh cosh sinh tanh cbrt expm1 log1p hypot lrint round trunc scalbn
+gettimeofday gmtime_r localtime_r mktime difftime
+__adddf3 __subdf3 __muldf3 __negdf2 __eqdf2 __nedf2 __ledf2 __gedf2 __unorddf2 __fixdfsi __floatsidf __extendsfdf2 __truncdfsf2 __fixdfdi __floatdidf __divdi3 __udivdi3 __moddi3 __umoddi3 __ashldi3 __ashrdi3 __lshrdi3 __muldi3 __fixsfdi __fixunssfdi __floatdisf __floatundisf __divsf3 __fixunssfsi __floatunsisf __fixunsdfdi __floatundidf
+heap_caps_malloc heap_caps_calloc heap_caps_free
+zm_rom_log zm_rom_task_entry zm_rom_ft_open zm_rom_ft_close

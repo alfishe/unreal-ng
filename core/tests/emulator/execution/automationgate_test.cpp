@@ -84,6 +84,12 @@ TEST(AutomationGate_Test, CliCommandsByTheirChangingForms)
     EXPECT_FALSE(CliCommandChangesMachine("status", {}));
     EXPECT_FALSE(CliCommandChangesMachine("rzx", {"status"}));
     EXPECT_TRUE(CliCommandChangesMachine("rzx", {"seek", "5"}));
+    EXPECT_TRUE(CliCommandChangesMachine("snapshot", {"transfer", "--model", "PENTAGON"}));
+    EXPECT_TRUE(CliCommandChangesMachine("snapshot", {"transfer", "emu-2"}));
+    EXPECT_FALSE(CliCommandChangesMachine("snapshot", {"transfer", "emu-2", "--check"})) << "a check only reports";
+    EXPECT_FALSE(CliCommandChangesMachine("snapshot", {"transfer"})) << "no arguments prints the usage";
+    EXPECT_FALSE(CliCommandChangesMachine("snapshot", {"transfer", "--help"}));
+    EXPECT_FALSE(CliCommandChangesMachine("snapshot", {"transfer", "help"}));
 }
 
 TEST(AutomationGate_Test, TheClientNameIsTheUserAgentsFirstProduct)
@@ -170,6 +176,7 @@ TEST(AutomationGate_Test, CompanionCliScopesFollowTheCommandForms)
     EXPECT_EQ(CompanionCliScopeOf("disk", {"insert", "A", "x.trd"}), uint32_t(ScopeMedia));
     EXPECT_EQ(CompanionCliScopeOf("disk", {"write", "A"}), uint32_t(ScopeDebug));
     EXPECT_EQ(CompanionCliScopeOf("snapshot", {"load", "x.sna"}), uint32_t(ScopeMedia));
+    EXPECT_EQ(CompanionCliScopeOf("snapshot", {"transfer", "emu-2"}), uint32_t(ScopeMachine)) << "as POST /snapshot/transfer";
     EXPECT_EQ(CompanionCliScopeOf("ttd", {"sb"}), uint32_t(ScopeRewind));
     EXPECT_EQ(CompanionCliScopeOf("ttd", {"load", "x.ttd"}), uint32_t(ScopeDebug));
     EXPECT_EQ(CompanionCliScopeOf("model", {"PENTAGON"}), uint32_t(ScopeMachine));

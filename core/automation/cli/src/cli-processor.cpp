@@ -213,6 +213,8 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
 
                         // TS-Conf VDAC2 card (FT812): bus capture
                         {"vdac2", &CLIProcessor::HandleVdac2},
+                        // TS-Conf VDAC4 board: Tang, ESP, app state and the ESP log
+                        {"vdac4", &CLIProcessor::HandleVdac4},
                         {"bus", &CLIProcessor::HandleBus},
 
                         // General Sound coprocessor triage (activity counters + port/DAC trace)
@@ -236,6 +238,7 @@ CLIProcessor::CLIProcessor() : _emulator(nullptr), _isFirstCommand(true)
                         {"stop", &CLIProcessor::HandleStop},
                         {"remove", &CLIProcessor::HandleStop},  // Alias for stop (stop also removes the instance)
                         {"models", &CLIProcessor::HandleModels},
+                        {"machines", &CLIProcessor::HandleMachines},
                         {"zxpoly", &CLIProcessor::HandleZXPoly},
                         {"model", &CLIProcessor::HandleModel},
 
@@ -691,6 +694,7 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "  stop [id|index|all] - Stop emulator (single if only one running, or by ID/index/all)" << NEWLINE;
     oss << "  remove        - Alias for stop (stops and removes instance)" << NEWLINE;
     oss << "  models        - List available ZX Spectrum models" << NEWLINE;
+    oss << "  machines [all] - The machines by family (creatable ones; 'all' for every one)" << NEWLINE;
     oss << "  zxpoly start <model> [file] [--ram-power-on random|zero] - Start a ZX-Poly machine (4 synchronized <model>s; file: .zxp/.prom/disk)" << NEWLINE;
     oss << "  zxpoly status [id|index]    - ZX-Poly group status (modules, registers, lock, video mode, lockstep)" << NEWLINE;
     oss << "  reset [hard] [id|index] - Reset the emulator: soft (the reset button); hard = power cycle (Next: boot ROM + firmware)" << NEWLINE;
@@ -794,6 +798,10 @@ void CLIProcessor::HandleHelp(const ClientSession& session, const std::vector<st
     oss << "TS-Conf VDAC2 card (FT812):" << NEWLINE;
     oss << "  vdac2 capture <start <path>|stop|status>" << NEWLINE;
     oss << "                                - FT812 bus to an .evr replay stream (chip selects, bytes, clocks, frame hashes)" << NEWLINE;
+    oss << NEWLINE;
+    oss << "TS-Conf VDAC4 board (Tang FT812 core + ESP32-S3):" << NEWLINE;
+    oss << "  vdac4 state [log N] | vdac4 log [N] | vdac4 esp-memory <address> [size] [app]" << NEWLINE;
+    oss << "                                - Tang personality, ESP phase, running app, link, audio, ESP log" << NEWLINE;
     oss << NEWLINE;
     oss << "General Sound card:" << NEWLINE;
     oss << "  gsporttrace <start|stop|pause|resume|clear|status|counters|events [n]>" << NEWLINE;

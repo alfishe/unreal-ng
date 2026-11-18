@@ -1,7 +1,8 @@
 # Sound-card CPU debugging (General Sound, NeoGS) — design
 
 - **Date:** 2026-09-27; revisions 2 and 3 on 2026-09-28
-- **Status:** draft for review.
+- **Status:** draft for review. §8 D1 / D4 (TTD positions on the card's CPU) built 2026-11-17 on branch
+  `card-positions` (not landed): see §8 "As built".
 - **Implements:** [requirements.md](requirements.md) (revision 4).
 - **Revision 3** adds §8A: the engine for the tracing and analysis tools
   (X1-X21), the audio tools (AU1-AU6) and the firmware metadata (M1-M12) of
@@ -1245,6 +1246,47 @@ the GS slot.
   a stop reply for its CPU with reason "stopped by other CPU".
 
 ## 8. TTD (D1-D4)
+
+> **Owner decision (2026-11-17): positions on either CPU, both directions** (settles Q2 of the TTD v2 phase-3 TDD,
+> [phase-3-replay-inputs-tdd.md §8](../2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md)).
+>
+> - Stepping works on either CPU in both directions: by main-CPU instructions or by card instructions.
+> - The other CPU is always in a known state. At frame boundaries both are exact and the clock ratio is fixed, so for
+>   any position of one CPU the other's state is computed by a replay from the nearest checkpoint.
+> - No "resumable burst inside a host instruction" is needed. Every step, forward or backward, is a replay to a
+>   target position. A card step inside a long main-CPU instruction works.
+> - Display: when the card stands at instruction N, the main CPU is shown as its last completed instruction plus a
+>   T-state offset inside the current one (its registers are those at the last boundary). A run or resume from such a
+>   position first lets the main CPU reach its instruction boundary.
+>
+> **As built (2026-11-17), how a card position is reached.**
+>
+> - *The card's instruction count* is part of the card's state: `GeneralSoundCard::cardInstructionCount` (the
+>   always-on `cpuSteps` counter, no new work per instruction; the idle sleep adds the steps it stands for). The TTD
+>   blob carries it (GS and the MultiSound GS: bytes 59-66 and the flag byte 67; NeoGS: bytes 240-247 and the flag
+>   byte 248). A recording made before it has no counts, and card positions in it are refused with that reason.
+> - *A position* names a card CPU (`gs`, also NeoGS in the GS slot; `ms`, the MultiSound's GS) and its instruction
+>   count: the card has run that many instructions and stands at the next one's boundary (an accepted INT or NMI
+>   already taken, as a card breakpoint sees it).
+> - *Seek to a card position* (`TimeTravelController::SeekToCardInstruction`): the frame whose checkpoint has the
+>   largest card count at or below the target is restored. That frame is replayed in tight mode with the card's debug
+>   loop (`GSCardTarget::BeginScan`): breakpoints collect instead of parking, and at the target count the card's whole
+>   state is copied together with the main CPU's instruction start and the card's moment in main T. Then the main CPU
+>   is put at its last boundary at or before that moment (a seek; if the moment lies past the decoded length of that
+>   instruction, it moves on one instruction at a time). The copy is loaded into the card. The card stands ahead of
+>   the main CPU by the T offset.
+> - *Steps* are seeks: `StepCardInstructions(cpu, ±n)` from the card's count at the current position. That count is
+>   the card's own, caught up to the main CPU's moment when the position is a main one.
+> - *Reverse continue* (`ReverseContinueCard`) replays frames backwards from the current one with the card's breakpoint
+>   manager armed in the scan. The newest hit before the current card count is the answer; with none, the machine is
+>   put back exactly where it stood and the answer says so.
+> - *Leaving a card position*: the card's natural state (the one a plain seek to the main boundary gives) is kept
+>   with the position (`CardStand`). The machine leaves the position at the first input service outside a replay
+>   (`ServiceInput` -> `LeaveCardStand`: a resume, a run of frames or T-states), at a main-CPU step forward, on
+>   leaving the history and on continuing the recording there; the natural state goes back into the card and the
+>   main CPU finishes its current instruction with the card behind it, as it was recorded. While a position stands,
+>   the input path does not idle (`InputIdleLimit` 0), so the first instruction run meets it. Any other move in time
+>   (a seek, a reset) drops the position. A tool's save / restore of the live state (`LiveStateSnapshot`) carries it.
 
 - **Card reverse step.** The card's instruction count, `cpuSteps`, becomes
   part of the card state (it already counts steps in `runTo`). A reverse step

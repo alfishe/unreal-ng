@@ -140,6 +140,12 @@ const ChipTable kFt812Table = {
     EVE_MODEL_FT812, "FT812", kRamGSize, kRamDlBase, kRamRegBase, kRamCmdBase, kSpecialBase,
     {kChipId[0], kChipId[1], kChipId[2], kChipId[3]}, kFt812Registers};
 
+// VDAC4: the FT812 address map and registers (ft_core.sv reg_reset, R_UND558 / R_UND560) with
+// 3 MB of RAM_G; the chip ID is the FT812's (ft_core.sv: 0x00011208 at 0x0C0000).
+const ChipTable kVdac4Table = {
+    EVE_MODEL_VDAC4, "VDAC4", kVdac4RamGSize, kRamDlBase, kRamRegBase, kRamCmdBase, kSpecialBase,
+    {kChipId[0], kChipId[1], kChipId[2], kChipId[3]}, kFt812Registers};
+
 // Word index (address / 4) inside REG / SPECIAL -> register + 1, 0 = reserved.
 struct RegisterLookup
 {
@@ -187,8 +193,7 @@ static_assert(TableInOrder(), "register table must follow enum Reg");
 
 const ChipTable& GetChipTable(EveModel model)
 {
-    (void)model; // the only model (arch §1, §12)
-    return kFt812Table;
+    return model == EVE_MODEL_VDAC4 ? kVdac4Table : kFt812Table;
 }
 
 const RegInfo& RegisterInfo(const EveChip& chip, Reg reg)

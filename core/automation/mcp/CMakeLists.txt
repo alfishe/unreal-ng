@@ -49,6 +49,8 @@ add_library(${PROJECT_NAME} STATIC
     src/mcp-history.cpp
     src/mcp-audio.h
     src/mcp-audio.cpp
+    src/mcp-vdac4.h
+    src/mcp-vdac4.cpp
     src/target-resolver.h
     src/target-resolver.cpp
     src/webapi-client.h

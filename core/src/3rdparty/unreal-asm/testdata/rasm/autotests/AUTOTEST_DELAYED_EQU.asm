@@ -1,0 +1,1 @@
+ld (ix + PLY_AKM_Data_OffsetPtStartTrack + 1),h:PLY_AKM_Track1_Data::PLY_AKM_Track1_PtStartTrack defw 0:PLY_AKM_Data_OffsetPtStartTrack    equ PLY_AKM_Track1_PtStartTrack - PLY_AKM_Track1_Data

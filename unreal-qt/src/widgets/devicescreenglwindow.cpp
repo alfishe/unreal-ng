@@ -1949,6 +1949,13 @@ void DeviceScreenGLWindow::paintGL()
     const bool hudShown = _hudOverlay && _hudOverlay->isVisible();
     if ((hudShown || _overlayPainter) && !_renderingImage)
     {
+        // QPainter's glyph cache uploads assume GL's default pixel store and texture unit; a picture pass that left
+        // others (alignment 1, a row length) skews every newly cached glyph into diagonal stripes
+        glActiveTexture(GL_TEXTURE0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         // Into the bound framebuffer: the window's surface or the native way's IOSurface
         QOpenGLPaintDevice device(QSize(surfaceWidth, surfaceHeight));
         device.setDevicePixelRatio(dpr);

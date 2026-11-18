@@ -288,6 +288,21 @@ The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_o
 `gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
 ([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).
 
+**Time travel on the card's CPU** ([TTD on a sound card's CPU](../control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu),
+[gs-debugger design §8](../../../inprogress/2026-09-27-gs-debugger/design.md)). In a recorded history the card's CPU
+is stepped both ways, seeked to an instruction count and reverse-continued to the previous hit of its own
+breakpoints (the list `bp_list` with `cpu gs` shows). Every move is a replay from the nearest checkpoint; the main CPU
+stands at its last completed instruction with the T-states into the next. The reverse search evaluates the card's
+breakpoints during the replay without counting hits or firing taps.
+
+| Plane | Seek | Step | Reverse continue |
+| :--- | :--- | :--- | :--- |
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back --cpu gs [--count N]`, `ttd si-forward --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` |
+| Lua | `ttd_card_seek("gs", n)` | `ttd_card_step("gs", -n)` | `ttd_card_reverse_continue("gs")` |
+| Python | `emu.ttd_card_seek("gs", n)` | `emu.ttd_card_step("gs", -n)` | `emu.ttd_card_reverse_continue("gs")` |
+| MCP | `time_travel` `card_seek` | `time_travel` `card_step` | `time_travel` `card_reverse_continue` |
+| REST / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}` | `POST /ttd/reverse-continue {cpu, max_frames}` |
+
 ## 9. Sound chip registers
 
 A chip register breakpoint (`BRK_CHIPREG`, `core/src/debugger/breakpoints/chipregister.h`) stops the main CPU after

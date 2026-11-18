@@ -1,0 +1,1 @@
+struct bite: preums defb 0: deuze defw 1: troize defs 10: endstruct: if {sizeof}bite.preums!=1 || {sizeof}bite.deuze!=2 || {sizeof}bite.troize!=10: stop: endif: nop 

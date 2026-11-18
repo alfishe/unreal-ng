@@ -20,6 +20,7 @@
 #include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
 #include <optional>
@@ -46,6 +47,7 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
+#include <loaders/snapshot/statetransfercontrol.h>
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memoryaccesstracker.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
@@ -156,6 +158,7 @@
 #include <debugger/history/historycontrol.h>
 #include "../bindings/python_porttrace.h"
 #include "../bindings/python_vdac2.h"
+#include "../bindings/python_vdac4.h"
 
 namespace py = pybind11;
 
@@ -415,6 +418,20 @@ inline pybind11::object BusReplyToPy(const StateNode& node)
 inline ttd::TTDReply TtdRunPy(Emulator& self, const std::string& verb, std::map<std::string, std::string> options = {})
 {
     return ttd::TTDControl(self.GetContext()).Execute({verb, std::move(options)});
+}
+
+/// A card move's reply as a script sees it: the body; a refusal with ok False and error; a bad request raises
+inline pybind11::object TtdCardReplyPy(const ttd::TTDReply& reply)
+{
+    if (reply.error == ttd::TTDControlError::BadRequest)
+        throw pybind11::value_error(reply.message);
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
 }
 
 /// The reply's body; a failure raises RuntimeError with the message, as the bindings always did
@@ -1573,6 +1590,22 @@ namespace PythonBindings
             return static_cast<int>(mgr->GetEmulatorIds().size());
         }, "Get count of emulator instances");
 
+        // The machines grouped family -> machine -> RAM size (MachineCatalog, as GET /emulator/machines):
+        // machines(all=False, id="") -> {"families": [...], "current"?: {...}}
+        m.def("machines", [](bool all, const std::string& id) -> py::object {
+            std::string current;
+            uint32_t ramKb = 0;
+            if (!id.empty())
+                if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(id))
+                {
+                    current = MachineCatalog::NameOf(*emulator);
+                    ramKb = EmulatorManager::GetMachineIdentity(*emulator).RamKb;
+                }
+            return StateNodeToPy(all ? MachineCatalog::ToState(MachineCatalog::All(), current, ramKb)
+                                     : MachineCatalog::ToState(MachineCatalog::Creatable(), current, ramKb));
+        }, py::arg("all") = false, py::arg("id") = "",
+           "Machines by family (creatable ones unless all); with id that instance's machine is 'current'");
+
         // Companion clients (docs/inprogress/2026-10-16-companion-client): devices the user paired at the GUI to act
         // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one
         m.def("companions", []() -> py::object {
@@ -1732,6 +1765,41 @@ namespace PythonBindings
                 return py::none();
             return StateNodeToPy(emulator->LastSnapshotReport().ToStateNode());
         }, "What the snapshot pipeline did with the last load: commit, verdicts, per-block outcomes, warnings, refusal",
+           py::arg("emulator_id") = "");
+
+        // The machine state transfer (StateTransferControl, as WebAPI POST /snapshot/transfer, MCP transfer_state, CLI
+        // snapshot transfer, Lua transfer_state): the source's (default: the selected one) running state into an
+        // existing instance (to; check=True only says what would move) or a new one of a model. Returns the WebAPI's
+        // report dict (ok False: refused, nothing changed); RuntimeError when there is no report (no such target, the
+        // machine state coordinator refuses, a bad request)
+        m.def("transfer_state", [](const std::string& to, const std::string& model, uint32_t ramSize,
+                                   const std::string& symbolicId, bool check, std::optional<bool> keepFramePosition,
+                                   std::optional<bool> start, const std::string& emulatorId) -> py::object {
+            StateTransferRequest request;
+            request.sourceId = python_rzx::ResolveId(emulatorId);
+            request.to = to;
+            request.model = model;
+            request.ramSizeKB = ramSize;
+            request.symbolicId = symbolicId;
+            request.check = check;
+            request.keepFramePosition = keepFramePosition;
+            request.start = start;
+            if (std::shared_ptr<Emulator> source = EmulatorManager::GetInstance()->GetEmulator(request.sourceId))
+                execution::script::Check(*source, execution::Origin::Python, !check);   // a check only reads
+            StateTransferReply reply;
+            {
+                py::gil_scoped_release release;   // pauses both machines, or builds a new one
+                reply = StateTransferControl::Execute(request);
+            }
+            if (!reply.hasReport)
+                throw std::runtime_error(reply.error + ": " + reply.message);
+            return StateNodeToPy(reply.body);
+        }, "Move a machine's running state into another instance, in memory: to='<id>' (an existing one; check=True "
+           "only reports) or model='PENTAGON' (a new one; ram_size, symbolic_id, start). Returns the report: ok, mode "
+           "(clone / cross-model), items (name, status copied / dropped / refused / note, detail), counts, summary, "
+           "target_id; RuntimeError when no report could be made (unknown target, coordinator refusal, bad request)",
+           py::arg("to") = "", py::arg("model") = "", py::arg("ram_size") = 0, py::arg("symbolic_id") = "",
+           py::arg("check") = false, py::arg("keep_frame_position") = py::none(), py::arg("start") = py::none(),
            py::arg("emulator_id") = "");
 
         // The last save: {ok, message, format, path, machine, reason, needs, warnings} (None before the first)
@@ -6893,9 +6961,13 @@ namespace PythonBindings
                 std::map<std::string, std::string> options{{"path", path}};
                 if (lineage)
                     options["lineage"] = "true";
-                return TtdRunPy(self, "dump", options).Ok();
+                const ttd::TTDReply reply = TtdRunPy(self, "dump", options);
+                if (!reply.Ok())
+                    throw std::runtime_error("ttd_dump: " + reply.message);
+                return true;
             }, "Dump TTD session to .ttd file: every branch, or lineage=True only the active branch's lineage as one "
-               "linear history", py::arg("path"), py::arg("lineage") = false)
+               "linear history. True; RuntimeError with the reason when it fails (the system's words, a full disk "
+               "only when it is; the partial file is removed)", py::arg("path"), py::arg("lineage") = false)
 
             // Loading refuses a session recorded on a different machine model:
             // a checkpoint is raw RAM pages plus a chipset snapshot, so it only
@@ -7070,6 +7142,47 @@ namespace PythonBindings
                "limit, before_frame / before_tin or before "
                "(at or before), from_frame (not older)",
                py::arg("pcs"))
+
+            // Positions on a sound card's CPU (gs-debugger design §8): cpu "gs" / "neogs" / "ms" / "multisound"; the
+            // main CPU follows by replay. Each returns the move's reply dict (status, reached, from, target, card);
+            // a refusal has ok False and error; an unknown cpu or a bad value raises ValueError
+            .def("ttd_card_seek", [](Emulator& self, const std::string& cpu, uint64_t instruction) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "seek", {{"cpu", cpu}, {"instruction", std::to_string(instruction)}}));
+            }, "Move to a sound card CPU's instruction count (the main CPU follows by replay)",
+               py::arg("cpu"), py::arg("instruction"))
+
+            .def("ttd_card_step", [](Emulator& self, const std::string& cpu, int64_t n) -> py::object {
+                const uint64_t count = n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu},
+                                                                          {"dir", n < 0 ? "back" : "forward"},
+                                                                          {"count", std::to_string(count)}}));
+            }, "Step a sound card's CPU by n instructions (negative: back)",
+               py::arg("cpu"), py::arg("n") = 1)
+
+            .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
+                std::map<std::string, std::string> options{{"cpu", cpu}};
+                if (maxFrames)
+                    options["max_frames"] = std::to_string(*maxFrames);
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-continue", options));
+            }, "Back to a sound card CPU's previous breakpoint hit (status no_hit when there is none)",
+               py::arg("cpu"), py::arg("max_frames") = py::none())
+
+            .def("ttd_card_position", [](Emulator& self, std::optional<std::string> cpu) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "position");
+                const StateNode* cards = reply.Ok() ? reply.body.find("cards") : nullptr;
+                if (!cpu)
+                    return StateNodeToPy(cards ? *cards : StateNode::Array());
+                DebugCpuId id = DebugCpuId::Main;
+                if (!DebugManager::ParseCpuName(*cpu, id))
+                    throw py::value_error("Unknown cpu '" + *cpu + "' (main, gs, neogs, ms or multisound)");
+                if (cards)
+                    for (const StateNode& card : cards->items)
+                        if (card.find("cpu")->s == DebugCpuName(id))
+                            return StateNodeToPy(card);
+                return py::none();
+            }, "A sound card CPU's readout (instruction, pc, card_position, main); all cards' list without cpu; None "
+               "for a cpu without a card",
+               py::arg("cpu") = py::none())
 
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
                                           uint32_t addrFrom, uint32_t addrTo, py::object pageObj, py::object spaceObj) -> py::object {
@@ -8933,5 +9046,8 @@ namespace PythonBindings
 
         // TS-Conf VDAC2 card (FT812): bus capture
         registerVdac2Bindings(emulatorClass);
+
+        // TS-Conf VDAC4 board (Tang + ESP32-S3): state
+        registerVdac4Bindings(emulatorClass);
     }
 }

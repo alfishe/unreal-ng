@@ -1,5 +1,6 @@
 #include "automationgate.h"
 
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <string_view>
@@ -94,8 +95,13 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return !any({"show", "help", "presets"});
     if (command == "tape")
         return any({"load", "eject", "play", "pause", "rewind", "seek", "stop"});
-    if (command == "snapshot")
-        return any({"load"});
+    if (command == "snapshot")   // `snapshot transfer --check` and its help only report, as `snapshot inspect`
+    {
+        const auto has = [&args](const char* flag) { return std::find(args.begin(), args.end(), flag) != args.end(); };
+        return any({"load"}) ||
+               (verb == "transfer" && args.size() > 1 && !has("--check") && !has("--help") && !has("-h") &&
+                args[1] != "help");
+    }
     if (command == "ttd")
     {
         // `ttd branch switch <b>` moves the machine onto another branch, as a seek does
@@ -259,6 +265,8 @@ uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::
         return ScopeMedia;
     if (command == "snapshot" && verb == "load")
         return ScopeMedia;
+    if (command == "snapshot" && verb == "transfer")   // as POST /snapshot/transfer
+        return ScopeMachine;
     if (OneOf(command, {"media", "open"}))
         return ScopeMedia;
     if (command == "rzx" && OneOf(verb, {"play", "stop", "seek"}))

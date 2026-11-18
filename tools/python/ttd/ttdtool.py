@@ -125,7 +125,7 @@ def find_branch(s: BranchedSession, key: str) -> int:
 
 def part_bytes(c: Container, index: int) -> int:
     part = c.parts[index]
-    return sum(RECORD_HEADER + r.stored_size for r in part.records) + RECORD_HEADER   # its part end too (about)
+    return sum(RECORD_HEADER + r.stored_size for r in part.physical) + RECORD_HEADER   # its part end too (about)
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ def cmd_info(args) -> int:
                 print(f"    {f.name:24s} unreadable")
     per_stream: Dict[int, List[int]] = {}
     for part in c.parts:
-        for r in part.records:
+        for r in part.physical:
             t = per_stream.setdefault(r.stream_id, [0, 0, 0])
             t[0] += 1
             t[1] += r.stored_size + RECORD_HEADER
@@ -622,7 +622,7 @@ def recoverable(files: List[Path]) -> Tuple[List[Tuple[Path, Container, List[int
         keep = []
         for part in c.parts:
             why = part.damage if part.damaged else ""
-            for r in part.records if not why else []:
+            for r in part.physical if not why else []:
                 try:
                     stored_payload(c, r)
                 except TtdError as e:
@@ -668,7 +668,7 @@ def cmd_recover(args) -> int:
         mapping = {old: base + k for k, old in enumerate(keep)}
         for old in keep:
             part = c.parts[old]
-            for r in part.records:
+            for r in part.physical:
                 w.add_stored(r.stream_id, r.flags, stored_payload(c, r), r.raw_size)
             w.end_part(part.first_frame, part.frame_count, part.branch,
                        [mapping[d] for d in part.dependencies if d in mapping], part.extra)

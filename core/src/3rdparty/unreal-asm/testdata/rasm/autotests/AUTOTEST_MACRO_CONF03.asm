@@ -1,0 +1,1 @@
+ label1 equ #100: macro label1: nop: mend: nop:

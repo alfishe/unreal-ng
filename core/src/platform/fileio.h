@@ -26,12 +26,23 @@ namespace platform
         /// Create a new file; null (with the reason) when it exists or cannot be created
         static std::unique_ptr<AppendFile> Create(const std::string& utf8Path, std::string* error = nullptr);
 
-        /// Append; false on a write error (disk full, device gone)
+        /// Append; false on a write error (disk full, device gone): LastError() says which
         virtual bool Write(const void* data, size_t size) = 0;
         /// What was written so far survives a crash of the process and a power loss
         virtual bool Sync() = 0;
         virtual uint64_t Size() const = 0;
         virtual void Close() = 0;
+
+        /// Why the last Write or Sync failed, as the system words it ("write: No space left on device"); empty
+        /// while none did
+        const std::string& LastError() const { return _lastError; }
+        /// The last failure was a full disk or an exhausted quota (ENOSPC, EDQUOT; ERROR_DISK_FULL,
+        /// ERROR_HANDLE_DISK_FULL): the only failure a caller may call "disk full"
+        bool LastErrorNoSpace() const { return _lastErrorNoSpace; }
+
+    protected:
+        std::string _lastError;
+        bool _lastErrorNoSpace = false;
     };
 
     class RandomAccessFile

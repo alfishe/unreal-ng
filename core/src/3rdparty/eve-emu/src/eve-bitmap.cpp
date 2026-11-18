@@ -49,9 +49,9 @@ uint32_t Expand(uint32_t value, uint32_t bits)
 uint32_t ReadByte(const EveChip& chip, uint32_t address)
 {
     address &= kAddressMask;
-    if (address < kRamGSize)
+    if (address < chip.ramGLimit)
         return chip.regions[RegionRamG].base[address];
-    if (address >= kRomFontBase && address < kRomEnd)
+    if (address >= chip.romStart && address < kRomEnd)
         return RomByte(chip, address);
     return 0;
 }
@@ -64,16 +64,28 @@ const uint8_t* LayoutBytes(const EveChip& chip, uint64_t start, uint64_t end)
     static const uint8_t kZeros[64 * 1024] = {};
     if (end <= start)
         return nullptr;
-    if (end <= kRamGSize)
+    if (end <= chip.ramGLimit)
         return chip.regions[RegionRamG].base + start;
-    if (start < kRomFontBase || end > kRomEnd)
+    if (start < chip.romStart || end > kRomEnd)
         return nullptr;
+    if (chip.romBlank)
+        return end - start <= sizeof(kZeros) ? kZeros : nullptr; // VDAC4 before the font copy
     if (chip.romImage != nullptr)
         return start >= chip.romBase ? chip.romImage + (start - chip.romBase) : nullptr;
     if (end <= kRomFontRootAddress && end - start <= sizeof(kZeros))
         return kZeros;
     return nullptr;
 }
+
+// VDAC4 PALETTED8: the palette is word aligned, the low 2 bits of PALETTE_SOURCE are ignored.
+uint32_t Vdac4PaletteBase(uint32_t source)
+{
+    constexpr uint32_t kWordAlign = ~3u;
+    return source & kWordAlign;
+}
+
+// Key of the VDAC4 PALETTED8 palette in the cache: never an FT812 format value.
+constexpr uint8_t kPaletteKeyVdac4Argb = 0x80 | kFormatPaletted8;
 
 uint32_t Read16(const EveChip& chip, uint32_t address)
 {
@@ -191,6 +203,14 @@ Rgba Texel(const LineRun& run, const BitmapHandle& h, uint32_t base, uint32_t st
         return Direct(Read16(chip, run.ctx.paletteSource + kPalette16Bytes * ReadByte(chip, row + x)), kArgb4Layout);
     case kFormatPaletted8:
     {
+        if (chip.vdac4)
+        {
+            // VDAC4: one ARGB8888 entry, bytes B, G, R, A, at PALETTE_SOURCE & ~3 (Tang
+            // palette word address pa[21:2])
+            const uint32_t entry = Vdac4PaletteBase(run.ctx.paletteSource) + kPalette32Bytes * ReadByte(chip, row + x);
+            return Rgba{ReadByte(chip, entry + 2), ReadByte(chip, entry + 1), ReadByte(chip, entry),
+                        ReadByte(chip, entry + 3)};
+        }
         // One channel per pass: PALETTE_SOURCE's offset picks the byte, COLOR_MASK the
         // channel it goes to [PG §4.7 note].
         const uint32_t v = ReadByte(chip, run.ctx.paletteSource + kPalette32Bytes * ReadByte(chip, row + x));
@@ -385,20 +405,39 @@ bool DefaultPipeline(const GraphicsContext& ctx)
 const uint32_t* LinePalette(LineRun& run, uint8_t format)
 {
     EveChip& chip = *run.chip;
-    const uint32_t source = run.ctx.paletteSource;
+    const bool argb8 = chip.vdac4 && format == kFormatPaletted8;
+    const uint32_t source = argb8 ? Vdac4PaletteBase(run.ctx.paletteSource) : run.ctx.paletteSource;
+    const uint8_t key = argb8 ? kPaletteKeyVdac4Argb : format;
     for (uint32_t k = 0; k < kPaletteCacheEntries; ++k)
     {
         const PaletteCache& c = chip.palettes[k];
-        if (c.valid && c.source == source && c.format == format && c.ramGWrites == chip.ramGWrites)
+        if (c.valid && c.source == source && c.format == key && c.ramGWrites == chip.ramGWrites)
             return c.entry;
     }
     PaletteCache& cache = chip.palettes[chip.paletteNext];
     chip.paletteNext = (chip.paletteNext + 1) % kPaletteCacheEntries;
+    if (argb8)
+    {
+        // VDAC4: one ARGB8888 entry (bytes B, G, R, A) per index, packed as the general path
+        // samples it
+        const bool inRamG = static_cast<uint64_t>(source) + kPalette32Bytes * kPaletteEntries <= chip.ramGLimit;
+        for (uint32_t i = 0; i < kPaletteEntries; ++i)
+        {
+            const uint32_t entry = source + kPalette32Bytes * i;
+            cache.entry[i] = Pack(Rgba{ReadByte(chip, entry + 2), ReadByte(chip, entry + 1), ReadByte(chip, entry),
+                                       ReadByte(chip, entry + 3)});
+        }
+        cache.valid = inRamG;
+        cache.source = source;
+        cache.format = key;
+        cache.ramGWrites = chip.ramGWrites;
+        return cache.entry;
+    }
     if (format == kFormatPaletted8)
     {
         // One byte per entry, 4 bytes apart (PALETTE_SOURCE's offset picks the channel
         // byte), in every channel: Rgba{v, v, v, v} as the general path samples it
-        const bool inRamG = static_cast<uint64_t>(source) + kPalette32Bytes * (kPaletteEntries - 1) + 1 <= kRamGSize;
+        const bool inRamG = static_cast<uint64_t>(source) + kPalette32Bytes * (kPaletteEntries - 1) + 1 <= chip.ramGLimit;
         for (uint32_t i = 0; i < kPaletteEntries; ++i)
         {
             const uint32_t v = inRamG ? chip.regions[RegionRamG].base[source + kPalette32Bytes * i]
@@ -413,7 +452,7 @@ const uint32_t* LinePalette(LineRun& run, uint8_t format)
     }
     // The 16-bit decode tables hold exactly Pack(Direct(v, layout)) for every v
     const uint32_t* table = TableFor(format == kFormatPaletted565 ? kFormatRgb565 : kFormatArgb4);
-    const bool inRamG = static_cast<uint64_t>(source) + kPalette16Bytes * kPaletteEntries <= kRamGSize;
+    const bool inRamG = static_cast<uint64_t>(source) + kPalette16Bytes * kPaletteEntries <= chip.ramGLimit;
     if (inRamG)
     {
         const uint8_t* p = chip.regions[RegionRamG].base + source;

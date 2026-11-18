@@ -11,6 +11,7 @@
 #include "emulator/sound/audiomixer.h"
 #include "emulator/video/framebufferexport.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include "emulator/video/screenshotter.h"
 #include "emulator/video/next/nextlayerimage.h"
@@ -33,8 +34,10 @@
 #include <emulator/emulatormanager.h>
 #include <emulator/rzx/rzxlauncher.h>
 #include <loaders/snapshot/snapshotlauncher.h>
+#include <loaders/snapshot/statetransfercontrol.h>
 #include "../bindings/lua_porttrace.h"
 #include "../bindings/lua_vdac2.h"
+#include "../bindings/lua_vdac4.h"
 #include <emulator/memory/memory.h>
 #include <emulator/memory/memorymap.h>  // TD-3 sparse map + hexdump
 #include <emulator/io/fdc/fdd.h>
@@ -1150,6 +1153,21 @@ public:
         lua.set_function("emu_count", []() -> int {
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
+        });
+
+        // The machines grouped family -> machine -> RAM size (MachineCatalog, as GET /emulator/machines):
+        // machines([all], [id]) -> {families = {...}, current = {...}?}
+        lua.set_function("machines", [](sol::optional<bool> all, sol::optional<std::string> id, sol::this_state state) {
+            std::string current;
+            uint32_t ramKb = 0;
+            if (id && !id->empty())
+                if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(*id))
+                {
+                    current = MachineCatalog::NameOf(*emulator);
+                    ramKb = EmulatorManager::GetMachineIdentity(*emulator).RamKb;
+                }
+            return StateNodeToLua(state, all.value_or(false) ? MachineCatalog::ToState(MachineCatalog::All(), current, ramKb)
+                                                             : MachineCatalog::ToState(MachineCatalog::Creatable(), current, ramKb));
         });
 
         // ZX-Poly machines (EmulatorManager::CreateZXPolyMachine - the entry point
@@ -3871,6 +3889,37 @@ public:
             return StateNodeToLua(state, emulator->LastSnapshotReport().ToStateNode());
         });
 
+        // transfer_state{to = id | model = name [, ram_size = KB, symbolic_id = "..."] [, check = true]
+        //                [, keep_frame_position = false] [, start = true | false]} -> report | nil, error
+        // This machine's running state into another instance, in memory (StateTransferControl, as WebAPI POST
+        // /snapshot/transfer, MCP transfer_state, CLI snapshot transfer): an existing one (`to`; `check` only says what
+        // would move) or a new one of a model (started when this one runs, unless `start` says otherwise). The report
+        // is the WebAPI's answer: {ok, mode = "clone" | "cross-model", reason, items = {{name, status, detail}},
+        // copied, dropped, refused, summary, source_id, target_id, created, state, model, ram_kb}; ok = false: refused,
+        // nothing changed. nil, error when there is no report (no such target, the coordinator refuses, a bad request)
+        lua.set_function("transfer_state", [this](sol::this_state s, sol::table opts) -> std::tuple<sol::object, sol::object> {
+            Emulator* source = effectiveEmulator();
+            if (!source)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, std::string("no emulator"))};
+            StateTransferRequest request;
+            request.sourceId = source->GetId();
+            request.to = opts.get_or<std::string>("to", "");
+            request.model = opts.get_or<std::string>("model", "");
+            request.ramSizeKB = opts.get_or<uint32_t>("ram_size", 0);
+            request.symbolicId = opts.get_or<std::string>("symbolic_id", "");
+            request.check = opts.get_or("check", false);
+            if (const sol::optional<bool> keep = opts.get<sol::optional<bool>>("keep_frame_position"))
+                request.keepFramePosition = *keep;
+            if (const sol::optional<bool> start = opts.get<sol::optional<bool>>("start"))
+                request.start = *start;
+            // The automation gate as every changing call of a script (a check only reads)
+            execution::script::Check(*source, execution::Origin::Lua, !request.check);
+            const StateTransferReply reply = StateTransferControl::Execute(request);
+            if (!reply.hasReport)
+                return {sol::make_object(s, sol::lua_nil), sol::make_object(s, reply.error + ": " + reply.message)};
+            return {StateNodeToLua(s, reply.body), sol::make_object(s, sol::lua_nil)};
+        });
+
         // RZX input recordings. rzx_play(path [, options]) -> table {ok, message,
         // emulator_id, model_switched, required_model, summary}; options:
         // desync_mode ("strict" / "tolerant"), ei_short_frame_blocks_int,
@@ -6580,12 +6629,19 @@ public:
         // Phase 4 — Reverse search + dump + instruction step
         // -----------------------------------------------------------------
 
-        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history
-        lua.set_function("ttd_dump", [this](const std::string& path, sol::optional<bool> lineage) -> bool {
+        // ttd_dump(path [, lineage]): lineage = true saves only the active branch's lineage as one linear history.
+        // true, or false and the reason (the system's words, a full disk only when it is, the partial file removed)
+        lua.set_function("ttd_dump", [this](sol::this_state ts, const std::string& path,
+                                            sol::optional<bool> lineage) -> sol::variadic_results {
             std::map<std::string, std::string> options{{"path", path}};
             if (lineage && *lineage)
                 options["lineage"] = "true";
-            return TtdRun("dump", options).Ok();
+            const ttd::TTDReply reply = TtdRun("dump", options);
+            sol::variadic_results results;
+            results.push_back(sol::make_object(ts, reply.Ok()));
+            if (!reply.Ok())
+                results.push_back(sol::make_object(ts, reply.message));
+            return results;
         });
 
         // Loading refuses a session recorded on a different machine model: a
@@ -6723,6 +6779,52 @@ public:
         lua.set_function("ttd_reverse_step_over", [this]() -> bool {
             const ttd::TTDReply reply = TtdRun("reverse-step-over", {});
             return reply.Ok() && reply.body.find("stepped")->b;
+        });
+
+        // -----------------------------------------------------------------
+        // Positions on a sound card's CPU (gs-debugger design §8): cpu "gs" / "neogs" / "ms" / "multisound"; the
+        // main CPU follows by replay. Each returns the move's reply: status ("ok", "at_start", "no_hit", ...),
+        // reached, from, target, card = {instruction, pc, card_position, main = {frame, tinframe, pc, t_offset,
+        // inside}}; on a refusal ok = false and error
+        // -----------------------------------------------------------------
+
+        // ttd_card_seek(cpu, instruction): the card at its instruction count
+        lua.set_function("ttd_card_seek", [this](sol::this_state ts, const std::string& cpu, uint64_t instruction) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("seek", {{"cpu", cpu}, {"instruction", std::to_string(instruction)}})));
+        });
+
+        // ttd_card_step(cpu [, n]): n card instructions forward (negative: back; default 1)
+        lua.set_function("ttd_card_step", [this](sol::this_state ts, const std::string& cpu, sol::optional<int64_t> nOpt) -> sol::object {
+            const int64_t n = nOpt.value_or(1);
+            const uint64_t count = n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu},
+                                                                                {"dir", n < 0 ? "back" : "forward"},
+                                                                                {"count", std::to_string(count)}})));
+        });
+
+        // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
+        lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
+                                                             sol::optional<uint64_t> maxFrames) -> sol::object {
+            std::map<std::string, std::string> options{{"cpu", cpu}};
+            if (maxFrames)
+                options["max_frames"] = std::to_string(*maxFrames);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("reverse-continue", options)));
+        });
+
+        // ttd_card_position([cpu]): the card's readout (position verb's cards[]); every card's array without cpu,
+        // nil for a cpu without a card
+        lua.set_function("ttd_card_position", [this](sol::this_state ts, sol::optional<std::string> cpu) -> sol::object {
+            const ttd::TTDReply reply = TtdRun("position");
+            const StateNode* cards = reply.Ok() ? reply.body.find("cards") : nullptr;
+            if (!cpu)
+                return StateNodeToLua(ts, cards ? *cards : StateNode::Array());
+            std::string name = *cpu;
+            DebugCpuId id = DebugCpuId::Main;
+            if (cards && DebugManager::ParseCpuName(name, id))
+                for (const StateNode& card : cards->items)
+                    if (card.find("cpu")->s == DebugCpuName(id))
+                        return StateNodeToLua(ts, card);
+            return sol::make_object(ts, sol::lua_nil);
         });
 
         // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
@@ -9033,6 +9135,9 @@ public:
 
         // TS-Conf VDAC2 card (FT812): bus capture
         LuaVdac2::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
+
+        // TS-Conf VDAC4 board (Tang + ESP32-S3): state
+        LuaVdac4::registerBindings(lua, [this]() -> Emulator* { return effectiveEmulator(); });
 
         // Script callbacks (docs/features/script-callbacks.md): a function runs deferred, on this Lua thread, with a
         // snapshot of the hit; a string is a chunk for the hook state (frame or sync mode, on the emulation thread).

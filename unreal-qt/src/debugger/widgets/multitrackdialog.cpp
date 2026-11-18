@@ -151,6 +151,7 @@ QString MultiTrackDialog::sourceToString(AudioSourceType source)
         case AudioSourceType::WildSoundXm:     return "WS XM";
         case AudioSourceType::WildSoundAy1:    return "WS AY 1";
         case AudioSourceType::WildSoundAy2:    return "WS AY 2";
+        case AudioSourceType::Vdac4Esp:        return "VDAC4 ESP";
         case AudioSourceType::Custom:          return "Custom";
         default:                                return "Unknown";
     }
@@ -193,6 +194,7 @@ AudioSourceType MultiTrackDialog::stringToSource(const QString& str)
     if (str == "WS XM") return AudioSourceType::WildSoundXm;
     if (str == "WS AY 1") return AudioSourceType::WildSoundAy1;
     if (str == "WS AY 2") return AudioSourceType::WildSoundAy2;
+    if (str == "VDAC4 ESP") return AudioSourceType::Vdac4Esp;
     return AudioSourceType::MasterMix;
 }
 

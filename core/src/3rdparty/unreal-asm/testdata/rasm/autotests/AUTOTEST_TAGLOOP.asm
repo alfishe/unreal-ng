@@ -1,0 +1,1 @@
+tab1 = #100:tab2 = #200:tab3 = #300:macro genreg channel,psg:label{channel} EQU tab{psg} + channeloffset:endm:channel=1:while channel <= 9:psg=floor(((channel-1)/3)+1):channeloffset=((channel-1) % 3)*2:genreg {channel},{psg}:channel=channel+1:wend:assert LABEL5==#0202:assert LABEL6==#0204:assert LABEL7==#0300:assert LABEL8==#0302:nop

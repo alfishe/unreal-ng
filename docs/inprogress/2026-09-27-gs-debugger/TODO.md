@@ -174,6 +174,25 @@ fixed RAM window, 3: high ROM at `#C000`).
      warnings, live `test_gs_debugger.py` 15/15; A/B benchmarks on .20 in neogs-automation-design.md §10 (frames
      unchanged, +0.5 ns per host `OUT`). Left: the gcc check.
 
+## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
+
+Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest
+checkpoint; the main CPU is shown at its last completed instruction plus a T offset; a run first lets the main CPU
+reach its boundary.
+
+- [x] Core: the card's instruction count in its TTD blob (GS bytes 59-67, NeoGS 240-248, outside the hash);
+  `GSCardTarget` scans (`ScanScope`: capture at a count, breakpoint hits by replay, hit counts kept);
+  `TimeTravelController::SeekToCardInstruction` / `StepCardInstructions` / `ReverseContinueCard` /
+  `CardPositionNow` / `PublishedCardPositions` (`ttdcontrollercardpositions.cpp`); the card position (`CardStand`)
+  left at the first run, carried by `LiveStateSnapshot`.
+- [x] Every plane: `TTDControl` `cpu` on `seek` / `step-instruction` / `reverse-step` / `reverse-continue`, `cards[]`
+  in `position` / `status`; CLI `--cpu`, Lua / Python `ttd_card_*`, MCP `card_seek` / `card_step` /
+  `card_reverse_continue` / `card_position`, REST / WebSocket and OpenAPI. Docs:
+  [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu).
+- [x] Tests: `TTD_CardPositions_*` (GS, NeoGS, MultiSound GS), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`,
+  `OpenApiTTDCards_Test`, MCP and Lua tests, live `tools/verification/mcp/test_ttd_card_positions.py`.
+- [ ] UI (the debugger's card view): a second agent.
+
 ### Later
 
 - [x] Card breakpoint conditions (2026-10-27): the card's registers, memory and pages through `IDebugTarget::Registers`

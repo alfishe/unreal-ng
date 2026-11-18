@@ -1834,6 +1834,7 @@ void SoundChip_NeoGS::restoreMailbox(const GSForwardMailbox& snapshot)
 void SoundChip_NeoGS::accumulateActivityCounters(const GSActivityCounters& other)
 {
     accumulateGSActivityCounters(_activityCounters, other);
+    _instructionCountOffset -= static_cast<int64_t>(other.cpuSteps);   // the folded steps are not this card's
 }
 
 bool SoundChip_NeoGS::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
@@ -1951,6 +1952,13 @@ void SoundChip_NeoGS::serializeFixedState(uint8_t* dst) const
 
     _flash.saveState(dst + 200); // 200..231
     put64(dst + 232, _nextTimerCrystal);
+    // 240..247 + 248: the card CPU's instruction count and its flag (TTDHashState leaves them out: a position)
+    uint64_t count = 0;
+    if (cardInstructionCount(count))
+    {
+        putU64(dst + TTD_COUNT_OFFSET, count);
+        dst[TTD_COUNT_FLAG_OFFSET] = 1;
+    }
 }
 
 void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const
@@ -2054,6 +2062,10 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
 
     _flash.loadState(src + 200);
     _nextTimerCrystal = get64(src + 232);
+    _instructionCountKnown = src[TTD_COUNT_FLAG_OFFSET] == 1;
+    if (_instructionCountKnown)
+        _instructionCountOffset =
+            static_cast<int64_t>(get64(src + TTD_COUNT_OFFSET)) - static_cast<int64_t>(_activityCounters.cpuSteps);
     _sd->loadState(src + TTD_SD_OFFSET);
     if (_mp3)
         _mp3->loadState(src + TTD_MP3_OFFSET);
@@ -2119,6 +2131,7 @@ uint64_t SoundChip_NeoGS::TTDHashState() const
 {
     std::vector<uint8_t> blob(TTD_DEVICE_STATE_END);
     serializeFixedState(blob.data());
+    std::fill_n(blob.begin() + TTD_COUNT_OFFSET, 9, static_cast<uint8_t>(0));   // the instruction count: a position
     serializeDeviceState(blob.data() + TTD_SD_OFFSET, true);
     uint64_t hash = 14695981039346656037ull;
     for (const uint8_t byte : blob)

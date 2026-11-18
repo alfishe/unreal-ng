@@ -1,0 +1,1 @@
+str 'roudou',0+'d','ou'

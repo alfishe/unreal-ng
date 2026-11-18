@@ -3,7 +3,7 @@
 The MagicWB generator draws every glyph with semantic palette keys ('g' backdrop, 'k' outline / black detail, 'w'
 white, 'l' light, 'd' dark, 'b' blue accent, 'e' warm accent, 'r' the record marker's red in every pack) through `streamdeck_pixel.Canvas`. A `RampCanvas` keeps
 those keys and, for each solid shape, the position of every pixel on a light-to-shade ramp; a `Skin` turns keys and
-ramp positions into colours. So every pack shows the same 148 drawings, each in its own palette and shading.
+ramp positions into colours. So every pack shows the same drawings, each in its own palette and shading.
 """
 
 import json

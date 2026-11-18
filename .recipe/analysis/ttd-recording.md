@@ -304,6 +304,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/load" \
      -d '{"path": "scratch/session-001.ttd"}' | jq .
 ```
 
+A failed dump answers with the real reason (`reason`: `io` 409 with the system's words, `session` 409, `no_space`
+507 only for a full disk, `too_large` 500) and removes its `<path>.partial` file (`partial_removed`). Long sessions
+need no splitting: streams over the 1 GiB record limit are chunked.
+
 The path is opened by the **emulator process** (relative paths resolve
 against its working directory). A load only succeeds into an instance of
 the same model the session was recorded on; otherwise it answers 400 with
