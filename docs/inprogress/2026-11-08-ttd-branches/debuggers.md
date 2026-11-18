@@ -125,3 +125,34 @@ a step of the card; at the frame end or in a host port access, neither a moment 
 
 Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp`. The eCat self-check no longer runs frames before its
 `start`.
+
+## 8. Positions on a sound card's CPU (2026-11-18)
+
+The core's card positions ([gs-debugger design §8](../2026-09-27-gs-debugger/design.md),
+[command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu)) in the
+debuggers' time group, by the CPU in front.
+
+- **eCat** (in process and over REST alike; `ecat/dialogs/debugger/ttdcontrols.cpp`). With a card's tab in front
+  (`gs`, `ms`): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's own
+  breakpoints, any kind), and the window's Step (F7) in the past (`detached`) is `step-instruction {cpu, dir:
+  forward}`; live, F7 stays the card's own step. Step Over Back is off on the card's tab (the core has no card step
+  over back); Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
+  processor (a pause, a move in time) no longer brings the main CPU's tab forward: the card's tab stays in front
+  after its back step (`DebuggerWindow::on_debug_event`).
+- **The moment** (eCat's state label) names both CPUs at a card position, from `cards[]` of `position` (the poll
+  already made): `gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction`, or `..., at
+  its instruction boundary`. Without one, the card's tab adds where the card stands.
+- **Refusals and answers** (`no_breakpoints`, `no_count`, `no_card`; `at_start`, `at_end`, `no_hit`) are said in a
+  message (`TtdControls::inform`, a box; the self-check reads them) and in the branch button's tooltip.
+- **Embedded** has no card CPU view: its registers, listing and stack are the main CPU's (the card is seen only in
+  memory dumps of the card's RAM). Its moment label (`debuggertimetravel.cpp`, `DebuggerTimeTravel::CardMoment`, from
+  `TimeTravelController::PublishedCardPositions` while the machine is paused in the history) says where both CPUs
+  stand when another surface left the machine at a card position, so the main CPU's registers read right. Proposed,
+  not built: a CPU selector on the Embedded debugger's toolbar (Main / GS / MS) that switches the registers widget and
+  the disassembler to the card's `GSCardTarget` (an extension of the two existing widgets, the way eCat's tabs do it);
+  the time group would then route as eCat's does.
+
+Tests: `DebuggerTimeTravelCard_Test` (unreal-qt-tests: the readout's words, a card position in the moment, a main move
+ending it); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
+Back with and without a card breakpoint, at the start, a missing card, the main CPU's tab again).
+

@@ -186,7 +186,12 @@ reach its boundary.
   [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu).
 - [x] Tests: `TTD_CardPositions_*` (GS, NeoGS, MultiSound GS), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`,
   `OpenApiTTDCards_Test`, MCP and Lua tests, live `tools/verification/mcp/test_ttd_card_positions.py`.
-- [ ] UI (the debugger's card view): a second agent.
+- [x] UI (2026-11-18, branch `card-positions-ui`): eCat's time group on the card's tab (Step Back, F7 in the past,
+  Run Back to the card's breakpoints; in process and over REST), the moment naming both CPUs (`gs at instruction N,
+  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded has no card CPU view, its moment label shows a
+  card position. [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
+  Tests: `DebuggerTimeTravelCard_Test`, `unreal-debugger --self-check` (both modes).
+- [ ] Embedded: a CPU selector (Main / GS / MS) for its registers and disassembler (proposed, not built).
 
 ### Later
 

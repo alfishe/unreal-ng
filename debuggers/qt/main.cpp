@@ -578,6 +578,172 @@ std::unique_ptr<guicontrol::Host> start_gui_control(DebuggerWindow * window, eca
     return host;
 }
 
+
+// The time group on a sound card's CPU (gs-debugger design §8): the card's tab in front, its back steps, the Step of
+// the past, Run Back to the card's breakpoints, the moment naming both CPUs, the refusals said; the main CPU's tab
+// acts on the main CPU again. The machine stands in the recorded history (detached) when called
+void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * ttd, ecatshim::CPU * cpu,
+                    ecatshim::CPU * gs, const std::function<void(bool, const char *)> &check)
+{
+    struct Said {
+        QString title, text;
+        bool warning = false;
+        int count = 0;
+    } said;
+    ttd->inform = [&said](const QString &title, const QString &text, bool warning) {
+        said.title = title;
+        said.text = text;
+        said.warning = warning;
+        said.count++;
+    };
+    // The card in front: "gs" (General Sound, NeoGS) or "ms" (the MultiSound's GS); the other one the machine lacks
+    const QString name = QString::fromStdString(gs->name);
+    const std::string missing = name == "gs" ? "ms" : "gs";
+    auto card = [ttd, name]() {
+        QJsonObject p;
+        ttd->call("position", {}, &p);
+        for (const QJsonValue &v : p.value("cards").toArray())
+            if (v.toObject().value("cpu").toString() == name) return v.toObject();
+        return QJsonObject();
+    };
+    auto count = [](const QJsonObject &c) { return (uint64_t)c.value("instruction").toInteger(); };
+    QAction * step = nullptr;
+    for (QAction * a : dw->actions())
+        if (a->text() == "Step") step = a;
+
+    // The readout's words, inside an instruction of the main CPU and at its boundary
+    const QJsonObject inside{{"cpu", "gs"}, {"known", true}, {"instruction", 1200}, {"pc", 0x0A3C}, {"card_position", true},
+                             {"main", QJsonObject{{"pc", 0x8009}, {"t_offset", 7}, {"inside", true}}}};
+    QJsonObject boundary = inside;
+    boundary["main"] = QJsonObject{{"pc", 0x800B}, {"t_offset", 0}, {"inside", false}};
+    QJsonObject away = inside;
+    away["card_position"] = false;
+    const QJsonObject unknown{{"cpu", "ms"}, {"known", false}, {"instruction", QJsonValue()}, {"pc", 0}};
+    check(TtdControls::describe_card(inside) ==
+              "gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction",
+          "ttd card: readout inside a main instruction");
+    check(TtdControls::describe_card(boundary) == "gs at instruction 1200, PC #0A3C; main CPU PC #800B, at its instruction boundary",
+          "ttd card: readout at a main boundary");
+    check(TtdControls::describe_card(away) == "gs at instruction 1200, PC #0A3C" &&
+              TtdControls::describe_card(unknown) == "ms: no instruction counts in this recording",
+          "ttd card: readout without a card position, without counts");
+
+    // The card's tab in front: the back steps are the card's (the stop events of the moves before are taken first)
+    wait_for([]() { return false; }, 300);
+    dw->select_cpu(gs);
+    QApplication::processEvents();
+    ttd->poll(true);
+    const QJsonObject c0 = card();
+    check(ttd->card_cpu() == name && c0.value("known").toBool(), "ttd card: the card's tab, its count known");
+    printf("    (card %s at instruction %llu)\n", name.toUtf8().constData(), (unsigned long long)c0.value("instruction").toInteger());
+    check(ttd->step_back_action()->isEnabled() && ttd->run_back_action()->isEnabled() &&
+              !ttd->step_over_back_action()->isEnabled() && ttd->step_back_action()->toolTip().contains(name + " instruction"),
+          "ttd card: Step Back and Run Back the card's, Step Over Back off");
+    check(ttd->moment().contains(name + " at instruction " + QString::number(count(c0))), "ttd card: the moment names the card");
+
+    // Step Back: one card instruction; the card's view reads the card there, the moment names both CPUs
+    const uint64_t n0 = count(c0);
+    ttd->step_back();
+    QJsonObject c1 = card();
+    check(c1.value("card_position").toBool() && count(c1) + 1 == n0 && said.count == 0, "ttd card: Step Back, one card instruction");
+    check(gs->get_pc() == (unsigned int)c1.value("pc").toInteger(), "ttd card: the card's tab shows the card at the position");
+    // The move's stop event names no processor: the card's tab stays in front
+    wait_for([]() { return false; }, 300);
+    QApplication::processEvents();
+    check(dw->current_cpu() == gs && ttd->card_cpu() == name, "ttd card: the card's tab stays in front after the move");
+    check(cpu->get_pc() == (unsigned int)c1.value("main").toObject().value("pc").toInteger(),
+          "ttd card: the main CPU's tab at its boundary (PC of the next instruction)");
+    check(ttd->moment().contains(TtdControls::describe_card(c1)) && ttd->moment().contains("main CPU PC"),
+          "ttd card: the moment names both CPUs");
+    if (!ttd->moment().contains(TtdControls::describe_card(c1)))
+        printf("  (moment '%s', readout '%s')\n", ttd->moment().toUtf8().constData(),
+               TtdControls::describe_card(c1).toUtf8().constData());
+
+    // Further back until the card's moment is inside a main instruction (an LDIR, a long OUT): "+N T"
+    bool met_inside = c1.value("main").toObject().value("inside").toBool();
+    for (int i = 0; i < 40 && !met_inside; i++) {
+        ttd->step_back();
+        c1 = card();
+        met_inside = c1.value("main").toObject().value("inside").toBool();
+    }
+    const QJsonObject main_part = c1.value("main").toObject();
+    check(met_inside && ttd->moment().contains(QString("+%1 T into the next instruction").arg(main_part.value("t_offset").toInteger())),
+          "ttd card: inside a main instruction, the moment says +N T");
+
+    // The Step of the past (F7 on the card's tab): one card instruction forward through the history
+    const uint64_t n1 = count(c1);
+    if (step != nullptr) step->trigger();
+    QJsonObject c2 = card();
+    check(step != nullptr && c2.value("card_position").toBool() && count(c2) == n1 + 1 && m->debug_paused(),
+          "ttd card: Step (F7) in the past, one card instruction forward");
+
+    // Run Back without a card breakpoint: the core's refusal is said, nothing moved
+    said = Said();
+    ttd->run_back();
+    check(said.count == 1 && said.warning && !said.text.isEmpty() && count(card()) == count(c2),
+          "ttd card: Run Back without a card breakpoint is refused, said");
+    if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
+
+    // Run Back with one: at an earlier instruction of the card's PC, the breakpoint named
+    const unsigned int at = (unsigned int)c1.value("pc").toInteger();
+    for (int i = 0; i < 3; i++)
+        if (step != nullptr) step->trigger();
+    const uint64_t n3 = count(card());
+    gs->add_breakpoint(at);
+    said = Said();
+    ttd->run_back();
+    const QJsonObject c3 = card();
+    gs->remove_breakpoint(at);
+    char what[96];
+    snprintf(what, sizeof(what), "ttd card: Run Back to the card's breakpoint #%04X", at);
+    check(said.count == 0 && count(c3) < n3 && (unsigned int)c3.value("pc").toInteger() == at && gs->get_pc() == at &&
+              ttd->last_result().contains("at the breakpoint"),
+          what);
+    if (said.count != 0) printf("    (said: %s)\n", said.text.toUtf8().constData());
+
+    // The start of the history: Step Back answers at_start, said, nothing moved
+    QJsonObject status;
+    ttd->call("status", {}, &status);
+    ttd->call("seek", {{"frame", std::to_string(status.value("session_start_frame").toInteger())}}, nullptr);
+    ttd->poll(true);
+    // The history's first card position: the core names it when asked for one before it
+    QJsonObject before;
+    ttd->call("seek", {{"cpu", name.toStdString()}, {"instruction", "0"}}, &before);
+    const QString words = before.value("message").toString();
+    const qsizetype from = words.lastIndexOf(' ');
+    const std::string first = from > 0 ? words.mid(from + 1).toStdString() : std::string();
+    check(before.value("status").toString() == "at_start" && !first.empty(), "ttd card: the history's first card position named");
+    QJsonObject there;
+    ttd->call("seek", {{"cpu", name.toStdString()}, {"instruction", first}}, &there);
+    ttd->poll(true);
+    const uint64_t s0 = count(card());
+    said = Said();
+    ttd->step_back();
+    check(there.value("reached").toBool() && said.count == 1 && !said.warning && !said.text.isEmpty() && count(card()) == s0,
+          "ttd card: Step Back at the start of the history is said");
+    printf("    (first card position %s; reached %d)\n", first.c_str(), there.value("reached").toBool());
+    if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
+
+    // A card the machine does not have: refused with the core's words (in process and over REST alike)
+    QJsonObject none;
+    check(!ttd->call("step-instruction", {{"cpu", missing}, {"dir", "back"}}, &none) && none.value("status").toString() == "no_card" &&
+              !none.value("message").toString().isEmpty(),
+          "ttd card: a missing card's move is refused (no_card)");
+
+    // The main CPU's tab again: its own back steps (a main move ends the card position)
+    ttd->call("seek", {{"frame", std::to_string(status.value("session_start_frame").toInteger() + 3)}}, nullptr);
+    dw->select_cpu(cpu);
+    QApplication::processEvents();
+    ttd->poll(true);
+    check(ttd->card_cpu().isEmpty() && ttd->step_over_back_action()->isEnabled() &&
+              !ttd->step_back_action()->toolTip().contains(name),
+          "ttd card: the main CPU's tab, its own back steps");
+    const unsigned int r1 = reg(cpu, "R");
+    ttd->step_back();
+    check(reg(cpu, "R") != r1 && !card().value("card_position").toBool(), "ttd card: Step Back on the main CPU, no card position");
+    ttd->inform = nullptr;
+}
+
 int self_check(ecatshim::Emulator * m, QWidget * window)
 {
     int failed = 0;
@@ -908,6 +1074,11 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
         check(made != 0 && ttd->delete_branch(made), "ttd: delete the branch (switches to the trunk first)");
         ttd->call("branches", {}, &list);
         check(list.value("branches").toArray().size() < 2, "ttd: one line of history again");
+        if (gs != nullptr) {
+            // In the history, a few frames in: the card's own positions
+            ttd->call("seek", {{"frame", std::to_string(past)}}, nullptr);
+            card_ttd_check(m, dw, ttd, cpu, gs, check);
+        }
         ttd->call("invalidate", {}, nullptr);
         ttd->poll(true);
         check(!ttd->shown(), "ttd: without a history nothing shows");

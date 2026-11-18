@@ -1,11 +1,15 @@
 // The Embedded debugger's time controls (TTD branches debuggers.md §4): nothing shows without a recorded history;
 // with one, the back steps, Run Back to the enabled execution breakpoints, Branch Here / Continue Rec named as in
 // the TTD panel, the moment ("History: frame ... replaying", "Live, not recorded", "fork here"), and with branches
-// the drop-down: switch, the branches leaving here, the management (a delete asks; never the trunk)
+// the drop-down: switch, the branches leaving here, the management (a delete asks; never the trunk). At a position on
+// a sound card's CPU (gs-debugger design §8) the moment names both CPUs: the window shows only the main CPU
 
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <functional>
+#include <map>
+#include <string>
 
 #include <QAction>
 #include <QApplication>
@@ -28,6 +32,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulatormanager.h"
+#include "emulator/slots/slotcontrol.h"
 #include "widgets/ttdbranchcommands.h"
 
 class DebuggerTimeTravel_Test : public ::testing::Test
@@ -271,4 +276,102 @@ TEST(TtdGui_Test, TheMomentInParts)
     EXPECT_EQ(ttdgui::DescribeMoment(info, 50).Line(), QStringLiteral("History: frame 50 of 120, replaying"));
     info.state = ttd::TTDSessionState::Idle;
     EXPECT_EQ(ttdgui::DescribeMoment(info, 130).Line(), QStringLiteral("Live, not recorded"));
+}
+
+TEST(DebuggerTimeTravelCard_Test, TheCardMomentNamesBothCpus)
+{
+    ttd::TTDCardPosition p;
+    p.cpu = DebugCpuId::GS;
+    p.known = true;
+    p.instruction = 1200;
+    p.pc = 0x0A3C;
+    p.mainPc = 0x8009;
+    EXPECT_TRUE(DebuggerTimeTravel::CardMoment({p}).isEmpty()) << "no card position: the moment is the main CPU's";
+    p.cardPosition = true;
+    p.caughtUp = true;
+    p.inside = true;
+    p.tOffset = 7;
+    EXPECT_EQ(DebuggerTimeTravel::CardMoment({p}),
+              QStringLiteral("gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction"));
+    p.inside = false;
+    p.tOffset = 0;
+    p.mainPc = 0x800B;
+    EXPECT_EQ(DebuggerTimeTravel::CardMoment({p}),
+              QStringLiteral("gs at instruction 1200, PC #0A3C; main CPU PC #800B, at its instruction boundary"));
+    // The MultiSound's GS by its name; a card without counts never stands at a position
+    ttd::TTDCardPosition ms = p;
+    ms.cpu = DebugCpuId::MultiSoundGS;
+    ttd::TTDCardPosition other;
+    other.cpu = DebugCpuId::GS;
+    EXPECT_TRUE(DebuggerTimeTravel::CardMoment({other, ms}).startsWith(QStringLiteral("ms at instruction 1200")));
+    ms.known = false;
+    EXPECT_TRUE(DebuggerTimeTravel::CardMoment({ms}).isEmpty());
+}
+
+/// A Pentagon with the General Sound card (its own Z80), time travel on: a card move made elsewhere (the CLI, eCat,
+/// MCP) puts the machine at a card position, and the Embedded debugger's moment says where both CPUs stand.
+/// Runtime: 3 recorded frames, two card seeks (~0.1 s)
+TEST(DebuggerTimeTravelCard_Test, ACardPositionShowsInTheMoment)
+{
+    QTemporaryDir settings;
+    ASSERT_TRUE(settings.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+    std::function<void(CONFIG&)> slotOverride;
+    std::string error;
+    ASSERT_TRUE(SlotControl::CreateOverride({{"zxbus.1", "gs"}}, slotOverride, error)) << error;
+    std::shared_ptr<Emulator> machine = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "debugger-ttd-card", "PENTAGON", LoggerLevel::LogError, &error, slotOverride);
+    ASSERT_NE(machine, nullptr) << error;
+    machine->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    machine->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelController* controller = machine->GetContext()->pTimeTravelController;
+    machine->RunNFrames(2, true);
+    ASSERT_TRUE(controller->StartRecording());
+    machine->RunNFrames(3, true);
+    controller->StopRecording();
+
+    QMainWindow window;
+    QToolBar* toolbar = window.addToolBar(QStringLiteral("debugger"));
+    DebuggerTimeTravel tt(&window, toolbar, nullptr);
+    tt.setEmulator(machine);
+    EXPECT_FALSE(tt.momentLabel()->text().contains(QStringLiteral("gs at"))) << "live past the end: no card position";
+
+    const ttd::TTDCardPosition now = controller->CardPositionNow(DebugCpuId::GS);
+    ASSERT_TRUE(now.known) << "the card counts its instructions";
+    ASSERT_GT(now.instruction, 3000u);
+    // A card position, as a CLI `ttd seek --cpu gs N` makes it; a few back until the card is inside a main
+    // instruction (the T offset shows)
+    auto execute = [&](const std::string& verb, const std::map<std::string, std::string>& options) {
+        const Emulator::ContextLease lease = machine->LeaseContext();
+        return ttd::TTDControl(lease.get()).Execute({verb, options});
+    };
+    ttd::TTDReply seek = execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(now.instruction - 2000)}});
+    ASSERT_TRUE(seek.Ok()) << seek.message;
+    ttd::TTDCardPosition at = controller->CardPositionNow(DebugCpuId::GS);
+    for (int i = 0; i < 40 && !at.inside; ++i)
+    {
+        ASSERT_TRUE(execute("step-instruction", {{"cpu", "gs"}, {"dir", "back"}}).Ok());
+        at = controller->CardPositionNow(DebugCpuId::GS);
+    }
+    ASSERT_TRUE(at.cardPosition && at.inside);
+    tt.refresh();
+    const QString label = tt.momentLabel()->text();
+    EXPECT_TRUE(label.startsWith(QStringLiteral("History: frame"))) << label.toStdString();
+    EXPECT_TRUE(label.contains(DebuggerTimeTravel::CardMoment({at}))) << label.toStdString();
+    char text[96];
+    std::snprintf(text, sizeof(text), "gs at instruction %llu, PC #%04X; main CPU PC #%04X, +%u T",
+                  static_cast<unsigned long long>(at.instruction), static_cast<unsigned>(at.pc),
+                  static_cast<unsigned>(at.mainPc), static_cast<unsigned>(at.tOffset));
+    EXPECT_TRUE(label.contains(QString::fromLatin1(text))) << label.toStdString() << " / " << text;
+    EXPECT_EQ(machine->GetContext()->pCore->GetZ80()->pc, at.mainPc) << "the main CPU shown at its last boundary";
+
+    // A main-CPU move ends the card position: the moment is the main CPU's again
+    tt.stepBack();
+    EXPECT_FALSE(controller->CardPositionNow(DebugCpuId::GS).cardPosition);
+    EXPECT_FALSE(tt.momentLabel()->text().contains(QStringLiteral("gs at"))) << tt.momentLabel()->text().toStdString();
+
+    controller->StopRecording();
+    machine.reset();
+    for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+        EmulatorManager::GetInstance()->RemoveEmulator(id);
 }
