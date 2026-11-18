@@ -431,4 +431,24 @@ Built as the gs-debugger's N7 (TODO item 5b). Differences from the design above:
 - **Not done.** The LW `player` / `module` sections (4.6: the sequencer has no getters for them yet); the
   `/neogs` aliases and `neogs ...` CLI names; `gs watch`; the NeoGS actions `zxdma_watch` and `mp3_gain`; DMA
   `busy_clocks`; the last transaction's clocks and frame; the per-card stats test files of section 8 (one
-  `gsslotstats_test.cpp` instead) and The Link's acceptance rate; the benchmarks of 5.4.
+  `gsslotstats_test.cpp` instead) and The Link's acceptance rate; of 5.4 `BM_NeoGSFrame_ZxDmaEffect`, the LW
+  benchmarks and the publish cost with a polling reader.
+- **Benchmarks (5.4).** A = 17c5a3e40 (before the counters), B = bbe0ec4aa; Release, M3 Ultra (.20), 20 rounds
+  ABAB... then BABA..., load 15.6 at the start, 37.1 at the end. CPU time, minimum per side and the mean of the
+  paired differences (B > A in how many of 10 pairs):
+
+  | Benchmark | min A, us | min B, us | min | pairs | B > A |
+  |---|---|---|---|---|---|
+  | `BM_HostFrame_Pentagon_Fast` (no GS) | 312.23 | 312.43 | +0.06 % | -0.10 % | 5/10 |
+  | `BM_HostFrame_NeoGS_Idle_Fast` | 446.07 | 442.89 | -0.71 % | -1.33 % | 1/10 |
+  | `BM_GeneralSoundFrame_Idle` | 0.74 | 0.72 | -2.43 % | -1.83 % | 0/10 |
+  | `BM_GeneralSoundFrame_Playing` | 191.66 | 191.79 | +0.07 % | -0.01 % | 5/10 |
+  | `BM_NeoGSFrame_Idle` | 4.29 | 4.25 | -0.85 % | -1.43 % | 0/10 |
+  | `BM_NeoGSFrame_Playing` | 380.01 | 368.03 | -3.15 % | -3.31 % | 0/10 |
+  | `BM_GSCommandLog_HostTraffic_None` | 2.24 | 2.39 | +6.75 % | +6.39 % | 10/10 |
+  | `BM_GSCommandLog_HostTraffic_Off` | 2.26 | 2.39 | +5.93 % | +5.16 % | 10/10 |
+  | `BM_GSCommandLog_HostTraffic_Ring` | 6.63 | 6.97 | +5.08 % | +4.81 % | 10/10 |
+
+  The frames are unchanged (the negative shifts are code layout). The host-traffic micro-benchmark (256 host data
+  writes into an unread mailbox per iteration) pays the overwrite counter: +0.14 us per 256 writes, about 0.5 ns per
+  host `OUT`, 0.07 % of a playing GS frame.
