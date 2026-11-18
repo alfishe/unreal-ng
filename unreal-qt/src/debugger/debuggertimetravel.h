@@ -4,7 +4,11 @@
 // only while the instance has a recorded history - Step Back, Step Over Back, Run Back (to the enabled execution
 // breakpoints), Frame Back, Branch Here / Continue Rec - the moment ("History: frame ... replaying", "fork here")
 // and the branch drop-down with the branch management. Every button is a TTDControl verb; nothing records unless
-// asked (rule 7)
+// asked (rule 7).
+// The window shows the main CPU only (no card CPU view): at a position on a sound card's CPU (a card seek or step
+// made by another surface, gs-debugger design §8) the moment names both CPUs - the card's instruction count and PC,
+// the main CPU's PC and the T-states the card is into its instruction - so the registers shown (the main CPU's at its
+// last boundary) are read right
 
 #include <QObject>
 
@@ -20,6 +24,7 @@ class BreakpointManager;
 namespace ttd
 {
 struct TTDReply;
+struct TTDCardPosition;
 }
 class Emulator;
 class QAction;
@@ -48,6 +53,10 @@ public:
     /// kMaxRunBackPcs addresses. Empty: none
     static std::string RunBackPcs(const BreakpointManager& breakpoints);
     static constexpr size_t kMaxRunBackPcs = 1024;
+    /// The moment's card part: "gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction"
+    /// for the card the machine stands at a position of (", at its instruction boundary" when not inside one); empty
+    /// without a card position
+    static QString CardMoment(const std::vector<ttd::TTDCardPosition>& cards);
 
     QAction* stepBackAction() const { return _stepBack; }
     QAction* stepOverBackAction() const { return _stepOverBack; }

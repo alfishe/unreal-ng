@@ -1090,6 +1090,7 @@ public:
             return std::string();
         return s.breakpoint.main.known ? execution::MainPositionText(s.breakpoint.main) : std::string();
     }
+    uint64_t debug_stop_serial() const override { return m_emu->LastStop().serial; }
     int debug_stop_reason() const override
     {
         switch (m_emu->LastStop().reason) {

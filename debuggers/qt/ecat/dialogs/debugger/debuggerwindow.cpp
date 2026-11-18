@@ -213,6 +213,8 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();
+        //The time group follows the tab: a card's back steps are the card's, the moment names where it stands
+        if (m_ttd != nullptr && this->e->loaded && m_ttd->shown()) m_ttd->poll(true);
     });
     connect(m_side_tabs, &QTabWidget::currentChanged, this, [this](int) { refresh_side(); });
 
@@ -243,6 +245,8 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     m_paused = e->debug_paused();
     m_serial = e->debug_serial();
+    //The stop before the window: taken (the tab its caller asked for stays)
+    if (e->loaded) m_stop_serial = e->debug_stop_serial();
     refresh_all(true);
     mark_all();
     if (e->loaded) m_ttd->poll(true);
@@ -357,6 +361,13 @@ void DebuggerWindow::build_toolbar(QWidget * host)
 
     m_step_action = add(":/icons/forward", tr("Step"), QKeySequence(Qt::Key_F7),
         [](Emulator * e, CPU * c) { e->debug_step(c); });
+    //Not in ecat: the Step of a card's tab in the past is a step through the history by card instructions (the time
+    //group's verb, gs-debugger design §8); everywhere else the step above. Ahead of it: it runs first
+    disconnect(m_step_action, &QAction::triggered, this, nullptr);
+    connect(m_step_action, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward()) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step(c); });
+    });
     m_step_over = add(":/icons/step_over", tr("Step over"), QKeySequence(Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_over(c); });
     m_step_out = add(":/icons/top", tr("Step out of the routine"), QKeySequence(Qt::CTRL | Qt::Key_F8),
@@ -369,7 +380,7 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
 
     //Back in time (not in ecat): shown only while the machine has a recorded history
-    m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); });
+    m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); }, [this]() { return current_cpu(); });
     connect(m_ttd, &TtdControls::moved, this, [this]() {
         //A move in time is a stop of its own: every view read again, PC in sight
         m_serial = e->debug_serial();
@@ -751,8 +762,16 @@ void DebuggerWindow::on_debug_event()
     const bool paused = e->debug_paused() && !e->debug_stepping();
     m_paused = paused;
     if (paused) {
-        CPU * c = e->debug_stop_cpu();
-        if (c != nullptr) select_cpu(c);
+        //A stop of a processor (a breakpoint, a step) brings its tab to the front, once. Not in ecat: the events
+        //after it (a move in time, a card's Step Back in the past, an edit, the stop's own event delivered late) find
+        //the same stop and leave the tab in front; a pause names no processor
+        const uint64_t stop = e->debug_stop_serial();
+        if (stop != m_stop_serial) {
+            m_stop_serial = stop;
+            const int reason = e->debug_stop_reason();
+            CPU * c = e->debug_stop_cpu();
+            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+        }
         refresh_all(true);
         if (CpuPane * p = pane()) p->code->setFocus();
     }
