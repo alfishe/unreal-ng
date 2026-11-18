@@ -1,7 +1,7 @@
-// POC 051 (tools/poc/051-xtensa-jit): the block JIT against the interpreter on random code. Never lands as is.
-// Two CPUs with the same memory run the same random program (instructions drawn so that the JIT's kinds dominate,
-// registers pointing into a data region) with the same budget; one interprets, the other compiles every block at
-// its first entry. Run result, the whole CPU state and all memory must be the same.
+// POC 051 (tools/poc/051-xtensa-jit): the region JIT against the interpreter on random code. Never lands as is.
+// Two CPUs with the same memory run the same random program (registers pointing into a data region, float registers
+// with NaNs, infinities and out-of-range values) with the same budgets; one interprets, the other compiles a region
+// at every block's first entry. Run result, the whole CPU state and all memory must be the same after every run.
 
 #include "stdafx.h"
 #include "pch.h"
@@ -15,6 +15,16 @@
 #include <3rdparty/unreal-xtensa/xtensa-isa.h>
 
 #if UNREAL_XTENSA_JIT
+
+namespace xtensa
+{
+inline uint32_t ToBitsForTest(float f)
+{
+    uint32_t b;
+    std::memcpy(&b, &f, 4);
+    return b;
+}
+} // namespace xtensa
 
 namespace
 {
@@ -46,8 +56,7 @@ bool Wanted(const Insn& in, uint32_t pc)
         case Op::Illegal: case Op::Ill: case Op::IllN: case Op::EeInsn:
             return false;
         // the windowed / looping / stopping kinds are rare: they end the experiment early
-        case Op::Entry: case Op::Retw: case Op::RetwN: case Op::Movsp: case Op::Rotw: case Op::Loop:
-        case Op::Loopnez: case Op::Loopgtz: case Op::Wsr: case Op::Xsr: case Op::Rsr: case Op::Syscall:
+        case Op::Entry: case Op::Retw: case Op::RetwN: case Op::Movsp: case Op::Rotw: case Op::Wsr: case Op::Xsr: case Op::Rsr: case Op::Syscall:
         case Op::Simcall: case Op::Break: case Op::BreakN: case Op::Waiti: case Op::Rsil: case Op::Rfe:
         case Op::Rfue: case Op::Rfde: case Op::Rfwo: case Op::Rfwu: case Op::Rfi: case Op::Rer: case Op::Wer:
         case Op::Mac16:
@@ -60,12 +69,13 @@ bool Wanted(const Insn& in, uint32_t pc)
     {
         case Op::J: case Op::Call0: case Op::Call4: case Op::Call8: case Op::Call12: case Op::L32r:
             return static_cast<uint32_t>(in.imm) - kCode < kCodeSize - 4;
+        case Op::Loop: case Op::Loopnez: case Op::Loopgtz: // short loops, ending inside the code
+            return static_cast<uint32_t>(in.imm) - kCode < kCodeSize - 4 && static_cast<uint32_t>(in.imm) - pc < 64;
         default:
             if (in.flags & xtensa::InsnEndsBlock && in.imm != 0 && in.op != Op::Jx && in.op != Op::Callx0 &&
                 in.op != Op::Callx4 && in.op != Op::Callx8 && in.op != Op::Callx12 && in.op != Op::Ret &&
                 in.op != Op::RetN)
                 return static_cast<uint32_t>(in.imm) - kCode < kCodeSize - 4;
-            (void)pc;
             return true;
     }
 }
@@ -117,7 +127,7 @@ TEST(XtensaJit_Test, RandomProgramsMatchTheInterpreter)
 {
     uint64_t compared = 0, executed = 0;
     uint64_t jitCalls = 0, jitInsns = 0;
-    for (uint64_t seed = 1; seed <= 400; ++seed)
+    for (uint64_t seed = 1; seed <= 600; ++seed)
     {
         Rng rng{seed * 0x9E3779B97F4A7C15ull};
         const std::vector<uint8_t> code = RandomCode(rng);
@@ -132,6 +142,24 @@ TEST(XtensaJit_Test, RandomProgramsMatchTheInterpreter)
             const uint32_t r = rng.Next();
             // mostly addresses in the data region (near the page boundary and the end too), else anything
             st.ar[i] = (r & 3) ? kData + (rng.Next() % (kDataSize + 64)) - 32 : rng.Next();
+        }
+        static const uint32_t kSpecial[] = {0x7FC00000u, 0x7F800001u, 0xFFC00001u, 0x7F800000u, 0xFF800000u,
+                                            0x80000000u, 0x00000001u, 0x4F000000u, 0xCF000000u, 0x4F800000u,
+                                            0x3F000000u, 0x3FC00000u, 0xBFC00000u, 0x40200000u};
+        for (uint32_t i = 0; i < 16; ++i)
+        {
+            const uint32_t r = rng.Next() % 4;
+            st.fr[i] = r == 0 ? kSpecial[rng.Next() % (sizeof(kSpecial) / 4)]
+                     : r == 1 ? rng.Next()
+                              : xtensa::ToBitsForTest(static_cast<float>(static_cast<int32_t>(rng.Next() % 2000000) - 1000000) / 64.0f);
+        }
+        st.br = rng.Next() & 0xFFFF;
+        if (rng.Next() & 1)
+        {
+            // a live loop: its end inside the code (other blocks run over it) and a small count
+            st.lbeg = kCode + 2 * (rng.Next() % 256);
+            st.lend = st.lbeg + 1 + rng.Next() % 48;
+            st.lcount = rng.Next() % 6;
         }
         st.sar = rng.Next() & 63;
         st.pc = kCode + 2 * (rng.Next() % 64);

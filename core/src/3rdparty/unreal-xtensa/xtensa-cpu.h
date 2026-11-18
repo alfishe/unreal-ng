@@ -92,6 +92,9 @@
 namespace xtensa
 {
 
+struct RegionLoop; // POC 051 (xtensa-jit-a64.inc)
+struct RegionBlock;
+
 enum class StopReason : uint8_t
 {
     None,
@@ -239,7 +242,14 @@ public:
         uint64_t flushes = 0;
         uint64_t bytes = 0;
         uint64_t calls = 0;
-        uint64_t insns = 0; ///< instructions the compiled prefixes ran
+        uint64_t insns = 0; ///< instructions the regions ran
+        uint64_t regionBlocks = 0;
+        uint64_t total = 0;          ///< all instructions run
+        uint64_t declineGroup = 0;   ///< region not entered: window check needed
+        uint64_t declineLoop = 0;    ///< region not entered: live loop end inside
+        uint64_t declineBudget = 0;
+        uint64_t noRegion = 0;       ///< block entries without a region (cold or rejected)
+        uint64_t runs = 0;
     };
     const JitStats& GetJitStats() const { return jitStats_; }
 #endif
@@ -319,7 +329,8 @@ private:
     {
         void operator()(JitArena* a) const;
     };
-    void* JitCompile(Block& b);
+    void JitCompile(Block& head);
+    bool Discover(uint32_t headPc, const RegionLoop& loop, std::vector<RegionBlock>& blocks, RegionLoop& found);
     void JitInitFromEnv();
     bool jitOn_ = false;
     uint32_t jitHot_ = 8;

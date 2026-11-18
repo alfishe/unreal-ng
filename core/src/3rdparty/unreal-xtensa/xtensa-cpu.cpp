@@ -34,7 +34,12 @@ struct Cpu::Block
     uint8_t maxGroup = 0;
     std::vector<Insn> insns;
 #if UNREAL_XTENSA_JIT
-    void* jit = nullptr;   ///< compiled prefix (POC 051)
+    void* jit = nullptr;   ///< compiled region headed by this block (POC 051)
+    uint32_t jitLo = 0;    ///< the region's address range (blocks' starts to ends)
+    uint32_t jitHi = 0;
+    uint8_t jitGroup = 0;  ///< highest register group the region touches
+    bool jitHasLoop = false;
+    uint32_t jitLoopEnd = 0; ///< LEND of the zero-overhead loop the region runs
     uint32_t hot = 0;
     bool jitTried = false;
 #endif
@@ -967,6 +972,27 @@ RunResult Cpu::Run(uint64_t maxInstructions)
     }
     executed += handlerCycles_;
     state_.ccount += executed;
+#if UNREAL_XTENSA_JIT
+    if (jitOn_)
+    {
+        jitStats_.total += executed;
+        static const bool print = std::getenv("UNREAL_XTENSA_JIT_STATS") != nullptr;
+        if (print && (++jitStats_.runs % 100000) == 0)
+            std::fprintf(stderr,
+                         "xtensa-jit: native %.1f %% of %llu; regions %llu (rejected %llu) blocks %llu; entries: "
+                         "native %llu, no region %llu, window %llu, loop %llu, budget %llu\n",
+                         100.0 * static_cast<double>(jitStats_.insns) / static_cast<double>(jitStats_.total),
+                         static_cast<unsigned long long>(jitStats_.total),
+                         static_cast<unsigned long long>(jitStats_.compiles),
+                         static_cast<unsigned long long>(jitStats_.rejected),
+                         static_cast<unsigned long long>(jitStats_.regionBlocks),
+                         static_cast<unsigned long long>(jitStats_.calls),
+                         static_cast<unsigned long long>(jitStats_.noRegion),
+                         static_cast<unsigned long long>(jitStats_.declineGroup),
+                         static_cast<unsigned long long>(jitStats_.declineLoop),
+                         static_cast<unsigned long long>(jitStats_.declineBudget));
+    }
+#endif
     res.pc = state_.pc;
     res.executed = executed;
     return res;
@@ -1091,6 +1117,44 @@ enterBlock:
     ++b->profileEntries;
 #endif
     wb4 = st.windowBase * 4;
+#if UNREAL_XTENSA_JIT
+    // POC 051: the compiled region headed by this block, where it holds as a whole (xtensa-jit-a64.inc)
+    if (jitOn_)
+    {
+        if (!b->jit && !b->jitTried && ++b->hot >= jitHot_)
+        {
+            b->jitTried = true;
+            JitCompile(*b);
+        }
+        if (!b->jit)
+            ++jitStats_.noRegion;
+        else if (b->jitGroup > safeGroups_)
+            ++jitStats_.declineGroup;
+        else if (!(st.lcount == 0 || st.lend < b->jitLo || st.lend > b->jitHi || (b->jitHasLoop && st.lend == b->jitLoopEnd)))
+            ++jitStats_.declineLoop;
+        else if (maxInstructions - executed - handlerCycles_ < b->count)
+            ++jitStats_.declineBudget;
+        if (b->jit && b->jitGroup <= safeGroups_ && (st.lcount == 0 || st.lend < b->jitLo || st.lend > b->jitHi || (b->jitHasLoop && st.lend == b->jitLoopEnd)))
+        {
+            const uint64_t rem = maxInstructions - executed - handlerCycles_;
+            if (rem >= b->count)
+            {
+                using JitFn = uint64_t (*)(uint32_t*, uint32_t, CpuState*, const void*, uint32_t);
+                const uint64_t r = reinterpret_cast<JitFn>(b->jit)(ar, wb4, &st, l1_,
+                                                                   rem > 0x7FFFFFFFu ? 0x7FFFFFFFu : static_cast<uint32_t>(rem));
+                const uint32_t ran = static_cast<uint32_t>(r);
+                ++jitStats_.calls;
+                if (ran != 0) // else nothing ran (its first instruction left at once): the interpreter runs the block
+                {
+                    jitStats_.insns += ran;
+                    executed += ran;
+                    nextPc = static_cast<uint32_t>(r >> 32);
+                    goto chain;
+                }
+            }
+        }
+    }
+#endif
     uint32_t count = b->count;
     bool cut = false;
     // a loop end inside the block (built under another LEND) must see the loop-back check
@@ -1123,30 +1187,6 @@ enterBlock:
     ip = begin;
 #if UNREAL_XTENSA_THREADED
     table = b->maxGroup > safeGroups_ ? kCheckHandlers : kHandlers;
-#if UNREAL_XTENSA_JIT
-    // POC 051: the compiled prefix, where the interpreter would run the whole block without the window check
-    if (jitOn_ && !cut && table == kHandlers)
-    {
-        if (!b->jit && !b->jitTried && ++b->hot >= jitHot_)
-        {
-            b->jitTried = true;
-            b->jit = JitCompile(*b);
-        }
-        if (b->jit)
-        {
-            using JitFn = uint64_t (*)(uint32_t*, uint32_t, CpuState*, const void*);
-            const uint64_t r = reinterpret_cast<JitFn>(b->jit)(ar, wb4, &st, l1_);
-            ++jitStats_.calls;
-            jitStats_.insns += (r & 0xFF) + ((r >> 8) & 1);
-            ip = begin + (r & 0xFF);
-            if (r & 0x100)
-            {
-                nextPc = static_cast<uint32_t>(r >> 32);
-                goto taken;
-            }
-        }
-    }
-#endif
 #else
     checkMode = b->maxGroup > safeGroups_;
 #endif
