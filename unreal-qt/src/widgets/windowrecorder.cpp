@@ -42,6 +42,24 @@ namespace
 {
 const QColor kBackground(24, 24, 24);
 
+/// ffmpeg's switch for a variable frame rate output: -fps_mode since ffmpeg 5.1, -vsync before it (Linux
+/// distributions still ship 4.x). Cached per ffmpeg
+QString FfmpegVfrSwitch(const QString& ffmpeg)
+{
+    static std::mutex cacheMutex;
+    static std::map<QString, QString> cache;
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    const auto found = cache.find(ffmpeg);
+    if (found != cache.end())
+        return found->second;
+    QProcess help;
+    help.start(ffmpeg, {"-hide_banner", "-h", "long"});
+    const bool fpsMode = help.waitForFinished(15000) && help.readAllStandardOutput().contains("-fps_mode");
+    if (help.state() != QProcess::NotRunning)
+        help.kill();
+    return cache[ffmpeg] = fpsMode ? QStringLiteral("-fps_mode") : QStringLiteral("-vsync");
+}
+
 /// The GPU encoder ffmpeg offers for the codec, found rather than assumed: the build lists it AND a real trial
 /// encode works (NVENC is listed by every build, whatever the card). Empty: none, the caller encodes in software.
 /// Cached per ffmpeg and codec: the trial runs once
@@ -934,10 +952,24 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             args << "-quality" << "quality" << "-rc" << "cqp" << "-qp_i" << "18" << "-qp_p" << "18" << "-pix_fmt"
                  << "yuv420p";
     }
-    else if (request.codec == "h265")
-        args << "-c:v" << "libx265" << "-preset" << "veryfast" << "-crf" << "14" << "-pix_fmt" << "yuv444p";
     else
-        args << "-c:v" << "libx264" << "-preset" << "veryfast" << "-crf" << "12" << "-pix_fmt" << "yuv444p";
+    {
+        // Software: x264 / x265 4:4:4. A frame equal to the one before is not encoded: it only lengthens that one
+        // (variable frame rate, the times stay those of the emulated frames). That is most of the frames a writer
+        // that falls behind gets (the picture repeated for the frames it owes), and every frame of a still screen.
+        // The thresholds are zero, so one changed pixel is a new frame (the defaults drop small changes, a
+        // bullet, a cursor); max=12 keeps four frames a second at least (seeking; the picture's last change is
+        // at most a quarter second before the end of the sound)
+        args << "-vf" << "mpdecimate=hi=0:lo=0:frac=0:max=12" << FfmpegVfrSwitch(ffmpeg) << "vfr";
+        // Presets measured at 1080p (M1 Ultra, loaded): x264 veryfast 33 fps, ultrafast 42; x265 veryfast 3.4,
+        // ultrafast 7.6. Above the native picture the fastest preset; x265 always (far from real time either way)
+        const bool large = static_cast<qint64>(_size.width()) * _size.height() > 1000000;
+        if (request.codec == "h265")
+            args << "-c:v" << "libx265" << "-preset" << "ultrafast" << "-crf" << "14" << "-pix_fmt" << "yuv444p";
+        else
+            args << "-c:v" << "libx264" << "-preset" << (large ? "ultrafast" : "veryfast") << "-crf" << "12"
+                 << "-pix_fmt" << "yuv444p";
+    }
     if (!fifo.isEmpty())
     {
         const QString suffix = QFileInfo(path).suffix().toLower();

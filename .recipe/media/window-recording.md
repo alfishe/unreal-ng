@@ -46,6 +46,10 @@ temporal processing) and the machine's sound; the keyboard is not drawn (use `ke
   so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
   4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
   a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+  In software a frame equal to the one before is not encoded, it lengthens that one (variable frame rate,
+  `mpdecimate` with zero thresholds: one changed pixel is a new frame; four frames a second at least): the repeats
+  of a lagging writer and a still screen cost nothing. Above the native picture x264 uses its `ultrafast` preset,
+  x265 always does (x265 4:4:4 1080p is still several times slower than real time: use the GPU, or H.264).
 - With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
   end. Stop returns at once; a slow encoder is waited for, never killed.
 - Same folder and `unreal_<time>` name as the raw recording. The choice is remembered (`windowSource` in the
