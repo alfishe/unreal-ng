@@ -48,6 +48,7 @@ constexpr const char* const kNetwork = "network";
 constexpr const char* const kContention = "contention";
 constexpr const char* const kTTDRestart = "ttdrestart";
 constexpr const char* const kEsxDos = "esxdos";
+constexpr const char* const kEspJit = "esp_jit";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -77,6 +78,7 @@ constexpr const char* const kNetworkAlias = "net";
 constexpr const char* const kContentionAlias = "cont";
 constexpr const char* const kTTDRestartAlias = "ttdre";
 constexpr const char* const kEsxDosAlias = "esx";
+constexpr const char* const kEspJitAlias = "jit";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -130,6 +132,9 @@ constexpr const char* const kNetworkDesc =
     "Network adapters on the bus (when fitted by the machine config [NETWORK] Card=, e.g. ZXNETUSB). Off: the card is "
     "unplugged and its ports read #FF, as on a machine without it.";
 
+constexpr const char* const kEspJitDesc =
+    "ESP32 code (the VDAC4 board's apps) runs translated to host code. Off runs it in the interpreter: the same "
+    "results, slower; for code the translator gets wrong. UNREAL_XTENSA_JIT=0/1 overrides it.";
 constexpr const char* const kGSLightweightDesc =
     "General Sound lightweight personality: fit the in-tree ProTracker player card (no coprocessor firmware needed). Off keeps the "
     "personality from [SOUND] GSType; runtime switching carries the host mailbox across.";

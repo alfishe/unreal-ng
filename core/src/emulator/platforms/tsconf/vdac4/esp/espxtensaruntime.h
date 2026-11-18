@@ -100,6 +100,8 @@ public:
     static constexpr uint32_t kMaxLatency = 16;
     void SetLatency(uint32_t passes);
     uint32_t Latency() const { return _latency; }
+    /// The ESP's code through the JIT or the interpreter (the `esp_jit` feature); any thread, the next Run on
+    void SetJit(bool on);
     /// Main thread: wait until no job runs (nothing handed over)
     void WaitIdle();
     /// Main thread: WaitIdle, then hand the finished jobs' outputs to the firmware

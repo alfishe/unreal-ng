@@ -244,7 +244,8 @@ void Cpu::JitArenaDelete::operator()(JitArena* a) const
 void Cpu::SetJit(bool on, uint32_t hot)
 {
     jitOn_ = on;
-    jitHot_ = hot == 0 ? 1 : hot;
+    if (hot != 0)
+        jitHot_ = hot;
 }
 
 void Cpu::JitInitFromEnv()

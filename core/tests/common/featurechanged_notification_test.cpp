@@ -48,6 +48,27 @@ TEST(FeatureChangedNotification_Test, HudFlagRegisteredWithCorrectMetadata)
     EmulatorTestHelper::CleanupEmulator(emu);
 }
 
+// The ESP32 JIT is on by default: the interpreter is the fallback a user switches to (POC 051)
+TEST(FeatureChangedNotification_Test, EspJitRegisteredOnByDefault)
+{
+    Emulator* emu = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emu, nullptr);
+    FeatureManager* fm = emu->GetFeatureManager();
+    ASSERT_NE(fm, nullptr);
+
+    EXPECT_TRUE(fm->isEnabled(Features::kEspJit));
+    auto features = fm->listFeatures();
+    auto it = std::find_if(features.begin(), features.end(),
+                           [](const FeatureManager::FeatureInfo& f) { return f.id == Features::kEspJit; });
+    ASSERT_NE(it, features.end());
+    EXPECT_EQ(it->alias, Features::kEspJitAlias);
+    EXPECT_EQ(it->category, Features::kCategoryPerformance);
+    ASSERT_TRUE(fm->setFeature(Features::kEspJit, false));
+    EXPECT_FALSE(fm->isEnabled(Features::kEspJit));
+
+    EmulatorTestHelper::CleanupEmulator(emu);
+}
+
 /// endregion </HUD feature flag registration>
 
 /// region <NC_FEATURE_CHANGED notifications>

@@ -92,6 +92,8 @@ public:
 
     /// Run the ESP up to `nowUs` (emulated microseconds since power-on)
     void Advance(uint64_t nowUs);
+    /// The app's code translated to host code (the JIT) or interpreted, from the next instruction run on; any thread
+    void SetJit(bool on) { _cpu->SetJit(on); }
     uint64_t NowUs() const { return _nowUs; }
 
     /// region <The firmware's app commands (ModuleApp)>

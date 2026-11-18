@@ -3,6 +3,7 @@
 #include "vdac4board.h"
 
 #include "common/filehelper.h"
+#include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/sound/soundmanager.h"
 #include "esp/espxtensaruntime.h"
@@ -112,6 +113,7 @@ Vdac4Board::Vdac4Board(EmulatorContext* context, Vdac4Tang& tang, std::function<
     if (const char* env = std::getenv("UNREAL_VDAC4_ESP_LATENCY"); env && *env)
         latency = static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
     _runtime->SetLatency(latency);
+    ApplyJitFeature();
     _tang.SetEspWait([this]() { _runtime->WaitIdle(); });
 
     Vdac4Esp::Config espConfig;
@@ -175,7 +177,24 @@ void Vdac4Board::OnFrameEnd()
     // A machine frame ends with the ESP's outputs handed over: no job in flight across a frame boundary (TTD
     // checkpoints, snapshots, the frame-end probes and the published state see a settled ESP)
     _runtime->Flush();
+    ApplyJitFeature();
     Publish();
+}
+
+void Vdac4Board::ApplyJitFeature()
+{
+    // UNREAL_XTENSA_JIT=0/1 overrides the esp_jit feature (A/B runs of one build)
+    static const char* const env = std::getenv("UNREAL_XTENSA_JIT");
+    bool on = true;
+    if (env && *env)
+        on = std::strcmp(env, "0") != 0;
+    else if (_context && _context->pFeatureManager)
+        on = _context->pFeatureManager->isEnabled(Features::kEspJit);
+    if (_jit != (on ? 1 : 0))
+    {
+        _jit = on ? 1 : 0;
+        _runtime->SetJit(on);
+    }
 }
 
 void Vdac4Board::Publish()

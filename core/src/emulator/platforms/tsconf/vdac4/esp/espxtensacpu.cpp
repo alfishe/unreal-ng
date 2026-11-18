@@ -1,5 +1,6 @@
 #include "espxtensacpu.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 
@@ -43,8 +44,19 @@ public:
 #ifdef UNREAL_XTENSA_PROFILE
     void DumpProfile(const char* path) override { _cpu.DumpProfile(path); }
 #endif
+#if UNREAL_XTENSA_JIT
+    void SetJit(bool on) override { _jit.store(on ? 1 : 0, std::memory_order_relaxed); }
+#endif
+
     Result Run(uint64_t maxInstructions) override
     {
+#if UNREAL_XTENSA_JIT
+        if (const int jit = _jit.load(std::memory_order_relaxed); jit != _jitApplied)
+        {
+            _cpu.SetJit(jit != 0, 0);
+            _jitApplied = jit;
+        }
+#endif
         const xtensa::RunResult run = _cpu.Run(maxInstructions);
         Result result;
         result.pc = run.pc;
@@ -109,6 +121,10 @@ public:
 
 private:
     xtensa::Cpu _cpu;
+#if UNREAL_XTENSA_JIT
+    std::atomic<int> _jit{-1}; ///< SetJit: -1 none yet, 0 interpreter, 1 JIT
+    int _jitApplied = -1;
+#endif
 };
 
 }  // namespace
