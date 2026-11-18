@@ -195,6 +195,29 @@ TEST(TTD_CardPositions_Interleave_Test, RoundTripsOnBothCpus)
     EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, mainA.tInFrame);
 }
 
+/// A move in time is no stop of the debugger's: the last stop (its reason, its number) stays as it was, so a debugger
+/// that brings a stopped processor's tab to the front does not take a card's Step Back for a main CPU step
+TEST(TTD_CardPositions_Interleave_Test, MovesInTimeLeaveTheLastStop)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, Card::NeoGS));
+    const uint64_t target = b.Count() + PerFrame(b) * 2 + 777;
+    Record(b, 4);
+    b.emulator->RunNCPUCycles(1);   // a real stop: a direct run of the main CPU
+    const Emulator::DebugStop stop = b.emulator->LastStop();
+    EXPECT_EQ(stop.reason, Emulator::DebugStop::Reason::Step);
+
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, target).Ok());
+    ASSERT_TRUE(b.ttd->StepCardInstructions(b.cpu, -2).Ok());
+    ASSERT_TRUE(b.ttd->StepCardInstructions(b.cpu, 1).Ok());
+    ASSERT_TRUE(b.ttd->StepBackInstruction());
+    EXPECT_EQ(b.emulator->LastStop().serial, stop.serial) << "the card's and the main CPU's moves in time: no stop";
+    EXPECT_EQ(b.emulator->LastStop().reason, stop.reason);
+
+    b.emulator->RunNCPUCycles(1);   // a real step again counts
+    EXPECT_EQ(b.emulator->LastStop().serial, stop.serial + 1);
+}
+
 /// A card moment inside the main CPU's LDIR step: the main CPU shown at the step's start with the T-states into it;
 /// a resume runs on from that boundary with the card as the boundary had it
 TEST(TTD_CardPositions_Inside_Test, InsideLdirTheMainCpuStandsAtItsBoundaryAndResumesFromThere)

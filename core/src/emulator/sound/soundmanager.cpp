@@ -1388,6 +1388,12 @@ void SoundManager::renderCdAudio(size_t samples)
     }
 }
 
+void SoundManager::publishGsStats()
+{
+    // One relaxed load unless a reader asked in the last 2 s (gsslotstats.h)
+    _gsStats.FrameEnd(_gs, _context->config.frame_duration_us / 1e6, _context->pTimeTravelHooks);
+}
+
 void SoundManager::handleFrameEnd()
 {
     // CD drives: the optical head moves through the frame in every mode (machine
@@ -1443,6 +1449,7 @@ void SoundManager::handleFrameEnd()
             v.stage->invalidateHistory();
         if (_gs)
             _gs->handleFrameEnd(0);
+        publishGsStats();
         if (_modelAudio)
             _modelAudio->AudioFrameEnd(0);
         renderCdAudio(0);
@@ -1698,6 +1705,7 @@ void SoundManager::handleFrameEnd()
     // into the registry buffer
     if (_gs)
         _gs->handleFrameEnd(samplesThisFrame);
+    publishGsStats();
 
     // Slot-built cards: run to the frame end and render their rows
     for (ICardAudio* card : _slotCards)

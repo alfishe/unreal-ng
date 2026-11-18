@@ -224,6 +224,8 @@ signals:
 
     // Machine signals
     void machineModelChangeRequested(const QString& modelShortName);
+    /// The running machine's configuration changed ("ATM-Turbo 2+ v7.10 512K"; empty: no machine)
+    void currentMachineChanged(const QString& title);
     void zxpolyConfigurationRequested(const QString& configurationName);  // Machine -> ZXPoly-48k / 128k / Pentagon
     void tapeTrapsToggled(bool enabled);
     void turboTapeToggled(bool enabled);
@@ -363,6 +365,8 @@ private:
     std::vector<QAction*> _machineVariantActions;  // machine variants (MachineVariants): TS-Conf + VDAC2
     std::vector<QMenu*> _machineFamilyMenus;       // a submenu per machine family (MachineCatalog), bold when current
     QString _currentModelShortName;
+    QAction* _currentMachineAction = nullptr;  ///< read-only first entry of the Machine menu: the running configuration
+    QString _currentMachineTitle;
     QAction* _tapeTrapsAction;
     QAction* _mniAction;
     QAction* _turboTapeAction;

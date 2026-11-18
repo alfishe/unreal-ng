@@ -84,7 +84,11 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   mask a pixel wide survives), `audio` (default true: the sound track, PCM in `.mov`, AAC 320k in `.mp4`; false =
   picture only), `fps` (left out = the machine's rate; 1..100 only with `audio: false`, else 400), `scale` (1..4: the picture doubled in blocks, the default 1),
   `picture_height` (0..4320: the CRT drawn at that height instead of the window's, GPU only), `width` + `height` (the
-  file's frame; left out = the picture with the keyboard under it), `layout` (`below` or `side`, with a frame).
+  file's frame; left out = the picture with the keyboard under it), `layout` (`below` or `side`, with a frame;
+  with `fit` the picture and the keyboard fit the frame together: below, the keyboard as wide as the picture;
+  beside, half the width at least),
+  `engine` (`native`, the default: hardware H.26x and ProRes by the Mac's own writer; `ffmpeg`: always ffmpeg, its
+  ProRes or, with `hardware`, its GPU encoder; the GUI's MKV is ffmpeg's too).
 - **Frames** (`video/window/record/frames {frames}`): the machine must be paused (409 `not-paused`). Runs `frames` frames, each one drawn
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.
@@ -97,7 +101,9 @@ before the start: a delay changed while recording inserts silence (longer) or dr
 - **The HUD** ("Remote control" and the like) is never in the file; the keys the program holds light up on the
   keyboard (a combination such as CS+6 lights its own key, the Down arrow, when the picture has one).
 - **Running instead of stepping**: a running machine records too, the frames the window skipped repeat the picture
-  before. Step with `record/frames` for a file where every picture is its own frame.
+  before. Step with `record/frames` for a file where every emulated frame's picture is at its time (through ffmpeg a
+  picture equal to the one before lengthens it: the file has as many frames as there were changes, its length the
+  frames').
 
 ## MCP (preferred)
 

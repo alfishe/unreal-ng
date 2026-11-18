@@ -29,6 +29,7 @@
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/mixerchannel.h"
 #include "emulator/sound/chips/gs/gshostdriver.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -147,6 +148,7 @@ protected:
     std::unique_ptr<GSCommandLog> _gsCommandLog;
     // The debugger's send (gshostdriver.h): steps at the frame start while it has one
     std::shared_ptr<GSHostDriver> _gsHostDriver;
+    GSStatsPublisher _gsStats;  ///< the GS slot's statistics, published at frame ends while read (N7)
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
@@ -606,6 +608,10 @@ public:
     {
         return _gsHostDriver;
     }
+    /// The GS slot's statistics (gsslotstats.h): any thread
+    void publishGsStats();
+    GSStatsPublisher& gsStats() { return _gsStats; }
+    const GSStatsPublisher& gsStats() const { return _gsStats; }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see
     /// ITurboSoundDevice::SetPsgClock. False when the slot is empty or its

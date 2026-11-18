@@ -112,6 +112,19 @@ struct GSActivityCounters
     // FIFO - a real, LW-specific backlog condition.
     uint64_t hostDataDropped = 0;
     uint64_t hostDataRead = 0;          // ZX IN #B3
+
+    // Both sides of the mailbox (neogs-automation-design.md §4.2): statistics, not machine state
+    uint64_t hostStatusPolls = 0;       // ZX IN #BB
+    uint64_t cardCommandsRead = 0;      // card IN #01 (LW: the interpreter takes the command)
+    uint64_t cardCommandAcks = 0;       // card #05 (RSCOM: the command flag cleared, the command confirmed)
+    uint64_t cardDataIn = 0;            // card IN #02 (LW: a parameter byte taken)
+    uint64_t cardDataOut = 0;           // card OUT #03 (LW: a reply byte posted)
+    uint64_t cardStatusPolls = 0;       // card IN #04
+    uint64_t commandOverwrites = 0;     // ZX OUT #BB while the command flag was still set
+    uint64_t dataOverwrites = 0;        // a data write, either side, while the data flag was still set
+    uint64_t resetsCold = 0;            // power-on (machine reset, cold boot)
+    uint64_t resetsHost = 0;            // #33 bit 7 (and the automation's card reset)
+    uint64_t nmiRequests = 0;           // #33 bit 6 (and the automation's NMI)
     int64_t  lastDacFetchGsCycle = -1; // totalGsCycles() at the most recent DAC fetch, -1 = never
     uint32_t lastDacFetchFrame = 0;    // Frame number of the most recent DAC fetch
 };
@@ -137,6 +150,17 @@ inline void accumulateGSActivityCounters(GSActivityCounters& dst, const GSActivi
     dst.hostDataWritten += src.hostDataWritten;
     dst.hostDataDropped += src.hostDataDropped;
     dst.hostDataRead += src.hostDataRead;
+    dst.hostStatusPolls += src.hostStatusPolls;
+    dst.cardCommandsRead += src.cardCommandsRead;
+    dst.cardCommandAcks += src.cardCommandAcks;
+    dst.cardDataIn += src.cardDataIn;
+    dst.cardDataOut += src.cardDataOut;
+    dst.cardStatusPolls += src.cardStatusPolls;
+    dst.commandOverwrites += src.commandOverwrites;
+    dst.dataOverwrites += src.dataOverwrites;
+    dst.resetsCold += src.resetsCold;
+    dst.resetsHost += src.resetsHost;
+    dst.nmiRequests += src.nmiRequests;
     if (src.lastDacFetchGsCycle > dst.lastDacFetchGsCycle)
     {
         dst.lastDacFetchGsCycle = src.lastDacFetchGsCycle;

@@ -15,6 +15,8 @@
 #include <set>
 
 #include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/targets/debugcpuid.h"
+#include "debugger/ttd/timetravelcontroller.h"
 #include "debugger/ttd/ttdcontrol.h"
 #include "debugger/ttd/ttdsession.h"
 #include "emulator/emulator.h"
@@ -129,11 +131,32 @@ std::string DebuggerTimeTravel::RunBackPcs(const BreakpointManager& breakpoints)
     return text;
 }
 
+QString DebuggerTimeTravel::CardMoment(const std::vector<ttd::TTDCardPosition>& cards)
+{
+    for (const ttd::TTDCardPosition& p : cards)
+    {
+        if (!p.cardPosition || !p.known)
+            continue;
+        QString text = tr("%1 at instruction %2, PC %3")
+                           .arg(QString::fromLatin1(DebugCpuName(p.cpu)))
+                           .arg(static_cast<qulonglong>(p.instruction))
+                           .arg(Hex(p.pc));
+        // The main CPU at its last completed instruction; inside the next one by the T-states the card is ahead
+        if (p.inside)
+            text += tr("; main CPU PC %1, +%2 T into the next instruction").arg(Hex(p.mainPc)).arg(p.tOffset);
+        else
+            text += tr("; main CPU PC %1, at its instruction boundary").arg(Hex(p.mainPc));
+        return text;
+    }
+    return QString();
+}
+
 void DebuggerTimeTravel::refresh()
 {
     ttd::TTDSessionInfo info;
     uint64_t frame = 0;
     std::string pcs;
+    std::vector<ttd::TTDCardPosition> cards;
     {
         const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
         EmulatorContext* context = lease.get();
@@ -147,6 +170,11 @@ void DebuggerTimeTravel::refresh()
         frame = session->CurrentPosition().frame;
         if (const BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
             pcs = RunBackPcs(*breakpoints);
+        // A card position exists only in the history with the machine paused (its first run leaves it): the
+        // published readout then (a read under the controller's lock, never a session operation)
+        if (info.state == ttd::TTDSessionState::Detached && (!_emulator->IsRunning() || _emulator->IsPaused()) &&
+            context->pTimeTravelController)
+            cards = context->pTimeTravelController->PublishedCardPositions();
     }
     const ttdgui::MomentText moment = ttdgui::DescribeMoment(info, frame);
     // Rule 1: without a recorded history the debugger looks as before
@@ -173,6 +201,8 @@ void DebuggerTimeTravel::refresh()
                                   : tr("Go on recording from the end of the recording"));
 
     QString state = moment.state;
+    if (const QString card = CardMoment(cards); !card.isEmpty())
+        state += QStringLiteral(" · ") + card;
     if (!moment.fork.isEmpty())
         state += QStringLiteral(" · ") + moment.fork;
     _moment->setText(state);

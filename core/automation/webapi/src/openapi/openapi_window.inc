@@ -259,6 +259,9 @@
         field("codec", "string", "prores (ProRes 4444, the default), h264 or h265 (4:4:4 through ffmpeg)");
         field("hardware", "boolean",
               "h264 / h265 on the GPU's encoder (macOS VideoToolbox, no ffmpeg, 4:2:0 / H.265 4:2:2); default false");
+        field("engine", "string",
+              "native (default: hardware h264 / h265 and prores by the Mac's own writer) or ffmpeg (always ffmpeg: "
+              "with hardware its GPU encoder, found by probing)");
         field("fit", "boolean", "Scale the picture to a given width x height frame (aspect kept); default false");
         field("audio", "boolean",
               "The machine's sound, frame for frame with the picture (default true; PCM in .mov, AAC in .mp4)");

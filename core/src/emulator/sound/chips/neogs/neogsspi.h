@@ -83,6 +83,14 @@ public:
     const MasterState& state(Master master) const { return _m[master]; }
     MasterState& state(Master master) { return _m[master]; }
     uint8_t sctrlRaw() const { return _sctrl; }
+
+    /// Per master (neogs-automation-design.md §4.8): statistics, not machine state (no snapshot)
+    struct Counters
+    {
+        uint64_t bytes = 0;     // bytes the CPU clocked through the master and the device took
+        uint64_t restarts = 0;  // a byte cut off by a new one before it ended
+    };
+    const Counters& counters(Master master) const { return _counters[master]; }
     void setSctrlRaw(uint8_t value) { _sctrl = value; }
 
 private:
@@ -92,4 +100,5 @@ private:
     SpiDevice* _device[3] = {nullptr, nullptr, nullptr};
     MasterState _m[3];
     uint8_t _sctrl = SCTRL_RESET;
+    Counters _counters[3];
 };

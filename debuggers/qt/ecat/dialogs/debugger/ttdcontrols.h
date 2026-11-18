@@ -2,7 +2,11 @@
 // A group on the window's toolbar, shown only while the machine has a recorded history: Step Back, Step Over Back,
 // Run Back (to the breakpoints), Frame Back, Branch Here / Continue Rec, and the branch drop-down with the branch
 // management. Every button is a TTDControl verb through Emulator::ttd_call (in process or over the WebAPI); nothing
-// records unless asked (Branch Here / Continue Rec only)
+// records unless asked (Branch Here / Continue Rec only).
+// With a sound card's tab in front (gs, ms) the back steps are the card's (gs-debugger design §8): Step Back and the
+// Step of the past (F7) move by card instructions (`step-instruction {cpu, dir}`), Run Back goes to the card's
+// previous breakpoint hit (`reverse-continue {cpu}`); Step Over Back is the main CPU's only. At a card position the
+// moment names both CPUs: the card's instruction count and PC, the main CPU's PC and the T-states into it
 
 #pragma once
 
@@ -29,7 +33,9 @@ class TtdControls : public QObject
 public:
     //Adds the group to the toolbar at its end. window: the questions' parent and the shortcuts' window
     //(Shift+F7 / F8 / F9); main_cpu: the processor whose breakpoints Run Back goes back to
-    TtdControls(QWidget * window, QToolBar * toolbar, Emulator * e, std::function<CPU *()> main_cpu);
+    //current_cpu: the processor whose tab is in front (a card's: the back steps act on the card)
+    TtdControls(QWidget * window, QToolBar * toolbar, Emulator * e, std::function<CPU *()> main_cpu,
+                std::function<CPU *()> current_cpu = nullptr);
 
     //Reads the session (status, position, branches) and sets what shows; force: now, else once in five calls (the
     //window's timer ticks five times a second)
@@ -46,6 +52,23 @@ public:
               const QString &title = QString());
     //Asked before a delete; the default is a question box (the self-check answers itself)
     std::function<bool(const QString &title, const QString &text)> confirm;
+    //A refusal or an answer that moved nothing (warning: a refusal); the default is a message box (the self-check
+    //reads them)
+    std::function<void(const QString &title, const QString &text, bool warning)> inform;
+
+    //The card CPU the back steps act on: "gs" / "ms" while a card's tab is in front, else empty (the main CPU)
+    QString card_cpu() const;
+    //The card's readout of the last poll (a `cards[]` entry of `position`), empty when the machine has no such card
+    QJsonObject card_readout(const QString &cpu) const;
+    //A card readout as the moment shows it: "gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the
+    //next instruction" at a card position (", at its instruction boundary" when not inside one); "gs at instruction
+    //1200, PC #0A3C" without one; "gs: no instruction counts in this recording" when the recording has none
+    static QString describe_card(const QJsonObject &card);
+    //The Step (F7) of the card's tab in the past: one card instruction forward through the history. False when
+    //that is not the case (the main CPU's tab, or not in the past): the window's own step runs
+    bool step_forward();
+    //What the last move said (the branch button's tooltip)
+    const QString &last_result() const { return m_last_result; }
 
     QAction * step_back_action() const { return m_step_back; }
     QAction * step_over_back_action() const { return m_step_over_back; }
@@ -80,6 +103,10 @@ public slots:
     void branch_here();
 
 private:
+    //A move of the card CPU: the verb with `cpu`; an answer that moved nothing (at_start, at_end, no_hit) is said
+    //under title. True when it moved
+    bool card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
+                   const QString &title);
     //A moving verb: the window redraws after it. True when it ran
     bool move(const std::string &verb, std::map<std::string, std::string> options, const QString &title,
               QJsonObject * out = nullptr);
@@ -91,6 +118,7 @@ private:
     QWidget * m_window;
     Emulator * e;
     std::function<CPU *()> m_main_cpu;
+    std::function<CPU *()> m_current_cpu;
     std::vector<QAction *> m_group;
     QAction * m_step_back = nullptr;
     QAction * m_step_over_back = nullptr;
@@ -112,5 +140,6 @@ private:
     QString m_state;        //"Recording", "History: ...", "Live, not recorded"; empty: no history
     QString m_branch_part;  //"on 'b' (2 branches)"
     QString m_fork_part;    //"fork here: 1 other future"
+    QString m_card_part;    //the card position, or the readout of the card in front (describe_card)
     QString m_last_result;  //what the last back step said (the tooltip)
 };

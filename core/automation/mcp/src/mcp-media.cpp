@@ -554,6 +554,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["hardware"]["description"] =
         "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
         "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+    schema["properties"]["engine"]["type"] = "string";
+    schema["properties"]["engine"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* engine : {"native", "ffmpeg"})
+        schema["properties"]["engine"]["enum"].append(engine);
+    schema["properties"]["engine"]["description"] =
+        "window_record_start: native (default: hardware H.264 / H.265 and ProRes by the Mac's own writer) or ffmpeg "
+        "(always ffmpeg: with hardware its GPU encoder, found by probing)";
     schema["properties"]["fit"]["type"] = "boolean";
     schema["properties"]["fit"]["description"] =
         "window_record_start: scale the picture to a given width x height frame (aspect kept, centred) instead of "
@@ -1316,7 +1323,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         return;
                     }
                     body["path"] = path;
-                    for (const char* field : {"keyboard", "codec", "hardware", "fit", "fps", "scale", "picture_height", "width", "height",
+                    for (const char* field : {"keyboard", "codec", "hardware", "engine", "fit", "fps", "scale", "picture_height", "width", "height",
                                         "layout"})
                         if (args.isMember(field))
                             body[field] = args[field];

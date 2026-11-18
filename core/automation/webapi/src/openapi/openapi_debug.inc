@@ -317,6 +317,72 @@
         put["responses"]["404"]["description"] = "A card CPU with no card in its slot";
     }
 
+    // Device boards (debugger-model widget catalog §4, protocol §6.4; gs-debugger N4 / N8)
+    {
+        Json::Value idParam;
+        idParam["name"] = "id";
+        idParam["in"] = "path";
+        idParam["required"] = true;
+        idParam["schema"]["type"] = "string";
+        Json::Value boardParam = idParam;
+        boardParam["name"] = "board";
+        boardParam["description"] = "gs (the classic card), neogs, neogs_dma, neogs_sd, neogs_mp3, neogs_flash";
+
+        Json::Value& list = paths["/api/v1/emulator/{id}/debug/boards"]["get"];
+        list["summary"] = "The device boards the machine has now";
+        list["tags"].append("Debug Commands");
+        list["description"] =
+            "A device board is a device's hardware state as data: a layout of columns, groups and controls with their "
+            "values, which any front-end renders with one generic renderer. {boards: [{id, title, device, cpu, "
+            "available, actions[{id, title, param}]}]}. The GS slot publishes gs (classic GS, lightweight player) or "
+            "the NeoGS boards neogs, neogs_dma, neogs_sd, neogs_mp3 (available: a decoder is fitted), neogs_flash. "
+            "Built on read, side-effect free (CLI board list, MCP inspect_state aspect boards, Lua / Python boards()).";
+        list["parameters"].append(idParam);
+        list["responses"]["200"]["description"] = "{boards: [...]}";
+
+        Json::Value& one = paths["/api/v1/emulator/{id}/debug/boards/{board}"]["get"];
+        one["summary"] = "One device board: layout and values";
+        one["tags"].append("Debug Commands");
+        one["description"] =
+            "{id, title, device, cpu, available, actions[], columns: [{groups: [{title, raw, controls: [{id, label, "
+            "type, value, note, names (bits, bit 0 first), values (enum), min / max (bar)}]}]}]}. Control types: hex8, "
+            "hex16, hex21, dec, counter, rate, bool, led, text, bits, enum, bar. ?values=1: {id, available, "
+            "values: {control id: value}} for polling (CLI board <id>, MCP aspect board.<id>, Lua / Python board(id)).";
+        one["parameters"].append(idParam);
+        one["parameters"].append(boardParam);
+        one["parameters"][2]["name"] = "values";
+        one["parameters"][2]["in"] = "query";
+        one["parameters"][2]["description"] = "1: the values only";
+        one["parameters"][2]["schema"]["type"] = "string";
+        one["responses"]["200"]["description"] = "The board";
+        one["responses"]["404"]["description"] = "No such board on this machine (the message lists the boards)";
+
+        Json::Value& act = paths["/api/v1/emulator/{id}/debug/boards/{board}/actions/{action}"]["post"];
+        act["summary"] = "Run a board's action";
+        act["tags"].append("Debug Commands");
+        act["description"] =
+            "neogs_sd insert (arg: an image file or a host folder) and eject are requests to the media manager's slot "
+            "sd.ngs (the same as media insert / eject: at once while the machine is not running, else at the next "
+            "frame boundary; while a TTD recording runs, an event of the recording); neogs_flash save writes a "
+            "modified flash in persist mode. Body {\"arg\": \"...\"} (or \"path\", or ?arg=). {board, action, arg, "
+            "status: done | queued} (CLI board <id> <action> [arg], MCP emulator_manage board_action, Lua / Python "
+            "board_action(id, action, arg)).";
+        act["parameters"].append(idParam);
+        act["parameters"].append(boardParam);
+        act["parameters"][2]["name"] = "action";
+        act["parameters"][2]["in"] = "path";
+        act["parameters"][2]["required"] = true;
+        act["parameters"][2]["schema"]["type"] = "string";
+        act["requestBody"]["required"] = false;
+        act["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        act["requestBody"]["content"]["application/json"]["schema"]["properties"]["arg"]["type"] = "string";
+        act["responses"]["200"]["description"] = "{board, action, arg, status}";
+        act["responses"]["400"]["description"] = "insert without a path";
+        act["responses"]["404"]["description"] = "No such board or action";
+        act["responses"]["409"]["description"] = "A TTD replay owns the machine";
+        act["responses"]["422"]["description"] = "No file or folder at the path; the request failed";
+    }
+
     // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
     {
         Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];

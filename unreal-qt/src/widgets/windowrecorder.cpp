@@ -44,22 +44,26 @@ namespace
 {
 const QColor kBackground(24, 24, 24);
 
-/// ffmpeg's switch for a variable frame rate output: -fps_mode since ffmpeg 5.1, -vsync before it (Linux
-/// distributions still ship 4.x). Cached per ffmpeg
-QString FfmpegVfrSwitch(const QString& ffmpeg)
+/// The switches an ffmpeg build takes for a variable frame rate output: -fps_mode since ffmpeg 5.1, -vsync before
+/// it (Linux distributions still ship 4.x); -enc_time_base where the build has it (else the times are rounded to
+/// the frame rate ffmpeg guesses). Cached per ffmpeg
+QStringList FfmpegVfrArgs(const QString& ffmpeg)
 {
     static std::mutex cacheMutex;
-    static std::map<QString, QString> cache;
+    static std::map<QString, QStringList> cache;
     std::lock_guard<std::mutex> lock(cacheMutex);
     const auto found = cache.find(ffmpeg);
     if (found != cache.end())
         return found->second;
     QProcess help;
     help.start(ffmpeg, {"-hide_banner", "-h", "long"});
-    const bool fpsMode = help.waitForFinished(15000) && help.readAllStandardOutput().contains("-fps_mode");
+    const QByteArray text = help.waitForFinished(15000) ? help.readAllStandardOutput() : QByteArray();
     if (help.state() != QProcess::NotRunning)
         help.kill();
-    return cache[ffmpeg] = fpsMode ? QStringLiteral("-fps_mode") : QStringLiteral("-vsync");
+    QStringList args{text.contains("-fps_mode") ? QStringLiteral("-fps_mode") : QStringLiteral("-vsync"), "vfr"};
+    if (text.contains("-enc_time_base"))
+        args << "-enc_time_base" << "1:1000000";  // the stream's microseconds, exact
+    return cache[ffmpeg] = args;
 }
 
 // The picture goes to ffmpeg as Matroska: uncompressed B,G,R,A frames, each in its own cluster with its time in
@@ -853,7 +857,8 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // The Mac's own encoder (VideoToolbox: H.264 / H.265 on the GPU, ProRes 4444) needs no ffmpeg
     bool native = false;
 #ifdef __APPLE__
-    native = request.codec == "prores" || (request.hardware && !request.ffmpegOnly);
+    // ffmpeg only (an MKV, or asked): ffmpeg's ProRes / GPU encoder, the Mac's writer makes no MKV
+    native = !request.ffmpegOnly && (request.codec == "prores" || request.hardware);
 #endif
     QString ffmpeg;
     if (!native)
@@ -926,8 +931,13 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         _size = QSize(request.frameWidth & ~1, request.frameHeight & ~1);
         if (request.fit)  // the picture scaled to the frame, aspect kept, centred (a CRT drawn at its height needs none)
         {
-            const double factor = std::min(static_cast<double>(_size.width()) / picture.width(),
-                                           static_cast<double>(_size.height()) / picture.height());
+            // A keyboard below is as wide as the picture: the two, one above the other, fit the frame together. A
+            // keyboard beside gets half the width at least (else it is a strip a few keys high)
+            const bool below = request.layout != "side" && keyboardAspectHeight > 0;
+            const double blockHeight = picture.height() + (below ? picture.width() * keyboardAspectHeight / 1000.0 : 0);
+            const int width = keyboardAspectHeight > 0 && !below ? _size.width() / 2 : _size.width();
+            const double factor = std::min(static_cast<double>(width) / picture.width(),
+                                           static_cast<double>(_size.height()) / blockHeight);
             picture = QSize(std::max(2, static_cast<int>(picture.width() * factor) & ~1),
                             std::max(2, static_cast<int>(picture.height() * factor) & ~1));
         }
@@ -942,6 +952,12 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
             _screenRect = QRect(QPoint(0, (_size.height() - picture.height()) / 2), picture);
             const int margin = _size.height() / 30;
             int width = _size.width() - picture.width() - 2 * margin;
+            if (width < 64)  // nothing to draw a keyboard in
+            {
+                error = "The picture leaves no room for the keyboard beside it in a " + std::to_string(_size.width()) +
+                        "x" + std::to_string(_size.height()) + " frame (use fit, or a wider frame)";
+                return false;
+            }
             int height = width * keyboardAspectHeight / 1000;
             if (height > _size.height() - 2 * margin)
             {
@@ -953,10 +969,12 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
         }
         else
         {
-            const int height = keyboardAspectHeight * _size.width() / 1000;
+            // The keyboard under the picture: the frame's width, or the picture's when fitted (see above)
+            const int width = request.fit && keyboardAspectHeight > 0 ? picture.width() : _size.width();
+            const int height = keyboardAspectHeight * width / 1000;
             const int top = (_size.height() - picture.height() - height) / 2;
             _screenRect = QRect(QPoint((_size.width() - picture.width()) / 2, std::max(0, top)), picture);
-            _keyboardRect = QRect(0, _screenRect.bottom() + 1, _size.width(), height);
+            _keyboardRect = QRect((_size.width() - width) / 2, _screenRect.bottom() + 1, width, height);
         }
     }
     else
@@ -1062,7 +1080,7 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
     if (!pipeFilter.isEmpty())
         args << "-vf" << pipeFilter;
-    args << FfmpegVfrSwitch(ffmpeg) << "vfr" << "-enc_time_base" << "1:1000000";
+    args << FfmpegVfrArgs(ffmpeg);
     if (request.codec == "prores")
         args << "-c:v" << "prores_videotoolbox" << "-profile:v" << "4444";
     else if (request.hardware && !(hardwareEncoder = FfmpegHardwareEncoder(ffmpeg, request.codec == "h265")).isEmpty())

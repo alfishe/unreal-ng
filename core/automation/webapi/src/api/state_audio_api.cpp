@@ -8,6 +8,9 @@
 #include <json/json.h>
 
 #include <bitset>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <vector>
 
@@ -17,6 +20,7 @@
 #include <emulator/sound/audiomixer.h>
 #include <debugger/ttd/timetravelcontroller.h>
 #include <emulator/sound/chips/gs/gshostdriver.h>
+#include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <emulator/sound/chips/neogs/neogsmedia.h>
 
@@ -507,6 +511,138 @@ void EmulatorAPI::getStateAudioGS(const HttpRequestPtr& req, std::function<void(
     ReplyDeviceState(DeviceState::Gs(emulator->GetContext(), req->getParameter("ram") == "1"), callback);
 }
 
+namespace
+{
+/// Answer a statistics read or reset (gsslotstats.h). While the block is pending (the machine runs and no frame has
+/// ended since the read) it is read again every 10 ms on this loop without holding the thread; 503 after 500 ms
+void ReplyGSStats(EmulatorContext* context, GSStatsQuery query, bool reset,
+                  std::function<void(const HttpResponsePtr&)> callback)
+{
+    const auto run = [reset](EmulatorContext* c, const GSStatsQuery& q) {
+        return reset ? GSStatsResetCounters(c, q) : GSStatsRead(c, q);
+    };
+    const auto respond = [](const std::function<void(const HttpResponsePtr&)>& reply, const GSStatsReply& r,
+                            bool timedOut) {
+        Json::Value body = StateNodeToJson(r.body);
+        int status = r.status;
+        if (timedOut)
+        {
+            status = 503;
+            body["error"] = "Service Unavailable";
+            body["message"] = "no frame end within 500 ms (the machine runs, but no frame ended); read again";
+        }
+        else if (status != 200)
+        {
+            body["message"] = body["error"];
+            body["error"] = status == 404 ? "Not Found" : "Bad Request";
+        }
+        else
+            body["text"] = r.text; // the same lines as CLI 'gs stats': an agent may read only the text
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        resp->setStatusCode(static_cast<HttpStatusCode>(status));
+        addCorsHeaders(resp);
+        reply(resp);
+    };
+    GSStatsReply first = run(context, query);
+    if (!first.pending)
+    {
+        respond(callback, first, false);
+        return;
+    }
+    struct Waiter
+    {
+        std::function<void(const HttpResponsePtr&)> callback;
+        GSStatsQuery query;
+        std::chrono::steady_clock::time_point deadline;
+        trantor::TimerId timer = 0;
+        bool done = false;
+    };
+    auto waiter = std::make_shared<Waiter>();
+    waiter->callback = std::move(callback);
+    waiter->query = query;
+    waiter->query.minFrame = first.minFrame;
+    waiter->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+    trantor::EventLoop* loop = trantor::EventLoop::getEventLoopOfCurrentThread();
+    if (!loop)
+        loop = drogon::app().getLoop();
+    waiter->timer = loop->runEvery(0.01, [waiter, loop, context, run, respond]() {
+        if (waiter->done)
+            return;
+        const GSStatsReply reply = run(context, waiter->query);
+        const bool timedOut = reply.pending && std::chrono::steady_clock::now() >= waiter->deadline;
+        if (reply.pending && !timedOut)
+            return;
+        waiter->done = true;
+        loop->invalidateTimer(waiter->timer);
+        respond(waiter->callback, reply, timedOut);
+    });
+}
+
+void GetGSStats(const std::shared_ptr<Emulator>& emulator, const HttpRequestPtr& req, const std::string& section,
+                std::function<void(const HttpResponsePtr&)>&& callback)
+{
+    GSStatsQuery query;
+    query.section = section;
+    query.fresh = req->getParameter("fresh") == "1";
+    const std::string since = req->getParameter("since");
+    if (!since.empty())
+    {
+        char* end = nullptr;
+        const unsigned long value = std::strtoul(since.c_str(), &end, 10);
+        if (!end || *end != '\0' || value > UINT32_MAX)
+        {
+            Json::Value error;
+            error["error"] = "Bad Request";
+            error["message"] = "'since' is a baseline id from reset_counters";
+            auto resp = HttpResponse::newHttpJsonResponse(error);
+            resp->setStatusCode(HttpStatusCode::k400BadRequest);
+            addCorsHeaders(resp);
+            callback(resp);
+            return;
+        }
+        query.since = static_cast<uint32_t>(value);
+    }
+    ReplyGSStats(emulator->GetContext(), query, false, std::move(callback));
+}
+} // namespace
+
+void EmulatorAPI::getStateAudioGSStats(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
+                                       const std::string& id) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    GetGSStats(emulator, req, "", std::move(callback));
+}
+
+void EmulatorAPI::getStateAudioGSStatsSection(const HttpRequestPtr& req,
+                                              std::function<void(const HttpResponsePtr&)>&& callback,
+                                              const std::string& id, const std::string& section) const
+{
+    auto emulator = getEmulatorByIdOrIndex(id);
+    if (!emulator)
+    {
+        Json::Value error;
+        error["error"] = "Not Found";
+        error["message"] = "Emulator not found with ID: " + id;
+        auto resp = HttpResponse::newHttpJsonResponse(error);
+        resp->setStatusCode(HttpStatusCode::k404NotFound);
+        addCorsHeaders(resp);
+        callback(resp);
+        return;
+    }
+    GetGSStats(emulator, req, section, std::move(callback));
+}
+
 /// @brief POST /api/v1/emulator/{id}/control/audio/gs
 /// @param body {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality|
 ///                         dump_module|sd_insert|sd_eject|flash_save|stereo_mode",
@@ -719,6 +855,13 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
             }
             respond(waiter->callback, reply);
         });
+        return;
+    }
+
+    // reset_counters: a statistics baseline (gsslotstats.h); read with ?since=<baseline>. Nothing on the card changes
+    if (action == "reset_counters")
+    {
+        ReplyGSStats(context, GSStatsQuery{}, true, std::move(callback));
         return;
     }
 
@@ -974,7 +1117,7 @@ void EmulatorAPI::postControlAudioGS(const HttpRequestPtr& req, std::function<vo
         error["message"] =
             "Unknown action '" + action +
             "' (expected reset, reset_card, nmi, send_command, send_data, read_status, read_data, switch_personality, "
-            "dump_module, sd_insert, sd_eject, flash_save or stereo_mode)";
+            "dump_module, sd_insert, sd_eject, flash_save, stereo_mode, send, conversation or reset_counters)";
 
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);

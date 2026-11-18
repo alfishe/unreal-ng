@@ -79,4 +79,8 @@ StateNode ToState(const std::vector<MachineFamily>& families, const std::string&
 /// "ATM-Turbo 2+ v7.10 1024K": the menu text of a machine with a RAM size (the size only when it has several)
 std::string Title(const MachineEntry& machine, uint32_t ramKb);
 
+/// The menu text of a running machine ("ATM-Turbo 2+ v7.10 512K", "TS-Conf + VDAC2 (FT812)"): what the Machine menu,
+/// the window title and the handheld menu show as the current configuration; empty when the machine is not known
+std::string TitleOf(Emulator& emulator);
+
 } // namespace MachineCatalog
