@@ -205,27 +205,16 @@ void DeviceScreen::handleExternalKeyRelease(QKeyEvent* event)
     keyReleaseEvent(event);
 }
 
-void DeviceScreen::paintEvent(QPaintEvent* event)
+const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
 {
-    QPainter painter = QPainter(this);
-
-    // Source rectangle with optional viewport cropping - applies to BOTH
-    // paint paths (the tear-free latched frame and the legacy live buffer
-    // share the same framebuffer geometry)
-    // Destination is always the full widget - clip to dirty region for efficiency.
-    // Using event->rect() as destination would squeeze the entire source into
-    // a partial rectangle when sibling widgets (HUD overlay) trigger partial repaints.
-    QRect destRect = rect();
-    painter.setClipRect(event->rect());
-
     // Determine which image to draw. Selection runs under the frame-source
     // mutex: clearFrameSource() may revoke both sources from the
     // MessageCenter worker while an instance is being destroyed, so the
     // legacy fallback deep-copies under the lock to keep every post-lock
     // read on owned memory.
-    QImage legacyCopy;
     QImage* drawImage = nullptr;
     PictureGeometry geometry;
+    uint64_t serial = 0;  ///< the frame's serial (0: the legacy buffer, no serial)
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
 
@@ -243,6 +232,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         {
             drawImage = &_latchedFrame;
             geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
+            serial = info.serial;
             _shownClock = info.source;
             if (_smoothAuto)
             {
@@ -301,7 +291,7 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
     }
 
     if (!drawImage || drawImage->isNull())
-        return;
+        return nullptr;
 
     // Smooth motion: the picture for now, drawn again only when it is another one
     if (drawImage == &_latchedFrame && smoothActive() && _smooth.Width() == drawImage->width() &&
@@ -325,8 +315,6 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         _frameGeometry = geometry;
         applyPictureViewRatio();
     }
-    const QRectF sourceRect = displaySourceRect();
-
     // Temporal blending: push frame to history and use blended result
     if (_temporalEnabled)
     {
@@ -340,7 +328,13 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
             _blendedFrame = QImage(srcWidth, srcHeight, QImage::Format_RGBA8888);
         }
 
-        _frameHistory.pushFrame(drawImage->bits(), drawImage->sizeInBytes());
+        // Each frame once: the window paints again without a new frame (a repaint, a screenshot, the recorder's
+        // picture), and a frame pushed twice would blend with itself instead of the frame before it
+        if (serial == 0 || serial != _historySerial || _frameHistory.frameCount() == 0)
+        {
+            _frameHistory.pushFrame(drawImage->bits(), drawImage->sizeInBytes());
+            _historySerial = serial;
+        }
 
         if (_frameHistory.hasMinimumHistory())
         {
@@ -349,53 +343,94 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
         }
     }
 
-    // CRTRenderer (or a CRTBeamModel for a shader model) at device pixels, drawn 1:1, with or without CRT effects: the
-    // GPU screen composes the same picture from the same tables, so the two backends match bit for bit
+    return drawImage;
+}
+
+bool DeviceScreen::composePicture(Composer& composer, const QImage& picture, QSize pixels)
+{
+    // CRTRenderer (or a CRTBeamModel for a shader model) at device pixels, with or without CRT effects: the GPU screen
+    // composes the same picture from the same tables, so the two backends match bit for bit
+    const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlainParams;
+    const bool model = CRTBeamModel::isModel(params.profile);
+    if (!composer.renderer)
+        composer.renderer = std::make_unique<CRTRenderer>();
+    if (model && !composer.model)
+        composer.model = std::make_unique<CRTBeamModel>();
+    CRTRenderer::Layout layout;
+    layout.outWidth = std::max(1, pixels.width());
+    layout.outHeight = std::max(1, pixels.height());
+    layout.source = displaySourceRect().toRect().intersected(picture.rect());
+    layout.frameWidth = picture.width();
+    layout.frameHeight = picture.height();
+    if (layout.source.isEmpty())
+        return false;
+
+    if (model)
     {
-        const CRTProfileParams& params = _crtEnabled ? _crtParams : kPlainParams;
-        const bool model = CRTBeamModel::isModel(params.profile);
-        if (!_crtRenderer)
-            _crtRenderer = std::make_unique<CRTRenderer>();
-        if (model && !_crtModel)
-            _crtModel = std::make_unique<CRTBeamModel>();
-        const qreal dpr = devicePixelRatioF();
-        CRTRenderer::Layout layout;
-        layout.outWidth = std::max(1, static_cast<int>(std::lround(destRect.width() * dpr)));
-        layout.outHeight = std::max(1, static_cast<int>(std::lround(destRect.height() * dpr)));
-        layout.source = sourceRect.toRect().intersected(drawImage->rect());
-        layout.frameWidth = drawImage->width();
-        layout.frameHeight = drawImage->height();
-        if (layout.source.isEmpty())
-            return;
-
-        if (model)
-        {
-            _crtModel->setLayout(layout, params.profile);
-            _crtModel->prepare(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()));
-        }
-        else
-        {
-            _crtRenderer->setLayout(layout, params);
-            _crtRenderer->grade(drawImage->constBits(), static_cast<int>(drawImage->bytesPerLine()), params);
-        }
-        // Opaque in the backing store's byte order: the 1:1 draw is a copy, no conversion, no blending (RGB32 is
-        // B G R 0xFF bytes on little-endian; an image with alpha would be blended pixel by pixel)
-        constexpr bool kBgra = Q_BYTE_ORDER == Q_LITTLE_ENDIAN;
-        constexpr QImage::Format kFormat = kBgra ? QImage::Format_RGB32 : QImage::Format_RGBX8888;
-        if (_crtFrame.width() != layout.outWidth || _crtFrame.height() != layout.outHeight ||
-            _crtFrame.format() != kFormat)
-            _crtFrame = QImage(layout.outWidth, layout.outHeight, kFormat);
-        if (model)
-            _crtModel->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
-        else
-            _crtRenderer->compose(_crtFrame.bits(), static_cast<int>(_crtFrame.bytesPerLine()), kBgra);
-        _crtFrame.setDevicePixelRatio(dpr);
-
-#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
-        painter.setRenderHint(QPainter::LosslessImageRendering);
-#endif
-        painter.drawImage(destRect.topLeft(), _crtFrame);
+        composer.model->setLayout(layout, params.profile);
+        composer.model->prepare(picture.constBits(), static_cast<int>(picture.bytesPerLine()));
     }
+    else
+    {
+        composer.renderer->setLayout(layout, params);
+        composer.renderer->grade(picture.constBits(), static_cast<int>(picture.bytesPerLine()), params);
+    }
+    // Opaque in the backing store's byte order: the 1:1 draw is a copy, no conversion, no blending (RGB32 is
+    // B G R 0xFF bytes on little-endian; an image with alpha would be blended pixel by pixel)
+    constexpr bool kBgra = Q_BYTE_ORDER == Q_LITTLE_ENDIAN;
+    constexpr QImage::Format kFormat = kBgra ? QImage::Format_RGB32 : QImage::Format_RGBX8888;
+    QImage& frame = composer.frame;
+    if (frame.width() != layout.outWidth || frame.height() != layout.outHeight || frame.format() != kFormat)
+        frame = QImage(layout.outWidth, layout.outHeight, kFormat);
+    if (model)
+        composer.model->compose(frame.bits(), static_cast<int>(frame.bytesPerLine()), kBgra);
+    else
+        composer.renderer->compose(frame.bits(), static_cast<int>(frame.bytesPerLine()), kBgra);
+    return true;
+}
+
+void DeviceScreen::paintEvent(QPaintEvent* event)
+{
+    QPainter painter = QPainter(this);
+
+    // Destination is always the full widget - clip to dirty region for efficiency.
+    // Using event->rect() as destination would squeeze the entire source into
+    // a partial rectangle when sibling widgets (HUD overlay) trigger partial repaints.
+    const QRect destRect = rect();
+    painter.setClipRect(event->rect());
+
+    QImage legacyCopy;
+    const QImage* drawImage = preparePicture(legacyCopy);
+    if (!drawImage)
+        return;
+    // Drawn 1:1 at device pixels
+    const qreal dpr = devicePixelRatioF();
+    const QSize pixels(static_cast<int>(std::lround(destRect.width() * dpr)),
+                       static_cast<int>(std::lround(destRect.height() * dpr)));
+    if (!composePicture(_windowComposer, *drawImage, pixels))
+        return;
+    _windowComposer.frame.setDevicePixelRatio(dpr);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 13, 0)
+    painter.setRenderHint(QPainter::LosslessImageRendering);
+#endif
+    painter.drawImage(destRect.topLeft(), _windowComposer.frame);
+}
+
+QImage DeviceScreen::renderPicture(int pictureHeight)
+{
+    // The window's shape at the height asked: the CRT's lines drawn for that height, as the GPU screen draws them,
+    // instead of the window's picture scaled afterwards (scanlines blur into a grey)
+    QImage legacyCopy;
+    const QImage* drawImage = preparePicture(legacyCopy);
+    if (!drawImage || pictureHeight <= 0 || height() <= 0)
+        return {};
+    const int width = std::max(1, static_cast<int>(std::lround(pictureHeight * static_cast<double>(this->width()) /
+                                                               static_cast<double>(height()))));
+    if (!composePicture(_pictureComposer, *drawImage, QSize(width, pictureHeight)))
+        return {};
+    QImage picture = _pictureComposer.frame;
+    _pictureComposer.frame = QImage();  // the caller keeps this one: the next picture is drawn into a new image
+    return picture;
 }
 
 void DeviceScreen::setTemporalBlendingEnabled(bool enabled)

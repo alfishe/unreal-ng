@@ -144,7 +144,7 @@ public:
     /// @brief The picture as this screen draws it, for the automation's screenshot source "window" (WindowView):
     /// letterbox excluded, CRT shader and HUD included, in device pixels. GUI thread only
     /// @p hud false leaves the HUD out (the window recording; the GPU screen only)
-    /// @p pictureHeight > 0: the picture alone at that height in device pixels (the GPU screen only)
+    /// @p pictureHeight > 0: the picture alone at that height in device pixels (GPU and software screen; no HUD)
     bool grabWindowView(WindowViewGrab& out, std::string& error, bool hud = true, int pictureHeight = 0);
     /// The window's picture as the renderer produced it (no HUD), without the copies grabWindowView makes: the
     /// window recorder's per-frame call on the GUI thread, where every millisecond counts. The format is the

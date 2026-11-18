@@ -2123,7 +2123,7 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   on-screen keyboard, the machine's sound, one video frame per emulated frame);
                                      #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
-                                     #   hardware, fit, picture_height= (0..4320, GPU), width= / height= (the frame), layout=
+                                     #   hardware, fit, picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout=
                                      #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
                                      #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples', 'frames_pending', and the timings in ms since
                                      #   the start: 'writer_start_ms', 'encoder_ready_ms', 'first_frame_ms',

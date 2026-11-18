@@ -256,6 +256,10 @@ bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, i
         if (!image.isNull() && pictureHeight <= 0)  // a picture drawn at its own height is the whole image
             image = image.copy(_gpuWindow->pictureDeviceRect().intersected(image.rect()));
     }
+    else if (_software && pictureHeight > 0)
+    {
+        image = _software->renderPicture(pictureHeight);  // the CRT drawn at the height asked, as the GPU does
+    }
     else if (_software)
     {
         const QPixmap pixmap = GrabSoftwareScreen(_software, false);
@@ -290,6 +294,13 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
         picture = QRect((viewport.width() - drawn.width()) / 2, (viewport.height() - drawn.height()) / 2, drawn.width(),
                         drawn.height());
         out.backend = "gpu";
+    }
+    else if (_software && pictureHeight > 0)
+    {
+        // The CRT drawn at the height asked, as the GPU does; the HUD is the window's, at its size: left out
+        image = _software->renderPicture(pictureHeight);
+        picture = viewport = image.rect();
+        out.backend = "software";
     }
     else if (_software)
     {
