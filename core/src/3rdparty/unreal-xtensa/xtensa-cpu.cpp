@@ -96,6 +96,37 @@ inline uint32_t Result(float f)
     return IsNan(b) ? 0x7FC00000u : b;
 }
 
+/// a * b + c rounded once, the same on every host. The C library's fmaf is not exact everywhere (MinGW-w64 rounds
+/// twice: one result in ten differs), so off arm64 it is computed here: a * b is exact in double, the double sum is
+/// rounded once more to float, which only matters when it lands exactly halfway between two floats and is inexact;
+/// then the last bit moves towards the true value (musl's fmaf). Round to nearest even, no exception flags.
+inline float FusedMulAdd(float a, float b, float c)
+{
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return std::fma(a, b, c); // FMADD
+#else
+    const double xy = static_cast<double>(a) * static_cast<double>(b);
+    const double result = xy + static_cast<double>(c);
+    uint64_t u;
+    std::memcpy(&u, &result, sizeof(u));
+    const uint32_t e = static_cast<uint32_t>(u >> 52) & 0x7FFu;
+    const bool halfway = (u & 0x1FFFFFFFu) == 0x10000000u;
+    const bool exact = result - xy == static_cast<double>(c) && result - static_cast<double>(c) == xy;
+    if (!halfway || e == 0x7FFu || exact)
+        return static_cast<float>(result);
+    const bool negative = (u >> 63) != 0;
+    const double err = negative == (static_cast<double>(c) > xy) ? xy - result + static_cast<double>(c)
+                                                                : static_cast<double>(c) - result + xy;
+    if (negative == (err < 0))
+        ++u;
+    else
+        --u;
+    double adjusted;
+    std::memcpy(&adjusted, &u, sizeof(adjusted));
+    return static_cast<float>(adjusted);
+#endif
+}
+
 constexpr float kInvPow2[16] = {1.0f,          0.5f,          0.25f,          0.125f,          0.0625f,       0.03125f,
                                 0.015625f,     0.0078125f,    0.00390625f,    0.001953125f,    0.0009765625f, 0.00048828125f,
                                 0.000244140625f, 0.0001220703125f, 0.00006103515625f, 0.000030517578125f};
@@ -1436,8 +1467,8 @@ dispatch:
             CASE(SubS) FA = Result(ToF(FB) - ToF(FC)); NEXT;
             CASE(MulS) FA = Result(ToF(FB) * ToF(FC)); NEXT;
             CASE(MaddS)
-            CASE(MaddnS) FA = Result(std::fma(ToF(FB), ToF(FC), ToF(FA))); NEXT;
-            CASE(MsubS) FA = Result(std::fma(-ToF(FB), ToF(FC), ToF(FA))); NEXT;
+            CASE(MaddnS) FA = Result(FusedMulAdd(ToF(FB), ToF(FC), ToF(FA))); NEXT;
+            CASE(MsubS) FA = Result(FusedMulAdd(-ToF(FB), ToF(FC), ToF(FA))); NEXT;
             CASE(RoundS) RA = FloatToInt(FB, ip->imm, Rounding::Nearest); NEXT;
             CASE(TruncS) RA = FloatToInt(FB, ip->imm, Rounding::Zero); NEXT;
             CASE(FloorS) RA = FloatToInt(FB, ip->imm, Rounding::Down); NEXT;
