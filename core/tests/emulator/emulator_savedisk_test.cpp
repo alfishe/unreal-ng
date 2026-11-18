@@ -231,8 +231,6 @@ TEST_F(EmulatorSaveDisk_Test, LoadDisk_ByExtension)
         { "loaders/fdi/VORON1.FDI", 81, 2, 1 },   // track 0 of this image carries a single 1024-byte sector
         { "loaders/dsk/plus3-blank.dsk", 40, 1, 9 },
         { "loaders/td0/trdos-sample.td0", 80, 2, 16 },
-        { "loaders/mgt/synthetic.mgt", 80, 2, 10 },
-        { "loaders/mgt/synthetic.img", 80, 2, 10 },
     };
 
     for (const Case& c : cases)
@@ -251,4 +249,12 @@ TEST_F(EmulatorSaveDisk_Test, LoadDisk_ByExtension)
     }
 
     EXPECT_FALSE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath("loaders/sna/action.sna"))) << "not a disk";
+
+    // An MGT disk is a +D disk (owner decision D-3): without the card it is refused, never put into a Beta drive
+    for (const char* mgt : {"loaders/mgt/synthetic.mgt", "loaders/mgt/synthetic.img"})
+    {
+        std::string error;
+        EXPECT_FALSE(_emulator->LoadDisk(TestPathHelper::GetTestDataPath(mgt), 0, &error)) << mgt;
+        EXPECT_NE(error.find("no +D"), std::string::npos) << mgt << ": " << error;
+    }
 }

@@ -1348,6 +1348,14 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         ret["autostarted"] = autostartResult.started;
         ret["autostart_message"] = autostartResult.message;
         ret["ttd_session_ended"] = autostartResult.ttdSessionEnded;
+        if (!autostartResult.plan.empty())
+        {
+            // An MGT disk on the +D: the plan, the start command, where G+DOS comes from (the steps run after the
+            // answer: state fdc -> autostart)
+            ret["plan"] = autostartResult.plan;
+            ret["command"] = autostartResult.command;
+            ret["dos"] = autostartResult.dos;
+        }
     }
     ret["status"] = success ? "success" : "error";
     if (success)

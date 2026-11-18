@@ -1574,6 +1574,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
         releaseEmulator();
     }
 
+    // Then every instance the window does not show (started through WebAPI / MCP / CLI: headless). Left to the
+    // manager's destructor they would stop during exit(), after other statics are gone, and their threads crash
+    // on destroyed mutexes
+    _emulatorManager->ShutdownAllEmulators();
+
     // Close debugger (now safe - emulator already released)
     if (debuggerWindow)
     {

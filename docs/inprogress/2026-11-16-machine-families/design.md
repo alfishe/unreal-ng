@@ -24,7 +24,7 @@ machine with one RAM size has no RAM level.
 
 | Family | Machines |
 |---|---|
-| Sinclair | 48K, 48K + Beta 128, 128K, +2, +2A, +3 |
+| Sinclair | 48K, 48K + Beta 128, 48K + Plus D, 128K, 128K + Plus D, +2, +2A, +3 |
 | Pentagon | Pentagon (128 / 512 / 1024) |
 | ATM Turbo | v4.50 (512 / 1024), 2+ v7.10 (128 / 256 / 512 / 1024) |
 | ZX-Evo | BaseConf, TS-Conf, TS-Conf + VDAC2, TS-Conf + VDAC4 |

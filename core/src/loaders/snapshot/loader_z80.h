@@ -111,6 +111,9 @@ enum Z80_Models_v3 : uint8_t
     Z80_MODEL3_TS2068 = 128,  // Timex TS2068
 };
 
+/// v3 byte 83 (mgtType): the M.G.T. interface of hardware 3 / 6 (0 DISCiPLE + Epson, 1 DISCiPLE + HP, 16 +D)
+constexpr uint8_t kMgtTypePlusD = 16;
+
 struct Z80Header_v2 : public Z80Header_v1
 {
     uint16_t extendedHeaderLen;
@@ -241,6 +244,7 @@ protected:
     Z80MemoryMode getMemoryModeV3(uint8_t model);
     void stagePeripheralState(const Z80Header_v2& header);
     void commitPeripheralState(const snapshot::Image& image);
+    void commitPlusDPaging(const snapshot::Image& image);
     bool validateHeaderSanity(Z80SnapshotVersion version);
 
     // Compression is used when Z80Header_v1.flags1:Bit 5 is set

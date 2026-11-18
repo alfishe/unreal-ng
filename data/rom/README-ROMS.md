@@ -91,7 +91,13 @@ that the emulator works out of the box, on the following basis:
   2022-2025) with FAT32 and Z-Controller support, from the ZS ProfROM group (<https://t.me/ZS_ProfRom>). Copied
   unchanged from the web Unreal Speccy's `rom/gmx644.zip` (<https://www.zxby.org/unreal/>, archive dated 2026-10-28,
   fetched 2026-10-30). OSZ needs this image. Page map: `docs/inprogress/2026-10-07-gmx/roms.md`.
-* **Open firmware**: `gdos-pd.rom` (public domain), `opense.rom` (OpenSE BASIC, GPL),
+* **MGT disk interface ROMs** (8 KB each, unused until the +D card lands: `docs/inprogress/2026-11-15-mgt-plus-d/`):
+  `gdos-pd.rom` is the +D G+DOS v1a boot ROM (CRC32 `569F7E55`, SHA-1 `6b841dc5797ef7eb219ad455cd1e434ca3b9d30d`,
+  SHA-256 `1529d74f90df9c75b7297ce2f9762b7a6fc85e6b0ee9218c82dd6bc39035e454`; MAME `plusd_g.rom`, Fuse `plusd.rom`);
+  `gdos.rom` is the DISCiPLE GDOS v3 ROM (CRC32 `82047489`, SHA-1 `9a75ed4b293f968985be4c9aa893cd88276d1ced`,
+  SHA-256 `efaedc62de4157d7a638634e6460f5dccff20dff2c043a876f830e04f1e988b1`; MAME `disciple_g.rom`, Fuse
+  `disciple.rom`). Datel, who sold the +D after MGT, allow their distribution (Fuse `roms/README.copyright`).
+* **Open firmware**: `opense.rom` (OpenSE BASIC, GPL),
   `data/testrom/zx-diagnostics.rom` (Brendan Alford, GPL-3.0).
 * **YRW801 wave data ROM** (`opl4/yrw801-m-yamaha-1993.rom`, renamed from the archive's
   `YRW801-M - Yamaha - 1993.rom` per the no-spaces kebab-case naming rule): mask ROM of the Yamaha YRW801

@@ -51,6 +51,7 @@ bool SzxReader::Parse(const uint8_t* data, size_t size, Stage& stage, std::strin
             case kRamPage: ok = ParseRamPage(body, blockSize, stage, error); break;
             case kAy: ok = ParseAy(body, blockSize, stage, error); break;
             case kBeta128: ok = ParseBeta128(body, blockSize, stage, error); break;
+            case kPlusD: ok = ParsePlusD(body, blockSize, stage, error); break;
             case kBetaDisk: ok = ParseBetaDisk(body, blockSize, stage, error); break;
             case kDskFile: ok = ParseDskFile(body, blockSize, stage, error); break;
             case kTape: ok = ParseTape(body, blockSize, stage, error); break;
@@ -281,6 +282,52 @@ bool SzxReader::ParseBeta128(const uint8_t* body, uint32_t size, Stage& stage, s
     if ((beta.flags & kBetaCustomRom) && size > kBeta128Size)
         stage.warnings.push_back("B128 carries a custom TR-DOS ROM: the configured ROM stays");
     stage.beta = beta;
+    return true;
+}
+
+bool SzxReader::ParsePlusD(const uint8_t* body, uint32_t size, Stage& stage, std::string& error)
+{
+    if (Short(size, kPlusDSize, "PLSD", error))
+        return false;
+    PlusD plusd;
+    plusd.flags = Get32(body);
+    const uint32_t ramLength = Get32(body + 4);
+    const uint32_t romLength = Get32(body + 8);
+    plusd.romType = body[12];
+    plusd.control = body[13];
+    plusd.drives = body[14];
+    plusd.track = body[15];
+    plusd.sector = body[16];
+    plusd.data = body[17];
+    plusd.status = body[18];
+    if (static_cast<uint64_t>(kPlusDSize) + ramLength + romLength > size)
+    {
+        error = "PLSD block too short for its RAM and ROM";
+        return false;
+    }
+    const uint8_t* ram = body + kPlusDSize;
+    if (plusd.flags & kPlusDCompressed)
+    {
+        if (!Inflate(ram, ramLength, kPlusDRamSize, plusd.ram))
+        {
+            error = "PLSD: the RAM does not inflate to 8K";
+            return false;
+        }
+    }
+    else if (ramLength == kPlusDRamSize)
+    {
+        plusd.ram.assign(ram, ram + kPlusDRamSize);
+    }
+    else
+    {
+        error = "PLSD: the RAM is not 8K";
+        return false;
+    }
+    // A custom ROM (or UNI-DOS) is reported, not loaded: the configured G+DOS stays, as with B128
+    if (plusd.romType != kPlusDRomGdos)
+        stage.warnings.push_back(plusd.romType == kPlusDRomUnidos ? "PLSD was saved with UNI-DOS: the configured G+DOS stays"
+                                                                  : "PLSD carries a custom ROM: the configured G+DOS stays");
+    stage.plusd = std::move(plusd);
     return true;
 }
 

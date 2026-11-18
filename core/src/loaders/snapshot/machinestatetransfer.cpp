@@ -727,6 +727,7 @@ namespace
         {
             case TTDDeviceType::BetaDisk:
             case TTDDeviceType::Upd765:
+            case TTDDeviceType::PlusD:  // the card's blob holds its WD1772 and drives
                 return Binding::Floppy;
             case TTDDeviceType::Tape:
                 return Binding::Tape;

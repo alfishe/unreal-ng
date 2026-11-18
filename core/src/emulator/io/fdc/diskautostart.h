@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,7 @@
 
 namespace unrealdisk { class DiskImage; }
 using unrealdisk::DiskImage;
+class PlusDAutostart;
 class Z80;
 
 /// TR-DOS disk autostart: decides what to run from a mounted disk and starts it without key injection.
@@ -18,6 +20,8 @@ class Z80;
 ///    into RUN "<name>" (no disk changes at all);
 ///  - for a disk with several BASIC programs and no boot file the bundled commander is injected as a
 ///    virtual boot (image stays marked unmodified)
+/// An MGT disk on a machine with the +D goes through PlusDAutostart instead (its own plan and steps, run at the frame
+/// end by OnFrame)
 class DiskAutostart
 {
 public:
@@ -49,6 +53,14 @@ public:
 
 public:
     explicit DiskAutostart(EmulatorContext* context);
+    ~DiskAutostart();
+
+    /// The MGT +D branch: its plan, its steps, their status
+    PlusDAutostart& PlusD() { return *_plusd; }
+    const PlusDAutostart& PlusD() const { return *_plusd; }
+
+    /// Frame end (MainLoop, after the command typer): the +D steps
+    void OnFrame();
 
     /// True when the machine has a TR-DOS ROM set and the Beta interface enabled
     bool IsTrdosCapable(std::string* reason = nullptr) const;
@@ -116,4 +128,5 @@ private:
     bool _coldStartFinishPending = false;
     std::string _name;                // Log label (file name for BootNamed)
     std::vector<uint8_t> _commandLine;  // Tokenized line the hook writes over the cold-start RUN "boot"
+    std::unique_ptr<PlusDAutostart> _plusd;
 };

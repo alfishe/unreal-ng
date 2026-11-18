@@ -208,6 +208,7 @@ enum class TTDDeviceType : uint16_t
     AmxMouse = 68,      ///< an AMX mouse card (slot-built, "<slot>.amx-mouse"): its Z80 PIO and pending motion
     KempstonInterface = 69,  ///< a Kempston joystick interface card (slot-built, "<slot>.kempston"): presence only
     GmxPaging = 70,     ///< the Scorpion GMX card's register file (ttd::TTDGmxPaging)
+    PlusD = 71,         ///< an MGT +D card (slot-built, "<slot>.plusd"): paging, latches, 8K RAM, its WD1772 and drives
 };
 static_assert(static_cast<uint16_t>(TTDDeviceType::TurboSound) == static_cast<uint16_t>(PeripheralId::TurboSound), "TTDDeviceType::TurboSound must keep its v1 number");
 static_assert(static_cast<uint16_t>(TTDDeviceType::BetaDisk) == static_cast<uint16_t>(PeripheralId::BetaDisk), "TTDDeviceType::BetaDisk must keep its v1 number");

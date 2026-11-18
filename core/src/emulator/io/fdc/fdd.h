@@ -3,6 +3,7 @@
 #include <stdafx.h>
 
 #include <functional>
+#include <string>
 #include <memory>
 #include <mutex>
 #include "unrealdisk/layoutmutex.h"
@@ -39,6 +40,7 @@ protected:
     EmulatorContext* _context = nullptr;
 
     uint8_t _driveID = 0;               // Drive number. 0..3
+    std::string _slotId;                // A card drive's media slot id (empty: a Beta 128 drive)
 
     // Read / write circuit signals
     bool _sideTop = false;
@@ -180,6 +182,10 @@ public:
         return read(static_cast<const DiskImage*>(_diskImage));
     }
     uint8_t getDriveId() const { return _driveID; }
+    /// The media slot the drive sits in when it is not a Beta 128 drive (a card's `fdd.plusd1`); empty = the Beta
+    /// slot of its drive number (FloppyDriveSlot::IdFor)
+    const std::string& getSlotId() const { return _slotId; }
+    void setSlotId(std::string slotId) { _slotId = std::move(slotId); }
     /// endregion </Properties>
 
     /// region <Constructors / destructors>

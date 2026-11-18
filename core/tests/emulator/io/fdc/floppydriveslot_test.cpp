@@ -233,3 +233,48 @@ TEST(FloppyDriveSlot_Test, ReadTrackIsNoWriteAndWriteTrackIs)
         EmulatorTestHelper::CleanupEmulator(emulator);
     }
 }
+
+/// A card's drive (the +D): its own slot id, label and alias; the drive is the card's, not coreState's, and the
+/// controller reports its writes to that slot (FDD::getSlotId)
+TEST(FloppyDriveSlot_Test, CardDriveHasItsOwnSlot)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    MediaManager& manager = *context->pMediaManager;
+
+    FDD cardDrive(context);
+    FloppyDriveSlot::CardDrive spec;
+    spec.fdd = &cardDrive;
+    spec.id = "fdd.plusd1";
+    spec.label = "+D drive 1";
+    spec.tags = {"wd1772", "gdos", "boot"};
+    spec.aliases = {"plusd1"};
+    {
+        FloppyDriveSlot slot(context, spec);
+        manager.RegisterSlot(slot);
+        EXPECT_EQ(cardDrive.getSlotId(), "fdd.plusd1");
+
+        const auto info = manager.Info("fdd.plusd1");
+        ASSERT_TRUE(info);
+        EXPECT_EQ(info->descriptor.label, "+D drive 1");
+        EXPECT_EQ(info->descriptor.kind, MediaKind::Floppy);
+
+        MediaSource source;
+        source.path = Fixture("testdata/loaders/mgt/synthetic.mgt");
+        InsertOptions readOnly;
+        readOnly.access = AccessMode::ReadOnly;
+        const MediaResult inserted = manager.Insert("fdd.plusd1", source, readOnly);
+        ASSERT_TRUE(inserted.Ok()) << inserted.message;
+        EXPECT_NE(cardDrive.getDiskImage(), nullptr);
+        EXPECT_EQ(cardDrive.getDiskImage(), manager.GetMedium("fdd.plusd1")->Floppy());
+        EXPECT_TRUE(cardDrive.isWriteProtect());
+        EXPECT_EQ(context->coreState.diskDrives[0]->getDiskImage(), nullptr) << "Beta drive A untouched";
+        EXPECT_TRUE(context->coreState.diskFilePaths[0].empty());
+
+        ASSERT_TRUE(manager.Eject("fdd.plusd1").Ok());
+        EXPECT_EQ(cardDrive.getDiskImage(), nullptr);
+        manager.UnregisterSlot("fdd.plusd1");
+    }
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}

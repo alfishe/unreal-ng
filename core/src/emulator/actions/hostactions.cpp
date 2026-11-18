@@ -480,6 +480,12 @@ ActionResult OpenDisk(Emulator& emulator, const std::string& path, uint8_t drive
         const Emulator::DiskAutostartResult result = emulator.AutostartDisk(path, drive);
         body["autostarted"] = result.started;
         body["autostart_message"] = result.message;
+        if (!result.plan.empty())
+        {
+            body["plan"] = result.plan;
+            body["command"] = result.command;
+            body["dos"] = result.dos;
+        }
         if (!result.mounted)
             return ActionResult::Failure("Bad Request", "Failed to insert disk: " + result.message, std::move(body));
         return ActionResult::Success(std::move(body), result.message);

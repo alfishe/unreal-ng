@@ -75,6 +75,8 @@ TEST(MachineCatalog_Test, VariantsAndAliasesFindTheirFamily)
     EXPECT_EQ(MachineCatalog::FamilyOf("PROFI3"), "profi");
     EXPECT_EQ(MachineCatalog::FamilyOf("PROFI-PLUS"), "profi");
     EXPECT_EQ(MachineCatalog::FamilyOf("48K-BETA128"), "sinclair");
+    EXPECT_EQ(MachineCatalog::FamilyOf("48K-PLUSD"), "sinclair");
+    EXPECT_EQ(MachineCatalog::FamilyOf("128K-PLUS-D"), "sinclair") << "a variant alias";
     EXPECT_EQ(MachineCatalog::FamilyOf("ZXPOLY-128K"), "zx-poly");
     EXPECT_EQ(MachineCatalog::FamilyOf("NO-SUCH-MACHINE"), "");
 }
@@ -89,6 +91,8 @@ TEST(MachineCatalog_Test, TheMenuTreeHoldsOnlyCreatableMachines)
             EXPECT_TRUE(machine.creatable) << machine.name;
     }
     EXPECT_EQ(FamilyOfIn(menu, "PENTAGON"), "pentagon");
+    EXPECT_EQ(FamilyOfIn(menu, "48K-PLUSD"), "sinclair") << "the +D machines sit with their base models";
+    EXPECT_EQ(FamilyOfIn(menu, "128K-PLUSD"), "sinclair");
     EXPECT_EQ(FamilyOfIn(menu, "KAY"), "") << "no port decoder or config folder yet";
 }
 
