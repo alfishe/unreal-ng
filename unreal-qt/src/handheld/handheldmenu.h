@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "emulator/machinecatalog.h"
 #include "emulator/state/statenode.h"
 #include "handheld/handheldbrowser.h"
 
@@ -139,6 +140,7 @@ private:
         std::vector<QString> items;
         int row = 0;
         std::function<void(int)> chosen;
+        std::function<void()> back;  ///< B on a nested picker: up a level (none: back to the page)
     };
 
     struct SectionInfo
@@ -165,6 +167,14 @@ private:
     /// Move the page focus by @p step rows, over the group captions
     void moveRow(int step);
     void openModelPicker();
+    /// The model picker's levels (MachineCatalog: family -> machine -> RAM size); a level with one entry is skipped
+    void openFamilyPicker(int row);
+    void openMachinePicker(size_t family, int row);
+    void openRamPicker(size_t family, size_t machine);
+    void startMachine(const std::string& name, uint32_t ramKb);
+    /// Rows "." (the family list) and ".." (the level above) at the top of a nested machine picker, so A goes up as
+    /// well as B; "." only when the level above is not the family list already
+    void addMachineWaysUp(const QString& upTitle, std::function<void()> up, std::function<void()> top);
     void openSpeedPicker();
     void openKeyboardPicker();
     void openCrtPicker();
@@ -219,6 +229,9 @@ private:
     std::vector<Slot> _slots;
     bool _hasPicker = false;
     Picker _picker;
+    std::vector<MachineFamily> _machineTree;  ///< the model picker's tree, taken when it opens
+    MachinePlace _machineHere;                ///< the running machine in it
+    uint32_t _machineHereRamKb = 0;
     bool _hasBrowser = false;
     HandheldBrowser _browser;
     int _browserRow = 0;

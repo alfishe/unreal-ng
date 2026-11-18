@@ -79,6 +79,9 @@ sender holds (its `X-Unreal-Session`, or its implicit session, an MCP agent's to
 ([execution arbiter design §6a](../../../inprogress/2026-10-09-execution-arbiter/design.md#6a-automation-sessions-visible-remote-control-x7)).
 
 ### Machine Identity and Lifecycle
+`machines(all=False, id="")` returns the machines grouped family -> machine -> RAM size as a dict, the same tree
+as WebAPI `GET /api/v1/emulator/machines` (with `id`, `current` places that instance's machine).
+
 The Python bindings do not expose model-selecting instance creation: `ue.Emulator()` always builds the default machine. For multi-instance lifecycle, model switching and strict model validation (`creatable` flags, 400-with-reason failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of an existing instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
 **ZX-Poly** (four synchronized instances of one model, through the same

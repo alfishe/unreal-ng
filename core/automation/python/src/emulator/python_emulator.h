@@ -19,6 +19,7 @@
 #include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/ports/models/profiboard.h"
 #include <algorithm>
 #include <optional>
@@ -1586,6 +1587,22 @@ namespace PythonBindings
             auto* mgr = EmulatorManager::GetInstance();
             return static_cast<int>(mgr->GetEmulatorIds().size());
         }, "Get count of emulator instances");
+
+        // The machines grouped family -> machine -> RAM size (MachineCatalog, as GET /emulator/machines):
+        // machines(all=False, id="") -> {"families": [...], "current"?: {...}}
+        m.def("machines", [](bool all, const std::string& id) -> py::object {
+            std::string current;
+            uint32_t ramKb = 0;
+            if (!id.empty())
+                if (auto emulator = EmulatorManager::GetInstance()->GetEmulator(id))
+                {
+                    current = MachineCatalog::NameOf(*emulator);
+                    ramKb = EmulatorManager::GetMachineIdentity(*emulator).RamKb;
+                }
+            return StateNodeToPy(all ? MachineCatalog::ToState(MachineCatalog::All(), current, ramKb)
+                                     : MachineCatalog::ToState(MachineCatalog::Creatable(), current, ramKb));
+        }, py::arg("all") = false, py::arg("id") = "",
+           "Machines by family (creatable ones unless all); with id that instance's machine is 'current'");
 
         // Companion clients (docs/inprogress/2026-10-16-companion-client): devices the user paired at the GUI to act
         // as the user's hands. A script lists and revokes them; it never pairs, approves or acts as one

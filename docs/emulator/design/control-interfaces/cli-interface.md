@@ -248,6 +248,7 @@ The CLI implements the same command semantics as other interfaces (WebAPI, Pytho
 
 | WebAPI Endpoint | CLI Equivalent | Reason Not in CLI |
 | :--- | :--- | :--- |
+| `GET /emulator/machines` | `machines [all]` | The same tree as text: family, then its machines with their RAM sizes |
 | `GET /emulator/models` | `models` | CLI shows the same list with `(not creatable on this build)` markers; the endpoint's `creatable` flags stay authoritative |
 | `POST /emulator/start` with `zxpoly` | `zxpoly start <model> [file]` | Same entry point (`EmulatorManager::CreateZXPolyMachine`) |
 | `GET /emulator/{id}/zxpoly` | `zxpoly status [id]` | Same source (`ZXPolyGroup::Status`) |

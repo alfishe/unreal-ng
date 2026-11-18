@@ -89,8 +89,15 @@ private:
     HudTilePosition _toastPosition{HudTilePosition::MidBottom};
     HudTilePosition _indicatorPosition{HudTilePosition::TopRight};
 
-    // Cache of converted QImages by buffer pointer
-    std::unordered_map<const HudImageBuffer*, QImage> _imageCache;
+    // Converted QImages by buffer: each entry holds its buffer, so a freed buffer's address cannot come back as a key
+    // for another picture while the entry lives; bounded (kImageCacheMaxSize)
+    struct CachedImage
+    {
+        std::shared_ptr<const HudImageBuffer> buffer;
+        QImage image;
+    };
+    static constexpr size_t kImageCacheMaxSize = 32;
+    std::unordered_map<const HudImageBuffer*, CachedImage> _imageCache;
 
     // Dirty region tracking - last known bounds of rendered elements
     QRect _lastIndicatorBounds;
