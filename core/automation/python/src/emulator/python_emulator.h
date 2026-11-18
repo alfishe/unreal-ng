@@ -7936,6 +7936,9 @@ namespace PythonBindings
             // GMX: the card's register file (the /state/paging `gmx` view)
             if (config.mem_model == MM_GMX)
                 d["gmx"] = StateNodeToPy(DeviceState::GmxPaging(context));
+            // Pentagon 2.666 LE: the window maps and the board latches (the /state/paging `p2666` view)
+            if (config.mem_model == MM_P2666)
+                d["p2666"] = StateNodeToPy(DeviceState::P2666Paging(context));
             d["banks"] = banks;
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")

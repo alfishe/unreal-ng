@@ -20,6 +20,7 @@
 #include <emulator/io/tape/tapecatalog.h>
 #include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
+#include <emulator/ports/models/portdecoder_p2666.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
 #include <emulator/io/storage/fs/diskfs.h>
@@ -1676,8 +1677,14 @@ void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
         ret["drives"].append(driveInfo);
     }
     
-    // FDC state
-    if (context && context->pBetaDisk) {
+    // FDC state: the Pentagon 2.666 LE's controller is its RAM-disk Beta Disk (the WD1793 object is not wired there)
+    const auto* p2666 = context ? dynamic_cast<const PortDecoderP2666*>(context->pPortDecoder) : nullptr;
+    if (const P2666BetaDisk* ramDisk = p2666 ? p2666->GetRamDisk() : nullptr) {
+        Json::Value fdcState;
+        fdcState["track_reg"] = ramDisk->Track();
+        fdcState["sector_reg"] = ramDisk->Sector();
+        ret["fdc_state"] = fdcState;
+    } else if (context && context->pBetaDisk) {
         Json::Value fdcState;
         fdcState["track_reg"] = context->pBetaDisk->getTrackRegister();
         fdcState["sector_reg"] = context->pBetaDisk->getSectorRegister();

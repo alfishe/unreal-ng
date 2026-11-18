@@ -262,9 +262,9 @@ TEST_F(TimeTravelControllerCorpus_Test, TheBaselineIntervalReplaysExactlyOnEvery
 {
     const std::vector<const char*> all = {"48K",   "128k",   "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION",
                                           "PROFSCORP", "GMX", "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL",
-                                          "TSL-VDAC2", "SPRINTER"};
+                                          "TSL-VDAC2", "SPRINTER", "P2666"};
     const std::vector<const char*> models =
-        TestTier::Long() ? all : std::vector<const char*>{"48K", "PENTAGON", "SPRINTER"};
+        TestTier::Long() ? all : std::vector<const char*>{"48K", "PENTAGON", "SPRINTER", "P2666"};
     for (const char* model : models)
     {
         SCOPED_TRACE(model);

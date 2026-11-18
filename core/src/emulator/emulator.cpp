@@ -2404,6 +2404,9 @@ bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& s
         stage.CommitPoint();
     };
     request.loaded = (*request.load)(request.error, planned);
+    // A model whose window shows another page than #7FFD names puts the state's bank there (the Pentagon 2.666, D-3)
+    if (request.loaded && _context->pPortDecoder)
+        _context->pPortDecoder->FinishSpectrum128State();
     // The loader reset the machine and replaced its state (ports, memory,
     // registers): start the frame again from the loaded state, so devices
     // and the video raster take their frame bases from it

@@ -1,0 +1,2 @@
+# The NedoOS SD card is kept byte for byte (CRLF texts included)
+sdcard/** -text

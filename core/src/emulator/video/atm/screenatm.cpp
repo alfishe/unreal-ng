@@ -2,6 +2,8 @@
 
 #include "emulator/memory/memory.h"
 
+#include <algorithm>
+
 /// region <Constructors / Destructors>
 
 ScreenAtm::ScreenAtm(EmulatorContext* context, Memory* memory) : _context(context), _memory(memory)
@@ -30,7 +32,7 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     // 16 vSync + 8 vBlank before the visible area; 4 lines fewer on ATM450 (rd is the timing
     // descriptor: docs/inprogress/2026-10-01-atm450/frame-timing-protection.md)
     const uint32_t VSYNC_VBLANK_LINES = static_cast<uint32_t>(rd.vSyncLines + rd.vBlankLines);
-    constexpr uint32_t VISIBLE_LINES = kVisibleLines;
+    const uint32_t VISIBLE_LINES = rd.fullFrameHeight;  // kVisibleLines; the Pentagon 2.666 LE window 296
     constexpr uint32_t SCREEN_LINES = kScreenLines;
     constexpr uint32_t BYTES_PER_LINE = kBytesPerLine;
     // 320-px modes render 2 px/T inside the 160T screen window; 640-px modes
@@ -62,9 +64,25 @@ void ScreenAtm::Draw(uint32_t tstate, VideoModeEnum mode, const RasterDescriptor
     const bool inScreenRow = (fbRow >= rd.screenOffsetTop) &&
                              (fbRow < rd.screenOffsetTop + SCREEN_LINES);
 
+    // Rows with side borders (Pentagon 2.666 LE, p2666geometry.h): the beam at the window's dot clock, the window
+    // after screenOffsetLeft dots, the border on both sides of it and above / below it
+    if (rd.screenOffsetLeft != 0)
+    {
+        const uint32_t dots = (mode == M_ATM16) ? 2 : 4;
+        const uint32_t startT = rd.screenOffsetLeft / dots;
+        const uint32_t endT = startT + SCREEN_END_T - SCREEN_START_T;
+        if (tInLine * dots >= rd.fullFrameWidth)
+            return;  // horizontal blank
+        if (!inScreenRow || tInLine < startT || tInLine >= endT)
+        {
+            std::fill_n(framebufferARGB + rowOffset + tInLine * dots, dots, borderColor);
+            return;
+        }
+        tInLine = tInLine - startT + SCREEN_START_T;  // the window's T as the generic rows count it
+    }
     // Border rows: fill by beam scan so every framebuffer column of the row
     // is covered exactly once per line (2 px/T for 448-wide, ~3 px/T for 704)
-    if (!inScreenRow)
+    else if (!inScreenRow)
     {
         const uint32_t x0 = tInLine * rd.fullFrameWidth / TSTATES_PER_LINE;
         const uint32_t x1 = (tInLine + 1) * rd.fullFrameWidth / TSTATES_PER_LINE;

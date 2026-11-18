@@ -368,6 +368,9 @@ void CLIProcessor::HandlePaging(const ClientSession& session, const std::vector<
     // GMX: the card's register file (the /state/paging `gmx` view)
     if (context->config.mem_model == MM_GMX)
         ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
+    // Pentagon 2.666 LE: the window maps and the board latches (the /state/paging `p2666` view)
+    if (context->config.mem_model == MM_P2666)
+        ss << NEWLINE << "Pentagon 2.666 LE:" << NEWLINE << DeviceState::ToText(DeviceState::P2666Paging(context), 1);
 
     session.SendResponse(ss.str());
 }

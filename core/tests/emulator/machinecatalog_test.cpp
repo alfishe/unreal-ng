@@ -89,6 +89,7 @@ TEST(MachineCatalog_Test, TheMenuTreeHoldsOnlyCreatableMachines)
             EXPECT_TRUE(machine.creatable) << machine.name;
     }
     EXPECT_EQ(FamilyOfIn(menu, "PENTAGON"), "pentagon");
+    EXPECT_EQ(FamilyOfIn(menu, "P2666"), "pentagon") << "the Pentagon 2.666 LE sits with the Pentagon, after it";
     EXPECT_EQ(FamilyOfIn(menu, "KAY"), "") << "no port decoder or config folder yet";
 }
 
