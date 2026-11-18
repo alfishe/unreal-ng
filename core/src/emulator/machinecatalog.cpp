@@ -26,7 +26,7 @@ const std::vector<FamilyDef>& FamilyDefs()
 {
     static const std::vector<FamilyDef> defs = {
         {"sinclair", "Sinclair", {"48K", "48K-BETA128", "128k", "PLUS2", "PLUS2A", "PLUS3"}},
-        {"pentagon", "Pentagon", {"PENTAGON"}},
+        {"pentagon", "Pentagon", {"PENTAGON", "P2666"}},
         {"atm", "ATM Turbo", {"ATM450", "ATM710"}},
         {"zx-evo", "ZX-Evo", {"ATM3", "TSL", "TSL-VDAC2", "TSL-VDAC4"}},
         {"profi", "Profi", {"PROFI3", "PROFI", "PROFI-PLUS"}},
