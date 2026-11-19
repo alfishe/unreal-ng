@@ -97,6 +97,16 @@ public:
     /// Counts completed programs and erases (not stored in the state: an owner's save debounce, EvoFlash)
     uint32_t changeCount() const { return _changes; }
 
+    /// Operations (neogs-automation-design.md §4.11): statistics, not machine state (no snapshot)
+    struct Counters
+    {
+        uint64_t bytesProgrammed = 0;
+        uint64_t programFailures = 0; // a 1 asked for over a 0 (DQ5)
+        uint64_t sectorsErased = 0;
+        uint64_t chipErases = 0;
+    };
+    const Counters& counters() const { return _counters; }
+
     /// Time-travel engine region (Phase 1, Step 6): every change of the array
     /// is marked in @p tracker while it is set (null = not recording)
     void setTracker(ttd::TTDRegionTracker* tracker) { _tracker = tracker; }
@@ -138,6 +148,7 @@ private:
     bool _writable = true;
     bool _modified = false;
     uint32_t _changes = 0;
+    Counters _counters;
 
     Mode _mode = Mode::Read;
     bool _erasing = false;

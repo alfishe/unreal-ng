@@ -522,6 +522,9 @@ void CLIProcessor::HandleStateMemory(const ClientSession& session, EmulatorConte
     // GMX: the card's register file (DeviceState::GmxPaging)
     if (config.mem_model == MM_GMX)
         ss << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1) << NEWLINE;
+    // Pentagon 2.666 LE: the window maps and the board latches (DeviceState::P2666Paging)
+    if (config.mem_model == MM_P2666)
+        ss << "Pentagon 2.666 LE:" << NEWLINE << DeviceState::ToText(DeviceState::P2666Paging(context), 1) << NEWLINE;
 
     // Paging State
     if (config.mem_model == MM_SPRINTER)
@@ -616,6 +619,8 @@ void CLIProcessor::HandleStateMemoryRAM(const ClientSession& session, EmulatorCo
 
     if (config.mem_model == MM_GMX)
         ss << NEWLINE << "GMX card:" << NEWLINE << DeviceState::ToText(DeviceState::GmxPaging(context), 1);
+    if (config.mem_model == MM_P2666)
+        ss << NEWLINE << "Pentagon 2.666 LE:" << NEWLINE << DeviceState::ToText(DeviceState::P2666Paging(context), 1);
 
     if (config.mem_model == MM_SPRINTER)
     {

@@ -42,6 +42,7 @@ private:
     static constexpr const char* slotsSection = "SLOTS";   // not `slots`: a Qt macro
     static constexpr const char* midi = "MIDI";
     static constexpr const char* vdac2 = "VDAC2";
+    static constexpr const char* vdac4 = "VDAC4";
 
     // Separate ROM file variables within ROMSET profile
     static constexpr const char* romset_128 = "128";
@@ -64,6 +65,7 @@ private:
 		{ "ATM-Turbo v4.50", "ATM450",           MM_ATM450, 512,  RAM_512 | RAM_1024 },
 		{ "Profi v5", "PROFI",                   MM_PROFI, 1024, RAM_512 | RAM_1024 },
 		{ "Profi v3", "PROFI3",                  MM_PROFI3, 512, RAM_512 | RAM_1024 },
+		{ "Pentagon 2.666 LE", "P2666",          MM_P2666, 2048, RAM_2048 },  // short names match by prefix: "P2666LE" works too
 		{ "ZS Scorpion", "SCORPION",             MM_SCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + PROF ROM", "PROFSCORP", MM_PROFSCORP, 256,  RAM_256 | RAM_1024 },
 		{ "ZS Scorpion + GMX", "GMX",			 MM_GMX, 2048,  RAM_2048 },
@@ -205,6 +207,10 @@ public:
 	/// A create-time config override (EmulatorManager::Create*) that sets
 	/// the power-on RAM mode over what the model's unreal.ini says
 	static std::function<void(CONFIG&)> RamPowerOnOverride(RamPowerOn mode);
+	/// Battery-backed settings that outlive the process: a config with no [EVO] NvramFile keeps its ZX-Evo NVRAM in
+	/// @p folder as "<config folder>.nvram" (the desktop app sets it to ~/.unreal-ng/nvram). Empty (the default:
+	/// tests, headless instances) = such a config keeps its NVRAM for the session only
+	static void SetDefaultNvramFolder(const std::string& folder);
 
 	/**
 	 * @brief Map a model (+ optional RAM size) to its config folder under configs/

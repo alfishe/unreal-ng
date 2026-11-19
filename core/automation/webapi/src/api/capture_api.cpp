@@ -103,6 +103,55 @@ void EmulatorAPI::captureOcr(const HttpRequestPtr& req, std::function<void(const
     ret["lines"] = lines;
     ret["text"] = screenText;
 
+    // The ZX screen (not a text mode): the page read, the menu bar rows, the inverse cells; ?attributes=1 adds every
+    // row's attribute bytes
+    std::vector<ScreenOCR::ZxLine> zx;
+    int page = -1;
+    if (ScreenOCR::readZxScreen(emulator.get(), zx, page))
+    {
+        const std::string attributesParam = req->getParameter("attributes");
+        const bool withAttributes = attributesParam == "1" || attributesParam == "true";
+        if (page >= 0)
+            ret["screen_page"] = page;
+        Json::Value highlighted(Json::arrayValue);
+        Json::Value inverse(Json::arrayValue);
+        Json::Value info(Json::arrayValue);
+        for (size_t row = 0; row < zx.size(); row++)
+        {
+            const ScreenOCR::ZxLine& line = zx[row];
+            if (line.highlighted)
+                highlighted.append(static_cast<Json::UInt>(row));
+            Json::Value columns(Json::arrayValue);
+            for (size_t col = 0; col < line.inverse.size(); col++)
+                if (line.inverse[col])
+                    columns.append(static_cast<Json::UInt>(col));
+            if (!columns.empty())
+            {
+                Json::Value cells;
+                cells["row"] = static_cast<Json::UInt>(row);
+                cells["cols"] = columns;
+                inverse.append(cells);
+            }
+            if (withAttributes)
+            {
+                Json::Value entry;
+                entry["row"] = static_cast<Json::UInt>(row);
+                entry["text"] = line.text;
+                entry["highlighted"] = line.highlighted;
+                Json::Value attrs(Json::arrayValue);
+                for (uint8_t attr : line.attrs)
+                    attrs.append(attr);
+                entry["attrs"] = attrs;
+                entry["inverse"] = columns;
+                info.append(entry);
+            }
+        }
+        ret["highlighted_rows"] = highlighted;
+        ret["inverse"] = inverse;
+        if (withAttributes)
+            ret["line_info"] = info;
+    }
+
     auto resp = HttpResponse::newHttpJsonResponse(ret);
     addCorsHeaders(resp);
     callback(resp);
@@ -269,7 +318,7 @@ std::vector<uint8_t> LayerBytes(const NextLayer::Image& image, bool rgba)
 
 /// @brief GET /api/v1/emulator/:id/capture/screen?layer=ula|layer2|tilemap|sprites|ids[&format=png|rgba][&alpha=false][&size=screen|grid|pixel][&path=]
 /// One layer of the last completed Next frame (design-layer-capture.md): a PNG with alpha 0 where the layer does not paint, or the raw
-/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's (640 x 512) unless size=grid (640 x 256) or size=pixel (320 x 256).
+/// RGBA bytes; `ids` colours every pixel by the layer that won it (the legend is in the answer). The geometry is the screenshot's grid (640 x 512, at (32, 32) of its 720 x 576 frame) unless size=grid (640 x 256) or size=pixel (320 x 256).
 /// 409: not a Next, the capture is off (POST next/layer-capture), or no frame completed yet
 static void ReplyLayerScreen(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>& callback, const std::shared_ptr<Emulator>& emulator,
                              NextLayer::Kind kind)

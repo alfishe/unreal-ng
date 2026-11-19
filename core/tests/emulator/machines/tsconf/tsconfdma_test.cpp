@@ -511,6 +511,34 @@ TEST_F(TsConfDma_Test, DMA14_SpiToRam)
     EXPECT_EQ(sent[1], 0xCD);
 }
 
+/// RAM -> SPI with a device that reacts to its bus access by catching the engine up to the CPU (the VDAC4 ESP, whose
+/// clock follows the machine): from inside the engine's own DMA step it must not, or the nested catch-up runs the
+/// next words before the current one is finished and the device sees them out of order ("c d a b" for "a b c d")
+TEST_F(TsConfDma_Test, DMA14b_SpiDeviceSeesTheEngineAdvancing)
+{
+    std::vector<uint8_t> sent;
+    uint32_t outside = 0;
+    Dma().SetSpi([&](bool read, uint8_t out) -> uint8_t {
+        if (!Engine().Advancing())  // as the VDAC4 port decoder guards its ESP bus-access hook
+        {
+            outside++;
+            Engine().CatchUp(_position);
+        }
+        if (!read)
+            sent.push_back(out);
+        return 0xFF;
+    });
+    for (uint32_t i = 0; i < 512; i++)
+        Byte(0x40000 + i) = static_cast<uint8_t>(i * 7);
+    Launch(0x40000, 0, 0xFF, 0, 0x8A);  // RAM -> SPI, 256 words
+    RunDma();
+    EXPECT_EQ(outside, 0u) << "every DMA exchange happens while the engine advances";
+    ASSERT_EQ(sent.size(), 512u);
+    for (uint32_t i = 0; i < 512; i++)
+        ASSERT_EQ(sent[i], static_cast<uint8_t>(i * 7)) << "byte " << i;
+    EXPECT_FALSE(Engine().Advancing());
+}
+
 /// TSU-8: objects past the line's DRAM budget are dropped, in processing
 /// order (one cut by the budget shows its fetched words, TSU-8b)
 TEST_F(TsConfDma_Test, TSU8_StarvedObjectsAreDropped)

@@ -1,7 +1,8 @@
 # Sound-card CPU debugging (General Sound, NeoGS) — design
 
 - **Date:** 2026-09-27; revisions 2 and 3 on 2026-09-28
-- **Status:** draft for review.
+- **Status:** draft for review. §8 D1 / D4 (TTD positions on the card's CPU) built 2026-11-17 on branch
+  `card-positions` (not landed): see §8 "As built".
 - **Implements:** [requirements.md](requirements.md) (revision 4).
 - **Revision 3** adds §8A: the engine for the tracing and analysis tools
   (X1-X21), the audio tools (AU1-AU6) and the firmware metadata (M1-M12) of
@@ -568,7 +569,19 @@ at cycle 60,000, which is main T 17,500.
 When all three are false, tight mode is off. The card then simply stays
 behind until the next port access or frame end, as today.
 
+> **As built (2026-11-14), the third trigger:** the selection is one per machine (`DebugManager::SelectCpu`, the last
+> front-end's choice). Tight mode comes with a direct run of the paused machine (`Emulator::DirectStepScope`: a step,
+> steps, a run of T or frames), plus one catch-up at the run's end, rather than with the pause itself: switching tight
+> mode takes a `CpuHold` (`FeatureManager::applyDebugMode`), and a pause edge comes from inside the execution arbiter.
+> The main CPU only runs while paused in a direct run, so the effect is the same. The card does not catch up at the
+> selection itself, only with the next step.
+
 ### 5.3 The stepping coordinator
+
+> **As built (2026-11-15), run to the cursor:** no coordinator object; a card's step in / over / out / to arms a
+> one-shot park in `GSCardTarget` (`ArmStep`), `RunControl::CardStep` resumes the machine and waits for the pause. The
+> cursor is the step kind `to`, not a hidden breakpoint, so it never shows in the breakpoint lists; the planes reach it
+> as the main CPU's run until PC with a card `cpu` (`/skip_until?cpu=gs`).
 
 All run and step requests from all front-ends go to one object,
 `StepCoordinator`. It executes them **on the emulation thread**, at the park
@@ -625,6 +638,13 @@ precise T. So main's clock may be slightly past the card's time. That
 difference is the **gap** in S2, and it is shown.
 
 ### 5.4 Instruction progress for the main CPU
+
+> **As built (2026-11-14):** `Z80::instrStartT` (T, not `tt`), set at each instruction start while the start-of-
+> instruction debug work runs; tight mode catches the card up before it moves, so `m1_pc` and `instrStartT` name the
+> finished instruction the card's moment is in. The machine cycles come from `Z80MCycleDecoder` (no table in the
+> opcode records), checked against the FUSE vectors. Contention: the measured T (`t_in_instruction`) beside the
+> table's, `contended` when they differ; no contention counter. The payload is `MainPosition` / the `main` node, not
+> `CpuTimePosition`.
 
 - **Start T.** A new field `Z80::instrStartTT` (same scale as `tt`) is set
   next to `m1_pc` in `RecordInstructionStart`, which runs once per
@@ -745,6 +765,46 @@ const GSFirmwareProfile* FindGSFirmwareProfile(const std::string& sha256);
   handler is not the "unknown command" stub. A table typed by hand therefore
   cannot drift from the ROM.
 
+**As built (phase 4, item 2).**
+
+- **Code.** `core/src/emulator/sound/chips/gs/firmware/gsfirmwareprofile.h/.cpp`.
+  - Each command has a name, `pre` (the byte written to the data register
+    before the command, which the handler takes on entry), `post` (bytes sent
+    after the firmware took the command, or variable) and up to four named
+    parameters with a kind.
+  - It also records the reply bytes and their meaning, the transfer it starts
+    (module / sample upload, block up / down, Covox stream), whether the guide
+    documents it, and a note.
+  - The stream commands taken during an upload are listed apart: `#D1`, `#D2`.
+- **Command sets.** v1.04 names 129 commands. v1.05a and v1.05b name 131:
+  the patch adds `#6A` and `#6B`.
+- **Sources over the guide.** Every handler in `COM_L.a80` / `COM_H.a80` was
+  read. The sources name commands the guide omits: `#2C`, `#2D`, `#2F`,
+  `#34`, `#3B`, `#3C`, `#50`, `#F0`, channels 4-7 of `#80-#AF`. They also
+  correct the guide:
+  - `#02` sets every volume to maximum and `#03` sets them to zero (the guide
+    swaps them).
+  - `#3E #00` loads a signed sample and `#3E #01` behaves as `#38`.
+  - The setters (`#2E`, `#42`, `#45`-`#47`) reply the old value.
+- **Variables.** 35 variables per version (37 in 1.05: `PlMode`, `MODLLEN`).
+  Each has its address, size and meaning. The addresses are the same in every
+  version.
+- **Identity.** `IdentifyGSFirmware(card)` hashes the card's ROM pages
+  (`cardRomPage`). The image digest selects the profile.
+- **Where the card names its firmware.** The GS report (`state audio gs` on
+  every plane, MCP `audio_gs`) carries `firmware_profile`:
+  - for a known ROM: `known`, `id`, `title`, `symbols` (the bundle set of the
+    card CPU's labels), `sha256`, `page_sha256`;
+  - for an unknown ROM: `known: false` with the digests, and MCP says
+    "unknown firmware, no symbols".
+- **Self-check** (`GSFirmwareProfile_Test`). For each shipped ROM:
+  - every `COMTAB` / `COMTABH` handler that is not `COMZ` / `COMHZ` has a
+    named command, no stub has one, and every handler has a label;
+  - the variables sit at their labels;
+  - the digests select the profile and its symbol bundle.
+- **Not done.** The `rom.cpp` known-ROM table entries; profiles from files.
+  NeoGS reports its flash as unknown firmware.
+
 ### 6.2 Firmware symbols (L3, L5, R1, N5)
 
 The binaries are the truth; the sources supply the names. For each shipped
@@ -802,6 +862,31 @@ flowchart LR
   - A comparison step matches NeoGS routines against the GS v1.05a mark-up
     by bytes, and writes `materials/neogs/firmware/COMPARISON.md`: same as
     GS, changed from GS, NeoGS only.
+
+**As built (phase 4, item 1).**
+
+- **The mark-up is a build, not a search.** The sources rebuild two shipped
+  ROMs byte for byte: the plain sources give `gs104.rom`, the sources with
+  `patch/` give `gs105b.rom`. For those two the labels are the build's own
+  (sjasmplus SLD). `gs105a.rom` uses the patched build's labels. It differs in
+  63 bytes in 5 ranges (#00CE-#00D5, #013C, #0EF3-#0EF5, #1147-#1149,
+  #1D00-#1D2F). `data/symbols/gs/REPORT.md` lists them and the labels over
+  them. Labels per firmware: 1354 for 1.04, 1396 for 1.05a and 1.05b.
+- **Verification (L3, R1).** The script's default mode rebuilds and fails
+  when 1.04 or 1.05b differ from the shipped ROMs, when two firmwares share a
+  page-0 digest, or when the committed output differs. CI does not run it yet,
+  because it needs `sjasmplus`.
+- **Store.** `GSCardTarget` owns a `LabelManager` with CPU name `gs` / `ms`
+  and a page mapper over `mapCardAddress`. The card's ROM pages are hashed
+  when the card is made (`cardRomPage`). `data/symbols/gs/manifest.json`
+  bundles (`gs:gs104`, `gs:gs105a`, `gs:gs105b`) match page 0. Disassembly
+  (`CpuView` with `Z80Disassembler::LabelsScope`, CLI `disasm --cpu gs`) and
+  card breakpoint conditions use this store. The planes reach it with `cpu`
+  ([command interface 4.4](../../emulator/design/control-interfaces/command-interface.md#44-labels--symbol-management)).
+- **Open.** User labels per firmware (L5) are not saved to the settings folder
+  yet; `symbols export --cpu gs` writes them by hand. NeoGS (N5) is not done:
+  no sources are imported, and no bundle matches a NeoGS flash. The Qt
+  debugger's card view still shows no labels (phase 5).
 
 ### 6.3 The command log (F1-F1c, F3, F4, W1-W4)
 
@@ -881,6 +966,56 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
   and cycle. Replay forward regenerates them, because the hooks fire during
   replay as well.
 
+**As built (phase 4, item 3).**
+
+- **A device history.** `GSCommandLog` (`core/src/emulator/sound/chips/gs/gscommandlog.h/.cpp`) is the decoder in
+  front of a `history::DeviceHistory<GSCommandLogEntry>` named `<slot>.commands` (`zxbus.1.commands`; a
+  ZX-MultiSound's GS `<slot>.gs.commands`).
+  - The planes get it through the history verbs (`device_history` in MCP, `history` in the CLI, `/history` in the
+    WebAPI and the WebSocket, Lua, Python). "Start" is a ring or a capture, "stop" is off, plus read and clear.
+    "Export" is the stream: every record to a JSON Lines file.
+  - Each record carries the fields, the profile's names and a decoded `text` line
+    (`#2C Set current module, module #05`).
+  - It is off by default; the ring holds 65,536 entries.
+- **Ownership.** `SoundManager` owns the machine's log, as it owns `<slot>.cpu`. Every personality is bound to it
+  (`GeneralSoundCard::attachCommandLog`), so the log survives LLE ↔ LW switches. The MultiSound slot card owns its
+  card's log.
+- **Feeds.** The host port handlers and the automation actions (`sendCommand`, `sendData`, `readData`, flagged
+  `automation`) of LLE, LW and NeoGS, plus a `#33` reset and the frame start. Each hook runs before the access
+  changes the mailbox, so it sees the status the access met.
+  - While the log is off a hook is a null test and one relaxed load. A log switched on again starts over and
+    identifies the firmware again.
+  - A TTD replay is not recorded (as in the WD1793's history).
+- **The card side is not hooked.** `CardTook` is seen at the next host access, when status bit 0 is clear. The
+  card's own reads of `#01` / `#02` and its reply writes `#03` are not entries.
+- **Profile.** The ROM digest selects it (§6.1); the lightweight card uses gs105a's. NeoGS firmware has no profile,
+  so its records are raw: commands and bytes without names.
+- **Decoder.**
+  - The data byte written before a command is its `pre` (`kHasPre`). The profile's `post` bytes are `Param` entries
+    (`#0D`: one per bit of the mask's low nibble; `#6B`: its optional high byte as one). Any other byte is `Data`.
+    Replies are numbered against the profile's count; one nothing asked for is flagged `unasked`.
+  - An upload or a stream is one `Block` entry with its byte count.
+    - `#30` / `#38` / `#3E` (format `#00` / `#01` only): LOAD takes a command as a stream command (flag `stream`,
+      `#D1` / `#D2` named). `#D2`, `#F3` or `#F4` ends the upload.
+    - `#14` / `#15` end at their length, at their address (dest `ram`).
+    - `#0E` / `#0F` streams end at the next command.
+    - A reset ends any of them `truncated`.
+  - The block's firmware destination (the module table) is not read: `dest` is `unknown` except for `#14` / `#15`.
+- **Anomalies (F4).**
+  - `command_overwritten`: a command while bit 0 is still set by the previous one.
+  - `data_overwritten`: data while bit 7 is still set by the host's previous byte and no reply is due.
+  - `reply_not_ready`: a due reply read while bit 7 is clear. The byte is flagged `not_ready` and the reply stays due.
+    Not for the handlers that write the reply and then read their data byte before RSCOM (`#2A`-`#2E`, `#30`,
+    `#32`-`#35`, `#38`, `#3B`-`#3E`, `#42`, `#45`-`#47`, `#6A`; `GSCommandInfo::replyUnflagged`): that read clears
+    bit 7, so once the card took the command the reply is in the register without the flag.
+  - `transfer_stalled`: an upload with no byte for 50 frames, reported once.
+- **Tests.** `GSCommandLog_Test`: decoding on the lightweight card; one block per upload with the stall; `#14` at its
+  length; the three host anomalies on the LLE card; a reset; a restart. The MCP check is
+  `test_the_command_log_is_a_device_history`.
+- **Benchmark (P2).** `BM_GSCommandLog_HostTraffic_{None,Off,Ring}`: one frame of an upload with 256 host writes.
+- **Not done.** TTD cut-off on a seek (D3, phase 6). The log starting itself when a debugger attaches (an option,
+  F1b). A Qt panel (U2).
+
 ### 6.4 Protocol state and firmware objects (F3, F5, W2, W3)
 
 A common read-only structure is filled by either card:
@@ -905,6 +1040,120 @@ struct GSFirmwareStateView
 - The protocol-state part comes from the command-log decoder for both cards.
   It is also valid when the firmware variables are unknown, for example for a
   ROM without a profile.
+
+**As built (phase 4, item 4: F3 and F6).** The protocol-state part and the send; the firmware objects (F5) are phase 6.
+
+- **Protocol state (F3).** `GSCommandLog::State()` (`GSProtocolState`): the decoder's view, published at the end of
+  each host hook under a small lock, read on any thread.
+  - Fields: the last command, whether the card took it, the parameters expected / received, the replies expected /
+    read, the transfer in progress (kind, bytes so far, the length when known, the address of `#14` / `#15`).
+  - The card's taking of a command is seen at the next host access or at the frame start, whichever comes first
+    (a host that polls only the status has no hook): `#2F Set current track: not taken yet, then parameter 2 of 2
+    due` until then.
+  - A text line: `#2F Set current track: parameter 2 of 2 due`, `module upload: 12,288 bytes so far (#30 Load
+    module)`, `idle (last #2C Set current module)`.
+  - In the GS report as `protocol` (every plane: `state audio gs`, `/state/audio/gs`, `gs_state()`, MCP
+    `audio_gs` with a `protocol:` line).
+  - Only while the log records: off it says so and names the history to configure. A switch of the history
+    (on, off, pause) restarts the decoder (`OnSwitch`), so a log switched on mid-conversation starts at the next
+    command.
+  - The module upload has no total: LOAD ends at `#D2`, the module's length is not in the protocol.
+- **Send (F6).** `GSHostDriver` (`gshostdriver.h`), owned by `SoundManager` for the machine's card, polled at the
+  frame start only while a send is queued (one relaxed load otherwise).
+  - A send is a command with its pre byte, the parameters after it and the reply count. It is checked against the
+    profile: a missing or extra pre byte, or a wrong parameter count, is refused with the parameters' names. Without
+    a profile (NeoGS firmware) the bytes go as given and replies are read only when asked.
+  - It goes in as a careful host sends it, one step a frame:
+    - a set data flag at the start: one frame for the card to take a host byte, then the stale reply is read (`drained`);
+    - the pre byte while bit 7 is clear;
+    - the command while bit 0 is clear;
+    - wait for the card to take it (bit 0 clear);
+    - each parameter while bit 7 is clear;
+    - each reply once bit 7 is set; for a `replyUnflagged` command (the handler's data read clears the flag) the
+      reply is read as soon as the card took the command.
+    A step the mailbox does not allow for 50 frames fails the send and names the byte.
+  - Every step is live input: `GSData`, `GSCommand` and the new `GSReadData` (IN `#B3`, the data flag cleared), so a
+    TTD recording replays the bytes; while a replay owns input the send fails ("refused").
+  - The replies are what the card's `readData` returned (`lastAutomationRead`), not a peek.
+  - The log records the bytes with the `automation` flag; a careful send raises no anomaly.
+  - The last 16 sends are kept; at most 16 wait. A paused machine keeps them queued.
+  - Planes: CLI `gs send` / `gs conversation`, WebAPI `/control/audio/gs` actions `send` / `conversation` (waits up
+    to `wait_ms` on a timer, not holding the thread), MCP `emulator_manage` `gs_send` / `gs_conversation`, Lua
+    `gs_send` / `gs_conversation` (never waits), Python `gs_send(..., wait_ms)` / `gs_conversation`. The GS report
+    carries `last_send`.
+- **Tests.** `GSHostDriver_Test`: `#23` on the firmware's card with its reply and no anomaly; the parameter checks
+  and names; drain, timeout, replay refusal; the protocol state through a command, an upload and its end.
+  `TTDInputApply_Test` covers `GSReadData`. MCP: `test_the_debugger_sends_a_command`.
+- **Not done.** A MultiSound slot's card has a log but no send (the planes address the machine's card). The Qt
+  panel (U2).
+
+### 6.5 Device boards (N4, N8)
+
+The card's hardware as boards of the debugger model ([widget catalog](../2026-09-28-debugger-model/widget-catalog.md)
+§4.4-§4.7, [protocol](../2026-09-28-debugger-model/protocol.md) §3.10, §6.4): a layout of columns, groups and
+controls with their values, rendered by any front-end with one generic renderer.
+
+**As built (phase 4, item 5a: N4, N8).**
+
+- **Core.** `DebugBoards` (`core/src/debugger/boards/debugboards.h`): `List`, `Read` (layout and values, or the
+  values only), `Action`; `DebugBoardBuilder` writes the catalog's schema (`hex8`, `hex16`, `hex21`, `dec`,
+  `counter`, `rate`, `bool`, `led`, `text`, `bits` with the bit names, `enum` with its values, `bar` with min / max)
+  and a text form for the planes.
+  - No plugin registry yet (debug-plugins.md §3): the boards come from the GS slot's card, the only device that
+    publishes any. A plugin registry replaces the switch in `DebugBoards::Build` when a second device publishes one.
+  - Built on read from the card's report getters, side-effect free, the same reading as the GS report
+    (`DeviceState::Gs`): nothing runs while nobody reads.
+- **Boards.**
+  - `gs` (classic GS and the lightweight player): MPAG with the RAM pages it maps, the four channels, the mailbox
+    (`status` as bits C / D), the firmware (ready, the profile's title and SHA-256).
+  - `neogs`: GSCFG0 as bits (NOROM, RAMRO, 8CHANS, EXPAG, CLK0 / CLK1, PAN4CH, INV7B), the four window pages and
+    whether each shows flash, MPAG, the clock, the eight channels and the audio mode, the output level per side and
+    the listening mode, INTENA / INTREQ / TIM_FREQ with the timer rate, SCTRL, SSTAT (computed as the card's
+    `IN (#12)` reads it, without the read's SPI catch-up), the LED, the mailbox, the firmware.
+  - `neogs_dma`: per module (zx, sd, mp3) selected, running, the 21-bit address and its page; the ZX-DMA detail
+    (mode, watch, latch, pending, the byte counters, waits, late starts, the overlay).
+  - `neogs_sd`: the slot `sd.ngs` as the media manager reports it (source, image or folder, write protect, pending,
+    unsaved changes) and the card's protocol (initialized, state, mode, last command and argument, blocks read and
+    written). Actions `insert <path>` (an image or a host folder) and `eject`: `NeoGSRequestSdInsert` /
+    `NeoGSRequestSdEject`, the media manager's rules (at once while not running, else at the next frame boundary;
+    while TTD records, an event of the recording).
+  - `neogs_mp3` (`available` only with a decoder fitted): chip, running, DREQ, rate, channels, decode time, input
+    fill of 2048, PCM queued, gain, frames, samples, bytes received, the 16 SCI registers.
+  - `neogs_flash`: title, modified, mode (read / busy / command), vendor, write mode, the persist path. Action `save`.
+  - `NeoGSStateInfo` grew the fields these show (SSTAT, the DAC levels, the SD protocol and write mode, the decoder's
+    queue, counters, gain and SCI registers, the flash's mode, vendor, write mode and path); each is on a board.
+- **Planes.** WebAPI `GET /debug/boards`, `GET /debug/boards/{board}` (`?values=1`), `POST
+  /debug/boards/{board}/actions/{action}` (`{"arg": ...}`), OpenAPI; CLI `board [list]`, `board <id> [values]`,
+  `board <id> <action> [arg]`; MCP `inspect_state` aspects `boards` and `board.<id>` (the text lists every control
+  with its value), `emulator_manage` `board_action` (`board`, `operation`, `path`); Lua `boards()`, `board(id,
+  values)`, `board_action(id, action, arg)`; Python the same.
+- **Tests.** `DebugBoards_Test`: the classic card's board and its values, the unknown board naming the boards; the
+  NeoGS boards against `neogsState`; a host folder inserted through the SD board is the slot's medium, eject, the
+  refusals (no path 400, no action 404, no file 422). MCP: `test_the_neogs_boards`.
+- **Not done.** Writing a board control (`PUT /debug/boards/{id}/{control}`): the controls the card's program owns
+  are not automation's to change (neogs-automation-design.md §7.1). The counters the catalog lists beside the state
+  (DMA transactions, SD commands and errors, MP3 drops, flash operations, clock switches) are in the statistics
+  (§6.6), not on these boards. MPAGEX is not latched by the card model. A MultiSound slot's card has no boards. The
+  Qt renderer.
+
+### 6.6 Card statistics (N7)
+
+As built (2026-11-17, TODO item 5b): the `GSSlotStats` block of
+[neogs-automation-design.md](../2026-09-19-general-sound/neogs-automation-design.md) §10, one block for every card in
+the GS slot.
+
+- **The Stats widget** is the board `gs_stats`: its groups are the block's sections (card, mailbox, interrupts, cpu,
+  audio; on NeoGS dma, spi, sd, mp3, flash; rates, errors), its controls the leaves (counters as `counter`, rates as
+  `rate`). It is built from the same published block as `GET /state/audio/gs/stats`, so both show the same numbers
+  for the same frame (`frame`, `age_frames`).
+- **Cost.** The counters are plain increments where the event already happens; the block is collected at frame ends
+  only for 100 frames after a read. Listing the boards, reading another board or running an action does not read the
+  block (`DebugBoards::Build` builds `gs_stats` without values then), so only a client that shows the statistics
+  keeps the publishing on.
+- **On a running machine** the first read of the board after a quiet spell answers "not available" with the reason
+  (no frame end since the read); the next one, a frame later, has the block. The WebAPI read waits for it.
+- **Not done.** The LW `player` / `module` sections, the NeoGS aliases and actions, `gs watch` (§10 there). The Qt
+  renderer.
 
 ## 7. Front-ends
 
@@ -997,6 +1246,47 @@ struct GSFirmwareStateView
   a stop reply for its CPU with reason "stopped by other CPU".
 
 ## 8. TTD (D1-D4)
+
+> **Owner decision (2026-11-17): positions on either CPU, both directions** (settles Q2 of the TTD v2 phase-3 TDD,
+> [phase-3-replay-inputs-tdd.md §8](../2026-09-25-ttd-v2-migration/phase-3-replay-inputs-tdd.md)).
+>
+> - Stepping works on either CPU in both directions: by main-CPU instructions or by card instructions.
+> - The other CPU is always in a known state. At frame boundaries both are exact and the clock ratio is fixed, so for
+>   any position of one CPU the other's state is computed by a replay from the nearest checkpoint.
+> - No "resumable burst inside a host instruction" is needed. Every step, forward or backward, is a replay to a
+>   target position. A card step inside a long main-CPU instruction works.
+> - Display: when the card stands at instruction N, the main CPU is shown as its last completed instruction plus a
+>   T-state offset inside the current one (its registers are those at the last boundary). A run or resume from such a
+>   position first lets the main CPU reach its instruction boundary.
+>
+> **As built (2026-11-17), how a card position is reached.**
+>
+> - *The card's instruction count* is part of the card's state: `GeneralSoundCard::cardInstructionCount` (the
+>   always-on `cpuSteps` counter, no new work per instruction; the idle sleep adds the steps it stands for). The TTD
+>   blob carries it (GS and the MultiSound GS: bytes 59-66 and the flag byte 67; NeoGS: bytes 240-247 and the flag
+>   byte 248). A recording made before it has no counts, and card positions in it are refused with that reason.
+> - *A position* names a card CPU (`gs`, also NeoGS in the GS slot; `ms`, the MultiSound's GS) and its instruction
+>   count: the card has run that many instructions and stands at the next one's boundary (an accepted INT or NMI
+>   already taken, as a card breakpoint sees it).
+> - *Seek to a card position* (`TimeTravelController::SeekToCardInstruction`): the frame whose checkpoint has the
+>   largest card count at or below the target is restored. That frame is replayed in tight mode with the card's debug
+>   loop (`GSCardTarget::BeginScan`): breakpoints collect instead of parking, and at the target count the card's whole
+>   state is copied together with the main CPU's instruction start and the card's moment in main T. Then the main CPU
+>   is put at its last boundary at or before that moment (a seek; if the moment lies past the decoded length of that
+>   instruction, it moves on one instruction at a time). The copy is loaded into the card. The card stands ahead of
+>   the main CPU by the T offset.
+> - *Steps* are seeks: `StepCardInstructions(cpu, ±n)` from the card's count at the current position. That count is
+>   the card's own, caught up to the main CPU's moment when the position is a main one.
+> - *Reverse continue* (`ReverseContinueCard`) replays frames backwards from the current one with the card's breakpoint
+>   manager armed in the scan. The newest hit before the current card count is the answer; with none, the machine is
+>   put back exactly where it stood and the answer says so.
+> - *Leaving a card position*: the card's natural state (the one a plain seek to the main boundary gives) is kept
+>   with the position (`CardStand`). The machine leaves the position at the first input service outside a replay
+>   (`ServiceInput` -> `LeaveCardStand`: a resume, a run of frames or T-states), at a main-CPU step forward, on
+>   leaving the history and on continuing the recording there; the natural state goes back into the card and the
+>   main CPU finishes its current instruction with the card behind it, as it was recorded. While a position stands,
+>   the input path does not idle (`InputIdleLimit` 0), so the first instruction run meets it. Any other move in time
+>   (a seek, a reset) drops the position. A tool's save / restore of the live state (`LiveStateSnapshot`) carries it.
 
 - **Card reverse step.** The card's instruction count, `cpuSteps`, becomes
   part of the card state (it already counts steps in `runTo`). A reverse step
@@ -1352,7 +1642,7 @@ flowchart LR
 
 | # | Point | Handling |
 |---|---|---|
-| 1 | Tight-mode cost (flush at every main memory access) | Measured in phase 1. If too high, flush only at instruction start. The card can then be one whole main instruction behind (still meets S4's "within one instruction"). |
+| 1 | Tight-mode cost (flush at every main memory access) | Measured in phase 1. If too high, flush only at instruction start. The card can then be one whole main instruction behind (still meets S4's "within one instruction"). **Taken in phase 2:** at every memory access (the debug memory path) it cost +44 % over lazy; at the instruction start (`Z80::cardTight`, the memory keeps its path) +24 %. |
 | 2 | Contention makes the table total wrong on 48K / 128K | Progress uses the table total plus contention so far (§5.4); marked "contended" |
 | 3 | Labels that cannot be placed on an older binary (routine rewritten, not just patched) | Listed as missing in the mark-up report; named by hand if needed, in the same `.map` (§6.2) |
 | 4 | NeoGS sources | A local git-svn mirror of NedoPC `ngs` exists (synced 2026-09-19); imported from it with the revision recorded |

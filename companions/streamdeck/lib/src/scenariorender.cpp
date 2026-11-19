@@ -407,7 +407,7 @@ namespace
 // amber for marks, a muted red for recording only. Fine lines (1-2 px), no fills behind the timeline.
 constexpr draw::Color kLiveText{200, 205, 220}, kLiveDim{120, 128, 158}, kLiveFaint{70, 76, 104},
     kLiveTrack{52, 58, 84}, kLivePlayed{0, 110, 200}, kLiveCounter{90, 200, 230}, kLiveMark{200, 160, 60},
-    kLiveRec{205, 70, 58}, kLivePos{235, 240, 250}, kLiveAmber{220, 170, 60};
+    kLiveRec{205, 70, 58}, kLivePos{235, 240, 250}, kLiveAmber{220, 170, 60}, kLiveFork{90, 200, 120};
 
 std::string TimeCode(long long frames, double fps)
 {
@@ -429,8 +429,11 @@ long long Num(const json& j, const char* key)
 // A header (TTD, its state, the frame counter, the time code), then the history as a capsule: a dark track with a
 // notch per ruler step, the part up to the position in a blue-to-cyan gradient lit from the top, the marks in their
 // colours (bookmarks amber, barriers violet, edges cyan), the position as a light pill (red while recording), and the
-// times of the ruler's main steps under it in cyan.
-void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks)
+// times of the ruler's main steps under it in cyan. With TTD branches (`branch`: ttd.branch, count > 1) the header
+// names the active branch after the state word, and every fork of the lineage (branch.forks: frames) is a green
+// tick through the capsule with a small fork (a "Y") above it.
+void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& t, const json* marks,
+                  const json* branch)
 {
     const long long first = Num(t, "first"), end = std::max(first, Num(t, "end"));
     const long long frame = std::clamp(Num(t, "frame"), first, end);
@@ -466,12 +469,25 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
         draw::RoundRect(im, static_cast<float>(x), static_cast<float>(top + hs), static_cast<float>(5 * hs),
                         static_cast<float>(5 * hs), 2.5f * hs, kLiveRec),
             x += 7 * hs;
-    draw::Text(im, x, top, word, hs, wordColor);
+    x += draw::Text(im, x, top, word, hs, wordColor);
+    const bool branches = branch && branch->is_object() && Num(*branch, "count") > 1;
+    int countersX = right;  // where the counters start (the branch name ends before them)
     if (history && headerW(hs) <= right - x0)
     {
         const int codeW = draw::TextWidth(code, hs), framesW = draw::TextWidth(frames, hs);
         draw::Text(im, right - codeW, top, code, hs, kLiveAmber);
         draw::Text(im, right - codeW - 8 * hs - framesW, top, frames, hs, kLiveCounter);
+        countersX = right - codeW - 8 * hs - framesW;
+    }
+    if (branches && branch->contains("name") && (*branch)["name"].is_string())
+    {
+        // the active branch, after the state word, as much of it as fits before the counters
+        std::string name = DisplayText((*branch)["name"].get<std::string>());
+        const int nx = x + 5 * hs;
+        while (!name.empty() && nx + draw::TextWidth(name, hs) > countersX - 6 * hs)
+            name.pop_back();
+        if (!name.empty())
+            draw::Text(im, nx, top, name, hs, kLiveFork);
     }
 
     // the capsule
@@ -569,6 +585,22 @@ void DrawTimeline(Rgb& im, int x0, int x1, int areaH, int rightEnd, const json& 
             else
                 draw::FillRect(im, mx, barY + 2, 1, barH - 4, c);
         }
+    // the forks of the lineage: a green tick through the capsule, a small "Y" above it
+    if (branches && branch->contains("forks") && (*branch)["forks"].is_array())
+        for (const auto& f : (*branch)["forks"])
+        {
+            if (!f.is_number())
+                continue;
+            const long long ff = f.get<long long>();
+            if (ff < first || ff > end)
+                continue;
+            const int fx = std::clamp(xOf(ff), x0, x1 - 1);
+            draw::FillRect(im, fx, barY - 3, 1, barH + 6, kLiveFork);
+            for (int r = 0; r < 3; ++r)  // the arms, then the stem below them
+                draw::FillRect(im, fx - 3 + r, barY - 9 + r, 1, 1, kLiveFork),
+                    draw::FillRect(im, fx + 3 - r, barY - 9 + r, 1, 1, kLiveFork);
+            draw::FillRect(im, fx, barY - 6, 1, 3, kLiveFork);
+        }
     // the position: a light pill over the capsule, a soft glow round it
     const draw::Color head = state == "recording" ? kLiveRec : kLivePos;
     const int ph = barH + (tall ? 14 : 8);
@@ -631,7 +663,9 @@ std::string TargetLine(const json& target)
 std::string StripLive::Key() const
 {
     std::string k = std::to_string(static_cast<int>(link)) + (showTarget ? "t" : "-") + notice + "|" + activity + "|" +
-                    std::to_string(dialHint) + (bannerInfo ? "i" : "e");
+                    std::to_string(dialHint) + (bannerInfo ? "i" : "e") + "z" + std::to_string(tapped);
+    for (const int z : latched)
+        k += "l" + std::to_string(z);
     if (target)
         k += target->dump();
     if (!readouts)
@@ -651,6 +685,15 @@ std::string StripLive::Key() const
     for (const char* name : {"ttd.marks", "run.state", "media.tape"})
         if (const auto it = readouts->find(name); it != readouts->end())
             k += std::string(name) + it->second.dump();
+    // the branches: only what the timeline draws (the name, the count, the forks; not the ages that tick)
+    if (const auto it = readouts->find("ttd.branch"); it != readouts->end() && it->second.is_object())
+    {
+        const json& b = it->second;
+        k += "br" + std::to_string(Num(b, "count"));
+        for (const char* field : {"name", "forks"})
+            if (const auto f = b.find(field); f != b.end())
+                k += f->dump() + ",";
+    }
     return k;
 }
 
@@ -673,10 +716,92 @@ std::pair<int, int> TimelineSpan(const Page& page, int w)
     return {x0, w - 12};
 }
 
+std::vector<std::pair<int, int>> StripKeySpans(const Strip& strip, int w)
+{
+    std::vector<std::pair<int, int>> out;
+    int total = 0;
+    for (const auto& z : strip.keys)
+        total += std::max(1, z.span);
+    int at = 0;
+    for (const auto& z : strip.keys)
+    {
+        const int next = at + std::max(1, z.span);
+        out.emplace_back(w * at / std::max(1, total), w * next / std::max(1, total));
+        at = next;
+    }
+    return out;
+}
+
+int StripKeyHit(const Strip& strip, int w, int x)
+{
+    const auto spans = StripKeySpans(strip, w);
+    for (size_t i = 0; i < spans.size(); ++i)
+        if (x >= spans[i].first && x < spans[i].second)
+            return static_cast<int>(i);
+    return -1;
+}
+
+namespace
+{
+// Strip keys: the zones as keys of their own (a raised cap, its label; a latch on: lit and underlined; the zone just
+// tapped: pressed). A wide menu's window: a track along the top, its columns in cells, the shown ones lit.
+void DrawStripKeys(Rgb& im, const Page& page, const StripLive* live)
+{
+    const int w = im.w, h = im.h;
+    const int top = page.width > 0 ? 12 : 6;
+    const auto spans = StripKeySpans(*page.strip, w);
+    for (size_t i = 0; i < spans.size(); ++i)
+    {
+        const auto& z = page.strip->keys[i];
+        const bool on = live && std::find(live->latched.begin(), live->latched.end(), static_cast<int>(i)) !=
+                                    live->latched.end();
+        const bool tapped = live && live->tapped == static_cast<int>(i);
+        const int x0 = spans[i].first + 6, x1 = spans[i].second - 6, kh = h - top - 6;
+        const draw::Color cap = on ? draw::Color{40, 70, 132} : tapped ? draw::Color{58, 62, 90} : draw::Color{30, 32, 48};
+        draw::RoundRect(im, static_cast<float>(x0), static_cast<float>(top), static_cast<float>(x1 - x0),
+                        static_cast<float>(kh), 12.f, on ? draw::Color{110, 170, 255} : draw::Color{56, 60, 86});
+        draw::RoundRect(im, static_cast<float>(x0 + 2), static_cast<float>(top + 2), static_cast<float>(x1 - x0 - 4),
+                        static_cast<float>(kh - 4), 10.f, cap);
+        const std::string t = DisplayText(z.label);
+        const int sc = std::min(4, FitScale(t, x1 - x0 - 24, 4));
+        const int tx = x0 + std::max(0, (x1 - x0 - draw::TextWidth(t, sc)) / 2), ty = top + (kh - 7 * sc) / 2;
+        draw::Text(im, tx, ty, t, sc, on ? draw::Color{240, 246, 255} : draw::Color{205, 210, 228});
+        if (on)
+            draw::FillRect(im, tx, ty + 7 * sc + 5, draw::TextWidth(t, sc), 3, {110, 170, 255});
+    }
+    if (page.width > 0)
+    {
+        // the window: one cell per column of the menu, those on the deck lit
+        const int cols = page.width;
+        const int cell = (w - 24) / cols;
+        for (int c = 0; c < cols; ++c)
+        {
+            const bool lit = c >= page.scroll && c < page.scroll + page.visibleCols;
+            draw::FillRect(im, 12 + c * cell + 2, 3, cell - 4, 4, lit ? draw::Color{110, 170, 255} : draw::Color{40, 44, 64});
+        }
+    }
+}
+}  // namespace
+
 Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string& banner, double autoExitLeft,
                 const std::string& status, const std::string& scenarioDir, const StripLive* live)
 {
     Rgb im(w, h, 8, 8, 14);
+    if (page.strip && page.strip->content == "keys" && !page.strip->keys.empty())
+    {
+        // the strip is a row of keys: no crumbs, status, timeline or target; a message still comes over it
+        DrawStripKeys(im, page, live);
+        if (!banner.empty())
+        {
+            const std::string t = DisplayText(banner);
+            const int sc = FitScale(t, w - 24, 5);
+            const bool info = live && live->bannerInfo;
+            draw::FillRect(im, 0, 0, w, h, info ? draw::Color{16, 24, 46} : draw::Color{120, 10, 20});
+            draw::Text(im, std::max(12, (w - draw::TextWidth(t, sc)) / 2), (h - 7 * sc) / 2, t, sc,
+                       info ? draw::Color{240, 215, 150} : draw::Color{255, 255, 255});
+        }
+        return im;
+    }
     int contentX = 12;
     const bool dialLabels =
         std::any_of(page.dials.begin(), page.dials.end(), [](const Dial* d) { return d && !d->label.empty(); });
@@ -744,8 +869,10 @@ Rgb RenderStrip(const Page& page, int w, int h, int dialTileW, const std::string
     if (timeline && banner.empty())
     {
         auto marks = live->readouts->find("ttd.marks");
+        auto branch = live->readouts->find("ttd.branch");
         DrawTimeline(im, TimelineSpan(page, w).first, TimelineSpan(page, w).second, areaH, w - 12 - targetW, *ttdPosition,
-                     marks != live->readouts->end() ? &marks->second : nullptr);
+                     marks != live->readouts->end() ? &marks->second : nullptr,
+                     branch != live->readouts->end() ? &branch->second : nullptr);
     }
     else if (!words.empty() && banner.empty())
     {

@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -62,8 +63,11 @@ class ControllersDialog;
 class ControllerToast;
 class GuiActions;
 class SlotChangeController;
+struct StateTransferRequest;
 class SlotsWindow;
 class NextLayersWindow;
+class HandheldMenu;
+class HandheldPad;
 class OsdKeyboardWindow;
 class HudOverlayWrapper;
 class HudModel;
@@ -188,7 +192,8 @@ private slots:
     void saveDiskAsTRDDialog();
     void saveDiskAsSCLDialog();
     void saveDiskAsUDIDialog();
-    void resetEmulator();
+    void resetEmulator();      // Soft: the reset button
+    void hardResetEmulator();  // Hard: a power cycle (the ZX Next boots its firmware again)
     void requestMni();  // Machine -> MNI: NMI + service monitor (plain NMI on other models)
     void handleFullScreenShortcut();
 
@@ -255,6 +260,12 @@ private slots:
     void handleSlotsWindowToggled(bool visible);
     void handleNextLayersToggled(bool visible);
     void handleOsdKeyboardToggled(bool visible);
+    /// Handheld mode: a pad's UI verb (HandheldPad::Verb) to the menu or the on-screen keyboard
+    void handleHandheldVerb(int verb);
+    /// Handheld mode: the UI takes the pads while the menu or the keyboard is up
+    void updateHandheldGrab();
+    /// Handheld mode: the on-screen keyboard drawn over the game by the screen (again after the screen is remade)
+    void installHandheldOverlay();
     void handleMidiActivityToggled(bool visible);
     void handleTrafficWindowToggled(bool visible);
     void handleFt812DebugToggled(bool visible);
@@ -271,6 +282,9 @@ private slots:
     /// Replace the running machine by `modelName` / `ramSize` (the media follow);
     /// no question asked. False when it did not happen (the user was told why)
     bool switchMachineModel(const std::string& modelName, uint32_t ramSize);
+    /// Machine > Transfer State To: an open instance is checked first and the user confirms what would move; a new
+    /// machine is created at once. The report shows what was copied, dropped or refused, and offers to show the target
+    void transferMachineState(const StateTransferRequest& request);
     /// Play an RZX recording: another model is replaced by the recording's first
     /// (as for an SZX); false when it did not start (the user was told why)
     bool playRzxFile(const std::string& file);
@@ -377,6 +391,9 @@ private:
     /// names (media-drop-targets design §4-§6): `slot` when the user picked one,
     /// else the plan's default, else the slot chooser (the call ends there and
     /// comes back with the pick); unattended callers take the first entry
+    /// Open a snapshot through the actions worker (media.open): a NEX first boots a fresh Next's NextZXOS, which takes
+    /// seconds; the GUI thread is never blocked, a refusal is shown when the worker answers
+    void openSnapshotAsync(const QString& filePath);
     void placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
                      const std::string& slot = {});
     void refuseFile(const QString& filePath, const QString& reason, LoadOrigin origin);
@@ -397,6 +414,8 @@ private:
     QRect dropArea() const;
     /// File > Insert Medium...: a file, then the slot chooser with every slot that takes it
     void insertMediumDialog();
+    /// Run > Reset / Hard Reset: the reset button (soft) or a power cycle (hard)
+    void doReset(bool hard);
 
     /// The slot chooser / drop zones / refusal over the screen
     class DropTargetOverlay* _dropOverlay = nullptr;
@@ -523,6 +542,9 @@ private:
     NetworkWindow* networkWindow = nullptr;
     NextLayersWindow* _nextLayersWindow = nullptr;          // View -> Next Layers (per-layer capture view)
     class WindowRecorder* _windowRecorder = nullptr;      // the window recording (WindowView), made on first use
+    HandheldPad* _handheldPad = nullptr;                   // handheld mode only: the pads as the UI reads them
+    std::shared_ptr<std::atomic<bool>> _handheldPadAlive;  // the input tap's posts find the window gone
+    HandheldMenu* _handheldMenu = nullptr;                 // handheld mode only: the controller menu (handheld.menu)
     OsdKeyboardWindow* _osdKeyboardWindow = nullptr;        // View -> On-screen Keyboard, unrealqt.osd_keyboard
     SlotsWindow* _slotsWindow = nullptr;                   // Machine -> Slots (ZX-bus slots)
     MidiActivityWindow* _midiActivityWindow = nullptr;     // Tools -> MIDI Activity

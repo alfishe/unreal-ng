@@ -11,6 +11,7 @@
 #include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "loaders/snapshot/szx/loaderszx.h"
@@ -131,6 +132,22 @@ snapshot::Image LoaderZ80::BuildImage() const
     }
     image.timingHint = image.machineHint == "pentagon128" ? "pentagon" : _memoryMode == Z80_48K ? "48k" : "128k";
 
+    // v3 hardware 3 / 6: "+ M.G.T.": byte 59 says the interface was paged in, byte 83 which one (0 DISCiPLE + Epson,
+    // 1 DISCiPLE + HP, 16 +D). The file carries no +D RAM or registers: only the paging
+    if (_snapshotVersion == Z80v3 && (model == Z80_MODEL3_48K_MGT || model == Z80_MODEL3_128K_MGT) &&
+        _data.size() >= sizeof(Z80Header_v1) + 2 + 54)
+    {
+        const auto* v3 = reinterpret_cast<const Z80Header_v3*>(_data.data());
+        const uint8_t paged = v3->mgtROM != 0 ? 1 : 0;
+        const uint8_t type = v3->mgtType;
+        if (type == kMgtTypePlusD)
+            image.extensions.push_back({"z80:v3", "plusd", 2, paged ? "MGT +D, paged in" : "MGT +D, paged out",
+                                        {paged, type}});
+        else
+            image.warnings.push_back("saved with a DISCiPLE (byte 83 = " + std::to_string(type) +
+                                     "): DISCiPLE is not supported, the snapshot loads without it");
+    }
+
     for (size_t idx = 0; idx < MAX_RAM_PAGES; ++idx)
     {
         if (_stagingRAMPages[idx])
@@ -245,6 +262,21 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
         error = "the .z80 format has no model for '" + machine + "'";
         return false;
     }
+    // An MGT +D on a 48K / 128K: hardware 3 / 6, byte 59 the paging, byte 83 = 16 (+D). On other models the format has
+    // no "+ M.G.T." code: the +D is left out
+    const snapshot::Extension* plusd = nullptr;
+    for (const snapshot::Extension& extension : image.extensions)
+        if (extension.kind == "plusd" && !extension.payload.empty())
+            plusd = &extension;
+    if (plusd && modelCode == Z80_MODEL3_48K)
+        modelCode = Z80_MODEL3_48K_MGT;
+    else if (plusd && modelCode == Z80_MODEL3_128K)
+        modelCode = Z80_MODEL3_128K_MGT;
+    else if (plusd)
+    {
+        warnings.push_back("the .z80 format has no '+ M.G.T.' code for '" + machine + "': the +D state is not saved");
+        plusd = nullptr;
+    }
     std::vector<uint16_t> banks;
     if (layout48)
         banks = {5, 2, 0};
@@ -296,6 +328,11 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
         header.extendedHeaderLen = 55;
         header.p1FFD = image.paging.p1FFD.value_or(0);
     }
+    if (plusd)
+    {
+        header.mgtROM = plusd->payload[0] != 0 ? 0xFF : 0;
+        header.mgtType = kMgtTypePlusD;
+    }
 
     // A 48K program on a machine that has an AY carries the AY state; byte 37 bit 2 says so, otherwise readers (this
     // loader included) ignore the AY bytes of a 48K snapshot
@@ -343,7 +380,6 @@ bool LoaderZ80::WriteImage(const snapshot::Image& image, std::string& error, std
         error = "cannot write '" + _path + "'";
         return false;
     }
-    (void)warnings;
     MLOGINFO("Saved Z80 v3 snapshot to '%s' (%s mode)", _path.c_str(), layout48 ? "48K" : (machine == "scorpion256" ? "256K" : "128K"));
     return true;
 }
@@ -606,6 +642,7 @@ void LoaderZ80::commitFromStage()
         // AY registers: core.Reset() above cleared the chip, so the snapshot's
         // registers go in after it
         commitPeripheralState(image);
+        commitPlusDPaging(image);
 
         /// endregion </Apply port configuration>
 
@@ -1249,6 +1286,21 @@ void LoaderZ80::commitPeripheralState(const snapshot::Image& image)
     }
 
     psg->setRegister(image.ay[0].selected & 0x0F);
+}
+
+/// The MGT +D's paging from byte 59 (hardware 3 / 6). Without a +D card the report's warning says so
+void LoaderZ80::commitPlusDPaging(const snapshot::Image& image)
+{
+    for (const snapshot::Extension& extension : image.extensions)
+    {
+        if (extension.kind != "plusd" || extension.payload.empty())
+            continue;
+        if (PlusDCard* card = PlusDCard::Find(_context))
+            card->SetPaged(extension.payload[0] != 0);
+        else
+            MLOGWARNING("the snapshot was saved with an MGT +D: this machine has none (a 48K-PLUSD or 128K-PLUSD has)");
+        return;
+    }
 }
 
 /// @brief Compress memory page using Z80 RLE compression

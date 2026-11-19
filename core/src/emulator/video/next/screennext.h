@@ -12,8 +12,9 @@
 class PortDecoder_Next;
 class NextCopper;
 
-/// The ZX Spectrum Next picture (design-video-timing.md): one mode, M_NEXT, one 640 x 256 framebuffer drawn line by
-/// line by NextVideoRenderer (every line twice: the 640 x 512 frame has the 4:3 picture of the 320 x 256 grid) from the register and memory state of the moment the beam leaves the line. The beam
+/// The ZX Spectrum Next picture (design-video-timing.md): one mode, M_NEXT, one 720 x 576 framebuffer: the 360 x 288 HDMI picture of
+/// zxula_timing.vhd doubled, the 320 x 256 grid drawn line by line by NextVideoRenderer (every line twice) inside the outer border
+/// (NextPictureWindow::Origin), from the register and memory state of the moment the beam leaves the line. The beam
 /// timing - contention, the interrupt, the frame length - is the ZX family of NR #03 (Screen::GetTimingDescriptor), so
 /// the 256-line visible window starts 32 lines above the paper.
 ///
@@ -40,7 +41,7 @@ public:
     /// (bank 5), Layer 2 (NR #12, 3 to 5 banks by NR #70), the tilemap (NR #6E / #6F, bank 5 or the 8K of bank 7).
     /// Sprite patterns and the palettes live in the Next state, not counted
     void DescribeDisplayedMemory(std::vector<ScreenMemorySpan>& out) const override;
-    /// The paper, or the whole frame in Layer 2's 320 x 256 / 640 x 256 modes (no border); the bounding box of the
+    /// The paper, or the whole 320 x 256 grid in Layer 2's 320 x 256 / 640 x 256 modes (no border); the bounding box of the
     /// enabled layers' clip windows (nextpicturewindow.h)
     PictureRect WorkingWindow() const override;
     PictureRect ContentWindow() const override;
@@ -108,6 +109,12 @@ private:
     mutable uint64_t _copperB = 0, _copperFrame7 = 0;                    ///< CopperClock = ((2 t + B) mod frame7) * 4, cached per raster
     mutable uint32_t _copperKey[4] = {};
     bool FramebufferReady() const;
+    static constexpr unsigned kFrameWidth = NextPictureWindow::kFrameWidth * NextPictureWindow::kScale;    ///< 720
+    static constexpr unsigned kFrameHeight = NextPictureWindow::kFrameHeight * NextPictureWindow::kScale;  ///< 576
+    /// The frame row pair of grid line `line` (the frame row of the line's first copy)
+    uint32_t* GridRow(uint32_t* fb, unsigned line) const;
+    /// Fill frame rows [fromRow, toRow) with the outer border colour, or black outside the 60 Hz picture
+    void FillOuterRows(uint32_t* fb, unsigned fromRow, unsigned toRow, uint32_t colour) const;
 
     mutable PortDecoder_Next* _decoder = nullptr;
     // The sprite engine in machine time (sprites.vhd): one pass a line on every line of the frame, drawn or not. The pass during grid line
@@ -163,6 +170,7 @@ private:
     unsigned _nextX = 0;  ///< the pixels of _nextLine already drawn (a MOVE of the copper drew up to its pixel)
     uint8_t _lastTimingClass = 2;
     uint8_t _lastSixty = 0;
+    NextPictureWindow::FrameOrigin _origin;  ///< where the grid is in the frame, for the family of _lastTimingClass / _lastSixty
     bool _copperBound = false;
 
     std::atomic<bool> _layerWanted{false};

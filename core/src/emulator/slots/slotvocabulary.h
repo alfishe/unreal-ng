@@ -15,6 +15,8 @@
 #undef signals
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace slots
 {
@@ -49,6 +51,7 @@ enum class Function : uint8_t
     FullerAy,           ///< "fuller-ay": the Fuller Box / DK'tronics AY on #3F / #5F (not the AY socket's role)
     FullerJoystick,     ///< "fuller-joystick": the Fuller stick on #7F
     AmxMouse,           ///< "amx-mouse": the AMX mouse's Z80 PIO on #1F / #3F / #5F / #7F and its buttons on #DF
+    DiskMgt,            ///< "disk.mgt": MGT disk interface (+D; DISCiPLE later): WD1772 on #E3-#FB, paging on #E7
     Count
 };
 
@@ -243,6 +246,10 @@ EnumInfo Describe(Opt value);
 EnumInfo Describe(OptionKind value);
 /// Outcome: id = the matrix code ("✓", "D", ...), description = its meaning
 EnumInfo Describe(Outcome value);
+
+/// A reference-data name as plain text: the names are markdown for the matrix tables and the docs ("Covox `#FB`");
+/// a surface that draws text (a menu, a list) shows "Covox #FB"
+std::string PlainLabel(std::string_view name);
 
 /// The BusSignal with bit index `index` (0 .. kBusSignalCount - 1)
 constexpr BusSignal SignalAt(int index)

@@ -70,10 +70,13 @@ protected:
             _manager->RemoveEmulator(_emulator->GetId());
     }
 
-    /// Create the shipped ATM3 machine
-    void Create()
+    /// Create the shipped ATM3 machine. Blank ERS settings by default (a board out of the box: the ERS writes its own
+    /// defaults, virtual drive A); the machine's default ([EVO] ErsNvram=FLOPPY) has its own test
+    void Create(bool floppyBootNvram = false)
     {
-        _emulator = _manager->CreateEmulatorWithModelAndRAM("zxevo-ers", "ATM3", 4096, LoggerLevel::LogError);
+        _emulator = _manager->CreateEmulatorWithModelAndRAM(
+            "zxevo-ers", "ATM3", 4096, LoggerLevel::LogError, nullptr,
+            [floppyBootNvram](CONFIG& config) { config.atm.ers_floppy_boot = floppyBootNvram ? 1 : 0; });
         ASSERT_NE(_emulator, nullptr);
         _context = _emulator->GetContext();
 
@@ -158,6 +161,33 @@ protected:
         return -1;
     }
 };
+
+/// [EVO] ErsNvram=FLOPPY (the default without an NVRAM file): the ERS accepts the seeded settings (valid CRC, so it
+/// keeps them), its virtual drive is D, and "TR-DOS boot" reads the disk in drive A instead of reporting "Virtual
+/// drive not formatted or image not loaded"
+TEST_F(ZXEvoErs_Test, FloppyBootNvramBootsTheDiskInDriveA)
+{
+    Create(true);
+    MediaSource disk;
+    disk.path = cdtest::Utf8(TestPathHelper::FindProjectRoot() / "testdata/loaders/trd/EyeAche.trd");
+    ASSERT_TRUE(_context->pMediaManager->Insert("fdd.a", disk).Ok());
+    ASSERT_TRUE(RunToMainMenu()) << "PC " << std::hex << _context->pCore->GetZ80()->pc << " ROM "
+                                 << _context->pMemory->IsBank0ROM() << " page " << _context->pMemory->GetROMPage()
+                                 << "\n" << Screen();
+
+    auto& rtc = static_cast<PortDecoder_ATM3*>(_context->pPortDecoder)->GetRtc();
+    const std::vector<uint8_t> cmos = rtc.NvramImage();
+    EXPECT_EQ(cmos[0xEB], 0x03) << "the ERS kept the seeded settings (a CRC mismatch would reset #EB to 0)";
+    EXPECT_EQ(_context->emulatorState.evo.fddMask & 0x01, 0x00) << "drive A is the real drive";
+
+    // "TR-DOS boot" (Enter on the first menu entry): the list of the disk's BASIC files, then run the first one
+    Tap(ZXKEY_ENTER);
+    _emulator->RunNFrames(100, true);
+    EXPECT_EQ(rtc.NvramImage()[0xEB], 0x03);
+    Tap(ZXKEY_ENTER);
+    EmulatorTestHelper::RunUntil(_emulator.get(), [&] { return _context->pCore->GetZ80()->pc >= 0x6000 && !_context->pMemory->IsBank0ROM(); }, 300);
+    EXPECT_FALSE(_context->pMemory->IsBank0ROM() && _context->pCore->GetZ80()->pc == 0x6117) << "still in the ERS menu";
+}
 
 /// The shipped pair boots the EVO Reset Service to its main menu
 TEST_F(ZXEvoErs_Test, BootsToMainMenu)

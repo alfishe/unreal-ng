@@ -1,0 +1,1 @@
+incapu './decrunch/lzDataTest.bin' : save './decrunch/lzDataTest.apu',0,$ 

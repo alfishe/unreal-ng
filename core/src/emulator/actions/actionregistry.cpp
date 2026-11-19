@@ -14,6 +14,7 @@
 #include "common/uuid.h"
 #include "3rdparty/message-center/messagecenter.h"
 #include "emulator/actions/activityfeed.h"
+#include "emulator/actions/branchactions.h"
 #include "emulator/actions/builtinactions.h"
 #include "emulator/actions/catalogue.h"
 #include "emulator/actions/hostactions.h"
@@ -646,6 +647,8 @@ ActionRegistry& ActionRegistry::Instance()
         for (RegistrationHandle& handle : RegisterSteppingActions(*created))  // run pace, runs to a place, TTD units
             created->_builtin.push_back(std::move(handle));
         for (RegistrationHandle& handle : RegisterDebugToolsActions(*created))  // breakpoints, profilers, state
+            created->_builtin.push_back(std::move(handle));
+        for (RegistrationHandle& handle : RegisterBranchActions(*created))  // TTD branches (surfaces.md §2)
             created->_builtin.push_back(std::move(handle));
         // The analog scrub: its host clock jogs the history through this registry, so it lives as long
         static ScrubClock* scrub = new ScrubClock([created](const std::string& instanceId, int64_t frames, double rate,

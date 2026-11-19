@@ -31,6 +31,7 @@
 #include "emulator/platform.h"          // GSTypeKind
 #include "emulator/ports/portdecoder.h"
 #include "debugger/ttd/ttdserializable.h"
+#include "emulator/sound/chips/gs/gscommandlog.h"
 #include "emulator/sound/chips/gs/gsporttrace.h"
 #include "emulator/sound/chips/gs/gsmailbox.h"  // GSForwardMailbox (switch snapshots)
 #include "emulator/sound/chips/gs/gshostclock.h" // GSClassicTiming
@@ -136,6 +137,10 @@ struct NeoGSStateInfo
     // Card
     std::string flashTitle;
     bool flashModified = false;
+    const char* flashMode = "read";   // read | busy (a program or erase running) | command (autoselect, a failed state)
+    const char* flashVendor = "ST";   // ST | AMD
+    const char* flashWriteMode = "session"; // session | persist | off
+    std::string flashPersistPath;
     uint8_t gscfg0 = 0;
     uint32_t clockHz = 0;
     uint8_t pages[4] = {};
@@ -143,27 +148,44 @@ struct NeoGSStateInfo
     uint8_t mpag = 0;
     bool ledOn = false;
     bool readyForCommands = false;
+    // Output: the DAC's level now, before the line output's coupling (dacLevel)
+    int32_t dacLeft = 0;
+    int32_t dacRight = 0;
     // Interrupts
     uint8_t intEnable = 0;
     uint8_t intRequest = 0;
     uint8_t timFreq = 0;
     // SPI / SD card
     uint8_t sctrl = 0;
+    uint8_t sstat = 0;                // as the card reads #12 now: MCRDY, /SD_WP, /SD_DET, DREQ
     bool sdPresent = false;
     std::string sdPath;
     bool sdSdhc = false;
     uint64_t sdSizeBytes = 0;
     uint64_t sdBlocksRead = 0;
     uint64_t sdBlocksWritten = 0;
+    bool sdInitialized = false;       // ACMD41 done
+    const char* sdState = "power_on"; // power_on | idle | ready
+    const char* sdMode = "command";   // command | read_multi | wait_token | receive_data
+    uint8_t sdLastCommand = 0;
+    uint32_t sdLastArgument = 0;
+    const char* sdWriteMode = "session"; // session | persist | off
+    bool sdWriteProtect = false;      // the slot's switch (SSTAT bit 2)
     // MP3 decoder
     bool mp3Fitted = false;
     const char* mp3Chip = "";
+    bool mp3Running = false;
     bool mp3Dreq = false;
     uint32_t mp3Rate = 0;
     int mp3Channels = 0;
     uint64_t mp3Frames = 0;
     uint32_t mp3DecodeSeconds = 0;
     size_t mp3InputFill = 0;
+    size_t mp3PcmQueued = 0;          // decoded frames not played yet
+    uint64_t mp3SamplesPlayed = 0;
+    uint64_t mp3BytesReceived = 0;
+    double mp3Gain = 1.0;             // [NGS] MP3Gain
+    uint16_t mp3Sci[16] = {};         // the SCI registers: MODE, STATUS, BASS, CLOCKF, DECODE_TIME, AUDATA, WRAM, ...
     // DMA (0 ZX, 1 SD, 2 MP3)
     uint8_t dmaSelect = 0;
     bool dmaRunning[3] = {};
@@ -193,6 +215,8 @@ enum class GSCpuRegister : uint8_t
 {
     AF, BC, DE, HL, AFAlt, BCAlt, DEAlt, HLAlt, IX, IY, SP, PC, I, R, IM, IFF1, IFF2, MEMPTR
 };
+
+class GSStatsWriter;
 
 class GeneralSoundCard : public PortDevice, public ttd::TTDSerializable
 {
@@ -342,6 +366,10 @@ public:
         return channel >= 0 && channel < kMaxHostChannels ? _hostGain[channel] : 32768;
     }
 
+    /// The card's own sections of the statistics block (gsslotstats.h), after the common ones: on the machine thread
+    /// at a frame end, or while the machine is paused
+    virtual void collectStats(GSStatsWriter& sections) const { (void)sections; }
+
     /// NeoGS extras (other cards: false / no-op)
     virtual bool neogsState(NeoGSStateInfo& out) const
     {
@@ -399,6 +427,28 @@ public:
         _execHistory = history;
         _execContext = context;
     }
+    /// The command log the card's host accesses feed (`<slot>.commands`, gscommandlog.h): the machine's
+    /// (SoundManager) or the slot card's; nullptr detaches. The emulation thread parked
+    void attachCommandLog(GSCommandLog* log)
+    {
+        _commandLog = log;
+        if (log)
+            log->Bind(this);
+    }
+    GSCommandLog* commandLog() const
+    {
+        return _commandLog;
+    }
+    /// The byte automation's last readData returned, and how many it has read (the debugger's send, gshostdriver.h,
+    /// takes its replies by them). Emulation thread
+    uint8_t lastAutomationRead() const
+    {
+        return _automationRead;
+    }
+    uint32_t automationReads() const
+    {
+        return _automationReads;
+    }
     /// That history (nullptr: none attached); a debugger reads it as a snapshot and may switch it on
     history::DeviceHistory<ExecRecord>* execHistory() const
     {
@@ -428,6 +478,13 @@ public:
         (void)kind;
         return 0;
     }
+    /// The 16K ROM (or flash) page `page` as mapCardAddress numbers it, for its SHA-256 (the card CPU's symbol
+    /// bundles, gs-debugger design §6.2); null past the last page or without a CPU
+    virtual const uint8_t* cardRomPage(uint32_t page) const
+    {
+        (void)page;
+        return nullptr;
+    }
     /// The card CPU's full register file; false without a CPU
     virtual bool cardRegisters(Z80CpuRegisters& out) const
     {
@@ -436,6 +493,12 @@ public:
     }
     /// Card time in the card's own unit and that unit's rate (classic GS: 12 MHz cycles; NeoGS: 120 MHz ticks)
     virtual int64_t cardTime() const { return 0; }
+    /// Run the card up to the main CPU's current time (the catch-up a host port access does): tight mode's catch-up
+    /// at every main instruction start while the card is debugged (GS debugger design §5.2). A card without a CPU: nothing
+    virtual void catchUpToHost() {}
+    /// How far the main CPU's current time is ahead of the card, in the card's unit (cardUnitsPerSecond): what a
+    /// catch-up would run now. 0 without a CPU, or while the host clock has no base for this frame
+    virtual int64_t hostLead() const { return 0; }
     virtual double cardUnitsPerSecond() const { return 0.0; }
     /// Card time since the ZX frame's start, as the card state keeps it (TTD): a replay reaches the same value at the
     /// same instruction of the frame
@@ -466,6 +529,17 @@ public:
     /// (dacFetches = player sample fetches, so triage reads the same).
     virtual const GSActivityCounters& getActivityCounters() const = 0;
     virtual void resetActivityCounters() = 0;
+
+    /// The card CPU's instruction count, a part of the card's state (TTD card positions, design §8 of
+    /// docs/inprogress/2026-09-27-gs-debugger/design.md): the instructions the card has run, the idle sleep's included.
+    /// It is the always-on cpuSteps counter plus an offset that keeps it apart from the counters' resets and folds, so
+    /// it costs nothing per instruction. The TTD blob carries it; after a blob without it (a recording made before)
+    /// it is unknown. False: unknown, or a card without a CPU (the lightweight personality)
+    virtual bool cardInstructionCount(uint64_t& count) const
+    {
+        (void)count;
+        return false;
+    }
 
     /// Structured event trace (host ports, card-side activity, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session
@@ -537,6 +611,48 @@ protected:
     bool _hostGainUnity = true;   ///< every gain at unity: the output path is the card's own, untouched
     bool _hostGainDirty = false;  ///< a gain changed: the card emits its level again at the next frame start
     /// endregion </Host channel gains>
+
+protected:
+    /// The command log's hooks (gscommandlog.h): one null test and a relaxed load while it is off. Called before
+    /// the access changes the mailbox
+    GSCommandLog* _commandLog = nullptr;
+    uint8_t _automationRead = 0;
+    uint32_t _automationReads = 0;
+    /// readData's value, for lastAutomationRead
+    void noteAutomationRead(uint8_t value)
+    {
+        _automationRead = value;
+        _automationReads++;
+    }
+    bool commandLogOn()
+    {
+        return _commandLog && _commandLog->On();
+    }
+    void logHostCommand(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostCommand(value, automation);
+    }
+    void logHostData(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostData(value, automation);
+    }
+    void logHostReplyRead(uint8_t value, bool automation = false)
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostReplyRead(value, automation);
+    }
+    void logHostReset()
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->HostReset();
+    }
+    void logFrame()
+    {
+        if (commandLogOn()) [[unlikely]]
+            _commandLog->Frame();
+    }
 
 protected:
     /// Before a card run (the card on a boundary): the execution history switched on or off since the last run puts

@@ -1,0 +1,1 @@
+repeat 16,tile,0: repeat 16,tileh,0: org tileh*256+tile*16: incbin 'rasmoutput_tiles.bin',256*tile+16*tileh,16: rend: rend:repeat 4,tile,0: repeat 16,tileh,0: org 16*256+tileh*256+tile*16: incbin 'rasmoutput_tiles.bin',256*(tile+16)+16*tileh,16: rend: rend:incbin 'rasmoutput_tiles.bin',SLICE,16,16

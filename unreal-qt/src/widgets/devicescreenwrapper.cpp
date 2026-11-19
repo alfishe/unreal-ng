@@ -231,6 +231,23 @@ QRectF DeviceScreenWrapper::pictureSourceRect() const
     return {};
 }
 
+namespace
+{
+/// The software screen as drawn, with or without its child widgets: the HUD is one (QWidget::grab takes children
+/// too, so a recording or a "no HUD" grab showed it)
+QPixmap GrabSoftwareScreen(QWidget* screen, bool children)
+{
+    if (children)
+        return screen->grab();
+    const qreal ratio = screen->devicePixelRatioF();
+    QPixmap pixmap((QSizeF(screen->size()) * ratio).toSize());
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::black);
+    screen->render(&pixmap, QPoint(), QRegion(), QWidget::DrawWindowBackground);
+    return pixmap;
+}
+}  // namespace
+
 bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, int pictureHeight)
 {
     if (_useGPU && _gpuWindow)
@@ -239,9 +256,13 @@ bool DeviceScreenWrapper::grabWindowPicture(QImage& image, std::string& error, i
         if (!image.isNull() && pictureHeight <= 0)  // a picture drawn at its own height is the whole image
             image = image.copy(_gpuWindow->pictureDeviceRect().intersected(image.rect()));
     }
+    else if (_software && pictureHeight > 0)
+    {
+        image = _software->renderPicture(pictureHeight);  // the CRT drawn at the height asked, as the GPU does
+    }
     else if (_software)
     {
-        const QPixmap pixmap = _software->grab();
+        const QPixmap pixmap = GrabSoftwareScreen(_software, false);
         image = pixmap.toImage();
         const QWidget* parent = _software->parentWidget();
         const QRect picture = parent ? _software->geometry() : QRect(QPoint(0, 0), _software->size());
@@ -274,10 +295,17 @@ bool DeviceScreenWrapper::grabWindowView(WindowViewGrab& out, std::string& error
                         drawn.height());
         out.backend = "gpu";
     }
+    else if (_software && pictureHeight > 0)
+    {
+        // The CRT drawn at the height asked, as the GPU does; the HUD is the window's, at its size: left out
+        image = _software->renderPicture(pictureHeight);
+        picture = viewport = image.rect();
+        out.backend = "software";
+    }
     else if (_software)
     {
         // The widget keeps the picture's shape inside its parent (fitToParent): the widget is the picture
-        const QPixmap pixmap = _software->grab();
+        const QPixmap pixmap = GrabSoftwareScreen(_software, hud);
         image = pixmap.toImage();
         ratio = pixmap.devicePixelRatio();
         const QWidget* parent = _software->parentWidget();
@@ -385,6 +413,27 @@ void DeviceScreenWrapper::setHudOverlay(HudOverlay* overlay)
         _gpuWindow->setHudOverlay(_hudOverlay);
         _hudOverlay->setTargetWindow(_gpuWindow);
     }
+}
+
+bool DeviceScreenWrapper::setOverlayPainter(std::function<void(QPainter&, int width, int height)> painter)
+{
+    if (!_useGPU || !_gpuWindow)
+        return false;
+    _gpuWindow->setOverlayPainter(std::move(painter));
+    _gpuWindow->requestUpdate();
+    return true;
+}
+
+void DeviceScreenWrapper::setOverlayPointer(std::function<bool(QEvent::Type, const QPointF&, int, int)> pointer)
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->setOverlayPointer(std::move(pointer));
+}
+
+void DeviceScreenWrapper::updateOverlay()
+{
+    if (_useGPU && _gpuWindow)
+        _gpuWindow->requestUpdate();
 }
 
 void DeviceScreenWrapper::clearDisplayViewport()

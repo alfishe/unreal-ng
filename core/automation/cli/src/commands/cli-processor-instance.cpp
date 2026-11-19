@@ -5,6 +5,7 @@
 #include <emulator/ports/models/sprinter/sprinterbios.h>
 #include <iomanip>
 #include "emulator/zxpoly/zxpolygroup.h"
+#include "emulator/machinecatalog.h"
 #include "emulator/machinevariants.h"
 #include <emulator/buildinfo.h>
 #include <emulator/config.h>
@@ -493,11 +494,24 @@ void CLIProcessor::InitializeProcessor()
     }
 }
 
-// HandleReset - lines 784-804
+// HandleReset - reset [hard|soft|--hard] [id|index]: soft by default (the reset button), hard = power cycle
 void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<std::string>& args)
 {
+    // The mode word may come before or after the id; what is left selects the emulator
+    bool hard = false;
+    std::vector<std::string> idArgs;
+    for (const std::string& arg : args)
+    {
+        if (arg == "hard" || arg == "--hard")
+            hard = true;
+        else if (arg == "soft" || arg == "--soft")
+            hard = false;
+        else
+            idArgs.push_back(arg);
+    }
+
     std::string errorMessage;
-    auto emulator = ResolveEmulator(session, args, errorMessage);
+    auto emulator = ResolveEmulator(session, idArgs, errorMessage);
 
     if (!emulator)
     {
@@ -512,8 +526,8 @@ void CLIProcessor::HandleReset(const ClientSession& session, const std::vector<s
         return;
     }
 
-    emulator->Reset();
-    session.SendResponse("Emulator reset\n");
+    emulator->Reset(hard);
+    session.SendResponse(hard ? "Emulator reset (hard)\n" : "Emulator reset (soft)\n");
 }
 
 // HandleNmi - pulse the Z80 NMI line (accepted at the next instruction boundary)
@@ -1271,6 +1285,34 @@ void CLIProcessor::HandleOpen(const ClientSession& session, const std::vector<st
         session.SendResponse("Requesting to open file: " + filepath);
         messageCenter.Post(NC_FILE_OPEN_REQUEST, new SimpleTextPayload(filepath), true);
     }
+}
+
+// HandleMachines - the machines by family (MachineCatalog): "ATM Turbo: ATM450 (512/1024K), ATM710 (...)"
+void CLIProcessor::HandleMachines(const ClientSession& session, const std::vector<std::string>& args)
+{
+    const bool all = !args.empty() && StringHelper::ToLower(args[0]) == "all";
+    const std::vector<MachineFamily> families = all ? MachineCatalog::All() : MachineCatalog::Creatable();
+    std::stringstream ss;
+    for (const MachineFamily& family : families)
+    {
+        ss << family.title << " [" << family.id << "]" << NEWLINE;
+        for (const MachineEntry& machine : family.machines)
+        {
+            ss << "  " << machine.name << " - " << machine.title;
+            if (machine.ramSizesKb.size() > 1)
+            {
+                ss << " (";
+                for (size_t i = 0; i < machine.ramSizesKb.size(); ++i)
+                    ss << (i ? "/" : "") << machine.ramSizesKb[i];
+                ss << "K)";
+            }
+            if (!machine.creatable)
+                ss << " (not creatable on this build)";
+            ss << NEWLINE;
+        }
+    }
+    ss << NEWLINE << "Start one: start <name>" << NEWLINE;
+    session.SendResponse(ss.str());
 }
 
 // HandleModels - List available ZX Spectrum models

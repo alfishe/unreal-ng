@@ -339,15 +339,21 @@
             op["description"] =
                 "Each spec: pokes, registers and input events (keys, joystick) applied on a muted headless analysis "
                 "instance seeked to a TTD point (start, end or frame:N), then N frames, then checks over memory, the "
-                "screen, watched addresses (pc / write / read) and new code. The source instance is never touched; "
-                "the experiments run in a bounded pool, each on its own clone. The result marks the finding "
-                "observed or refuted.";
+                "screen, watched addresses (pc / write / read) and new code. The experiments run in a bounded pool, "
+                "each on its own clone. The result marks the finding observed or refuted. The source instance is "
+                "not touched unless asked: a spec with keep_branch (or keep_branches observed / all) replays in the "
+                "source's TTD session as a branch created by analyzer under the run id, its memory checks read back "
+                "(branch.reproduced), the machine back where it stood (paused).";
             idParameter(op);
             bodyOf(op, {{"spec", "One spec object or an array of them (or their JSON text)"},
                         {"path", "A JSON file with the spec(s)"},
                         {"parallel", "Clones at once (1..8)"},
-                        {"finding", "The finding the result marks"}});
-            op["responses"]["200"]["description"] = "results, observed, refuted, errors, workers, peak_concurrency, seeks, micros, text";
+                        {"finding", "The finding the result marks"},
+                        {"keep_branches", "asked (default) | observed | all: which experiments become TTD branches"},
+                        {"run", "Run id of the kept branches (default experiment-<n>)"}});
+            op["responses"]["200"]["description"] =
+                "results (each with branch when kept), observed, refuted, errors, workers, peak_concurrency, seeks, "
+                "micros, branches_kept, branch_run, text";
             op["responses"]["400"]["description"] = "A bad spec (the field and what it takes)";
             op["responses"]["409"]["description"] = "No L2 yet (build first), or no recording kept";
         }

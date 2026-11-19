@@ -35,6 +35,7 @@
 #include "emulator/io/storage/hostfolder/hostfolderfat.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/models/portdecoder_next.h"
+#include "loaders/snapshot/snapshotlauncher.h"
 
 namespace
 {
@@ -448,10 +449,11 @@ TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
     for (int i = 0; i < 2; i++)
         _emulator->RunFrame(true);
 
-    // ScreenNext drew it: a 640 x 512 frame (the 320 x 256 grid, lines doubled) with the highlighted "Browser" bar in cyan
+    // ScreenNext drew it: the HDMI frame, 720 x 576 (360 x 288 doubled, the 320 x 256 grid inside the outer border) with the
+    // highlighted "Browser" bar in cyan
     const FramebufferDescriptor& fb = _context->pScreen->GetFramebufferDescriptor();
-    ASSERT_EQ(fb.width, 640u);
-    ASSERT_EQ(fb.height, 512u);
+    ASSERT_EQ(fb.width, 720u);
+    ASSERT_EQ(fb.height, 576u);
     const NextVideoRegs& video = _ports->Board().Video();
     const uint32_t cyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 5));
     const uint32_t brightCyan = NextVideoRenderer::Rgba(video.PaletteEntry(0, 13));
@@ -460,4 +462,45 @@ TEST_F(NextFirmware_Test, NextZxosMainMenuIsDrawn)
     for (size_t i = 0; i < size_t(fb.width) * fb.height; i++)
         bar += (pixels[i] == cyan || pixels[i] == brightCyan) ? 1 : 0;
     EXPECT_GT(bar, 2000u) << "the highlighted menu entry";
+}
+
+// A NEX opened on a Next that has just powered on (the boot chain still in the config mode, the system area empty: the
+// firmware fills it) runs under NextZXOS like one nexload starts: the launcher boots the machine first. Loaded into the
+// empty system area it met #FF at #0038 with its first interrupt and stayed in RST 38 (every Next game on a fresh machine).
+// Long tier: the boot to NextZXOS's welcome screen is ~1500 frames
+TEST_F(NextFirmware_Test, ANexOnAFreshMachineRunsAfterNextZxosBooted)
+{
+    if (!TestTier::Long())
+        GTEST_SKIP() << "the boot to NextZXOS is long: UNREAL_LONG_TESTS=1";
+    ASSERT_TRUE(_memory->InConfigMode());
+
+    // V1.2, bank 0 at #C000: EI; JR $ (IM 1: the frame interrupt goes through the ROM's #0038)
+    std::vector<uint8_t> nex(512, 0);
+    std::memcpy(nex.data(), "NextV1.2", 8);
+    nex[9] = 1;                    // one bank
+    nex[12] = 0xF0, nex[13] = 0xBF;  // SP #BFF0
+    nex[14] = 0x00, nex[15] = 0xC0;  // PC #C000
+    nex[18 + 0] = 1;               // bank 0 present, the entry bank (byte 139) 0
+    std::vector<uint8_t> bank(0x4000, 0);
+    bank[0] = 0xFB, bank[1] = 0x18, bank[2] = 0xFE;
+    nex.insert(nex.end(), bank.begin(), bank.end());
+    const std::string path = TestPathHelper::GetUniqueTestScratchPath("fresh.nex");
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(nex.data()), static_cast<std::streamsize>(nex.size()));
+    }
+
+    SnapshotLoadRequest request;
+    request.emulatorId = _emulator->GetId();
+    request.path = path;
+    const SnapshotLoadResult result = SnapshotLauncher::Load(request);
+    ASSERT_TRUE(result.ok) << result.message;
+    EXPECT_FALSE(_memory->InConfigMode());
+    EXPECT_NE(_memory->DirectReadFromZ80Memory(0x0038), 0xFF) << "the 48K ROM's interrupt handler is there";
+
+    for (int i = 0; i < 5; i++)
+        _emulator->RunFrame(true);
+    _emulator->RunTStates(20000);
+    EXPECT_GE(_z80->pc, 0xC000) << "the program runs (interrupts return to it), PC " << _z80->pc;
+    EXPECT_LE(_z80->pc, 0xC002);
 }

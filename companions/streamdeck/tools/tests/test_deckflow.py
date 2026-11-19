@@ -163,7 +163,7 @@ class SpecTest(Base):
         self.expect("tools:  {at: [2, 0], open: tools}", "tool:   {at: [2, 0], open: tools}", "its id must be 'tools'",
                     20)
         self.expect("tools:  {at: [2, 0], open: tools}", "", "is opened from no key", 22)
-        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of load|save",
+        self.expect("value: {op: save, slot: 1}", "value: {op: keep, slot: 1}", "op 'keep' is not one of delete|list|load|save",
                     26)
         self.expect("value: {op: save, slot: 1}", "value: {op: save, slots: 1}", "param 'slots'", 26)
         self.expect("{at: [0, 1], uc: C1.2, action: mach.reset}", "{at: [0, 1], uc: C1.2, action: mach.reset, colour: x}",
@@ -184,6 +184,40 @@ class SpecTest(Base):
         self.expect("alert: 95}}", "alert: 95, colour: red}}", "show: unknown field(s) colour", 29)
         self.expect(', show: {readout: host.stats.cpu_percent, format: "{:.0f}%", warn: 80, alert: 95}}', "}",
                     "key cpu does nothing", 29)
+
+    def test_long_list_press_turn(self):
+        """A key's long press, a menu's list page and a dial's press_turn: checked, built into the project, read back
+        unchanged; the mistakes named."""
+        text = self.spec_text()
+        text = text.replace("press: {action: run.pause_toggle}}",
+                            "press: {action: run.pause_toggle}, press_turn: {left: {action: ttd.branch_prev_sibling}, "
+                            "right: {action: ttd.branch_next_sibling}}}", 1)
+        text = text.replace("label: X4}", "label: X4, long: {action: mach.nmi}}", 1)
+        text = text.replace("  title: Tools\n  uc: C6\n",
+                            "  title: Tools\n  uc: C6\n  list: {readout: ttd.branch_list.items, label: '{name}', "
+                            "on: active, dial: 0, action: ttd.branch_switch, value: {branch: $id}, "
+                            "long: {action: ttd.branch_delete, value: {branch: $id, now: true}}}\n", 1)
+        write(self.paths.spec("fx"), text)
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build(force=True)
+        self.assertEqual(self.project_model(), self.spec_model())
+        root = y.load(read(self.paths.project("fx")))["root"]
+        self.assertEqual(find(root, "x4")["long"], {"kind": "action", "id": "mach.nmi"})
+        lst = find(root, "tools")["list"]
+        self.assertEqual((lst["readout"], lst["dial"], lst["do"]["id"], lst["long"]["value"]),
+                         ("ttd.branch_list.items", 0, "ttd.branch_switch", {"branch": "$id", "now": True}))
+        self.assertEqual(find(root, "home")["dials"][0]["press_turn"]["left"]["id"], "ttd.branch_prev_sibling")
+        self.assertIn("# list: the free keys (.) show ttd.branch_list.items", self.spec_text())
+        base = self.spec_text()
+        for old, new, what in (("dial: 0,", "dial: 0, colour: x,", "unknown field(s) colour"),
+                               ("long: {action: mach.nmi}", "long: {action: nothing.here}", "nothing.here")):
+            write(self.paths.spec("fx"), base.replace(old, new, 1))
+            issues = [str(i) for i in self.pipe.check("fx")]
+            self.assertTrue([i for i in issues if what in i], f"{what!r} not in {issues}")
+        write(self.paths.spec("fx"), base.replace("action: mach.reset}", "action: mach.reset, long: {action: mach.nmi}}",
+                                                   1))  # mach.reset is held: no long press
+        issues = [str(i) for i in self.pipe.check("fx") if i.error]
+        self.assertTrue([i for i in issues if "long" in i], issues)
 
     def test_gui_keys(self):
         """A `gui:` key: a GUI control plane command (gui-catalogue.json) with its params, glyph and title."""
@@ -391,6 +425,95 @@ class BuildTest(Base):
         self.build()
         issues = df.cli_check(self.paths, self.paths.project("fx"))
         self.assertEqual([str(i) for i in issues if i.error], [])
+
+
+class WideMenuTest(Base):
+    """A wide menu (width over the deck's columns) with strip keys: the spec's zones in the key form become `do`
+    steps in the project and come back the same; a slot past the deck's columns is taken, past the width is not."""
+
+    KB = ("    tools:  {at: [2, 0], open: tools}\n",
+          "    tools:  {at: [2, 0], open: tools}\n    kb:     {at: [2, 1], open: kb}\n")
+    MENU = """
+menu kb:
+  title: Keys
+  uc: U1.4
+  width: 10
+  back: false
+  strip: {content: keys, keys: [{label: CAPS, latch: true, action: input.key, value: {key: caps, hold: true}, hold: true}, {label: SPACE, span: 4, action: input.key, value: {key: space}}]}
+  dials:
+    0: {label: CAPS, turn: {kind: nav, to: scroll, by: $ticks}, press: {action: input.key, value: {key: caps, hold: true}, hold: true}}
+  keys:
+    kq:     {at: [1, 0], uc: U1.4, action: input.key, value: {key: q, hold: true}, label: Q}
+    kp:     {at: [1, 9], uc: U1.4, action: input.key, value: {key: p, hold: true}, label: P}
+"""
+
+    def setUp(self):
+        super().setUp()
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        self.assertIn(self.KB[0], text)
+        write(p, text.replace(self.KB[0], self.KB[1], 1) + self.MENU)
+
+    def test_build_and_round_trip(self):
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build()
+        kb = find(y.load(read(self.paths.project("fx")))["root"], "kb")
+        self.assertEqual(kb["width"], 10)
+        self.assertEqual(kb["nav"]["back"], None)
+        zones = kb["strip"]["keys"]
+        self.assertEqual(zones[0], {"label": "CAPS", "latch": True, "do": {"kind": "action", "id": "input.key",
+                                                                          "value": {"key": "caps", "hold": True},
+                                                                          "hold": True}})
+        self.assertEqual((zones[1]["span"], zones[1]["do"]["value"]), (4, {"key": "space"}))
+        self.assertEqual(find(kb, "kp")["at"], [1, 9])
+        self.assertEqual(kb["dials"][0]["turn"], {"kind": "nav", "to": "scroll", "by": "$ticks"})
+        self.assertEqual(self.project_model(), self.spec_model())
+        text = self.spec_text()
+        self.assertIn("# strip: CAPS (latch) | SPACE", text)
+        self.assertIn("the deck shows 9 of the 10 columns", text)
+        self.assertIn("    9", text.split("# +-- screen kb")[1].split("\n")[1])  # the map has a column 9
+
+    def test_mistakes(self):
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        write(p, text.replace("kp:     {at: [1, 9]", "kp:     {at: [1, 10]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "outside the plusxl grid (4 rows x 10" in i])
+        write(p, text.replace("  back: false\n", ""))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "scrolls its back key away" in i])
+        write(p, text.replace("{label: CAPS, latch: true, action", "{latch: true, action"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "needs a label" in i])
+
+
+class WindowedMenuTest(WideMenuTest):
+    """A wide menu with a window: the grid scrolls on deck columns 1..7, pinned keys keep the deck's slots outside it
+    (a slot a grid key also has is no clash); the project holds window and pin and comes back the same."""
+
+    MENU = WideMenuTest.MENU.replace("  width: 10\n", "  width: 10\n  window: [1, 7]\n") + \
+        "    kleft:  {at: [1, 0], pin: true, uc: U1.4, do: {kind: nav, to: scroll, by: -1}, title: Left}\n" \
+        "    kright: {at: [1, 8], pin: true, uc: U1.4, do: {kind: nav, to: scroll, by: 1}, title: Right}\n"
+
+    def test_build_and_round_trip(self):
+        self.assertEqual([str(i) for i in self.pipe.check("fx") if i.error], [])
+        self.build()
+        kb = find(y.load(read(self.paths.project("fx")))["root"], "kb")
+        self.assertEqual(kb["window"], [1, 7])
+        self.assertEqual((find(kb, "kleft")["at"], find(kb, "kleft")["pin"]), ([1, 0], True))
+        self.assertNotIn("pin", find(kb, "kq"))
+        self.assertEqual(find(kb, "kright")["do"], {"kind": "nav", "to": "scroll", "by": 1})
+        self.assertEqual(self.project_model(), self.spec_model())
+        text = self.spec_text()
+        self.assertIn("the deck shows 7 of the 10 columns at a time on its columns 1..7", text)
+        self.assertIn("# pinned: [1,0] ", text)
+
+    def test_mistakes(self):
+        p = self.paths.spec("fx")
+        text = self.spec_text()
+        write(p, text.replace("kright: {at: [1, 8]", "kright: {at: [1, 4]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "inside the window of kb" in i])
+        write(p, text.replace("  window: [1, 7]\n", ""))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "pin goes in a menu with a window" in i])
+        write(p, text.replace("window: [1, 7]", "window: [1, 9]"))
+        self.assertTrue([i for i in map(str, self.pipe.check("fx")) if "window: [first, last]" in i])
 
 
 class SyncTest(Base):

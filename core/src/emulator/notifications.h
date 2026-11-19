@@ -7,6 +7,7 @@
 
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/uuid.h"
+#include "debugger/disassembler/z80mcycles.h"
 
 class EmulatorContext;
 
@@ -348,6 +349,29 @@ enum class PauseCause : uint8_t
     Step          // another CPU's step ended (a sound card's: the machine parked with it at `cpuPc`)
 };
 
+/// Where the main CPU parked with another CPU's stop (a card's: gs-debugger design §5.2): its instruction, how far
+/// into it, and how far the card's time is behind main's. Tight mode keeps the gap under one main instruction
+struct MainPosition
+{
+    bool known = false;
+    bool frameEnd = false;        ///< the stop came in the frame-end catch-up: main is between frames, not inside `pc`
+    uint16_t pc = 0;              ///< main's instruction (its M1 address): the one the card's moment falls in
+    uint32_t tInInstruction = 0;  ///< T of that instruction main has run
+    int32_t gapT = 0;             ///< main's time minus the card's, in main T
+
+    /// Instruction progress (gs-debugger design §5.4), known while main runs the instruction-start debug work
+    /// (debug mode, exec taps, tight mode) and the card's moment is inside `pc`
+    bool onBoundary = false;  ///< main finished `pc` and stands at the next instruction's start (tight mode's catch-up)
+    bool timed = false;       ///< the fields below are known
+    uint32_t elapsedT = 0;    ///< T into `pc` at the card's moment
+    uint8_t totalT = 0;       ///< `pc`'s T, uncontended (the way taken when it is known)
+    uint8_t totalTAlt = 0;    ///< a conditional not decided yet: the other way's T (0: none)
+    bool contended = false;   ///< main spent more T on `pc` than the table's (contention, an interrupt's acknowledge
+                              ///< after it): the bus cycle is the uncontended one at `elapsedT`
+    int8_t busCycle = -1;     ///< the machine cycle under way in `cycles` (-1: past the instruction's cycles)
+    Z80MCycleList cycles;     ///< `pc`'s machine cycles (Z80MCycleDecoder), the way `totalT` counts
+};
+
 /// Payload for NC_EMULATOR_STATE_CHANGE.
 /// `_payloadNumber` carries the new EmulatorStateEnum value (StateRun /
 /// StatePaused / StateResumed / StateStopped) — same as the legacy
@@ -364,6 +388,7 @@ public:
     BreakpointHitKind hitKind{BreakpointHitKind::Execute};
     std::string cpu{"main"};  ///< the CPU whose breakpoint it was ("gs": a card's, the machine parked with it)
     uint16_t cpuPc{0};        ///< that CPU's instruction (a card: the instruction the access belonged to)
+    MainPosition main;        ///< a card's stop: where the main CPU parked with it
 
     EmulatorStateChangePayload(const unreal::UUID& id, uint32_t newState)
         : SimpleNumberPayload(newState), emulatorId(id) {}
@@ -580,6 +605,72 @@ public:
     {
     }
     virtual ~FrameWatchPayload() = default;
+};
+
+/// Payload of NC_DEBUG_EDITED (Emulator::EditMemoryFromTool): tool edits of the instance went through. The edits
+/// themselves are taken from the instance (Emulator::TakeToolEdits, merged): one of these waits in the queue per
+/// instance at a time, whatever the edit rate
+class DebugEditedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+
+    explicit DebugEditedPayload(const std::string& emulator)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    {
+    }
+    virtual ~DebugEditedPayload() = default;
+};
+
+/// Payload of NC_LABEL_CHANGED: the instance whose labels changed, and the CPU whose store it was ("main", "gs", "ms")
+class LabelsChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string cpu = "main";
+
+    explicit LabelsChangedPayload(const std::string& emulator, std::string cpuName = "main")
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), cpu(std::move(cpuName))
+    {
+    }
+    virtual ~LabelsChangedPayload() = default;
+};
+
+/// Payload of NC_DEBUG_TARGETS_CHANGED: every CPU of the instance a debugger can name and whether it is there now
+class DebugTargetsChangedPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::vector<std::pair<std::string, bool>> targets;  ///< {cpu, available}
+
+    explicit DebugTargetsChangedPayload(const std::string& emulator)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator))
+    {
+    }
+    virtual ~DebugTargetsChangedPayload() = default;
+};
+
+/// Payload of NC_SECTION_TIMER (debugger/analyzers/sectiontimer): the emulator's section timer "started", "stopped",
+/// was "cleared", or a break condition stopped the machine ("break": `condition` met by the pass of `section` that
+/// started at `frame` / `t` and took `elapsed` T-states, `net` without the `interrupts` that ran inside it)
+class SectionTimerPayload : public MessagePayload
+{
+public:
+    unreal::UUID emulatorId;
+    std::string event;
+    std::string condition;
+    std::string section;
+    uint64_t frame = 0;
+    uint32_t t = 0;
+    uint64_t elapsed = 0;
+    uint64_t net = 0;
+    uint32_t interrupts = 0;
+
+    SectionTimerPayload(const std::string& emulator, std::string what)
+        : emulatorId(emulator.empty() ? unreal::UUID() : unreal::UUID(emulator)), event(std::move(what))
+    {
+    }
+    virtual ~SectionTimerPayload() = default;
 };
 
 /// Payload of NC_ASM_SYNC (asm-synchronizer, core/src/debugger/asm/sync/asmsyncservice.h)

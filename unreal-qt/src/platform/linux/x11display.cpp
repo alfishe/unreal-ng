@@ -194,6 +194,8 @@ struct Display::Api
                              int) = nullptr;
     int (*getOutputProperty)(void*, RROutput, Atom, long, long, XBool, XBool, Atom, Atom*, int*, unsigned long*,
                              unsigned long*, unsigned char**) = nullptr;
+    int (*getWindowProperty)(void*, XWindow, Atom, long, long, XBool, Atom, Atom*, int*, unsigned long*,
+                             unsigned long*, unsigned char**) = nullptr;
 
     ~Api()
     {
@@ -211,6 +213,7 @@ struct Display::Api
                Resolve(x11, "XDefaultRootWindow", defaultRootWindow) && Resolve(x11, "XInternAtom", internAtom) &&
                Resolve(x11, "XChangeProperty", changeProperty) && Resolve(x11, "XFree", xfree) &&
                Resolve(x11, "XSync", sync) && Resolve(x11, "XSetErrorHandler", setErrorHandler) &&
+               Resolve(x11, "XGetWindowProperty", getWindowProperty) &&
                Resolve(xrandr, "XRRQueryExtension", queryExtension) &&
                Resolve(xrandr, "XRRGetScreenResourcesCurrent", getResources) &&
                Resolve(xrandr, "XRRFreeScreenResources", freeResources) &&
@@ -281,20 +284,31 @@ Display* Display::Get()
 std::unique_ptr<Display> Display::Connect()
 {
     std::unique_ptr<Display> d(new Display());
-    if (!d->Open())
+    if (!d->Open(nullptr))
         return nullptr;
     return d;
 }
 
-bool Display::Open()
+std::unique_ptr<Display> Display::ConnectTo(const std::string& name)
 {
-    const char* name = std::getenv("DISPLAY");
-    if (!name || !*name)
-        return false;
+    std::unique_ptr<Display> d(new Display());
+    if (name.empty() || !d->Open(name.c_str()))
+        return nullptr;
+    return d;
+}
+
+bool Display::Open(const char* name)
+{
+    if (name == nullptr)
+    {
+        const char* own = std::getenv("DISPLAY");
+        if (!own || !*own)
+            return false;
+    }
     _api = new Api();
     if (!_api->Load())
         return false;
-    _display = _api->openDisplay(nullptr);
+    _display = _api->openDisplay(name);
     int eventBase = 0, errorBase = 0;
     return _display && _api->queryExtension(_display, &eventBase, &errorBase);
 }
@@ -423,6 +437,26 @@ void Display::SetVariableRefresh(unsigned long window, bool on)
     _api->changeProperty(_display, window, property, kXaCardinal, 32, kPropModeReplace,
                          reinterpret_cast<const unsigned char*>(&value), 1);
     scope.Errors();
+}
+bool Display::RootCardinal(const char* name, uint64_t& value)
+{
+    ErrorScope scope(*_api, _display);
+    const Atom property = _api->internAtom(_display, name, 1);  // only_if_exists: no atom, no property
+    if (property == 0)
+        return false;
+    Atom type = 0;
+    int format = 0;
+    unsigned long count = 0;
+    unsigned long after = 0;
+    unsigned char* data = nullptr;
+    const int status = _api->getWindowProperty(_display, _api->defaultRootWindow(_display), property, 0, 1, 0,
+                                               kXaCardinal, &type, &format, &count, &after, &data);
+    const bool found = status == 0 && type == kXaCardinal && format == 32 && count >= 1 && data != nullptr;
+    if (found)
+        value = static_cast<uint64_t>(*reinterpret_cast<const unsigned long*>(data));  // format 32 arrives as longs
+    if (data != nullptr)
+        _api->xfree(data);
+    return found && scope.Errors() == 0;
 }
 }  // namespace x11
 

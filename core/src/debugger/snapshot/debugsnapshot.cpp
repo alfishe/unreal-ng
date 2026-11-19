@@ -16,6 +16,7 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/state/devicestate.h"
 #include "emulator/memory/memory.h"
 
@@ -247,12 +248,15 @@ const char* BankKind(MemoryBankModeEnum mode)
     }
 }
 
-/// Why it stopped last: {reason, cpu, breakpoint_id, address, cpu_pc (a card CPU's stop)}
+/// Why it stopped last: {reason, serial, cpu, breakpoint_id, address, cpu_pc (a card CPU's stop)}
 StateNode PauseNode(Emulator* emulator)
 {
     const Emulator::DebugStop stop = emulator->LastStop();
     StateNode pause = StateNode::Object();
     pause["reason"] = std::string(StopReason(stop.reason));
+    // One more at every stop: a reader that sees it unchanged has seen this stop already (time travel moves and
+    // edits leave it)
+    pause["serial"] = stop.serial;
     if (stop.reason == Emulator::DebugStop::Reason::Breakpoint)
     {
         pause["cpu"] = std::string(DebugCpuName(stop.breakpoint.cpu));
@@ -260,6 +264,8 @@ StateNode PauseNode(Emulator* emulator)
         pause["address"] = static_cast<int>(stop.breakpoint.address);
         if (stop.breakpoint.cpu != DebugCpuId::Main)
             pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
+        if (stop.breakpoint.main.known)
+            pause["main"] = execution::MainPositionNode(stop.breakpoint.main);
     }
     else if (stop.reason == Emulator::DebugStop::Reason::Watch)
     {
@@ -287,6 +293,8 @@ StateNode PauseNode(Emulator* emulator)
         // Another CPU's step ended there (a sound card's): its instruction beside the main PC
         pause["cpu"] = std::string(DebugCpuName(stop.breakpoint.cpu));
         pause["cpu_pc"] = static_cast<int>(stop.breakpoint.cpuPc);
+        if (stop.breakpoint.main.known)
+            pause["main"] = execution::MainPositionNode(stop.breakpoint.main);
     }
     return pause;
 }

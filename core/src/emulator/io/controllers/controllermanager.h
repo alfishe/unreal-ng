@@ -125,6 +125,13 @@ public:
     /// The reverse of ParseKeys: the bound controls in bit order, lower case ("right:p,left:o,...")
     static std::string KeysSpec(const std::array<ZXKeysEnum, kOverlayControls>& keys);
     static OverlayOptions DefaultOptions(RetroDeviceKind device);
+    /// The matrix keys a keyboard joystick holds for one control bit (kUp, kFire, ...) as UpdateOverlay wires them:
+    /// Sinclair port 1 / 2, Cursor (with CAPS SHIFT on a direction when `shift`), the keys joystick's own keys. Empty
+    /// for another connector kind or an unwired control (the bindings report, hostinputcontrol)
+    static std::vector<ZXKeysEnum> WiredKeys(const Connector& connector, uint16_t bit);
+    /// The host keys also reach the machine's PS/2 controller as PC keys (ZX-Evo, TS-Conf, Sprinter): ApplyHostKeys's
+    /// route
+    bool HostKeysReachPs2() const;
     /// endregion </Plugs>
 
     /// region <Input>
@@ -275,7 +282,7 @@ private:
     bool _wasOwned = false;
     HostSample _sample;  // reused per frame
     std::vector<PcKey> _ps2HostKeys;  ///< the PC keys the overlay holds on a PS/2 sink (machine thread only)
-    std::array<uint8_t, 2> _pcOnlyKeys{};  ///< the PC-only keys of a profile (rows 8 and 9 of HostKeys), not in the TTD blob; _mutex
+    std::array<uint8_t, 5> _pcOnlyKeys{};  ///< the PC-only keys of a profile (rows 8 to 12 of HostKeys), not in the TTD blob; _mutex
     std::array<uint8_t, 8> _hostKeys{};  ///< the host key overlay, active high (journaled, in the blob); _mutex
     MouseDeltaAccumulator _mouseMotion;  ///< the controllers' mouse counts x [INPUT] MouseScale, the fraction carried
     uint8_t _mouseButtons = 0;           ///< the mouse buttons the host source held at its last sample

@@ -71,6 +71,18 @@ unreal-asm/
     zasmcheck.py                zasm's Test and Examples folders against zasm
     fantasmcheck.py             FantASM's tests against FantASM
     dialectcheck.py             zmac (testdata/zmac) and rasm (decrunch routines) against the real assemblers
+    rasmcheck.py                sjasmplus sources through the rasm backend (`zxasm convert --project --to rasm`):
+                                the 64K memory rasm builds from the converted project against sjasmplus' own
+    rasmdatacheck.py            the rasm data helpers (floats, INCBIN transforms, WAV import, SAVE headers, pokers,
+                                CPC colours, BUILDZX, strings): small sources assembled by rasm (--rasm), the inputs,
+                                bytes and messages written as unreal-asm testdata/rasm/data (rasmdata_test.cpp);
+                                --check compares without writing (research-rasm-data.md)
+    rasmautotests.py            rasm.c's AUTOTEST snippets assembled by the rasm binary: testdata/rasm/autotests (NAME.asm,
+                                NAME.bin, index.tsv with rasm's exit code) for rasmengine_test.cpp
+    rasmconvertcheck.py         rasm.c's AUTOTEST snippets with a binary (testdata/rasm/autotests) converted by the rasm
+                                frontend (the rasm engine) to sjasmplus, built, bytes against rasm's
+    rasminstrtable.py           every instruction form through rasm (--rasm): testdata/rasm/instructions.tsv and
+                                timings.tsv (rasminstructions_test.cpp; research-rasm-instructions.md)
     specasmcheck.py             Specasm programs: saimport + salink against the converted sjasmplus build
     z80nmatrix.py               the 29 Z80N instructions in each assembler, bytes against sjasmplus
     z80ncheck.py                the programs of a ZXSpectrumNextTests checkout built by sjasmplus (--zxnext=cspect), converted
@@ -79,6 +91,9 @@ unreal-asm/
                                 --sym over every main source of a set of images
     lstcheck.py                 the bytes of a sjasmplus listing against a memory dump, line by line (a converted
                                 program against a running copy of it)
+    crunchcheck.py              rasm's crunchers (LZ4 ... LZSA2, sections and INCxxx) against the fixtures of
+                                unreal-asm's compress module (testdata/compress); --update rewrites them from rasm,
+                                --fuzz N crunches N generated inputs with rasm, --tests runs CrunchFixtures on them
 ```
 
 ## Conventions
@@ -87,7 +102,8 @@ unreal-asm/
   gives a whole address (another host), `UNREAL_ASM_EMULATOR_URL` does the same for every run. Start your own
   instance on ports of its own when other sessions use the defaults (below); stop it by its own PID.
 - **Tools.** `UNREAL_ASM_ZXASM`, `UNREAL_ASM_SYMCONV` (the library's `zxasm` / `symconv` from `<build>/bin`),
-  `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` (+ `ZCCCFG`), or the matching options.
+  `UNREAL_ASM_SJASMPLUS`, `UNREAL_ASM_PASMO`, `UNREAL_ASM_Z80ASM` (+ `ZCCCFG`), `UNREAL_ASM_RASM` (rasm 3.3.x built
+  with its third-party crunchers), or the matching options.
 - **Outputs** go to `scratch/`. Commands below run from the repository root with
   `S=tools/verification/unreal-asm`.
 
@@ -167,6 +183,16 @@ python3 $S/checks/crosscheck.py scratch/xc --images-from images.txt --targets pa
 pasmo 0.5.5 writes an empty file when the code spans the whole 64K (its size wraps to 16 bits); such sources show as
 "pasmo wrote nothing" unless pasmo is built with that one line widened.
 
+## Example: sjasmplus sources through rasm
+
+```bash
+export UNREAL_ASM_RASM=<path to rasm> UNREAL_ASM_SJASMPLUS=<path to sjasmplus>
+python3 $S/checks/rasmcheck.py main1.asm main2.asm ... --summary
+python3 $S/checks/rasmcheck.py --list scratch/z5/corpus-ok.txt --summary --keep scratch/rasmcheck
+#   one line a source: equal / N bytes differ / rasm does not build it / conversion failed (with the first byte that
+#   differs and rasm's first errors without --summary)
+```
+
 ## Example: a converted program against a running copy
 
 ```bash
@@ -189,5 +215,22 @@ python3 $S/checks/symcheck.py scratch/symcheck --images-from scratch/images.txt
 
 A program that runs while it assembles (ALASM's SNAKE waits for keys) is stopped by `--timeout` (sjasmplus) and by
 the layout's own limit. Names that differ only in case share one host file and are skipped.
+
+
+## Example: rasm's crunchers against unreal-asm
+
+Each fixture input (`testdata/compress/inputs`, plus a generated 100K input) is crunched by rasm with every algorithm,
+once in a section (`LZX0` / `INCBIN 'in.bin'` / `LZCLOSE`) and once as an include (`INCZX0 'in.bin'`); the outcome
+(crunched, kept raw, kept reversed, empty, error, crash) and the bytes go to `manifest.tsv` and `expected/` (the
+outputs of the 20K ROM slice and of lzDataTest.bin as CRC-32 and size only). `unreal-asm-tests
+--gtest_filter='Crunch*'` checks the library against them (the long inputs with `UNREAL_LONG_TESTS=1`).
+
+```bash
+export UNREAL_ASM_RASM=<path to rasm>
+python3 $S/checks/crunchcheck.py                       # rasm against the fixtures: a DIFF line per changed case
+python3 $S/checks/crunchcheck.py --update              # rewrite the fixtures from rasm (about 2 minutes)
+python3 $S/checks/crunchcheck.py --fuzz 40 --seed 7 \
+    --tests cmake-build-agent-release/bin/unreal-asm-tests   # 40 generated inputs: rasm's bytes, then the unit tests
+```
 
 Write all outputs to `scratch/`.

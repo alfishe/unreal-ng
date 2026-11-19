@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "debugger/debuggertimetravel.h"
 #include "emulator/remotecontrolguard.h"
 
 #include <QBoxLayout>
@@ -189,6 +190,15 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     atomicStepButton->setMenu(atomicStepMenu);
     atomicStepButton->setPopupMode(QToolButton::InstantPopup);
     toolBar->addWidget(atomicStepButton);
+
+    // Time travel (TTD branches debuggers.md §4): shown only while a recorded history exists
+    _timeTravel = new DebuggerTimeTravel(this, toolBar, nullptr);
+    connect(_timeTravel, &DebuggerTimeTravel::moved, this, [this]() {
+        clearStopBanner();   // the machine moved in time
+        updateState();
+        emit screenRefreshRequested();
+    });
+    connect(_timeTravel, &DebuggerTimeTravel::showInTtdPanel, this, &DebuggerWindow::showInTtdPanelRequested);
 
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
@@ -579,6 +589,8 @@ void DebuggerWindow::propagateEmulator()
     if (_visualizationWindow)
         _visualizationWindow->setEmulator(_emulator);
     _pcHistoryPane->setEmulator(_emulator);
+    if (_timeTravel)
+        _timeTravel->setEmulator(_emulator);
     // Port events holds the machine it searches: another machine (or none) closes it
     if (_portEventsDialog && _portEventsDialog->emulator() != _emulator)
         _portEventsDialog->close();

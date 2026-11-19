@@ -816,10 +816,19 @@ TEST_F(McpDebugTools_Test, CardCpu_StepsGoToTheCardsRoutes)
     ASSERT_NE(steps, nullptr);
     EXPECT_EQ(steps->body["count"].asUInt(), 5u);
 
+    // Run to the cursor: the main CPU's run until PC with ?cpu=
+    args["action"] = "run_until_pc";
+    args["pc"] = 0x4010;
+    ASSERT_FALSE(Run("control_execution", args).isError);
+    const FakeCaller::RecordedCall* runTo = _caller->Last("POST", "/api/v1/emulator/emu-1/skip_until?cpu=gs");
+    ASSERT_NE(runTo, nullptr);
+    EXPECT_EQ(runTo->body["pc"].asUInt(), 0x4010u);
+
     args["action"] = "run_frame";
     const mcp::ToolResult refused = Run("control_execution", args);
     EXPECT_TRUE(refused.isError);
-    EXPECT_NE(refused.text.find("a card CPU takes step, step_n, step_over and step_out"), std::string::npos)
+    EXPECT_NE(refused.text.find("a card CPU takes step, step_n, step_over, step_out and run_until_pc"),
+              std::string::npos)
         << refused.text;
 }
 

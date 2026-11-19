@@ -1,4 +1,4 @@
-"""Conformance of the schema-2 reader (src/ttdcontainer.py) with the C++ writer.
+"""Conformance of the schema-2 reader (tools/python/ttd/ttdlib/ttdcontainer.py) with the C++ writer.
 
 testdata/ttd/v2/ holds files the C++ writer produced
 (TTDSessionFile_Test.DISABLED_WriteAnalyzerFixtures) and expected.json, the
@@ -16,8 +16,9 @@ import json
 import unittest
 from pathlib import Path
 
-from src.ttdcontainer import (RECORD_HEADER, TtdContainerError, open_container, read_record, read_session,
-                              reachable, validate)
+import src  # noqa: F401  (puts tools/python/ttd on sys.path)
+from ttdlib.ttdcontainer import (RECORD_HEADER, TtdContainerError, open_container, read_record, read_session,
+                                 reachable, validate)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 FIXTURES = PROJECT_ROOT / "testdata/ttd/v2"
@@ -46,7 +47,7 @@ class FixtureTest(unittest.TestCase):
             with self.subTest(name):
                 problems = validate((FIXTURES / name).read_bytes())
                 if name == "synthetic-unfinished.ttd":
-                    expected = ("not finalized", "incomplete", "scanning")
+                    expected = ("not finalized", "incomplete", "scanning", "cut or damaged tail")
                     self.assertTrue(problems and all(any(e in p for e in expected) for p in problems), problems)
                 else:
                     self.assertEqual(problems, [])

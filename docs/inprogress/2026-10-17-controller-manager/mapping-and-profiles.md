@@ -126,7 +126,7 @@ DT-5, in words:
 | Triggers | the resting value is measured at connect (raw APIs report -1 at rest, Nestopia's bug); `lt.click` at 0.5 of the calibrated travel | 0.5 |
 | Hair-trigger stops (Elite) | the trigger's full value is the maximum seen in the session, not 1.0; it adapts as the stop changes | adaptive |
 | Stick → mouse | `v = sign(x) · max(0, |x| - dz)^γ · speed`, accumulated in sub-pixels, sent as integer mouse counts per frame | γ 1.8, speed 8 counts/frame at full deflection |
-| Touchpad → mouse | relative, like a laptop's pad: the finger's travel since the last sample moves the pointer, `travel · min(5, 1 + accel · 10 · |travel|) · scale` counts (the pad spans -1..1, so 2.0 is its width), accumulated in sub-pixels. The first sample of a touch only anchors, a lifted finger moves nothing, so where the finger rests means nothing and a touch at the edge does not jump. A pad is a pointing surface: no dead zone, no γ | `accel` 0.25, `scale` 72 counts per pad unit (the Deck profile; the DualShock 4 and DualSense profiles take 72 on x and 72 · height / 1920 on y, below) |
+| Touchpad → mouse | relative, like a laptop's pad: the finger's travel since the last sample moves the pointer, `travel · min(5, 1 + accel · 10 · |travel|) · scale` counts (the pad spans -1..1, so 2.0 is its width), accumulated in sub-pixels. The first sample of a touch only anchors, a lifted finger moves nothing, so where the finger rests means nothing and a touch at the edge does not jump. A pad is a pointing surface: no dead zone, no γ | `accel` 0.25, `scale` 92 counts per pad unit (the Deck profile, raised from 72 for the Kempston mouse: a pointer that crossed too little; the DualShock 4 and DualSense profiles take 72 on x and 72 · height / 1920 on y, below) |
 | Host sensitivity on top | `[INPUT] MouseScale` (2^n, -3..3) multiplies every pointer count from a pad or stick, as it does the host mouse's; the fraction is carried | 0 (identity) |
 | Stick → mouse, precision | a held modifier (default `rstick.click`) scales speed by 0.25 | |
 | Gyro → mouse | angular velocity × scale, only while a chosen control is held (a ratchet), never always-on | hold `lb` |
@@ -588,8 +588,12 @@ picture shows those callouts as "not wired on this board".
   rule with `player: N` ([haptics.md §6](haptics.md#6-effects)) plays on that pad only. A game that tells its players by
   keys (a fighting game: one key set each) binds the first pad in `play` and the second in `play@2`
   (`games/sprinter/tmnt-fighters.yaml`: pad 1 the Kempston joystick and V G B H J, pad 2 the cursor keys and `pc.*`).
-- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` name keys the ZX matrix has no
-  place for. They travel as HostKeys rows 8 and 9, are held outside the TTD blob (its format and hash stay as they were)
-  and reach a machine whose input is a PS/2 keyboard (Sprinter) only; elsewhere they do nothing.
+- **PC-only keys.** `pc.delete`, `pc.insert`, `pc.end`, `pc.home`, `pc.pageup`, `pc.pagedown` and (2026-11-16, for the
+  PC games of the TS-Conf VDAC4 board: DOOM) `pc.escape` (`pc.esc`), `pc.tab`, `pc.backspace`, `pc.alt`, `pc.ctrl`,
+  `pc.f1` .. `pc.f12` name keys the ZX matrix has no place for (Break on the matrix is Caps Shift + Space, which a PS/2
+  keyboard gets as Shift and Space, not Escape). They travel as HostKeys rows 8 to 12, five to a row in the order of
+  their codes (0xE0..), are held outside the TTD blob (its format and hash stay as they were) and reach a machine
+  whose input is a PS/2 keyboard (Sprinter, TS-Conf and ZX-Evo when the host keys reach PS/2) only; elsewhere they do
+  nothing.
 - With several emulator instances, each device follows its instance assignment
   ([architecture.md §9](architecture.md#9-several-emulator-instances)); two players on two machines is two pins.

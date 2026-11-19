@@ -1,0 +1,1 @@
+push bc,de,hl,ix,iy,af:pop hl,bc,de,iy,ix,af:nop 2:push bc:push de:push hl:push ix:push iy:push af:pop hl:pop bc:pop de:pop iy:pop ix:pop af:nop:nop

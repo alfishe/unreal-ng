@@ -1,0 +1,1 @@
+defb 'machin&truc : ld a,&12 : bidule',0

@@ -56,6 +56,10 @@ public:
     /// A 9-bit colour (RRRGGGBBb) as RGBA bytes
     static uint32_t Rgba(uint16_t colour9);
 
+    /// The colour of the frame outside the 320 x 256 grid (the HDMI picture's outer border, ScreenNext): the ULA's border, or the
+    /// fallback colour NR #4A where the ULA has none (off, ULANext full ink, the border in the global transparent colour)
+    static uint32_t OuterBorderRgba(const NextVideoInputs& in);
+
     /// Where the ULA's paper sub-pixel `sub` (0..511, 14 MHz) of paper row `py` (0..191) takes its bitmap bit and its attribute from
     /// (zxula.vhd: the screen mode of port #FF bits 2:0 - 000 while the shadow screen is shown - the Y scroll NR #27, the X scroll NR #26
     /// and the half-pixel fine scroll NR #68 bit 2). Offsets are inside the 16K page of the screen (bank 5, or 7 for the shadow screen)
@@ -87,6 +91,7 @@ private:
     static unsigned DrawLayers(const NextVideoInputs& in, unsigned y, Pixel* ula, Pixel* layer2, Pixel* tiles, Pixel* sprites,
                                uint8_t* spriteNumbers);
     static void UlaLine(const NextVideoInputs& in, unsigned y, Pixel* line);
+    static bool UlaBorderPixel(const NextVideoInputs& in, Pixel& p);
     static void LoResLine(const NextVideoInputs& in, unsigned y, Pixel* line);
     static void ApplyUlaClip(const NextVideoInputs& in, unsigned y, Pixel* line);
     static bool SpriteLine(const NextVideoInputs& in, unsigned y, Pixel* line, uint8_t* numbers);

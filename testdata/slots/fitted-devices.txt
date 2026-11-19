@@ -42,7 +42,7 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:137 15:39 17:57 18:48 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 61:32 notRecorded 0
+ttd 0:77 1:64 2:34 3:21 7:20 8:89 10:216 12:138 15:39 17:57 18:56 19:38 21:18 22:1135 23:14 24:47 35:52 38:20 41:42 55:29 56:22 61:32 notRecorded 0
 == atm450
 model 7
 mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -70,7 +70,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 0:77 1:72 2:34 3:21 7:20 8:90 10:216 12:137 17:50 35:52 56:22 notRecorded 0
+ttd 0:77 1:72 2:34 3:21 7:20 8:90 10:216 12:138 17:50 35:52 56:22 notRecorded 0
 == atm710
 model 6
 mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -98,7 +98,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:137 17:50 26:83 35:52 36:16 56:22 notRecorded 0
+ttd 0:77 1:72 2:34 3:21 7:20 8:85 10:216 12:138 17:50 26:83 35:52 36:16 56:22 notRecorded 0
 == gmx
 model 11
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -124,7 +124,7 @@ port 78FD FF27/7825 GMX #8000 RAM page (stored XOR 2); IN: page, BRD1, magic bit
 port 7AFD FF27/7A25 GMX scroll start low (bits 7-4); IN: paging status, BRD0
 port 7CFD FF27/7C25 GMX scroll start high (bits 13-8)
 port 7EFD FF27/7E25 GMX turbo, ROM plane, 640x200, MagEnable; IN: status
-port 7FFD D027/5025 Memory paging (host Scorpion, after the GMX file)
+port 7FFD C027/4025 Memory paging (host Scorpion, after the GMX file)
 port BFFD C002/8000 AY / TurboSound data
 port DFFD FF27/DF25 GMX RAM page bits 4-6 at #C000
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
@@ -138,7 +138,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 15:39 17:50 18:95 23:14 35:52 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:138 15:39 17:50 18:95 23:14 35:52 54:44 56:22 notRecorded 0
 == next
 model 16
 mixer [Beeper] [Next AY 1] [Next AY 2] [Next AY 3] [Next DAC]
@@ -163,6 +163,40 @@ port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
 ttd 1:72 2:34 7:20 20:39 23:14 27:169 35:52 56:22 62:781 63:38 notRecorded 0
+== p2666
+model 21
+mixer [Beeper] [TS AY 1] [TS AY 2] [COVOX]
+turbosound none
+gs none
+covox none
+network.card 0 comport 0
+port 0000 0006/0000 Nemo IDE (A2 = A1 = 0; even registers read as #FE)
+port 001F 00FF/001F Kempston joystick
+port 001F FFFF/001F Beta128 FDC status/command
+port 003F FFFF/003F Beta128 FDC track
+port 0057 00FF/0057 Z-Controller SD data (config with A15 = 1 in DOS)
+port 005F FFFF/005F Beta128 FDC sector
+port 0077 00FF/0077 Z-Controller SD config
+port 007F FFFF/007F Beta128 FDC data
+port 00BF 00FF/00BF #BF bit 0: DOS stays on in RAM
+port 00FB 00FF/00FB Covox (mono #FB)
+port 00FE 0001/0000 Keyboard / Beeper / Border / MIC+EAR
+port 00FF 00FF/00FF Beta128 system register
+port 00FF 00FF/00FF Palette write (entry = border colour, data D7..0 + A15..8)
+port 37F7 3FFF/37F7 Dispatcher RAM page register, x7F7 (A15:A14 = window)
+port 3FF7 3FFF/3FF7 Dispatcher window register (A15:A14 = window)
+port 7FFD 8002/0000 Memory paging (64 pages via bits 7..5, shadow screen, ROM, lock)
+port BFF7 FFFF/BFF7 Gluk CMOS data
+port BFFD C002/8000 AY / TurboSound data
+port DFF7 FFFF/DFF7 Gluk CMOS address
+port EFF7 F029/E021 #EFF7: 16c / 128 mode / RAM0 / 3.5 MHz / CMOS enable
+port F8EF F8FF/F8EF UART (16550-like, register = A10..8)
+port FADF 023F/021F Kempston mouse buttons (+ wheel)
+port FBDF 023F/021F Kempston mouse X axis
+port FF77 00FF/0077 ATM register (video mode, 28 MHz, CP/M = A9, pen2 = A14)
+port FFDF 023F/021F Kempston mouse Y axis
+port FFFD C002/C000 AY / TurboSound register select (chip select)
+ttd 1:72 2:34 7:20 15:40 17:50 18:49 23:14 35:52 56:22 notRecorded 0
 == pentagon128k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -193,7 +227,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:142 17:50 23:14 35:52 56:22 notRecorded 0
 == pentagon512k
 model 0
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -224,7 +258,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 17:50 23:14 35:52 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:142 17:50 23:14 35:52 56:22 notRecorded 0
 == profi
 model 8
 mixer [Beeper] [AY] [COVOX]
@@ -285,9 +319,9 @@ port 00BA 00FE/00BA SMUC board (EEPROM / RTC / PIC / IDE window)
 port 00DD 0023/0001 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
-port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
-port 7EFD D127/5025 ProfROM service-window latch
-port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port 1FFD C027/0025 Window latch / Shadow Monitor (bit 1)
+port 7EFD C127/4025 ProfROM service-window latch
+port 7FFD C027/4025 Memory paging (incl. extended RAM bits)
 port BFFD C002/8000 AY / TurboSound data
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
@@ -300,7 +334,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:138 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == scorpion
 model 9
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -318,8 +352,8 @@ port 00BB FFFF/00BB Registered peripheral device
 port 00DD 0027/0005 Scorpion Covox (8-bit DAC on the printer data latch, write only)
 port 00FE 0023/0022 Keyboard / Beeper / Border / MIC+EAR
 port 00FF 00FF/00FF Beta128 system register
-port 1FFD D027/1025 Window latch / Shadow Monitor (bit 1)
-port 7FFD D027/5025 Memory paging (incl. extended RAM bits)
+port 1FFD C027/0025 Window latch / Shadow Monitor (bit 1)
+port 7FFD C027/4025 Memory paging (incl. extended RAM bits)
 port BFFD C002/8000 AY / TurboSound data
 port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
@@ -332,7 +366,7 @@ fulldecode 00FF/00C6 slot 1
 fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
-ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:137 18:48 23:14 35:52 54:44 56:22 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 6:20 7:20 10:216 12:138 18:48 23:14 35:52 54:44 56:22 notRecorded 0
 == spectrum128
 model 2
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2]
@@ -475,7 +509,7 @@ port FADF 023F/021F Kempston mouse buttons (+ wheel)
 port FBDF 023F/021F Kempston mouse X axis
 port FFDF 023F/021F Kempston mouse Y axis
 port FFFD C002/C000 AY / TurboSound register select (chip select)
-ttd 0:77 1:64 2:34 7:20 12:138 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
+ttd 0:77 1:64 2:34 7:20 12:142 17:70 18:52 20:39 23:14 25:142 28:42 29:93 30:32 31:39 32:42 33:16 35:52 45:var 56:22 notRecorded 0
 == ts-conf
 model 4
 mixer [Beeper] [TSFM SSG 1] [TSFM SSG 2] [TSFM FM 1] [TSFM FM 2] [COVOX] [NeoGS] [NeoGS MP3] [MoonSound FM (OPL3)] [MoonSound PCM (wave)]
@@ -504,6 +538,6 @@ fulldecode 00FF/00C7 slot 1
 fulldecode 00FF/007E slot 1
 fulldecode 00FF/007F slot 1
 fulldecode 00FF/00EF slot 1
-ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:138 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
+ttd 1:72 2:34 3:21 4:109 7:20 10:216 12:142 15:39 16:189 17:50 18:99 19:38 23:14 24:47 35:52 38:20 39:47 40:40 55:29 56:22 61:32 notRecorded 0
 == zx-diagnostics
 config turbosound 1 gs 4 moonsound 1 covoxFB 0 sd 1 network.card 0

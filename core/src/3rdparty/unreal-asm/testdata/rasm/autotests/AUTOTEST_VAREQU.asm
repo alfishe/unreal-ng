@@ -1,0 +1,1 @@
+label1 equ #C000:label2 equ (label1*2)/16:label3 equ label1-label2:label4 equ 15:var1=50*3+2:var2=12*label1:var3=label4-8:var4=label2:nop

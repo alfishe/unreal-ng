@@ -5,6 +5,7 @@
 #include <emulator/emulatorcontext.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
+#include <emulator/media/floppyformats.h>
 #include <emulator/io/storage/fs/diskfs.h>
 #include <emulator/io/fdc/fdd.h>
 #include <emulator/io/fdc/wd1793.h>
@@ -417,7 +418,9 @@ void CLIProcessor::HandleDiskSector(const ClientSession& session, EmulatorContex
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -504,7 +507,9 @@ void CLIProcessor::HandleDiskTrack(const ClientSession& session, EmulatorContext
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -567,7 +572,9 @@ void CLIProcessor::HandleDiskSysinfo(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -660,7 +667,9 @@ void CLIProcessor::HandleDiskCatalog(const ClientSession& session, EmulatorConte
         return;
     }
 
-    DiskImage* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    DiskImage* diskImage = snapshot.get();
     if (!diskImage)
     {
         session.SendResponse(std::string("Error: Cannot access disk image") + NEWLINE);
@@ -742,7 +751,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
         session.SendResponse(std::string("Error: Missing drive parameter") + NEWLINE +
                              "Usage: disk create <drive> [cylinders] [sides] [format]" + NEWLINE +
                              "  format: auto (plus3 on a +3, unformatted elsewhere), unformatted (raw), plus3, trdos" + NEWLINE +
-                             "  cylinders: 40 or 80, sides: 1 or 2 (default: the format's, 80/2 or 40/1)" + NEWLINE);
+                             "  " + BlankFloppySpec::GeometryHelp + " (default: the format's, 80/2 or 40/1)" + NEWLINE);
         return;
     }
 
@@ -783,7 +792,7 @@ void CLIProcessor::HandleDiskCreate(const ClientSession& session, std::shared_pt
     const int sides = numbers.size() > 1 ? numbers[1] : 0;
     if (numbers.size() > 2 || cylinders < 0 || cylinders > 255 || sides < 0 || sides > 255)
     {
-        session.SendResponse(std::string("Error: Cylinders must be 40 or 80, sides 1 or 2") + NEWLINE);
+        session.SendResponse(std::string("Error: expected ") + BlankFloppySpec::GeometryHelp + NEWLINE);
         return;
     }
 

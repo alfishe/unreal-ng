@@ -1089,7 +1089,7 @@ bool EmulatorManager::ResumeEmulator(const std::string& emulatorId, const execut
     return result.outcome != execution::Outcome::Refused;
 }
 
-bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
+bool EmulatorManager::ResetEmulator(const std::string& emulatorId, bool hard)
 {
     // Block state changes during shutdown
     if (_isShuttingDown.load())
@@ -1103,8 +1103,9 @@ bool EmulatorManager::ResetEmulator(const std::string& emulatorId)
     auto it = _emulators.find(emulatorId);
     if (it != _emulators.end())
     {
-        it->second->Reset();
-        LOGINFO("EmulatorManager::ResetEmulator - Reset emulator with ID '%s'", emulatorId.c_str());
+        it->second->Reset(hard);
+        LOGINFO("EmulatorManager::ResetEmulator - %s reset of emulator with ID '%s'", hard ? "Hard" : "Soft",
+                emulatorId.c_str());
         return true;
     }
 

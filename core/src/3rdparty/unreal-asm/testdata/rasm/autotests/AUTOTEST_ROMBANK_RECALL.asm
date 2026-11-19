@@ -1,0 +1,1 @@
+buildsna: bank 0 : nop: rombank 0: nop: rombank 1: nop 5: rombank 0: assert $==1

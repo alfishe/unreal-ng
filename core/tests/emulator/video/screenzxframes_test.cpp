@@ -59,7 +59,8 @@ const FrameGolden kFrameGolden[] = {
     {"ATM710", nullptr, 640, 288, 0x2FC6C35968C6F354ull, 0x2FC6C35968C6F354ull},
     // ATM3 re-recorded 2026-10-01 (E8b): 150 real frames of the BIOS now (RunNFrames counts emulated time across
     // the 14 MHz switch), the clock select taken over at the next M1 refresh
-    {"ATM3", nullptr, 352, 288, 0x65DE3531E7BF4A70ull, 0x65DE3531E7BF4A70ull},
+    // ATM3 re-recorded 2026-11-14 (6de779c75): the ERS's floppy-boot settings on blank NVRAM, another BIOS screen
+    {"ATM3", nullptr, 352, 288, 0x94B3C4354DF1CC4Cull, 0x94B3C4354DF1CC4Cull},
 };
 
 constexpr unsigned kFrames = 150;

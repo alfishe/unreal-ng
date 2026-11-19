@@ -155,6 +155,9 @@ void EmulatorAPI::getStateMemory(const HttpRequestPtr& /*req*/, std::function<vo
     // GMX: the card's register file next to the host Scorpion's latches (DeviceState::GmxPaging)
     if (config.mem_model == MM_GMX)
         ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
+    // Pentagon 2.666 LE: the window maps and the board latches (DeviceState::P2666Paging)
+    if (config.mem_model == MM_P2666)
+        ret["p2666"] = StateNodeToJson(DeviceState::P2666Paging(context));
 
     // Sprinter: #7FFD / #1FFD and the windows live in the PLD (DeviceState::SprinterPaging)
     if (config.mem_model == MM_SPRINTER)
@@ -324,6 +327,9 @@ void EmulatorAPI::getStateMemoryRAM(const HttpRequestPtr& /*req*/,
     // GMX: the card's register file (DeviceState::GmxPaging)
     if (config.mem_model == MM_GMX)
         ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
+    // Pentagon 2.666 LE: the window maps and the board latches (DeviceState::P2666Paging)
+    if (config.mem_model == MM_P2666)
+        ret["p2666"] = StateNodeToJson(DeviceState::P2666Paging(context));
 
     // Sprinter: the window kinds (fast RAM, vROM, graphics, ISA) and the PLD latches
     if (config.mem_model == MM_SPRINTER)
@@ -766,7 +772,9 @@ void EmulatorAPI::writeMemory(const HttpRequestPtr& req, std::function<void(cons
         refused = CpuView::Write(emulator.get(), cpu, "WebAPI memory write", address, bytes, &bytesWritten);
     }
     else
-        refused = emulator->EditMemoryFromTool("WebAPI memory write", [&]() {
+        refused = emulator->EditMemoryFromTool(Emulator::ToolEdit::Of("WebAPI memory write", "memory", address,
+                                                                      data.size()),
+                                               [&]() {
             for (Json::ArrayIndex i = 0; i < data.size(); i++)
             {
                 memory->DirectWriteToZ80Memory(address + i, static_cast<uint8_t>(data[i].asUInt()));
@@ -1387,7 +1395,10 @@ void EmulatorAPI::writePage(const HttpRequestPtr& req, std::function<void(const 
     Json::Value& data = (*body)["data"];
     size_t bytesWritten = 0;
     // A page edit behind the CPU's back: TTD must see it like any other tool write
-    const std::string refused = emulator->EditMemoryFromTool("WebAPI page write", [&] {
+    Emulator::ToolEdit what = Emulator::ToolEdit::Of("WebAPI page write", "page", static_cast<int32_t>(offset),
+                                                     data.size());
+    what.page = std::string(isCache ? "CACHE" : isRAM ? "RAM" : "ROM") + std::to_string(page);
+    const std::string refused = emulator->EditMemoryFromTool(what, [&] {
         for (Json::ArrayIndex i = 0; i < data.size() && (offset + i) < PAGE_SIZE; i++)
         {
             pagePtr[offset + i] = static_cast<uint8_t>(data[i].asUInt());
@@ -1800,6 +1811,9 @@ void EmulatorAPI::getStatePaging(const HttpRequestPtr& /*req*/, std::function<vo
     // GMX: the card's register file, the same view every interface shows (DeviceState::GmxPaging)
     if (config.mem_model == MM_GMX)
         ret["gmx"] = StateNodeToJson(DeviceState::GmxPaging(context));
+    // Pentagon 2.666 LE: the window maps and the board latches (DeviceState::P2666Paging)
+    if (config.mem_model == MM_P2666)
+        ret["p2666"] = StateNodeToJson(DeviceState::P2666Paging(context));
 
     // Top-level flags
     ret["paging_locked"] = (state.p7FFD & PORT_7FFD_LOCK) != 0;

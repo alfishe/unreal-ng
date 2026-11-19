@@ -102,7 +102,7 @@ const std::vector<std::string>& OptionsFor(const std::string& action)
     static const std::vector<std::string> review = {"op",     "id",     "verdict", "label",      "title",
                                                     "comment", "kind",  "names",   "by",         "experiment",
                                                     "ranges", "reason", "offset",  "limit"};
-    static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding"};
+    static const std::vector<std::string> experiment = {"spec", "path", "parallel", "finding", "keep_branches", "run"};
     static const std::vector<std::string> trace = {"from_frame", "from_tinframe", "to_frame", "to_tinframe", "path",
                                                    "max_cycles"};
     static const std::vector<std::string> cover = {"budget", "per_branch", "frames", "parallel", "limit", "ranges"};

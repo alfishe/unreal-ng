@@ -2,6 +2,8 @@
 
 #include <common/stringhelper.h>
 
+#include <array>
+#include <memory>
 #include <queue>
 #include <vector>
 
@@ -17,6 +19,14 @@
 #include "stdafx.h"
 
 class IWD1793Observer;
+
+/// The chip of the WD177x / WD179x family a controller emulates. The FSM is shared; the variant changes the timing
+/// tables, the motor / ready lines and the meaning of some command and status bits (see WD1793::Is1772())
+enum class WdVariant : uint8_t
+{
+    Wd1793,  ///< WD1793 / KR1818VG93: Beta 128 and its clones (READY input, HLD / HLT, side compare)
+    Wd1772,  ///< WD1772-00: MGT +D (motor on output, spin-up, no READY, double density only)
+};
 
 class WD1793 : public PortDecoder, public PortDevice, public ttd::TTDSerializable
 {
@@ -512,7 +522,9 @@ public:
         WDS_HEADLOADED = 0x20,
         WDS_WRITEFAULT = 0x20,
         WDS_WRITEPROTECTED = 0x40,  // Disk is write-protected
-        WDS_NOTRDY = 0x80           // Drive is not ready
+        WDS_NOTRDY = 0x80,          // Drive is not ready
+        WDS_SPINUP_1772 = 0x20,     // WD1772, Type I: the spin-up sequence has completed
+        WDS_MOTORON_1772 = 0x80     // WD1772: the motor on (MO) output is active
     };
 
     enum BETA_STATUS_BITS : uint8_t
@@ -662,6 +674,19 @@ public:
     static constexpr const uint8_t STEP_TIMINGS_MS_1MHZ[] = {6, 12, 20, 30};
     static constexpr const uint8_t STEP_TIMINGS_MS_2MHZ[] = {3, 6, 10, 15};
 
+    /// WD1772-00 (data sheet, docs/WD1793/datasheeets/WD177X-00): step rates of r1r0 at its 8 MHz clock, head settle
+    /// of E / V, the spin-up of a Type I command with h = 0 and of every Type II / III command, and the motor timeout
+    static constexpr const uint8_t STEP_TIMINGS_MS_1772[] = {6, 12, 2, 3};
+    static constexpr const size_t HEAD_SETTLE_MS_1772 = 15;
+    static constexpr const size_t SPIN_UP_REVOLUTIONS_1772 = 6;
+    static constexpr const size_t MOTOR_OFF_REVOLUTIONS_1772 = 9;
+
+    /// Register numbers of ReadRegister() / WriteRegister() (address lines A1 A0 of the chip)
+    static constexpr const uint8_t REG_COMMAND_STATUS = 0;
+    static constexpr const uint8_t REG_TRACK = 1;
+    static constexpr const uint8_t REG_SECTOR = 2;
+    static constexpr const uint8_t REG_DATA = 3;
+
     // Disk rotation and timing constants
     static constexpr const size_t DISK_ROTATION_PERIOD_TSTATES = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
     static constexpr const size_t INDEX_STROBE_DURATION_TSTATES =
@@ -686,7 +711,22 @@ protected:
     PortDecoder* _portDecoder = nullptr;
     bool _chipAttachedToPortDecoder = false;
 
+    WdVariant _variant = WdVariant::Wd1793;
+    /// The drives on the controller's select lines (drive 0..3); null = no drive on that line. The Beta 128 controller
+    /// uses coreState.diskDrives[], a card passes its own
+    std::array<FDD*, 4> _drives{};
+    /// The drives are coreState.diskDrives[] (the Beta 128 constructor): the destructor reaches them only through coreState
+    bool _betaDrives = false;
+    /// Selected while a card's latch selects no drive: no disk, so not ready and no index pulses
+    std::unique_ptr<FDD> _noDrive;
+    /// WD1772: the time the current spin-up completes (status bit 5 of Type I); SIZE_MAX = no spin-up done since MO
+    /// last went high
+    size_t _spinUpDoneAt = SIZE_MAX;
+
     FDD* _selectedDrive = nullptr;
+    /// The drive selected when the last command started: its transfer pointers point into that drive's disk even
+    /// after the program selects another one (onDiskChanged). Null = not known (after a TTD restore): any change clears
+    FDD* _commandDrive = nullptr;
 
     // New WD93 state to migrate to
     WD93State _wd93State;
@@ -743,6 +783,7 @@ protected:
     bool _loadHead = false;  // Determines if load should be loaded or unloaded during Type1 command
     bool _verifySeek =
         false;  // Determines if VERIFY (check for ID Address Mark) needs to be done after head positioning
+    uint16_t _hapticSteps = 0;  // step pulses since TakeHapticSteps
     uint8_t _steppingMotorRate =
         6;  // Step period in ms of the current Type I command: STEP_TIMINGS_MS_1MHZ / STEP_TIMINGS_MS_2MHZ
             // by the r1r0 bits and the controller clock at the time of the step pulse
@@ -787,6 +828,7 @@ protected:
     size_t _tstatesPerByte = WD93_TSTATES_PER_FDC_BYTE;  // Byte cell of the track in use (112 T MFM 6250, 224 T FM 3125)
     size_t _rotationalDelayTStates = 0;             // Byte cells between the head and the data field of the matched sector
     size_t _crcStartPosition = 0;        // Start position for CRC calculation (set on F5 sync byte)
+    bool _writeTrackEscapeNext = false;  // WRITE TRACK: the byte after an F7 is written literally and joins the next CRC
 
     // FDD state
     // TODO: all timeouts must go to WD93State.counters
@@ -900,6 +942,8 @@ public:
     /// holds no command in flight)
     void RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
                                   bool stepIn);
+    /// The same without the Beta 128 system register (a card controller: its latch is the card's)
+    void RestoreTaskRegisters(uint8_t track, uint8_t sector, uint8_t data, uint8_t status, bool stepIn);
     /// Current state-machine state (DeviceState::Fdc report)
     WDSTATE getFSMState() const
     {
@@ -975,6 +1019,24 @@ public:
     static constexpr size_t kTransferContextSize = 112;
     void SaveTransferContext(uint8_t* dst) const;
     void LoadTransferContext(const uint8_t* src);
+    /// The TTD blob's size (TTDStateSize): registers, FSM, counters, four drives
+    static constexpr size_t kTtdStateSize = 254;
+    /// State a card controller keeps beyond the blob, whose layout the Beta recordings share: the WD1772's spin-up
+    /// deadline (status bit 5) and "no drive on the select lines" (the blob restores the last drive index). A card's
+    /// own TTD blob carries them and puts them back after TTDLoadState, without touching motor or drives
+    size_t SpinUpDoneAt() const
+    {
+        return _spinUpDoneAt;
+    }
+    void RestoreSpinUpDoneAt(size_t time)
+    {
+        _spinUpDoneAt = time;
+    }
+    bool NoDriveSelected() const
+    {
+        return _selectedDrive == _noDrive.get();
+    }
+    void RestoreNoDriveSelected();
     /// Rate the chip writes at: derived from its clock (datasheet p.19, "all times double when CLK = 1 MHz")
     static FdcDataRate WriteRateForClock(FdcClock clock)
     {
@@ -993,7 +1055,12 @@ public:
 
     /// region <Constructors / destructors>
 public:
+    /// The Beta 128 controller: a WD1793 with the four drives of coreState.diskDrives[] (created here), history `beta128`
     WD1793(EmulatorContext* context);
+    /// A controller of a card: the variant, the card's drives (not owned, null = no drive on that select line) and the id
+    /// of its command history (unique per machine, e.g. `plusd`). Ports are the card's: it calls ReadRegister() /
+    /// WriteRegister(), selectDriveLine() and setSide()
+    WD1793(EmulatorContext* context, WdVariant variant, const std::array<FDD*, 4>& drives, const char* historyId);
     virtual ~WD1793();
     /// endregion </Constructors / destructors>
 
@@ -1021,6 +1088,27 @@ public:
     {
         return _commandHistory;
     }
+    /// Register access by number (REG_*): what the chip does on a read / write with A1 A0 = reg. The Beta 128 ports
+    /// map onto these; a card decodes its own ports and calls them
+    uint8_t ReadRegister(uint8_t reg);
+    void WriteRegister(uint8_t reg, uint8_t value);
+    /// What ReadRegister would return, without its side effects (no INTRQ / DRQ clear, no state advance): debugger
+    uint8_t PeekRegister(uint8_t reg) const;
+
+    WdVariant Variant() const
+    {
+        return _variant;
+    }
+    bool Is1772() const
+    {
+        return _variant == WdVariant::Wd1772;
+    }
+    /// The drive on select line `index` (0..3), null when none
+    FDD* DriveAt(uint8_t index) const;
+    /// The card's drive select latch: line 0..3, or -1 = no drive selected (the +D with both select bits low)
+    void selectDriveLine(int drive);
+    /// The card's side select latch (the WD1772 has no side output)
+    void setSide(bool side1);
     /// endregion </Methods>
 
     /// region <Helper methods>
@@ -1102,7 +1190,13 @@ protected:
     /// A queued command step from its tag (FifoKind); the drive by index, and back
     FSMEvent MakeFifoEvent(const FifoTag& tag);
     uint8_t DriveIndexOf(const FDD* drive) const;
-    FDD* DriveAt(uint8_t index) const;
+    /// The media slot of the selected drive: where guest writes are reported (FloppyDriveSlot::NoteSlotWrite)
+    std::string SlotIdOfSelectedDrive() const;
+    /// WD1772: the spin-up wait in front of a command that started with the motor off; the status as the 1772 shows it
+    void applySpinUp1772(uint8_t command, bool motorWasOn);
+    uint8_t Status1772(uint8_t status) const;
+    /// The four Beta 128 drives, created in coreState.diskDrives[] (the default constructor)
+    static std::array<FDD*, 4> CreateBetaDrives(EmulatorContext* context);
 
     /// endregion </Command handling>
 
@@ -1362,6 +1456,15 @@ public:
     /// Asleep: handleStep returns at once. Awake and inert, it still stamps its time on every step (handleStepAwake)
     bool IsAsleep() const { return _sleeping; }
     void handleFrameEnd();
+    /// The head's step pulses since the last call (haptics: the drive's mechanics, HapticDriveFrame), with the step
+    /// period of the last one in ms; counted always, one increment per pulse
+    uint16_t TakeHapticSteps(uint8_t& stepMs)
+    {
+        const uint16_t steps = _hapticSteps;
+        _hapticSteps = 0;
+        stepMs = _steppingMotorRate;
+        return steps;
+    }
     /// handleStep's work while the controller is awake
     void handleStepAwake();
     /// endregion </Emulation events>
@@ -1458,6 +1561,8 @@ class WD1793CUT : public WD1793
 {
 public:
     WD1793CUT(EmulatorContext* context) : WD1793(context) {};
+    WD1793CUT(EmulatorContext* context, WdVariant variant, const std::array<FDD*, 4>& drives, const char* historyId)
+        : WD1793(context, variant, drives, historyId) {};
 
     using WD1793::_portDecoder;
     using WD1793::_selectedDrive;
@@ -1518,6 +1623,7 @@ public:
     using WD1793::isType3Command;
     using WD1793::isType4Command;
     using WD1793::processWD93Command;
+    using WD1793::selectDrive;
 
     using WD1793::cmdForceInterrupt;
     using WD1793::cmdReadAddress;
@@ -1569,6 +1675,7 @@ public:
     using WD1793::_rawDataBuffer;
     using WD1793::_rawDataBufferIndex;
     using WD1793::_crcStartPosition;
+    using WD1793::_writeTrackEscapeNext;
     using WD1793::_writeTrackLength;
     using WD1793::_currentSector;
     using WD1793::_currentReadTrack;

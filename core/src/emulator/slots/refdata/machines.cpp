@@ -663,6 +663,56 @@ constexpr Src kSprinterSources[] = { Src::SprinterSchematic, Src::SprinterHard, 
 
 // endregion
 
+// region <Pentagon 2.666 LE (docs/inprogress/2026-11-11-pentagon-2666-le/hardware-reference.md §4, §9)>
+// Every device is inside the FPGA (the MCU behind the CMOS clock, the UART and the mouse); the ZX-BUS connector
+// takes cards, none is shipped (HR §9)
+
+constexpr BusDef kP2666Buses[] = {
+    { .id = "ay-socket", .kind = BusKind::AySocket, .physicalSlots = 1,
+      .note = "no chip socket: the FPGA's two YM2149 cores (TurboSound, P2666Audio), unreal.ini keeps it empty" },
+    // The read mux gives the external data bus the CPU only for a port no board row answers (PaE.vhd:1493-1541)
+    { .id = "zxbus", .kind = BusKind::ZxBus, .signals = kNemoBus, .physicalSlots = 1,
+      .arbitration = Arbitration::BoardWins, .readRule = ReadRule::SlotOrder,
+      .note = "the board's ZX-BUS connector (IORQGE, external ROM, WAIT, BUSRQ, NMI, INT); no card is shipped. The board's "
+              "own write decodes need A1 or A2 = 1 (ebl, PaE.vhd:1658); A2 = A1 = 0 is the Nemo IDE's" },
+};
+// HR §4.1: FFFD = A15..14 = 11, A1..0 = 01; BFFD = A15..14 = 10, A1..0 = 01
+constexpr PortClaim kP2666AyClaims[] = {
+    { .mask = 0xC003, .match = 0xC001, .dir = Dir::InOut, .port = 0xFFFD,
+      .channel = Channel::SelectIndexed, .channelMask = 0x000F, .input = InputRole::AyIo, .channelName = "reg" },
+    { .mask = 0xC003, .match = 0x8001, .dir = Dir::Out, .port = 0xBFFD,
+      .channel = Channel::Indexed, .input = InputRole::AyIo, .channelName = "reg" },
+};
+// The mouse rows of the read mux: the full 16-bit address (PaE.vhd:1530-1534)
+constexpr PortClaim kP2666MouseClaims[] = {
+    { .mask = 0xFFFF, .match = 0xFADF, .dir = Dir::In, .port = 0xFADF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFBDF, .dir = Dir::In, .port = 0xFBDF, .input = InputRole::KempstonMouse },
+    { .mask = 0xFFFF, .match = 0xFFDF, .dir = Dir::In, .port = 0xFFDF, .input = InputRole::KempstonMouse },
+};
+// Nemo IDE outside the FPGA on A2 = A1 = 0; the even registers read as #FE (the mux's first row, D-5)
+constexpr PortClaim kP2666NemoIdeClaims[] = {
+    { .mask = 0x0007, .match = 0x0001, .dir = Dir::InOut },
+    { .mask = 0x0007, .match = 0x0000, .dir = Dir::Out },
+};
+constexpr BuiltInDef kP2666BuiltIns[] = {
+    { .id = "ay", .name = "TurboSound (two YM2149 cores in the FPGA)", .socket = "ay-socket",
+      .functions = kAyFunctions, .claims = kP2666AyClaims },
+    { .id = "beta128", .name = "Beta Disk (RAM-disk emulator; [P2666] BetaDisk=wd1793: a WD1793)", .functions = kBetaFunctions, .claims = kBetaClaims },
+    { .id = "kempston-joystick", .name = "Kempston joystick", .functions = kKempstonFunctions,
+      .claims = kKempstonClaims },
+    { .id = "kempston-mouse", .name = "Kempston mouse (MCU)", .functions = kMouseFunctions,
+      .claims = kP2666MouseClaims },
+    { .id = "sd-zc", .name = "Z-Controller SD", .functions = kSdZcFunctions, .claims = kSdZcClaims },
+    { .id = "ide-nemo", .name = "Nemo IDE", .functions = kNemoIdeFunctions, .claims = kP2666NemoIdeClaims },
+    { .id = "rtc", .name = "CMOS / RTC (MCU)", .functions = kRtcFunctions, .claims = kEvoRtcClaims },
+    { .id = "covox", .name = "Covox `#FB`", .claims = kCovoxFbClaims },
+    { .id = "com", .name = "UART (16550-like, in the FPGA)", .functions = kSerialEfFunctions, .claims = kEvoComClaims },
+    { .id = "ula", .name = "keyboard and border `#FE`", .claims = kUlaClaims },
+};
+constexpr Src kP2666Sources[] = { Src::KoePentagon2666, Src::RepoPentagon2666 };
+
+// endregion
+
 constexpr MachineDef kMachines[] = {
     { .model = MM_SPECTRUM48, .name = "48K", .variant = "Sinclair 16K / 48K", .buses = kSpectrum48Buses,
       .builtIns = kSpectrum48BuiltIns, .fitted = kSpectrum48Fitted, .sources = kSpectrum48Sources },
@@ -697,6 +747,8 @@ constexpr MachineDef kMachines[] = {
       .fitted = kStdMouseFitted, .sources = kProfiSources },
     { .model = MM_PROFI3, .name = "PROFI3", .variant = "Profi v3.2", .buses = kProfiBuses, .builtIns = kProfi3BuiltIns,
       .fitted = kStdMouseFitted, .sources = kProfi3Sources },
+    { .model = MM_P2666, .name = "P2666", .variant = "Pentagon 2.666 LE (koe, 2025)", .buses = kP2666Buses,
+      .builtIns = kP2666BuiltIns, .sources = kP2666Sources },
     // The bare personality (N2): the 128K board's buses and built-ins until the Next's own devices exist, plus its
     // Kempston decode (PortDecoder_Next answers #1F / #37: a Kempston card there would double it)
     { .model = MM_NEXT, .name = "NEXT", .variant = "ZX Spectrum Next (bare personality: 128K board)",

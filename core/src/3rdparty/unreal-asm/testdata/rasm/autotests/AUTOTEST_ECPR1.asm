@@ -1,0 +1,1 @@
+buildcpr extended : bank 32 : label1 : assert {bank}label1==32 : nop

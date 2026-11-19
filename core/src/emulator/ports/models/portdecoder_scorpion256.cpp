@@ -806,11 +806,14 @@ bool PortDecoder_Scorpion256::IsPort_7FFD(uint16_t port)
     //    Scorpion ZS256
     //    port: #7FFD
     //    Full match  :  01111111 11111101
-    //    Match pattern: 01x1xxxx xx1xx101
-    //    Equation: /IORQ /WR M1 /A15 A14 A12 A5 A2 /A1 A0
+    //    Match pattern: 01xxxxxx xx1xx101
+    //    Equation: /IORQ /WR M1 /A15 A14 A5 A2 /A1 A0. A12 is not decoded (MAME scorpion.cpp, Unreal Speccy io.cpp:
+    //    neither decodes it). A2 stays: with it a SoundDrive in mode 2 (#F1 / #F9, A2 = 0) lives beside the paging
+    //    registers, as SQ-Tracker's Scorpion + SoundDrive player needs (PortDecoder_Scorpion256_Soundrive_Test);
+    //    MAME and Unreal Speccy leave A2 out too but emulate no SoundDrive on a Scorpion
     static const uint16_t port_7FFD_full    = 0b0111'1111'1111'1101;
-    static const uint16_t port_7FFD_mask    = 0b1101'0000'0010'0111;
-    static const uint16_t port_7FFD_match   = 0b0101'0000'0010'0101;
+    static const uint16_t port_7FFD_mask    = 0b1100'0000'0010'0111;
+    static const uint16_t port_7FFD_match   = 0b0100'0000'0010'0101;
 
     // Compile-time check
     static_assert((port_7FFD_full & port_7FFD_mask) == port_7FFD_match && "Mask pattern incorrect");
@@ -825,15 +828,22 @@ bool PortDecoder_Scorpion256::IsPort_1FFD(uint16_t port)
     //    Scorpion ZS256
     //    port: #1FFD
     //    Full match:    00011111 11111101
-    //    Match pattern: 00x1xxxx xx1xx101
-    //    /IORQ /WR M1 /A15 /A14 A12 A5 A2 /A1 A0
+    //    Match pattern: 00xxxxxx xx1xx101
+    //    /IORQ /WR M1 /A15 /A14 A5 A2 /A1 A0. A12 is not decoded: SQ-Tracker Digital's player pages with
+    //    XOR A : OUT (#FD),A - port #00FD - and the earlier A12 equation dropped it (patterns read from the wrong
+    //    page). A2: see IsPort_7FFD. The GMX card keeps the decode it was written against (A12 included)
     static const uint16_t port_1FFD_full    = 0b0001'1111'1111'1101;
-    static const uint16_t port_1FFD_mask    = 0b1101'0000'0010'0111;
-    static const uint16_t port_1FFD_match   = 0b0001'0000'0010'0101;
+    static const uint16_t port_1FFD_mask    = 0b1100'0000'0010'0111;
+    static const uint16_t port_1FFD_match   = 0b0000'0000'0010'0101;
+    static const uint16_t gmx_1FFD_mask     = 0b1101'0000'0010'0111;
+    static const uint16_t gmx_1FFD_match    = 0b0001'0000'0010'0101;
 
     // Compile-time check
     static_assert((port_1FFD_full & port_1FFD_mask) == port_1FFD_match && "Mask pattern incorrect");
+    static_assert((port_1FFD_full & gmx_1FFD_mask) == gmx_1FFD_match && "Mask pattern incorrect");
 
+    if (_context && _context->config.mem_model == MM_GMX)
+        return (port & gmx_1FFD_mask) == gmx_1FFD_match;
     bool result = (port & port_1FFD_mask) == port_1FFD_match;
 
     return result;
@@ -844,10 +854,10 @@ bool PortDecoder_Scorpion256::IsPort_7EFD(uint16_t port)
     //    Scorpion ZS256 ProfROM
     //    port: #7EFD
     //    Full match:    01111110 11111101
-    //    Match pattern: 01x1xxxx 0x1xx101 (A8 low separates it from #7FFD)
+    //    Match pattern: 01xxxxx0 xx1xx101 (the #7FFD family with A8 low)
     static const uint16_t port_7EFD_full    = 0b0111'1110'1111'1101;
-    static const uint16_t port_7EFD_mask    = 0b1101'0001'0010'0111;
-    static const uint16_t port_7EFD_match   = 0b0101'0000'0010'0101;
+    static const uint16_t port_7EFD_mask    = 0b1100'0001'0010'0111;
+    static const uint16_t port_7EFD_match   = 0b0100'0000'0010'0101;
 
     // Compile-time check
     static_assert((port_7EFD_full & port_7EFD_mask) == port_7EFD_match && "Mask pattern incorrect");

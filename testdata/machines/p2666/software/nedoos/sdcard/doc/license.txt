@@ -1,0 +1,8 @@
+This is a beta version.
+You can use it to create your projects.
+Please don't add targets, memory addressing schemes, screen modes. Please contact me.
+Please don't create branches.
+You can borrow library procedures and PC utilities, but not compiler/assembler code. Please contact me.
+
+Alone Coder/Conscience
+dmitry.alonecoder@gmail.com

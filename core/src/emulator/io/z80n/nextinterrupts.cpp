@@ -21,7 +21,7 @@ void NextInterruptSource::Reset()
     if (onStacklessNmi)
         onStacklessNmi(false);
     _nmiReturn[0] = _nmiReturn[1] = 0;
-    _enable0 = 0x81;  // the ULA interrupt and the expansion bus INT
+    _enable0 = 0x80;  // the expansion bus INT; the ULA and line enables are NR #22's bits (_lineControl)
     _enableCtc = _enableUart = 0;
     _dma[0] = _dma[1] = _dma[2] = 0;
     _lineControl = _lineValue = 0;
@@ -56,7 +56,11 @@ bool NextInterruptSource::WriteNr(uint8_t reg, uint8_t value)
             _nmiReturn[reg - kRegNmiReturnLow] = value;
             return true;
         case kRegEnable0:
-            _enable0 = value & 0x83;
+            // zxnext.vhd 5607-5610, 3621: bit 7 is the expansion bus enable, bits 1 and 0 are no flops of their own - the line
+            // interrupt enable is nr_22_line_interrupt_en and the ULA one is port_ff_reg(6) inverted, NR #22 bits 1 and 2
+            _enable0 = value & 0x80;
+            _lineControl = static_cast<uint8_t>((_lineControl & ~0x06) | (value & 0x02) | ((value & 0x01) ? 0 : 0x04));
+            _lineStartKnown = false;
             return true;
         case kRegEnableCtc:
             _enableCtc = value;
@@ -106,7 +110,8 @@ bool NextInterruptSource::ReadNr(uint8_t reg, uint8_t& value) const
             value = _nmiReturn[reg - kRegNmiReturnLow];
             return true;
         case kRegEnable0:
-            value = _enable0;
+            // zxnext.vhd 6239: nr_c4_int_en_0_expbus & "00000" & ula_int_en, ula_int_en = line enable & not port_ff_interrupt_disable
+            value = static_cast<uint8_t>(_enable0 | (_lineControl & 0x02) | ((_lineControl & 0x04) ? 0 : 0x01));
             return true;
         case kRegEnableCtc:
             value = ctcEnables ? ctcEnables() : _enableCtc;
@@ -152,14 +157,19 @@ uint16_t NextInterruptSource::Blocked() const
     return static_cast<uint16_t>(~(lowest - 1));
 }
 
+void NextInterruptSource::SetUlaInterruptDisabled(bool disabled)
+{
+    _lineControl = static_cast<uint8_t>(disabled ? (_lineControl | 0x04) : (_lineControl & ~0x04));
+}
+
 bool NextInterruptSource::Enabled(Source source) const
 {
     switch (source)
     {
         case kUla:
-            return (_enable0 & 0x01) != 0 && (_lineControl & 0x04) == 0;
+            return (_lineControl & 0x04) == 0;  // port_ff_interrupt_disable: NR #22 bit 2, NR #C4 bit 0, port #FF bit 6
         case kLine:
-            return (_enable0 & 0x02) != 0 || (!HardwareMode() && (_lineControl & 0x02) != 0);
+            return (_lineControl & 0x02) != 0;  // nr_22_line_interrupt_en: NR #22 bit 1 and NR #C4 bit 1 are the same flop
         case kUart0Rx:
             return (_enableUart & 0x03) != 0;
         case kUart1Rx:

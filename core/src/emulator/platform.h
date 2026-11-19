@@ -10,6 +10,7 @@
 #include "emulator/slots/slotconfig.h"
 #include "emulator/platforms/atm/atmstate.h"
 #include "emulator/platforms/gmx/gmxstate.h"
+#include "emulator/platforms/p2666/p2666state.h"
 #include "emulator/platforms/profi/profistate.h"
 #include "emulator/platforms/scorpion/scorpionstate.h"
 #include "emulator/platforms/zxevo/evostate.h"
@@ -54,6 +55,9 @@ constexpr char const* NC_COMPANION_CHANGED = "COMPANION_CHANGED";               
 constexpr char const* NC_BREAKPOINTS_CHANGED = "BREAKPOINTS_CHANGED";             // The breakpoint set changed — payload: BreakpointsChangedPayload (posted by BreakpointManager::RebuildFilters)
 constexpr char const* NC_SCRIPT_CALLBACKS_CHANGED = "SCRIPT_CALLBACKS_CHANGED";   // A script callback was added, removed, suspended, disabled, resumed or got a new policy - payload: ScriptCallbacksChangedPayload
 constexpr char const* NC_FRAME_WATCH = "FRAME_WATCH";   // An armed frame watch was added, removed, hit or failed - payload: FrameWatchPayload (debugger/watch/framewatch.h)
+constexpr char const* NC_DEBUG_EDITED = "DEBUG_EDITED";       // A tool edited the machine (registers, memory, a port, other state: Emulator::EditMemoryFromTool) - payload: DebugEditedPayload
+constexpr char const* NC_DEBUG_TARGETS_CHANGED = "DEBUG_TARGETS_CHANGED";   // The CPUs a debugger can stop on changed (a sound card with a CPU fitted, switched or removed) - payload: DebugTargetsChangedPayload
+constexpr char const* NC_SECTION_TIMER = "SECTION_TIMER";   // The section timer started, stopped, was cleared or stopped the machine at a slow pass - payload: SectionTimerPayload (debugger/analyzers/sectiontimer)
 constexpr char const* NC_EXECUTION_BREAKPOINT = "BREAKPOINT";                   // Breakpoint triggered — payload: BreakpointTriggeredPayload (instance-tagged since Sprint 0 / GDB TDD §6.3)
 constexpr char const* NC_SCANLINE_BOUNDARY = "SCANLINE_BOUNDARY";               // Scanline boundary reached (debug stepping only)
 
@@ -76,7 +80,7 @@ constexpr char const* NC_FEATURE_CHANGED = "FEATURE_CHANGED";                   
 constexpr char const* NC_SPEED_CHANGED = "SPEED_CHANGED";                       // Speed multiplier or turbo mode changed (payload: SpeedChangedPayload). Posted from Core after state is committed.
 constexpr char const* NC_DISK_AUTOSTART = "DISK_AUTOSTART";                       // TR-DOS disk autostart outcome or refusal (payload: DiskAutostartPayload). Posted from Emulator::AutostartDisk.
 constexpr char const* NC_FILE_LOADED = "FILE_LOADED";                           // Snapshot / tape / disk file loaded or load failed (payload: FileLoadedPayload). Posted from Emulator after the loader returns.
-constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
+constexpr char const* NC_GUEST_PROGRAM = "GUEST_PROGRAM";                       // The guest read a program file (NEX, SNX, SNA, TAP, SPG, ...) from a block medium (payload: GuestProgramPayload). Posted from the emulation thread by GuestProgramWatch; the host never loaded it, so this is the only way a game profile finds a title started inside the machine
 constexpr char const* NC_RZX_PLAYBACK = "RZX_PLAYBACK";                         // RZX playback started / finished / desync / stopped / failed (payload: RzxPlaybackPayload). Posted from RzxSession; finished and desync on the emulation thread
 constexpr char const* NC_MEDIA_INSERTED = "MEDIA_INSERTED";                     // A medium was attached to a slot (payload: MediaSlotPayload). Posted from MediaManager on the thread that applied it
 constexpr char const* NC_MEDIA_EJECTED = "MEDIA_EJECTED";                       // A medium was detached from a slot (payload: MediaSlotPayload)
@@ -95,7 +99,7 @@ constexpr char const* NC_AUDIO_ACTIVITY = "AUDIO_ACTIVITY";                     
 constexpr char const* NC_FILE_OPEN_REQUEST = "FILE_OPEN_REQUEST";               // File open request from emulator
 
 constexpr char const* NC_BREAKPOINT_CHANGED = "BREAKPOINT_CHANGED";             // Breakpoints added, removed, or modified
-constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified
+constexpr char const* NC_LABEL_CHANGED = "LABEL_CHANGED";                       // Labels added, removed, or modified - payload: LabelsChangedPayload (the instance; none from a label manager without one)
 constexpr char const* NC_ASM_SYNC = "ASM_SYNC";                                 // asm-synchronizer: the watched source changed, was built, or its assembler came / went (payload: AsmSyncPayload). Posted from the worker of AsmSyncService
 
 constexpr char const* NC_CPU_FREQ_CHANGED = "CPU_FREQ_CHANGED";                 // CPU frequency changed (3.5/7.0/14.0 MHz) - payload: CPUFreqPayload
@@ -357,6 +361,7 @@ enum MEM_MODEL : uint8_t
 	MM_PLUS2A,              // ZX Spectrum +2A (black): +3 hardware without the floppy controller
 	MM_SPRINTER,            // Peters Plus Sprinter Sp2000 (PLD port table, Z84C15, 21 MHz turbo)
 	MM_PROFI3,              // Profi v3 (Kramis / TOO "Profi" 3.x boards): monochrome hi-res, no extended ports; 512K
+	MM_P2666,               // Pentagon 2.666 LE (koe, 2025): Pentagon-1024 + ATM2 / BaseConf shadow ports, 2 MB, 3.5/14/28 MHz
 	N_MM_MODELS             // <End of enumeration>
 };
 
@@ -691,6 +696,17 @@ struct CONFIG
 	char vdac2_capture_path[FILENAME_MAX] = {};	// [VDAC2] CaptureFile: write the FT812's bus traffic as an .evr replay stream (vdac2-test-corpus.md §4); empty = off
 	uint8_t vdac2_line_budget_margin = 10;	// [VDAC2] LineBudgetMargin: the soft line budget, percent below HCYCLE x PCLK (0..50; line-budget-model.md)
 	char vdac2_rom_path[FILENAME_MAX] = "rom/ft81x.rom";	// [VDAC2] RomImage: the FT812's ROM fonts (FT81x ROM 0x1E0000-0x2FFFFF, extracted by tools/machines/tsconf/vdac2/)
+	bool ts_vdac4 = false;			// [MISC] TS_VDAC4: the VDAC4 board on the VDAC2 firmware build (ts_vdac = 7): Tang FPGA (FT812 core) + ESP32-S3 (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+	uint8_t vdac4_ramg_mb = 2;		// [VDAC4] RamG: RAM_G at power-on, 2 or 3 (MB); the ESP / apps switch it through FT_CFG
+	uint16_t vdac4_esp_boot_ms = 400;	// [VDAC4] EspBootMs: ESP boot after power-on (it arms the Tang then)
+	uint16_t vdac4_load_delay_ms = 174;	// [VDAC4] LoadDelayMs: Tang slot switch to the FT812 core
+	uint16_t vdac4_esp_mhz = 240;		// [VDAC4] EspMhz: ESP core clock (one instruction per cycle)
+	bool vdac4_esp_thread = true;		// [VDAC4] EspThread: the ESP app's jobs on a worker thread (same results either way)
+	bool vdac4_ft_thread = false;		// [VDAC4] FtThread: the Tang / FT812 work of the ESP's jobs on a thread of its own
+	bool vdac4_ft_draw_thread = true;	// [VDAC4] FtDrawThread: the FT812's drawing on its renderer thread (same picture)
+	uint8_t vdac4_esp_latency_ms = 4;	// [VDAC4] EspLatencyMs: 1..16 ms the app's outputs reach the firmware after its job
+	char vdac4_esp_cache[FILENAME_MAX] = {};	// [VDAC4] EspCache: ESP module cache directory; empty = <data dir>/vdac4/zm
+	char vdac4_esp_log[FILENAME_MAX] = {};		// [VDAC4] EspLog: ESP app log file; empty = off
 	IDE_CONFIG ide[4];				// ide0 master, slave; ide1 master, slave (a second channel: IDE_SPRINTER only)
 
 	uint32_t sd_delay;
@@ -926,6 +942,11 @@ struct CONFIG
 		// BIOS boots Wild Commander from the SD card); 0 = SETUP, blank cells (the
 		// BIOS opens its Setup Utility)
 		uint8_t ts_bios_sd_boot = 1;
+		// ZX-Evo BaseConf: the EVO Reset Service settings a machine starts with when no NVRAM file gives them
+		// ([EVO] ErsNvram=): 1 = FLOPPY, the ERS defaults with its virtual drive on D, so a disk in drive A boots
+		// ("TR-DOS boot"); 0 = BLANK, blank cells (the ERS writes its own defaults: virtual drive A, which hides
+		// drive A)
+		uint8_t ers_floppy_boot = 1;
 	} atm;
 
 	// Profi RTC battery-backed cells image ([PROFI] NvramFile=); empty = kept
@@ -994,6 +1015,9 @@ struct CONFIG
 	char gmx_rom_path[FILENAME_MAX];
 	char profi_rom_path[FILENAME_MAX];
 	char profi3_rom_path[FILENAME_MAX];   // [ROM] PROFI3: the Profi v3 system ROM
+	char p2666_rom_path[FILENAME_MAX];    // [ROM] P2666: Gluk, TR-DOS, BASIC 128, BASIC 48, FATALL, logo (6 pages)
+	char p2666_cmos_path[FILENAME_MAX];   // [P2666] CmosFile: the 64 CMOS cells the MCU keeps (empty: this session only)
+	bool p2666_betadisk_wd1793;           // [P2666] BetaDisk=wd1793: the WD1793 on drives A..D instead of the RAM disk
 	uint8_t profi_sync_prom;              // [PROFI] SyncProm: a ProfiSyncProm (ports/models/profiboard.h), 0 = the board's own
 	uint8_t profi_wait_phase;             // [PROFI] WaitPhase: v5 power-on phase 0..3 of the video WAIT (1 = none)
 	uint8_t profi_wait_pentagon;          // [PROFI] WaitConfig=pentagon: v5 jumper SB8, no video WAIT at 3.5 MHz
@@ -1406,6 +1430,7 @@ struct EmulatorState
 	ScorpionState scorpion;   // Scorpion ZS-256 (Turbo+, ProfROM, SMUC)
 	GmxState gmx;             // Scorpion GMX card register file (#00, #78FD, scroller, Magic latch)
 	ProfiState profi;         // Profi (front-panel switches, hi-res palette)
+	P2666State p2666;         // Pentagon 2.666 LE (#xx77, dispatcher windows, DOS latch, palette words, INT pulse)
 	/// endregion </Hardware-family state>
 };
 

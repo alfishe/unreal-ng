@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 
 #include "common/modulelogger.h"
 #include "emulator/emulatorcontext.h"
@@ -38,7 +39,9 @@ void TimeTravelController::ResetBranches()
     _tip = 0;
     _viewId = 0;
     _lastVisited.assign(1, std::nullopt);
+    _branchTrail.clear();
     _nextBranchMetaSet = false;
+    _forceFork = false;
     PublishLineage();
 }
 
@@ -315,8 +318,25 @@ bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimeP
         meta.reason = "resume";
     if (meta.createdBy.empty())
         meta.createdBy = "user";
+    // The default name says where the branch leaves: the time from the trunk's start, "+00:01:25.150" (the
+    // owner's choice 2026-11-10; a counter like "resume 3" told nothing). Two forks in one millisecond get " (2)"
     if (meta.name.empty())
-        meta.name = meta.reason + " " + std::to_string(_branches.NextCounter(meta.reason));
+    {
+        const std::vector<TTDCheckpoint>& trunk = _lines.front()->timeline;
+        const uint64_t start = trunk.empty() ? forkAt.frame : trunk.front().time.frame;
+        const uint64_t frames = forkAt.frame >= start ? forkAt.frame - start : 0;
+        const EmulatorState* state = _context ? &_context->emulatorState : nullptr;
+        const uint64_t hz = state && state->base_z80_frequency ? state->base_z80_frequency : 3'500'000u;
+        const uint64_t frameT = _context ? _context->config.frame : 71'680u;
+        const uint64_t inFrame = state ? state->CpuToBaseT(forkAt.tInFrame) : forkAt.tInFrame;
+        const uint64_t ms = (frames * frameT + inFrame) * 1000u / hz;   // integers: one name on every platform
+        char text[32];
+        std::snprintf(text, sizeof(text), "+%02llu:%02llu:%02llu.%03llu",
+                      static_cast<unsigned long long>(ms / 3'600'000u),
+                      static_cast<unsigned long long>(ms / 60'000u % 60u),
+                      static_cast<unsigned long long>(ms / 1000u % 60u), static_cast<unsigned long long>(ms % 1000u));
+        meta.name = text;
+    }
     meta.createdHostMicros = HostMicrosNow();
 
     // The table first: it refuses a fork it cannot hold (the limit) before the engine is touched
@@ -394,8 +414,11 @@ bool TimeTravelController::ForkBranchAt(const TTDTimePoint& from, const TTDTimeP
     _lastVisited[parent] = from;
     _line = _lines[line].get();
     _viewId = line;
+    LeaveBranch(_tip);
     _tip = line;
     PublishLineage();
+    if (const TTDBranchInfo* created = _branches.Get(line))
+        NoteBranchEvent("created", *created);
 
     // The engine's cursors into the controller's journals, at the new line's ends
     _shadowEvents.input = _line->inputJournal.Size();
@@ -498,7 +521,69 @@ bool TimeTravelController::SwitchBranch(uint32_t branch, const std::optional<TTD
     }
     _lastVisited.resize(_lines.size());
     _lastVisited[branch] = target;
+    if (!_walkingTrailBack && oldTip != branch)
+        LeaveBranch(oldTip);
+    if (const TTDBranchInfo* switched = _branches.Get(branch))
+        NoteBranchEvent("switched", *switched);
     return true;
+}
+
+void TimeTravelController::LeaveBranch(uint32_t left)
+{
+    constexpr size_t kBranchTrailMax = 64;
+    if (!_branchTrail.empty() && _branchTrail.back() == left)
+        return;
+    _branchTrail.push_back(left);
+    if (_branchTrail.size() > kBranchTrailMax)
+        _branchTrail.erase(_branchTrail.begin());
+}
+
+uint32_t TimeTravelController::PreviousOnTrail() const
+{
+    for (auto it = _branchTrail.rbegin(); it != _branchTrail.rend(); ++it)
+        if (*it != _tip && _branches.Get(*it) && *it < _lines.size() && _lines[*it])
+            return *it;
+    return kTTDNoBranch;
+}
+
+std::vector<uint32_t> TimeTravelController::BranchTrail() const
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Read};
+    return _branchTrail;
+}
+
+void TimeTravelController::SetBranchTrail(std::vector<uint32_t> trail)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    trail.erase(std::remove_if(trail.begin(), trail.end(),
+                               [this](uint32_t id) { return !_branches.Get(id) || id >= _lines.size() || !_lines[id]; }),
+                trail.end());
+    _branchTrail = std::move(trail);
+}
+
+bool TimeTravelController::SwitchToPreviousBranch(uint32_t& switchedTo, std::string& error)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    const uint32_t target = PreviousOnTrail();
+    if (target == kTTDNoBranch)
+    {
+        error = "no branch was left before this one";
+        return false;
+    }
+    // The steps walked back leave the trail: repeated calls go further back (restored when the switch fails)
+    const std::vector<uint32_t> trail = _branchTrail;
+    while (!_branchTrail.empty() && _branchTrail.back() != target)
+        _branchTrail.pop_back();
+    if (!_branchTrail.empty())
+        _branchTrail.pop_back();
+    _walkingTrailBack = true;
+    const bool ok = SwitchBranch(target, std::nullopt, error);
+    _walkingTrailBack = false;
+    if (ok)
+        switchedTo = target;
+    else
+        _branchTrail = trail;
+    return ok;
 }
 
 bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed,
@@ -508,9 +593,76 @@ bool TimeTravelController::DeleteBranch(uint32_t branch, bool force, std::vector
     std::vector<uint32_t> protect;
     for (const TTDLineageSpan& s : _branches.Lineage(_tip))
         protect.push_back(s.branch);
+    const TTDBranchInfo* asked = _branches.Get(branch);
+    const TTDBranchInfo before = asked ? *asked : TTDBranchInfo{};
     if (!_branches.Delete(branch, protect, force, removed, error))
         return false;
     ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", before, static_cast<uint32_t>(removed.size()));
+    error.clear();
+    return true;
+}
+
+bool TimeTravelController::DeleteBranches(const std::vector<uint32_t>& branches, bool force,
+                                          std::vector<uint32_t>& removed, std::vector<BranchDeleteRefusal>& refused)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    removed.clear();
+    refused.clear();
+    std::vector<uint32_t> protect;
+    for (const TTDLineageSpan& s : _branches.Lineage(_tip))
+        protect.push_back(s.branch);
+    TTDBranchInfo first{};
+    bool any = false;
+    for (uint32_t branch : branches)
+    {
+        const TTDBranchInfo* asked = _branches.Get(branch);
+        const TTDBranchInfo before = asked ? *asked : TTDBranchInfo{};
+        std::vector<uint32_t> subtree;
+        std::string error;
+        if (!_branches.Delete(branch, protect, force, subtree, error))
+        {
+            refused.push_back({branch, error});
+            continue;
+        }
+        if (!any)
+            first = before;
+        any = true;
+        removed.insert(removed.end(), subtree.begin(), subtree.end());
+    }
+    if (!any)
+        return false;
+    ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", first, static_cast<uint32_t>(removed.size()));
+    return true;
+}
+
+bool TimeTravelController::UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    if (!_branches.Get(branch))
+    {
+        error = "branch " + std::to_string(branch) + " does not exist";
+        return false;
+    }
+    if (update.name)
+    {
+        if (update.name->empty())
+        {
+            error = "a branch name cannot be empty";
+            return false;
+        }
+        if (!_branches.Rename(branch, *update.name, error))
+            return false;
+    }
+    if (update.note)
+        _branches.SetNote(branch, *update.note);
+    if (update.tags || !update.addTags.empty() || !update.removeTags.empty())
+        _branches.UpdateTags(branch, update.tags ? &*update.tags : nullptr, update.addTags, update.removeTags);
+    if (update.pinned)
+        _branches.SetPinned(branch, *update.pinned);
+    if (const TTDBranchInfo* updated = _branches.Get(branch))
+        NoteBranchEvent("updated", *updated);
     error.clear();
     return true;
 }
@@ -542,9 +694,16 @@ void TimeTravelController::ReleaseBranchLines(const std::vector<uint32_t>& remov
         }
         if (_engine->HasLine(id) && !_engine->ReleaseLine(id, error))
             MLOGWARNING("TimeTravelController::DeleteBranch — engine line %u: %s", id, error.c_str());
+        for (auto it = _segmentFiles.lower_bound({id, 0}); it != _segmentFiles.end() && it->first.first == id;)
+            it = _segmentFiles.erase(it);   // its segments are gone from memory and from the read back
         if (id < _lastVisited.size())
             _lastVisited[id].reset();
     }
+    _branchTrail.erase(std::remove_if(_branchTrail.begin(), _branchTrail.end(),
+                                      [&removed](uint32_t id) {
+                                          return std::find(removed.begin(), removed.end(), id) != removed.end();
+                                      }),
+                       _branchTrail.end());
     if (_bookmarks.RemoveOnBranches(removed) != 0)
         NotifyReadoutsChanged(_context, "ttd.bookmarks");
 }
@@ -555,6 +714,9 @@ bool TimeTravelController::TipIsEmpty() const
         return false;
     const TTDBranchInfo* info = _branches.Get(_tip);
     const ControllerLine& line = *_lines[_tip];
+    // A branch asked for by name (branch-create) or pinned stays: somebody wants it, recorded or not
+    if (info && (info->meta.reason == "create" || info->meta.reason.rfind("create:", 0) == 0 || info->meta.pinned))
+        return false;
     if (!info || !info->children.empty() || line.timeline.size() != 1 || line.inputJournal.Size() != line.forkInputs ||
         line.externalEvents.Size() != line.forkMarkers)
         return false;
@@ -582,6 +744,7 @@ bool TimeTravelController::DropEmptyTip(const TTDTimePoint& leavingTo)
     std::vector<uint32_t> protect;
     for (const TTDLineageSpan& s : _branches.Lineage(parent))
         protect.push_back(s.branch);
+    const TTDBranchInfo before = *info;
     std::vector<uint32_t> removed;
     std::string error;
     if (!_branches.Delete(empty, protect, /*force=*/true, removed, error))
@@ -597,8 +760,31 @@ bool TimeTravelController::DropEmptyTip(const TTDTimePoint& leavingTo)
     _stoppedEnd = parentEnd;
     _stoppedEndValid = true;
     ReleaseBranchLines(removed);
+    NoteBranchEvent("deleted", before, static_cast<uint32_t>(removed.size()));
     MLOGINFO("TimeTravelController — the empty branch %u went (nothing recorded after its fork)", empty);
     return true;
+}
+
+void TimeTravelController::NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed)
+{
+    ++_branchEvent.seq;
+    _branchEvent.event = event;
+    _branchEvent.branch = branch.id;
+    _branchEvent.guid = branch.guid;
+    _branchEvent.name = branch.meta.name;
+    _branchEvent.removed = removed;
+}
+
+TTDBranchesPublished TimeTravelController::PublishedBranches() const
+{
+    TTDBranchesPublished out;
+    std::lock_guard<std::mutex> lock(_publishedMutex);
+    out.view = _published.branches;
+    out.active = _published.activeBranch;
+    out.viewed = _published.viewedBranch;
+    out.previous = _published.previousBranch;
+    out.event = _published.branchEvent;
+    return out;
 }
 
 }  // namespace ttd

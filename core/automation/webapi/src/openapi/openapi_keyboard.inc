@@ -15,6 +15,18 @@
     paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["frames"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["responses"]["200"]["description"] = "Key tapped";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["description"] = "Taps in a row, 1..100 (default 1): a menu cursor moved N rows in one call";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["gap_frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["gap_frames"]["description"] =
+        "Frames to wait after each release before the next tap (default 0). A press of the same key always waits until it "
+        "stayed released 5 frames (the ROM's KSTATE takes it as a new key only then); a program with a slower keyboard "
+        "scan may need more";
+    paths["/api/v1/emulator/{id}/keyboard/tap"]["post"]["responses"]["400"]["description"] = "Unknown key, or count / gap_frames out of range";
 
     // POST /api/v1/emulator/{id}/keyboard/combo
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/combo", "post");
@@ -30,6 +42,18 @@
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["frames"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["responses"]["200"]["description"] = "Combo tapped";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["count"]["description"] = "Taps in a row, 1..100 (default 1): a menu cursor moved N rows in one call";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["gap_frames"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["gap_frames"]["description"] =
+        "Frames to wait after each release before the next tap (default 0). A press of the same key always waits until it "
+        "stayed released 5 frames (the ROM's KSTATE takes it as a new key only then); a program with a slower keyboard "
+        "scan may need more";
+    paths["/api/v1/emulator/{id}/keyboard/combo"]["post"]["responses"]["400"]["description"] = "Unknown key, or count / gap_frames out of range";
 
     // POST /api/v1/emulator/{id}/keyboard/type
     addKeyboardIdParam("/api/v1/emulator/{id}/keyboard/type", "post");

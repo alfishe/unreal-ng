@@ -118,6 +118,7 @@ Key fields (`id: {...}` in a menu's `keys`; ids unique in the file):
 | Field | What | Default |
 |:--|:--|:--|
 | `at` | `[row, col]` | the next free key, row by row (the back key kept free) |
+| `pin` | `true`: in a menu with a `window`, `at` is the deck's slot outside it; the key never scrolls | `false` |
 | `uc` | use-case id(s) of [use-cases.md](../../inprogress/2026-10-19-streamdeck-integration/use-cases.md): `C2.1` or `[C2.1, C2.5]` | |
 | `action`, `value`, `hold`, `params` | a catalogue action ([`data/streamdeck/catalogue.json`](../../../data/streamdeck/catalogue.json)) and its value | `hold`: the catalogue's `held` (unless the action has a `hold?` param) |
 | `steps` | several steps in order: `[{action: ..., value: ...}, {nav: home}, {kind: delay, ms: 200}]` | |
@@ -125,6 +126,7 @@ Key fields (`id: {...}` in a menu's `keys`; ids unique in the file):
 | `do` | any other step of the v2 format, as it is (`{kind: toggle, on: ..., off: ...}`) | |
 | `open` | a menu: a `menu ID:` section of this spec (the key's id must be that id; only `at` beside it), or a shared menu `src/shared/ID.spec.yaml` (an include; `title`, `glyph`, `label`, `uc`, `tags` override) | |
 | `then` | `stay`, `back`, `home` after a successful action | `stay` |
+| `long` | a long press: a step of its own (`{action: ttd.branch_prev}`, `{nav: home}`, any step); a press held 600 ms or more runs it on the release, a shorter one the key's own step (also on the release). The key's own action cannot be held | none |
 | `title` | the node's title (breadcrumbs, the studio's tree) | the catalogue label of the action |
 | `label` | text drawn under the picture (a slot, a speed, a drive) | none |
 | `glyph`, `glyph_on` | glyph ids of [glyphs.json](icons/glyphs.md); `glyph: none` = no picture (the key shows its title) | the glyphs bound to the action in glyphs.json (also per param: `snapshot.quick` save / load) |
@@ -133,10 +135,43 @@ Key fields (`id: {...}` in a menu's `keys`; ids unique in the file):
 | `face`, `face_on` | more face fields (`bg`, `fg`, `fit`, ...), merged over the generated face | |
 | `tags`, `activity`, `extra` | more tags; `activity: false`; any other node field, as it is | |
 
-Menu fields (`menu ID:`): `title` (default the id), `uc`, `glyph` (default `nav.folder`), `label`, `context`, `strip`,
-`back` (`[row, col]` or `false`; submenus and shared menus default `[0, 0]`), `navigation` (more `nav` fields:
-`auto_exit`, `breadcrumbs`), `dials` (`index: {label, uc, turn | left / right, press}`), `face`, `tags`, `extra`,
-`keys`.
+Menu fields (`menu ID:`): `title` (default the id), `uc`, `glyph` (default `nav.folder`), `label`, `show` (the menu
+key as a value key, as a key's `show`), `long` (the menu key's long press, as a key's `long`; a short press opens the
+menu), `context`, `readonly`, `width`, `window`, `strip`, `list` (below), `back` (`[row, col]` or `false`; submenus and
+shared menus default `[0, 0]`), `navigation` (more `nav` fields: `auto_exit`, `breadcrumbs`), `dials` (`index: {label,
+uc, turn | left / right, press, press_turn}`), `face`, `tags`, `extra`, `keys`.
+
+A wide menu and strip keys ([scenarios.md §7](../../inprogress/2026-10-19-streamdeck-integration/scenarios.md#7-contexts-on-menus)):
+`width: 10` lets the keys take columns 0..9, the deck shows a window of them (`back: false`: a back key would scroll
+away; the screen map shows all the columns); a dial moves it with `turn: {kind: nav, to: scroll, by: $ticks}`, a swipe
+on the strip too. `window: [1, 7]` keeps the window to deck columns 1..7; a key with `pin: true` stays on its deck
+slot outside it (`do: {kind: nav, to: scroll, by: -1}` makes a scroll key; the screen map lists pinned keys apart).
+`strip: {content: keys, keys: [{label: CAPS SHIFT, latch: true, action: input.key, value: {key:
+caps, hold: true}}, {label: SPACE, span: 4, action: input.key, value: {key: space}}]}` makes the strip a row of touch
+keys: zones by `span`, a tap runs the zone's step, a `latch` zone holds until the next key is let go.
+
+A dial's `press_turn` turns the dial while it is pressed: a step (`$ticks`, `$rate` as in `turn`) or `left` / `right`
+steps (`press_turn: {left: {action: ttd.branch_prev_sibling}, right: {action: ttd.branch_next_sibling}}`). With
+`press_turn` the dial's `press` runs on the release, and only when the dial did not turn while pressed. The press
+cannot be held.
+
+A menu's `list` fills the menu's free keys (not its `keys`, not the back key; row by row) from a readout array, one
+key per item, in pages:
+
+| Field | What | Default |
+|:--|:--|:--|
+| `readout` | the path of an array (`ttd.branch_list.items`); the surface subscribes it while the deck runs | required |
+| `key` | the item field that names the item (the key's id is `<menu>#<value>`) | `id` |
+| `label` | a template on the item (`'{name}{pinned? *\|}'`) | `{<key>}` |
+| `show` | a template on the item: the key becomes a value key (big text, the label as the caption) | none |
+| `action`, `value`, `params`, `hold`, `gui`, `target`, `nav`, `do` | a press, as a key's; `$<field>` in a value is the item's field (`value: {branch: $id}`) | none |
+| `long` | a long press, as a key's `long`, `$<field>` the same | none |
+| `on` | an item field: the key is lit (blue) while it is true | none |
+| `dim` | an item field (`!field`: negated): the key's text is dimmed while it is true | none |
+| `dial` | a dial index that turns the pages (`PAGE n/m`; a press goes to the first page); the strip's title shows `n/m` while there is more than one page. The menu's own dial at that index is ignored (a warning) | none |
+
+A key's press and long press act on the item they showed when the finger went down: an item that moved off the key
+in between (the list changed) runs nothing.
 
 A value that equals its default is the default: `glyph: run.pause` on a `run.pause_toggle` key reads as "the action's
 glyph" and follows the action when it changes.

@@ -796,11 +796,11 @@ TEST_F(MachineStateTransfer_Test, everyModelPairKeepsTheProgramsView)
     EXPECT_GE(accepted, models.size()) << "almost every pair refused";
 }
 
-/// A 128K state moves into the ATM and Profi boards, as far as they can hold it: they are put in their plain Spectrum 128K layout
+/// A 128K state moves into the ATM, Profi and Pentagon 2.666 boards, as far as they can hold it: they are put in their plain Spectrum 128K layout
 /// first (EnterSpectrum128Paging), then #7FFD is replayed through their own decoder
 TEST_F(MachineStateTransfer_Test, a128kStateMovesIntoTheAtmAndProfiBoards)
 {
-    for (const char* model : {"ATM710", "ATM3", "ATM450", "PROFI", "PROFI3"})
+    for (const char* model : {"ATM710", "ATM3", "ATM450", "PROFI", "PROFI3", "P2666"})
     {
         SCOPED_TRACE(model);
         auto a = Create("128k");

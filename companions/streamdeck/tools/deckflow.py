@@ -69,12 +69,16 @@ MENU_GLYPH = "nav.folder"
 NAV_GLYPHS = {"back": "nav.back", "home": "nav.home"}
 
 # Fields of a key entry, of a menu section, of a dial; the order fresh entries are written in
-KEY_FIELDS = ["at", "uc", "open", "action", "gui", "value", "hold", "params", "steps", "nav", "do", "then", "title", "label",
-              "glyph", "glyph_on", "state", "show", "face", "face_on", "tags", "activity", "extra"]
+KEY_FIELDS = ["at", "pin", "uc", "open", "action", "gui", "value", "hold", "params", "steps", "nav", "do", "then", "long",
+              "title", "label", "glyph", "glyph_on", "state", "show", "face", "face_on", "tags", "activity", "extra"]
 INCLUDE_FIELDS = ["at", "open", "uc", "title", "label", "glyph", "face", "tags", "extra"]
-MENU_FIELDS = ["title", "uc", "glyph", "label", "context", "readonly", "strip", "back", "navigation", "face", "tags",
-               "extra", "dials", "keys"]
-DIAL_FIELDS = ["label", "uc", "turn", "press", "left", "right"]
+MENU_FIELDS = ["title", "uc", "glyph", "label", "show", "long", "context", "readonly", "width", "window", "strip", "list",
+               "back", "navigation", "face", "tags", "extra", "dials", "keys"]
+STRIP_KEY_FIELDS = ("label", "span", "latch")  # a strip key zone (strip.content keys): these and one step
+DIAL_FIELDS = ["label", "uc", "turn", "press", "left", "right", "press_turn"]
+# A menu's list page (the project's `list`): its own fields, then the press as a key gives it (action, value, ...)
+LIST_FIELDS = ["readout", "key", "label", "show", "on", "dim", "dial"]
+LIST_PRESS = ["action", "value", "params", "hold", "gui", "target", "nav", "do"]
 TOP_FIELDS = ["scenario", "shared", "model", "pack", "settings"]
 DERIVED = ("title", "glyph", "glyph_on", "state", "hold")
 SHOW_FIELDS = ("readout", "format", "warn", "alert")  # a value key's `show` (the project's face.value)
@@ -561,6 +565,27 @@ def grid_of(model):
     return GRIDS.get(model["doc"].get("model", "plusxl"), (4, 9))
 
 
+def menu_window(model, mid):
+    """(first, count): the deck's columns a menu's grid shows; the whole deck unless the menu names a `window`."""
+    w = (model["nodes"].get(mid) or {}).get("window")
+    if isinstance(w, list) and len(w) == 2 and all(isinstance(x, int) for x in w) and 0 <= w[0] <= w[1]:
+        return w[0], w[1] - w[0] + 1
+    return 0, grid_of(model)[1]
+
+
+def menu_cols(model, mid):
+    """A menu's columns: its width when it is wider than its window (the deck shows a window of them)."""
+    w = (model["nodes"].get(mid) or {}).get("width")
+    if isinstance(w, int) and not isinstance(w, bool) and w > menu_window(model, mid)[1]:
+        return w
+    return grid_of(model)[1]
+
+
+def is_wide(model, mid):
+    w = (model["nodes"].get(mid) or {}).get("width")
+    return isinstance(w, int) and not isinstance(w, bool) and w > menu_window(model, mid)[1]
+
+
 def back_slot(model, mid):
     n = model["nodes"][mid]
     root = n.get("in") is None
@@ -668,6 +693,21 @@ def nav_step(to):
     return {"kind": "nav", "to": to} if to in ("back", "home") else {"kind": "nav", "to": "node", "node": to}
 
 
+def is_sides(t):
+    """A dial turn given as its two ways ({left: STEP, right: STEP}, a step a detent) rather than one step."""
+    return isinstance(t, dict) and bool(set(t) & {"left", "right"}) and set(t) <= {"left", "right"}
+
+
+def list_press(lst):
+    """The step a list's item key runs, in the spec's step form (action / gui / nav / do), or None."""
+    if lst.get("do") is not None:
+        return lst["do"]
+    if lst.get("nav") is not None:
+        return {"nav": lst["nav"]}
+    press = {k: lst[k] for k in ("action", "value", "params", "hold", "gui", "target") if k in lst}
+    return press or None
+
+
 class Project:
     """Builds the v2 documents of a model (the generator does the steps, slots and checks)."""
 
@@ -740,9 +780,18 @@ class Project:
                        "tags": self.tags(e, meta)}
                 if n.get("at") is not None:
                     out["at"] = n["at"]
-                for f in ("context", "readonly", "strip"):
+                for f in ("context", "readonly", "width", "window", "strip"):
                     if n.get(f) is not None:
                         out[f] = n[f]
+                if isinstance(out.get("strip"), dict) and isinstance(out["strip"].get("keys"), list):
+                    out["strip"] = dict(out["strip"], keys=[
+                        dict({k: z[k] for k in STRIP_KEY_FIELDS if k in z},
+                             **self.step({k: v for k, v in z.items() if k not in STRIP_KEY_FIELDS}))
+                        if isinstance(z, dict) else z for z in out["strip"]["keys"]])
+                if n.get("long") is not None:
+                    out["long"] = self.step(n["long"])
+                if isinstance(n.get("list"), dict):
+                    out["list"] = self.list_spec(n["list"])
                 if "back" in n:
                     out["back"] = n["back"]
                 if n.get("navigation"):
@@ -754,6 +803,8 @@ class Project:
                         for side in ("turn", "press", "left", "right"):
                             if side in d:
                                 g[side] = self.step(d[side])
+                        if "press_turn" in d:
+                            g["press_turn"] = self.turn_spec(d["press_turn"])
                         out["dials"].append(g)
                 # by slot: the project's order does not depend on the spec's
                 out["items"] = [node(c) for c in sorted(kids.get(nid, []), key=lambda c: (
@@ -763,6 +814,8 @@ class Project:
                 return out
             out = {"id": nid, "title": e["title"], "at": n.get("at"), "face": self.face(e),
                    "tags": self.tags(e)}
+            if n.get("pin"):
+                out["pin"] = True
             fo = self.face(e, "_on")
             if fo:
                 out["face_on"] = fo
@@ -770,6 +823,8 @@ class Project:
                 out["state"] = e["state"]
             if n.get("then"):
                 out["then"] = n["then"]
+            if n.get("long") is not None:
+                out["long"] = self.step(n["long"])
             if n.get("action"):
                 out["action"] = n["action"]
                 for f in ("value", "params"):
@@ -813,6 +868,22 @@ class Project:
         if isinstance(s, dict) and s.get("gui") and "hold" not in s and self.vocab.gui.get(s["gui"], {}).get("repeats"):
             s["hold"] = True
         return s
+
+    def turn_spec(self, t):
+        """A turn in the spec ({left, right}: a step a detent each way, else one step with $ticks) for the generator."""
+        if is_sides(t):
+            return {side: self.step(t[side]) for side in ("left", "right") if side in t}
+        return self.step(t)
+
+    def list_spec(self, lst):
+        """A menu's list in the spec ({readout, label, ..., action, value, long}) for the generator ({..., do, long})."""
+        out = {f: lst[f] for f in LIST_FIELDS if f in lst}
+        press = list_press(lst)
+        if press is not None:
+            out["do"] = self.step(press)
+        if lst.get("long") is not None:
+            out["long"] = self.step(lst["long"])
+        return out
 
     def document(self, model, include_file):
         spec = self.gen_spec(model, include_file)
@@ -884,6 +955,23 @@ def decompile_step(s, vocab):
     return dict(s)
 
 
+def decompile_list(lst, vocab):
+    """A project's list ({readout, ..., do, long}) in the spec's form (the press as a key writes it)."""
+    out = {f: lst[f] for f in LIST_FIELDS if f in lst}
+    if lst.get("do") is not None:
+        ds = decompile_step(lst["do"], vocab)
+        if "action" in ds or "gui" in ds:
+            out.update(ds)
+        elif "nav" in ds:
+            out["nav"] = ds["nav"]
+        else:
+            out["do"] = ds
+    if lst.get("long") is not None:
+        out["long"] = decompile_step(lst["long"], vocab)
+    out.update({k: v for k, v in lst.items() if k not in LIST_FIELDS and k not in ("do", "long")})
+    return out
+
+
 def project_model(doc, vocab, base=None, where=""):
     """The model a Studio project holds (its tags carry the meta). base: the last sync's model, so that an
     unchanged derived value (a title, a glyph) keeps standing for "the default" when the action changed."""
@@ -914,12 +1002,15 @@ def project_model(doc, vocab, base=None, where=""):
         m = {"in": parent}
         if parent is not None and isinstance(n.get("at"), list):
             m["at"] = list(n["at"])
+        if n.get("pin"):
+            m["pin"] = True
         if meta.get("uc"):
             m["uc"] = meta["uc"]
         if rest:
             m["tags"] = rest
         known = {"id", "type", "title", "tags", "at", "face", "face_on", "items", "do", "then", "state", "nav",
-                 "dials", "strip", "context", "readonly", "file", "node", "activity", "included_from"}
+                 "dials", "strip", "width", "window", "pin", "context", "readonly", "file", "node", "activity",
+                 "included_from", "long", "list"}
         x = {k: v for k, v in n.items() if k not in known}
         face = dict(n.get("face") or {})
         b = bnodes.get(nid)
@@ -946,11 +1037,23 @@ def project_model(doc, vocab, base=None, where=""):
             nodes[nid] = clean(m)
             order.append(nid)
             return
+        if n.get("long") is not None:
+            m["long"] = decompile_step(n["long"], vocab)
+        if isinstance(face.get("value"), dict):
+            v = face.pop("value")  # in the spec's order (the project's keys are sorted)
+            m["show"] = {k: v[k] for k in SHOW_FIELDS if k in v}
+            m["show"].update({k: x for k, x in v.items() if k not in SHOW_FIELDS})
         if t == "menu":
             m["kind"] = "menu"
-            for f in ("context", "readonly", "strip"):
+            for f in ("context", "readonly", "width", "window", "strip"):
                 if n.get(f) is not None:
                     m[f] = n[f]
+            if isinstance(m.get("strip"), dict) and isinstance(m["strip"].get("keys"), list):
+                m["strip"] = dict(m["strip"], keys=[
+                    dict({k: z[k] for k in STRIP_KEY_FIELDS if k in z}, **decompile_step(z.get("do") or {}, vocab))
+                    if isinstance(z, dict) else z for z in m["strip"]["keys"]])
+            if isinstance(n.get("list"), dict):
+                m["list"] = decompile_list(n["list"], vocab)
             nav = dict(n.get("nav") or {})
             if parent is not None or d["kind"] == "shared":
                 bk = nav.pop("back", [0, 0]) if "back" in nav else [0, 0]
@@ -977,16 +1080,18 @@ def project_model(doc, vocab, base=None, where=""):
                         dd["turn"] = decompile_step(turn, vocab)
                     if dl.get("press") is not None:
                         dd["press"] = decompile_step(dl["press"], vocab)
+                    pt = dl.get("press_turn")
+                    if isinstance(pt, dict) and pt.get("kind") == "dir" and set(pt) <= {"kind", "left", "right"}:
+                        dd["press_turn"] = {side: decompile_step(pt[side], vocab) for side in ("left", "right")
+                                            if side in pt}
+                    elif pt is not None:
+                        dd["press_turn"] = decompile_step(pt, vocab)
                     if meta.get(f"dial.{idx}.uc"):
                         dd["uc"] = meta[f"dial.{idx}.uc"]
                     dm[idx] = clean(dd) if dd.get("label") else clean(dict(dd, label=None))
                 m["dials"] = dm
         else:
             m["kind"] = "key"
-            if isinstance(face.get("value"), dict):
-                v = face.pop("value")  # in the spec's order (the project's keys are sorted)
-                m["show"] = {k: v[k] for k in SHOW_FIELDS if k in v}
-                m["show"].update({k: x for k, x in v.items() if k not in SHOW_FIELDS})
             do = n.get("do") or {}
             if do.get("kind") == "multi" and set(do) <= {"kind", "steps"} and isinstance(do.get("steps"), list):
                 m["steps"] = [decompile_step(s, vocab) for s in do["steps"]]
@@ -1145,10 +1250,10 @@ def merge(S, P, B, prefer=None):
             conflicts.append((nid, "in", S["nodes"].get(nid, {}).get("in"), P["nodes"].get(nid, {}).get("in"),
                               f"menu {par} is gone"))
             continue
-        at = tuple(n.get("at") or ())
+        at = tuple(n.get("at") or ()) + (("pin",) if n.get("pin") else ())  # pinned keys: the deck's slots
         if at in slots.get(par, {}):
             other = slots[par][at]
-            conflicts.append((nid, "at", f"{list(at)} (also {other})", "", "the same key on both sides"))
+            conflicts.append((nid, "at", f"{list(at[:2])} (also {other})", "", "the same key on both sides"))
         slots.setdefault(par, {})[at] = nid
     return M, conflicts
 
@@ -1263,24 +1368,32 @@ def map_step(st):
     """What a dial side or a key does, in a word: its action id or where it navigates."""
     if not isinstance(st, dict):
         return ""
+    if is_sides(st):
+        return " / ".join(f"{side} {map_step(st[side])}" for side in ("left", "right") if side in st)
     if st.get("action"):
         return str(st["action"])
     if st.get("gui"):
         return str(st["gui"])
     if st.get("nav"):
         return "go " + str(st["nav"])
+    if st.get("kind") == "nav" and st.get("to") == "scroll":
+        return "scroll"
     return ""
 
 
 def screen_map(model, mid):
     """The comment block above `menu ID:`: the page as the deck shows it (a cell per key, `<` the back key, `.` free),
     the pages its keys open and what its dials do. deckflow build writes it; edit the keys, not the map."""
-    rows, cols = grid_of(model)
+    rows, cols = grid_of(model)[0], menu_cols(model, mid)
     n = model["nodes"][mid]
     cells = {}
     opens = []
+    pins = []
     for k in children(model, mid):
         c = model["nodes"][k]
+        if c.get("pin") and isinstance(c.get("at"), list):
+            pins.append(f"[{c['at'][0]},{c['at'][1]}] {map_cell(model, k)}")
+            continue
         if isinstance(c.get("at"), list) and len(c["at"]) == 2:
             cells[tuple(c["at"])] = map_cell(model, k)
             if c.get("kind") in ("menu", "include"):
@@ -1302,9 +1415,28 @@ def screen_map(model, mid):
                 line = "#       "
             line += f" {o},"
         out.append(line.rstrip(","))
+    lst = n.get("list")
+    if isinstance(lst, dict):
+        what = map_step(list_press(lst))
+        if lst.get("long"):
+            what += f", long {map_step(lst['long'])}"
+        pages = f", pages on dial {lst['dial']}" if lst.get("dial") is not None else ""
+        out.append(f"# list: the free keys (.) show {lst.get('readout')}: {what}{pages}")
     for idx, d in sorted((n.get("dials") or {}).items(), key=lambda x: int(x[0])):
-        sides = [f"{side} {map_step(d.get(side))}" for side in ("turn", "press", "left", "right") if d.get(side)]
+        sides = [f"{side} {map_step(d.get(side))}" for side in ("turn", "press", "left", "right", "press_turn")
+                 if d.get(side)]
         out.append(f"# dial {idx} {str(d.get('label') or '').upper()}: " + ", ".join(sides))
+    st = n.get("strip")
+    if isinstance(st, dict) and isinstance(st.get("keys"), list):
+        zones = [str(z.get("label", "")).upper() + (" (latch)" if z.get("latch") else "")
+                 for z in st["keys"] if isinstance(z, dict)]
+        out.append("# strip: " + " | ".join(zones))
+    if is_wide(model, mid):
+        first, count = menu_window(model, mid)
+        out.append(f"# the deck shows {count} of the {menu_cols(model, mid)} columns at a time" +
+                   (f" on its columns {first}..{first + count - 1}" if n.get("window") is not None else ""))
+    if pins:
+        out.append("# pinned: " + ", ".join(sorted(pins)))
     out.append(MAP_TAIL)
     return out
 
@@ -1707,6 +1839,45 @@ def check_model(model, vocab, spec=None, where_default=""):
             if v.get(t) is not None and (not isinstance(v[t], (int, float)) or isinstance(v[t], bool)):
                 issues.append(Issue(at(nid, "show"), f"show: {t} must be a number"))
 
+    def long_step(n, nid):
+        """A key's (or a menu key's) long press: a step of its own; the key acts on its release."""
+        if n.get("long") is None:
+            return
+        step(n["long"], nid, "long")
+        if n.get("kind") == "key" and (n.get("hold") or (n.get("action") and vocab.default_hold(n["action"])) or (
+                n.get("gui") and vocab.gui.get(n["gui"], {}).get("repeats"))):
+            issues.append(Issue(at(nid, "long"), f"key {nid}: a key with long acts on its release: its own action "
+                                                 "cannot be held"))
+
+    def list_check(lst, nid):
+        if not isinstance(lst, dict) or not isinstance(lst.get("readout"), str):
+            issues.append(Issue(at(nid, "list"), "list: {readout: <path to an array>, label, show, action, value, "
+                                                 "long, on, dim, key, dial}"))
+            return
+        bad = [k for k in lst if k not in LIST_FIELDS + LIST_PRESS + ["long"]]
+        if bad:
+            issues.append(Issue(at(nid, "list"), f"list: unknown field(s) {', '.join(bad)} "
+                                                 f"({', '.join(LIST_FIELDS + LIST_PRESS + ['long'])})"))
+        if not vocab.readout_ok(lst["readout"]):
+            issues.append(Issue(at(nid, "list"), f"list: readout '{lst['readout']}' is not a readout of readouts.h"))
+        for f in ("label", "show"):
+            if lst.get(f) is not None:
+                why = value_format_error(lst[f]) if isinstance(lst[f], str) else "a template is a string"
+                if why:
+                    issues.append(Issue(at(nid, "list"), f"list: {f}: {why}"))
+        for f in ("key", "on", "dim"):
+            if lst.get(f) is not None and not isinstance(lst[f], str):
+                issues.append(Issue(at(nid, "list"), f"list: {f} names an item field (a string)"))
+        press = list_press(lst)
+        if press is not None:
+            step(press, nid, "list")
+        if lst.get("long") is not None:
+            step(lst["long"], nid, "list")
+        d = lst.get("dial")
+        dials = {"plusxl": 6, "plus": 4}.get(m, 0)
+        if d is not None and (not isinstance(d, int) or isinstance(d, bool) or not 0 <= d < dials):
+            issues.append(Issue(at(nid, "list"), f"list: dial is a dial index (0..{dials - 1}) of the {m}"))
+
     def uc(lst, nid, field):
         for u in lst or []:
             if vocab.use_cases and u not in vocab.use_cases:
@@ -1741,6 +1912,7 @@ def check_model(model, vocab, spec=None, where_default=""):
                 step(n["do"], nid, "do")
             if n.get("show") is not None:
                 show(n["show"], nid)
+            long_step(n, nid)
             if not (acts or n.get("steps") or n.get("nav") or n.get("do") or n.get("show")):
                 issues.append(Issue(at(nid), f"key {nid} does nothing: give it action, gui, steps, nav, do, open or "
                                              "show"))
@@ -1759,6 +1931,11 @@ def check_model(model, vocab, spec=None, where_default=""):
             if n.get("hold") and n.get("action") and not vocab.actions.get(n["action"], {}).get("held"):
                 issues.append(Issue(at(nid, "hold"), f"{n['action']} is not a held action", False))
         if n["kind"] == "menu":
+            if n.get("show") is not None:
+                show(n["show"], nid)
+            long_step(n, nid)
+            if n.get("list") is not None:
+                list_check(n["list"], nid)
             for idx, d in (n.get("dials") or {}).items():
                 if int(idx) >= {"plusxl": 6, "plus": 4}.get(m, 0):
                     issues.append(Issue(at(nid, f"dial {idx}"), f"dial {idx}: the {m} has "
@@ -1767,20 +1944,77 @@ def check_model(model, vocab, spec=None, where_default=""):
                 for side in ("turn", "press", "left", "right"):
                     if side in d:
                         step(d[side], nid, f"dial {idx}" if spec and (nid, f"dial {idx}") in spec.where else side)
+                pt = d.get("press_turn")
+                if pt is not None:
+                    where_pt = f"dial {idx}" if spec and (nid, f"dial {idx}") in spec.where else "turn"
+                    for st in ([pt[s] for s in ("left", "right") if s in pt] if is_sides(pt) else [pt]):
+                        step(st, nid, where_pt)
             ctx = n.get("context")
             if ctx is not None and not re.match(r"^[a-z0-9._-]+$", str(ctx)):
                 issues.append(Issue(at(nid, "context"), "context: lower case, digits, '.', '_', '-'"))
             b = n.get("back")
             if b is not None and b is not False and not (isinstance(b, list) and len(b) == 2):
                 issues.append(Issue(at(nid, "back"), "back: [row, col] or false"))
+            w, win = n.get("width"), n.get("window")
+            if win is not None:
+                if not (isinstance(win, list) and len(win) == 2 and all(isinstance(x, int) for x in win) and
+                        0 <= win[0] <= win[1] < cols):
+                    issues.append(Issue(at(nid, "window"), f"window: [first, last] of the {cols} deck columns"))
+                elif not is_wide(model, nid):
+                    issues.append(Issue(at(nid, "window"), f"a window needs a width over its "
+                                                           f"{menu_window(model, nid)[1]} columns"))
+            wcols = menu_window(model, nid)[1]
+            if w is not None:
+                if not isinstance(w, int) or isinstance(w, bool) or w < wcols:
+                    issues.append(Issue(at(nid, "width"), f"width: columns, at least the {wcols} of the "
+                                                          + ("window" if win is not None else m)))
+                elif w > wcols and back_slot(model, nid) is not None:
+                    issues.append(Issue(at(nid, "width"), "a wide menu scrolls its back key away: back: false (a "
+                                                          "long press on the strip goes home)"))
+            st = n.get("strip")
+            if isinstance(st, dict) and st.get("keys") is not None:
+                if st.get("content") != "keys":
+                    issues.append(Issue(at(nid, "strip"), "strip.keys go with content: keys"))
+                if not isinstance(st["keys"], list) or not st["keys"]:
+                    issues.append(Issue(at(nid, "strip"), "strip.keys: a list of zones {label, span?, latch?, "
+                                                          "action ...}"))
+                else:
+                    for z in st["keys"]:
+                        if not isinstance(z, dict) or not z.get("label"):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z!r}: needs a label"))
+                            continue
+                        if "span" in z and (not isinstance(z["span"], int) or z["span"] < 1):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z['label']}: span is a count >= 1"))
+                        if "latch" in z and not isinstance(z["latch"], bool):
+                            issues.append(Issue(at(nid, "strip"), f"strip key {z['label']}: latch is true or false"))
+                        step({k: v for k, v in z.items() if k not in STRIP_KEY_FIELDS}, nid, "strip")
+            elif isinstance(st, dict) and st.get("content") == "keys":
+                issues.append(Issue(at(nid, "strip"), "strip content keys needs strip.keys"))
         par = n.get("in")
         if par is not None:
             a = n.get("at")
             if not (isinstance(a, list) and len(a) == 2 and all(isinstance(x, int) for x in a)):
                 issues.append(Issue(at(nid, "at"), f"at: [row, col], not {a!r}"))
                 continue
-            if not (0 <= a[0] < rows and 0 <= a[1] < cols):
-                issues.append(Issue(at(nid, "at"), f"slot {a} is outside the {m} grid ({rows} rows x {cols} keys)"))
+            if n.get("pin") is not None and not isinstance(n.get("pin"), bool):
+                issues.append(Issue(at(nid, "pin"), "pin: true or false"))
+            if n.get("pin"):
+                first, count = menu_window(model, par)
+                if (model["nodes"].get(par) or {}).get("window") is None:
+                    issues.append(Issue(at(nid, "pin"), f"pin goes in a menu with a window; {par} has none"))
+                elif not (0 <= a[0] < rows and 0 <= a[1] < cols):
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} is outside the {m} grid ({rows} rows x "
+                                                       f"{cols} keys)"))
+                elif first <= a[1] < first + count:
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} is inside the window of {par}"))
+                other = slots.setdefault((par, "pin"), {}).get(tuple(a))
+                if other:
+                    issues.append(Issue(at(nid, "at"), f"pinned slot {a} of {par} is taken by {other}"))
+                slots[(par, "pin")][tuple(a)] = nid
+                continue
+            if not (0 <= a[0] < rows and 0 <= a[1] < menu_cols(model, par)):
+                issues.append(Issue(at(nid, "at"), f"slot {a} is outside the {m} grid ({rows} rows x "
+                                                   f"{menu_cols(model, par)} keys)"))
             if back_slot(model, par) == tuple(a):
                 issues.append(Issue(at(nid, "at"), f"slot {a} is the back key of {par}"))
             other = slots.setdefault(par, {}).get(tuple(a))
@@ -2222,7 +2456,7 @@ class MetaDoc:
         n = mm["nodes"][mid]
         e = effective(n, self.vocab, mid)
         doc = mm["doc"]
-        rows, cols = grid_of(mm)
+        rows, cols = grid_of(mm)[0], menu_cols(mm, mid)
         head = f"## menu {mid}" + (f" ({lbl})" if lbl != self.main.label() else "")
         out = [head, ""]
         facts = [f"Title: {e['title']}"]
@@ -2232,6 +2466,11 @@ class MetaDoc:
             facts.append(f"context `{n['context']}`")
         if n.get("readonly"):
             facts.append("read-only (its keys only show)")
+        if is_wide(mm, mid):
+            first, count = menu_window(mm, mid)
+            facts.append(f"{cols} columns wide, the deck shows {count} at a time" +
+                         (f" on its columns {first}..{first + count - 1}" if n.get("window") is not None else "") +
+                         " (a dial or a swipe moves them)")
         if n.get("in"):
             facts.append(f"opened from `{n['in']}` at {n.get('at')}")
         elif doc.get("kind") != "shared":
@@ -2239,6 +2478,22 @@ class MetaDoc:
         if n.get("strip"):
             facts.append("strip " + ", ".join(f"{k} `{deckyaml.flow(v)}`" for k, v in n["strip"].items()))
         out += ["; ".join(facts) + ".", ""]
+        lst = n.get("list")
+        if isinstance(lst, dict):
+            line = (f"List page: the free keys show the items of `{lst.get('readout')}` (label "
+                    f"`{lst.get('label') or '{' + str(lst.get('key', 'id')) + '}'}`")
+            if lst.get("show"):
+                line += f", value `{lst['show']}`"
+            line += f"); press: {self.step_text(list_press(lst)) or 'nothing'}"
+            if lst.get("long"):
+                line += f"; held: {self.step_text(lst['long'])}"
+            if lst.get("on"):
+                line += f"; lit while `{lst['on']}`"
+            if lst.get("dim"):
+                line += f"; dimmed while `{lst['dim']}`"
+            if lst.get("dial") is not None:
+                line += f"; dial {lst['dial']} turns the pages"
+            out += [line + ".", ""]
         grid = [["" for _ in range(cols)] for _ in range(rows)]
         b = back_slot(mm, mid)
         if b and 0 <= b[0] < rows and 0 <= b[1] < cols:
@@ -2248,8 +2503,8 @@ class MetaDoc:
             kn = mm["nodes"][k]
             ke = effective(kn, self.vocab, k)
             a = kn.get("at") or [0, 0]
-            if not (0 <= a[0] < rows and 0 <= a[1] < cols):
-                continue
+            if kn.get("pin") or not (0 <= a[0] < rows and 0 <= a[1] < cols):
+                continue  # a pinned key: in the table below (its slot is the deck's)
             g, title = self.face_of(kn, ke)
             cell = (self.img(g) + "<br>") if g else ""
             cell += (f"**{kn['label']}** " if kn.get("label") else "") + f"{title}"
@@ -2272,15 +2527,23 @@ class MetaDoc:
                 gtxt += f" / {self.img(ke['glyph_on'], 28)} `{ke['glyph_on']}` when `{ke.get('state')}`"
             if kn.get("label"):
                 gtxt += f" + label {kn['label']}"
-            out.append(f"| `{k}` | {kn.get('at')} | {gtxt} | {title.replace('|', '/')} | "
+            slot = f"{kn.get('at')}" + (" pinned" if kn.get("pin") else "")
+            out.append(f"| `{k}` | {slot} | {gtxt} | {title.replace('|', '/')} | "
                        f"{self.does(kn, ke).replace('|', '/')} | {' '.join(kn.get('uc') or [])} |")
         if n.get("dials"):
             out += ["", "| Dial | Label | Turn | Press | Use case |", "|:--|:--|:--|:--|:--|"]
             for idx, d in sorted(n["dials"].items(), key=lambda x: int(x[0])):
                 turn = self.step_text(d.get("turn")) if "turn" in d else " / ".join(
                     f"{s}: {self.step_text(d[s])}" for s in ("left", "right") if s in d)
-                out.append(f"| {idx} | {d.get('label', '')} | {turn or ''} | "
-                           f"{self.step_text(d.get('press')) if 'press' in d else ''} | {' '.join(d.get('uc') or [])} |")
+                press = self.step_text(d.get("press")) if "press" in d else ""
+                pt = d.get("press_turn")
+                if pt is not None:
+                    held = " / ".join(f"{s}: {self.step_text(pt[s])}" for s in ("left", "right") if s in pt) if \
+                        is_sides(pt) else self.step_text(pt)
+                    turn = f"{turn or ''}; held: {held}"
+                    press = f"{press} (on the release, unless turned)" if press else press
+                out.append(f"| {idx} | {d.get('label', '')} | {turn or ''} | {press} | "
+                           f"{' '.join(d.get('uc') or [])} |")
         return out
 
     def face_of(self, kn, ke):
@@ -2319,7 +2582,12 @@ class MetaDoc:
         if k == "include":
             return f"opens the shared menu `{kn['open']}`"
         if k == "menu":
-            return f"opens menu `{kn.get('id', '')}`".replace("``", "") if False else "opens the menu"
+            t = "opens the menu"
+            if isinstance(kn.get("show"), dict):
+                t += f", shows `{kn['show'].get('format') or '{}'}` of `{kn['show'].get('readout')}`"
+            if kn.get("long") is not None:
+                t += f"; held: {self.step_text(kn['long'])}"
+            return t
         if kn.get("action"):
             t = self.step_text({"action": kn["action"], "value": kn.get("value"), "hold": ke.get("hold")})
         elif kn.get("gui"):
@@ -2341,6 +2609,8 @@ class MetaDoc:
                 t += f" ({', '.join(th)})"
         if kn.get("then"):
             t += f", then {kn['then']}"
+        if kn.get("long") is not None:
+            t += f"; held: {self.step_text(kn['long'])}"
         return t
 
     def coverage(self):
@@ -2361,6 +2631,14 @@ class MetaDoc:
                 for d in (n.get("dials") or {}).values():
                     acts += [d[s].get("action") for s in ("turn", "press", "left", "right") if
                              isinstance(d.get(s), dict)]
+                    pt = d.get("press_turn")
+                    if isinstance(pt, dict):
+                        acts += [pt[s].get("action") for s in ("left", "right") if isinstance(pt.get(s), dict)] \
+                            if is_sides(pt) else [pt.get("action")]
+                for st in [n.get("long")] + ([list_press(n["list"]), n["list"].get("long")]
+                                             if isinstance(n.get("list"), dict) else []):
+                    if isinstance(st, dict):
+                        acts.append(st.get("action"))
                 for a in acts:
                     if a:
                         used_actions.add(a)

@@ -737,6 +737,10 @@
     schemas["TTDStatusResponse"]["description"] =
         "Snapshot of the TTD recorder session for the requested emulator instance";
     schemas["TTDStatusResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["type"] = "array";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["items"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDStatusResponse"]["properties"]["cards"]["description"] =
+        "Both CPUs: the main CPU's place is the position, each sound card CPU's here (as GET /ttd/position)";
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStatusResponse"]["properties"]["state"]["enum"].append("detached");
@@ -758,7 +762,33 @@
     schemas["TTDStatusResponse"]["properties"]["history_bytes"]["description"] =
         "Checkpoint data held now: page-store slots plus device blobs (what the byte limit bounds)";
     schemas["TTDStatusResponse"]["properties"]["evicted_checkpoints"]["description"] =
-        "Oldest checkpoints released by the history limit in this session";
+        "Oldest checkpoints released by the history limit in this session (no recording folder)";
+    // Two tiers (P3): with a recording folder the limit moves segments to disk; a restore reads one back
+    for (const char* name : {"evicted_to_disk_segments", "evicted_to_disk_checkpoints", "read_back_segments",
+                             "read_back_bytes", "read_back_capacity", "read_back_loads", "read_back_hits",
+                             "read_back_failures"})
+    {
+        schemas["TTDStatusResponse"]["properties"][name]["type"] = "integer";
+        schemas["TTDStatusResponse"]["properties"][name]["format"] = "uint64";
+    }
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["disk_tier_active"]["description"] =
+        "The history limit evicts segments to the recording folder's files (nothing is released)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_segments"]["description"] =
+        "Segments held on disk only now (still seekable)";
+    schemas["TTDStatusResponse"]["properties"]["evicted_to_disk_checkpoints"]["description"] =
+        "Checkpoints of the segments on disk only";
+    schemas["TTDStatusResponse"]["properties"]["read_back_segments"]["description"] =
+        "The read-back cache: evicted segments in memory again for a restore";
+    schemas["TTDStatusResponse"]["properties"]["read_back_bytes"]["description"] = "Payload bytes of the read-back cache";
+    schemas["TTDStatusResponse"]["properties"]["read_back_capacity"]["description"] =
+        "The read-back cache's capacity in segments (least recently used goes first)";
+    schemas["TTDStatusResponse"]["properties"]["read_back_loads"]["description"] =
+        "Segments read back from their files in this session";
+    schemas["TTDStatusResponse"]["properties"]["read_back_hits"]["description"] =
+        "Restores that moved to a segment the read-back cache already held (no file read)";
+    schemas["TTDStatusResponse"]["properties"]["read_back_failures"]["description"] =
+        "Read backs that failed (the restore reported the segment)";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["checkpoint_count"]["format"] = "uint64";
     schemas["TTDStatusResponse"]["properties"]["page_store_bytes"]["type"] = "integer";
@@ -838,6 +868,17 @@
             "Agent bookmarks currently stored beside the timeline (TD-4). "
             "Advisory annotations — unlike external-event markers they never "
             "halt a seek.";
+
+    // TTD branches: present only when the session has branches
+    schemas["TTDStatusResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDStatusResponse"]["properties"]["branch"]["description"] =
+        "Only with branches: the active branch (recording continues on it).";
+    schemas["TTDStatusResponse"]["properties"]["viewed_branch"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDStatusResponse"]["properties"]["viewed_branch"]["description"] =
+        "Only with branches: the branch the current moment belongs to (on the active lineage).";
+    schemas["TTDStatusResponse"]["properties"]["branch_count"]["type"] = "integer";
+    schemas["TTDStatusResponse"]["properties"]["branch_count"]["description"] =
+        "Only with branches: how many there are, the trunk included (GET /ttd/branches lists them).";
 
     schemas["TTDStatusResponse"]["properties"]["input_event_count"]["type"] = "integer";
     schemas["TTDStatusResponse"]["properties"]["input_event_count"]["format"] = "uint64";
@@ -931,6 +972,10 @@
     schemas["TTDStatusResponse"]["properties"]["recording_paused"]["description"] =
         "D8: a seek, step or reverse query while recording paused the recording; state is detached. "
         "Resuming at its end (resume, or running into it) continues the same recording; stop ends it";
+    schemas["TTDStatusResponse"]["properties"]["start_pending"]["type"] = "boolean";
+    schemas["TTDStatusResponse"]["properties"]["start_pending"]["description"] =
+        "A start was asked while the machine stood inside the sound card's run (a General Sound breakpoint): the "
+        "recording begins at the next frame boundary; state stays idle until then, stop cancels it";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["$ref"] = "#/components/schemas/TTDTimePoint";
     schemas["TTDStatusResponse"]["properties"]["earliest"]["description"] =
         "The earliest position the history keeps (D12): where 'jump to start' goes. Older frames were "
@@ -1016,6 +1061,10 @@
     schemas["TTDStartResponse"]["properties"]["already_active"]["type"] = "boolean";
     schemas["TTDStartResponse"]["properties"]["state"]["type"] = "string";
     schemas["TTDStartResponse"]["properties"]["black_box"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["start_pending"]["type"] = "boolean";
+    schemas["TTDStartResponse"]["properties"]["start_pending"]["description"] =
+        "Started inside the sound card's run (a General Sound breakpoint): the recording begins at the next frame "
+        "boundary, state idle until then";
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDStartResponse"]["properties"]["state"]["enum"].append("detached");
@@ -1081,6 +1130,19 @@
     schemas["TTDSeekRequest"]["properties"]["bookmark"]["description"] =
             "TD-4 bookmark label to seek to (alternative to frame). Unknown "
             "labels get a 404.";
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDSeekRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it only instruction is taken.";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["type"] = "integer";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["format"] = "uint64";
+    schemas["TTDSeekRequest"]["properties"]["instruction"]["description"] =
+        "With cpu: the card CPU's instruction count to stand at (TTDCardPosition.instruction)";
 
     schemas["TTDSeekResponse"]["type"] = "object";
     schemas["TTDSeekResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1213,6 +1275,61 @@
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("idle");
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("recording");
     schemas["TTDPositionResponse"]["properties"]["state"]["enum"].append("detached");
+    schemas["TTDPositionResponse"]["properties"]["cards"]["type"] = "array";
+    schemas["TTDPositionResponse"]["properties"]["cards"]["items"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDPositionResponse"]["properties"]["cards"]["description"] =
+        "Each sound card CPU's readout as the last move left it (empty: no card with a CPU)";
+
+    // ---------------------------------------------------------------------
+    // Card positions (gs-debugger design §8)
+    // ---------------------------------------------------------------------
+    schemas["TTDCardPosition"]["type"] = "object";
+    schemas["TTDCardPosition"]["description"] =
+        "A sound card CPU's place. card_position: the machine stands at a card instruction (a card move put it "
+        "there); the main CPU is then at its last completed instruction (main.frame / main.tinframe, main.pc) and "
+        "main.t_offset T-states into the next (inside: > 0). Otherwise the card's count and PC are where it last ran.";
+    schemas["TTDCardPosition"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDCardPosition"]["properties"]["known"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["known"]["description"] =
+        "The card has an instruction count (false: a recording made before them is loaded)";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["format"] = "uint64";
+    schemas["TTDCardPosition"]["properties"]["instruction"]["nullable"] = true;
+    schemas["TTDCardPosition"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["card_position"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["caught_up"]["type"] = "boolean";
+    schemas["TTDCardPosition"]["properties"]["main"]["type"] = "object";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["t_offset"]["type"] = "integer";
+    schemas["TTDCardPosition"]["properties"]["main"]["properties"]["inside"]["type"] = "boolean";
+
+    schemas["TTDCardMoveResponse"]["type"] = "object";
+    schemas["TTDCardMoveResponse"]["description"] =
+        "Response of seek / step-instruction / reverse-step / reverse-continue with cpu naming a card. reached false "
+        "with status at_start, at_end or no_hit is an answer (HTTP 200: nothing moved); no_card, no_count, "
+        "no_history and no_breakpoints are refused (409), failed is 500.";
+    schemas["TTDCardMoveResponse"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDCardMoveResponse"]["properties"]["status"]["type"] = "string";
+    for (const char* status : {"ok", "no_card", "no_count", "no_history", "at_start", "at_end", "no_breakpoints",
+                               "no_hit", "failed"})
+        schemas["TTDCardMoveResponse"]["properties"]["status"]["enum"].append(status);
+    schemas["TTDCardMoveResponse"]["properties"]["reached"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["from"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["from"]["description"] = "The card's instruction count before the move";
+    schemas["TTDCardMoveResponse"]["properties"]["target"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["target"]["description"] = "The instruction count moved to";
+    schemas["TTDCardMoveResponse"]["properties"]["message"]["type"] = "string";
+    schemas["TTDCardMoveResponse"]["properties"]["card"]["$ref"] = "#/components/schemas/TTDCardPosition";
+    schemas["TTDCardMoveResponse"]["properties"]["searched_frames"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["truncated"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["type"] = "object";
+    schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["description"] =
+        "reverse-continue: the card breakpoint hit (id, kind, address)";
+    schemas["TTDCardMoveResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
 
     // ---------------------------------------------------------------------
     // GET /ttd/markers response
@@ -1343,6 +1460,259 @@
     schemas["TTDDumpRequest"]["properties"]["path"]["description"] =
         "Filesystem path where the .ttd file will be written.";
     schemas["TTDDumpRequest"]["required"].append("path");
+    schemas["TTDDumpRequest"]["properties"]["lineage"]["type"] = "boolean";
+    schemas["TTDDumpRequest"]["properties"]["lineage"]["description"] =
+        "true: only the active branch's lineage, as one linear history; default false: every branch.";
+
+    // TTD branches
+    schemas["TTDBranchRef"]["type"] = "object";
+    schemas["TTDBranchRef"]["description"] = "A branch named in a reply.";
+    schemas["TTDBranchRef"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchRef"]["properties"]["id"]["description"] = "Local id in this session (0 = the trunk).";
+    schemas["TTDBranchRef"]["properties"]["guid"]["type"] = "string";
+    schemas["TTDBranchRef"]["properties"]["guid"]["description"] = "Stable across files and sessions.";
+    schemas["TTDBranchRef"]["properties"]["name"]["type"] = "string";
+
+    schemas["TTDBranch"]["type"] = "object";
+    schemas["TTDBranch"]["description"] = "A branch with its place in the tree and its metadata.";
+    schemas["TTDBranch"]["allOf"].append(Json::Value());
+    schemas["TTDBranch"]["allOf"][0]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDBranch"]["properties"]["parent"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["parent"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["parent"]["description"] = "The branch it forked from; null for the trunk.";
+    schemas["TTDBranch"]["properties"]["fork"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranch"]["properties"]["fork"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["fork"]["description"] = "The moment it forked at; null for the trunk.";
+    schemas["TTDBranch"]["properties"]["end"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranch"]["properties"]["length"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["length"]["description"] = "Frames from its fork to its end.";
+    schemas["TTDBranch"]["properties"]["created_by"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["created_host_micros"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["reason"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["run"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["run"]["nullable"] = true;
+    schemas["TTDBranch"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDBranch"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBranch"]["properties"]["pinned"]["type"] = "boolean";
+    schemas["TTDBranch"]["properties"]["children"]["type"] = "integer";
+    schemas["TTDBranch"]["properties"]["active"]["type"] = "boolean";
+    schemas["TTDBranch"]["properties"]["on_lineage"]["type"] = "boolean";
+
+    schemas["TTDBranchLineageSpan"]["type"] = "object";
+    schemas["TTDBranchLineageSpan"]["properties"]["branch"]["type"] = "integer";
+    schemas["TTDBranchLineageSpan"]["properties"]["from"]["$ref"] = "#/components/schemas/TTDTimePoint";
+
+    schemas["TTDBranchesResponse"]["type"] = "object";
+    schemas["TTDBranchesResponse"]["description"] =
+        "Response from GET /ttd/branches: the rows of this page, total matching rows, count of all branches (1 "
+        "without branches: the trunk), the active and the viewed branch ids, the active lineage, and one line per "
+        "row in text ('*' marks the active one).";
+    schemas["TTDBranchesResponse"]["properties"]["branches"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["branches"]["items"]["$ref"] = "#/components/schemas/TTDBranch";
+    for (const char* name : {"total", "count", "active", "viewed"})
+        schemas["TTDBranchesResponse"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["nullable"] = true;
+    schemas["TTDBranchesResponse"]["properties"]["previous"]["description"] =
+        "The branch POST /ttd/branches/switch {to: previous} goes to (the branch left last); null: none";
+    schemas["TTDBranchesResponse"]["properties"]["lineage"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["lineage"]["items"]["$ref"] =
+        "#/components/schemas/TTDBranchLineageSpan";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["type"] = "array";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["description"] =
+        "The branches leaving the shown timeline at the current moment's frame (a debugger's 'fork here'): a branch "
+        "forking there, or the parent's future the lineage left there; frames: its length past the fork.";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["type"] = "object";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchesResponse"]["properties"]["forks_here"]["items"]["properties"]["frames"]["type"] = "integer";
+    schemas["TTDBranchesResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchResponse"]["type"] = "object";
+    schemas["TTDBranchResponse"]["description"] =
+        "One branch: GET /ttd/branches/{branch} (with active, viewed, lineage) and PATCH (with updated).";
+    schemas["TTDBranchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchResponse"]["properties"]["updated"]["type"] = "boolean";
+    schemas["TTDBranchResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchUpdateRequest"]["type"] = "object";
+    schemas["TTDBranchUpdateRequest"]["description"] =
+        "Request body for PATCH /ttd/branches/{branch}: only the fields given change.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchUpdateRequest"]["properties"]["name"]["description"] = "The new name (unique in the session).";
+    schemas["TTDBranchUpdateRequest"]["properties"]["note"]["type"] = "string";
+    schemas["TTDBranchUpdateRequest"]["properties"]["tags"]["description"] = "Replace the tags (a list or a, b).";
+    schemas["TTDBranchUpdateRequest"]["properties"]["add_tags"]["description"] = "Tags to add.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["remove_tags"]["description"] = "Tags to remove.";
+    schemas["TTDBranchUpdateRequest"]["properties"]["pinned"]["type"] = "boolean";
+    schemas["TTDBranchUpdateRequest"]["properties"]["pinned"]["description"] =
+        "A pinned branch survives a prune and a delete without force.";
+
+    schemas["TTDBranchSwitchRequest"]["type"] = "object";
+    schemas["TTDBranchSwitchRequest"]["description"] =
+        "Request body for POST /ttd/branches/{branch}/switch (optional): the moment on the branch, default its end.";
+    schemas["TTDBranchSwitchRequest"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDBranchSwitchRequest"]["properties"]["tinframe"]["type"] = "integer";
+
+    schemas["TTDBranchSwitchRelativeRequest"]["type"] = "object";
+    schemas["TTDBranchSwitchRelativeRequest"]["description"] = "Request body for POST /ttd/branches/switch.";
+    schemas["TTDBranchSwitchRelativeRequest"]["required"].append("to");
+    schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["type"] = "string";
+    for (const char* to : {"previous", "next_sibling", "prev_sibling"})
+        schemas["TTDBranchSwitchRelativeRequest"]["properties"]["to"]["enum"].append(to);
+
+    schemas["TTDBranchSwitchResponse"]["type"] = "object";
+    schemas["TTDBranchSwitchResponse"]["description"] = "Response from POST /ttd/branches/{branch}/switch.";
+    schemas["TTDBranchSwitchResponse"]["properties"]["switched"]["type"] = "boolean";
+    schemas["TTDBranchSwitchResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchSwitchResponse"]["properties"]["arrived_at"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["fork_frame"]["description"] =
+        "to=next_sibling / prev_sibling: the frame of the fork the siblings leave from";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["type"] = "integer";
+    schemas["TTDBranchSwitchResponse"]["properties"]["siblings"]["description"] =
+        "to=next_sibling / prev_sibling: how many branches leave that fork, the lineage's own included";
+    schemas["TTDBranchSwitchResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDBranchSwitchResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
+    schemas["TTDBranchSwitchResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchDeletedResponse"]["type"] = "object";
+    schemas["TTDBranchDeletedResponse"]["description"] =
+        "Response from DELETE /ttd/branches/{branch}: the branch and its descendants that went.";
+    schemas["TTDBranchDeletedResponse"]["properties"]["deleted"]["type"] = "boolean";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed"]["type"] = "array";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed"]["items"]["type"] = "integer";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed_names"]["type"] = "array";
+    schemas["TTDBranchDeletedResponse"]["properties"]["removed_names"]["items"]["type"] = "string";
+    schemas["TTDBranchDeletedResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchRef"]["type"] = "object";
+    schemas["TTDBranchRef"]["description"] = "A branch named in an answer: its local id, its GUID and its name.";
+    schemas["TTDBranchRef"]["properties"]["id"]["type"] = "integer";
+    schemas["TTDBranchRef"]["properties"]["guid"]["type"] = "string";
+    schemas["TTDBranchRef"]["properties"]["name"]["type"] = "string";
+
+    schemas["TTDBranchInfoResponse"]["type"] = "object";
+    schemas["TTDBranchInfoResponse"]["description"] =
+        "Response from GET /ttd/branches/{branch}: the branch, its children (with fork and length), its ancestors "
+        "from the trunk, its files in the recording's folder (none for a loaded session: its history is the file).";
+    schemas["TTDBranchInfoResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchInfoResponse"]["properties"]["children"]["type"] = "array";
+    schemas["TTDBranchInfoResponse"]["properties"]["children"]["items"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDBranchInfoResponse"]["properties"]["ancestors"]["type"] = "array";
+    schemas["TTDBranchInfoResponse"]["properties"]["ancestors"]["items"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDBranchInfoResponse"]["properties"]["files"]["type"] = "array";
+    schemas["TTDBranchInfoResponse"]["properties"]["files"]["items"]["type"] = "object";
+    schemas["TTDBranchInfoResponse"]["properties"]["files"]["items"]["properties"]["name"]["type"] = "string";
+    schemas["TTDBranchInfoResponse"]["properties"]["files"]["items"]["properties"]["bytes"]["type"] = "integer";
+    schemas["TTDBranchInfoResponse"]["properties"]["file_bytes"]["type"] = "integer";
+    schemas["TTDBranchInfoResponse"]["properties"]["folder"]["type"] = "string";
+    schemas["TTDBranchInfoResponse"]["properties"]["folder"]["nullable"] = true;
+    schemas["TTDBranchInfoResponse"]["properties"]["active"]["type"] = "integer";
+    schemas["TTDBranchInfoResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchCreateRequest"]["type"] = "object";
+    schemas["TTDBranchCreateRequest"]["description"] =
+        "Request body for POST /ttd/branches: every field optional (an empty body forks where the machine stands).";
+    for (const char* name : {"frame", "tinframe", "run_frames"})
+        schemas["TTDBranchCreateRequest"]["properties"][name]["type"] = "integer";
+    for (const char* name : {"branch", "name", "reason", "note", "run", "created_by", "media"})
+        schemas["TTDBranchCreateRequest"]["properties"][name]["type"] = "string";
+    for (const char* name : {"pinned", "go_back"})
+        schemas["TTDBranchCreateRequest"]["properties"][name]["type"] = "boolean";
+    schemas["TTDBranchCreateRequest"]["properties"]["frame"]["description"] =
+        "The moment (with tinframe, default 0); default where the machine stands.";
+    schemas["TTDBranchCreateRequest"]["properties"]["branch"]["description"] =
+        "The branch whose lineage holds the moment (id, GUID or name); default the active one.";
+    schemas["TTDBranchCreateRequest"]["properties"]["reason"]["description"] =
+        "Why: stored as 'create: <reason>'.";
+    schemas["TTDBranchCreateRequest"]["properties"]["run"]["description"] =
+        "A run id (an analyzer's): branch-prune {run} removes the run's branches.";
+    schemas["TTDBranchCreateRequest"]["properties"]["created_by"]["description"] = "Default: webapi.";
+    schemas["TTDBranchCreateRequest"]["properties"]["media"]["description"] =
+        "ask | empty (default) | keep: a medium that cannot go back to the moment (as POST /ttd/resume).";
+    schemas["TTDBranchCreateRequest"]["properties"]["run_frames"]["description"] =
+        "0..10000: run the new branch headless this many frames; the branch records it.";
+    schemas["TTDBranchCreateRequest"]["properties"]["tags"]["type"] = "array";
+    schemas["TTDBranchCreateRequest"]["properties"]["tags"]["items"]["type"] = "string";
+    schemas["TTDBranchCreateRequest"]["properties"]["input"]["type"] = "array";
+    schemas["TTDBranchCreateRequest"]["properties"]["input"]["items"]["type"] = "string";
+    schemas["TTDBranchCreateRequest"]["properties"]["input"]["description"] =
+        "Key changes during the run, frames from its start: 'frame:key[+key][:hold|:down|:up]' (a tap held 2 "
+        "frames by default; keys as the keyboard routes name them, joy.<button> for a joystick button), or "
+        "'frame:release_all'. Needs run_frames.";
+    for (const char* name : {"poke", "regs"})
+    {
+        schemas["TTDBranchCreateRequest"]["properties"][name]["type"] = "array";
+        schemas["TTDBranchCreateRequest"]["properties"][name]["items"]["type"] = "string";
+    }
+    schemas["TTDBranchCreateRequest"]["properties"]["poke"]["description"] =
+        "Bytes written (CPU view) at the fork, before the run: 'address=byte'. A tool edit the branch records.";
+    schemas["TTDBranchCreateRequest"]["properties"]["regs"]["description"] =
+        "CPU registers set at the fork, before the run: 'name=value' (the debugger's register names).";
+    schemas["TTDBranchCreateRequest"]["properties"]["read"]["type"] = "array";
+    schemas["TTDBranchCreateRequest"]["properties"]["read"]["items"]["type"] = "string";
+    schemas["TTDBranchCreateRequest"]["properties"]["read"]["description"] =
+        "Memory to read where the run ended (CPU view): 'address[:length]', length 1..256.";
+    schemas["TTDBranchCreateRequest"]["properties"]["go_back"]["description"] =
+        "After the run, back on the branch and at the moment the machine stood on before.";
+
+    schemas["TTDBranchCreateResponse"]["type"] = "object";
+    schemas["TTDBranchCreateResponse"]["description"] = "Response from POST /ttd/branches.";
+    schemas["TTDBranchCreateResponse"]["properties"]["created"]["type"] = "boolean";
+    schemas["TTDBranchCreateResponse"]["properties"]["branch"]["$ref"] = "#/components/schemas/TTDBranch";
+    schemas["TTDBranchCreateResponse"]["properties"]["parent"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    schemas["TTDBranchCreateResponse"]["properties"]["at"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchCreateResponse"]["properties"]["end"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchCreateResponse"]["properties"]["returned_to"]["$ref"] = "#/components/schemas/TTDTimePoint";
+    schemas["TTDBranchCreateResponse"]["properties"]["ran_frames"]["type"] = "integer";
+    schemas["TTDBranchCreateResponse"]["properties"]["aborted"]["type"] = "boolean";
+    schemas["TTDBranchCreateResponse"]["properties"]["aborted"]["description"] =
+        "The run stopped early: the user took control back.";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["type"] = "array";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["type"] = "object";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["properties"]["address"]["type"] = "integer";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["properties"]["length"]["type"] = "integer";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["properties"]["bytes"]["type"] = "array";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["properties"]["bytes"]["items"]["type"] =
+        "integer";
+    schemas["TTDBranchCreateResponse"]["properties"]["reads"]["items"]["properties"]["hex"]["type"] = "string";
+    schemas["TTDBranchCreateResponse"]["properties"]["needs_decision"]["type"] = "boolean";
+    schemas["TTDBranchCreateResponse"]["properties"]["media"]["type"] = "array";
+    schemas["TTDBranchCreateResponse"]["properties"]["media"]["items"]["type"] = "object";
+    schemas["TTDBranchCreateResponse"]["properties"]["state"]["type"] = "string";
+    schemas["TTDBranchCreateResponse"]["properties"]["text"]["type"] = "string";
+
+    schemas["TTDBranchPruneRequest"]["type"] = "object";
+    schemas["TTDBranchPruneRequest"]["description"] =
+        "Request body for POST /ttd/branches/prune: the GET /ttd/branches filter (at least one criterion) and dry_run.";
+    for (const char* name : {"scope", "created_by", "run", "name_prefix"})
+        schemas["TTDBranchPruneRequest"]["properties"][name]["type"] = "string";
+    for (const char* name : {"min_length", "max_length", "created_after", "created_before"})
+        schemas["TTDBranchPruneRequest"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchPruneRequest"]["properties"]["tag"]["description"] = "A tag or a list: every one of them.";
+    schemas["TTDBranchPruneRequest"]["properties"]["pinned"]["type"] = "boolean";
+    schemas["TTDBranchPruneRequest"]["properties"]["dry_run"]["type"] = "boolean";
+    schemas["TTDBranchPruneRequest"]["properties"]["dry_run"]["description"] = "Default true: nothing goes.";
+
+    schemas["TTDBranchPruneResponse"]["type"] = "object";
+    schemas["TTDBranchPruneResponse"]["description"] = "Response from POST /ttd/branches/prune.";
+    schemas["TTDBranchPruneResponse"]["properties"]["dry_run"]["type"] = "boolean";
+    for (const char* name : {"would_delete", "deleted"})
+    {
+        schemas["TTDBranchPruneResponse"]["properties"][name]["type"] = "array";
+        schemas["TTDBranchPruneResponse"]["properties"][name]["items"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    }
+    schemas["TTDBranchPruneResponse"]["properties"]["would_delete"]["description"] =
+        "A dry run: the branches that would go (with their descendants), each with its length.";
+    schemas["TTDBranchPruneResponse"]["properties"]["kept"]["type"] = "array";
+    schemas["TTDBranchPruneResponse"]["properties"]["kept"]["description"] =
+        "Picked but kept: on the active lineage, pinned, or holding one of those; reason says which.";
+    schemas["TTDBranchPruneResponse"]["properties"]["kept"]["items"]["$ref"] = "#/components/schemas/TTDBranchRef";
+    for (const char* name : {"frames", "file_bytes", "memory_bytes_freed"})
+        schemas["TTDBranchPruneResponse"]["properties"][name]["type"] = "integer";
+    schemas["TTDBranchPruneResponse"]["properties"]["text"]["type"] = "string";
 
     schemas["TTDDumpResponse"]["type"] = "object";
     schemas["TTDDumpResponse"]["description"] =
@@ -1634,6 +2004,19 @@
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("forward");
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["enum"].append("fwd");
     schemas["TTDStepInstructionRequest"]["properties"]["dir"]["default"] = "back";
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDStepInstructionRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it dir and count are taken.";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["type"] = "integer";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["format"] = "uint64";
+    schemas["TTDStepInstructionRequest"]["properties"]["count"]["description"] =
+        "With cpu: card instructions to step (default 1)";
 
     schemas["TTDStepInstructionResponse"]["type"] = "object";
     schemas["TTDStepInstructionResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1663,6 +2046,15 @@
     schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["format"] = "uint32";
     schemas["TTDReverseStepRequest"]["properties"]["scanlines"]["description"] =
         "Number of scanlines to step back: the machine's t_line T-states each (lands at nearest M1 <= target).";
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDReverseStepRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. With it only count (card instructions back) is taken.";
 
     schemas["TTDReverseStepResponse"]["type"] = "object";
     schemas["TTDReverseStepResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -1681,6 +2073,29 @@
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
 
+    // POST /ttd/reverse-step-over
+    schemas["TTDReverseStepOverResponse"]["type"] = "object";
+    schemas["TTDReverseStepOverResponse"]["description"] = "Response from POST /ttd/reverse-step-over.";
+    schemas["TTDReverseStepOverResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
+    schemas["TTDReverseStepOverResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["stepped"]["description"] = "The machine went back (false: no earlier instruction)";
+    schemas["TTDReverseStepOverResponse"]["properties"]["over_call"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["over_call"]["description"] =
+        "The instruction before was a routine's return: the machine went back past the routine";
+    schemas["TTDReverseStepOverResponse"]["properties"]["skipped"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["skipped"]["description"] = "over_call: the routine's instructions passed over";
+    schemas["TTDReverseStepOverResponse"]["properties"]["call_out_of_reach"]["type"] = "boolean";
+    schemas["TTDReverseStepOverResponse"]["properties"]["call_out_of_reach"]["description"] =
+        "The routine started before the history or behind a barrier: the machine stays on the return";
+    schemas["TTDReverseStepOverResponse"]["properties"]["blocking_marker"]["type"] = "object";
+    schemas["TTDReverseStepOverResponse"]["properties"]["blocking_marker"]["description"] = "The barrier that kept the routine's start out of reach";
+    schemas["TTDReverseStepOverResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["frame"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["frame"]["format"] = "uint64";
+    schemas["TTDReverseStepOverResponse"]["properties"]["tinframe"]["type"] = "integer";
+    schemas["TTDReverseStepOverResponse"]["properties"]["tinframe"]["format"] = "uint32";
+    schemas["TTDReverseStepOverResponse"]["properties"]["text"]["type"] = "string";
+
     // POST /ttd/reverse-continue
     schemas["TTDReverseContinueRequest"]["type"] = "object";
     schemas["TTDReverseContinueRequest"]["description"] =
@@ -1691,9 +2106,9 @@
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][0]["maximum"] = 65535;
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["items"]["oneOf"][1]["type"] = "string";
     schemas["TTDReverseContinueRequest"]["properties"]["pcs"]["description"] =
-        "Non-empty list of reverse breakpoint PCs (required), 0..65535 each: a number, or a string "
+        "Non-empty list of reverse breakpoint PCs (required on the main CPU; not taken with a card 'cpu', whose "
+        "own breakpoints are the targets), 0..65535 each: a number, or a string "
         "(decimal, \"0x..\", \"#..\" or \"$..\"). A bad entry is a 400.";
-    schemas["TTDReverseContinueRequest"]["required"].append("pcs");
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["type"] = "integer";
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["minimum"] = 0;
     schemas["TTDReverseContinueRequest"]["properties"]["phys_page"]["oneOf"][0]["maximum"] = 255;
@@ -1722,6 +2137,19 @@
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["type"] = "integer";
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["format"] = "uint64";
     schemas["TTDReverseContinueRequest"]["properties"]["from_frame"]["description"] = "Do not look older than this frame's start";
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["type"] = "string";
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("main");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("gs");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("neogs");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("ms");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["enum"].append("multisound");
+    schemas["TTDReverseContinueRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the move is on its instructions, the main CPU follows by "
+        "replay; the reply is a TTDCardMoveResponse. Back to the card's previous hit of its own breakpoints; with it only max_frames is taken (pcs is not needed).";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["type"] = "integer";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["format"] = "uint64";
+    schemas["TTDReverseContinueRequest"]["properties"]["max_frames"]["description"] =
+        "With cpu: frames searched back at most (default 1000); truncated in the reply when reached";
 
     schemas["TTDReverseContinueResponse"]["type"] = "object";
     schemas["TTDReverseContinueResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";

@@ -109,7 +109,8 @@ produced from the block layer and never read back as the source of truth.
 - A **write equal to the source** frees the piece, so the head and the version show "unchanged".
   This is the `SessionWriteMap` rule, kept.
 - **Branching.** After a TTD seek back and a new write, the default is to truncate the future,
-  exactly as TTD does with its own timeline. A labeled version is never dropped by truncation, so
+  exactly as TTD did with its own timeline. (TTD keeps the future as a branch since 2026-11-10; media follow in
+  [TTD branches](../2026-11-08-ttd-branches/README.md) P4, a version tree instead of the linear undo log.) A labeled version is never dropped by truncation, so
   a user can keep an alternative.
 
 ### 3.3 Storage and tiers

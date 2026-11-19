@@ -5,7 +5,7 @@
 #        K5  K6  K7  K8  K9          step out, back an instruction, pause / continue, step in, step over
 #        K14     Jog     K15         held while turning: by instructions / by seconds; alone: follow PC / next pane
 #          K10         K11           back a frame, forward a frame
-#         K12           K13          reverse continue, back to live
+#         K12           K13          reverse continue, back to live; K14 held + K12: the branch left last
 #
 # The shuttle ring is the debugger's speed control and moves it from where it is: turned right (CW) slower, a preset
 # per position (25 fps, 5 fps, 1 fps, a frame, 100 / 10 / 1 scanlines, 1 instruction), turned left (CCW) faster, up to
@@ -41,6 +41,7 @@ layers:
     jog:           { action: run.step_by }
     button.14+jog: { action: run.step_by, curve: { unit: frames } }
     button.15+jog: { action: ttd.seek_by, curve: { unit: seconds, min: 0.02, max: 2.0 } }
+    button.14+button.12: { action: ttd.branch_prev }
   "@ttd":
     jog:           { action: ttd.seek_by, curve: { unit: frames, min: 1, max: 100 } }
     button.14+jog: { action: ttd.jog_instructions }

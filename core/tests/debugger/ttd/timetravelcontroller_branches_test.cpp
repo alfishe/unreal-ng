@@ -214,7 +214,9 @@ protected:
 
     static bool HasBranchStreams(const std::vector<uint16_t>& streams)
     {
-        return std::any_of(streams.begin(), streams.end(), [](uint16_t id) {
+        // A chunked twin (0x8000 + S, F3) counts as its stream S
+        return std::any_of(streams.begin(), streams.end(), [](uint16_t twin) {
+            const uint16_t id = ttd::StreamOfChunkedTwin(twin);
             return id >= ttd::sessionstream::kBranchTable || id == ttd::holderstream::kBranchState;
         });
     }

@@ -10,6 +10,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -28,6 +29,11 @@
 #include "wheelclaim.h"
 #endif
 #include "controllers/connectorview.h"
+
+namespace gamescope
+{
+class SteamOverlay;
+}
 #include "emulator/actions/contextstate.h"
 
 class Emulator;
@@ -99,6 +105,9 @@ public:
     std::string ChoosePlayerConnector(const std::string& device, const std::string& connector, std::string& message);
     /// "" automatic, "none", or the chosen connector's id
     std::string PlayerChoice(const std::string& device) const;
+    /// The machine side of the bindings report (IHostInputOwner::MachineInputs): connectors with their matrix keys,
+    /// the auto decision, why the menu keys and the mouse buttons are on
+    controllers::JsonValue MachineInputs() const;
     /// Machine > Controllers > Reset bindings to default: every choice made by hand goes, the profiles and the
     /// machine's order decide again
     void ResetPlayerChoices();
@@ -140,6 +149,14 @@ public:
         return _soundHapticsDsp;
     }
     void SetSoundHapticsDsp(bool on);
+    /// The floppy drive under the hand (haptics.md §4.4, kept in the settings, on by default): the head's steps and the
+    /// turning disk on the pads. Plays only where allowed (SetDriveHapticsAllowed: the handheld mode for now)
+    bool DriveHaptics() const
+    {
+        return _driveHaptics;
+    }
+    void SetDriveHaptics(bool on);
+    void SetDriveHapticsAllowed(bool allowed);
     /// The window keyboard (`kbd:system`, mapping-and-profiles.md §4) is a debugger remote: its debug bindings are the
     /// debugger's shortcuts (debug-and-ttd.md §4.3). They take the keys of the debugger window, and of the main window
     /// with "global shortcuts" on (kept in the settings, off by default); a key they take does not reach the machine.
@@ -198,6 +215,9 @@ signals:
     void notice(const QString& text);
     /// The port-read heuristic plugged a device for the loaded program (ui-ux.md §3.8): the toast's line
     void autoDecided(const QString& text);
+    /// The program started or stopped reading the whole keyboard (the 128K menu, BASIC): the pad drives it with the
+    /// cursor keys and the handheld back grips type the loaders (InputRouter::SetMenuKeys)
+    void menuKeysChanged(bool on);
     /// A player device arrived; @p first: never seen on this computer before (the toast with Open controllers),
     /// @p connector: the one it drives ("" none)
     void deviceConnected(const QString& name, const QString& connector, bool first);
@@ -237,6 +257,7 @@ private:
     void applyConnectorPlans();
     void onFileLoaded(const QString& emulatorId, const QString& path);
     void onGuestProgram(const QString& emulatorId, const QString& path, const QByteArray& data);
+    void onMachineReset();
     void checkAuto();
     void applyAuto(const controllers::AutoDecision& decision);
     bool saveUserProfile(controllers::Profile profile, QString& error);
@@ -264,6 +285,12 @@ private:
     /// Own the devices while this process is the first live one of the queue; a queue with no live client is claimed
     void updateOwner();
     QString _ownersPath;  ///< "" in a windowless session: it never takes the devices from a window
+    /// Steam's menus over the window in gamescope (platform/linux/steamoverlay.h): the devices are Steam's meanwhile,
+    /// neither the machine nor the app's own screens read them. Checked every 50 ms while in gamescope
+    void checkSteamOverlay();
+    std::shared_ptr<gamescope::SteamOverlay> _steamOverlay;  ///< in gamescope only (Linux)
+    bool _steamOverlayUp = false;
+    QTimer* _steamOverlayTimer = nullptr;
     controllers::WheelClaim _wheelClaim;
     std::map<controllers::WheelClaim::Window, void*> _wheelHolds;  ///< WheelMenuWindows::Take's holds by window
     bool _wheelConnected = false;
@@ -272,6 +299,7 @@ private:
     std::string _videoKey;    ///< the profile and `video:` gameVideoChanged told last
     uint64_t _fileObserver = 0;
     uint64_t _guestObserver = 0;
+    uint64_t _resetObserver = 0;
     uint64_t _contextObserver = 0;
     uint64_t _breakpointObserver = 0;
     /// The signatures, file hash and TR-DOS file set of the program loaded last into the bound emulator (only those
@@ -283,9 +311,17 @@ private:
     /// reads a joystick
     bool _autoDone = false;
     bool _keyboardNoticed = false;
+    /// The watch's frame where the key scan last stopped while the menu keys were on (-1: it has not): they go off
+    /// only after a whole window without it (a menu's scan skips a moment after a reset)
+    int64_t _keyScanLostAt = -1;
+    uint64_t _keyBufferReads = 0;  ///< the PS/2 controller's key-buffer reads at the last poll
     bool _cardNoticed = false;  ///< the card a program's board reads want, said once
     std::string _autoConnector;  ///< the connector the decision chose: the first pad drives it
     controllers::AutoDecision _decision;
+    /// For the bindings report: why the menu keys / mouse buttons are as they are, and the last auto decision
+    std::string _menuKeysRule = "off: no whole-keyboard scan seen";
+    std::string _mouseButtonsRule = "off: no mouse decided";
+    controllers::JsonValue _autoReport;
     std::unique_ptr<controllers::HostInputService> _service;
     controllers::ProfileStore _profiles;
     controllers::ResolvedProfiles _resolved;
@@ -320,6 +356,8 @@ private:
     std::map<std::string, HeldContext> _layerContexts;  ///< by device: the debug layer keys held up
     std::string _manualProfile;
     bool _soundHaptics = false;
+    bool _driveHaptics = true;
+    bool _driveHapticsAllowed = false;
     bool _soundHapticsDsp = false;
     bool _globalShortcuts = false;
     QWidget* _mainWindow = nullptr;

@@ -1,0 +1,1 @@
+buildcpr:bank 5:org #C000:ld bc,{page}$

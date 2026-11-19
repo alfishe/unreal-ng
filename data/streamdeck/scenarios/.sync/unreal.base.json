@@ -301,12 +301,33 @@
    "state": null,
    "title": "bps"
   },
+  "branches": {
+   "glyph": "nav.folder",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Branches"
+  },
   "brk": {
    "glyph": "input.key",
    "glyph_on": null,
    "hold": true,
    "state": null,
    "title": "Key"
+  },
+  "brpin": {
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "hold": false,
+   "state": "ttd.branch.pinned",
+   "title": "Pin the branch"
+  },
+  "brprev": {
+   "glyph": "nav.back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch"
   },
   "bttdc": {
    "glyph": null,
@@ -847,12 +868,61 @@
    "state": null,
    "title": "Key"
   },
+  "kbenter": {
+   "glyph": "zx.enter",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "kbhome": {
+   "glyph": "nav.home",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Home"
+  },
+  "kbleft1": {
+   "glyph": "nav.prev_page",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Scroll left"
+  },
+  "kbleft2": {
+   "glyph": "nav.prev_page",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Scroll left"
+  },
+  "kbright1": {
+   "glyph": "nav.next_page",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Scroll right"
+  },
+  "kbright2": {
+   "glyph": "nav.next_page",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Scroll right"
+  },
   "kemp": {
    "glyph": "input.joystick_type",
    "glyph_on": null,
    "hold": false,
    "state": null,
    "title": "Joystick type"
+  },
+  "keyboard": {
+   "glyph": "input.keyboard",
+   "glyph_on": null,
+   "hold": null,
+   "state": null,
+   "title": "Keyboard"
   },
   "keyn": {
    "glyph": "input.key",
@@ -2198,6 +2268,20 @@
    "state": null,
    "title": "threads"
   },
+  "timbrpin": {
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "hold": false,
+   "state": "ttd.branch.pinned",
+   "title": "Pin the branch"
+  },
+  "timbrprev": {
+   "glyph": "nav.back",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch"
+  },
   "time": {
    "glyph": "ttd.menu",
    "glyph_on": null,
@@ -2211,6 +2295,20 @@
    "hold": false,
    "state": null,
    "title": "Resume live"
+  },
+  "timsibnxt": {
+   "glyph": "nav.next_page",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Next branch at the fork"
+  },
+  "timsibprv": {
+   "glyph": "nav.prev_page",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Previous branch at the fork"
   },
   "timttdrec": {
    "glyph": "ttd.record",
@@ -2624,6 +2722,279 @@
    "hold": false,
    "state": null,
    "title": "Speed"
+  },
+  "zx0": {
+   "glyph": "zx.0",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx1": {
+   "glyph": "zx.1",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx2": {
+   "glyph": "zx.2",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx3": {
+   "glyph": "zx.3",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx4": {
+   "glyph": "zx.4",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx5": {
+   "glyph": "zx.5",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx6": {
+   "glyph": "zx.6",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx7": {
+   "glyph": "zx.7",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx8": {
+   "glyph": "zx.8",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zx9": {
+   "glyph": "zx.9",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxa": {
+   "glyph": "zx.a",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxb": {
+   "glyph": "zx.b",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxc": {
+   "glyph": "zx.c",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxcaps": {
+   "glyph": "zx.caps",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxd": {
+   "glyph": "zx.d",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxe": {
+   "glyph": "zx.e",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxenter": {
+   "glyph": "zx.enter",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxf": {
+   "glyph": "zx.f",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxg": {
+   "glyph": "zx.g",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxh": {
+   "glyph": "zx.h",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxi": {
+   "glyph": "zx.i",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxj": {
+   "glyph": "zx.j",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxk": {
+   "glyph": "zx.k",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxl": {
+   "glyph": "zx.l",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxm": {
+   "glyph": "zx.m",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxn": {
+   "glyph": "zx.n",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxo": {
+   "glyph": "zx.o",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxp": {
+   "glyph": "zx.p",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxq": {
+   "glyph": "zx.q",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxr": {
+   "glyph": "zx.r",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxs": {
+   "glyph": "zx.s",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxsymbol": {
+   "glyph": "zx.symbol",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxt": {
+   "glyph": "zx.t",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxu": {
+   "glyph": "zx.u",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxv": {
+   "glyph": "zx.v",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxw": {
+   "glyph": "zx.w",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxx": {
+   "glyph": "zx.x",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxy": {
+   "glyph": "zx.y",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
+  },
+  "zxz": {
+   "glyph": "zx.z",
+   "glyph_on": null,
+   "hold": true,
+   "state": null,
+   "title": "Key"
   }
  },
  "doc": {
@@ -3426,6 +3797,48 @@
     "C10.5"
    ]
   },
+  "branches": {
+   "at": [
+    3,
+    2
+   ],
+   "context": "ttd",
+   "in": "home",
+   "kind": "menu",
+   "label": "BRANCH",
+   "list": {
+    "action": "ttd.branch_switch",
+    "dial": 0,
+    "dim": "!on_lineage",
+    "label": "{name}{pinned? *|}",
+    "long": {
+     "action": "ttd.branch_delete",
+     "value": {
+      "branch": "$id",
+      "now": true
+     }
+    },
+    "on": "active",
+    "readout": "ttd.branch_list.items",
+    "show": "{age}",
+    "value": {
+     "branch": "$id"
+    }
+   },
+   "long": {
+    "action": "ttd.branch_prev"
+   },
+   "show": {
+    "format": "{name}\n{count} BR",
+    "readout": "ttd.branch"
+   },
+   "strip": {
+    "content": "title",
+    "status": "ttd",
+    "target": true
+   },
+   "title": "Branches"
+  },
   "brk": {
    "action": "input.key",
    "at": [
@@ -3443,6 +3856,30 @@
     "hold": true,
     "key": "caps+space"
    }
+  },
+  "brpin": {
+   "action": "ttd.branch_pin",
+   "at": [
+    0,
+    2
+   ],
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "in": "branches",
+   "kind": "key",
+   "label": "PIN",
+   "state": "ttd.branch.pinned"
+  },
+  "brprev": {
+   "action": "ttd.branch_prev",
+   "at": [
+    0,
+    1
+   ],
+   "glyph": "nav.back",
+   "in": "branches",
+   "kind": "key",
+   "label": "PREV BR"
   },
   "bttdc": {
    "at": [
@@ -4545,6 +4982,14 @@
      "press": {
       "action": "ttd.resume_live"
      },
+     "press_turn": {
+      "left": {
+       "action": "ttd.branch_prev_sibling"
+      },
+      "right": {
+       "action": "ttd.branch_next_sibling"
+      }
+     },
      "turn": {
       "action": "ttd.jog_instructions",
       "value": {
@@ -4755,6 +5200,114 @@
     "key": "4"
    }
   },
+  "kbenter": {
+   "action": "input.key",
+   "at": [
+    0,
+    8
+   ],
+   "glyph": "zx.enter",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "enter"
+   }
+  },
+  "kbhome": {
+   "at": [
+    0,
+    0
+   ],
+   "in": "keyboard",
+   "kind": "key",
+   "nav": "home",
+   "pin": true,
+   "uc": [
+    "U1.7"
+   ]
+  },
+  "kbleft1": {
+   "at": [
+    1,
+    0
+   ],
+   "do": {
+    "by": -1,
+    "kind": "nav",
+    "to": "scroll"
+   },
+   "glyph": "nav.prev_page",
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "title": "Scroll left",
+   "uc": [
+    "U1.7"
+   ]
+  },
+  "kbleft2": {
+   "at": [
+    2,
+    0
+   ],
+   "do": {
+    "by": -1,
+    "kind": "nav",
+    "to": "scroll"
+   },
+   "glyph": "nav.prev_page",
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "title": "Scroll left",
+   "uc": [
+    "U1.7"
+   ]
+  },
+  "kbright1": {
+   "at": [
+    1,
+    8
+   ],
+   "do": {
+    "by": 1,
+    "kind": "nav",
+    "to": "scroll"
+   },
+   "glyph": "nav.next_page",
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "title": "Scroll right",
+   "uc": [
+    "U1.7"
+   ]
+  },
+  "kbright2": {
+   "at": [
+    2,
+    8
+   ],
+   "do": {
+    "by": 1,
+    "kind": "nav",
+    "to": "scroll"
+   },
+   "glyph": "nav.next_page",
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "title": "Scroll right",
+   "uc": [
+    "U1.7"
+   ]
+  },
   "kemp": {
    "action": "input.joystick_type",
    "at": [
@@ -4770,6 +5323,176 @@
    "value": {
     "kind": "kempston"
    }
+  },
+  "keyboard": {
+   "at": [
+    1,
+    6
+   ],
+   "back": false,
+   "context": "play",
+   "dials": {
+    "0": {
+     "label": "CAPS",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "caps"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    },
+    "1": {
+     "label": "SPACE",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "space"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    },
+    "2": {
+     "label": "SPACE",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "space"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    },
+    "3": {
+     "label": "SPACE",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "space"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    },
+    "4": {
+     "label": "SPACE",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "space"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    },
+    "5": {
+     "label": "SYMBOL",
+     "press": {
+      "action": "input.key",
+      "hold": true,
+      "value": {
+       "hold": true,
+       "key": "symbol"
+      }
+     },
+     "turn": {
+      "by": "$ticks",
+      "kind": "nav",
+      "to": "scroll"
+     },
+     "uc": [
+      "U1.7"
+     ]
+    }
+   },
+   "glyph": "input.keyboard",
+   "in": "home",
+   "kind": "menu",
+   "label": "KEYBOARD",
+   "strip": {
+    "content": "keys",
+    "keys": [
+     {
+      "action": "input.key",
+      "hold": true,
+      "label": "CAPS SHIFT",
+      "latch": true,
+      "value": {
+       "hold": true,
+       "key": "caps"
+      }
+     },
+     {
+      "action": "input.key",
+      "label": "SPACE",
+      "span": 4,
+      "value": {
+       "key": "space"
+      }
+     },
+     {
+      "action": "input.key",
+      "hold": true,
+      "label": "SYMBOL SHIFT",
+      "latch": true,
+      "value": {
+       "hold": true,
+       "key": "symbol"
+      }
+     }
+    ]
+   },
+   "title": "Keyboard",
+   "uc": [
+    "U1.7"
+   ],
+   "width": 10,
+   "window": [
+    1,
+    7
+   ]
   },
   "keyn": {
    "action": "input.key",
@@ -7961,6 +8684,30 @@
     "C10.2"
    ]
   },
+  "timbrpin": {
+   "action": "ttd.branch_pin",
+   "at": [
+    3,
+    4
+   ],
+   "glyph": "media.protect",
+   "glyph_on": "media.protect.on",
+   "in": "time",
+   "kind": "key",
+   "label": "PIN",
+   "state": "ttd.branch.pinned"
+  },
+  "timbrprev": {
+   "action": "ttd.branch_prev",
+   "at": [
+    2,
+    2
+   ],
+   "glyph": "nav.back",
+   "in": "time",
+   "kind": "key",
+   "label": "PREV BR"
+  },
   "time": {
    "at": [
     3,
@@ -8074,6 +8821,28 @@
    "uc": [
     "D3.6"
    ]
+  },
+  "timsibnxt": {
+   "action": "ttd.branch_next_sibling",
+   "at": [
+    2,
+    7
+   ],
+   "glyph": "nav.next_page",
+   "in": "time",
+   "kind": "key",
+   "label": "SIB >"
+  },
+  "timsibprv": {
+   "action": "ttd.branch_prev_sibling",
+   "at": [
+    2,
+    6
+   ],
+   "glyph": "nav.prev_page",
+   "in": "time",
+   "kind": "key",
+   "label": "SIB <"
   },
   "timttdrec": {
    "action": "ttd.record_toggle",
@@ -9052,6 +9821,746 @@
    ],
    "value": {
     "value": 1
+   }
+  },
+  "zx0": {
+   "action": "input.key",
+   "at": [
+    0,
+    9
+   ],
+   "glyph": "zx.0",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "DELETE",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "0"
+   }
+  },
+  "zx1": {
+   "action": "input.key",
+   "at": [
+    0,
+    0
+   ],
+   "glyph": "zx.1",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "EDIT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "1"
+   }
+  },
+  "zx2": {
+   "action": "input.key",
+   "at": [
+    0,
+    1
+   ],
+   "glyph": "zx.2",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "CAPS LOCK",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "2"
+   }
+  },
+  "zx3": {
+   "action": "input.key",
+   "at": [
+    0,
+    2
+   ],
+   "glyph": "zx.3",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "TRUE VIDEO",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "3"
+   }
+  },
+  "zx4": {
+   "action": "input.key",
+   "at": [
+    0,
+    3
+   ],
+   "glyph": "zx.4",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "INV VIDEO",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "4"
+   }
+  },
+  "zx5": {
+   "action": "input.key",
+   "at": [
+    0,
+    4
+   ],
+   "glyph": "zx.5",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "LEFT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "5"
+   }
+  },
+  "zx6": {
+   "action": "input.key",
+   "at": [
+    0,
+    5
+   ],
+   "glyph": "zx.6",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "DOWN",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "6"
+   }
+  },
+  "zx7": {
+   "action": "input.key",
+   "at": [
+    0,
+    6
+   ],
+   "glyph": "zx.7",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "UP",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "7"
+   }
+  },
+  "zx8": {
+   "action": "input.key",
+   "at": [
+    0,
+    7
+   ],
+   "glyph": "zx.8",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "RIGHT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "8"
+   }
+  },
+  "zx9": {
+   "action": "input.key",
+   "at": [
+    0,
+    8
+   ],
+   "glyph": "zx.9",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "GRAPHICS",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "9"
+   }
+  },
+  "zxa": {
+   "action": "input.key",
+   "at": [
+    2,
+    0
+   ],
+   "glyph": "zx.a",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "NEW",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "a"
+   }
+  },
+  "zxb": {
+   "action": "input.key",
+   "at": [
+    3,
+    5
+   ],
+   "glyph": "zx.b",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "BORDER",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "b"
+   }
+  },
+  "zxc": {
+   "action": "input.key",
+   "at": [
+    3,
+    3
+   ],
+   "glyph": "zx.c",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "CONT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "c"
+   }
+  },
+  "zxcaps": {
+   "action": "input.key",
+   "at": [
+    3,
+    0
+   ],
+   "glyph": "zx.caps",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "caps"
+   }
+  },
+  "zxd": {
+   "action": "input.key",
+   "at": [
+    2,
+    2
+   ],
+   "glyph": "zx.d",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "DIM",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "d"
+   }
+  },
+  "zxe": {
+   "action": "input.key",
+   "at": [
+    1,
+    2
+   ],
+   "glyph": "zx.e",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "REM",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "e"
+   }
+  },
+  "zxenter": {
+   "action": "input.key",
+   "at": [
+    2,
+    9
+   ],
+   "glyph": "zx.enter",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "enter"
+   }
+  },
+  "zxf": {
+   "action": "input.key",
+   "at": [
+    2,
+    3
+   ],
+   "glyph": "zx.f",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "FOR",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "f"
+   }
+  },
+  "zxg": {
+   "action": "input.key",
+   "at": [
+    2,
+    4
+   ],
+   "glyph": "zx.g",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "GO TO",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "g"
+   }
+  },
+  "zxh": {
+   "action": "input.key",
+   "at": [
+    2,
+    5
+   ],
+   "glyph": "zx.h",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "GO SUB",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "h"
+   }
+  },
+  "zxi": {
+   "action": "input.key",
+   "at": [
+    1,
+    7
+   ],
+   "glyph": "zx.i",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "INPUT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "i"
+   }
+  },
+  "zxj": {
+   "action": "input.key",
+   "at": [
+    2,
+    6
+   ],
+   "glyph": "zx.j",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "LOAD",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "j"
+   }
+  },
+  "zxk": {
+   "action": "input.key",
+   "at": [
+    2,
+    7
+   ],
+   "glyph": "zx.k",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "LIST",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "k"
+   }
+  },
+  "zxl": {
+   "action": "input.key",
+   "at": [
+    2,
+    8
+   ],
+   "glyph": "zx.l",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "LET",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "l"
+   }
+  },
+  "zxm": {
+   "action": "input.key",
+   "at": [
+    3,
+    7
+   ],
+   "glyph": "zx.m",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "PAUSE",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "m"
+   }
+  },
+  "zxn": {
+   "action": "input.key",
+   "at": [
+    3,
+    6
+   ],
+   "glyph": "zx.n",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "NEXT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "n"
+   }
+  },
+  "zxo": {
+   "action": "input.key",
+   "at": [
+    1,
+    8
+   ],
+   "glyph": "zx.o",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "POKE",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "o"
+   }
+  },
+  "zxp": {
+   "action": "input.key",
+   "at": [
+    1,
+    9
+   ],
+   "glyph": "zx.p",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "PRINT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "p"
+   }
+  },
+  "zxq": {
+   "action": "input.key",
+   "at": [
+    1,
+    0
+   ],
+   "glyph": "zx.q",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "PLOT",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "q"
+   }
+  },
+  "zxr": {
+   "action": "input.key",
+   "at": [
+    1,
+    3
+   ],
+   "glyph": "zx.r",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "RUN",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "r"
+   }
+  },
+  "zxs": {
+   "action": "input.key",
+   "at": [
+    2,
+    1
+   ],
+   "glyph": "zx.s",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "SAVE",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "s"
+   }
+  },
+  "zxsymbol": {
+   "action": "input.key",
+   "at": [
+    3,
+    8
+   ],
+   "glyph": "zx.symbol",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "pin": true,
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "symbol"
+   }
+  },
+  "zxt": {
+   "action": "input.key",
+   "at": [
+    1,
+    4
+   ],
+   "glyph": "zx.t",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "RAND",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "t"
+   }
+  },
+  "zxu": {
+   "action": "input.key",
+   "at": [
+    1,
+    6
+   ],
+   "glyph": "zx.u",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "IF",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "u"
+   }
+  },
+  "zxv": {
+   "action": "input.key",
+   "at": [
+    3,
+    4
+   ],
+   "glyph": "zx.v",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "CLS",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "v"
+   }
+  },
+  "zxw": {
+   "action": "input.key",
+   "at": [
+    1,
+    1
+   ],
+   "glyph": "zx.w",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "DRAW",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "w"
+   }
+  },
+  "zxx": {
+   "action": "input.key",
+   "at": [
+    3,
+    2
+   ],
+   "glyph": "zx.x",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "CLEAR",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "x"
+   }
+  },
+  "zxy": {
+   "action": "input.key",
+   "at": [
+    1,
+    5
+   ],
+   "glyph": "zx.y",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "RETURN",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "y"
+   }
+  },
+  "zxz": {
+   "action": "input.key",
+   "at": [
+    3,
+    1
+   ],
+   "glyph": "zx.z",
+   "hold": true,
+   "in": "keyboard",
+   "kind": "key",
+   "label": "COPY",
+   "uc": [
+    "U1.7"
+   ],
+   "value": {
+    "hold": true,
+    "key": "z"
    }
   }
  }

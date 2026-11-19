@@ -6,7 +6,7 @@
 /// MCP, Lua and Python. Header-only so core-tests drive it without a CLI socket.
 ///
 ///   slots [list]                                     buses, slots, fitted cards, built-ins
-///   slots catalog                                    every card, its options and how it fits this machine
+///   slots catalog [slot]                             every card, its options and how it fits this machine (or that slot)
 ///   slots matrix [table]                             the compatibility tables (markdown)
 ///   slots plug <slot> <card> [opt=val ...]           a card into a slot (zxbus.next, ay-socket, auto)
 ///   slots remove <slot>                              the card out of a slot
@@ -60,6 +60,8 @@ inline bool ParseArgs(const std::vector<std::string>& args, SlotControlRequest& 
     };
     if (out.verb == "matrix")
         take(out.table);
+    else if (out.verb == "catalog")
+        take(out.slot);  // every card planned into that slot
     else if (out.verb == "plug")
     {
         take(out.slot);
@@ -298,7 +300,7 @@ inline std::string Render(const SlotControlRequest& request, const SlotControlRe
 
 inline const char* Usage()
 {
-    return "Usage: slots [list] | catalog | matrix [table] | plug <slot> <card> [opt=val ...] | remove <slot> |\n"
+    return "Usage: slots [list] | catalog [slot] | matrix [table] | plug <slot> <card> [opt=val ...] | remove <slot> |\n"
            "       set <slot> opt=val ... | gs <gs|gs-lw|neogs>\n"
            "       plug / remove / set / gs: [--replace] [--dry-run] [--media save|discard] [--adapter <id>]; any: [--json]\n"
            "A change is planned first: one that removes a card or fits it unrealistically needs --replace (the plan\n"

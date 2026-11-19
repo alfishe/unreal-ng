@@ -362,7 +362,7 @@ Caveats the stub must honor (and report, not silently swallow):
 
 - **128K lock bit:** once bit 5 of `0x7FFD` is set, real hardware ignores further `7FFD` writes until reset. The decoder honors this, so path 1/2 on a locked machine replies `E0D` with a `monitor`-visible explanation ("paging locked by 7FFD bit 5 — use monitor out --raw to override"). The `--raw` path exists precisely for this debugging situation.
 - **Client memory caches:** IDA and Ghidra cache memory reads. After any paging write the stub can't force a client refresh; the setup guides document the refresh action per client, and `monitor bankinfo` lets the user confirm the active mapping first.
-- **Consistency with TTD:** a paging write from GDB while *recording* is a debugger-initiated state edit → it truncates history after the current point (parent TDD §4.2), same as a memory poke from the Qt UI.
+- **Consistency with TTD:** a paging write from GDB while *recording* is a debugger-initiated state edit → in the recorded past it starts a branch at the current point and the old future stays on its parent (parent TDD §4.2, TTD branches), same as a memory poke from the Qt UI.
 
 **Monitoring switches (reads and traps):**
 
@@ -560,9 +560,9 @@ sequenceDiagram
         Note over C: client reports<br/>end of recorded history
     end
     C->>S: c - resume forward from the past
-    S->>T: ResumeFromCurrent - truncates future history
+    S->>T: ResumeFromCurrent - forks a branch, the old future stays
     S->>E: Emulator.Resume
-    Note over S: monitor warning emitted<br/>on first truncating resume
+    Note over S: monitor note names<br/>the new branch
 ```
 
 ---

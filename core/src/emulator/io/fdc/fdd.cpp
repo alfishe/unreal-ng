@@ -7,6 +7,7 @@
 #include "emulator/emulator.h"
 #include "emulator/cpu/core.h"
 #include "emulator/notifications.h"
+#include "emulator/io/fdc/floppydriveslot.h"
 
 /// region <Constructors / destructors>
 FDD::FDD(EmulatorContext* context) : _context(context)
@@ -72,12 +73,45 @@ DiskImage::Track* FDD::trackUnderHead(uint8_t side)
     return _diskImage->getTrackForCylinderAndSide(cylinder, side);
 }
 
+DiskImage::Track* FDD::trackUnderHeadForWrite(uint8_t side)
+{
+    DiskImage::Track* track = trackUnderHead(side);
+    if (track || !_diskImage || side >= _diskImage->getSides())
+        return track;
+
+    uint8_t cylinder = _track;
+    if (_driveCylinders >= 80 && _diskImage->isFortyTrack())
+    {
+        if (_track & 1)
+            return nullptr;
+        cylinder = static_cast<uint8_t>(_track / 2);
+    }
+    if (cylinder >= MAX_CYLINDERS)
+        return nullptr;
+    if (_slotId.empty())
+        FloppyDriveSlot::BeforeImageGrow(_context, _driveID, *_diskImage);
+    else
+        FloppyDriveSlot::BeforeImageGrow(_context, _slotId, *_diskImage);  // the undo log (TTD) keeps the size first
+    if (!_diskImage->growCylinders(static_cast<uint8_t>(cylinder + 1)))
+        return nullptr;
+    return _diskImage->getTrackForCylinderAndSide(cylinder, side);
+}
+
 void FDD::insertDisk(DiskImage* diskImage)
 {
     if (diskImage)
     {
-        _diskImage = diskImage;
-        _diskInserted = true;
+        diskImage->setLayoutMutex(&_imageMutex);
+        DiskImage* previous = nullptr;
+        {
+            std::lock_guard<unrealdisk::LayoutMutex> lock(_imageMutex);  // no reader holds the previous image after this
+            previous = _diskImage;
+            _diskImage = diskImage;
+            _diskInserted = true;
+            _diskChanges++;
+        }
+        if (previous && previous != diskImage)
+            previous->setLayoutMutex(nullptr);
         if (_diskChanged)
             _diskChanged(this); // the previous image may be released right after this call
         
@@ -108,14 +142,60 @@ void FDD::ejectDisk()
     
     // Note: FDD does not own the DiskImage, just holds a pointer to it
     // The DiskImage is owned and managed by the Emulator/CoreState
-    _diskImage = nullptr;
-    _diskInserted = false;
+    DiskImage* previous = nullptr;
+    {
+        std::lock_guard<unrealdisk::LayoutMutex> lock(_imageMutex);  // no reader holds the image after this
+        previous = _diskImage;
+        _diskImage = nullptr;
+        _diskInserted = false;
+        _diskChanges++;
+    }
+    if (previous)
+        previous->setLayoutMutex(nullptr);
     if (_diskChanged)
         _diskChanged(this);
     
     // Notify subscribers about disk ejection with full context
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_FDD_DISK_EJECTED, new FDDDiskPayload(emulatorId, _driveID, path), true);
+}
+
+std::unique_ptr<DiskImage> FDD::SnapshotDisk() const
+{
+    // One track per hold of the lock (about a microsecond each): the emulation thread waits at most for one track's
+    // copy, and a reader the OS preempts is unlikely to be holding the lock. A disk change between two holds
+    // starts the copy again; after a few such restarts the whole copy runs under one hold
+    constexpr int kRestarts = 3;
+    DiskImage::RawCopy raw;
+    for (int attempt = 0;; attempt++)
+    {
+        const DiskImage* image = nullptr;
+        uint64_t changes = 0;
+        {
+            unrealdisk::LayoutMutex::ReaderGuard lock(_imageMutex);
+            image = _diskImage;
+            changes = _diskChanges;
+            if (!image)
+                return nullptr;
+            if (attempt >= kRestarts)
+            {
+                raw = image->CopyRaw();
+                break;
+            }
+            image->CopyRawHeader(raw);
+        }
+        bool same = true;
+        for (size_t i = 0; same; i++)
+        {
+            unrealdisk::LayoutMutex::ReaderGuard lock(_imageMutex);
+            same = _diskChanges == changes;
+            if (same && !image->CopyRawTrack(i, raw))
+                break;
+        }
+        if (same)
+            break;
+    }
+    return DiskImage::FromRaw(std::move(raw));
 }
 
 /// endregion </Methods>

@@ -83,6 +83,18 @@ class FloppyDriveSlots;
 enum class FrontPanelSwitch : uint8_t;  // emulator/ports/portdecoder.h
 class TapeSlot;
 
+/// The tool edits an `edited` event reports (Emulator::TakeToolEdits)
+struct ToolEditSummary
+{
+    std::string source;  ///< the last edit's
+    std::string cpu;
+    std::string what;
+    std::string page;
+    int32_t address = -1;  ///< -1: none
+    uint32_t length = 0;
+    uint32_t count = 0;
+};
+
 class Emulator : public ISoftResetSink
 {
     /// region <ModuleLogger definitions for Module/Submodule>
@@ -154,6 +166,14 @@ protected:
     snapshot::Report _lastSnapshotReport;
     mutable std::mutex _snapshotPathMutex;   ///< guards coreState.snapshotFilePath
 
+    // The tool edits not yet taken by an `edited` event (TakeToolEdits): one NC_DEBUG_EDITED in the message queue per
+    // instance at a time, whatever the edit rate (a script writing byte by byte); re-posted after kToolEditsRepost
+    // when nobody took the last one (no WebAPI), so the queue sees at most ten a second
+    std::mutex _toolEditsMutex;
+    ToolEditSummary _toolEdits;
+    bool _toolEditsPosted = false;
+    std::chrono::steady_clock::time_point _toolEditsPostedAt{};
+
     // The machine state coordinator (docs/inprogress/2026-10-09-machine-state-coordinator/): every operation on the
     // whole machine goes through it. Created with the emulator, before every participant; WireCoordinator links it
     class CoordinatorPorts;   ///< the emulator's ports: the machine thread, the clock, the owner of its own operations
@@ -168,6 +188,9 @@ protected:
     /// The emulator's own operations, run by the coordinator (stage: where the TTD session effect lands)
     void ResetNow(bool hardReset, coordinator::OpStage& stage);
     bool AutostartNow(AutostartRequest& request, coordinator::OpStage& stage);
+    bool AutostartPlusDNow(AutostartRequest& request, coordinator::OpStage& stage);
+    /// An MGT disk goes to the +D's drive (`slotId` set): "" or the refusal (no +D, a drive the +D has not)
+    std::string MgtDriveSlot(const std::string& path, uint8_t drive, std::string& slotId) const;
     bool LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& stage);
     snapshot::SaveResult _lastSaveResult;
 
@@ -178,6 +201,8 @@ protected:
     /// the emulation thread is parked. A GUI that reads the machine (debugger, memory views) must not do so
     /// meanwhile: the memory map changes under it. Depth, not a flag: the calls may nest
     std::atomic<int> _directStepDepth{0};
+    /// The machine's thread is parked inside another CPU's run (OnTargetBreakpointHit / OnTargetStep)
+    std::atomic<bool> _parkedInsideCardRun{false};
     /// The outermost direct run's CPU hold and its thread: at each frame boundary it lends the CPU to the holds
     /// queued behind it (ExecutionArbiter::LendCpu) - a TTD stop, a save, a reader do not wait for a long run_frames
     const execution::HoldToken* _lendingHold = nullptr;
@@ -204,6 +229,8 @@ public:
         uint16_t cpuPc = 0;
         /// No breakpoint (`hit` false): a step of `cpu` ended at `cpuPc` (OnTargetStep)
         bool step = false;
+        /// Another CPU's stop in the emulator's own run: where the main CPU parked with it
+        MainPosition main;
     };
 
     /// Why the emulator stopped last (the debugger snapshot's `pause`)
@@ -218,6 +245,10 @@ public:
             Watch,        ///< an armed frame watch held at a frame end (framewatch::Manager::LastPause says which)
         } reason = Reason::None;
         BreakpointStop breakpoint;
+        /// The stop's number: one more at every stop. An event that comes after it without a stop of its own (a
+        /// time travel move, an edit, a late delivery of the stop's own event) finds it unchanged: a debugger brings
+        /// a processor's view to the front once per stop, not once per event
+        uint64_t serial = 0;
     };
 
 private:
@@ -472,8 +503,41 @@ public:
     /// Refused in the recorded past (a replay, a point of a stopped session's history; owner 2026-10-11): the edit
     /// does not run, the reason comes back (empty: done) for the surface to report
     std::string EditMemoryFromTool(const char* source, const std::function<void()>& edit);
+    /// What a tool edits, for the NC_DEBUG_EDITED an edit that went through posts (DebugEditedPayload): `what` is
+    /// "registers", "memory" (the CPU's view), "page" (a physical page, `address` the offset), "port" or "state"
+    struct ToolEdit
+    {
+        const char* source = nullptr;
+        const char* cpu = "main";
+        const char* what = "state";
+        int32_t address = -1;  ///< -1: none
+        uint32_t length = 0;
+        std::string page;      ///< "page": the page ("RAM5")
+
+        static ToolEdit Of(const char* source, const char* what, int32_t address = -1, size_t length = 0,
+                           const char* cpu = "main")
+        {
+            ToolEdit e;
+            e.source = source;
+            e.what = what;
+            e.address = address;
+            e.length = static_cast<uint32_t>(length);
+            e.cpu = cpu;
+            return e;
+        }
+    };
+    /// The tool edits since the last call, merged: `count` edits; `what` / `cpu` are "mixed" when they differ, the
+    /// address range spans every memory or page edit of one kind (none when they cannot be spanned). The `edited`
+    /// event takes them on its NC_DEBUG_EDITED (DebugEventHub); count 0: another event took them already
+    ToolEditSummary TakeToolEdits();
+    /// EditMemoryFromTool with what it edits (the edited event's fields)
+    std::string EditMemoryFromTool(const ToolEdit& what, const std::function<void()>& edit);
     /// EditMemoryFromTool for a script: a refusal throws (std::runtime_error, the reason), so it is a script error
     void EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit);
+    void EditMemoryFromToolOrThrow(const ToolEdit& what, const std::function<void()>& edit);
+private:
+    void NoteToolEdit(const ToolEdit& what);  ///< an edit that went through: merged, NC_DEBUG_EDITED when none waits
+public:
     /// A CPU register set by a tool (EditMemoryFromTool): false, with nothing changed or recorded, for an unknown
     /// register or a value above its maximum (Z80::SetRegisterValue), or refused (@p refusal: why)
     bool SetRegisterFromTool(const char* source, const std::string& name, uint16_t value,
@@ -698,7 +762,7 @@ public:
 
     /// Create a blank disk and insert it into `drive`, owned like a loaded image (the previous image of
     /// the drive is released). The drive's path reads "<blank>" until the disk is saved.
-    /// @param cylinders 40 or 80; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
+    /// @param cylinders 1..86 Unformatted, 40 or 80 Trdos / Plus3; 0 = the format's default (Unformatted / Trdos 80, Plus3 40)
     /// @param sides 1 or 2; 0 = the format's default (Unformatted / Trdos 2, Plus3 1)
     /// @param error When non-null and the call fails, receives a human-readable reason
     /// @param resolved When non-null, receives the format and geometry actually used
@@ -719,6 +783,13 @@ public:
         bool started = false;  // Machine was reset into TR-DOS to run the disk
         bool ttdSessionEnded = false;  // The boot ended the TTD session (D42; a black box starts a new one)
         std::string message;   // Human readable outcome (says so when the TTD session ended)
+        // An MGT disk on the +D (PlusDAutostart): the plan (run, run+load, system-disk+load, mount), the start
+        // command it types, where G+DOS comes from (disk, system-disk). The steps run after the call returns: their
+        // progress is DiskAutostart::PlusD().GetStatus() (`state fdc` autostart)
+        std::string plan;
+        std::string command;
+        std::string dos;
+        std::string basic;  // MGT: the BASIC the steps run in: "48", "128" (the 128K's menu, then 128 BASIC)
     };
 
     /// Mount a disk image and, when the machine can run TR-DOS, quick-reset straight into TR-DOS so the
@@ -727,7 +798,13 @@ public:
     /// @param drive Must be 0 (A) - TR-DOS/Beta 128's own "RUN boot" convention only ever boots from drive
     ///              A, this is a hardware constraint, not a missing feature. Any other value is a hard
     ///              failure (`mounted=false`, `message` explains why) rather than a silent fallback to A.
-    DiskAutostartResult AutostartDisk(const std::string& path, uint8_t drive = 0);
+    /// @param basic MGT on the +D only: "" = the machine's own (48 BASIC on a 48K; on a 128K the reset goes to its
+    ///              menu and the steps choose 128 BASIC), "48" = 48 BASIC on any machine (a 128K user's choice for
+    ///              48K works), "128" = 128 BASIC (refused on a 48K)
+    DiskAutostartResult AutostartDisk(const std::string& path, uint8_t drive = 0, const std::string& basic = "");
+
+    /// The file is an MGT image (by its probe: 819200 bytes of 80 x 2 x 10 x 512)
+    static bool IsMgtDisk(const std::string& path);
 
     /// Result of SaveDisk()
     struct DiskSaveResult
@@ -812,6 +889,8 @@ public:
     /// The symbol bundles (data/symbols/manifest.json, in the resources or next to the executable) that match the
     /// loaded ROM pages go into the label manager as sets of origin "bundle"; UNREAL_SYMBOL_BUNDLES=0 turns it off
     void ApplySymbolBundles();
+    /// The shipped symbol bundles' folder (`symbols/` beside `rom/`); "" when UNREAL_SYMBOL_BUNDLES=0 turns them off
+    static std::string SymbolBundleFolder();
 
     // Debug methods
     void DebugOn();
@@ -944,6 +1023,11 @@ public:
     bool RunWhileParked(const std::function<void()>& work);
     /// A direct-stepping call is driving the Z80 on some thread right now (see DirectStepScope)
     bool IsDirectStepping() const { return _directStepDepth.load(std::memory_order_acquire) > 0; }
+    /// The machine is stopped inside another CPU's run (a General Sound breakpoint or step): the main CPU stands
+    /// inside a host port access or inside the frame end (its frame counter already moved, the frame's boundary work
+    /// not done). Neither is a moment time travel can capture or restore at: a recording starts at the next frame
+    /// boundary, a move in time waits until the machine leaves it (TTD branches debuggers.md §7)
+    bool IsParkedInsideCardRun() const { return _parkedInsideCardRun.load(std::memory_order_acquire); }
 
     /// The debugger snapshot's `seq`: grows at every stop, run start and tool edit of this emulator (equal = nothing
     /// changed for a debugger view)
@@ -994,6 +1078,12 @@ public:
     /// Another CPU's step ended at its instruction boundary `cpuPc` (GSCardTarget::ArmStep, the emulation thread):
     /// the machine pauses with the reason step, the main CPU wherever it stands, and this thread parks until Resume()
     void OnTargetStep(DebugCpuId cpu, uint16_t cpuPc);
+    /// WaitWhilePaused, marked as parked inside another CPU's run (IsParkedInsideCardRun)
+    void ParkInsideCardRun();
+    /// Where the main CPU stands as card `cpu` stops (the emulation thread, inside the card's run)
+    MainPosition MainPositionAt(DebugCpuId cpu) const;
+    /// MainPositionAt's instruction progress: elapsed and total T, the machine cycle under way (design §5.4)
+    void FillInstructionProgress(MainPosition& position) const;
     /// The stop goes to the script callbacks that wait for this breakpoint (on_breakpoint), before the pause
     void NoteBreakpointCallbacks(uint16_t breakpointId, uint16_t address, BreakpointHitKind kind);
     /// The breakpoint that ended the last direct run early; hit = false when the run did all it was asked

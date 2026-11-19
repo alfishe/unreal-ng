@@ -59,6 +59,8 @@ public:
     /// The pictures of a model by its short name ("48K", "ATM710"), the default first; empty for an unknown model
     std::vector<std::string> forModel(const std::string& model) const;
     QString name(const std::string& id) const;
+    /// Every picture of the index, by id
+    std::vector<std::string> ids() const;
     /// The styles the pictures are drawn in, the default first ("photo", "schematic", "hybrid")
     const std::vector<std::string>& styles() const { return _styles; }
     /// Load one picture's key map and its SVG in @p style (an unknown style: the default); false (and @p error)

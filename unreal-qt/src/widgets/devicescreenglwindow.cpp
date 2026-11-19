@@ -1658,6 +1658,11 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
         QPainter painter(&image);
         _hudOverlay->renderHUD(painter, width(), height(), ratio);
     }
+    if (hud && _overlayPainter)
+    {
+        QPainter painter(&image);
+        _overlayPainter(painter, width(), height());
+    }
     return image;
 }
 
@@ -1960,13 +1965,24 @@ void DeviceScreenGLWindow::paintGL()
         _gpuTimes.End(GpuPassTimes::Picture);
     }
 
-    if (_hudOverlay && _hudOverlay->isVisible() && !_renderingImage)
+    const bool hudShown = _hudOverlay && _hudOverlay->isVisible();
+    if ((hudShown || _overlayPainter) && !_renderingImage)
     {
+        // QPainter's glyph cache uploads assume GL's default pixel store and texture unit; a picture pass that left
+        // others (alignment 1, a row length) skews every newly cached glyph into diagonal stripes
+        glActiveTexture(GL_TEXTURE0);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
         // Into the bound framebuffer: the window's surface or the native way's IOSurface
         QOpenGLPaintDevice device(QSize(surfaceWidth, surfaceHeight));
         device.setDevicePixelRatio(dpr);
         QPainter painter(&device);
-        _hudOverlay->renderHUD(painter, width(), height(), dpr);
+        if (hudShown)
+            _hudOverlay->renderHUD(painter, width(), height(), dpr);
+        if (_overlayPainter)
+            _overlayPainter(painter, width(), height());
     }
 }
 
@@ -2140,8 +2156,29 @@ void DeviceScreenGLWindow::keyReleaseEvent(QKeyEvent* event)
     }
 }
 
+bool DeviceScreenGLWindow::overlayTakesPointer(QMouseEvent* event)
+{
+    const bool taken = _overlayPointer && _overlayPointer(event->type(), event->position(), width(), height());
+    if (taken && !_overlayHidCursor)
+    {
+        setCursor(Qt::BlankCursor);
+        _overlayHidCursor = true;
+    }
+    else if (!taken && _overlayHidCursor)
+    {
+        unsetCursor();
+        _overlayHidCursor = false;
+    }
+    return taken;
+}
+
 void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 {
+    if (overlayTakesPointer(event))
+    {
+        event->accept();
+        return;
+    }
     // An automation session holds the machine: no capture, no clicks from the GUI
     if (RemoteControlGuard::InputBlocked(_emulator.get()))
     {
@@ -2156,6 +2193,11 @@ void DeviceScreenGLWindow::mousePressEvent(QMouseEvent* event)
 
 void DeviceScreenGLWindow::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (overlayTakesPointer(event))
+    {
+        event->accept();
+        return;
+    }
     if (_mouseCapture && _mouseCapture->handleMouseRelease(event))
         event->accept();
     else
@@ -2164,6 +2206,11 @@ void DeviceScreenGLWindow::mouseReleaseEvent(QMouseEvent* event)
 
 void DeviceScreenGLWindow::mouseMoveEvent(QMouseEvent* event)
 {
+    if (overlayTakesPointer(event))
+    {
+        event->accept();
+        return;
+    }
     if (_mouseCapture && _mouseCapture->handleMouseMove(event))
         event->accept();
     else

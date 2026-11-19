@@ -161,8 +161,11 @@ public:
     bool setDebugHooks(IGSDebugHooks* hooks) override;
     CardPage mapCardAddress(uint16_t addr) const override;
     uint32_t cardPageCount(CardPage::Kind kind) const override;
+    const uint8_t* cardRomPage(uint32_t page) const override;
     bool cardRegisters(Z80CpuRegisters& out) const override;
     int64_t cardTime() const override { return totalGsCycles(); }
+    void catchUpToHost() override;
+    int64_t hostLead() const override;
     double cardUnitsPerSecond() const override { return _unitsPerSecond; }
     int64_t cardFrameTime() const override { return totalGsCycles() - _frameStartGsCycles; }
     bool inFrameEndCatchUp() const override { return _frameEndCatchUp; }
@@ -179,7 +182,16 @@ public:
     /// "is the GS coprocessor doing anything at all" (CLI/WebAPI/MCP/Lua/Python
     /// all read this via getActivityCounters()).
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
-    void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
+    void resetActivityCounters() override
+    {
+        _instructionCountOffset += static_cast<int64_t>(_activityCounters.cpuSteps);   // the count goes on
+        _activityCounters = GSActivityCounters{};
+    }
+    bool cardInstructionCount(uint64_t& count) const override
+    {
+        count = _activityCounters.cpuSteps + static_cast<uint64_t>(_instructionCountOffset);
+        return _instructionCountKnown;
+    }
 
     /// Structured event trace (host ports, GS-side ports, DAC fetches,
     /// interrupts) - opt-in, mirrors the main-Z80 port tracer's session model
@@ -306,6 +318,9 @@ public:
 
     /// Fixed part of the TTD blob (everything except the RAM image)
     static constexpr size_t TTD_FIXED_STATE_SIZE = 95;
+    /// The card CPU's instruction count in the fixed part: a little-endian u64, then its flag byte (1: present)
+    static constexpr size_t TTD_COUNT_OFFSET = 59;
+    static constexpr size_t TTD_COUNT_FLAG_OFFSET = 67;
 
     /// Time-travel engine region (Phase 1, Step 6): the card RAM (128-512 KB);
     /// the engine's blob is the fixed state only
@@ -419,6 +434,7 @@ private:
 
     // Lazy sync core
     void flush();                      // run GS to the current ZX tact
+    bool hostTarget(int64_t& target) const;  // the card time of the current ZX tact; false without a base
     void runToDebug(int64_t targetGsCycles);  // out of line: the debug loop's code stays away from the fast loop's
     void runToRecord(int64_t targetGsCycles);  // out of line too: the execution history's loop
     void runTo(int64_t targetGsCycles)
@@ -520,6 +536,7 @@ private:
     bool _frameEndCatchUp = false;  // inside handleFrameEnd's run (a card hook's edit names the frame)
     uint64_t _frameStartZxTacts = 0;
     int64_t _frameGsCycles = 0;
+    GSHostClock::Rate _tightRate;  // catchUpToHost's conversion, per host instruction in tight mode
     bool _nmiPending = false;
     uint32_t _busEffects = 0;  // GSCardRunner::busEffects
 
@@ -533,6 +550,9 @@ private:
 
     // Diagnostics: always-on counters + opt-in structured trace (gsporttrace.h)
     GSActivityCounters _activityCounters;
+    // The instruction count (cardInstructionCount) = cpuSteps + this; false after a TTD blob without a count
+    int64_t _instructionCountOffset = 0;
+    bool _instructionCountKnown = true;
     GSPortTraceRecorder _portTrace;
     IGSBusObserver* _busObserver = nullptr;
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus

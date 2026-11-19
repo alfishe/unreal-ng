@@ -650,6 +650,16 @@ TEST_F(EmulatorManager_Test, PortDecoderIsModelSupportedMatchesCreatableExpectat
         EXPECT_TRUE(Config::IsModelCreatable(*model));
     }
 
+    // Pentagon 2.666 LE (docs/inprogress/2026-11-11-pentagon-2666-le): its own decoder, configs/p2666
+    {
+        EXPECT_TRUE(PortDecoder::IsModelSupported(MM_P2666));
+        const TMemModel* model = Config::FindModelByShortName("P2666");
+        ASSERT_NE(model, nullptr);
+        EXPECT_EQ(model->Model, MM_P2666);
+        EXPECT_TRUE(Config::IsModelCreatable(*model));
+        EXPECT_EQ(Config::GetConfigFolderForModel(MM_P2666), "p2666");
+    }
+
     // Profi v3 (docs/inprogress/2026-10-01-profi-v3-v5): the v5 decoder with the v3 board profile, configs/profi3;
     // PROFI5 names the v5 board
     {

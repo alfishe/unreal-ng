@@ -108,7 +108,7 @@ The same pattern holds the saturating sound mix (D-11, §5.2) and any further bu
 | `window[2][4]` | 10 each | `0x3FF`, window 0 `0x3BF` |
 | `palette[16]` | 16 each | power-on only |
 | `border3` | 1 | 0 |
-| `sdConfig`, `covox`, `aySelect`, `intFlag` | | 0 |
+| `covox`, `aySelect`, `intFlag` | | 0 |
 
 **DOS state machine** in the M1 hook exactly as HR §3: enter on M1 at `3D00..3DFF` with `7FFD.4 = 1`; at M1
 `>= 0x4000` take `dos1`; `dos1 = cpm AND NOT bf0` latched at the end of every I/O cycle. Reuse the existing Beta 128

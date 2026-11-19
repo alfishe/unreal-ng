@@ -50,6 +50,8 @@ public:
     static Display* Get();
     /// A connection of the caller's own (another thread), nullptr when X11 is not there
     static std::unique_ptr<Display> Connect();
+    /// A connection to the X display @p name (":0": in gamescope, Steam's own), nullptr when it cannot be opened
+    static std::unique_ptr<Display> ConnectTo(const std::string& name);
 
     /// The output under `screen` (by its name, Qt's xcb screens are RandR outputs; else the CRTC at its origin)
     bool Output(const QScreen* screen, OutputState& state, std::string& error);
@@ -59,6 +61,8 @@ public:
     bool SetMode(const OutputState& state, uint64_t modeId, std::string& error);
     /// `_VARIABLE_REFRESH` on the X window (what Mesa and xf86-video-amdgpu read): 1 opts it into VRR, 0 out
     void SetVariableRefresh(unsigned long window, bool on);
+    /// The root window's CARDINAL property @p name (its first value); false when it is not there
+    bool RootCardinal(const char* name, uint64_t& value);
 
     ~Display();
     Display(const Display&) = delete;
@@ -68,7 +72,7 @@ public:
 
 private:
     Display() = default;
-    bool Open();
+    bool Open(const char* name);  ///< nullptr: DISPLAY
 
     Api* _api = nullptr;
     void* _display = nullptr;

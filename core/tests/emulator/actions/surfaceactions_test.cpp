@@ -247,7 +247,7 @@ TEST_F(SurfaceActions_Test, HistoryVerbsAreUnavailableUntilAHistoryIsRecorded)
     const char* verbs[] = {"ttd.bookmark_add",          "ttd.resume_live",       "ttd.step_back_frame",
                            "ttd.step_forward_frame",    "ttd.step_back_instruction", "ttd.step_forward_instruction",
                            "ttd.reverse_step",          "ttd.reverse_continue",  "ttd.jog_frames",
-                           "ttd.jog_instructions"};
+                           "ttd.jog_instructions",      "ttd.reverse_step_over"};
     for (const char* id : verbs)
         EXPECT_EQ(_registry->Unavailable(id, press), actions::kNoHistory) << id;
     EXPECT_EQ(_registry->Run("ttd.bookmark_add", press).error, "not_now");

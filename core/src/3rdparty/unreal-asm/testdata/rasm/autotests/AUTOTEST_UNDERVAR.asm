@@ -1,0 +1,1 @@
+coucou nop:_coucou nop:_mavar=5:jr _coucou+_mavar:print _mavar

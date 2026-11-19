@@ -83,6 +83,8 @@ Drive the card with `emulator_manage` (all `gs_*` actions go to
 | `gs_nmi` | | `#33` bit-6 pulse |
 | `gs_send_command` / `gs_send_data` | `value` 0-255 (required) | `OUT #BB` / `OUT #B3` semantics |
 | `gs_read_status` / `gs_read_data` | | side-effect-free peek: `IN #BB` value (status or `#7E`) / the card-to-ZX byte (bit 7 not cleared) |
+| `gs_send` | `value` the command; `pre`, `params` (array), `replies`, `wait_ms` (default 1000) | the debugger's send: each byte when the card may take it, the replies read, named by the firmware profile (`GS send 3: #23 Get number of RAM pages -> #03 (pages)`); a wrong parameter count is refused |
+| `gs_conversation` | `send_id` (default the last) | a send's state: queued (a paused machine), running, done, failed with the byte the card did not take |
 | `gs_switch_personality` | `personality`: `z80`/`lle`, `lw`/`lightweight`, `ngs`/`neogs`; optional `replace_if_incompatible`, `dry_run` | replace the card in the GS slot: a slot change applied by a machine restart (owner decision Q10) - a new emulator id (the reply's `restart.emulatorId`), the machine state is lost; refused while TTD records |
 | `gs_dump_module` | `path` (optional, relative, no `..`; default `gs-module-dump.mod`) | write the last completed COM30..D2 module upload; 404 if none |
 | `gs_sd_insert` / `gs_sd_eject` / `gs_flash_save` | `path` (insert: raw image) | NeoGS only; insert/eject while TTD records: an event of the recording at the next frame boundary |
@@ -92,6 +94,26 @@ The writes, resets and NMI are live input: applied at the next instruction
 boundary and journaled for TTD (409 while a TTD replay owns input). Pick
 `gs_reset` vs `gs_reset_card` deliberately when re-running a firmware boot
 test.
+
+What the host program's conversation is at: `inspect_state {"aspects":["audio_gs"]}` shows `protocol:` (the
+command, the parameters and replies due, an upload's bytes) while the command log records
+(`device_history {"action":"config","device":"zxbus.1.commands","mode":"ring"}`; off: "no protocol
+state").
+
+The card's hardware as boards: `inspect_state {"aspects":["boards"]}` lists them (`gs` on the classic card;
+`neogs`, `neogs_dma`, `neogs_sd`, `neogs_mp3`, `neogs_flash` on NeoGS), `{"aspects":["board.neogs"]}` reads one
+control by control (GSCFG0 and SSTAT bits named, pages, clock, channels, interrupts, mailbox). The SD card through its
+board: `emulator_manage {"action":"board_action","board":"neogs_sd","operation":"insert","path":"<image or folder>"}`
+(`operation` `eject`; board `neogs_flash`, operation `save`); `media {"action":"list"}` shows it in `sd.ngs`. WebAPI
+`GET /debug/boards/{id}?values=1` gives `{values: {control: value}}` for polling.
+
+What the card did, as counters: `inspect_state {"aspects":["audio_gs_stats"]}` (or `audio_gs_stats.mailbox`,
+`.dma`, `.sd`, `.errors`, `.rates`...): both mailbox sides (`host_commands` vs `card_commands_read` /
+`card_command_acks`, `command_overwrites` = a command written over an unread one), interrupts, on NeoGS every DMA
+transaction, SD commands by index and errors, MP3 drops and resyncs, flash programs; `errors.total` is the one number
+to watch. For "how many during this action": `emulator_manage {"action":"gs_reset_counters"}` returns a baseline,
+then read with `"gs_stats_since": <baseline>`. Rates (`commands`, `zx_dma_bytes`, `cpu_steps` per second) need the
+machine running; add `"gs_stats_fresh": true` for a block from after the call.
 
 Protocol triage: `analyze_performance {"action":"gs_porttrace","frames":10,"limit":32}`
 starts a GS trace, runs the frames, stops it and returns the always-on

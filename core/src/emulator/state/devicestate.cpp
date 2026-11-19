@@ -9,10 +9,14 @@
 
 #include "emulator/corestate.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/diskautostart.h"
 #include "emulator/io/fdc/diskimage.h"
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/upd765.h"
 #include "emulator/io/fdc/wd1793.h"
+#include "emulator/slots/cards/plusd/plusdautostart.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
+#include "emulator/slots/slotmanager.h"
 #include "emulator/io/ide/ata/atapicdrom.h"
 #include "emulator/io/ide/idecontroller.h"
 #include "emulator/io/rtc/ds12887.h"
@@ -22,11 +26,13 @@
 #include "emulator/io/network/networkmanager.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/firmware/gsfirmwareprofile.h"
 #include "emulator/sound/chips/soundchip_moonsound.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/covox.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/memory/memory.h"
@@ -365,14 +371,15 @@ StateNode DrivesNode(EmulatorContext* context, int count)
         drive["side"] = fdd->getSide() ? 1 : 0;
         drive["motor_on"] = fdd->getMotor();
         drive["write_protected"] = fdd->isWriteProtect();
-        DiskImage* image = fdd->getDiskImage();
-        if (image && fdd->isDiskInserted())
-        {
-            StateNode geo = StateNode::Object();
-            geo["cylinders"] = int(image->getCylinders());
-            geo["sides"] = int(image->getSides());
-            drive["image"] = geo;
-        }
+        fdd->WithDisk([&](const DiskImage* image) {  // read from any thread: the image may change meanwhile
+            if (image && fdd->isDiskInserted())
+            {
+                StateNode geo = StateNode::Object();
+                geo["cylinders"] = int(image->getCylinders());
+                geo["sides"] = int(image->getSides());
+                drive["image"] = geo;
+            }
+        });
         drives.push(drive);
     }
     return drives;
@@ -417,6 +424,64 @@ StateNode BytesArray(const uint8_t* bytes, size_t count)
 }
 
 /// NEC uPD765A (+3): phase, main status, the command in hand, status bytes, SPECIFY times, units, drives
+/// The Pentagon 2.666 LE's Beta Disk emulator (betadisk.vhd): the WD1793 registers as the CPU reads them, the
+/// command in hand, the system register, the head, and drive A (the image the RAM disk holds)
+StateNode P2666BetaDiskNode(EmulatorContext* context, const P2666BetaDisk& fdc, uint64_t edge)
+{
+    StateNode ret = StateNode::Object();
+    ret["available"] = true;
+    ret["controller"] = "P2666 Beta Disk emulator (WD1793 imitation on the RAM disk)";
+
+    const uint8_t status = fdc.StatusAt(edge);
+    StateNode regs = StateNode::Object();
+    regs["command"] = int(fdc.Command());
+    regs["track"] = int(fdc.Track());
+    regs["sector"] = int(fdc.Sector());
+    regs["data"] = int(fdc.Data());
+    regs["status"] = int(status);
+    ret["registers"] = regs;
+
+    // betadisk.vhd:169-177: never not ready, write protected, record not found, CRC error or lost data
+    const bool type1 = fdc.TypeIStatus();
+    StateNode sb = StateNode::Object();
+    sb["busy"] = (status & 0x01) != 0;
+    if (type1)
+    {
+        sb["index"] = (status & 0x02) != 0;
+        sb["track0"] = (status & 0x04) != 0;
+        sb["head_loaded"] = (status & 0x20) != 0;
+    }
+    else
+        sb["drq"] = (status & 0x02) != 0;
+    ret["status_bits"] = sb;
+
+    ret["phase"] = fdc.Phase();
+    StateNode sig = StateNode::Object();
+    sig["intrq"] = fdc.Intrq();
+    sig["drq"] = fdc.Drq();
+    ret["signals"] = sig;
+
+    // betadisk_reg (#FF in DOS): drive 1..0 (only A = 00 takes commands), reset 2 (0 = held), side 4 (1 = side 0)
+    const uint8_t system = fdc.System();
+    StateNode sys = StateNode::Object();
+    sys["value"] = int(system);
+    sys["drive"] = int(system & 0x03);
+    sys["reset_held"] = (system & 0x04) == 0;
+    sys["side"] = (system & 0x10) ? 0 : 1;
+    ret["system_register"] = sys;
+    ret["selected_drive"] = int(system & 0x03);
+    ret["head_cylinder"] = int(fdc.Position());
+
+    StateNode ram = StateNode::Object();
+    ram["first_page"] = int(P2666BetaDisk::kFirstPage);
+    ram["last_page"] = int(P2666BetaDisk::kLastPage);
+    ram["order"] = "cylinder 0 in the last page, downwards";
+    ret["ram_disk"] = ram;
+
+    ret["drives"] = DrivesNode(context, 1);
+    return ret;
+}
+
 StateNode Upd765Node(EmulatorContext* context, const UPD765& fdc)
 {
     const UPD765::Snapshot s = fdc.getSnapshot();
@@ -712,6 +777,25 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
     ret["enabled"] = true;
     ret["rom_loaded"] = gs->isROMLoaded();
     ret["firmware"] = gs->firmwareDescription();
+    // The firmware profile the ROM's SHA-256 selects (gs-debugger design §6.1, L4): id and title, or
+    // known = false with the digest of an unknown ROM. A card without a ROM to hash (lightweight) has none
+    if (const GSFirmwareIdentity identity = IdentifyGSFirmware(*gs); identity.hasRom)
+    {
+        StateNode profile = StateNode::Object();
+        profile["known"] = identity.profile != nullptr;
+        if (identity.profile)
+        {
+            profile["id"] = std::string(identity.profile->id);
+            profile["title"] = std::string(identity.profile->title);
+            profile["symbols"] = std::string("bundle:gs:") + identity.profile->id;
+        }
+        profile["sha256"] = identity.sha256;
+        StateNode pages = StateNode::Array();
+        pages.push(identity.sha256Pages[0]);
+        pages.push(identity.sha256Pages[1]);
+        profile["page_sha256"] = pages;
+        ret["firmware_profile"] = profile;
+    }
     ret["ram_kb"] = uint64_t(gs->getRamSizeKB());
     ret["status"] = int(status);
     ret["command_pending"] = (status & 0x01) != 0;  // bit0: ZX command waiting
@@ -725,6 +809,25 @@ StateNode GeneralSoundReport(GeneralSoundCard& card, const SoundManager* sm, boo
     ret["data_from_host"] = int(gs->getDataFromHost());
     ret["data_to_host"] = int(gs->getDataToHost());
     ret["page"] = int(gs->getMPAG());  // MPAG banking latch (GS design §2.3)
+    // What the host's conversation is at (gs-debugger design §6.4, F3): the command log's decoder, so only while the
+    // log records; and the debugger's last send (F6) to the machine's card
+    if (const GSCommandLog* log = gs->commandLog())
+    {
+        StateNode protocol = StateNode::Object();
+        log->State().ToState(protocol);
+        if (!log->On())
+            protocol["device"] = log->History().Device();
+        ret["protocol"] = protocol;
+    }
+    if (const std::shared_ptr<GSHostDriver> driver = sm && sm->getGeneralSound() == gs ? sm->gsHostDriver() : nullptr)
+    {
+        if (const std::optional<GSConversation> last = driver->Find(0))
+        {
+            StateNode send = StateNode::Object();
+            last->ToState(send);
+            ret["last_send"] = send;
+        }
+    }
 
     StateNode channels = StateNode::Array();
     for (int i = 0; i < gs->channelCount(); i++)
@@ -1317,32 +1420,28 @@ StateNode FmChip(EmulatorContext* context, int chip)
     return FmChipNode(device->chip(chip), chip, double(CPU_CLOCK_RATE), device->fmTrimDb());
 }
 
-StateNode Fdc(EmulatorContext* context)
+namespace
 {
-    // The +3 has its own controller; the WD1793 object exists on every model but is not wired there
-    if (context && context->pUPD765)
-        return Upd765Node(context, *context->pUPD765);
-
-    const WD1793* fdc = context ? context->pBetaDisk : nullptr;  // const: picks the register getters, not the computing overloads
-    if (!fdc)
-        return Unavailable("Beta Disk interface (WD1793) not present on this machine");
-
+/// A WD1793 / WD1772's registers, status bits, state machine, signals, clock and command history (no drives)
+StateNode WdControllerNode(const WD1793& fdc, const char* controller)
+{
     StateNode ret = StateNode::Object();
     ret["available"] = true;
-    ret["controller"] = "WD1793 (Beta Disk)";
+    ret["controller"] = controller;
 
     StateNode regs = StateNode::Object();
-    regs["command"] = int(fdc->getCommandRegister());
-    regs["track"] = int(fdc->getTrackRegister());
-    regs["sector"] = int(fdc->getSectorRegister());
-    regs["data"] = int(fdc->getDataRegister());
-    regs["status"] = int(fdc->getStatusRegister());
+    regs["command"] = int(fdc.getCommandRegister());
+    regs["track"] = int(fdc.getTrackRegister());
+    regs["sector"] = int(fdc.getSectorRegister());
+    regs["data"] = int(fdc.getDataRegister());
+    // The status as the guest reads it (the WD1772 shows motor on / spin-up in bits 7 / 5)
+    const uint8_t status = fdc.PeekRegister(WD1793::REG_COMMAND_STATUS);
+    regs["status"] = int(status);
     ret["registers"] = regs;
 
-    const WD1793::WD_COMMANDS lastCmd = fdc->getLastDecodedCommand();
+    const WD1793::WD_COMMANDS lastCmd = fdc.getLastDecodedCommand();
     ret["last_command"] = WdCommandName(lastCmd);
     const bool type1 = lastCmd <= WD1793::WD_CMD_STEP_OUT;
-    const uint8_t status = fdc->getStatusRegister();
     StateNode sb = StateNode::Object();
     sb["busy"] = (status & 0x01) != 0;
     if (type1)
@@ -1357,30 +1456,167 @@ StateNode Fdc(EmulatorContext* context)
     }
     sb["crc_error"] = (status & 0x08) != 0;
     sb["record_not_found"] = (status & 0x10) != 0;
-    sb[type1 ? "head_loaded" : "record_type"] = (status & 0x20) != 0;
-    sb["write_protected"] = (status & 0x40) != 0;
-    sb["not_ready"] = (status & 0x80) != 0;
+    if (fdc.Is1772())
+    {
+        if (type1)
+            sb["spin_up_done"] = (status & 0x20) != 0;
+        else
+            sb["record_type"] = (status & 0x20) != 0;
+        sb["write_protected"] = (status & 0x40) != 0;
+        sb["motor_on"] = (status & 0x80) != 0;
+    }
+    else
+    {
+        sb[type1 ? "head_loaded" : "record_type"] = (status & 0x20) != 0;
+        sb["write_protected"] = (status & 0x40) != 0;
+        sb["not_ready"] = (status & 0x80) != 0;
+    }
     ret["status_bits"] = sb;
 
-    ret["fsm_state"] = WD1793::WDSTATEToString(fdc->getFSMState());
-    const uint8_t beta = fdc->getBeta128Status();
+    ret["fsm_state"] = WD1793::WDSTATEToString(fdc.getFSMState());
+    const uint8_t beta = fdc.getBeta128Status();
     StateNode sig = StateNode::Object();
     sig["intrq"] = (beta & WD1793::INTRQ) != 0;
     sig["drq"] = (beta & WD1793::DRQ) != 0;
     ret["signals"] = sig;
-    ret["beta128_register"] = int(fdc->getBeta128Register());
-    ret["density"] = fdc->isDoubleDensityMode() ? "MFM" : "FM";
-    ret["clock_policy"] = WD1793::ClockPolicyName(fdc->GetClockPolicy());
-    ret["clock_mhz"] = static_cast<int>(fdc->GetClock());
-    ret["data_rate_kbps"] = fdc->GetDataRate() == FdcDataRate::Rate500Kbps ? 500 : 250;
-    ret["selected_drive"] = int(fdc->getSelectedDriveIndex());
-    ret["side"] = fdc->getSideUp() ? 1 : 0;
-
-    ret["drives"] = DrivesNode(context, 4);
+    ret["density"] = fdc.isDoubleDensityMode() ? "MFM" : "FM";
+    ret["clock_policy"] = WD1793::ClockPolicyName(fdc.GetClockPolicy());
+    ret["clock_mhz"] = static_cast<int>(fdc.GetClock());
+    ret["data_rate_kbps"] = fdc.GetDataRate() == FdcDataRate::Rate500Kbps ? 500 : 250;
+    ret["side"] = fdc.getSideUp() ? 1 : 0;
 
     // The chip's state machine history (debugger/history/devicehistory.h): its mode and counts, the records kept
-    ret["history_state"] = history::StatsNode(fdc->CommandHistory());
-    ret["history"] = fdc->CommandHistory().Records(0);
+    ret["history_state"] = history::StatsNode(fdc.CommandHistory());
+    ret["history"] = fdc.CommandHistory().Records(0);
+    return ret;
+}
+
+/// A card's disk interface (the MGT +D): its WD1772, its paging state and its drives by media slot
+StateNode PlusDNode(const PlusDCard& card, EmulatorContext* context)
+{
+    const WD1793& fdc = *card.Fdc();
+    StateNode ret = WdControllerNode(fdc, "WD1772 (MGT +D)");
+    ret["card"] = card.Def().id;
+    ret["slot"] = card.SlotId();
+    ret["paged"] = card.IsPaged();
+    ret["control_register"] = int(card.Control());
+    // The printer port: no printer is connected; the strobe pulses the guest made are counted
+    StateNode printer = StateNode::Object();
+    printer["data_latch"] = int(card.PrinterData());
+    printer["bytes_printed"] = int64_t(card.PrintedBytes());
+    printer["last_byte"] = int(card.LastPrinted());
+    ret["printer"] = printer;
+    StateNode drives = StateNode::Array();
+    int selected = -1;
+    for (size_t d = 0; d < PlusDCard::kDrives; d++)
+    {
+        FDD* fdd = card.Drive(d);
+        if (fdd != nullptr && fdd == card.Fdc()->getDrive())
+            selected = int(d);
+        StateNode drive = StateNode::Object();
+        drive["index"] = int(d);
+        drive["media_slot"] = PlusDCard::kDriveSlotIds[d];
+        drive["present"] = fdd != nullptr;
+        if (fdd != nullptr)
+        {
+            drive["inserted"] = fdd->isDiskInserted();
+            drive["track"] = int(fdd->getTrack());
+            drive["side"] = fdd->getSide() ? 1 : 0;
+            drive["motor_on"] = fdd->getMotor();
+            drive["write_protected"] = fdd->isWriteProtect();
+            fdd->WithDisk([&](const DiskImage* image) {  // read from any thread: the image may change meanwhile
+                if (image && fdd->isDiskInserted())
+                {
+                    StateNode geo = StateNode::Object();
+                    geo["cylinders"] = int(image->getCylinders());
+                    geo["sides"] = int(image->getSides());
+                    drive["image"] = geo;
+                }
+            });
+        }
+        drives.push(drive);
+    }
+    ret["selected_drive"] = selected;  // -1: no drive on the select lines
+    ret["drives"] = drives;
+    // The last disk autostart on the card (PlusDAutostart): its plan, the steps done with their frames, the outcome
+    if (context && context->pDiskAutostart)
+    {
+        const PlusDAutostart::Status status = context->pDiskAutostart->PlusD().GetStatus();
+        if (!status.plan.kind.empty())
+        {
+            StateNode autostart = StateNode::Object();
+            autostart["plan"] = status.plan.kind;
+            autostart["dos"] = status.plan.dos;
+            autostart["command"] = status.plan.command;
+            autostart["start_file"] = status.plan.startFile;
+            autostart["active"] = status.active;
+            autostart["finished"] = status.finished;
+            autostart["ok"] = status.ok;
+            autostart["stage"] = status.stage;
+            autostart["message"] = status.message;
+            StateNode steps = StateNode::Array();
+            for (const PlusDAutostart::Step& step : status.steps)
+            {
+                StateNode item = StateNode::Object();
+                item["step"] = step.name;
+                item["frame"] = int64_t(step.frame);
+                steps.push(item);
+            }
+            autostart["steps"] = steps;
+            ret["autostart"] = autostart;
+        }
+    }
+    return ret;
+}
+
+/// The disk interfaces the slots built (cards with their own controller)
+std::vector<const PlusDCard*> CardDiskInterfaces(EmulatorContext* context)
+{
+    std::vector<const PlusDCard*> out;
+    if (context == nullptr || context->pSlotManager == nullptr || context->cardFdcCount == 0)
+        return out;
+    for (const char* slot : {"edge.1", "edge.2", "zxbus.1", "zxbus.2", "zxbus.3", "zxbus.4"})
+    {
+        if (const auto* card = dynamic_cast<const PlusDCard*>(context->pSlotManager->FindCard(slot)))
+            out.push_back(card);
+    }
+    return out;
+}
+}  // namespace
+
+StateNode Fdc(EmulatorContext* context)
+{
+    // The +3 has its own controller; the WD1793 object exists on every model but is not wired there
+    if (context && context->pUPD765)
+        return Upd765Node(context, *context->pUPD765);
+    // The Pentagon 2.666 LE has no floppy controller: its FPGA imitates a WD1793 over the RAM disk (unless
+    // [P2666] BetaDisk=wd1793 wires the WD1793 instead)
+    if (const auto* p2666 = context ? dynamic_cast<const PortDecoderP2666*>(context->pPortDecoder) : nullptr)
+    {
+        if (const P2666BetaDisk* ramDisk = p2666->GetRamDisk())
+            return P2666BetaDiskNode(context, *ramDisk, p2666->BoardEdge());
+    }
+
+    // A card's controller is the machine's disk controller when the board has no Beta 128 of its own (48K-PLUSD)
+    const std::vector<const PlusDCard*> cards = CardDiskInterfaces(context);
+    if (!cards.empty() && !context->config.trdos_present)
+        return PlusDNode(*cards.front(), context);
+
+    const WD1793* fdc = context ? context->pBetaDisk : nullptr;  // const: picks the register getters, not the computing overloads
+    if (!fdc)
+        return Unavailable("Beta Disk interface (WD1793) not present on this machine");
+
+    StateNode ret = WdControllerNode(*fdc, "WD1793 (Beta Disk)");
+    ret["beta128_register"] = int(fdc->getBeta128Register());
+    ret["selected_drive"] = int(fdc->getSelectedDriveIndex());
+    ret["drives"] = DrivesNode(context, 4);
+    if (!cards.empty())
+    {
+        StateNode list = StateNode::Array();
+        for (const PlusDCard* card : cards)
+            list.push(PlusDNode(*card, context));
+        ret["card_controllers"] = list;
+    }
     return ret;
 }
 

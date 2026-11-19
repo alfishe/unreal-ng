@@ -356,6 +356,25 @@ TEST_F(WD1793_Ports_Test, SeekMovesTheHeadByStepsOnly)
     EXPECT_EQ(_fdc->getTrackRegister(), 3);
 }
 
+/// The haptics count the head's step pulses (the floppy drive under the hand): a pulse per track crossed, with the
+/// step rate the command set; a zero-distance seek issues none
+TEST_F(WD1793_Ports_Test, HapticStepsCountThePulses)
+{
+    uint8_t stepMs = 0;
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x00);  // RESTORE, 6 ms
+    RunUntilNotBusy();
+    _fdc->TakeHapticSteps(stepMs);
+    _fdc->portDeviceOutMethod(WD1793::PORT_7F, 7);
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x13);  // SEEK 7, r1r0 = 3: 30 ms at 1 MHz
+    RunUntilNotBusy();
+    EXPECT_EQ(_fdc->TakeHapticSteps(stepMs), 7u);
+    EXPECT_EQ(stepMs, 30u);
+    EXPECT_EQ(_fdc->TakeHapticSteps(stepMs), 0u) << "taken: the count starts again";
+    _fdc->portDeviceOutMethod(WD1793::PORT_1F, 0x13);  // SEEK 7 again: already there
+    RunUntilNotBusy();
+    EXPECT_EQ(_fdc->TakeHapticSteps(stepMs), 0u);
+}
+
 /// DRQ (Beta128 port #FF bit 6) is raised when the data register holds a byte for the CPU and is
 /// released by the CPU reading it; a full sector read delivers exactly 256 bytes
 TEST_F(WD1793_Ports_Test, Beta128_Status_DRQ)

@@ -246,6 +246,216 @@ void TestReadonlyAndUnavailable()
     press(1);
     CHECK(rt.State()["last_actions"].size() == actionsBefore + 1);  // greyed out: no job ran
 }
+// A host that records the catalogue actions it is asked to run
+struct Calls final : ActionHost
+{
+    std::vector<ActionCall> calls;
+    Runtime* rt = nullptr;
+    ActionResult RunAction(const ActionCall& call) override
+    {
+        calls.push_back(call);
+        return {true, "ok"};
+    }
+    HttpResponse Webapi(const std::string&, const std::string&, const json&, bool) override
+    {
+        return {};
+    }
+    HttpResponse Http(const std::string&, const std::string&, const json&, const std::string&) override
+    {
+        return {};
+    }
+    int Shell(const std::string&, int, std::string&) override
+    {
+        return 0;
+    }
+    bool Open(const std::string&) override
+    {
+        return true;
+    }
+    bool Keys(const std::string&, const std::string&, std::string&) override
+    {
+        return true;
+    }
+    void Navigate(const json& r) override
+    {
+        if (rt)
+            rt->Navigate(r);
+    }
+    void Brightness(const json&) override {}
+    void SleepMs(int) override {}
+    void Note(const std::string&) override {}
+};
+
+json BranchDoc()
+{
+    return json::parse(R"({ "name": "br", "model": "plusxl",
+      "root": { "id": "home", "type": "menu", "title": "Home",
+        "dials": [ { "index": 2, "label": "OPS",
+          "turn": { "kind": "action", "id": "ttd.jog_instructions", "value": { "d": "$ticks" } },
+          "press": { "kind": "action", "id": "ttd.resume_live" },
+          "press_turn": { "kind": "dir", "left": { "kind": "action", "id": "ttd.branch_prev_sibling" },
+                          "right": { "kind": "action", "id": "ttd.branch_next_sibling" } } } ],
+        "items": [
+          { "id": "branches", "type": "menu", "title": "Branches", "at": [3, 2], "nav": { "back": [0, 0] },
+            "long": { "kind": "action", "id": "ttd.branch_prev" },
+            "list": { "readout": "ttd.branch_list.items", "label": "{name}{pinned? *|}", "show": "{age}",
+              "do": { "kind": "action", "id": "ttd.branch_switch", "value": { "branch": "$id" } },
+              "long": { "kind": "action", "id": "ttd.branch_delete", "value": { "branch": "$id", "now": true }, "hold": true },
+              "on": "active", "dim": "!on_lineage", "dial": 0 },
+            "items": [ { "id": "pin", "type": "action", "title": "Pin", "at": [0, 1],
+                         "do": { "kind": "action", "id": "ttd.branch_pin" } } ] }
+        ] } })");
+}
+
+json BranchItems(int n)
+{
+    json items = json::array();
+    for (int i = 0; i < n; ++i)
+        items.push_back({{"id", i}, {"name", "b" + std::to_string(i)}, {"age", "1m"}, {"active", i == 0},
+                         {"on_lineage", i < 2}, {"pinned", i == 1}, {"length", 100}});
+    return items;
+}
+
+// The key of the current page that shows node `id` (-1 none) and its entry
+json KeyEntry(const Runtime& rt, const std::string& id)
+{
+    const json page = rt.CurrentPage();
+    for (const auto& k : page["keys"])
+        if (k.value("id", "") == id)
+            return k;
+    return nullptr;
+}
+
+// Key `long` (a press held holdMs: its long step on the release), a menu's list page (keys from a readout's items,
+// pages on a dial) and a dial's press_turn (turns while held; its press only on a release without a turn)
+void TestLongListPressTurn()
+{
+    const Model& m = *FindModel(kElgatoVid, 0x00C6);
+    {
+        const Scenario sc = Load(BranchDoc());
+        CHECK(sc.root.items[0].longPress && sc.root.items[0].list && sc.root.items[0].list->dial == 0);
+        CHECK(sc.root.dials[0].pressTurn && sc.root.dials[0].pressTurn->kind == "dir");
+        const json back = ToJson(sc);  // written back
+        CHECK(back["root"]["items"][0]["long"]["id"] == "ttd.branch_prev");
+        CHECK(back["root"]["items"][0]["list"]["readout"] == "ttd.branch_list.items" &&
+              back["root"]["items"][0]["list"]["dial"] == 0 && back["root"]["items"][0]["list"]["dim"] == "!on_lineage");
+        CHECK(back["root"]["dials"][0]["press_turn"]["kind"] == "dir");
+        std::vector<Issue> issues;
+        json bad = BranchDoc();
+        bad["root"]["items"][0]["list"]["oops"] = 1;
+        CHECK(!Parse(bad, issues));
+        issues.clear();
+        bad = BranchDoc();
+        bad["root"]["items"][0]["list"]["dial"] = 9;
+        CHECK(!Parse(bad, issues));
+        issues.clear();
+        bad = BranchDoc();
+        bad["root"]["items"][0]["items"][0]["do"]["hold"] = true;
+        bad["root"]["items"][0]["items"][0]["long"] = {{"kind", "action"}, {"id", "ttd.branch_prev"}};
+        CHECK(!Parse(bad, issues));  // a key with long acts on its release: its own action cannot be held
+    }
+    // short presses (holdMs as shipped): a menu with long opens on a short press; items switch
+    Device dev(m, std::make_unique<NullTransport>(), "T");
+    auto host = std::make_unique<Calls>();
+    Calls* h = host.get();
+    RuntimeOptions opt;
+    opt.syncActions = true;
+    Runtime rt(dev, Load(BranchDoc()), std::move(host), opt);
+    h->rt = &rt;
+    auto press = [&](Runtime& r, int k) {
+        r.Inject({EventType::KeyDown, k});
+        r.Step(0);
+        r.Inject({EventType::KeyUp, k});
+        r.Step(0);
+    };
+    rt.Step(0);
+    press(rt, 3 * 9 + 2);
+    CHECK((StackIds(rt) == std::vector<std::string>{"home", "branches"}));
+    CHECK(h->calls.empty());
+    CHECK(KeyEntry(rt, "branches#0").is_null());  // no items yet: no keys
+    rt.SetReadout("ttd.branch_list.items", BranchItems(40));
+    rt.Step(0);
+    // 36 keys - the back key - PIN = 34 a page: two pages; the items from [0, 2] on, row by row
+    CHECK(rt.CurrentPage()["list"]["pages"] == 2 && rt.CurrentPage()["list"]["page"] == 1);
+    CHECK(KeyEntry(rt, "branches#0").value("key", -1) == 2 && KeyEntry(rt, "branches#0").value("title", "") == "b0");
+    CHECK(KeyEntry(rt, "branches#1").value("title", "") == "b1 *");  // pinned
+    CHECK(KeyEntry(rt, "branches#33").value("key", -1) == 35 && KeyEntry(rt, "branches#34").is_null());
+    CHECK(KeyEntry(rt, "branches#0").value("action", "") == "ttd.branch_switch");
+    press(rt, 3);
+    CHECK(h->calls.size() == 1 && h->calls[0].id == "ttd.branch_switch" && h->calls[0].params["branch"] == 1);
+    // the dial turns the pages; the page shows in the path and on the dial's label
+    rt.Inject({EventType::DialTurn, 0, 1});
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 2);
+    CHECK(KeyEntry(rt, "branches#34").value("key", -1) == 2 && KeyEntry(rt, "branches#0").is_null());
+    CHECK(rt.State()["path"].back() == "Branches 2/2");
+    CHECK(rt.CurrentPage()["dials"][0].value("label", "") == "PAGE 2/2");
+    rt.Inject({EventType::DialTurn, 0, 3});  // the last page: stays
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 2);
+    rt.Inject({EventType::DialDown, 0});  // a press: the first page
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 0});
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["page"] == 1 && h->calls.size() == 1);
+    rt.SetReadout("ttd.branch_list.items", BranchItems(3));  // fewer items: one page
+    rt.Step(0);
+    CHECK(rt.CurrentPage()["list"]["pages"] == 1 && KeyEntry(rt, "branches#3").is_null());
+    CHECK(rt.State()["path"].back() == "Branches");
+
+    // press_turn: turns while held run it (siblings), the press waits for a release without a turn
+    rt.Navigate({{"to", "home"}});
+    rt.Step(0);
+    h->calls.clear();
+    rt.Inject({EventType::DialDown, 2});
+    rt.Step(0);
+    CHECK(h->calls.empty());  // not on the press
+    rt.Inject({EventType::DialTurn, 2, 1});
+    rt.Step(0);
+    rt.Inject({EventType::DialTurn, 2, -2});
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 2});
+    rt.Step(0);
+    CHECK(h->calls.size() == 3 && h->calls[0].id == "ttd.branch_next_sibling" &&
+          h->calls[1].id == "ttd.branch_prev_sibling" && h->calls[2].id == "ttd.branch_prev_sibling");
+    rt.Inject({EventType::DialDown, 2});
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 2});
+    rt.Step(0);
+    CHECK(h->calls.size() == 4 && h->calls[3].id == "ttd.resume_live");  // pressed, not turned
+    rt.Inject({EventType::DialTurn, 2, 2});  // not held: the turn
+    rt.Step(0);
+    CHECK(h->calls.size() == 5 && h->calls[4].id == "ttd.jog_instructions" && h->calls[4].value["delta"] == 2);
+
+    // long presses (holdMs 0: every press is long): the menu key sends its long step and stays; an item deletes
+    Device dev2(m, std::make_unique<NullTransport>(), "T2");
+    auto host2 = std::make_unique<Calls>();
+    Calls* h2 = host2.get();
+    RuntimeOptions opt2 = opt;
+    opt2.holdMs = 0;
+    Runtime rt2(dev2, Load(BranchDoc()), std::move(host2), opt2);
+    h2->rt = &rt2;
+    rt2.Step(0);
+    press(rt2, 3 * 9 + 2);
+    CHECK(h2->calls.size() == 1 && h2->calls[0].id == "ttd.branch_prev");
+    CHECK((StackIds(rt2) == std::vector<std::string>{"home"}));
+    rt2.Navigate({{"to", "node"}, {"node", "branches"}});
+    rt2.SetReadout("ttd.branch_list.items", BranchItems(3));
+    rt2.Step(0);
+    press(rt2, 4);  // b2
+    // a held step after the release: pressed and released at once (now: true deletes on the press)
+    CHECK(h2->calls.size() == 3 && h2->calls[1].id == "ttd.branch_delete" && h2->calls[1].params["branch"] == 2 &&
+          h2->calls[1].params["now"] == true && h2->calls[1].value == true && h2->calls[2].value == false);
+    // the item under the finger changed between the press and the release: nothing runs
+    rt2.Inject({EventType::KeyDown, 4});
+    rt2.Step(0);
+    rt2.SetReadout("ttd.branch_list.items", BranchItems(2));
+    rt2.Step(0);
+    rt2.Inject({EventType::KeyUp, 4});
+    rt2.Step(0);
+    CHECK(h2->calls.size() == 3);
+}
+
 // The daemon ends: the keys go dark (V2: "Fill Key with Color" black, a feature report per key) and the strip is
 // written whole with the farewell, so the deck does not stay frozen on a page that no longer answers
 void TestShowStopped()
@@ -327,12 +537,279 @@ void TestStripKey()
     readouts["run.state"] = {{"state", "paused"}};
     CHECK(live.Key().find("run.state") != std::string::npos);
 }
+
+// A wide menu (width over the deck's columns) and strip keys: a dial's nav scroll and a swipe move the window of
+// columns (clamped; the same menu, no menu change); a strip key zone taps its action; a latch zone holds until the next
+// key lets go, a second tap lets it go, a second latch goes with it as one combination; a dial press holds
+void TestWideMenuAndStripKeys()
+{
+    struct KeyLog final : ActionHost
+    {
+        std::vector<std::string> log;  // "caps+" press, "caps-" release, "space" a tap
+        ActionResult RunAction(const ActionCall& call) override
+        {
+            const std::string key = call.params.value("key", "?");
+            log.push_back(call.value.is_boolean() ? key + (call.value.get<bool>() ? "+" : "-") : key);
+            return {true, "ok"};
+        }
+        HttpResponse Webapi(const std::string&, const std::string&, const json&, bool) override
+        {
+            return {};
+        }
+        HttpResponse Http(const std::string&, const std::string&, const json&, const std::string&) override
+        {
+            return {};
+        }
+        int Shell(const std::string&, int, std::string&) override
+        {
+            return 0;
+        }
+        bool Open(const std::string&) override
+        {
+            return true;
+        }
+        bool Keys(const std::string&, const std::string&, std::string&) override
+        {
+            return true;
+        }
+        Runtime* rt = nullptr;
+        void Navigate(const json& r) override
+        {
+            if (rt)
+                rt->Navigate(r);
+        }
+        void Brightness(const json&) override {}
+        void SleepMs(int) override {}
+        void Note(const std::string&) override {}
+    };
+    const Model& m = *FindModel(kElgatoVid, 0x00C6);  // + XL: 4 x 9
+    Device dev(m, std::make_unique<NullTransport>(), "T");
+    auto host = std::make_unique<KeyLog>();
+    KeyLog* h = host.get();
+    RuntimeOptions opt;
+    opt.syncActions = true;
+    const json doc = json::parse(R"({ "name": "kb", "model": "plusxl",
+      "root": { "id": "home", "type": "menu", "title": "Home", "width": 10,
+        "strip": { "content": "keys", "keys": [
+          { "label": "CAPS", "latch": true, "do": { "kind": "action", "id": "input.key", "value": { "key": "caps", "hold": true }, "hold": true } },
+          { "label": "SPACE", "span": 4, "do": { "kind": "action", "id": "input.key", "value": { "key": "space" } } },
+          { "label": "SYMBOL", "latch": true, "do": { "kind": "action", "id": "input.key", "value": { "key": "symbol", "hold": true }, "hold": true } } ] },
+        "dials": [ { "index": 0, "label": "CAPS", "turn": { "kind": "nav", "to": "scroll", "by": "$ticks" },
+                     "press": { "kind": "action", "id": "input.key", "value": { "key": "caps", "hold": true }, "hold": true } } ],
+        "items": [
+          { "id": "q", "type": "action", "title": "Q", "at": [1, 0], "do": { "kind": "action", "id": "input.key", "value": { "key": "q", "hold": true }, "hold": true } },
+          { "id": "p", "type": "action", "title": "P", "at": [1, 9], "do": { "kind": "action", "id": "input.key", "value": { "key": "p", "hold": true }, "hold": true } }
+        ] } })");
+    Runtime rt(dev, Load(doc), std::move(host), opt);
+    h->rt = &rt;
+    rt.Step(0);
+    auto keyAt = [&](int k) -> std::string {
+        const json page = rt.CurrentPage();
+        for (const auto& e : page["keys"])
+            if (e["key"] == k)
+                return e["id"];
+        return "";
+    };
+    auto press = [&](int k) {
+        rt.Inject({EventType::KeyDown, k});
+        rt.Step(0);
+        rt.Inject({EventType::KeyUp, k});
+        rt.Step(0);
+    };
+    const Scenario laid = Load(doc);
+    const auto spans = StripKeySpans(laid.root.strip, m.lcdLogicalW);
+    CHECK(spans.size() == 3 && spans[0].first == 0 && spans[2].second == m.lcdLogicalW &&
+          spans[1].second - spans[1].first > 3 * (spans[0].second - spans[0].first));  // by span: 1, 4, 1
+    auto tapZone = [&](int zone) {
+        Event tap{EventType::LcdTap};
+        tap.x = (spans[static_cast<size_t>(zone)].first + spans[static_cast<size_t>(zone)].second) / 2;
+        tap.y = 50;
+        rt.Inject(tap);
+        rt.Step(0);
+    };
+    using V = std::vector<std::string>;
+    CHECK(keyAt(9) == "q" && keyAt(17) == "");  // columns 0..8: Q on the first key of row 1, P not shown
+    CHECK(rt.CurrentPage()["scroll"]["column"] == 0 && rt.CurrentPage()["scroll"]["width"] == 10);
+
+    rt.Inject({EventType::DialTurn, 0, 3});  // clamped: one column to the right is all there is
+    rt.Step(0);
+    rt.Step(0);
+    CHECK(keyAt(9) == "" && keyAt(17) == "p" && rt.CurrentPage()["scroll"]["column"] == 1);
+    press(17);
+    CHECK((h->log == V{"p+", "p-"}));
+    Event swipe{EventType::LcdSwipe};
+    swipe.x = 300, swipe.x2 = 600, swipe.y = swipe.y2 = 50;  // to the right: the columns on the left come back
+    rt.Inject(swipe);
+    rt.Step(0);
+    CHECK(keyAt(9) == "q" && rt.CurrentPage()["scroll"]["column"] == 0);
+    swipe.x = 600, swipe.x2 = 300;
+    rt.Inject(swipe);
+    rt.Step(0);
+    CHECK(keyAt(17) == "p");
+    swipe.x = 300, swipe.x2 = 600;
+    rt.Inject(swipe);
+    rt.Step(0);
+
+    h->log.clear();  // a one-shot shift: down from its tap until the next key lets go
+    tapZone(0);
+    CHECK((h->log == V{"caps+"}));
+    press(9);
+    CHECK((h->log == V{"caps+", "q+", "q-", "caps-"}));
+    h->log.clear();  // tapped again: lets go
+    tapZone(0);
+    tapZone(0);
+    CHECK((h->log == V{"caps+", "caps-"}));
+    h->log.clear();  // CAPS then SYMBOL: both down, then both up (extended mode)
+    tapZone(0);
+    tapZone(2);
+    CHECK((h->log == V{"caps+", "symbol+", "symbol-", "caps-"}));
+    h->log.clear();  // a plain zone taps; a latched shift goes with it
+    tapZone(0);
+    tapZone(1);
+    CHECK((h->log == V{"caps+", "space", "caps-"}));
+    h->log.clear();  // a dial press holds while it is down
+    rt.Inject({EventType::DialDown, 0});
+    rt.Step(0);
+    rt.Inject({EventType::DialUp, 0});
+    rt.Step(0);
+    CHECK((h->log == V{"caps+", "caps-"}));
+
+    // the rules: a wide menu keeps no back key (a model with a strip has none by default, so the menu asks for one),
+    // its keys stay inside its width, it is not narrower than the deck
+    auto issuesOf = [&](const std::string& text) {
+        std::vector<Issue> issues;
+        (void)Parse(json::parse(text), issues);
+        std::string all;
+        for (const auto& i : issues)
+            all += i.message + "\n";
+        return all;
+    };
+    const std::string wideBack = issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu",
+        "items": [ { "id": "k", "type": "menu", "at": [0, 1], "width": 10, "nav": { "back": [3, 0] }, "items": [] } ] } })");
+    CHECK(wideBack.find("back key") != std::string::npos);
+    const std::string outside = issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu",
+        "width": 10, "items": [ { "id": "k", "type": "action", "at": [0, 10], "do": { "kind": "delay", "ms": 1 } } ] } })");
+    CHECK(outside.find("outside") != std::string::npos);
+    const std::string narrow = issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu",
+        "width": 5, "items": [] } })");
+    CHECK(narrow.find("narrower") != std::string::npos);
+    const std::string noZones = issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu",
+        "strip": { "content": "keys" }, "items": [] } })");
+    CHECK(noZones.find("strip.keys") != std::string::npos);
+}
+
+// A windowed wide menu: the grid scrolls on deck columns 1..7 only; pinned keys keep their deck slots outside the
+// window (scroll keys, a shift); a scroll key moves the window a column and stops at the end
+void TestWindowedMenu()
+{
+    const Model& m = *FindModel(kElgatoVid, 0x00C6);  // + XL: 4 x 9
+    Device dev(m, std::make_unique<NullTransport>(), "T");
+    struct NavHost final : ActionHost
+    {
+        Runtime* rt = nullptr;
+        ActionResult RunAction(const ActionCall&) override
+        {
+            return {true, "ok"};
+        }
+        HttpResponse Webapi(const std::string&, const std::string&, const json&, bool) override
+        {
+            return {};
+        }
+        HttpResponse Http(const std::string&, const std::string&, const json&, const std::string&) override
+        {
+            return {};
+        }
+        int Shell(const std::string&, int, std::string&) override
+        {
+            return 0;
+        }
+        bool Open(const std::string&) override
+        {
+            return true;
+        }
+        bool Keys(const std::string&, const std::string&, std::string&) override
+        {
+            return true;
+        }
+        void Navigate(const json& r) override
+        {
+            if (rt)
+                rt->Navigate(r);
+        }
+        void Brightness(const json&) override {}
+        void SleepMs(int) override {}
+        void Note(const std::string&) override {}
+    };
+    auto host = std::make_unique<NavHost>();
+    NavHost* h = host.get();
+    RuntimeOptions opt;
+    opt.syncActions = true;
+    const json doc = json::parse(R"({ "name": "kb", "model": "plusxl",
+      "root": { "id": "home", "type": "menu", "title": "Home", "width": 10, "window": [1, 7],
+        "items": [
+          { "id": "q", "type": "action", "title": "Q", "at": [1, 0], "do": { "kind": "delay", "ms": 1 } },
+          { "id": "p", "type": "action", "title": "P", "at": [1, 9], "do": { "kind": "delay", "ms": 1 } },
+          { "id": "left", "type": "action", "title": "<", "at": [1, 0], "pin": true, "do": { "kind": "nav", "to": "scroll", "by": -1 } },
+          { "id": "right", "type": "action", "title": ">", "at": [1, 8], "pin": true, "do": { "kind": "nav", "to": "scroll", "by": 1 } },
+          { "id": "caps", "type": "action", "title": "CAPS", "at": [3, 0], "pin": true, "do": { "kind": "delay", "ms": 1 } }
+        ] } })");
+    std::vector<Issue> issues;
+    (void)Parse(doc, issues);
+    CHECK(issues.empty());
+    Runtime rt(dev, Load(doc), std::move(host), opt);
+    h->rt = &rt;
+    rt.Step(0);
+    auto keyAt = [&](int k) -> std::string {
+        const json page = rt.CurrentPage();
+        for (const auto& e : page["keys"])
+            if (e["key"] == k)
+                return e["id"];
+        return "";
+    };
+    auto press = [&](int k) {
+        rt.Inject({EventType::KeyDown, k});
+        rt.Step(0);
+        rt.Inject({EventType::KeyUp, k});
+        rt.Step(0);
+        rt.Step(0);
+    };
+    // window at 0: Q on deck column 1, the pins on 0 and 8, P (column 9) not shown
+    CHECK(keyAt(10) == "q" && keyAt(9) == "left" && keyAt(17) == "right" && keyAt(27) == "caps");
+    CHECK(rt.CurrentPage()["scroll"]["window"] == json::array({1, 7}));
+    press(17);
+    press(17);
+    press(17);
+    press(17);  // the fourth press is at the end: nothing moves
+    CHECK(rt.CurrentPage()["scroll"]["column"] == 3);
+    CHECK(keyAt(16) == "p" && keyAt(10) == "" && keyAt(9) == "left" && keyAt(27) == "caps");
+    press(9);
+    CHECK(rt.CurrentPage()["scroll"]["column"] == 2 && keyAt(16) == "");
+
+    auto issuesOf = [&](const std::string& text) {
+        std::vector<Issue> found;
+        (void)Parse(json::parse(text), found);
+        std::string all;
+        for (const auto& i : found)
+            all += i.message + "\n";
+        return all;
+    };
+    CHECK(issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu", "width": 10,
+        "window": [1, 7], "items": [ { "id": "k", "type": "action", "at": [0, 3], "pin": true,
+        "do": { "kind": "delay", "ms": 1 } } ] } })").find("inside the window") != std::string::npos);
+    CHECK(issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu", "width": 10,
+        "items": [ { "id": "k", "type": "action", "at": [0, 3], "pin": true,
+        "do": { "kind": "delay", "ms": 1 } } ] } })").find("pin goes in a menu with a window") != std::string::npos);
+    CHECK(issuesOf(R"({ "name": "w", "model": "plusxl", "root": { "id": "home", "type": "menu", "width": 7,
+        "window": [1, 7], "items": [] } })").find("a window needs a width") != std::string::npos);
+}
 }  // namespace
 
 void TestRuntime()
 {
     TestShowStopped();
     TestStripKey();
+    TestWideMenuAndStripKeys();
+    TestWindowedMenu();
     std::printf("runtime\n");
     const Model& m = *FindModel(kElgatoVid, 0x00C6);
     Device dev(m, std::make_unique<NullTransport>(), "T");
@@ -473,4 +950,5 @@ void TestRuntime()
     }
     TestTimelineTouch();
     TestReadonlyAndUnavailable();
+    TestLongListPressTurn();
 }

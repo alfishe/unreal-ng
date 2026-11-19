@@ -200,6 +200,17 @@ const char* Config::RamPowerOnName(RamPowerOn mode)
 	return mode == RamPowerOn::Zero ? "zero" : "random";
 }
 
+namespace
+{
+std::string& DefaultNvramFolder()
+{
+	static std::string folder;
+	return folder;
+}
+}  // namespace
+
+void Config::SetDefaultNvramFolder(const std::string& folder) { DefaultNvramFolder() = folder; }
+
 std::function<void(CONFIG&)> Config::RamPowerOnOverride(RamPowerOn mode)
 {
 	return [mode](CONFIG& config) { config.ramPowerOn = mode; };
@@ -326,6 +337,14 @@ bool Config::ParseConfig(IniFile& inimanager)
 	}
 	config.atm.evo_nvram_path[0] = '\0';  // a config without the key must not inherit a previous path
 	CopyStringValue(inimanager.GetValue("EVO", "NvramFile", nullptr), config.atm.evo_nvram_path, sizeof config.atm.evo_nvram_path);
+	if (config.atm.evo_nvram_path[0] == '\0' && !DefaultNvramFolder().empty() && !_configFilePath.empty())
+	{
+		// No [EVO] NvramFile: the app's per-user folder keeps the battery-backed settings, one file per config
+		const std::filesystem::path configFolder = FileHelper::ToFsPath(_configFilePath).parent_path().filename();
+		const auto text = (FileHelper::ToFsPath(DefaultNvramFolder()) / configFolder).u8string() + u8".nvram";
+		CopyStringValue(std::string(text.begin(), text.end()).c_str(), config.atm.evo_nvram_path,
+		                sizeof config.atm.evo_nvram_path);
+	}
 	{
 		// TS-Conf: the TS-BIOS settings without an NVRAM file (boot-and-storage-notes.md §1)
 		const std::string preset = inimanager.GetValue("EVO", "TsBiosNvram", "SDBOOT");
@@ -337,6 +356,29 @@ bool Config::ParseConfig(IniFile& inimanager)
 			if (preset != "SDBOOT" && preset != "sdboot")
 				MLOGWARNING("Config: unknown [EVO] TsBiosNvram='%s' - using SDBOOT (SDBOOT | SETUP)", preset.c_str());
 		}
+	}
+	{
+		// ZX-Evo BaseConf: the ERS settings without an NVRAM file (PortDecoder_ATM3::ApplyErsFloppyBootNvram)
+		const std::string preset = inimanager.GetValue("EVO", "ErsNvram", "FLOPPY");
+		if (preset == "BLANK" || preset == "blank")
+			config.atm.ers_floppy_boot = 0;
+		else
+		{
+			config.atm.ers_floppy_boot = 1;
+			if (preset != "FLOPPY" && preset != "floppy")
+				MLOGWARNING("Config: unknown [EVO] ErsNvram='%s' - using FLOPPY (FLOPPY | BLANK)", preset.c_str());
+		}
+	}
+
+	// P2666 section: the CMOS cells #00..#3F the board's MCU keeps in its own memory (PaE.vhd:871-910, 943)
+	config.p2666_cmos_path[0] = '\0';  // a config without the key must not inherit a previous path
+	CopyStringValue(inimanager.GetValue("P2666", "CmosFile", nullptr), config.p2666_cmos_path, sizeof config.p2666_cmos_path);
+	// The Beta Disk: the board's emulator on the RAM disk (default) or path A, the WD1793 on real drives
+	{
+		const std::string beta = inimanager.GetValue("P2666", "BetaDisk", "ramdisk");
+		config.p2666_betadisk_wd1793 = (beta == "wd1793" || beta == "WD1793");
+		if (!config.p2666_betadisk_wd1793 && beta != "ramdisk" && beta != "RAMDISK")
+			MLOGWARNING("Config: unknown [P2666] BetaDisk='%s' - using ramdisk (ramdisk | wd1793)", beta.c_str());
 	}
 
 	// PROFI section: battery-backed RTC cells
@@ -607,6 +649,7 @@ bool Config::ParseConfig(IniFile& inimanager)
     CopyStringValue(inimanager.GetValue(rom, "GMX", nullptr), config.gmx_rom_path, sizeof config.gmx_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI", nullptr), config.profi_rom_path, sizeof config.profi_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "PROFI3", nullptr), config.profi3_rom_path, sizeof config.profi3_rom_path);
+    CopyStringValue(inimanager.GetValue(rom, "P2666", nullptr), config.p2666_rom_path, sizeof config.p2666_rom_path);
     config.profi_xt_rom_path[0] = '\0';  // empty = the reconstructed image rom/profixt/profi-xt-v1.27.rom
     CopyStringValue(inimanager.GetValue(rom, "PROFIXT", nullptr), config.profi_xt_rom_path, sizeof config.profi_xt_rom_path);
     CopyStringValue(inimanager.GetValue(rom, "KAY", nullptr), config.kay_rom_path, sizeof config.kay_rom_path);
@@ -1277,6 +1320,29 @@ bool Config::ParseConfig(IniFile& inimanager)
 		}
 		if (inimanager.GetLongValue(misc, "TS_VDAC2", 0) != 0)
 			config.ts_vdac = 7;
+		// TS_VDAC4=1: the VDAC4 board. It runs on the stock VDAC2 firmware build
+		// (VDAC4.md "What the Evo needs"), so the build stays VDAC_VER 7
+		config.ts_vdac4 = inimanager.GetLongValue(misc, "TS_VDAC4", 0) != 0;
+		if (config.ts_vdac4)
+			config.ts_vdac = 7;
+	}
+	// [VDAC4] (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+	{
+		const long ramG = inimanager.GetLongValue(vdac4, "RamG", 2);
+		config.vdac4_ramg_mb = ramG == 3 ? 3 : 2;
+		config.vdac4_esp_boot_ms =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspBootMs", 400), 0, 10000));
+		config.vdac4_load_delay_ms =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "LoadDelayMs", 174), 0, 10000));
+		config.vdac4_esp_mhz =
+			static_cast<uint16_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspMhz", 240), 1, 1000));
+		config.vdac4_esp_thread = inimanager.GetLongValue(vdac4, "EspThread", 1) != 0;
+		config.vdac4_ft_thread = inimanager.GetLongValue(vdac4, "FtThread", 0) != 0;
+		config.vdac4_ft_draw_thread = inimanager.GetLongValue(vdac4, "FtDrawThread", 1) != 0;
+		config.vdac4_esp_latency_ms =
+			static_cast<uint8_t>(std::clamp<long>(inimanager.GetLongValue(vdac4, "EspLatencyMs", 4), 1, 16));
+		CopyStringValue(inimanager.GetValue(vdac4, "EspCache", ""), config.vdac4_esp_cache, sizeof config.vdac4_esp_cache);
+		CopyStringValue(inimanager.GetValue(vdac4, "EspLog", ""), config.vdac4_esp_log, sizeof config.vdac4_esp_log);
 	}
 	// [VDAC2] RomImage: the FT812's ROM fonts (vdac2-integration-design.md §3, §10).
 	// Resolved by the card like the other ROMs (working dir, executable, resources);
@@ -1699,6 +1765,7 @@ std::string Config::GetConfigFolderForModel(MEM_MODEL model, uint32_t ramSizeKB)
 		case MM_PLUS2A:      return "spectrum2a";
 		case MM_TSL:         return "ts-conf";
 		case MM_NEXT:        return "next";
+		case MM_P2666:       return "p2666";
 		default:
 			break;
 	}
@@ -1861,6 +1928,13 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
     //   Scorpion: 14336T (Xpeccy ULA.Scorpion, ZXMAK2 UlaScorpion; UnrealSpeccy 14344) -> 1815
     switch (config.mem_model)
     {
+        case MM_P2666:
+            // The Pentagon raster (HR §1); the decoder replaces the INT window by the board's exact one in CPU clocks
+            // at every speed (PortDecoder::FrameIntWindow): these are its 3.5 MHz values
+            config.intstart = 71635;
+            config.intlen   = 32;
+            break;
+
         case MM_PENTAGON:
             // INT fires at intstart+1 due to strict `>` check. Paper starts at T=17944.
             // Calculation: (71680 - (71635+1)) + 17944 = 17988T (demo-verified)
@@ -1987,6 +2061,12 @@ void Config::ApplyModelTimingDefaults(CONFIG& config, bool canonicalGeometry)
             case MM_PENTAGON:
                 config.frame = 71680;   // 224 * 320
                 config.t_line = 224;
+                break;
+            case MM_P2666:
+                config.frame = 71680;   // 896 x 640 VGA pixels x 4 mainclk / 32 (HR §1)
+                config.t_line = 224;
+                config.intstart = 71635;
+                config.intlen = 32;
                 break;
             case MM_SCORP:
             case MM_PROFSCORP:

@@ -34,6 +34,8 @@
 #include "debugger/labels/labelmanager.h"
 #include "debugger/search/memorysearch.h"
 #include "debugger/targets/gscardtarget.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "debugger/ttd/ttdsession.h"
 #include "emulator/actions/actionregistry.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -1011,6 +1013,7 @@ public:
     void debug_detach() override
     {
         clear_run_to();
+        if (DebugManager * debug = m_emu->GetContext()->pDebugManager) debug->SelectCpu(DebugCpuId::Main);
         if (m_emu->IsPaused()) m_emu->Resume(kGui);
     }
     bool debug_paused() const override { return m_emu->IsPaused(); }
@@ -1053,6 +1056,12 @@ public:
         if (card_step(c, "out", 1)) return;
         m_emu->StepOut();
     }
+    // The tab's CPU shown (DebugManager::SelectCpu): a card's follows the main CPU's steps of the paused machine
+    void debug_select(ecatshim::CPU * c) override
+    {
+        auto * card = dynamic_cast<CardZ80 *>(c);
+        if (DebugManager * debug = m_emu->GetContext()->pDebugManager) debug->SelectCpu(card ? card->id() : DebugCpuId::Main);
+    }
     void debug_run_to(ecatshim::CPU * c, unsigned int address) override
     {
         // A breakpoint of its own that goes away at the next stop, whatever stops the machine: a stop after this run
@@ -1074,6 +1083,14 @@ public:
                 if (s.breakpoint.cpu == c->id()) return c.get();
         return m_main.get();
     }
+    std::string debug_stop_main_text() const override
+    {
+        const ::Emulator::DebugStop s = m_emu->LastStop();
+        if (s.reason != ::Emulator::DebugStop::Reason::Breakpoint && s.reason != ::Emulator::DebugStop::Reason::Step)
+            return std::string();
+        return s.breakpoint.main.known ? execution::MainPositionText(s.breakpoint.main) : std::string();
+    }
+    uint64_t debug_stop_serial() const override { return m_emu->LastStop().serial; }
     int debug_stop_reason() const override
     {
         switch (m_emu->LastStop().reason) {
@@ -1140,6 +1157,22 @@ private:
         const execution::RunReply r = execution::RunControl(m_emu).CardStep(kGui, card->id(), kind, std::max(1u, count));
         if (!r.Ok()) fprintf(stderr, "ecat-debugger: card step refused: %s\n", r.message.c_str());
         return true;
+    }
+
+    // Time travel in process: the verb on the machine's context (the views follow through the window, which reads
+    // them again after a move)
+    bool ttd_supported() const override { return true; }
+    TtdAnswer ttd_call(const std::string &verb, const std::map<std::string, std::string> &options) override
+    {
+        ttd::TTDReply reply;
+        {
+            const ::Emulator::ContextLease lease = m_emu->LeaseContext();
+            EmulatorContext * context = lease.get();
+            if (context == nullptr || !ttd::HasTimeTravelSession(context))
+                return {false, R"({"error":"Not Implemented","message":"This machine has no time travel"})"};
+            reply = ttd::TTDControl(context).Execute({verb, options});
+        }
+        return {reply.Ok(), StateNodeToJsonText(reply.ToValue())};
     }
 
     void on_core_event()

@@ -1,0 +1,1 @@
+a=45: a=a>>256: assert a==0:nop

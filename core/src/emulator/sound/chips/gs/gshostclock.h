@@ -76,4 +76,19 @@ struct GSHostClock
     /// rewound (a ZX reset) - the caller waits for the next frame base.
     static bool targetUnits(const EmulatorContext* context, double unitsPerSecond, uint64_t frameStartZxTacts,
                             int64_t frameStartUnits, int64_t& target);
+
+    /// unitsPerZxTact remembered against its inputs: the tight-mode catch-up asks it per host instruction, and the
+    /// two divisions are recomputed only when the frame geometry or the host speed changed. The value is the same
+    /// double, so a target rounds as targetUnits rounds it
+    struct Rate
+    {
+        unsigned frame = 0;
+        unsigned frameDurationUs = 0;
+        uint8_t hostMultiplier = 0;
+        double value = 0;
+    };
+
+    /// targetUnits with the conversion taken from `rate`
+    static bool targetUnits(const EmulatorContext* context, double unitsPerSecond, uint64_t frameStartZxTacts,
+                            int64_t frameStartUnits, Rate& rate, int64_t& target);
 };

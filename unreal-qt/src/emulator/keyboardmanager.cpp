@@ -3,6 +3,8 @@
 #include <QDebug>
 #include <QKeyEvent>
 
+#include <algorithm>
+
 #include "3rdparty/message-center/messagecenter.h"
 
 std::set<uint8_t> KeyboardManager::_heldPcKeys;
@@ -313,6 +315,42 @@ PcKey KeyboardManager::mapQtEventToPcKey(const QKeyEvent* event)
     if (key == PcKey::None)
         key = mapQtKeyToPcKey(event->key());
     return key;
+}
+
+void KeyboardManager::postVirtualKey(const std::vector<ZXKeysEnum>& zx, PcKey pc, KeyEventEnum type,
+                                     const std::string& targetId, const IPs2KeySink* sink)
+{
+    MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
+    const bool pressed = type == KEY_PRESSED;
+    std::vector<PcKey> pcKeys;
+    if (pc != PcKey::None)
+        pcKeys.push_back(pc);
+    else
+    {
+        // The ZX keys as given (Up is E0 75, not Shift + 7): an extended key stands for itself
+        for (ZXKeysEnum key : zx)
+            for (PcKey derived : sink != nullptr ? sink->PcKeysForZxKey(key) : pckey::FromZxKey(key))
+                if (std::find(pcKeys.begin(), pcKeys.end(), derived) == pcKeys.end())
+                    pcKeys.push_back(derived);
+    }
+    const auto postPc = [&](PcKey key) {
+        messageCenter.Post(pressed ? MC_PCKEY_PRESSED : MC_PCKEY_RELEASED,
+                           new PcKeyEvent(static_cast<uint8_t>(key), type, targetId));
+    };
+    const auto postZx = [&](ZXKeysEnum key) {
+        messageCenter.Post(pressed ? MC_KEY_PRESSED : MC_KEY_RELEASED, new KeyboardEvent(key, type, targetId));
+    };
+    // Down in order, up in reverse, as fingers do
+    if (pressed)
+    {
+        std::for_each(pcKeys.begin(), pcKeys.end(), postPc);
+        std::for_each(zx.begin(), zx.end(), postZx);
+    }
+    else
+    {
+        std::for_each(zx.rbegin(), zx.rend(), postZx);
+        std::for_each(pcKeys.rbegin(), pcKeys.rend(), postPc);
+    }
 }
 
 void KeyboardManager::postHostKey(const QKeyEvent* event, KeyEventEnum type, const std::string& targetId)

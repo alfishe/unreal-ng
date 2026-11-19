@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,7 @@
 
 namespace unrealdisk { class DiskImage; }
 using unrealdisk::DiskImage;
+class PlusDAutostart;
 class Z80;
 
 /// TR-DOS disk autostart: decides what to run from a mounted disk and starts it without key injection.
@@ -18,6 +20,8 @@ class Z80;
 ///    into RUN "<name>" (no disk changes at all);
 ///  - for a disk with several BASIC programs and no boot file the bundled commander is injected as a
 ///    virtual boot (image stays marked unmodified)
+/// An MGT disk on a machine with the +D goes through PlusDAutostart instead (its own plan and steps, run at the frame
+/// end by OnFrame)
 class DiskAutostart
 {
 public:
@@ -28,6 +32,7 @@ public:
         BootNamed,       // Single BASIC program: RUN "<name>" through the one-shot hook
         BootCommander,   // Several BASIC programs: bundled commander injected as boot.B
         BootGenerated,   // Fallback: generated one-line boot.B runs the single BASIC program
+        BootServiceMenu, // ZX-Evo BaseConf: reset into the service ROM (ERS), its "TR-DOS boot" runs drive A
         Unsupported      // Machine cannot run TR-DOS
     };
 
@@ -42,8 +47,20 @@ public:
     static constexpr uint16_t BOOT_LINE_BUILDER = 0x027B;
     static constexpr uint16_t COMMAND_LOOP_ENTRY = 0x02EF;
 
+    /// The ZX-Evo EVO Reset Service (rom/zxevo-fe.rom) waits for a key at this PC (after its HALT, window 0 on ROM), in its main
+    /// menu and in the boot list "TR-DOS boot" shows
+    static constexpr uint16_t SERVICE_MENU_IDLE = 0x6117;
+
 public:
     explicit DiskAutostart(EmulatorContext* context);
+    ~DiskAutostart();
+
+    /// The MGT +D branch: its plan, its steps, their status
+    PlusDAutostart& PlusD() { return *_plusd; }
+    const PlusDAutostart& PlusD() const { return *_plusd; }
+
+    /// Frame end (MainLoop, after the command typer): the +D steps
+    void OnFrame();
 
     /// True when the machine has a TR-DOS ROM set and the Beta interface enabled
     bool IsTrdosCapable(std::string* reason = nullptr) const;
@@ -76,14 +93,40 @@ public:
     /// Whether HandleCommandLoopHook has anything left to do
     bool IsHookPending() const { return _armed || _coldStartFinishPending; }
 
+    /// ZX-Evo BaseConf (BootServiceMenu): after the reset into the service ROM, the menu is driven as a user would:
+    /// `1` (TR-DOS drive A, kept in the CMOS), ENTER on "TR-DOS boot", ENTER on the first file of the disk's boot list
+    /// (boot when the disk has one). Gives up when the menu does not show within a few seconds (another RESET target)
+    void ArmServiceMenuBoot();
+    bool IsServiceMenuBootPending() const { return _serviceStage != ServiceStage::Idle; }
+
+    /// Z80Step hook at PC == SERVICE_MENU_IDLE: the next key of the sequence once the menu has drawn
+    void HandleServiceMenuIdle();
+
     /// Z80Step hook at PC == $02EF. Finishes the cold start for the model, then rewrites the cold-start RUN "boot" line
     /// into RUN "<name>". True when it changed the machine
     bool HandleCommandLoopHook(Z80& cpu);
 
 private:
+    enum class ServiceStage
+    {
+        Idle,
+        SelectDrive,  // the main menu: `1` = TR-DOS drive A
+        BootItem,     // ENTER on the first entry, "TR-DOS boot"
+        RunFile,      // the boot list: ENTER on the selected file
+    };
+
+    /// Frames the menu gets to draw after a key before the next one (the ERS's scan sees each tap)
+    static constexpr uint64_t SERVICE_KEY_GAP_FRAMES = 25;
+    /// Frames after the reset before the sequence gives up (the RESET target in the CMOS may not be the menu)
+    static constexpr uint64_t SERVICE_TIMEOUT_FRAMES = 500;
+
     EmulatorContext* _context = nullptr;
+    ServiceStage _serviceStage = ServiceStage::Idle;
+    uint64_t _serviceSince = 0;      // frame of the last key (or of the arming)
+    uint64_t _serviceArmedAt = 0;
     bool _armed = false;
     bool _coldStartFinishPending = false;
     std::string _name;                // Log label (file name for BootNamed)
     std::vector<uint8_t> _commandLine;  // Tokenized line the hook writes over the cold-start RUN "boot"
+    std::unique_ptr<PlusDAutostart> _plusd;
 };

@@ -78,14 +78,22 @@ transmit it). Emulate the power-on values.
 |---|---|---|
 | Total | 896 | 640 |
 | Blanked | pixel >= 848 or <= 73 | line >= 608 or <= 16 |
-| ZX / Pentagon 16c paper (256 x 192) | 192 .. 703 | 128 .. 511 |
-| ATM 320 x 200 / 640 x 200 / text paper | 128 .. 767 | 128 .. 527 |
-| Visible border around ZX paper | left 59, right 72 ZX pixels | top 55.5, bottom 48 ZX lines |
+| ZX / Pentagon 16c paper (256 x 192), fetched | VGA line pair `2 (Y + 64)`, pixel_c `368 + 32c` | 128 .. 511 |
+| ZX / Pentagon 16c paper, shown (one ZX line later, line buffer) | 193 .. 704 | 130 .. 513 |
+| ATM 320 x 200 / 640 x 200 / text paper (no line buffer) | 129 .. 768 | 128 .. 527 |
+| Visible border around the shown ZX paper | left 59.5, right 71.5 ZX pixels | top 56.5, bottom 47.5 ZX lines |
 
-The ZX line is fetched into a line buffer while the previous VGA line pair is scanned (`multic_buf*`,
-`border_buf*` double buffers in `zx_main.vhd`); `screen_delay` and `border_delay` (both 0) shift the read-out.
-The exact INT-to-pixel offset therefore needs a calibration test (border-stripe and multicolor programs, see
-[test-plan.md](test-plan.md#t-v-video)) rather than arithmetic.
+Sources: `zx_main.vhd:238-257` (blanking, window), `:325-331` (ATM window, 64 VGA pixels left of the ZX paper),
+`:420-427`, `:474-483` (fetch counters). The ZX line is fetched into a line buffer while the previous VGA line pair is
+scanned (`multic_buf*`, `border_buf*` double buffers); `screen_delay` and `border_delay` (both 0) shift the read-out.
+
+The emulator draws at the fetch time, in whole T and lines: framebuffer 388 x 296 (left 60, right 72, top 56, bottom
+48 around the ZX paper, the half line at the top drawn at the bottom), paper latch on line 80, T `30 + 4c`, ATM window
+from T 14, 160 T wide (`core/src/emulator/video/p2666/p2666geometry.h`).
+
+Fetch timing was checked against `zx_main` itself in `ghdl` (POC 051 `video.sh`): with the decoder's frame origin
+the bytes `zx_main` keeps are read at T `30.375 + 4c` (pixel) and `30.25 + 4c` (attribute) of line `80 + Y`, the INT
+strobe starts at T 71640 (`intstart`).
 
 ## 2. Memory
 
@@ -319,15 +327,40 @@ A WD1793 imitation that works on the RAM disk instead of a floppy:
   register, length code `0xFF`, CRC `0xF0 0xE0`), read sector (single / multi), write sector (single / multi), read
   track and write track **as raw sectors 1..16** (no gaps, no IDs: TR-DOS `FORMAT` would write gap bytes into the
   sectors; Gluk formats the RAM disk itself, "Kills/RD Fido"), force interrupt.
-- Status: never "not ready", "write protect", "record not found", "CRC error" or "lost data"; bit 1 = DRQ during
-  transfers else the index pulse; bit 2 = track 0 for type I.
-- Timing: about 128 `mainclk` (1.1 us) per byte, the CPU is stalled during each RAM access; restore and read
-  address take `0x3D40000` `mainclk` = 0.56 s; index pulse 5 Hz, 4 ms.
+- Status (`betadisk.vhd:169-177`): never "not ready", "write protect", "record not found", "CRC error" or "lost
+  data"; bit 5 and bit 2 (track 0) only while a type I command runs (D-14: after a restore the program sees bit 2 =
+  0); bit 1 = DRQ while a read / write / read address flag is set, else the index pulse; bit 0 = busy. The read and
+  write flags stay set after their command ends, until the next type I command or force interrupt.
+- Timing: DRQ 127 `mainclk` after the command and after the CPU took / gave the previous byte (plus the RAM slot,
+  a few edges, during which the CPU clock stops: `vg_tormoz`, not modelled); between the sectors of a multi-sector
+  command 2 x 127. Type I commands end 127 `mainclk` after the command, restore `0x3D40000` `mainclk` = 0.56 s.
+  Read address is **not** slow (an earlier reading of this section said 0.56 s): `read_address_flag` is never part
+  of the long delay; its six bytes come 127 `mainclk` apart. Index pulse: period `0x15B94A4`, high from `0x154A106`
+  to `0x15B94A2` (200 ms / 4 ms), the counter restarts with the motor (seek / step).
+- Force interrupt: every command flag off; INTRQ at once with any of I0..I3, and again when its 127-edge delay ends.
+- `betadisk_reg` (#FF in DOS) has no reset term (#FF at configuration); bit 2 = 0 holds the controller in reset and
+  loads a restore that runs its 0.56 s after release. INTRQ / DRQ read on any odd DOS port with A7..5 = 111.
+- Loading: the MCU copies `firmware/test.trd` from its SD card into the RAM disk at power-on. The emulator loads
+  the disk of drive A (again whenever another disk goes in); writes stay in the RAM disk.
 
 ### 5.7 UART
 
-16550 subset at `F8EF..FFEF` (manual §2.12): 16-byte FIFOs, `baud = 115200 / divisor`, RTS / CTS, interrupts into
-INT. The manual says "not supported by the current firmware" (no software uses it); the VHDL has it.
+16550 subset at `F8EF..FFEF` (manual §2.12), register = A10..8: 16-byte FIFOs, RTS / CTS, interrupts into INT
+(`internal_int = vsync_int AND uart_int`, `PaE.vhd:1567`). The manual says "not supported by the current firmware"
+(no software uses it). The VHDL (`common/uart.vhd`) differs from a 16550:
+
+- D-15: the register strobe `reg_stb_n` follows IORQ for the whole I/O cycle (`PaE.vhd:1257-1262`), and the FIFO
+  processes act on every `mainclk` while it is low: one `OUT` to the data register pushes the byte until the TX
+  FIFO is full (16 copies), one `IN` pops the RX FIFO empty and returns its last byte; with the FIFO empty the data
+  register reads whatever the last register read left on `reg_data_out`.
+- D-16: the FCR FIFO reset bits clear only inside the next register write; until then their FIFO is held empty.
+- D-17: LSR bit 5 is `tx_reg_empty_int`: 0 after reset (until a byte has been sent) and cleared by an IIR read.
+- IIR: RLS `0C`, RX data or timeout `08`, THRE `04`, modem status `00`, none `03` (the 16550's bits 3..1 reversed),
+  bits 7..6 = FCR bit 0. The RX timeout counts `mainclk`, 4 x (frame length x 16 + 16), about 6 us.
+- MSR = `1 0 1 CTS 0 0 0 DCTS` (DCD, DSR read 1; CTS is the pin level, 1 = stop). RTS pin = MCR bit 1 OR 8 bytes in
+  the RX FIFO (1 = stop). No loopback, no OUT1 / OUT2; IER keeps 8 bits; 5..7-bit words arrive in RBR's high bits.
+- Baud: a TX bit every 495 x divisor `mainclk`, an RX bit every 496 x divisor (`c_tx_maxdiv`, `c_rx_maxdiv`):
+  divisor 1 = 230400, 2 = 115200 (not `115200 / divisor`).
 
 ## 6. Video
 
@@ -372,7 +405,19 @@ selected through `xx77`, i.e. only from DOS (Gluk, NedoOS drivers in shadow mode
 ### 6.3 Border
 
 16 colours (`border3 & FE[2:0]`) through the palette. In the ZX and Pentagon 16c modes the border goes through a
-per-line delay buffer (`border_buf*`, `border_delay`), in ATM modes it is taken directly from `FE`.
+per-line delay buffer (`border_buf*`, `border_delay`), in ATM modes it is taken directly from `FE`
+(`zx_main.vhd:225-229`, `gfx_mode(3)` = `xx77` bit 0).
+
+Measured on `zx_main` in `ghdl` (POC 051 `video.sh`, FE writes in the top, left and right border): the `FE` register
+is latched in the T the emulator writes the port (`OUT (C),r`: 9.0 T after the instruction start, `OUT (n),A`: 8.0 T,
+from the timing oracle's `IOW` lines), and in the ZX / Pentagon 16c modes the new colour shows 3.25 T (6.5 ZX
+pixels) later than the paper mapping puts that T. The plain Pentagon renderer holds the old colour 1 T; the
+P2.666 holds it 2 T (`P2666Geometry::kBorderHoldT`), the new colour from T + 3.
+
+ATM modes have no line buffer: each VGA line of a pair fetches and shows again, at twice the ZX rate. For a line of
+the emulator frame the first VGA line shows pixel `x` (ZX pixels of the 388 window) at about T `x / 4 - 7`, the
+second at T `x / 4 + 105`. A CPU write (video memory or `FE`) during an ATM line reaches the board's two VGA lines at
+different places; the emulator draws one row per line and approximates it with the row drawn at T `x / 2`.
 
 ## 7. Reset and power-on
 
@@ -421,7 +466,11 @@ features (no `xxAF` registers, no DMA, no sprites), no BaseConf extended video m
 | D-6 | Stereo | not stated | right = A + B, left = B + C | **decided**: as the VHDL |
 | D-7 | Kempston joystick bits | standard | the MCU sends its pins raw: `D0` = P2.7, `D1` = P2.6, `D2` = P2.5, `D3` = P2.4, `D4` = P0.11 (comments: left, right, up, down, fire) | **decided**: as the board; the direction of each pin from the schematic (Appendix 2), until then the firmware comments |
 | D-8 | Undefined `gfx_mode` values | not stated | last colour held | **decided**: as the VHDL (the colour register keeps its last value) |
-| D-9 | UART | "not supported by the current firmware" | implemented | as the VHDL, phase P4 |
+| D-9 | UART | "not supported by the current firmware" | implemented | as the VHDL, phase P4 (§5.7) |
 | D-10 | CMOS size | 64 cells | 256-byte RAM, 64 persisted | as the VHDL: 256 cells, 64 persisted |
 | D-11 | Sound overflow | "without overflow check" | 8-bit wrap | **decided**: wrap, as the board; a saturating mix stays a commented-out recipe (design §5.2), not enabled |
 | D-12 | AY clock | not stated | 1.8387 MHz | as the VHDL |
+| D-14 | Beta Disk track 0 | WD1793: status bit 2 after a restore | bit 2 only while the type I command runs | as the VHDL; `P2666-FIX D-14` in `p2666betadisk.cpp` |
+| D-15 | UART strobe | one access, one FIFO step | level strobe: an `OUT` fills the TX FIFO with copies, an `IN` drains the RX FIFO | as the VHDL; `P2666-FIX D-15` in `p2666uart.cpp` |
+| D-16 | UART FCR reset bits | self-clearing | clear on the next register write; the FIFO stays empty until then | as the VHDL |
+| D-17 | UART THRE | 1 after reset | 0 after reset until a byte went out; an IIR read clears it | as the VHDL |

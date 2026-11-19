@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "base/featuremanager.h"
+#include "debugger/breakpoints/breakpointmanager.h"
+#include "debugger/debugmanager.h"
 #include "emulator/cpu/core.h"
 #include "emulator/config.h"
 #include "emulator/emulator.h"
@@ -191,8 +193,11 @@ BENCHMARK(BM_HostFrame_Pentagon_Overlay_Debug)->Iterations(1000)->Unit(benchmark
 ///    access catches the card up - the worst case);
 ///  - Read: the card runs the module and the host streams #0000-#3FFF with LDIR
 enum class NeoGSBench { Idle, Watch, Read };
+/// A card breakpoint that never fires (gs-debugger design §5.2): the card in its debug loop, the main CPU lazy (only
+/// the card's hooks: tight mode held off) or tight (catching the card up at every main instruction start)
+enum class CardDebug { None, Lazy, Tight };
 
-static void RunNeoGSFrame(benchmark::State& state, NeoGSBench scenario, bool debug)
+static void RunNeoGSFrame(benchmark::State& state, NeoGSBench scenario, bool debug, CardDebug cardDebug = CardDebug::None)
 {
     // Zeroed power-on RAM: the same machine in every mode
     EmulatorManager* manager = EmulatorManager::GetInstance();
@@ -245,12 +250,24 @@ static void RunNeoGSFrame(benchmark::State& state, NeoGSBench scenario, bool deb
     for (int i = 0; i < 3; i++)
         mainLoop->RunFramePublic();
     const uint64_t bytesBefore = card->zxDma().bytesRead();
+    if (cardDebug != CardDebug::None)
+    {
+        BreakpointSpec spec;
+        spec.type = BRK_MEMORY;
+        spec.access = BRK_MEM_EXECUTE;
+        spec.address = 0x3FFF;  // never executed
+        std::string error;
+        context->pDebugManager->GetBreakpointsManager(DebugCpuId::GS)->AddBreakpoint(spec, error);
+        context->pFeatureManager->setCardTightHold(cardDebug == CardDebug::Tight);
+    }
 
     for (auto _ : state)
         mainLoop->RunFramePublic();
 
     const char* names[] = {"idle (Off)", "Watch always, BASIC", "Divert, LDIR read"};
+    const char* cardNames[] = {"", " + card breakpoint, lazy", " + card breakpoint, tight"};
     state.SetLabel(std::string("NeoGS ") + names[static_cast<int>(scenario)] + (debug ? " debug" : " fast") +
+                   cardNames[static_cast<int>(cardDebug)] +
                    " bytes/frame=" + std::to_string((card->zxDma().bytesRead() - bytesBefore) / state.iterations()));
     state.SetItemsProcessed(state.iterations());
     manager->RemoveEmulator(emulator->GetUUID());
@@ -262,6 +279,8 @@ static void BM_HostFrame_NeoGS_Read_Fast(benchmark::State& s) { RunNeoGSFrame(s,
 static void BM_HostFrame_NeoGS_Idle_Debug(benchmark::State& s) { RunNeoGSFrame(s, NeoGSBench::Idle, true); }
 static void BM_HostFrame_NeoGS_Watch_Debug(benchmark::State& s) { RunNeoGSFrame(s, NeoGSBench::Watch, true); }
 static void BM_HostFrame_NeoGS_Read_Debug(benchmark::State& s) { RunNeoGSFrame(s, NeoGSBench::Read, true); }
+static void BM_HostFrame_NeoGS_Idle_CardLazy(benchmark::State& s) { RunNeoGSFrame(s, NeoGSBench::Idle, false, CardDebug::Lazy); }
+static void BM_HostFrame_NeoGS_Idle_CardTight(benchmark::State& s) { RunNeoGSFrame(s, NeoGSBench::Idle, false, CardDebug::Tight); }
 
 BENCHMARK(BM_HostFrame_NeoGS_Idle_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_NeoGS_Watch_Fast)->Iterations(300)->Unit(benchmark::kMicrosecond);
@@ -269,3 +288,5 @@ BENCHMARK(BM_HostFrame_NeoGS_Read_Fast)->Iterations(300)->Unit(benchmark::kMicro
 BENCHMARK(BM_HostFrame_NeoGS_Idle_Debug)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_NeoGS_Watch_Debug)->Iterations(300)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_HostFrame_NeoGS_Read_Debug)->Iterations(300)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_NeoGS_Idle_CardLazy)->Iterations(300)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_HostFrame_NeoGS_Idle_CardTight)->Iterations(300)->Unit(benchmark::kMicrosecond);

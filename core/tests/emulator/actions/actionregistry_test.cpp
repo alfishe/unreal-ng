@@ -424,8 +424,8 @@ TEST(ActionRegistryBuiltins_Test, TheCoreRegistersTheMovedActions)
     for (const char* id : {"run.pause_toggle", "run.step_in", "run.step_over", "run.step_out", "run.frame_step",
                            "run.wait_int", "run.to_scanline", "run.n_scanlines", "run.turbo_hold", "ttd.record_toggle",
                            "ttd.step_back_frame", "ttd.step_forward_frame", "ttd.step_back_instruction",
-                           "ttd.step_forward_instruction", "ttd.reverse_step", "ttd.reverse_continue",
-                           "ttd.bookmark_add", "ttd.resume_live", "ttd.jog_frames", "ttd.jog_instructions",
+                           "ttd.step_forward_instruction", "ttd.reverse_step", "ttd.reverse_step_over",
+                           "ttd.reverse_continue", "ttd.bookmark_add", "ttd.resume_live", "ttd.jog_frames", "ttd.jog_instructions",
                            "mach.reset", "mach.nmi", "mach.turbo_toggle"})
     {
         EXPECT_TRUE(registry.Find(id).has_value()) << id;
@@ -464,6 +464,12 @@ TEST(ActionRegistryBuiltins_Test, StepInStepsAPausedMachineAndAShortResetDoesNot
     EXPECT_TRUE(registry.Run("mach.reset", Press(true), id, hands).ok);
     const ActionResult early = registry.Run("mach.reset", Press(false), id, hands);
     EXPECT_EQ(early.error, "not_now") << "released before 1 s: no reset";
+    ActionValue atOnce = Press(true);
+    atOnce.params["now"] = true;
+    const ActionResult reset = registry.Run("mach.reset", atOnce, id, hands);
+    EXPECT_TRUE(reset.ok) << "now: a UI that confirmed resets at the press, " << reset.message;
+    atOnce.pressed = false;
+    EXPECT_TRUE(registry.Run("mach.reset", atOnce, id, hands).ok) << "its release is nothing to refuse";
 
     EmulatorTestHelper::CleanupEmulator(emulator);
     EXPECT_EQ(registry.Run("run.step_in", Press(), id, hands).error, "Not Found") << "the instance is gone";

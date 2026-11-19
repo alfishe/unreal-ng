@@ -65,8 +65,14 @@ constexpr struct
 {
     const char* name;
     uint8_t code;
-} kPcOnly[] = {{"pc.delete", kPcOnlyKeyBase},   {"pc.insert", kPcOnlyKeyBase + 1}, {"pc.end", kPcOnlyKeyBase + 2},
-               {"pc.home", kPcOnlyKeyBase + 3}, {"pc.pageup", kPcOnlyKeyBase + 4}, {"pc.pagedown", kPcOnlyKeyBase + 5}};
+} kPcOnly[] = {{"pc.delete", kPcOnlyKeyBase},       {"pc.insert", kPcOnlyKeyBase + 1},  {"pc.end", kPcOnlyKeyBase + 2},
+               {"pc.home", kPcOnlyKeyBase + 3},     {"pc.pageup", kPcOnlyKeyBase + 4},  {"pc.pagedown", kPcOnlyKeyBase + 5},
+               {"pc.escape", kPcOnlyKeyBase + 6},   {"pc.esc", kPcOnlyKeyBase + 6},     {"pc.tab", kPcOnlyKeyBase + 7},
+               {"pc.backspace", kPcOnlyKeyBase + 8}, {"pc.alt", kPcOnlyKeyBase + 9},    {"pc.ctrl", kPcOnlyKeyBase + 10},
+               {"pc.f1", kPcOnlyKeyBase + 11},      {"pc.f2", kPcOnlyKeyBase + 12},     {"pc.f3", kPcOnlyKeyBase + 13},
+               {"pc.f4", kPcOnlyKeyBase + 14},      {"pc.f5", kPcOnlyKeyBase + 15},     {"pc.f6", kPcOnlyKeyBase + 16},
+               {"pc.f7", kPcOnlyKeyBase + 17},      {"pc.f8", kPcOnlyKeyBase + 18},     {"pc.f9", kPcOnlyKeyBase + 19},
+               {"pc.f10", kPcOnlyKeyBase + 20},     {"pc.f11", kPcOnlyKeyBase + 21},    {"pc.f12", kPcOnlyKeyBase + 22}};
 
 bool OneName(const std::string& name, std::vector<uint8_t>& keys)
 {
@@ -140,6 +146,41 @@ std::vector<std::string> KnownZxKeyNames()
     for (const NamedKeys& named : kNamed)
         names.emplace_back(named.name);
     return names;
+}
+
+std::string ZxKeyName(uint8_t code)
+{
+    switch (code)
+    {
+        case kCaps:
+            return "caps";
+        case kSym:
+            return "sym";
+        case kEnter:
+            return "enter";
+        case kSpace:
+            return "space";
+        default:
+            break;
+    }
+    if (code >= k0 && code <= k0 + 9)
+        return std::string(1, static_cast<char>('0' + (code - k0)));
+    for (char c = 'a'; c <= 'z'; c++)
+        if (Letter(c) == code)
+            return std::string(1, c);
+    for (const auto& pcOnly : kPcOnly)
+        if (pcOnly.code == code)
+            return pcOnly.name;
+    static const char kHex[] = "0123456789abcdef";
+    return std::string("#") + kHex[code >> 4] + kHex[code & 0x0F];
+}
+
+std::string ZxChordName(const std::vector<uint8_t>& keys)
+{
+    std::string name;
+    for (uint8_t key : keys)
+        name += (name.empty() ? "" : "+") + ZxKeyName(key);
+    return name;
 }
 
 }  // namespace controllers

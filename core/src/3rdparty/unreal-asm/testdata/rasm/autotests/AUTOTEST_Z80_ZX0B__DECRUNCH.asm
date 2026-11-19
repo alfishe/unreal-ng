@@ -1,0 +1,1 @@
+org #100 : ld sp,#38 : ld hl,lastb-1 : ld de,#1000+FileSize('./decrunch/lzDataTest.bin')-1 : call mizou : jr #FE : include 'decrunch/dzx0_standard_back.asm' : mizou dzx0_standard_back (void) : org #C000 : incbin './decrunch/lzDataTest.zx0b' : lastb

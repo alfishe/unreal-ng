@@ -1,5 +1,6 @@
 #include "automationgate.h"
 
+#include <algorithm>
 #include <array>
 #include <initializer_list>
 #include <string_view>
@@ -94,12 +95,28 @@ bool CliCommandChangesMachine(const std::string& command, const std::vector<std:
         return !any({"show", "help", "presets"});
     if (command == "tape")
         return any({"load", "eject", "play", "pause", "rewind", "seek", "stop"});
-    if (command == "snapshot")
-        return any({"load"});
+    if (command == "snapshot")   // `snapshot transfer --check` and its help only report, as `snapshot inspect`
+    {
+        const auto has = [&args](const char* flag) { return std::find(args.begin(), args.end(), flag) != args.end(); };
+        return any({"load"}) ||
+               (verb == "transfer" && args.size() > 1 && !has("--check") && !has("--help") && !has("-h") &&
+                args[1] != "help");
+    }
     if (command == "ttd")
+    {
+        // `ttd branch switch <b>` moves the machine onto another branch, as a seek does
+        if (any({"branch", "branches", "br"}) && args.size() >= 2)
+        {
+            for (const char* moving : {"switch", "sw", "checkout", "back", "prev", "previous", "sibling", "sib"})
+                if (args[1] == moving)
+                    return true;
+            return false;
+        }
         return any({"back", "forward", "goto", "seek", "sb", "sf", "si-back", "si-forward", "step-back",
-                    "step-forward", "step-instruction", "reverse-step", "rs", "reverse-continue", "rc", "resume",
+                    "step-forward", "step-instruction", "reverse-step", "rs", "reverse-step-over", "rso",
+                    "reverse-continue", "rc", "resume",
                     "load", "open"});
+    }
     if (command == "disk")
         return any({"create", "eject", "insert", "write"});
     if (command == "basic")
@@ -248,6 +265,8 @@ uint32_t CompanionCliScopeOf(const std::string& command, const std::vector<std::
         return ScopeMedia;
     if (command == "snapshot" && verb == "load")
         return ScopeMedia;
+    if (command == "snapshot" && verb == "transfer")   // as POST /snapshot/transfer
+        return ScopeMachine;
     if (OneOf(command, {"media", "open"}))
         return ScopeMedia;
     if (command == "rzx" && OneOf(verb, {"play", "stop", "seek"}))
@@ -271,7 +290,8 @@ bool CompanionNeedsPause(const std::string& subpath)
     for (std::string_view stepping : {"/step", "/steps", "/stepover", "/stepout", "/skip_until", "/run_until", "/run_frame",
                                       "/run_frames", "/run_tstates", "/run_scanlines", "/run_to_scanline",
                                       "/run_to_pixel", "/run_to_interrupt", "/listing/step_line", "/listing/run_to_line",
-                                      "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-continue"})
+                                      "/ttd/step-instruction", "/ttd/reverse-step", "/ttd/reverse-step-over",
+                                      "/ttd/reverse-continue"})
         if (path == stepping)
             return true;
     return StartsWith(path, "/registers/");
@@ -287,7 +307,7 @@ bool CompanionCliNeedsPause(const std::string& command, const std::vector<std::s
         return args.size() >= 2;
     const std::string_view verb = args.empty() ? std::string_view() : std::string_view(args[0]);
     return command == "ttd" && OneOf(verb, {"si-back", "si-forward", "step-instruction", "reverse-step", "rs",
-                                            "reverse-continue", "rc"});
+                                            "reverse-step-over", "rso", "reverse-continue", "rc"});
 }
 
 std::string CompanionScopeName(uint32_t scope)

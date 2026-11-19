@@ -15,9 +15,13 @@
 /// strands `sd.zc`: a card with 48 unsaved sectors refuses the switch
 /// ("dirty") until the request says save, discard or keep.
 ///
-/// The cards go along too (ZX-bus slots R-OP-9): the old machine's slot set is
-/// planned against the new model, a card the new machine cannot take is
-/// dropped and reported (ModelSwitchResult::slotCarry, also in the report lines).
+/// The cards: the new machine takes the ones its own configuration names,
+/// nothing migrates from the old machine (owner decision 2026-11-14: a switch
+/// from a menu, on any platform and any automation plane, is a clean machine).
+/// A cold reset needs no carry: the cards plugged at run time are in the
+/// instance's own config override (keepConfigOverride). A run-time caller that
+/// needs the old machine's cards migrated asks for it (carryCards; ZX-bus slots
+/// R-OP-9, ModelSwitchResult::slotCarry, also in the report lines).
 
 #include <cstdint>
 #include <functional>
@@ -55,10 +59,14 @@ struct ModelSwitchRequest
     /// machine created with zeroed RAM stays that way across a model switch
     std::optional<RamPowerOn> ramPowerOn;
     /// The new machine's slot set, exactly ([SLOTS]): a restart with a planned
-    /// slot change (SlotChange, ZX-bus slots SL-6). Unset: the old machine's
-    /// cards are carried and planned against the new model (R-OP-9,
-    /// SlotManager::Carry), the cards it cannot take reported in the result
+    /// slot change (SlotChange, ZX-bus slots SL-6). Unset: the new model's
+    /// configured cards, or the old machine's carried with carryCards
     std::optional<SlotConfig> slotSet;
+    /// Without slotSet: the old machine's cards are planned against the new
+    /// model (R-OP-9, SlotManager::Carry), the ones it cannot take reported in
+    /// the result. Off by default: a model switch is a clean machine of the
+    /// new model's configuration (no caller sets it today)
+    bool carryCards = false;
     /// The old instance's create-time config override applies to the new
     /// machine too (a restart of the same model: a machine variant's board, a
     /// create-time option); off for a switch to another model

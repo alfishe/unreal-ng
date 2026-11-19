@@ -17,6 +17,7 @@
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testpathhelper.h"
 #include "_helpers/testwaithelper.h"
+#include "_helpers/ttdcardbench.h"
 #include "automation-lua.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
@@ -824,4 +825,88 @@ TEST_F(AutomationLua_Test, AnalysisTraceTakesThePathAsItsPositionalOption)
                                  message, output))
         << message;
     EXPECT_NE(output.find("no recording"), std::string::npos) << output;
+}
+
+/// transfer_state{...} as every surface (StateTransferControl): the WebAPI's report as a table for a check, a transfer
+/// into a new instance and a refusal; nil and the reason when there is no report
+TEST_F(AutomationLua_Test, TransferStateAnswersTheReportOfEverySurface)
+{
+    EmulatorManager* manager = EmulatorManager::GetInstance();
+    struct RemoveAll
+    {
+        EmulatorManager* manager;
+        ~RemoveAll()
+        {
+            for (const auto& emulatorId : manager->GetEmulatorIds())
+                manager->RemoveEmulator(emulatorId);
+        }
+    } removeAll{manager};
+    auto source = manager->CreateEmulatorWithModelAndRAM("lua-transfer", "128k", 128, LoggerLevel::LogError);
+    auto target = manager->CreateEmulatorWithModelAndRAM("lua-transfer", "PENTAGON", 128, LoggerLevel::LogError);
+    ASSERT_TRUE(source && target);
+    manager->SetSelectedEmulatorId(source->GetId());
+
+    std::string message;
+    std::string output;
+    ASSERT_TRUE(_lua.executeCode("local r = transfer_state{to = '" + target->GetId() + "', check = true}; "
+                                 "print(r.ok, r.mode, r.check, r.target_id == '" + target->GetId() + "', r.copied > 0)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output, "true\tcross-model\ttrue\ttrue\ttrue\n");
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r = transfer_state{model = 'PENTAGON', ram_size = 512, start = false}; "
+                                 "print(r.ok, r.created, r.model, r.ram_kb, r.state, #r.items > 0); print(r.target_id)",
+                                 message, output))
+        << message;
+    EXPECT_EQ(output.rfind("true\ttrue\tPENTAGON\t512\tinitialized\ttrue\n", 0), 0u) << output;
+    const std::string created = output.substr(output.find('\n') + 1, output.size() - output.find('\n') - 2);
+    EXPECT_TRUE(manager->GetEmulator(created)) << "the new instance: " << created;
+
+    output.clear();
+    ASSERT_TRUE(_lua.executeCode("local r, err = transfer_state{to = 'no-such-instance'}; print(r, err)", message, output))
+        << message;
+    EXPECT_EQ(output, "nil\tNot Found: Target emulator 'no-such-instance' not found\n");
+}
+
+/// Time travel on a sound card's CPU from Lua (gs-debugger design §8): ttd_card_seek / ttd_card_step /
+/// ttd_card_reverse_continue / ttd_card_position answer the TTDControl replies as tables
+TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
+{
+    ttdtest::Bench b;
+    ASSERT_TRUE(ttdtest::Build(b, ttdtest::Card::NeoGS));
+    const uint64_t perFrame = ttdtest::PerFrame(b);
+    ttdtest::Record(b, 3);
+    const uint64_t target = b.Count() - perFrame - 100;
+    {
+        BoundLua lua;
+        lua.start();
+        lua.Bind(b.emulator);
+        std::string message;
+        std::string output;
+        const std::string t = std::to_string(target);
+        ASSERT_TRUE(lua.executeCode(
+            "local r = ttd_card_seek('gs', " + t + ")\n"
+            "assert(r.reached and r.status == 'ok', tostring(r.error or r.message))\n"
+            "assert(r.card.instruction == " + t + " and r.card.card_position)\n"
+            "local back = ttd_card_step('neogs', -5)\n"
+            "assert(back.reached and back.from == " + t + " and back.card.instruction == " + t + " - 5)\n"
+            "local fwd = ttd_card_step('gs')\n"
+            "assert(fwd.reached and fwd.card.instruction == " + t + " - 4)\n"
+            "local p = ttd_card_position('gs')\n"
+            "assert(p.card_position and p.instruction == " + t + " - 4 and p.main.frame ~= nil)\n"
+            "assert(#ttd_card_position() == 1)\n"
+            "assert(ttd_card_position('ms') == nil)\n"
+            "local none = ttd_card_reverse_continue('gs', 3)\n"
+            "assert(none.ok == false and none.status == 'no_breakpoints', tostring(none.status))\n"
+            "local bad = ttd_card_seek('zz', 1)\n"
+            "assert(bad.ok == false and bad.error:find('Unknown cpu'))\n"
+            "local early = ttd_card_seek('gs', 0)\n"
+            "assert(early.reached == false and early.status == 'at_start')\n"
+            "print('ok')",
+            message, output))
+            << message;
+        EXPECT_EQ(output, "ok\n");
+        lua.stop();
+    }
 }

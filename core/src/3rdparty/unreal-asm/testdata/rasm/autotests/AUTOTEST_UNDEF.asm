@@ -1,0 +1,1 @@
+mavar=10: ifdef mavar: undef mavar: endif: ifdef mavar: fail 'undef did not work': endif:nop 

@@ -393,7 +393,8 @@ namespace ttd
         TTDContainerReader reader;
         if (!reader.Open(source, error, [](uint16_t id) { return id == sessionstream::kBranchTable; }))
             return false;
-        // Each record a part of its own: a cut or damaged one ends the list, the complete ones before it count
+        // Each record a part of its own (a prune's delete records share one): a cut or damaged part ends the list,
+        // the complete ones before it count
         for (const TTDPartRef& part : reader.Parts())
         {
             if (part.damaged)
@@ -625,15 +626,28 @@ namespace ttd
         // The records first: from here on the files are not the recording's, whenever they go
         if (!_index && !RebuildBranchIndex(error))
             return false;
+        // Every delete record in one part, synced once: a prune of a thousand branches is one write, not a thousand
         for (uint32_t line : lines)
         {
             TTDByteWriter w;
             w.U8(kIndexDelete);
             w.Varint(line);
-            if (!AppendIndexRecord(w.bytes, error))
+            if (!_index->writer.AddRecord(sessionstream::kBranchTable, w.bytes))
+            {
+                if (error)
+                    *error = "cannot write " + BranchIndexPath();
                 return false;
+            }
         }
-        FinishDeletions();
+        if (!_index->writer.EndPart(TTDPartEnd{}, /*sync=*/true))
+        {
+            if (error)
+                *error = "cannot write " + BranchIndexPath();
+            return false;
+        }
+        // The lines are known: their files go without reading the index back (that read, per deleted branch, was
+        // 90 % of a 1000-branch prune)
+        RemoveLineFiles(std::set<uint32_t>(lines.begin(), lines.end()));
         return true;
     }
 
@@ -645,13 +659,20 @@ namespace ttd
         std::string why;
         if (!ReadBranchIndex(BranchIndexPath(), index, why) || index.deleted.empty())
             return;
+        RemoveLineFiles(index.deleted);
+    }
+
+    void TTDRecordingFolder::RemoveLineFiles(const std::set<uint32_t>& lines)
+    {
+        if (lines.empty())
+            return;
         std::error_code ec;
         std::vector<fs::path> gone;
         for (const auto& entry : fs::directory_iterator(FileHelper::ToFsPath(_path), ec))
         {
             uint32_t number = 0, line = 0;
             if (ParseSegmentFileName(FileHelper::FromFsPath(entry.path().filename()), number, line) &&
-                index.deleted.count(line))
+                lines.count(line))
                 gone.push_back(entry.path());
         }
         for (const fs::path& file : gone)

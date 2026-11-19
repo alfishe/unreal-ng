@@ -29,7 +29,7 @@ struct RuntimeOptions
 {
     bool syncActions = false;  // run actions inside step() (tests); otherwise on the worker thread
     bool dryRun = false;       // log actions instead of running them (navigation still works)
-    int holdMs = 600;          // back key held this long = home
+    int holdMs = 600;          // back key held this long = home; a key with `long` held this long = its long step
     // runs the `action` kind for the system host; null = its REST fallback (sdb/actionexec.h). The daemon's surface
     // client sets its own here.
     std::shared_ptr<ActionExecutor> executor{};
@@ -174,6 +174,13 @@ private:
     };
     void Handle(const Event& e, std::int64_t nowMs);
     void Activate(int key);
+    void ActivateLong(int key);  // a key's `long` step (released after holdMs)
+    // A dial's press: its job (a held step: the release job kept for DialUp, or sent at once with releaseNow)
+    void PressDial(int index, const Dial& d, bool releaseNow);
+    double TurnRate(int index, int delta, std::int64_t now);  // detents a second, smoothed
+    // The page of the current menu (_mu held): Layout, then the list page's keys and its paging dial
+    void Relayout();
+    void FillList();
     void Enqueue(Job j);
     void RunJob(Job& j);
     void ApplyNav(const json& r);
@@ -181,6 +188,9 @@ private:
     void SetBanner(const std::string& text, int ms, bool info = false);
     void FailureBanner(const Job& j, const std::string& message);
     bool SeekOnTimeline(int x, int x2, bool swipe);
+    void TapStripKey(int zone, std::int64_t now);  // strip.content "keys": a tap on a zone
+    void ReleaseLatches(bool afterTap);
+    [[nodiscard]] bool ScrollStuck(const Node& n) const;            // the latched zones let go (afterTap: once a tap has played)
     [[nodiscard]] std::string UnavailableLocked(const Action& a) const;
     static void DimUnavailable(Rgb& img);
     int _swipeStep = 1, _swipeDir = 0;  // the timeline's swipe: seconds of the last step, its way
@@ -215,11 +225,23 @@ private:
     std::map<std::string, json> _readouts;     // readout path -> value
     std::map<std::string, bool> _pushed;       // readouts a surface client delivers (not polled)
     std::map<int, Job> _holds;                 // keys / dials (1000 + index) held down: their release job
+    std::map<int, Job> _latched;               // strip key zones latched (a one-shot shift): their release job
+    int _stripTapped = -1;                     // the strip key zone just tapped, drawn pressed until _stripTappedUntil
+    std::int64_t _stripTappedUntil = 0;
     std::map<int, std::int64_t> _flashUntil;   // activity flash per key
     std::string _context;                      // the context sent last (ctx.set)
     bool _contextSent = false;
     std::vector<bool> _pressed;
     std::map<int, std::int64_t> _downAt;
+    std::map<int, std::string> _longArmed;  // keys with a `long` step held down: the node id pressed
+    std::map<int, bool> _dialHeld;          // dials with press_turn held down: turned since the press
+    // the list page (List): the current menu's item keys (Page::keys point into _listNodes, rebuilt by FillList),
+    // the items their value faces read ("@<node id>"), the paging dial, the page shown
+    const Node* _listMenu = nullptr;
+    int _listPage = 0, _listPages = 1;
+    std::vector<Node> _listNodes;
+    std::map<std::string, json> _listValues;
+    Dial _listDial;
     std::map<int, std::pair<std::int64_t, double>> _turnRate;  // per dial: last turn (ms), detents a second
     std::vector<std::size_t> _sentKey;                         // face hash per key (0 = never sent)
     std::size_t _sentStrip = 0;

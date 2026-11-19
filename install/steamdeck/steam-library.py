@@ -176,7 +176,8 @@ def cmd_add(args):
         shortcuts = entries_of(root)
         kept = []
         for item in shortcuts.values():
-            if field(item, 'exe', '') == exe_quoted:
+            # Re-registration: the entry of this executable and any older one under the same name (another path)
+            if field(item, 'exe', '') == exe_quoted or field(item, 'appname') == args.name:
                 old = field(item, 'appid', 0) & 0xFFFFFFFF
                 if old != appid:
                     drop_art(config, old)

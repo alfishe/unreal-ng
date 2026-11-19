@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | History. Section 2 describes v1's file, which nothing reads since v1 was deleted (2026-10-30). Sections 4-6 are the proposal that led to the engine's container, built differently: see [As built](#as-built-2026-10-31) |
-| **Last updated** | 2026-10-31 (as-built note; text 2026-08-20) |
+| **Last updated** | 2026-11-16 (chunked streams; as-built note 2026-10-31; text 2026-08-20) |
 | **Parent TDD** | [time-travel-debugging-tdd.md](./time-travel-debugging-tdd.md) §6, §9 |
 | **Schema** | `core/src/debugger/ttd/ttd.ksy` (authoritative for the current layout: the engine's schema 2, not the layout in section 2) |
 
@@ -21,7 +21,32 @@ The engine's session file is a container of numbered streams, as proposed here, 
   skipped;
 - CRC32C on the header, on each record's header and payload, and on the index; a file without its trailer opens by
   scanning its records, and a damaged part is a hole (it and the parts that depend on it are unreachable);
-- a recording is written as it records, one file per segment in its recording folder (`engine/ttdrecordingwriter.*`).
+- a recording is written as it records, one file per segment in its recording folder (`engine/ttdrecordingwriter.*`);
+- a record holds at most 1 GiB raw. A larger payload of a stream S is stored as several records of S's *chunked
+  twin*, stream `S | 0x8000` (see [Chunked streams](#chunked-streams-2026-11-16)).
+
+### Chunked streams (2026-11-16)
+
+A session of 139 382 frames could not be dumped: its write journal, written whole with the session's last part,
+passed the record limit (about 8.3 KB raw per frame, so 1 GiB at about 130 000 frames; 96 503 frames gave 797 MB).
+The container now splits such a payload:
+
+| Rule | |
+|---|---|
+| Twin | stream `0x8000 + S`, declared in the header as ancillary, with S's layout and the name `chunked-<S's name>` |
+| Records | limit-sized pieces, back to back in one part, consecutive sequence numbers; each compressed or not on its own |
+| Flags | bit 2 (*continued*) on every record but the last |
+| Readers | join the run into one payload of S (C++ `TTDContainerReader`, Python `ttdlib`, the analyzer); `TTDPartRef::records` is the joined view, `physical` every record as stored (verbatim copies, joins of a recording's segment files) |
+| Damage | a run cut before its last record, or a continued record outside a twin, makes the part damaged |
+| Older readers | skip the twin as an unknown ancillary stream: the file reads as one without that payload, never a chunk as the whole |
+| Declared | by the session writer for the write journal and every holder stream (coverage, bookmarks, facts, branch state) and their branch twins: the streams written whole with the last part. Required streams are not declared (an older reader would refuse every new file); their records are per part and stay small |
+
+Writer failures carry a reason (`TTDContainerWriter::Error()`, `TTDWriteError`): `Io` with the system's words,
+`NoSpace` only for a full disk or quota (ENOSPC / EDQUOT, `ERROR_DISK_FULL`), `TooLarge` with the stream and the
+sizes (a stream over the limit without a declared twin), `Layout` for calls out of order. The record limit is
+settable for tests (`SetRecordLimit`, `TTDSessionSaveParams::recordLimit`). Tests:
+`core/tests/debugger/ttd/engine/ttdcontainer_chunks_test.cpp`, `ttdsessionfile_chunks_test.cpp`,
+`tools/python/ttd/tests/test_chunks.py`; fixture `testdata/ttd/v2/chunked/`.
 
 Design: [phase-4-session-file-tdd.md](../../../../inprogress/2026-09-25-ttd-v2-migration/phase-4-session-file-tdd.md),
 [integrity-and-versioning.md](../../../../inprogress/2026-09-25-ttd-v2-migration/integrity-and-versioning.md). The text below is kept as written.

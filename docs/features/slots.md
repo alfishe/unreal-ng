@@ -57,7 +57,9 @@ debugger attributes a port access to the device by these claims.
 
 `slots catalog` lists every card with its options and how it would fit this machine now: where the planner would put
 it, the fit, and `fits`, `needs-replace` (it would remove a card; the list says which) or `refused` (the machine
-cannot take it at all, with the reason).
+cannot take it at all, with the reason). `slots catalog <slot>` plans every card into that one slot instead (a card
+of another bus is refused there, the card in it now is `inSlot`): what a picker for one slot offers. Every card and
+report entry has `label` too, its name as plain text (the names are markdown: "Covox `#FB`").
 
 ## Changing a card
 
@@ -218,11 +220,11 @@ A configuration with `[SLOTS]` ignores the old keys.
 
 | Surface | Read | Change |
 |---|---|---|
-| CLI | `slots`, `slots catalog`, `slots matrix [table]` | `slots plug / remove / set / gs` with `--replace`, `--dry-run`, `--media`, `--json` ([command-interface.md section 14](../emulator/design/control-interfaces/command-interface.md#14-zx-bus-slots)) |
-| WebAPI | `GET /emulator/{id}/slots`, `/slots/catalog`, `/slots/matrix` | `POST /slots/{slot}/plug`, `/remove`, `PUT /slots/{slot}/options`; refusal = 409 with the plan ([webapi-interface.md](../emulator/design/control-interfaces/webapi-interface.md#zx-bus-slots), OpenAPI tag `Slots`) |
+| CLI | `slots`, `slots catalog [slot]`, `slots matrix [table]` | `slots plug / remove / set / gs` with `--replace`, `--dry-run`, `--media`, `--json` ([command-interface.md section 14](../emulator/design/control-interfaces/command-interface.md#14-zx-bus-slots)) |
+| WebAPI | `GET /emulator/{id}/slots`, `/slots/catalog[?slot=]`, `/slots/matrix` | `POST /slots/{slot}/plug`, `/remove`, `PUT /slots/{slot}/options`; refusal = 409 with the plan ([webapi-interface.md](../emulator/design/control-interfaces/webapi-interface.md#zx-bus-slots), OpenAPI tag `Slots`) |
 | MCP | `inspect_state` aspect `slots`; `emulator_manage` `slots_catalog`, `slots_matrix` | `emulator_manage` `slots_plug`, `slots_remove`, `slots_set` ([mcp/README.md](mcp/README.md)) |
-| Lua | `slots_state()`, `slots_catalog()`, `slots_matrix()` | `slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([lua-interface.md](../emulator/design/control-interfaces/lua-interface.md#zx-bus-slots)) |
-| Python | `unreal.slots_state()`, `slots_catalog()`, `slots_matrix()` | `unreal.slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([python-interface.md](../emulator/design/control-interfaces/python-interface.md#zx-bus-slots)) |
+| Lua | `slots_state()`, `slots_catalog([slot])`, `slots_matrix()` | `slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([lua-interface.md](../emulator/design/control-interfaces/lua-interface.md#zx-bus-slots)) |
+| Python | `unreal.slots_state()`, `slots_catalog(slot=)`, `slots_matrix()` | `unreal.slots_plug()`, `slots_remove()`, `slots_set()`, `slots_gs()` ([python-interface.md](../emulator/design/control-interfaces/python-interface.md#zx-bus-slots)) |
 | Qt | Machine > Slots | the same window: plug, remove, options, the plan preview, Undo |
 | Network settings | `network`, `/state/network`, `network_state()` | `card=` of `network set`, `POST /network/config`, MCP `network_configure`, Lua / Python `network_configure`, the Network window's card boxes: a slot change (see [The network cards](#the-network-cards)) |
 

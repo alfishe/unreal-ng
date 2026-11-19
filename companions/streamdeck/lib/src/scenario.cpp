@@ -135,6 +135,51 @@ struct Parser
         return Action{j["kind"].get<std::string>(), j};
     }
 
+    std::optional<List> ParseList(const json& j, const std::string& id)
+    {
+        if (!j.is_object() || !j.contains("readout") || !j["readout"].is_string())
+        {
+            Error(id, "list must be {readout: <path to an array>, label, show, do, long, on, dim, key, dial}");
+            return std::nullopt;
+        }
+        List l;
+        for (const auto& [k, v] : j.items())
+        {
+            if (k == "readout" || k == "key" || k == "label" || k == "show" || k == "on" || k == "dim")
+            {
+                if (!v.is_string())
+                {
+                    Error(id, "list." + k + " must be a string");
+                    continue;
+                }
+                const std::string t = v.get<std::string>();
+                (k == "readout" ? l.readout
+                 : k == "key"   ? l.key
+                 : k == "label" ? l.label
+                 : k == "show"  ? l.show
+                 : k == "on"    ? l.on
+                                : l.dim) = t;
+            }
+            else if (k == "do" || k == "long")
+            {
+                if (auto a = ParseAction(v, id))
+                    (k == "do" ? l.press : l.longPress) = std::move(*a);
+            }
+            else if (k == "dial")
+            {
+                if (v.is_number_integer() && v.get<int>() >= 0)
+                    l.dial = v.get<int>();
+                else if (!v.is_null())
+                    Error(id, "list.dial must be a dial index (0 = the first)");
+            }
+            else
+                Error(id, "list: unknown field '" + k + "' (readout, key, label, show, do, long, on, dim, dial)");
+        }
+        if (l.key.empty())
+            Error(id, "list.key must name an item field");
+        return l;
+    }
+
     Node ParseNode(const json& j, bool root)
     {
         Node n;
@@ -196,9 +241,20 @@ struct Parser
             Error(n.id, "the root must be a menu");
         if (!root && j.contains("at"))
             n.at = ParseSlot(j["at"]).value_or(Slot{});
+        if (!root && j.contains("pin"))
+        {
+            if (j["pin"].is_boolean())
+                n.pin = j["pin"].get<bool>();
+            else
+                Error(n.id, "pin must be true or false");
+        }
         n.face = ParseFace(j.value("face", json::object()), n.id);
+        if (j.contains("long") && !j["long"].is_null() && type != "include")
+            n.longPress = ParseAction(j["long"], n.id);
         if (n.IsMenu())
         {
+            if (j.contains("list") && !j["list"].is_null())
+                n.list = ParseList(j["list"], n.id);
             if (j.contains("context"))
             {
                 if (j["context"].is_string())
@@ -224,6 +280,8 @@ struct Parser
                     dl.turn = ParseAction(d["turn"], n.id);
                 if (d.contains("press"))
                     dl.press = ParseAction(d["press"], n.id);
+                if (d.contains("press_turn") && !d["press_turn"].is_null())
+                    dl.pressTurn = ParseAction(d["press_turn"], n.id);
                 n.dials.push_back(dl);
             }
             if (const auto st = j.value("strip", json::object()); st.is_object())
@@ -245,9 +303,54 @@ struct Parser
                     Error(n.id, "strip.status: ttd, run, tape or target (or none)");
                 if (n.strip.fps <= 0)
                     Error(n.id, "strip.fps must be > 0");
-                static const std::set<std::string> kinds{"breadcrumbs", "title", "text", "image", "none"};
+                static const std::set<std::string> kinds{"breadcrumbs", "title", "text", "image", "keys", "none"};
                 if (!kinds.count(n.strip.content))
-                    Error(n.id, "strip.content must be breadcrumbs, title, text, image or none");
+                    Error(n.id, "strip.content must be breadcrumbs, title, text, image, keys or none");
+                if (st.contains("keys") && !st["keys"].is_array())
+                    Error(n.id, "strip.keys must be a list of {label, span?, latch?, do}");
+                for (const auto& k : st.value("keys", json::array()))
+                {
+                    if (!k.is_object())
+                    {
+                        Error(n.id, "strip.keys: each zone is {label, span?, latch?, do}");
+                        continue;
+                    }
+                    StripKey z;
+                    z.label = k.value("label", "");
+                    if (k.contains("span") && !k["span"].is_number_integer())
+                        Error(n.id, "strip.keys: span must be a whole number");
+                    z.span = k.contains("span") && k["span"].is_number_integer() ? k["span"].get<int>() : 1;
+                    if (z.span < 1)
+                        Error(n.id, "strip.keys: span must be at least 1");
+                    if (k.contains("latch") && !k["latch"].is_boolean())
+                        Error(n.id, "strip.keys: latch must be true or false");
+                    z.latch = k.value("latch", false);
+                    if (k.contains("do"))
+                        z.tap = ParseAction(k["do"], n.id);
+                    else
+                        Error(n.id, "strip.keys: zone '" + z.label + "' needs \"do\"");
+                    n.strip.keys.push_back(std::move(z));
+                }
+                if (n.strip.content == "keys" && n.strip.keys.empty())
+                    Error(n.id, "strip.content keys needs strip.keys");
+                if (n.strip.content != "keys" && !n.strip.keys.empty())
+                    Error(n.id, "strip.keys go with strip.content keys");
+            }
+            if (j.contains("width"))
+            {
+                if (j["width"].is_number_integer() && j["width"].get<int>() > 0)
+                    n.width = j["width"].get<int>();
+                else
+                    Error(n.id, "width must be a whole number of columns (> 0)");
+            }
+            if (j.contains("window"))
+            {
+                const json& w = j["window"];
+                if (w.is_array() && w.size() == 2 && w[0].is_number_integer() && w[1].is_number_integer() &&
+                    w[0].get<int>() >= 0 && w[1].get<int>() >= w[0].get<int>())
+                    n.windowFirst = w[0].get<int>(), n.windowLast = w[1].get<int>();
+                else
+                    Error(n.id, "window must be [first, last] deck columns (0 <= first <= last)");
             }
             if (const auto nv = j.value("nav", json::object()); nv.is_object())
             {
@@ -549,11 +652,56 @@ struct Validator
             }
             else if (to == "scenario")
                 need("file");
+            else if (to == "scroll")
+            {
+                if (!j.contains("by") || !(j["by"].is_number_integer() || j["by"].is_string()))
+                    Error(id, "nav to scroll needs 'by': columns (a whole number, or $ticks)");
+            }
             else if (to != "back" && to != "home")
-                Error(id, "nav.to must be back, home, node or scenario");
+                Error(id, "nav.to must be back, home, node, scroll or scenario");
         }
         else
             Error(id, "unknown action kind '" + a.kind + "'");
+    }
+
+    // A key's long press: a step of its own; the key acts on its release, so its own action cannot be held
+    void CheckLong(const Node& n)
+    {
+        if (!n.longPress)
+            return;
+        CheckAction(*n.longPress, n.id, 0);
+        if (!n.IsMenu() && (n.action.kind == "action" || n.action.kind == "gui") && n.action.spec.value("hold", false))
+            Error(n.id, "a key with long acts on its release: its own action cannot be held (hold: true)");
+    }
+
+    void CheckList(const Node& n, const List& l)
+    {
+        if (!IsReadoutPath(l.readout))
+            Error(n.id, "list.readout '" + l.readout + "' is not a readout path (ttd.branch_list.items, ...)");
+        else if (!IsKnownReadoutPath(l.readout))
+            Warn(n.id, "list.readout '" + l.readout + "' is no readout the core publishes: the list stays empty");
+        for (const auto* t : {&l.label, &l.show})
+            if (const std::string e = CheckValueFormat(*t); !e.empty())
+                Error(n.id, std::string("list.") + (t == &l.label ? "label" : "show") + ": " + e);
+        if (l.press)
+            CheckAction(*l.press, n.id, 0);
+        if (l.longPress)
+            CheckAction(*l.longPress, n.id, 0);
+        if (l.press && (l.press->kind == "action" || l.press->kind == "gui") && l.press->spec.value("hold", false) &&
+            l.longPress)
+            Error(n.id, "list: an item with long acts on its release: its own step cannot be held (hold: true)");
+        if (l.dial >= 0)
+        {
+            const Model& m = *s.model;
+            if (m.dials == 0)
+                Error(n.id, std::string("list.dial on ") + std::string(m.name) + ", which has no dials");
+            else if (l.dial >= m.dials)
+                Error(n.id, sdb::Format("list.dial {} outside 0..{}", l.dial, m.dials - 1));
+            for (const auto& d : n.dials)
+                if (d.index == l.dial)
+                    Warn(n.id, sdb::Format("dial {} turns the list's pages: its own binding here does nothing",
+                                           l.dial));
+        }
     }
 
     void Menu(const Node& n, std::vector<const Node*>& path)
@@ -567,13 +715,44 @@ struct Validator
         const Model& m = *s.model;
         const ResolvedNav rn = ResolveNav(s, path);
         std::map<std::pair<int, int>, std::string> used;
+        // a wide menu (width > its window's columns): its keys take columns up to its width, the deck shows a window
+        // of them on the window's columns (the whole deck unless `window` names some); pinned keys stay on the deck
+        // columns outside the window
+        const MenuWindow win = WindowOf(n, m);
+        const bool windowed = n.windowFirst >= 0;
+        const bool wide = n.width > win.cols;
+        const int cols = wide ? n.width : static_cast<int>(m.cols);
+        if (windowed && n.windowLast >= m.cols)
+            Error(n.id, sdb::Format("window [{}, {}] is outside the {} columns of {}", n.windowFirst, n.windowLast,
+                                    m.cols, m.name));
+        if (windowed && !wide)
+            Error(n.id, sdb::Format("a window needs a width over its {} columns", win.cols));
+        if (n.width > 0 && n.width < win.cols)
+            Error(n.id, sdb::Format("width {} is narrower than the {} columns of {}", n.width, win.cols,
+                                    windowed ? std::string("its window") : std::string(m.name)));
+        if (wide && rn.backKey)
+            Error(n.id, "a wide menu scrolls its back key away: back: false (the strip's long press goes home)");
+        std::set<std::pair<int, int>> pinned;
         for (const auto& c : n.items)
         {
+            if (c.pin && !windowed)
+                Error(c.id, "pin goes in a menu with a window (its keys outside the window stay put)");
             if (!c.at.Valid())
                 Error(c.id, "missing or bad 'at' [row, col]");
-            else if (!KeyIndex(m, c.at.row, c.at.col))
+            else if (c.pin)
+            {
+                if (c.at.row >= m.rows || c.at.col >= m.cols)
+                    Error(c.id, sdb::Format("pinned slot [{}, {}] is outside the {}x{} grid of {}", c.at.row,
+                                            c.at.col, m.rows, m.cols, m.name));
+                else if (windowed && c.at.col >= win.first && c.at.col < win.first + win.cols)
+                    Error(c.id, sdb::Format("pinned slot [{}, {}] is inside the window [{}, {}]", c.at.row, c.at.col,
+                                            n.windowFirst, n.windowLast));
+                else if (!pinned.insert({c.at.row, c.at.col}).second)
+                    Error(c.id, sdb::Format("same pinned slot [{}, {}] as another key", c.at.row, c.at.col));
+            }
+            else if (c.at.row >= m.rows || c.at.col >= cols)
                 Error(c.id, sdb::Format("slot [{}, {}] is outside the {}x{} grid of {}", c.at.row, c.at.col, m.rows,
-                                        m.cols, m.name));
+                                        cols, wide ? std::string("the menu") : std::string(m.name)));
             else
             {
                 auto [it, fresh] = used.emplace(std::make_pair(c.at.row, c.at.col), c.id);
@@ -596,7 +775,22 @@ struct Validator
                 CheckAction(*d.turn, n.id, 0);
             if (d.press)
                 CheckAction(*d.press, n.id, 0);
+            if (d.pressTurn)
+                CheckAction(*d.pressTurn, n.id, 0);
+            if (d.pressTurn && d.press && (d.press->kind == "action" || d.press->kind == "gui") &&
+                d.press->spec.value("hold", false))
+                Warn(n.id, sdb::Format("dial {}: with press_turn the press fires on the release: its hold is "
+                                       "pressed and released at once",
+                                       d.index));
         }
+        if (!n.strip.keys.empty() && !m.HasLcd())
+            Error(n.id, std::string("strip keys on ") + std::string(m.name) + ", which has no touch strip");
+        for (const auto& z : n.strip.keys)
+            if (z.tap)
+                CheckAction(*z.tap, n.id, 0);
+        if (n.list)
+            CheckList(n, *n.list);
+        CheckLong(n);
         for (const auto& c : n.items)
         {
             if (c.IsMenu())
@@ -612,6 +806,7 @@ struct Validator
                     Error(c.id, "state '" + c.state + "' is not a readout path (run.state.paused, toggle.<id>, ...)");
                 if (!c.state.empty() && !c.faceOn)
                     Warn(c.id, "state without face_on: the face does not change");
+                CheckLong(c);
             }
         }
         path.pop_back();
@@ -907,12 +1102,34 @@ json ToJson(const Node& n)
         j["tags"] = n.tags;
     if (n.at.Valid())
         j["at"] = SlotJson(n.at);
+    if (n.pin)
+        j["pin"] = true;
     if (auto f = FaceJson(n.face); !f.empty())
         j["face"] = f;
     if (!n.activity)
         j["activity"] = false;
+    if (n.longPress)
+        j["long"] = n.longPress->spec;
     if (n.IsMenu())
     {
+        if (n.list)
+        {
+            const List& l = *n.list;
+            json lj{{"readout", l.readout}};
+            if (l.key != "id")
+                lj["key"] = l.key;
+            for (const auto& [name, v] : {std::pair<const char*, const std::string*>{"label", &l.label},
+                                          {"show", &l.show}, {"on", &l.on}, {"dim", &l.dim}})
+                if (!v->empty())
+                    lj[name] = *v;
+            if (l.press)
+                lj["do"] = l.press->spec;
+            if (l.longPress)
+                lj["long"] = l.longPress->spec;
+            if (l.dial >= 0)
+                lj["dial"] = l.dial;
+            j["list"] = lj;
+        }
         if (!n.context.empty())
             j["context"] = n.context;
         if (n.readonly)
@@ -930,8 +1147,12 @@ json ToJson(const Node& n)
             nav["dials"] = n.nav.dials;
         if (!nav.empty())
             j["nav"] = nav;
+        if (n.width > 0)
+            j["width"] = n.width;
+        if (n.windowFirst >= 0)
+            j["window"] = {n.windowFirst, n.windowLast};
         if (n.strip.content != "title" || !n.strip.text.empty() || !n.strip.image.empty() || !n.strip.status.empty() ||
-            n.strip.target)
+            n.strip.target || !n.strip.keys.empty())
         {
             json st{{"content", n.strip.content}};
             if (!n.strip.text.empty())
@@ -945,6 +1166,22 @@ json ToJson(const Node& n)
             }
             if (n.strip.target)
                 st["target"] = *n.strip.target;
+            if (!n.strip.keys.empty())
+            {
+                json ks = json::array();
+                for (const auto& z : n.strip.keys)
+                {
+                    json zj{{"label", z.label}};
+                    if (z.span != 1)
+                        zj["span"] = z.span;
+                    if (z.latch)
+                        zj["latch"] = true;
+                    if (z.tap)
+                        zj["do"] = z.tap->spec;
+                    ks.push_back(zj);
+                }
+                st["keys"] = ks;
+            }
             j["strip"] = st;
         }
         if (!n.dials.empty())
@@ -959,6 +1196,8 @@ json ToJson(const Node& n)
                     dj["turn"] = d.turn->spec;
                 if (d.press)
                     dj["press"] = d.press->spec;
+                if (d.pressTurn)
+                    dj["press_turn"] = d.pressTurn->spec;
                 ds.push_back(dj);
             }
             j["dials"] = ds;
@@ -1068,6 +1307,18 @@ std::vector<const Node*> PathTo(const Node& root, std::string_view id)
         }
     }
     return {};
+}
+
+MenuWindow WindowOf(const Node& menu, const Model& m)
+{
+    if (menu.windowFirst >= 0 && menu.windowLast >= menu.windowFirst)
+        return {menu.windowFirst, menu.windowLast - menu.windowFirst + 1};
+    return {0, static_cast<int>(m.cols)};
+}
+
+bool IsWide(const Node& menu, const Model& m)
+{
+    return menu.width > WindowOf(menu, m).cols;
 }
 
 ResolvedNav ResolveNav(const Scenario& s, const std::vector<const Node*>& path)

@@ -4,6 +4,7 @@
 #include "emulator/io/fdc/diskimage.h"
 
 #include <cstring>
+#include <memory>
 #include <vector>
 
 class LoaderHFE_Test : public ::testing::Test
@@ -268,3 +269,141 @@ TEST_F(LoaderHFE_Test, Serialize_FromTrdFormat_KeepsGeometry)
 
     delete hfeImage;
 }
+
+/// region <Round trips: the tracks come back byte for byte>
+
+namespace
+{
+void FormatAll(DiskImage& image, bool fm, int fmCylinders = -1)
+{
+    for (uint8_t c = 0; c < image.getCylinders(); c++)
+    {
+        for (uint8_t s = 0; s < image.getSides(); s++)
+        {
+            const bool trackFm = fm || c < fmCylinders;
+            DiskImage::TrackFormatSpec spec =
+                trackFm ? DiskImage::TrackFormatSpec::ibm3740() : DiskImage::TrackFormatSpec::trdos(nullptr, 16);
+            image.getTrackForCylinderAndSide(c, s)->formatTrack(c, s, spec);
+        }
+    }
+}
+
+void ExpectSameTracks(DiskImage& expected, DiskImage& actual)
+{
+    ASSERT_EQ(actual.getCylinders(), expected.getCylinders());
+    ASSERT_EQ(actual.getSides(), expected.getSides());
+    for (uint8_t c = 0; c < expected.getCylinders(); c++)
+    {
+        for (uint8_t s = 0; s < expected.getSides(); s++)
+        {
+            DiskImage::Track* want = expected.getTrackForCylinderAndSide(c, s);
+            DiskImage::Track* got = actual.getTrackForCylinderAndSide(c, s);
+            ASSERT_EQ(got->encoding(), want->encoding()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->rawSize(), want->rawSize()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(0, std::memcmp(got->rawData(), want->rawData(), want->rawSize()))
+                << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->clockBitmap(), want->clockBitmap()) << "cylinder " << int(c) << " side " << int(s);
+            ASSERT_EQ(got->sectorCount(), want->sectorCount()) << "cylinder " << int(c) << " side " << int(s);
+        }
+    }
+}
+
+DiskImage* SaveAndLoad(DiskImage& image, int version, std::vector<uint8_t>* file = nullptr)
+{
+    LoaderHFE saver;
+    std::vector<uint8_t> buffer;
+    std::vector<std::string> warnings;
+    const bool saved = version == 3 ? saver.serialize(&image, buffer, warnings) : saver.serializeV1(&image, buffer, warnings);
+    EXPECT_TRUE(saved);
+    if (!saved) return nullptr;
+    if (file) *file = buffer;
+    LoaderHFE loader;
+    return loader.parse(buffer.data(), buffer.size(), warnings);
+}
+}  // namespace
+
+TEST_F(LoaderHFE_Test, RoundTrip_V3_TrdosTracksByteExact)
+{
+    DiskImage image(80, 2);
+    FormatAll(image, false);
+    ASSERT_EQ(image.getTrackForCylinderAndSide(0, 0)->sectorCount(), 16u);
+
+    std::unique_ptr<DiskImage> loaded(SaveAndLoad(image, 3));
+    ASSERT_NE(loaded, nullptr);
+    ExpectSameTracks(image, *loaded);
+}
+
+TEST_F(LoaderHFE_Test, RoundTrip_V1_TrdosTracksByteExact)
+{
+    DiskImage image(40, 2);
+    FormatAll(image, false);
+
+    std::unique_ptr<DiskImage> loaded(SaveAndLoad(image, 1));
+    ASSERT_NE(loaded, nullptr);
+    ExpectSameTracks(image, *loaded);
+}
+
+TEST_F(LoaderHFE_Test, RoundTrip_FmTracksStayFm)
+{
+    DiskImage image(40, 1);
+    FormatAll(image, true);
+
+    std::vector<uint8_t> file;
+    std::unique_ptr<DiskImage> loaded(SaveAndLoad(image, 3, &file));
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(file[0x0B], LoaderHFE::ENCODING_ISOIBM_FM);
+    ExpectSameTracks(image, *loaded);
+}
+
+TEST_F(LoaderHFE_Test, RoundTrip_MixedFmAndMfmKeepsEachTrack)
+{
+    DiskImage image(40, 2);
+    FormatAll(image, false, 2);  // cylinders 0 and 1 FM, the rest MFM
+
+    for (int version : {3, 1})
+    {
+        std::vector<uint8_t> file;
+        std::unique_ptr<DiskImage> loaded(SaveAndLoad(image, version, &file));
+        ASSERT_NE(loaded, nullptr) << "v" << version;
+        EXPECT_EQ(file[0x0B], LoaderHFE::ENCODING_ISOIBM_MFM);
+        ExpectSameTracks(image, *loaded);
+    }
+}
+
+TEST_F(LoaderHFE_Test, RoundTrip_V3_KeepsWeakBytes)
+{
+    DiskImage image(40, 2);
+    FormatAll(image, false);
+    DiskImage::Track* track = image.getTrackForCylinderAndSide(5, 1);
+    const size_t firstWeak = track->getDataForSector(3) - track->rawData() + 10;
+    for (size_t b = firstWeak; b < firstWeak + 20; b++) track->setWeakByte(b, true);
+
+    std::unique_ptr<DiskImage> loaded(SaveAndLoad(image, 3));
+    ASSERT_NE(loaded, nullptr);
+    DiskImage::Track* got = loaded->getTrackForCylinderAndSide(5, 1);
+    ASSERT_EQ(got->rawSize(), track->rawSize());
+    for (size_t b = firstWeak; b < firstWeak + 20; b++) EXPECT_TRUE(got->weakByte(b)) << b;
+    EXPECT_FALSE(got->weakByte(firstWeak - 2));
+    EXPECT_FALSE(got->weakByte(firstWeak + 22));
+    EXPECT_EQ(got->sectorCount(), 16u);
+    EXPECT_FALSE(loaded->getTrackForCylinderAndSide(5, 0)->hasWeakBits());
+}
+
+TEST_F(LoaderHFE_Test, Parse_V3Opcodes_GreaseweazleSemantics)
+{
+    // One side: SETBITRATE 72, SETINDEX, NOP, SKIPBITS 3 + 0x15 (cells 10101), RAND (8 weak cells), SKIPBITS 5 + RAND
+    // (3 weak cells), then data 0x5A. 5 + 8 + 3 + 8 = 24 cells
+    const std::vector<uint8_t> stream = {LoaderHFE::OP_SETBITRATE, 72, LoaderHFE::OP_SETINDEX, LoaderHFE::OP_NOP,
+                                         LoaderHFE::OP_SKIPBITS,    3,  0x15,
+                                         LoaderHFE::OP_RAND,        LoaderHFE::OP_SKIPBITS, 5, LoaderHFE::OP_RAND,
+                                         0x5A};
+    std::vector<uint8_t> bits, weak;
+    unrealdisk::LoaderHFECUT::processV3Opcodes(stream, bits, weak);
+
+    const std::vector<uint8_t> wantBits = {1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0};
+    const std::vector<uint8_t> wantWeak = {0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0};
+    EXPECT_EQ(bits, wantBits);
+    EXPECT_EQ(weak, wantWeak);
+}
+
+/// endregion </Round trips: the tracks come back byte for byte>

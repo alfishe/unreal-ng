@@ -246,6 +246,9 @@ public:
     TTDCursor PublishedCursor() const override;
     /// D8: the recording is paused for browsing (state detached); see PauseRecordingForBrowsing
     bool IsRecordingPaused() const { return _recordingPaused; }
+    /// A start asked while the machine stood inside another CPU's run (Emulator::IsParkedInsideCardRun): the
+    /// recording begins at the next frame boundary, its baseline the frame's start (debuggers.md §7)
+    bool IsStartPending() const { return _startPending.load(std::memory_order_acquire); }
 
     /// @brief The machine's thread, about to park (pause): publish the
     /// recording's summary so status reads while paused are exact
@@ -256,9 +259,17 @@ public:
     /// `maxFrames` frames (a ring; its segments are an eighth of the window,
     /// so it holds up to 1/8 more), and drops segments while the store holds
     /// more than `maxBytes`. 0 = no limit for that measure (the default for
-    /// both). What stays is a complete, shorter session starting at a
-    /// segment's baseline; the journals are cut to the new start.
+    /// both). Without a recording folder what stays is a complete, shorter
+    /// session starting at a segment's baseline; the journals are cut to the
+    /// new start. With one (the two tiers, P3) the limits only move segments
+    /// whose file is complete out of memory: the whole session stays seekable,
+    /// a restore reads an evicted segment back (the read-back cache).
     void SetHistoryLimit(uint64_t maxFrames, uint64_t maxBytes);
+    /// Two tiers: the read-back cache's capacity in segments (default 4, at least 1)
+    void SetReadBackCapacity(size_t segments);
+    /// Tests (T-C10): completed segment files are held back from the eviction while @p hold is set; clearing it
+    /// offers them
+    void HoldSegmentFilesForTesting(bool hold);
     /// Bytes of history held now: the engine's piece store and the first
     /// checkpoint's device blobs (what the byte limit measures)
     uint64_t HistoryBytes() const;
@@ -383,6 +394,20 @@ public:
     /// lineage's bookmarks on the trunk, no coverage index (each branch's starts at its fork)
     /// @return false with @p err set when there is no session or a write fails
     bool SerializeSession(std::ostream& out, std::string& err, bool lineageOnly = false);
+
+    /// What DumpSession did
+    struct DumpResult
+    {
+        bool ok = false;
+        std::string error;                              ///< the reason, naming the file and the system's words
+        TTDWriteFailure failure = TTDWriteFailure::None;   ///< its kind (the HTTP status of the dump)
+        uint64_t bytes = 0;                             ///< the file's size (ok)
+        bool partialRemoved = false;                    ///< a failed dump removed what it had written
+    };
+    /// @brief Write the session to the file @p path (SerializeSession's content). The file is written as
+    /// "<path>.partial" and renamed to @p path when complete: a failed dump leaves no file that looks like a
+    /// session (it removes the partial one and says so) and an existing @p path stays as it was
+    DumpResult DumpSession(const std::string& path, bool lineageOnly = false);
 
     /// @brief Replace the session by the one in @p in, an engine session file.
     /// Refused, leaving the current session as it was, when the file is
@@ -1061,16 +1086,16 @@ public:
     // the emulator (existing pause discipline — same as RestoreCheckpoint-
     // ForTesting / SeekTo).
 
-    /// @brief Resume recording from a historical position, truncating future.
+    /// @brief Resume recording from a historical position; the old future is kept.
     ///
-    /// Algorithm (parent TDD §8.3):
+    /// Algorithm (parent TDD §8.3, TTD branches architecture.md §4.5):
     ///   1. Validate preconditions (state, bounds).
     ///   2. SeekTo(from) — ensures the emulator is positioned at `from`.
     ///      No-op-equivalent if already there (re-restore is deterministic).
-    ///   3. Release page refs for every checkpoint cp where cp.time > from.
-    ///   4. Erase those checkpoints from _line->timeline.
-    ///   5. _line->inputJournal.DropAfter(from).
-    ///   6. _state = Recording.
+    ///   3. History after `from`: a new branch forks there (ForkBranchAt), the old future stays on its parent.
+    ///      At the active branch's end: the line is cut at the resume point (its partial last frame) and goes on.
+    ///   4. The new line's journals, markers, bookmarks and coverage after the resume point are dropped.
+    ///   5. _state = Recording.
     ///
     /// @param from  Position to resume from. Must be within the current
     ///              recorded timeline bounds (<= SessionEndPosition()).
@@ -1090,9 +1115,31 @@ public:
     /// Make @p branch active and stand at @p at on its lineage (default: its last visited moment, else its end).
     /// A recording pauses for browsing first
     bool SwitchBranch(uint32_t branch, const std::optional<TTDTimePoint>& at, std::string& error);
+    /// Make the branch left last active again (ttd.branch_prev, surfaces.md §2): every change of the active branch
+    /// (a switch, a fork) leaves the old one on a trail; each call walks it back one step, at that branch's last
+    /// visited moment. False with @p error when the trail holds no live branch
+    bool SwitchToPreviousBranch(uint32_t& switchedTo, std::string& error);
+    /// The trail SwitchToPreviousBranch walks, oldest first; a verb whose moves are one step for the user
+    /// (branch-create: a switch to the fork's branch, the fork, the way back) puts it back afterwards
+    std::vector<uint32_t> BranchTrail() const;
+    void SetBranchTrail(std::vector<uint32_t> trail);
     /// Delete @p branch and its descendants (TTDBranchTable::Delete: never the trunk or the active lineage, pinned
     /// ones only with @p force); their history leaves memory. @p removed: the ids deleted
     bool DeleteBranch(uint32_t branch, bool force, std::vector<uint32_t>& removed, std::string& error);
+    /// One refusal of DeleteBranches: the branch asked for and why it stays
+    struct BranchDeleteRefusal
+    {
+        uint32_t branch = 0;
+        std::string error;
+    };
+    /// Delete several branches with their descendants in one operation (a prune): each by DeleteBranch's rules,
+    /// the refused ones in @p refused, the rest gone together - one delete batch in the recording folder (one sync,
+    /// one sweep of the files), one session publish, one `deleted` event counting them all. @p removed: every id
+    /// deleted. False only when none was
+    bool DeleteBranches(const std::vector<uint32_t>& branches, bool force, std::vector<uint32_t>& removed,
+                        std::vector<BranchDeleteRefusal>& refused);
+    /// Edit @p branch's name, note, tags or pin (the table's rules: a name stays unique among the live branches)
+    bool UpdateBranch(uint32_t branch, const TTDBranchUpdate& update, std::string& error);
     /// Who asks for the next fork and why (createdBy, run, tags, note, name; reason when empty: resume): taken by
     /// the next fork only
     void SetNextBranchMeta(TTDBranchMeta meta)
@@ -1100,8 +1147,22 @@ public:
         _nextBranchMeta = std::move(meta);
         _nextBranchMetaSet = true;
     }
+    /// branch-create (surfaces.md §5.1): the next resume forks a branch with @p meta even at the active branch's
+    /// end, where a resume only goes on. Taken by the next resume; CancelBranchCreate drops it when none came
+    void PrepareBranchCreate(TTDBranchMeta meta)
+    {
+        SetNextBranchMeta(std::move(meta));
+        _forceFork = true;
+    }
+    void CancelBranchCreate()
+    {
+        _forceFork = false;
+        _nextBranchMetaSet = false;
+    }
     /// The lineage spans of the active branch (trunk first)
     std::vector<TTDLineageSpan> ActiveLineage() const { return _branches.Lineage(_tip); }
+    /// The branches as last published (no fresh publish asked)
+    TTDBranchesPublished PublishedBranches() const override;
 
     /// endregion </Branches>
     /// The media a recording continued from @p from could not set back there (M5, F11): another medium in the
@@ -1438,6 +1499,43 @@ public:
     /// end (no further history).
     bool StepForwardInstruction();
 
+    /// @brief Step back over (the debuggers' Shift+F8): one instruction back, but when that instruction is a return
+    /// (RET, RET cc taken, RETI, RETN) that brought the stack up to where it is now, back past the whole routine to
+    /// the instruction at this stack level before it: the CALL / RST that entered it, or the instruction an interrupt
+    /// came after. The routine is found by the stack level of each instruction's start (SP), so nested calls,
+    /// interrupts inside it and recursion are passed over too. There is no reverse step out (owner 2026-11-12).
+    ttd::TTDReverseStepOverResult ReverseStepOver();
+
+    // -----------------------------------------------------------------------
+    // Card CPU positions (gs-debugger design §8; owner decision 2026-11-17, Q2 of the phase-3 TDD). A position on
+    // the CPU of a sound card (DebugCpuId GS: General Sound or NeoGS; MultiSoundGS: the MultiSound's GS) is its
+    // instruction count. Every move is a replay: the frame whose checkpoint holds the largest count at or below the
+    // target is replayed in tight mode until the card reaches it (GSCardTarget's scan), the main CPU is put at its
+    // last instruction boundary at or before the card's moment, and the card's copy from the scan is loaded. The card
+    // position stays until the machine moves: a run first puts the card back as the seek to that boundary left it
+    // (the main CPU finishes its instruction with the card behind it, as recorded).
+    // -----------------------------------------------------------------------
+
+    /// Where @p cpu's card stands now (a read: nothing runs); known false without a card with a CPU or a count
+    ttd::TTDCardPosition CardPositionNow(DebugCpuId cpu) const;
+    /// The machine stands at a card position (of any card)
+    bool AtCardPosition() const;
+    /// Seek to the moment @p cpu's card has run @p instruction instructions (at the boundary of the next one)
+    ttd::TTDCardMoveResult SeekToCardInstruction(DebugCpuId cpu, uint64_t instruction);
+    /// @p delta card instructions forward (> 0) or back (< 0) from the card's count now: at a main position the count
+    /// of the card run up to the main CPU's moment
+    ttd::TTDCardMoveResult StepCardInstructions(DebugCpuId cpu, int64_t delta);
+    /// Frames a card reverse continue replays at most by default
+    static constexpr uint64_t kCardReverseMaxFrames = 1000;
+    /// Back to the newest hit of @p cpu's card breakpoints (its own breakpoint manager, as a live run stops on them)
+    /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
+    /// answer says so (NoHit, NoBreakpoints)
+    ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
+    /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
+    /// parking the machine)
+    std::vector<ttd::TTDCardPosition> PublishedCardPositions() const;
+
     // -----------------------------------------------------------------------
     // Phase 4 reverse execution (extends single-opcode step helpers with
     // multi-step / reverse-continue primitives).
@@ -1738,6 +1836,31 @@ private:
     /// truncation itself, so the sorted invariant is preserved).
     bool SeekToInternal(const TTDTimePoint& target, TTDSeekResult* outResult);
 
+    /// region <Card CPU positions (ttdcontrollercardpositions.cpp)>
+    /// The card position the machine stands at: the card's copy from the scan, its state as the seek to the main
+    /// boundary left it (put back before the machine runs), the readout. Null: none
+    struct CardStand;
+    std::shared_ptr<CardStand> _cardStand;
+    /// The card's count at frame @p frame's checkpoint on the active lineage (a restore: the machine moves there);
+    /// false when the frame is out of the history (before: it precedes the earliest kept frame) or has no count
+    bool CardCountAtFrame(DebugCpuId cpu, uint64_t frame, uint64_t& count, bool& before);
+    /// The latest frame of [first, last] whose checkpoint count is at or below @p instruction, from @p hint
+    bool FindCardStartFrame(DebugCpuId cpu, uint64_t instruction, uint64_t hint, uint64_t& frame,
+                            ttd::TTDCardMoveResult& result);
+    /// The move itself (SeekToCardInstruction's body, inside an operation)
+    void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
+    /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
+    void LeaveCardStand();
+    /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again
+    void ReapplyCardStand();
+    /// The card position for PublishedCardPositions (at the end of every move)
+    void PublishCardReadouts();
+    mutable std::mutex _cardReadoutMutex;
+    std::vector<ttd::TTDCardPosition> _cardReadouts;
+    /// endregion </Card CPU positions>
+
     // -----------------------------------------------------------------------
     // Internal seek helpers (Phase 2 Item 4; parent TTD §8.1 step 3)
     // -----------------------------------------------------------------------
@@ -1846,12 +1969,27 @@ private:
     uint32_t _viewId = 0;   ///< the line read and written now (an ancestor's while standing in its part)
     TTDBranchMeta _nextBranchMeta;
     bool _nextBranchMetaSet = false;
+    bool _forceFork = false;   ///< PrepareBranchCreate: the next resume forks at the end too
+    /// The table's last change (the ttd.branches topic); NoteBranchEvent numbers them
+    TTDBranchEvent _branchEvent;
+    void NoteBranchEvent(const char* event, const TTDBranchInfo& branch, uint32_t removed = 0);
     /// Per branch id: where it was last visited (SwitchBranch's default)
     std::vector<std::optional<TTDTimePoint>> _lastVisited = {std::nullopt};
+    /// The branches the active one left, oldest first (SwitchToPreviousBranch walks it back); bounded
+    std::vector<uint32_t> _branchTrail;
+    /// SwitchBranch called by SwitchToPreviousBranch: the branch left is not added to the trail
+    bool _walkingTrailBack = false;
+    /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
+    void LeaveBranch(uint32_t left);
+    /// The trail's last live branch other than the active one; kTTDNoBranch: none
+    uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
     /// does not park the machine (GetBookmarks); empty = the trunk alone
     mutable std::mutex _lineageViewLock;
     std::vector<TTDLineageSpan> _lineageView;
+    /// GetSessionInfo's branch list: rebuilt when the table's revision or the active branch moved
+    mutable std::shared_ptr<const TTDBranchesView> _branchesView;
+    mutable uint32_t _branchesViewTip = kTTDTrunk;
     /// The trunk alone (a new session, a load, an invalidation): the active line's state stays the trunk's
     void ResetBranches();
     /// A resume at @p from (cut @p cut) on the viewed line, which has recorded history after it: a new branch
@@ -2116,6 +2254,8 @@ private:
         std::vector<uint8_t> framebuffer;
         std::vector<uint16_t> planeB;      ///< ZX DLSS plane B, rendered in the same pass as the pixels
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
+        /// The card position the caller stood at (a read that replays elsewhere comes back to it)
+        std::shared_ptr<CardStand> cardStand;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable
@@ -2244,6 +2384,7 @@ private:
     std::set<uint32_t> _shadowLinesWithFiles;    ///< lines with a file in the folder
     TTDSessionSaveParams _shadowParams;          ///< the folder's files: identity, holder streams, branch records
     bool _shadowFilesStopped = false;            ///< writing failed: no new writer until the session's next folder
+    uint64_t _shadowFolderSerial = UINT64_MAX;   ///< the engine's segments begun when the folder was made
     bool _shadowDiskStop = false;                ///< the disk is full: the recording stops at the frame's end (S-7)
     TTDDiskSpace _shadowDiskSpace = TTDDiskSpace::Ok;
     std::function<uint64_t(const std::string&)> _freeSpaceProbe;
@@ -2383,6 +2524,34 @@ private:
     std::atomic<uint64_t> _historyLimitFrames{0};
     std::atomic<uint64_t> _historyLimitBytes{0};
     uint64_t _evictedCheckpoints = 0;   ///< released by the limit in this session
+
+    /// Two tiers (P3, architecture.md §5.3-5.4): with a recording folder the limits move segments out of memory,
+    /// their files keep them, and a restore reads one back into the read-back cache
+    std::map<std::pair<uint32_t, size_t>, std::string> _segmentFiles;   ///< (line, first checkpoint): complete file
+    uint64_t _segmentFilesSerial = 0;          ///< files completed (EnforceHistoryLimit's cheap check)
+    uint64_t _tierCheckedFiles = UINT64_MAX;   ///< _segmentFilesSerial at the last full check
+    uint64_t _tierCheckedSegment = UINT64_MAX; ///< segments begun at the last full check
+    size_t _readBackCapacity = 4;              ///< the read-back cache's segments
+    bool _readBackUnbounded = false;           ///< Save, Check: every segment read back for the call
+    uint64_t _readBackLoads = 0;               ///< segments read back from their files
+    uint64_t _readBackFailures = 0;            ///< read backs that failed (the restore reported it)
+    bool _holdSegmentFiles = false;            ///< test hook: completed files are noted, not offered for eviction
+    std::vector<std::pair<std::pair<uint32_t, size_t>, std::string>> _heldSegmentFiles;
+    /// The disk tier works: a folder whose files are written, an engine that records
+    bool DiskTierActive() const;
+    /// The limits with the disk tier: evict segments with a complete file outside the memory window
+    void EnforceDiskTier(uint64_t frames, uint64_t bytes);
+    /// The engine's loader: read line @p line's segment @p segment back from its file
+    bool LoadSegmentFromFile(uint32_t line, size_t segment);
+    /// The read-back cache back to its capacity (least recently used first), keeping @p keep (line, segment)
+    void TrimReadBackCache(std::pair<uint32_t, size_t> keep);
+    /// A completed segment file of @p line (the writer's callback)
+    void NoteSegmentFile(uint32_t line, const std::string& path, size_t firstCheckpoint);
+    /// Read back every evicted segment (Save and Check read the whole session); ReleaseAllReadBack trims again
+    bool ReadBackAll(std::string& error);
+    /// SerializeSession and DumpSession: the session into @p sink, @p failure the kind of a failed write
+    bool SaveSessionTo(ITTDByteSink& sink, std::string& err, bool lineageOnly, TTDWriteFailure* failure);
+    void ReleaseAllReadBack();
     uint64_t _blobBytes = 0;            ///< device blob bytes of every checkpoint in _line->timeline (kept with it)
     static uint64_t BlobBytes(const TTDCheckpoint& cp);
 
@@ -2634,6 +2803,7 @@ private:
     void ApplyBankOverrides(const TTDBankOverrides& in);
     uint32_t _blackBoxMinutes = 5;
     bool _blackBoxSuspended = false;        // stopped for an acceleration; starts again after it
+    std::atomic<bool> _startPending{false};  // StartRecording inside a card's run: the machine starts it at the next boundary
     bool _restartPending = false;           // the session ended (reset, snapshot load, machine change): a new one at the next frame boundary
     /// The one rule (D42): the recording session ends, @p keepHistory = the machine is still the one the history belongs to.
     /// A new session starts at the next frame boundary for a black box, or when the `ttdrestart` feature is on

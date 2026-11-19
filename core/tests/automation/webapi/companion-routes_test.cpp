@@ -35,7 +35,8 @@ std::string Concrete(std::string path)
         {"{slot}", "disk0"}, {"{verb}", "insert"}, {"{drive}", "A"},   {"{name}", "speed"}, {"{cyl}", "0"},
         {"{side}", "0"},     {"{sec}", "1"},       {"{type}", "ram"},  {"{page}", "0"},     {"{offset}", "0"},
         {"{address}", "0"},  {"{source}", "master"}, {"{bus}", "isa"}, {"{label}", "x"},    {"{index}", "0"},
-        {"{chip}", "0"},     {"{reg}", "0"},       {"{part}", "0"},    {"{group}", "g"},    {"{id2}", "0"}};
+        {"{chip}", "0"},     {"{reg}", "0"},       {"{part}", "0"},    {"{group}", "g"},    {"{id2}", "0"},
+        {"{branch}", "1"}};
     for (const auto& [placeholder, value] : samples)
         for (size_t at = path.find(placeholder); at != std::string::npos; at = path.find(placeholder))
             path.replace(at, placeholder.size(), value);
@@ -51,6 +52,7 @@ const std::set<std::string> kDebugRoutes = {
     "DELETE /markup",
     "DELETE /markup/layers",
     "DELETE /ttd/bookmarks/{label}",
+    "DELETE /ttd/branches/{branch}",
     "DELETE /watches/{watch}",
     "POST /analysis/build",
     "POST /analysis/cancel",
@@ -80,6 +82,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /control/audio/midi",
     "POST /control/isa",
     "POST /cpuprofile/{op}",
+    "POST /debug/boards/{board}/actions/{action}",
     "POST /history/{device}/clear",
     "POST /history/{device}/config",
     "POST /history/{device}/pause",
@@ -105,6 +108,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /run_to_scanline",
     "POST /run_tstates",
     "POST /run_until",
+    "POST /section-timer",
     "POST /skip_until",
     "POST /step",
     "POST /stepout",
@@ -114,6 +118,10 @@ const std::set<std::string> kDebugRoutes = {
     "POST /tape/render",
     "POST /watches",
     "POST /ttd/bookmarks",
+    "POST /ttd/branches",
+    "POST /ttd/branches/prune",
+    "POST /ttd/branches/switch",
+    "POST /ttd/branches/{branch}/switch",
     "POST /ttd/dump",
     "POST /ttd/export-bookmarks",
     "POST /ttd/find-last",
@@ -128,6 +136,7 @@ const std::set<std::string> kDebugRoutes = {
     "POST /ttd/probe-frames",
     "POST /ttd/reverse-continue",
     "POST /ttd/reverse-step",
+    "POST /ttd/reverse-step-over",
     "POST /ttd/seek-check",
     "POST /ttd/step-instruction",
     "POST /video/window/record/frames",
@@ -138,6 +147,7 @@ const std::set<std::string> kDebugRoutes = {
     "PUT /breakpoints/{bp_id}/group",
     "PUT /breakpoints/{bp_id}/note",
     "PUT /callbacks/{cb_id}/policy",
+    "PUT /debug/selected_cpu",
     "PUT /debugmode",
     "PUT /disk/{drive}/sector/{cyl}/{side}/{sec}",
     "PUT /markup",

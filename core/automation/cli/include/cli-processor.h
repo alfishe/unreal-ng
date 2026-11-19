@@ -145,6 +145,9 @@ private:
     void HandleNext(const ClientSession& session, const std::vector<std::string>& args);
     void HandleDebugWait(const ClientSession& session, const std::vector<std::string>& args);
     void HandlePcHistory(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSelectedCpu(const ClientSession& session, const std::vector<std::string>& args);
+    // Device boards: board list | board <id> [values] | board <id> <action> [arg] (core DebugBoards)
+    void HandleBoard(const ClientSession& session, const std::vector<std::string>& args);
     /// Another surface holds run control: answers the claim message and returns true (tdd §5, F5)
     bool RunControlHeld(const ClientSession& session, const std::shared_ptr<Emulator>& emulator);
     void DumpZ80Memory(const ClientSession& session, Memory* memory, uint16_t address, uint16_t length);
@@ -216,6 +219,7 @@ private:
     void HandleCpuProfile(const ClientSession& session, const std::vector<std::string>& args);  // CPU time profile (profilecontrol.h)
     void HandleAyLog(const ClientSession& session, const std::vector<std::string>& args);
     void HandleAudioCapture(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleSectionTimer(const ClientSession& session, const std::vector<std::string>& args);  // section timing (sectiontimeranalyzer.h)
     void HandleMixer(const ClientSession& session, const std::vector<std::string>& args);
     void HandleVideoRecord(const ClientSession& session, const std::vector<std::string>& args);
     void HandleRecent(const ClientSession& session, const std::vector<std::string>& args);
@@ -268,6 +272,10 @@ private:
     void ShowBusHelp(const ClientSession& session);
     void HandleVdac2Metrics(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
     void ShowVdac2Help(const ClientSession& session);
+    // TS-Conf VDAC4 board (Tang + ESP32-S3) state (cli-processor-vdac4.cpp)
+    void HandleVdac4(const ClientSession& session, const std::vector<std::string>& args);
+    void HandleVdac4EspMemory(const ClientSession& session, const std::vector<std::string>& args);
+    void ShowVdac4Help(const ClientSession& session);
 
 
     // Settings command handlers
@@ -331,6 +339,8 @@ private:
     void HandleZXPoly(const ClientSession& session, const std::vector<std::string>& args);
     void HandleStop(const ClientSession& session, const std::vector<std::string>& args);
     void HandleModels(const ClientSession& session, const std::vector<std::string>& args);
+    /// machines [all]: the machines grouped family -> machine -> RAM size (MachineCatalog)
+    void HandleMachines(const ClientSession& session, const std::vector<std::string>& args);
     /// model <name> [--ram <kb>] [--stranded save|discard|keep]: switch the
     /// selected emulator's model; the media follow (ModelSwitch)
     void HandleModel(const ClientSession& session, const std::vector<std::string>& args);
@@ -454,6 +464,8 @@ private:
     void HandleSnapshotInfo(const ClientSession& session, std::shared_ptr<Emulator> emulator, EmulatorContext* context);
     /// snapshot formats - which formats this machine can be saved in right now, and why not
     void HandleSnapshotFormats(const ClientSession& session, std::shared_ptr<Emulator> emulator);
+    void HandleSnapshotTransfer(const ClientSession& session, std::shared_ptr<Emulator> emulator,
+                                const std::vector<std::string>& args);
     void HandleSnapshotInspect(const ClientSession& session, std::shared_ptr<Emulator> emulator,
                                const std::vector<std::string>& args);
 
@@ -485,6 +497,8 @@ private:
     void HandleTTDMarkers(const ClientSession& session, EmulatorContext* context);
     void HandleTTDBookmark(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
+    void HandleTTDBranch(const ClientSession& session, EmulatorContext* context,
+                         const std::vector<std::string>& args);
     void HandleTTDDump(const ClientSession& session, EmulatorContext* context,
                        const std::vector<std::string>& args);
     void HandleTTDLoad(const ClientSession& session, EmulatorContext* context,
@@ -497,6 +511,7 @@ private:
                              const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
+    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,

@@ -5,7 +5,9 @@
 #include <emulator/video/displaygeometry.h>
 #include "loaders/snapshot/snapshotlauncher.h"
 #include "loaders/snapshot/snapshotpipeline.h"
+#include "emulator/slots/slotcontrol.h"
 #include "emulator/savesnapshotchoices.h"
+#include "emulator/statetransferchoices.h"
 #include <algorithm>
 
 #include "emulator/media/mediacontrol.h"
@@ -18,6 +20,10 @@
 #include "emulator/media/modelswitch.h"
 #include "emulator/machinevariants.h"
 
+#include <QDesktopServices>
+#include <QJsonObject>
+#include <QProcess>
+#include <QUrl>
 #include <QCursor>
 #include <QWindow>
 #include <QClipboard>
@@ -135,6 +141,10 @@
 #include "guicontrol/screenbinding.h"
 #include "guicontrol/windowbinding.h"
 #include "guiplane/debuggercontrol.h"
+#include "guiplane/handheldcontrol.h"
+#include "handheld/handheldmenu.h"
+#include "handheld/handheldmode.h"
+#include "handheld/handheldpad.h"
 #include "guiplane/programcontrol.h"
 
 namespace
@@ -439,6 +449,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _hostControllers->SetShortcutWindows(this, debuggerWindow);
     _hostControllers->SetDebuggerOpener([this] { handleDebuggerToggled(true); });
     _controllersDialog = new ControllersDialog(_hostControllers, this);
+    // The floppy drive under the hand: the handheld (Steam Deck) only for now
+    _hostControllers->SetDriveHapticsAllowed(handheld::IsHandheldMode());
     _controllersDialog->setSurfaceTargets(_surfaceTargets);
     connect(_hostControllers, &HostControllers::notice, this,
             [this](const QString& text) { statusBar()->showMessage(text, 5000); });
@@ -533,8 +545,125 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     _dockingManager->addDockableWindow(_nextLayersWindow, Qt::RightEdge);
 
     // The on-screen keyboard: a tool window of its own, hidden until View -> On-screen Keyboard or unrealqt.osd_keyboard
-    _osdKeyboardWindow = new OsdKeyboardWindow(this);
+    // Handheld mode: an overlay the screen draws over the game (gamescope shows one window of the app)
+    const bool handheldMode = handheld::IsHandheldMode();
+    _osdKeyboardWindow = new OsdKeyboardWindow(this, handheldMode);
     _osdKeyboardWindow->setBinding(m_binding);
+    if (handheldMode)
+    {
+        installHandheldOverlay();
+        connect(_osdKeyboardWindow, &OsdKeyboardWindow::overlayChanged, this, [this]() {
+            if (_screenWrapper)
+                _screenWrapper->updateOverlay();
+        });
+    }
+
+    // The handheld menu (Steam Deck Game Mode): a child of the screen's frame, drawn over the paused picture
+    if (handheldMode)
+    {
+        HandheldMenu::Hooks hooks;
+        hooks.emulator = [this]() -> Emulator* { return m_binding ? m_binding->emulator() : nullptr; };
+        hooks.context = [this]() -> EmulatorContext* { return m_binding ? m_binding->context() : nullptr; };
+        hooks.grabPicture = [this]() {
+            WindowViewGrab grab;
+            std::string error;
+            if (!_screenWrapper || !_screenWrapper->grabWindowView(grab, error, false) || grab.width == 0)
+                return QImage();
+            return QImage(grab.rgba.data(), grab.width, grab.height, QImage::Format_RGBA8888).copy();
+        };
+        hooks.showScreen = [this](bool on) {
+            if (_screenWrapper && _screenWrapper->widget())
+                _screenWrapper->widget()->setVisible(on);
+        };
+        hooks.quit = [this]() { close(); };
+        hooks.keyboards = [this]() {
+            std::vector<std::pair<std::string, QString>> list{{"", tr("The machine's own")},
+                                                              {"minimal", tr("Minimal")},
+                                                              {"steam", tr("Steam keyboard")}};
+            if (_osdKeyboardWindow)
+                for (auto& picture : _osdKeyboardWindow->fittingPictures())
+                    list.push_back(std::move(picture));
+            return list;
+        };
+#ifdef ENABLE_CONTROLLERS
+        hooks.driveHaptics = [this]() { return _hostControllers && _hostControllers->DriveHaptics(); };
+        hooks.setDriveHaptics = [this](bool on) {
+            if (_hostControllers)
+                _hostControllers->SetDriveHaptics(on);
+        };
+#endif
+        hooks.keyboard = [this]() { return _osdKeyboardWindow ? _osdKeyboardWindow->forced() : std::string(); };
+        hooks.setKeyboard = [this](const std::string& id) {
+            std::string error;
+            if (_osdKeyboardWindow && !_osdKeyboardWindow->setForced(id, error))
+                statusBar()->showMessage(QString::fromStdString(error), 3000);
+        };
+        hooks.notice = [this](const QString& text) { statusBar()->showMessage(text, 3000); };
+        hooks.showKeyboard = [this]() {
+            _menuManager->setOsdKeyboardChecked(true);
+            handleOsdKeyboardToggled(true);
+        };
+        // A card change from the menu: the SlotControl flow without the desktop's questions (no dialog in Game Mode).
+        // The plan's removals are accepted (the menu said a change restarts the machine), unsaved media of a removed
+        // card refuse the change; the window follows the restarted machine as with the Slots window
+        hooks.changeSlot = [this](const std::string& verb, const std::string& slot, const std::string& card) -> QString {
+            Emulator* emulator = m_binding ? m_binding->emulator() : nullptr;
+            if (emulator == nullptr)
+                return tr("No machine");
+            SlotControlRequest request;
+            request.verb = verb;
+            request.emulatorId = emulator->GetId();
+            request.slot = slot;
+            request.card = card;
+            request.replaceIfIncompatible = true;
+            request.startWhenRunning = true;
+            request.beforeRelease = [this](Emulator&) { unbindFromEmulator(); };
+            _switchingModel = true;
+            const SlotControlReply reply = SlotControl::Execute(request);
+            _switchingModel = false;
+            if (reply.emulator)
+                adoptEmulator(reply.emulator, EmulatorOrigin::CreatedByGui);
+            if (!reply.Ok())
+                return reply.message.empty() ? QString::fromStdString(reply.status) : QString::fromStdString(reply.message);
+            return {};
+        };
+        _handheldMenu = new HandheldMenu(std::move(hooks), ui->contentFrame);
+
+        // The pads as the UI reads them: Menu and View always, everything while the menu or the keyboard is up;
+        // nothing of it reaches the machine (no profile, layer or context of the router in between)
+        _handheldPad = new HandheldPad(this);
+        connect(_handheldPad, &HandheldPad::verb, this,
+                [this](HandheldPad::Verb verb) { handleHandheldVerb(static_cast<int>(verb)); });
+        connect(_handheldMenu, &HandheldMenu::stateChanged, this, &MainWindow::updateHandheldGrab);
+#ifdef ENABLE_CONTROLLERS
+        if (_hostControllers)
+        {
+            auto alive = std::make_shared<std::atomic<bool>>(true);
+            _handheldPadAlive = alive;
+            HandheldPad* pad = _handheldPad;
+            // In the 128K menu and BASIC the back grips type the loaders, in a game the profile has them
+            connect(_hostControllers, &HostControllers::menuKeysChanged, _handheldPad, &HandheldPad::SetTyping);
+            _hostControllers->Service().SetUiTap([alive, pad](const controllers::ControlEvent& event) {
+                if (!alive->load() || !pad->Takes(event.device, event.control))
+                    return false;
+                QCoreApplication* app = QCoreApplication::instance();
+                if (app == nullptr)
+                    return false;
+                const QString device = QString::fromStdString(event.device);
+                const QString control = QString::fromStdString(event.control);
+                const float value = event.value;
+                QMetaObject::invokeMethod(
+                    app,
+                    [alive, pad, device, control, value] {
+                        if (alive->load())
+                            pad->Feed(device, control, value);
+                    },
+                    Qt::QueuedConnection);
+                return true;
+            });
+        }
+#endif
+    }
 
     // MIDI activity: hidden by default, Tools -> MIDI Activity
     _midiActivityWindow = new MidiActivityWindow();
@@ -608,6 +737,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::resumeRequested, this, &MainWindow::handleResumeEmulator);
     connect(_menuManager, &MenuManager::stopRequested, this, &MainWindow::handleStopEmulator);
     connect(_menuManager, &MenuManager::resetRequested, this, &MainWindow::resetEmulator);
+    connect(_menuManager, &MenuManager::hardResetRequested, this, &MainWindow::hardResetEmulator);
     connect(_menuManager, &MenuManager::mniRequested, this, &MainWindow::requestMni);
     connect(_menuManager, &MenuManager::speedMultiplierChanged, this, &MainWindow::handleSpeedMultiplierChanged);
     connect(_menuManager, &MenuManager::turboModeToggled, this, &MainWindow::handleTurboModeToggled);
@@ -665,6 +795,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_nextLayersWindow, &NextLayersWindow::visibilityChanged, _menuManager, &MenuManager::setNextLayersChecked);
     connect(_menuManager, &MenuManager::osdKeyboardToggled, this, &MainWindow::handleOsdKeyboardToggled);
     connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, _menuManager, &MenuManager::setOsdKeyboardChecked);
+    // Handheld mode: the shown keyboard takes the pads
+    if (handheld::IsHandheldMode())
+    {
+        connect(_osdKeyboardWindow, &OsdKeyboardWindow::visibilityChanged, this, &MainWindow::updateHandheldGrab);
+        // No mouse pointer at all: Steam draws its own for the trackpads, the emulator's would show over the picture
+        QApplication::setOverrideCursor(Qt::BlankCursor);
+    }
     connect(_slotsWindow, &SlotsWindow::visibilityChanged, _menuManager, &MenuManager::setSlotsWindowChecked);
     connect(_menuManager, &MenuManager::midiActivityToggled, this, &MainWindow::handleMidiActivityToggled);
     connect(_midiActivityWindow, &MidiActivityWindow::visibilityChanged, _menuManager, &MenuManager::setMidiActivityChecked);
@@ -693,6 +830,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         saveViewSettings();
     });
     connect(_menuManager, &MenuManager::machineModelChangeRequested, this, &MainWindow::handleMachineModelChangeRequested);
+    // The title names the running configuration: "unreal-ng — ATM-Turbo 2+ v7.10 512K"
+    connect(_menuManager, &MenuManager::currentMachineChanged, this, [this](const QString& machine) {
+        setWindowTitle(machine.isEmpty() ? QStringLiteral("unreal-ng[*]") : QStringLiteral("unreal-ng[*] — %1").arg(machine));
+    });
     connect(_menuManager, &MenuManager::zxpolyConfigurationRequested, this,
             &MainWindow::handleZXPolyConfigurationRequested);
 #ifdef ENABLE_RECORDING
@@ -804,6 +945,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
             }
         }
     });
+    // The debugger's branch drop-down: "Show in the TTD panel" opens the panel with its Branches row
+    connect(debuggerWindow, &DebuggerWindow::showInTtdPanelRequested, this, [this]() {
+        handleTtdToggled(true);
+        _ttdWidget->showBranches();
+        raise();
+        activateWindow();
+    });
     // The surfaces' context (control surfaces architecture.md §6): the debugger's panes and the TTD panel set it
     _hostControllers->SetContextWidgets(debuggerWindow->contextPanes(), _ttdWidget);
     connect(_ttdWidget, &TtdWidget::visibilityChanged, _hostControllers, &HostControllers::OnTtdPanelVisible);
@@ -861,6 +1009,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     if (QMenu* controllers = _menuManager->machineControllersMenu())
         connect(controllers, &QMenu::aboutToShow, this,
                 [this, controllers] { controllersmenu::Fill(controllers, _hostControllers); });
+    if (QMenu* transfer = _menuManager->machineTransferMenu())
+        connect(transfer, &QMenu::aboutToShow, this, [this, transfer] {
+            StateTransferChoices::Fill(transfer, _emulator ? _emulator->GetId() : std::string(),
+                                       [this](const StateTransferRequest& request) { transferMachineState(request); });
+        });
     // ui-ux.md §8: the DEBUG tag in the HUD as well, while the HUD is on
     connect(_statusBarManager, &StatusBarManager::controllerDebugLayerChanged, this, [this](bool held) {
         if (!_hudModel)
@@ -1073,6 +1226,13 @@ MainWindow::~MainWindow()
     _controllersDialog = nullptr;
     if (_statusBarManager)
         _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
+    // The handheld UI's input tap: no event reaches the pad any more, a post on its way finds it gone
+    if (_handheldPadAlive)
+        _handheldPadAlive->store(false);
+#ifdef ENABLE_CONTROLLERS
+    if (_hostControllers)
+        _hostControllers->Service().SetUiTap({});
+#endif
     delete _hostControllers;
     _hostControllers = nullptr;
 
@@ -1185,7 +1345,18 @@ QSize MainWindow::pictureNativeSize() const
 
     const DisplayGeometry::Size frame = DisplayGeometry::DisplayFrame(static_cast<uint16_t>(source.width()),
                                                                       static_cast<uint16_t>(source.height()));
-    return QSize(frame.width, frame.height);
+    // A framebuffer with two dots per ZX pixel on both axes (the Next's 720x576: its 360x288 HDMI picture doubled) is shown at 1x the
+    // size of a ZX raster, so View > Scale steps as on a 128K (1x 360x295, 2x the framebuffer 1:1). Otherwise its 1x is already 720x590
+    // and the larger scales do not fit a 1080p display: fitWindowToScreen drops them back to 1x and the window does not change
+    int dots = 1;
+    if (EmulatorContext* context = m_binding ? m_binding->context() : nullptr; context && context->pScreen)
+    {
+        const FramebufferDescriptor& fb = context->pScreen->GetNativeFramebufferDescriptor();
+        const int byWidth = (fb.width + DisplayGeometry::kReferenceWidth / 2) / DisplayGeometry::kReferenceWidth;
+        const int byHeight = (fb.height + DisplayGeometry::kReferenceHeight / 2) / DisplayGeometry::kReferenceHeight;
+        dots = std::max(1, std::min(byWidth, byHeight));
+    }
+    return QSize(frame.width / dots, frame.height / dots);
 }
 
 void MainWindow::updateScreenMinimumSize()
@@ -1407,6 +1578,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
         releaseEmulator();
     }
 
+    // Then every instance the window does not show (started through WebAPI / MCP / CLI: headless). Left to the
+    // manager's destructor they would stop during exit(), after other statics are gone, and their threads crash
+    // on destroyed mutexes
+    _emulatorManager->ShutdownAllEmulators();
+
     // Close debugger (now safe - emulator already released)
     if (debuggerWindow)
     {
@@ -1452,6 +1628,13 @@ void MainWindow::closeEvent(QCloseEvent* event)
     _controllersDialog = nullptr;
     if (_statusBarManager)
         _statusBarManager->setControllers(nullptr);  // its 200 ms refresh still runs until the event loop ends
+    // The handheld UI's input tap: no event reaches the pad any more, a post on its way finds it gone
+    if (_handheldPadAlive)
+        _handheldPadAlive->store(false);
+#ifdef ENABLE_CONTROLLERS
+    if (_hostControllers)
+        _hostControllers->Service().SetUiTap({});
+#endif
     delete _hostControllers;
     _hostControllers = nullptr;
     if (networkWindow)
@@ -3114,6 +3297,13 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
                                          QString::fromStdString(snapshot::ZXPolyRefusal(filePath.right(3).toLower().toStdString())));
                     break;
                 }
+                // A NEX runs under NextZXOS: the launcher boots a fresh Next first (seconds of firmware), so it runs on
+                // the actions worker as the handheld menu's open does, never blocking this thread
+                if (filePath.toLower().endsWith(".nex"))
+                {
+                    openSnapshotAsync(filePath);
+                    break;
+                }
                 SnapshotLauncher::Need need;
                 std::string error;
                 if (!SnapshotLauncher::NeedOf(file, runningContext->config.mem_model, runningContext->config.ramsize, need, error))
@@ -3171,6 +3361,45 @@ void MainWindow::loadFile(const QString& filePath, bool mountOnly, LoadOrigin or
             qWarning() << "Unsupported file type:" << filePath;
             break;
     };
+}
+
+void MainWindow::openSnapshotAsync(const QString& filePath)
+{
+    if (!_emulator)
+        return;
+    StateNode params = StateNode::Object();
+    params["path"] = StateNode(filePath.toStdString());
+    params["kind"] = StateNode(std::string("snapshot"));
+    params["switch_model"] = StateNode(true);  // choosing the file here is the explicit request for its machine
+    actions::ActionValue value;
+    value.params = std::move(params);
+    actions::ActionOrigin origin;
+    origin.origin = execution::Origin::Gui;
+    origin.identity = "gui:open";
+    origin.client = "open dialog";
+    statusBar()->showMessage(tr("Opening %1...").arg(QFileInfo(filePath).fileName()));
+    QPointer<MainWindow> self(this);
+    actions::ActionRegistry::Instance().Submit(
+        "media.open", std::move(value), _emulator->GetId(), std::move(origin), [self](actions::ActionResult result) {
+            const bool ok = result.ok;
+            const QString text = QString::fromStdString(result.message);
+            QMetaObject::invokeMethod(
+                QCoreApplication::instance(),
+                [self, ok, text] {
+                    if (!self)
+                        return;
+                    self->statusBar()->clearMessage();
+                    if (!ok)
+                    {
+                        QMessageBox::warning(self, tr("Load Snapshot"), text);
+                        return;
+                    }
+                    if (self->_statusBarManager)
+                        self->_statusBarManager->resetFpsMeasurement();  // the snapshot replaces the frame counter
+                    self->_lastFrameCount = 0;
+                },
+                Qt::QueuedConnection);
+        });
 }
 
 void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass, bool mountOnly, LoadOrigin origin,
@@ -3826,10 +4055,20 @@ void MainWindow::saveDiskAsSCLDialog()
 
 void MainWindow::resetEmulator()
 {
+    doReset(false);
+}
+
+void MainWindow::hardResetEmulator()
+{
+    doReset(true);
+}
+
+void MainWindow::doReset(bool hard)
+{
     if (_emulator)
     {
-        // Reset handles pause/resume internally to avoid race conditions
-        _emulator->Reset();
+        // Reset handles pause/resume internally to avoid race conditions; hard adds the power cycle
+        _emulator->Reset(hard);
         _lastFrameCount = 0;
         if (_statusBarManager)
             _statusBarManager->resetFpsMeasurement();  // Frame counter restarts from 0
@@ -4248,8 +4487,119 @@ void MainWindow::handleNextLayersToggled(bool visible)
 
 void MainWindow::handleOsdKeyboardToggled(bool visible)
 {
-    if (_osdKeyboardWindow)
-        _osdKeyboardWindow->setVisible(visible);
+    if (!_osdKeyboardWindow)
+        return;
+    if (visible && _osdKeyboardWindow->forced() == "steam")
+    {
+        // Steam's own keyboard types into the focused window: the host keyboard reaches the machine
+        if (!QProcess::startDetached(QStringLiteral("steam"), {QStringLiteral("steam://open/keyboard")}) &&
+            !QDesktopServices::openUrl(QUrl(QStringLiteral("steam://open/keyboard"))))
+            statusBar()->showMessage(tr("Steam's keyboard did not open: is Steam running?"), 5000);
+        return;
+    }
+    _osdKeyboardWindow->setVisible(visible);
+}
+
+void MainWindow::installHandheldOverlay()
+{
+    if (!_screenWrapper || !_osdKeyboardWindow || !_osdKeyboardWindow->overlay())
+        return;
+    const QPointer<OsdKeyboardWindow> keyboard(_osdKeyboardWindow);
+    _screenWrapper->setOverlayPainter([keyboard](QPainter& painter, int width, int height) {
+        if (keyboard)
+            keyboard->paintOverlay(painter, width, height);
+    });
+    _screenWrapper->setOverlayPointer([keyboard](QEvent::Type type, const QPointF& at, int width, int height) {
+        return keyboard && keyboard->overlayPointer(type, at, width, height);
+    });
+}
+
+void MainWindow::updateHandheldGrab()
+{
+    if (!_handheldPad)
+        return;
+    const bool grabbing = (_handheldMenu && _handheldMenu->IsOpen()) ||
+                          (_osdKeyboardWindow && _osdKeyboardWindow->shown());
+    if (grabbing == _handheldPad->Grabbing())
+        return;
+    _handheldPad->SetGrabbing(grabbing);
+#ifdef ENABLE_CONTROLLERS
+    // What the machine held when the UI took the pads goes up: it will not see their releases
+    if (grabbing && _hostControllers)
+        _hostControllers->Service().Router().ReleaseHeld();
+#endif
+}
+
+void MainWindow::handleHandheldVerb(int verbValue)
+{
+    using Verb = HandheldPad::Verb;
+    const auto verb = static_cast<Verb>(verbValue);
+    if (verb == Verb::Menu)
+    {
+        if (_handheldMenu->IsOpen())
+            _handheldMenu->Close();
+        else
+            _handheldMenu->Open();
+        updateHandheldGrab();
+        return;
+    }
+    if (_handheldMenu->IsOpen())
+    {
+        switch (verb)
+        {
+            case Verb::Up: _handheldMenu->Nav(0, -1); break;
+            case Verb::Down: _handheldMenu->Nav(0, 1); break;
+            case Verb::Left: _handheldMenu->Nav(-1, 0); break;
+            case Verb::Right: _handheldMenu->Nav(1, 0); break;
+            case Verb::Accept: _handheldMenu->Accept(); break;
+            case Verb::Back: _handheldMenu->Back(); break;
+            case Verb::OptionX: _handheldMenu->Option('x'); break;
+            case Verb::OptionY: _handheldMenu->Option('y'); break;
+            case Verb::Prev: _handheldMenu->Section(-1); break;
+            case Verb::Next: _handheldMenu->Section(1); break;
+            default: break;
+        }
+        updateHandheldGrab();
+        return;
+    }
+    const bool keyboard = _osdKeyboardWindow && _osdKeyboardWindow->shown();
+    if (verb == Verb::View || (keyboard && verb == Verb::Back))
+    {
+        _menuManager->setOsdKeyboardChecked(!keyboard);
+        handleOsdKeyboardToggled(!keyboard);
+        return;
+    }
+    if (!keyboard)
+    {
+        // The machine reads the keyboard (the 128K menu, BASIC): the back grips type without the on-screen keyboard
+        if (_handheldPad && _handheldPad->Typing())
+        {
+            switch (verb)
+            {
+                case Verb::Paddle3: _osdKeyboardWindow->tapMatrixKey(ZXKEY_ENTER); break;
+                case Verb::Back: _osdKeyboardWindow->tapMatrixKey(ZXKEY_EXT_DELETE); break;
+                case Verb::Paddle1: _handheldMenu->Run("basic.run", QStringLiteral("LOAD \"\"")); break;
+                case Verb::Paddle2: _handheldMenu->Run("basic.run", QStringLiteral("RUN \"boot\"")); break;
+                default: break;
+            }
+        }
+        return;
+    }
+    switch (verb)
+    {
+        case Verb::Up: _osdKeyboardWindow->moveFocus(0, -1); break;
+        case Verb::Down: _osdKeyboardWindow->moveFocus(0, 1); break;
+        case Verb::Left: _osdKeyboardWindow->moveFocus(-1, 0); break;
+        case Verb::Right: _osdKeyboardWindow->moveFocus(1, 0); break;
+        case Verb::Accept: _osdKeyboardWindow->tapFocus(); break;
+        case Verb::OptionX: _osdKeyboardWindow->tapMatrixKey(ZXKEY_SPACE); break;
+        case Verb::OptionY:
+        case Verb::Paddle3: _osdKeyboardWindow->tapMatrixKey(ZXKEY_ENTER); break;
+        // The back grips type the loaders: R4 LOAD "" (tape), R5 RUN "boot" (TR-DOS)
+        case Verb::Paddle1: _handheldMenu->Run("basic.run", QStringLiteral("LOAD \"\"")); break;
+        case Verb::Paddle2: _handheldMenu->Run("basic.run", QStringLiteral("RUN \"boot\"")); break;
+        default: break;
+    }
 }
 
 void MainWindow::handleSlotsWindowToggled(bool visible)
@@ -4754,6 +5104,43 @@ bool MainWindow::switchMachineModel(const std::string& modelName, uint32_t ramSi
     return true;
 }
 
+void MainWindow::transferMachineState(const StateTransferRequest& request)
+{
+    const QString title = tr("Transfer State");
+    StateTransferRequest run = request;
+    if (!run.to.empty())
+    {
+        // An open instance: what would move first, the user decides (the check-only mode every surface has)
+        StateTransferRequest check = request;
+        check.check = true;
+        const StateTransferReply checked = StateTransferControl::Execute(check);
+        if (!checked.Ok())
+        {
+            QMessageBox::warning(this, title, StateTransferChoices::ReportText(checked));
+            return;
+        }
+        if (QMessageBox::question(this, title,
+                                  tr("%1\n\nThe target's own state is replaced. Transfer?")
+                                      .arg(StateTransferChoices::ReportText(checked)),
+                                  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+            return;
+    }
+
+    const StateTransferReply reply = StateTransferControl::Execute(run);
+    if (!reply.Ok() || !reply.target)
+    {
+        QMessageBox::warning(this, title, StateTransferChoices::ReportText(reply));
+        return;
+    }
+    QMessageBox box(QMessageBox::Information, title, StateTransferChoices::ReportText(reply), QMessageBox::NoButton, this);
+    QPushButton* show = box.addButton(tr("Show It Here"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    // This window then shows the target; the machine it showed keeps running headless, as after any adoption
+    if (box.clickedButton() == show)
+        adoptEmulator(reply.target, EmulatorOrigin::Adopted);
+}
+
 #ifdef ENABLE_RECORDING
 WindowRecorder* MainWindow::windowRecorder()
 {
@@ -4957,6 +5344,7 @@ void MainWindow::rebuildScreen(bool enabled, bool force)
         _toolBarManager->setMouseCapture(_screenWrapper->mouseCapture());  // the gate carries over
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
+    installHandheldOverlay();
 
     // Re-establish drag/drop connections for the new wrapper
     connectScreenDrops();
@@ -5548,12 +5936,35 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
         debuggerControl = new DebuggerControl(*_guiHost, debuggerWindow, m_binding, std::move(hooks));
     }
     ProgramControl::Hooks programHooks;
-    programHooks.keyboardShown = [this] { return _osdKeyboardWindow != nullptr && _osdKeyboardWindow->isVisible(); };
+    programHooks.keyboardShown = [this] { return _osdKeyboardWindow != nullptr && _osdKeyboardWindow->shown(); };
     programHooks.showKeyboard = [this](bool on) { handleOsdKeyboardToggled(on); };
+    programHooks.keyboardNav = [this](int dx, int dy) {
+        if (_osdKeyboardWindow)
+            _osdKeyboardWindow->moveFocus(dx, dy);
+    };
+    programHooks.keyboardTap = [this] { return _osdKeyboardWindow != nullptr && _osdKeyboardWindow->tapFocus(); };
+    programHooks.forceKeyboard = [this](const std::string& id) {
+        std::string error;
+        if (_osdKeyboardWindow == nullptr)
+            return tr("the on-screen keyboard is not available");
+        return _osdKeyboardWindow->setForced(id, error) ? QString() : QString::fromStdString(error);
+    };
+    programHooks.keyboardState = [this] {
+        if (_osdKeyboardWindow == nullptr)
+            return QJsonObject{};
+        return QJsonObject{{"shown", _osdKeyboardWindow->shown()},
+                           {"picture", QString::fromStdString(_osdKeyboardWindow->picture().id)},
+                           {"focus", QString::fromStdString(_osdKeyboardWindow->focusKey())},
+                           {"forced", QString::fromStdString(_osdKeyboardWindow->forced())}};
+    };
     programHooks.showControllers = [this] {
         _controllersDialog->show();
         _controllersDialog->raise();
         _controllersDialog->activateWindow();
+    };
+    programHooks.showTtdBranches = [this] {
+        handleTtdToggled(true);
+        _ttdWidget->showBranches();
     };
     programHooks.learn = [this](const std::string& device) {
         _controllersDialog->show();
@@ -5561,6 +5972,7 @@ void MainWindow::startGuiControl(int tcpPort, const QString& tcpBind)
         return _controllersDialog->openLearnWizard(device);
     };
     new ProgramControl(*_guiHost, std::move(programHooks), this);
+    RegisterHandheldControl(*_guiHost, _handheldMenu);
     // The controller bindings of GUI commands go to this host in process (design §4.7)
     if (_guiActions)
         _guiActions->SetGuiHost(_guiHost.get());

@@ -1,0 +1,1 @@
+defs 16384,#CC:save 'gros04.bin',0,16384,DSK,'rasmoutput_test.dsk':

@@ -12,6 +12,7 @@
 #include "emulator/coordinator/ports.h"
 #include "emulator/io/keyboard/atm2kbc.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/models/portdecoder_profi.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -81,9 +82,11 @@ NetworkManager::Plan NetworkManager::MakePlan() const
         if (caps.zifi && networkOn)
             plan.zifiPeer = zifiPeer;
     }
-    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251 || caps.serialPort == SerialPort::NextUart)
+    else if (caps.serialPort == SerialPort::Atm2Kbc || caps.serialPort == SerialPort::Profi8251 || caps.serialPort == SerialPort::NextUart ||
+             caps.serialPort == SerialPort::P2666Uart)
     {
-        // Not on #xxEF: a ZX-WiFi card fits beside it
+        // The machine's own UART, its peer through attachSerialPeer (the Pentagon 2.666's is on #xxEF: no ZX-WiFi
+        // card beside it, see below)
         plan.machineSerial = true;
         if (networkOn)
         {
@@ -1221,6 +1224,7 @@ void NetworkManager::UpdateStatus()
                         : caps.serialPort == SerialPort::Atm2Kbc   ? "atm2-kbc"
                         : caps.serialPort == SerialPort::Profi8251 ? "profi-8251"
                         : caps.serialPort == SerialPort::NextUart  ? "next-uart"
+                        : caps.serialPort == SerialPort::P2666Uart ? "p2666-uart"
                                                                    : "none";
         if (caps.serialPort == SerialPort::NextUart)
         {
@@ -1231,6 +1235,25 @@ void NetworkManager::UpdateStatus()
             m.baud = caps.serialBaud ? caps.serialBaud() : 0;
             m.frameBits = 10;
             m.modemLines = false;
+            FillPeerStatus(_machinePeer.get(), m);
+        }
+        if (caps.serialPort == SerialPort::P2666Uart)
+        {
+            // The Pentagon 2.666's FPGA UART: the line as the program set it
+            auto& m = st.machineSerial;
+            m.fitted = true;
+            m.flavor = "p2666uart";
+            m.modemLines = true;
+            if (auto* p2666 = dynamic_cast<PortDecoderP2666*>(_context->pPortDecoder))
+            {
+                const P2666Uart& uart = p2666->GetUart();
+                m.baud = uart.Baud();
+                m.frameBits = static_cast<uint32_t>(uart.FrameBits());
+                m.rts = !uart.RtsStop();
+                m.bytesIn = uart.bytesIn;
+                m.bytesOut = uart.bytesOut;
+                m.lost = uart.lost;
+            }
             FillPeerStatus(_machinePeer.get(), m);
         }
         if (caps.serialPort == SerialPort::Atm2Kbc)

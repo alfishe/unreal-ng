@@ -66,7 +66,9 @@ These account for most "it won't boot" reports. Check them before suspecting the
 |:--|:--|:--|:--|:--|
 | `48K` | ZX-Spectrum 48K | `data/rom/48.rom` | tape (`tape`); no TR-DOS ROM, so a TR-DOS floppy does nothing | tape: `.tap`/`.tzx`/etc. |
 | `48K-BETA128` | ZX-Spectrum 48K + Beta 128 (variant of `48K`) | `data/rom/48.rom` + `data/rom/trdos503.rom` | tape; TR-DOS floppy `fdd.a`–`fdd.d` after `RANDOMIZE USR 15616` / `15619` (no menu, no autostart on reset), see [48k-beta128.md](../../.recipe/machines/48k-beta128.md) | TR-DOS TRD / SCL |
+| `48K-PLUSD` | ZX-Spectrum 48K + MGT +D (variant of `48K`) | `data/rom/48.rom` + `data/rom/gdos-pd.rom` | tape; +D floppy `fdd.plusd1` / `fdd.plusd2`: `RUN` loads G+DOS from drive 1 (`data/boot/plusd/gdos-2a-system.mgt` for disks without `+SYS`); disk autostart, see [plusd.md](../../.recipe/machines/plusd.md) | MGT `.mgt` / `.img` |
 | `128k` | ZX-Spectrum 128K | `data/rom/128.rom` | tape, TR-DOS floppy `fdd.a`–`fdd.d` | same as above |
+| `128K-PLUSD` | ZX-Spectrum 128K + MGT +D (variant of `128k`) | `data/rom/128.rom` + `data/rom/gdos-pd.rom` | as `48K-PLUSD`; the autostart resets into 128 BASIC | MGT `.mgt` / `.img` |
 | `PLUS2` | ZX-Spectrum +2 (grey, Amstrad ROM) | `data/rom/plus2.rom` | tape, TR-DOS floppy (Beta-128 decoded the same way as other Sinclairs in this build) | same as above |
 | `PLUS2A` | ZX-Spectrum +2A (the +3 without its floppy controller) | `data/rom/plus2a.rom` | tape; no native +3 FDC (that is the point of this model) | tape |
 | `PLUS3` | ZX-Spectrum +3 | `data/rom/plus3.rom` | tape, built-in +3 FDC on `fdd.a`/`fdd.b` (present from power-on, no Beta-128 reset dance) | tape; `+3DOS` `.dsk` images insert directly |

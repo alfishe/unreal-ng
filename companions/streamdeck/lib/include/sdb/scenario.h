@@ -76,15 +76,46 @@ struct Dial
     int index = 0;
     std::string label;
     std::optional<Action> turn, press;
+    // turned while held down (JSON "press_turn"): runs with $ticks as a turn does (a "dir" step: left / right per
+    // detent); a dial with one fires its press on the release, and only when it was not turned while held
+    std::optional<Action> pressTurn;
+};
+
+// A list page (JSON "list" of a menu): keys made from a readout's array, one per item, in the menu's free slots (row
+// by row, after its own keys and the back key). An item's fields go into the templates ({name}) and the steps ($id).
+// More items than free slots: pages, turned by the dial `dial` (its label says PAGE n/m, a press goes to the first).
+struct List
+{
+    std::string readout;      // a readout path to an array of objects: "ttd.branch_list.items"
+    std::string key = "id";   // the item field naming it (the key's id: "<menu>#<value>")
+    std::string label;        // a template (sdb/valueface.h) of the key's caption: "{name}{pinned? *|}"
+    std::string show;         // a template of its big text ("" = a label key): "{age}"
+    std::optional<Action> press, longPress;  // JSON "do" / "long": steps with $<field> of the item
+    std::string on;           // an item field: the key lit while it is true ("active")
+    std::string dim;          // an item field (a leading '!' negates): the key dimmed while it is true
+    int dial = -1;            // the dial that turns the pages (-1: none)
+};
+
+// A touch zone of a strip that shows keys (content "keys"): a tap runs its action. Zones share the strip by span (six
+// spans of one: a zone above each dial of a Stream Deck +). A latch zone (a shift) holds its action pressed from one
+// tap until the next key is let go (a one-shot shift); tapped again it lets go; a second latch tapped while one holds
+// goes with it as one combination (CAPS + SYMBOL: the Spectrum's extended mode) and both let go.
+struct StripKey
+{
+    std::string label;
+    int span = 1;
+    bool latch = false;
+    std::optional<Action> tap;
 };
 
 struct Strip
 {
-    std::string content = "title";  // breadcrumbs title text image none
+    std::string content = "title";  // breadcrumbs title text image keys none
     std::string text, image;
     std::string status;  // a live readout at the right: ttd (time travel: recording span / position), run, tape, target
     double fps = 50;     // frames a second for its time codes (Pentagon 48.83)
     std::optional<bool> target;  // v2: the target line (targeting.md §6); unset = on for decks with a strip
+    std::vector<StripKey> keys;  // content "keys": the touch zones, left to right
 };
 
 struct Back
@@ -117,14 +148,22 @@ struct Node
     std::vector<std::string> tags;  // free labels for search / agents ("debug", "ttd", "danger")
     Slot at;                        // position in the parent menu
     Face face;
+    // a press held at least RuntimeOptions::holdMs (JSON "long"): this step instead of the key's own action (or
+    // opening its menu). A key with one acts on its release: short = its own, long = this
+    std::optional<Action> longPress;
     // menu
     std::vector<Node> items;
     std::vector<Dial> dials;
     Strip strip;
     Nav nav;
     std::string context;  // menu (v2): entering it sets this surface context (ctx.set); a ctx from the core comes here
+    int width = 0;  // menu (v2): columns of its grid when it is wider than the deck's (0 = the deck's); the deck shows
+                    // a window of them that dials (nav to: scroll) and swipes on the strip move
+    int windowFirst = -1, windowLast = -1;  // menu (v2, wide): the deck's columns that show the window (-1: all);
+                                            // the columns outside it hold pinned keys (scroll keys, shifts)
     bool readonly = false;  // menu (v2): its keys only show (monitoring): a press does nothing (no action, no press
                             // look); the back key goes back, a page key opens its page
+    std::optional<List> list;  // menu: keys made from a readout's items (see List)
     // action
     Action action;
     std::string then = "stay";   // stay | back | home
@@ -132,6 +171,8 @@ struct Node
     std::string state;           // v2: a readout path; the face is faceOn while it is true ("run.state.paused")
                                  // an action without "do" is a display-only key: its face shows a value (face.value)
     bool activity = true;        // v2: false = no activity look for this key
+    bool pin = false;            // v2, in a windowed menu: `at` is the deck's slot, outside the window; it never
+                                 // scrolls
     [[nodiscard]] bool IsMenu() const
     {
         return type == Type::Menu;
@@ -213,5 +254,14 @@ struct ResolvedNav
     int autoExit = 0;
 };
 [[nodiscard]] ResolvedNav ResolveNav(const Scenario& s, const std::vector<const Node*>& path);
+
+// The deck's columns a menu's grid shows: [first, first + cols); the whole deck unless the menu names a window
+struct MenuWindow
+{
+    int first = 0, cols = 0;
+};
+[[nodiscard]] MenuWindow WindowOf(const Node& menu, const Model& m);
+// A wide menu: wider than its window, so it scrolls
+[[nodiscard]] bool IsWide(const Node& menu, const Model& m);
 
 }  // namespace sdb::scn

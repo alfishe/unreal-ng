@@ -28,6 +28,7 @@ class BreakpointsView;
 class HistoryView;
 class DevicesView;
 class AddressRouter;
+class TtdControls;
 
 //One window for the whole machine. Each processor has a tab with its listing,
 //registers and flags; below are the memory dumps (each processor's address
@@ -50,6 +51,9 @@ public:
     double zoom() const;
     //The processor whose tab is in front
     CPU * current_cpu();
+    //The last stop the window has taken (not in ecat): its number (Emulator::debug_stop_serial). A stop brings its
+    //processor's tab to the front once, when the window takes it; the events after it leave the tab alone
+    uint64_t taken_stop() const { return m_stop_serial; }
 
     //The GUI control plane's way in (guiplane/, not in ecat): the listing and the dump of the processor in front;
     //shown: the dump's tab in front
@@ -72,6 +76,8 @@ public:
     //F4 and F2 at the cursor of the listing in front; false when the machine is not held, or only seen
     bool run_to_cursor();
     bool toggle_breakpoint_at_cursor();
+    //The time travel group of the toolbar (not in ecat): the self-check drives it
+    TtdControls * ttd() { return m_ttd; }
 
 signals:
     //The views were read again: after a stop, and while the machine runs
@@ -131,8 +137,10 @@ private:
     QAction * m_bp_remove;
     QAction * m_bp_toggle;
     QAction * m_bp_clear;
+    TtdControls * m_ttd = nullptr;
     unsigned int m_serial;
     bool m_paused;
+    uint64_t m_stop_serial = 0;
     bool m_online = true;
     bool follow_online();
     AddressRouter * m_router;

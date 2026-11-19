@@ -1806,7 +1806,8 @@ void VideoRecordingWidget::startWindowRecording(const QString& filename, const Q
     DeviceScreenWrapper* screen = _windowScreen ? _windowScreen() : nullptr;
     const WindowRecordingRequest request =
         MakeWindowRecordingRequest(container, codec, audio, UiGpuAcceleration(),
-                                   _profileCombo->currentData().toString(), filename);
+                                   _profileCombo->currentData().toString(), filename,
+                                   _nativeBackendRadio->isChecked() ? 1 : _ffmpegBackendRadio->isChecked() ? 2 : 0);
     WindowRecordingStatus status;
     std::string error;
     if (!_windowRecorder->start(screen, recordingEmulator(), request, status, error))

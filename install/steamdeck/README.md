@@ -38,9 +38,11 @@ Running `install.sh` again (from a new bundle, or `~/Applications/unreal-ng/inst
 prints one line per step:
 
 ```
-app: /home/deck/Applications/unreal-ng (20261108.121658)
+app: /home/deck/Applications/unreal-ng (<version>)
 launcher: /home/deck/.local/share/applications/unreal-ng.desktop
-Steam library: Unreal NG (3357196967) with its artwork in /home/deck/.local/share/Steam/userdata/58956458
+Steam library: Unreal NG (3357196967) with its artwork in /home/deck/.local/share/Steam/userdata/<account>
+Steam: started again
+Steam library: Unreal NG registered
 Stream Deck udev rule: installed
 ```
 
@@ -54,11 +56,14 @@ The installer sets up:
 | The artwork: poster, wide capsule, hero, logo, icon | `userdata/<account>/config/grid/<appid>*.png` |
 | The Stream Deck udev rule | `/etc/udev/rules.d/70-unreal-streamdeck.rules`, only with `--udev` (asks for the sudo password) |
 
-Steam reads its library and the artwork when it starts and writes the library back when it stops. So when the entry or
-its artwork needs a change (the first install, new artwork), the installer stops Steam for a moment, writes them, and
-starts Steam again (in Game Mode the session restarts Steam by itself). When both are in place already it leaves Steam
-alone and says `Steam library: up to date`. If a game is running while something needs a change, the installer leaves
-the library alone and says so: close the game and run it again.
+Steam reads its library and the artwork when it starts and writes the library back when it stops. So every run of
+the installer (an install, an update, a redeploy) re-registers the entry: it stops Steam for a moment, rewrites the
+entry and its artwork, starts Steam again and checks that the entry is there (`Steam library: Unreal NG registered`).
+The app id stays the same, so the Game Mode tile, its play time and its launch id stay. An older entry named
+"Unreal NG" that points to another executable is replaced. In Game Mode Steam is the user unit
+`steam-launcher.service`, which the Game Mode session restarts at once; the installer masks it in `/run` while it
+writes and always unmasks and starts it afterwards. If a game is running, the installer leaves the library alone and
+says so: close the game and run it again.
 
 To uninstall, run `~/Applications/unreal-ng/install.sh --remove`. That removes the app, the menu entry, and the
 Steam library entry with its artwork. The settings stay in `~/.config` (unreal-qt and `unreal-streamdeck/`).
@@ -146,7 +151,7 @@ entries it adds a random app id, and it reads their artwork only after a restart
 |:--|:--|
 | `steam-library.py list` | The non-Steam games and their app ids |
 | `steam-library.py check --name N --exe E --art DIR` | Exit 0 when the entry and its artwork are in place |
-| `steam-library.py add --name N --exe E --art DIR [--icon --start-dir --shortcut-path --launch-options]` | Add or update the entry with its artwork (refuses while Steam runs) |
+| `steam-library.py add --name N --exe E --art DIR [--icon --start-dir --shortcut-path --launch-options]` | Add or update the entry with its artwork, replacing older entries of the same executable or name (refuses while Steam runs) |
 | `steam-library.py remove --exe E` | Remove the entries of an executable and their artwork (refuses while Steam runs) |
 | `steam-library.py art --match S --art DIR` | Artwork only, for entries whose executable contains `S` (entries Steam added itself) |
 

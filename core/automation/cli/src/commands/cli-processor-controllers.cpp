@@ -25,6 +25,118 @@
 
 namespace
 {
+#ifdef ENABLE_CONTROLLERS
+using controllers::JsonValue;
+
+/// The bindings verb as text: the machine's state, each device's player connector, then each binding with its rule
+/// and what it drives down to the matrix keys
+std::string BindingsText(const JsonValue& body)
+{
+    auto str = [](const JsonValue* value) { return value != nullptr && value->IsString() ? value->AsString() : std::string(); };
+    auto on = [](const JsonValue* object) {
+        const JsonValue* value = object != nullptr ? object->Find("on") : nullptr;
+        return value != nullptr && value->IsBool() && value->AsBool();
+    };
+    auto keysText = [&str](const JsonValue& keys) {
+        if (keys.IsString())
+            return keys.AsString();
+        std::string text;
+        if (keys.IsArray())
+            for (const JsonValue& step : keys.Items())
+                text += (text.empty() ? "" : ", ") + str(&step);
+        else
+            for (const auto& [control, chord] : keys.GetMembers())
+                text += (text.empty() ? "" : " ") + control + "=" + str(&chord);
+        return text;
+    };
+    std::string text = "Bindings of " + str(body.Find("scope"));
+    if (const JsonValue* applied = body.Find("applied"); applied != nullptr && applied->IsArray())
+    {
+        std::string list;
+        for (const JsonValue& id : applied->Items())
+            list += (list.empty() ? "" : ", ") + str(&id);
+        text += " (profiles: " + list + ")";
+    }
+    text += "\n";
+    if (const JsonValue* machine = body.Find("machine"); machine != nullptr && machine->IsObject())
+    {
+        const JsonValue* menu = machine->Find("menu_keys");
+        const JsonValue* mouse = machine->Find("mouse_buttons");
+        text += "Machine " + str(machine->Find("machine")) + ":\n";
+        text += "  menu keys " + std::string(on(menu) ? "on" : "off") + " - " + str(menu ? menu->Find("rule") : nullptr) + "\n";
+        text += "  mouse buttons " + std::string(on(mouse) ? "on" : "off") + " - " +
+                str(mouse ? mouse->Find("rule") : nullptr) + "\n";
+        const JsonValue* decision = machine->Find("auto");
+        if (decision != nullptr && decision->IsObject())
+            text += "  auto: " + (str(decision->Find("label")).empty() ? std::string("no device") : str(decision->Find("label"))) +
+                    (str(decision->Find("connector")).empty() ? "" : " on " + str(decision->Find("connector"))) + " - " +
+                    str(decision->Find("reason")) + "\n";
+        else
+            text += "  auto: not decided\n";
+        const JsonValue* ps2 = machine->Find("ps2");
+        text += "  host keys to PS/2: " + std::string(ps2 != nullptr && ps2->IsBool() && ps2->AsBool() ? "yes" : "no") + "\n";
+        if (const JsonValue* connectors = machine->Find("connectors"); connectors != nullptr && connectors->IsArray())
+            for (const JsonValue& connector : connectors->Items())
+            {
+                text += "  connector " + str(connector.Find("id")) + ": " +
+                        (str(connector.Find("device")).empty() ? std::string("empty") : str(connector.Find("device")));
+                if (const JsonValue* keys = connector.Find("keys"))
+                    text += " (" + keysText(*keys) + ")";
+                text += "\n";
+            }
+    }
+    if (const JsonValue* devices = body.Find("devices"); devices != nullptr && devices->IsArray())
+        for (const JsonValue& device : devices->Items())
+        {
+            std::string layers;
+            if (const JsonValue* up = device.Find("layers"); up != nullptr && up->IsArray())
+                for (const JsonValue& layer : up->Items())
+                    layers += (layers.empty() ? "" : ",") + str(&layer);
+            text += "Device " + str(device.Find("id")) + ": player connector " +
+                    (str(device.Find("player_connector")).empty() ? std::string("none") : str(device.Find("player_connector"))) +
+                    " (" + str(device.Find("player_rule")) + "), layers " + layers + "\n";
+        }
+    for (const JsonValue& binding : body.Find("bindings")->Items())
+    {
+        text += "  " + str(binding.Find("layer")) + "." + str(binding.Find("control")) + ": " + binding.Find("spec")->Dump() +
+                " - " + str(binding.Find("rule")) + "\n";
+        const JsonValue* resolved = binding.Find("resolved");
+        if (resolved == nullptr || !resolved->IsArray())
+            continue;
+        for (const JsonValue& perDevice : resolved->Items())
+            for (const JsonValue& output : perDevice.Find("outputs")->Items())
+            {
+                const std::string to = str(output.Find("to"));
+                std::string what = to;
+                if (to == "connector")
+                {
+                    std::string controls;
+                    for (const JsonValue& control : output.Find("controls")->Items())
+                        controls += (controls.empty() ? "" : ",") + str(&control);
+                    what = str(output.Find("connector")) + " [" +
+                           (str(output.Find("device")).empty() ? std::string("empty") : str(output.Find("device"))) + "] " + controls;
+                    if (const JsonValue* keys = output.Find("keys"))
+                        what += " = keys " + keysText(*keys);
+                }
+                else if (to == "keys")
+                {
+                    what = "keys " + keysText(*output.Find("keys"));
+                    if (output.Find("ps2") != nullptr)
+                        what += " (+PS/2)";
+                }
+                else if (to == "mouse")
+                    what = "mouse " + str(output.Find(output.Find("button") != nullptr ? "button" : "axis"));
+                else if (to == "action")
+                    what = "action " + str(output.Find("action"));
+                else if (to == "layer")
+                    what = "layer " + str(output.Find("layer"));
+                text += "      " + str(perDevice.Find("device")) + " -> " + what + "  (" + str(output.Find("rule")) + ")\n";
+            }
+    }
+    return text;
+}
+#endif
+
     const char* const kUsage =
         "controllers [list]                         - The machine's connectors and the devices they hold\n"
         "controllers get <connector>                - One connector, the controls it holds now\n"
@@ -209,18 +321,8 @@ namespace
         std::string text;
         if (verb == "profile" && reply.body.Find("yaml") != nullptr)
             return reply.body.Find("yaml")->AsString();
-        if (const JsonValue* bindings = reply.body.Find("bindings"))
-        {
-            for (const JsonValue& binding : bindings->Items())
-            {
-                std::string line = "  " + binding.Find("layer")->AsString() + "." + binding.Find("control")->AsString();
-                line.resize(std::max<size_t>(line.size() + 1, 24), ' ');
-                line += binding.Find("spec")->Dump();
-                line.resize(std::max<size_t>(line.size() + 1, 60), ' ');
-                text += line + binding.Find("profile")->AsString() + "\n";
-            }
-            return "Bindings (control, spec, profile):\n" + text;
-        }
+        if (reply.body.Find("bindings") != nullptr)
+            return BindingsText(reply.body);
         if (verb == "haptics")
         {
             for (const JsonValue& device : reply.body.Find("devices")->Items())

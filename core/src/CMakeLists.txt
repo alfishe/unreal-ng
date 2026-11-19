@@ -223,6 +223,14 @@ set_source_files_properties(${Z84C15_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS O
 file (GLOB UNREAL_NEXT_Z80_FILES ${SOURCE_DIR}/3rdparty/unreal-next-z80/*.cpp)
 set_source_files_properties(${UNREAL_NEXT_Z80_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
+# unreal-xtensa (Xtensa LX7 / ESP32-S3 user-mode interpreter for the VDAC4 board): self-contained C++17, namespace
+# xtensa. Its FPU must be bit exact on every host, so no FMA contraction (MSVC /fp:precise does not contract).
+file (GLOB UNREAL_XTENSA_FILES ${SOURCE_DIR}/3rdparty/unreal-xtensa/*.cpp)
+set_source_files_properties(${UNREAL_XTENSA_FILES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+if (NOT MSVC)
+    set_source_files_properties(${UNREAL_XTENSA_FILES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 message("CPP_FILES:${CPP_FILES}")
 
 set (SOURCES ${CPP_FILES})

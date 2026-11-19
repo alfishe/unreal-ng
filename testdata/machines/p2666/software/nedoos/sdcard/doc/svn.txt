@@ -1,0 +1,46 @@
+Клиент SVN с сильно ограниченным функционалом.
+В текущей реализации имеет статус альфа версии, со всеми вытекающими
+Синтаксис:
+svn <subcommand> <url> [options] [args]
+
+<url> указывается без префикса svn://
+например <url> NedoOS:
+директория bin - nedoos.ru/nedoos/nedoos/release/bin
+файл ядра для Евы - nedoos.ru/nedoos/nedoos/release/sd_boot.$C
+
+общие опции для всех команд:
+-r  не обязательная опция указания номера ревизии
+    по умолчанию используется последняя
+    пример: 
+        svn lst nedoos.ru/nedoos/nedoos -r 2270
+
+<subcommand> :
+rev выводит номер последней ревизии на сервере
+    пример:
+        svn rev nedoos.ru/nedoos/nedoos
+lst выводит список файлов
+    при указании опции -v выводит дополнительную информацию
+    примеры:
+        svn lst nedoos.ru/nedoos/nedoos -v
+        svn lst nedoos.ru/nedoos/nedoos/release -r 2270
+        svn lst nedoos.ru/nedoos/nedoos/release -r 2270 -v
+log выводит информацию о последнем коммите
+    при указании опции -r выводит комиты от указанной ревизии до последней
+    при указании опции -r в формате -r N:M выводит комиты от ревизии N до M
+    примеры:
+        svn log nedoos.ru/nedoos/nedoos
+        svn log nedoos.ru/nedoos/nedoos -r 2270
+        svn log nedoos.ru/nedoos/nedoos -r 2270:2273
+upd обновляет рекурсивно файлы в указанной директории
+    сверка происходит только по дате и времени
+    синтаксис: svn update <url> <path> [options]
+    <path> обязательный, указывает на локальную директорию
+    опции:
+        -f принудительное обновление без проверки даты
+    примеры:
+        svn upd nedoos.ru/nedoos/nedoos/release/tmp /bin -r 2270
+        svn upd nedoos.ru/nedoos/nedoos/release/sd_boot.$C /
+        svn upd nedoos.ru/nedoos/nedoos/release/doc /doc -f
+    для обновления недооси на Еве, выполнить:
+        svn upd nedoos.ru/nedoos/nedoos/release/bin /bin
+        svn upd nedoos.ru/nedoos/nedoos/release/sd_boot.$C /

@@ -16,6 +16,11 @@ page is there becomes a symbol set `bundle:<id>` (origin `bundle`, priority 50, 
 | `space` | `rom` = the file's addresses are offsets in the page that matched (one set per matching page); a space spelling (`cpu:main`) = records without a page go there; absent = the records' own pages (`ROM8:0000`) |
 | `except` | names left out (the 48K ROM's `spare` label is code in the 128K's ROM 1) |
 
+`gs/` holds the General Sound firmware symbols (1.04, 1.05a, 1.05b; ids `gs:<version>`). They go to the sound card
+CPU's own label store, not the machine's: when a card is made, the hash of its ROM page 0 is matched against
+`gs/manifest.json`. `tools/gsfirmware/markup_symbols.py` builds them from the firmware sources (sjasmplus SLD) and
+checks the builds against the shipped ROMs (`gs/REPORT.md`).
+
 The other files are not bundles: `128k_rom.map` (the other map of 128K ROM 0; the bundle takes `128k_rom_relabeled.map`, "Verified & Relabeled"), `sos.l`, `next/` (no NextZXOS
 ROM ships to hash) and the Sprinter maps of code that runs in RAM (`bios304-setup.map`, `bios304-p0-setupstub.map`,
 `spectrum-exe-pp.map`). Load them yourself (`symbols import`).

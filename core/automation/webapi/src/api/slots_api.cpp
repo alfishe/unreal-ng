@@ -130,15 +130,15 @@ void EmulatorAPI::getSlots(const HttpRequestPtr& req, std::function<void(const H
     RespondReply(callback, SlotControl::Execute(request));
 }
 
-/// @brief GET /api/v1/emulator/{id}/slots/catalog
+/// @brief GET /api/v1/emulator/{id}/slots/catalog?slot= (slot: every card planned into that slot)
 void EmulatorAPI::getSlotsCatalog(const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback,
                                   const std::string& id) const
 {
-    (void)req;
     SlotControlRequest request;
     if (!ResolveId(id, request.emulatorId, callback))
         return;
     request.verb = "catalog";
+    request.slot = req->getParameter("slot");
     RespondReply(callback, SlotControl::Execute(request));
 }
 

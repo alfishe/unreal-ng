@@ -8,6 +8,7 @@
 
 #include "emulator/io/z80n/nextboardissue.h"
 #include "emulator/platform.h"
+#include "emulator/slots/slotmanager.h"
 
 namespace
 {
@@ -18,12 +19,29 @@ namespace
 void ApplyTsConfVdac2(CONFIG& config)
 {
     config.ts_vdac = 7;
+    config.ts_vdac4 = false;
     config.ide_scheme = IDE_NONE;
 }
 
 bool IsTsConfVdac2(const CONFIG& config)
 {
-    return config.mem_model == MM_TSL && config.ts_vdac == 7;
+    return config.mem_model == MM_TSL && config.ts_vdac == 7 && !config.ts_vdac4;
+}
+
+/// TS-Conf with the VDAC4 board on its IDE connector: the stock VDAC2 firmware
+/// build (VDAC_VER = 7, ESP32_SPI), the Tang FPGA's FT812 core where the VDAC2
+/// card's FT812 sits and the ESP32-S3 on #77 bit 4
+/// (docs/inprogress/2026-11-15-tsconf-vdac4/design.md §4)
+void ApplyTsConfVdac4(CONFIG& config)
+{
+    config.ts_vdac = 7;
+    config.ts_vdac4 = true;
+    config.ide_scheme = IDE_NONE;
+}
+
+bool IsTsConfVdac4(const CONFIG& config)
+{
+    return config.mem_model == MM_TSL && config.ts_vdac == 7 && config.ts_vdac4;
 }
 
 bool TsConfVdac2Supported(std::string* reason)
@@ -123,13 +141,64 @@ bool Beta128Supported(std::string* reason)
     return true;
 }
 
+/// A 48K / 128K with the MGT +D disk interface on its edge connector (docs/inprogress/2026-11-15-mgt-plus-d/design.md
+/// §2): `edge.1 = plusd` on top of the machine's own slots; the 48K's Beta 128 is not fitted. G+DOS v1a pages in at
+/// /RESET and on the traps #0008 / #003A / #0066 / #028E; two drives `fdd.plusd1` / `fdd.plusd2`
+constexpr const char* kPlusDSlot = "edge.1";
+constexpr const char* kPlusDCard = "plusd";
+
+void ApplyPlusD(CONFIG& config)
+{
+    config.trdos_present = false;
+    config.dos_rom_path[0] = '\0';
+    SlotConfig slots = config.slotConfig;
+    std::erase_if(slots.entries, [](const SlotConfigEntry& entry) { return entry.slot == kPlusDSlot; });
+    SlotConfigEntry entry;
+    entry.slot = kPlusDSlot;
+    entry.card = kPlusDCard;
+    entry.source = "variant PLUSD";
+    slots.entries.push_back(entry);
+    SlotManager::UseSlots(slots, config);
+}
+
+bool HasPlusD(const CONFIG& config)
+{
+    return std::any_of(config.slotConfig.entries.begin(), config.slotConfig.entries.end(),
+                       [](const SlotConfigEntry& entry) { return entry.slot == kPlusDSlot && entry.card == kPlusDCard; });
+}
+
+bool Is48kPlusD(const CONFIG& config)
+{
+    return config.mem_model == MM_SPECTRUM48 && HasPlusD(config);
+}
+
+bool Is128kPlusD(const CONFIG& config)
+{
+    return config.mem_model == MM_SPECTRUM128 && HasPlusD(config);
+}
+
+bool PlusDSupported(std::string* reason)
+{
+    (void)reason;
+    return true;
+}
+
 const std::vector<MachineVariant> kVariants = {
     {"48K-BETA128", "ZX-Spectrum 48k + Beta 128 (TR-DOS 5.03)",
      "ZX-Spectrum 48k with the Beta 128 disk interface: TR-DOS 5.03 paged in at #3Dxx, 4 floppy drives, no #7FFD",
      "48K", 48, Apply48kBeta128, Is48kBeta128, Beta128Supported},
+    {"48K-PLUSD", "ZX-Spectrum 48k + Plus D (G+DOS)",
+     "ZX-Spectrum 48k with the MGT +D disk interface: G+DOS v1a, WD1772, 2 floppy drives (.mgt), snapshot button",
+     "48K", 48, ApplyPlusD, Is48kPlusD, PlusDSupported},
+    {"128K-PLUSD", "ZX-Spectrum 128k + Plus D (G+DOS)",
+     "ZX-Spectrum 128k with the MGT +D disk interface: G+DOS v1a, WD1772, 2 floppy drives (.mgt), snapshot button",
+     "128K", 128, ApplyPlusD, Is128kPlusD, PlusDSupported},
     {"TSL-VDAC2", "TS-Conf + VDAC2 (FT812)",
      "TS-Conf with the TS-Labs VDAC2 card: FT812 graphics on the IDE connector (no IDE)", "TSL", 4096,
      ApplyTsConfVdac2, IsTsConfVdac2, TsConfVdac2Supported},
+    {"TSL-VDAC4", "TS-Conf + VDAC4",
+     "TS-Conf with the VDAC4 board: Tang Nano 20K (FT812 core) and ESP32-S3 application processor (no IDE)", "TSL",
+     4096, ApplyTsConfVdac4, IsTsConfVdac4, TsConfVdac2Supported},
     {"PROFI-PLUS", "ZX Profi+ (BIOS Plus, PQ-DOS)",
      "ZX Profi v5 with the V0.03 port decoder and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, IDE", "PROFI", 1024,
      ApplyProfiPlus, IsProfiPlus, ProfiPlusSupported},
@@ -153,7 +222,10 @@ struct Alias
 const Alias kAliases[] = {
     {"48K-TRDOS", "48K-BETA128"},
     {"48K-BETA", "48K-BETA128"},
+    {"48K-PLUS-D", "48K-PLUSD"},
+    {"128K-PLUS-D", "128K-PLUSD"},
     {"TSCONF-VDAC2", "TSL-VDAC2"},
+    {"TSCONF-VDAC4", "TSL-VDAC4"},
     {"PROFIPLUS", "PROFI-PLUS"},
     {"NEXT-ISSUE2", "NEXT-KS1"},
     {"NEXT-ISSUE5", "NEXT-KS3"},

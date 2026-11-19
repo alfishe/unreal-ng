@@ -16,6 +16,15 @@ namespace platform
 
         class WindowsAppendFile : public AppendFile
         {
+            /// Keep GetLastError's reason (read at once: the next call may change it)
+            void Failed(const char* what)
+            {
+                const DWORD code = GetLastError();
+                _lastErrorNoSpace = code == ERROR_DISK_FULL || code == ERROR_HANDLE_DISK_FULL;
+                _lastError = std::string(what) + ": " + (_lastErrorNoSpace ? "the disk is full, " : "") +
+                             "Windows error " + std::to_string(code);
+            }
+
         public:
             explicit WindowsAppendFile(HANDLE handle) : _handle(handle) {}
             ~WindowsAppendFile() override { Close(); }
@@ -27,15 +36,35 @@ namespace platform
                 {
                     const DWORD chunk = size > 0x40000000u ? 0x40000000u : static_cast<DWORD>(size);
                     DWORD written = 0;
-                    if (!WriteFile(_handle, p, chunk, &written, nullptr) || written == 0)
+                    if (!WriteFile(_handle, p, chunk, &written, nullptr))
+                    {
+                        Failed("write");
                         return false;
+                    }
+                    if (written == 0)
+                    {
+                        _lastError = "write: nothing was written";
+                        _lastErrorNoSpace = false;
+                        return false;
+                    }
                     p += written;
                     size -= written;
                     _size += written;
                 }
                 return true;
             }
-            bool Sync() override { return _handle != INVALID_HANDLE_VALUE && FlushFileBuffers(_handle) != 0; }
+            bool Sync() override
+            {
+                if (_handle == INVALID_HANDLE_VALUE)
+                {
+                    _lastError = "flush: the file is closed";
+                    return false;
+                }
+                if (FlushFileBuffers(_handle) != 0)
+                    return true;
+                Failed("flush");
+                return false;
+            }
             uint64_t Size() const override { return _size; }
             void Close() override
             {

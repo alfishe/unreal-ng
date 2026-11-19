@@ -172,7 +172,9 @@ close the door on them:
   every route (QR-8) and starts a branch instead of deleting the future; history
   is discarded only by an explicit branch delete; stopping TTD leaves the
   machine free-running. Until branches land (PLAN #76 W1) v1 keeps truncating;
-  nothing in Phases 1–4 may add new truncating paths.
+  nothing in Phases 1–4 may add new truncating paths. *Met 2026-11-10:* branches
+  are built on the engine ([TTD branches](../2026-11-08-ttd-branches/README.md));
+  a resume or an edit in the past forks a branch.
 
 ## 3. Performance requirements
 

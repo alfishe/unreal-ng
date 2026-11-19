@@ -22,6 +22,7 @@ bool Navigator::Enter(const Node& menu)
 {
     if (!menu.IsMenu())
         return false;
+    _scroll = 0;
     if (_s->settings.stack)
         _stack.push_back(&menu);
     else
@@ -34,12 +35,14 @@ bool Navigator::Back()
     if (_stack.size() < 2)
         return false;
     _stack.pop_back();
+    _scroll = 0;
     return true;
 }
 
 void Navigator::Home()
 {
     _stack = {&_s->root};
+    _scroll = 0;
 }
 
 bool Navigator::PopTo(size_t depth)
@@ -47,6 +50,7 @@ bool Navigator::PopTo(size_t depth)
     if (depth >= _stack.size())
         return false;
     _stack.resize(depth + 1);
+    _scroll = 0;
     return true;
 }
 
@@ -57,6 +61,8 @@ bool Navigator::GoTo(std::string_view id)
         return false;
     if (!path.back()->IsMenu())
         path.pop_back();
+    if (path.back() != _stack.back())
+        _scroll = 0;
     if (_s->settings.stack)
         _stack = std::move(path);
     else
@@ -69,9 +75,20 @@ void Navigator::Rebind(const Scenario& s)
     Rebind(s, Ids());
 }
 
+bool Navigator::ScrollBy(int columns, const Model& m)
+{
+    const int most = std::max(0, Current().width - WindowOf(Current(), m).cols);
+    const int next = std::clamp(_scroll + columns, 0, most);
+    if (next == _scroll)
+        return false;
+    _scroll = next;
+    return true;
+}
+
 void Navigator::Rebind(const Scenario& s, const std::vector<std::string>& old)
 {
     _s = &s;
+    _scroll = 0;
     _stack = {&s.root};
     if (!s.settings.stack)
     {
@@ -97,9 +114,28 @@ Page Layout(const Scenario& s, const Navigator& nav, const Model& m)
     p.keys.assign(m.keys, nullptr);
     p.dials.assign(m.dials, nullptr);
     const Node& cur = nav.Current();
+    const MenuWindow win = WindowOf(cur, m);
+    if (IsWide(cur, m))
+    {
+        p.width = cur.width, p.visibleCols = win.cols, p.windowFirst = win.first;
+        p.scroll = std::clamp(nav.Scroll(), 0, cur.width - win.cols);
+    }
     for (const auto& c : cur.items)
-        if (auto k = KeyIndex(m, c.at.row, c.at.col); k && *k < m.keys)
+    {
+        // a wide menu: the window of its columns the deck shows; a pinned key stays on its deck slot
+        int col = c.at.col;
+        if (!c.pin)
+        {
+            col -= p.scroll;
+            if (col < 0 || col >= win.cols)
+                continue;
+            col += win.first;
+        }
+        if (col < 0 || col >= m.cols)
+            continue;
+        if (auto k = KeyIndex(m, c.at.row, col); k && *k < m.keys)
             p.keys[static_cast<size_t>(*k)] = &c;
+    }
     const ResolvedNav rn = ResolveNav(s, nav.Stack());
     p.crumbs = rn.crumbs;
     p.autoExit = rn.autoExit;
@@ -149,10 +185,16 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
         json e{{"key", k},         {"row", row},  {"col", col},
                {"role", "item"},   {"id", n->id}, {"type", n->IsMenu() ? "menu" : "action"},
                {"title", n->title}};
+        if (p.width > 0 && !n->pin)
+            e["at"] = {n->at.row, n->at.col};  // a wide menu: the slot in the menu (col: the deck's key)
+        if (n->pin)
+            e["pinned"] = true;
         if (!n->face.label.empty())
             e["label"] = n->face.label;
         if (!n->tags.empty())
             e["tags"] = n->tags;
+        if (n->longPress)
+            e["long"] = n->longPress->kind == "action" ? n->longPress->spec.value("id", "") : n->longPress->kind;
         if (!n->IsMenu())
         {
             e["kind"] = n->action.kind;
@@ -184,6 +226,8 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
                 e["turn"] = d->turn->kind;
             if (d->press)
                 e["press"] = d->press->kind;
+            if (d->pressTurn)
+                e["press_turn"] = d->pressTurn->kind;
             dials.push_back(e);
         }
     json out{{"menu", nav.Current().id},
@@ -195,11 +239,29 @@ json DescribePage(const Scenario& s, const Navigator& nav, const Model& m, const
              {"dials", dials},
              {"model", std::string(m.name)},
              {"grid", {m.rows, m.cols}}};
+    if (p.width > 0)
+        out["scroll"] = {{"column", p.scroll},
+                         {"width", p.width},
+                         {"window", {p.windowFirst, p.windowFirst + p.visibleCols - 1}}};
     if (p.strip)
     {
         out["strip"] = {{"content", p.strip->content}, {"text", p.strip->text}};
         if (!p.strip->status.empty())
             out["strip"]["status"] = p.strip->status;
+        if (!p.strip->keys.empty())
+        {
+            json zones = json::array();
+            for (const auto& z : p.strip->keys)
+            {
+                json e{{"label", z.label}, {"span", z.span}};
+                if (z.latch)
+                    e["latch"] = true;
+                if (z.tap && z.tap->kind == "action")
+                    e["action"] = z.tap->spec.value("id", "");
+                zones.push_back(e);
+            }
+            out["strip"]["keys"] = zones;
+        }
     }
     for (auto it = nav.Stack().rbegin(); it != nav.Stack().rend(); ++it)
         if (!(*it)->context.empty())

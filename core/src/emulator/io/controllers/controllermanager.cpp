@@ -22,6 +22,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/io/fdc/upd765.h"
+#include "emulator/io/fdc/wd1793.h"
 #include "emulator/io/joystick/joystick.h"
 #include "emulator/io/mouse/mousemanager.h"
 #include "emulator/io/tape/tape.h"
@@ -64,12 +66,19 @@ bool CheckHapticCondition(const std::string& text, uint8_t trigger, std::string&
 /// v3: the host key overlay (8 half-rows) after the connectors
 constexpr uint8_t kControllersTTDVersion = 3;
 constexpr size_t kHostKeyRows = 8;
-/// The PC-only keys of a profile (`pc.delete` .. `pc.pagedown`, controllers/router/zxkeys.h; codes 0xE0..) have no place
-/// in the ZX matrix. They ride the same HostKeys events as rows 8 and 9 (five to a row), are held outside the TTD blob and
-/// its hash (their format stays v3) and reach a PS/2 sink only
+/// The PC-only keys of a profile (`pc.delete` .. `pc.f12`, controllers/router/zxkeys.cpp; codes 0xE0..) have no place
+/// in the ZX matrix. They ride the same HostKeys events as rows 8 to 12 (five to a row), are held outside the TTD blob and
+/// its hash (their format stays v3) and reach a PS/2 sink only. The order is the codes' order: append, never reorder
 constexpr uint8_t kPcOnlyKeyBase = 0xE0;
-constexpr size_t kPcOnlyRows = 2;
-constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete, PcKey::Insert, PcKey::End, PcKey::Home, PcKey::PageUp, PcKey::PageDown};
+constexpr PcKey kPcOnlyKeys[] = {PcKey::Delete,    PcKey::Insert,     PcKey::End,        PcKey::Home,
+                                 PcKey::PageUp,    PcKey::PageDown,   PcKey::Escape,     PcKey::Tab,
+                                 PcKey::Backspace, PcKey::LeftAlt,    PcKey::LeftCtrl,   PcKey::Function1,
+                                 PcKey::Function2, PcKey::Function3,  PcKey::Function4,  PcKey::Function5,
+                                 PcKey::Function6, PcKey::Function7,  PcKey::Function8,  PcKey::Function9,
+                                 PcKey::Function10, PcKey::Function11, PcKey::Function12};
+constexpr size_t kPcOnlyRows = (std::size(kPcOnlyKeys) + 4) / 5;
+static_assert(kPcOnlyKeyBase + std::size(kPcOnlyKeys) <= 0x100, "the PC-only key codes end at 0xFF");
+static_assert(kPcOnlyRows == 5, "ControllerManager::_pcOnlyKeys holds the PC-only rows");
 
 /// The key each control bit holds (kRight, kLeft, kDown, kUp, kFire), per wiring
 constexpr ZXKeysEnum kSinclair1Keys[5] = {ZXKEY_7, ZXKEY_6, ZXKEY_8, ZXKEY_9, ZXKEY_0};
@@ -827,6 +836,22 @@ void ControllerManager::FeedHaptics(uint64_t frame)
     summary.frameTStates = _context->GetFrameTStates();
     summary.cpuHz = _context->emulatorState.current_z80_frequency;
     summary.beeperEdges = sound->getBeeper().TakeEarEdges();
+    // The floppy drive's mechanics: counters the controllers keep anyway, read here only while a feed is set (H-7)
+    // (both controllers on a +3 with a Beta 128: the steps add up)
+    if (WD1793* wd = _context->pBetaDisk)
+    {
+        summary.drive.present = true;
+        summary.drive.steps = wd->TakeHapticSteps(summary.drive.stepMs);
+    }
+    if (UPD765* fdc = _context->pUPD765)
+    {
+        uint8_t stepMs = 0;
+        const uint16_t steps = fdc->TakeHapticSteps(stepMs);
+        summary.drive.present = true;
+        if (steps > 0)
+            summary.drive.stepMs = stepMs;
+        summary.drive.steps = static_cast<uint16_t>(std::min<unsigned>(summary.drive.steps + steps, UINT16_MAX));
+    }
     const int chips = std::min<int>(sound->getAYChipCount(), static_cast<int>(HapticFrame::kMaxAy));
     for (int index = 0; index < chips; index++)
     {
@@ -858,7 +883,12 @@ void ControllerManager::FeedHaptics(uint64_t frame)
         for (const HapticWatch& watch : _hapticWatches)
         {
             uint8_t value = 0;
-            if (watch.page == 0xFFFF)
+            if (watch.esp)
+            {
+                if (_context->pPortDecoder == nullptr || !_context->pPortDecoder->PeekEspAppByte(watch.espAddress, value))
+                    value = 0;  // no app (yet): the byte reads 0, as a page not mapped does
+            }
+            else if (watch.page == 0xFFFF)
                 value = memory->DirectReadFromZ80Memory(watch.address);
             else if (const uint8_t* page = memory->RAMPageAddress(watch.page))
                 value = page[watch.address & 0x3FFF];
@@ -1120,9 +1150,12 @@ bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
         rows = _hostKeys;
         pcOnly = _pcOnlyKeys;
     }
-    // A machine whose software reads a PS/2 controller instead of the matrix gets the same keys as PC keys
-    IPs2KeySink* sink = _context && _context->pKeyboard ? _context->pKeyboard->GetPs2Sink() : nullptr;
-    if (!sink || !sink->WantsHostOverlayKeys())
+    // The PS/2 controller gets the same keys as PC keys wherever the keyboard's route reaches it, as the host keyboard
+    // does: software that reads the controller and never the matrix (Sprinter DSS, Wild Commander on TS-Conf) sees the
+    // pad's keys and the menu keys too
+    Keyboard* keyboard = _context ? _context->pKeyboard : nullptr;
+    IPs2KeySink* sink = keyboard ? keyboard->GetPs2Sink() : nullptr;
+    if (!sink || !(sink->WantsHostOverlayKeys() || keyboard->RoutesToPs2()))
     {
         _ps2HostKeys.clear();
         return true;
@@ -1179,6 +1212,47 @@ bool ControllerManager::ApplyHostKeys(uint8_t row, uint8_t bits)
             sink->OnPcKey(key, true);
     _ps2HostKeys = wanted;
     return true;
+}
+
+std::vector<ZXKeysEnum> ControllerManager::WiredKeys(const Connector& connector, uint16_t bit)
+{
+    std::vector<ZXKeysEnum> keys;
+    if (connector.kind != ConnectorKind::KeyboardJoystick || bit == 0)
+        return keys;
+    unsigned index = 0;
+    while (index < kOverlayControls && (bit & (1u << index)) == 0)
+        index++;
+    if (index >= kOverlayControls)
+        return keys;
+    switch (connector.device)
+    {
+        case RetroDeviceKind::SinclairJoystick:
+            if (index < 5)
+                keys.push_back((connector.options.sinclairPort == 2 ? kSinclair2Keys : kSinclair1Keys)[index]);
+            break;
+        case RetroDeviceKind::CursorJoystick:
+            if (index < 5)
+            {
+                if (connector.options.cursorShift && (bit & kDirections))
+                    keys.push_back(ZXKEY_CAPS_SHIFT);
+                keys.push_back(kCursorKeys[index]);
+            }
+            break;
+        case RetroDeviceKind::KeysJoystick:
+            if (connector.options.keys[index] != ZXKEY_NONE)
+                keys.push_back(connector.options.keys[index]);
+            break;
+        default:
+            break;
+    }
+    return keys;
+}
+
+bool ControllerManager::HostKeysReachPs2() const
+{
+    Keyboard* keyboard = _context ? _context->pKeyboard : nullptr;
+    IPs2KeySink* sink = keyboard ? keyboard->GetPs2Sink() : nullptr;
+    return sink != nullptr && (sink->WantsHostOverlayKeys() || keyboard->RoutesToPs2());
 }
 
 uint8_t ControllerManager::HostKeys(uint8_t row) const

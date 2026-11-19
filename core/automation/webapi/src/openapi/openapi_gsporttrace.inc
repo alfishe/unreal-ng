@@ -41,4 +41,52 @@
         post["responses"]["200"]["description"] = "The trace session status after the action";
         post["responses"]["400"]["description"] = "Missing or unknown action";
         post["responses"]["404"]["description"] = "Emulator not found, or no General Sound card fitted";
+
+        // The GS slot's statistics block (gsslotstats.h, gs-debugger N7); CLI 'gs stats', MCP inspect_state
+        // aspect audio_gs_stats, Lua / Python gs_stats
+        const auto statsQuery = [](Json::Value& operation) {
+            Json::Value& since = operation["parameters"][operation["parameters"].size()];
+            since["name"] = "since";
+            since["in"] = "query";
+            since["required"] = false;
+            since["schema"]["type"] = "integer";
+            since["description"] = "A baseline id from POST control/audio/gs reset_counters: counters since then";
+            Json::Value& fresh = operation["parameters"][operation["parameters"].size()];
+            fresh["name"] = "fresh";
+            fresh["in"] = "query";
+            fresh["required"] = false;
+            fresh["schema"]["type"] = "integer";
+            fresh["description"] = "1: a block from a frame end after this read (a running machine)";
+        };
+        Json::Value& stats = paths["/api/v1/emulator/{id}/state/audio/gs/stats"]["get"];
+        stats["summary"] = "General Sound slot statistics";
+        stats["description"] =
+            "What the fitted card did, one block for every card (each fills the sections it has): card (resets), "
+            "mailbox (both sides: host commands / data / status polls, card reads / acks, overwrites), interrupts, "
+            "cpu, audio; on NeoGS also dma (zx / sd / mp3 transactions), spi, sd (commands by index, errors), mp3, "
+            "flash. rates: per second over the last 50 frames; errors: the error counters and their total. "
+            "capabilities lists the sections. A running machine publishes the block at frame ends while it is read "
+            "(for 2 s after a read): the answer comes from the next frame end, age_frames says how old it is; a "
+            "paused machine is read now. replaying: collected while TTD replays";
+        stats["tags"].append("Audio State");
+        idParameter(stats);
+        statsQuery(stats);
+        stats["responses"]["200"]["description"] = "The statistics block";
+        stats["responses"]["404"]["description"] = "Emulator not found, no General Sound card, or no such baseline";
+        stats["responses"]["503"]["description"] = "No frame ended within 500 ms; read again";
+
+        Json::Value& section = paths["/api/v1/emulator/{id}/state/audio/gs/stats/{section}"]["get"];
+        section["summary"] = "One section of the General Sound slot statistics";
+        section["description"] = "card, mailbox, interrupts, cpu, audio, dma, spi, sd, mp3, flash, rates or errors "
+                                 "(as the card has them: 404 names the card's sections)";
+        section["tags"].append("Audio State");
+        idParameter(section);
+        section["parameters"][1]["name"] = "section";
+        section["parameters"][1]["in"] = "path";
+        section["parameters"][1]["required"] = true;
+        section["parameters"][1]["schema"]["type"] = "string";
+        statsQuery(section);
+        section["responses"]["200"]["description"] = "The section with implementation, frame, age_frames, since";
+        section["responses"]["404"]["description"] = "No such section on this card, no card, or no such baseline";
+        section["responses"]["503"]["description"] = "No frame ended within 500 ms; read again";
     }

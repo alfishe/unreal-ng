@@ -46,6 +46,13 @@ temporal processing) and the machine's sound; the keyboard is not drawn (use `ke
   so a lagging encoder drops frames instead of piling up work. H.265 and H.264 are 4:2:0 there (the hardware has no
   4:4:4 H.26x); ProRes 4444 is 4:4:4. MKV, GPU acceleration off, and other systems use ffmpeg (x264 / x265 4:4:4:
   a CRT mask keeps its colour, but 4K is slower than real time; the picture repeats while the encoder is behind).
+  ffmpeg gets the picture as Matroska (uncompressed BGRA, each frame with its emulated time, variable frame rate):
+  a picture held for several frames (a still screen, the frames a lagging writer owes) is sent once, and a picture
+  equal to the one before is not sent (one changed pixel is a new one; four frames a second at least). The frame's
+  content goes at the picture's own size and ffmpeg scales it to the chosen frame (FHD, 4K) and adds the border:
+  a raw 1080p frame is 8 MB, more than a pipe carries 50 times a second. The keyboard under the picture is drawn at
+  that size too and scaled with it. Above the native picture x264 uses its `ultrafast` preset, x265 always does
+  (x265 4:4:4 1080p is still several times slower than real time: use the GPU, or H.264).
 - With ffmpeg the sound goes into the same process through a FIFO (macOS / Linux): nothing to copy and mux at the
   end. Stop returns at once; a slow encoder is waited for, never killed.
 - Same folder and `unreal_<time>` name as the raw recording. The choice is remembered (`windowSource` in the
@@ -76,24 +83,32 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   the picture only; a wrong id lists the offered ones), `codec` (`prores` = ProRes 4444 `.mov`, the default; `h264` = H.264 4:4:4 `.mp4`: full colour, so a
   mask a pixel wide survives), `audio` (default true: the sound track, PCM in `.mov`, AAC 320k in `.mp4`; false =
   picture only), `fps` (left out = the machine's rate; 1..100 only with `audio: false`, else 400), `scale` (1..4: the picture doubled in blocks, the default 1),
-  `picture_height` (0..4320: the CRT drawn at that height instead of the window's, GPU only), `width` + `height` (the
-  file's frame; left out = the picture with the keyboard under it), `layout` (`below` or `side`, with a frame).
+  `picture_height` (0..4320: the CRT drawn at that height instead of the window's, on the GPU and the software screen alike), `width` + `height` (the
+  file's frame; left out = the picture with the keyboard under it), `layout` (`below` or `side`, with a frame;
+  with `fit` the picture and the keyboard fit the frame together: below, the keyboard as wide as the picture;
+  beside, half the width at least),
+  `engine` (`native`, the default: hardware H.26x and ProRes by the Mac's own writer; `ffmpeg`: always ffmpeg, its
+  ProRes or, with `hardware`, its GPU encoder; the GUI's MKV is ffmpeg's too).
 - **Frames** (`video/window/record/frames {frames}`): the machine must be paused (409 `not-paused`). Runs `frames` frames, each one drawn
   by the window and written before the next runs. No time limit on the emulator's side; an MCP client may have its
   own per-call timeout, so a few hundred frames per call keeps progress visible.
 - **Status** (`GET video/window/record`) / **stop** (`video/window/record/stop`): `{recording, path, keyboard, frames,
-  width, height, fps, audio, sample_rate, audio_samples}`. Stop waits for ffmpeg, then muxes the sound in (the
+  width, height, fps, audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms,
+  first_frame_ms, slowest_frame_ms}` (the last four: where the time went, ms since the start; a late or stalled
+  recording shows there whether the writer got the CPU, the encoder start or a frame was slow). Stop waits for ffmpeg, then muxes the sound in (the
   picture copied, not re-encoded: seconds). Meanwhile the picture is in `.<name>.video.<ext>` and the sound in
   `.<name>.sound.s16le` beside the file; a failed mux leaves both and names them.
 - **The HUD** ("Remote control" and the like) is never in the file; the keys the program holds light up on the
   keyboard (a combination such as CS+6 lights its own key, the Down arrow, when the picture has one).
 - **Running instead of stepping**: a running machine records too, the frames the window skipped repeat the picture
-  before. Step with `record/frames` for a file where every picture is its own frame.
+  before. Step with `record/frames` for a file where every emulated frame's picture is at its time (through ffmpeg a
+  picture equal to the one before lengthens it: the file has as many frames as there were changes, its length the
+  frames').
 
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"start","model":"PENTAGON"}             # or the instance the window already shows
+emulator_manage {"action":"create","model":"PENTAGON"}            # unreal-qt starts with none; or the one the window shows
 capture_media {"action":"window_display_set","display":{"gpu":true,"crt_profile":"crt-lottes"}}
 control_execution {"action":"take_control"}                       # the GUI shows who drives it and locks
 control_execution {"action":"pause"}
@@ -212,7 +227,10 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_fr
 - **The 128 editor drops keys right after Enter** (it is entering the line): wait ~40 frames after each Enter, or
   the next line's number is lost and the line runs as a direct command.
 - **The Pentagon 128 boot menu starts on Tape Loader**: 128 BASIC is one Down.
-- **`picture_height` needs the GPU** (`gpu: true`); the software screen records at the window's size.
+- **The window's post-processing is in the file**: the CRT profile or shader preset, temporal blending (each emulated
+  frame enters the blend once, however often the window draws it), as `screenshot source=window`
+  shows them. `picture_height` (the profiles 1080p / 1440p / 4K) draws the CRT at the file's height on both the GPU
+  and the software screen: scaling the window's picture afterwards would blur the scanlines.
 - **Switching `gpu` while recording** re-creates the screen the recording draws from: set the display first.
 - **A frame does not fit** (`width` / `height` smaller than picture × scale): 409 with the sizes; lower `scale` or
   `picture_height`.

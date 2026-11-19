@@ -59,6 +59,9 @@ print(string.format("PC = 0x%04X", cpu:get_pc()))
 ```
 
 ### Machine Identity and Lifecycle
+`machines([all], [id])` returns the machines grouped family -> machine -> RAM size as a table, the same tree as WebAPI
+`GET /api/v1/emulator/machines` (with `id`, `current` places that instance's machine).
+
 The Lua bindings operate on the existing emulator instance (`get_emulator()`); they do not expose model-selecting instance creation or model switching. For lifecycle operations with strict model validation (`creatable` flags, reason-carrying failures) use the WebAPI (`POST /api/v1/emulator/create`, `GET /api/v1/emulator/models`) or the CLI (`create`/`start <model>`). Machine identity of the current instance is observable through state endpoints (e.g. TTD status reports `model_id`/`model_ram_pages`).
 
 **ZX-Poly** (four synchronized instances of one model, through the same
@@ -230,6 +233,7 @@ user guide [docs/features/slots.md](../../../features/slots.md)).
 ```lua
 r = slots_state()          -- buses, slots (card, options, adapter, fit, state), built-ins, plan log
 c = slots_catalog()        -- every card: options, functions, ports, media, thisMachine {slot, fit, outcome, removes}
+c = slots_catalog("zxbus.1")  -- the same, each card planned into that slot (thisMachine.inSlot: the card there now)
 m = slots_matrix("cards")  -- the compatibility tables as markdown (all without an argument)
 
 r = slots_plug("zxbus.next", "multisound", {dry_run = true})                -- the plan only
@@ -556,6 +560,8 @@ r = cdaudio("play", "", {track=2})   -- verbs: status, play (track/to, lba/frame
 r = cdaudio("volume", "ide0.slave", {left=128, route="mono"})   -- reply: ok, error, message, drive
 ts = tsconf_state()         -- TS-Conf: memory map, video (mode, geometry, TSU, the engine's line with its tile graphics pages), interrupts, DMA (live and programmed addresses, ctrl decoded), clock, sys_config / cache_en, SD, regs (the register file #00-#47)
 tsu = tsconf_tsu()          -- TS-Conf TSU objects for debug views: tile_layers, sprites (85 decoded), cram (256 cells)
+v4 = vdac4_state(20)         -- TS-Conf VDAC4 board: tang {personality, ft_cfg, ...}, esp {phase, boots, last_error, clock_restarts, ...}, app {running, name, version, error, ...}, link, packets {count, recent}, audio {input_rate, underruns, ...}, threads {esp_thread, ft_thread, ft_draw_thread, esp_latency_ms, esp_jobs, esp_wait_ms, ft_ops, ...}, log (last 20 ESP lines; default 50, max 256); {error="..."} without the board
+m = vdac4_esp_memory(0x3fc8a000, 64, true)  -- the VDAC4 ESP's memory (size default 16, at most 4096; true: an address of the running app's ELF image, as a haptic probe `cpu: esp` takes it): {address, size, app, bytes, hex} or {error}
 sp = sprinter_state()       -- Sprinter Sp2000: pld (module Standard / Game, selected_by, why, game), decoder, windows, registers, cells, clock, frame, video, z84c15, fdc, cmos, ide, bios
 tbl, err = sprinter_ports{map=0, dos=1, rw="w"}  -- the decoded port table (page #40); omitted keys = the current state
 lk, err = sprinter_port(0x21BC, {rw="w"})        -- one port: index, code, name (or the Z84C15); also sprinter_port("21BC")
@@ -618,6 +624,15 @@ lv = audio_levels()                           -- every row's and channel's peak,
 -- get_sound_character() / set_sound_character(name, value): ay_stereo, ay_chip, fm_trim_db, neogs_stereo, covox_dc_removal, fir_filter too
 r = audio_capture_start(1.0, "covox")             -- capture one device's own buffer (default: the master mix)
 r = audio_capture_start(600, "", "out.wav")       -- a WAV file written while the samples come (up to 86400 s; closes at the target; status: file_closed)
+r, err = section_timer_start{sections = {"Plasma", "spark=#8000:#8010,#8020"}, break_if = {"net:Plasma>53400"}}
+                                                  -- section timing at full speed (command-interface 5.5c): the results
+                                                  -- without the passes, or nil and the reason; extra, recursive,
+                                                  -- frame_t, capacity too; no sections = every X with an X.End
+r = section_timer_result()                        -- active, sections {name, entry, exits, count, min, max, avg, net_*,
+                                                  -- interrupted, last, max_frame, max_t}, passes {name, frame, t,
+                                                  -- elapsed, net, interrupts}, hits, orphan, dropped, open, stopped
+print(section_timer_text())                       -- the table; section_timer_json([offset [, limit]]) the JSON
+section_timer_stop()                              -- results stay; section_timer_clear() drops them
 rtc = rtc_state()           -- CMOS clock: chip, ports, time_mode, time, register_a..d, alarm, dump
 exe = execution_state()     -- execution arbiter: phase, intent + intent_set_by, serving, queue, claim, driver_violations
 take_control("my script")   -- automation session: the GUI shows it; after the user takes control back, control calls raise revoked_by_user - stop, do not retry. Takes over another client's implicit session, never an explicit one. Code sent by POST /api/v1/lua/exec or /lua/file acts in the sender's session on a machine the sender holds (an MCP agent's too): no take needed, release_control() leaves that session in place
@@ -673,7 +688,8 @@ emu = Emulator.new("symbolic_id")
 success = emu:init()
 
 -- Control
-emu:reset()
+emu:reset()                -- soft: the reset button (the ZX Next restarts NextZXOS at once)
+emu:reset{hard = true}     -- hard: a power cycle (the ZX Next runs its boot ROM and firmware); emu:reset(true) too
 emu:pause()   -- "paused", "queued: behind <command>" (applies when it ends) or "refused: <why>"
 emu:resume()
 r = emu:step(false)      -- one instruction, breakpoints honored (default true skips them)
@@ -698,6 +714,8 @@ w = memory_map("gs")              -- {cpu, windows = {{start, size, kind = "rom"
 -- Its steps: the machine runs until the card's step ends, then is paused; {ok, stop = {cpu, reason, cpu_pc, ...},
 -- pc, sp, main_pc, main_sp, state}, or {ok = false, error}
 r = step("gs");  r = steps(10, false, "gs");  r = stepover("gs");  r = step_out("gs")
+-- The CPU the front-ends show: a card shown follows the main CPU's steps of the paused machine; {cpu, follows}
+c = select_cpu("gs");  c = selected_cpu();  select_cpu("main")
 
 -- Properties
 id = emu:get_id()
@@ -1075,6 +1093,34 @@ run_frames(500)
 print(rzx_status().summary)   -- playing frame 500 / 32315 (1.5%), block 1 / 1, 0 desyncs
 ```
 
+### Machine State Transfer
+
+`transfer_state{...}` moves this machine's running state (the selected one, or the machine the interpreter is bound to)
+into another instance, in memory - the verb of every plane (`StateTransferControl`; WebAPI `POST
+/emulator/{id}/snapshot/transfer`, CLI `snapshot transfer`, [automation.md](../../../features/automation.md#machine-state-transfer)).
+
+| Key | Meaning |
+|:--|:--|
+| `to` | an existing instance (id) |
+| `model`, `ram_size`, `symbolic_id` | or a new instance of that model (RAM in KB, default the model's) |
+| `check` | with `to`: only report what would move, nothing changes |
+| `keep_frame_position` | keep the in-frame position when both models share the frame geometry (default `true`) |
+| `start` | new instance: start it (default: when this machine runs and is not paused) |
+
+It returns the WebAPI's report as a table - `ok`, `mode` (`"clone"` / `"cross-model"`), `reason`, `items`
+(`{name, status, detail}`, status `copied` / `dropped` / `refused` / `note`), `copied`, `dropped`, `refused`,
+`summary`, `source_id`, `target_id`, `created`, `state`, `model`, `ram_kb` - with `ok = false` for a refused transfer
+(nothing changed). Without a report (no such target, the machine state coordinator refuses, a bad request) it returns
+`nil, "<error>: <message>"`.
+
+```lua
+local r = transfer_state{to = other_id, check = true}
+if r.ok then r = transfer_state{to = other_id} end
+print(r.summary)
+local fork = transfer_state{model = "PENTAGON", ram_size = 512}
+print(fork.target_id, fork.mode, fork.copied, fork.dropped)
+```
+
 ### Time-Travel Debugging
 
 The TTD functions are **global functions** (like the mouse functions), not methods on the emulator object. They act on the bound emulator, or on the selected one when the script is not bound to an instance. Bindings: `core/automation/lua/src/emulator/lua_emulator.h`. Command semantics and background: [command-interface.md §8](./command-interface.md#8-time-travel-debugging-ttd).
@@ -1100,8 +1146,10 @@ ttd_build_journal([from_frame], [to_frame])  --> {ok, error, cancelled, frames_b
                                        --   frames_refused, records}: build it by replaying frames from..to
                                        --   (default: the whole session), about 2-4 ms per frame; not while recording
 ttd_cancel_journal_build()   --> {cancelled}  -- stop a build that runs (another thread's call)
-ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history while recording
-                                       --   (0 = no limit, nil keeps a value; status: history_* fields)
+ttd_set_history_limit(frames, bytes)   --> frames, bytes  -- keep only the newest history in memory
+                                       --   (0 = no limit, nil keeps a value; status: history_* fields;
+                                       --   with a recording folder the rest stays seekable on disk:
+                                       --   evicted_to_disk_*, read_back_* fields; without one it is released)
 ttd_get_journal_enabled()    --> bool
 ttd_stop()                             -- stop recording, keep history
 ttd_invalidate([reason])               -- drop all history (default reason "lua invalidate")
@@ -1187,7 +1235,7 @@ ttd_step_instruction_back()      --> bool
 ttd_step_instruction_forward()   --> bool
 
 ttd_resume()                     --> bool  -- record again from the exact current position (frame and tinframe)
-ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); future is discarded
+ttd_resume(4823, 0)              --> bool  -- ...or from (frame, tinframe; tinframe defaults to 0); a new branch forks there, the old future stays
                                             -- fails from idle: seek first
 
 ttd_position()   -- current, session_end, first_frame, history, state, paused, fps; never parks the machine
@@ -1201,6 +1249,8 @@ ttd_reverse_step()               --> bool  -- one instruction back
 ttd_reverse_step(10)             --> bool  -- ten instructions back
 ttd_reverse_step_tstates(5000)   --> bool  -- back 5000 t-states (nearest instruction start)
 ttd_reverse_step_scanlines(2)    --> bool  -- back 2 scanlines of the machine (t_line each)
+ttd_reverse_step_over()          --> bool  -- back over a routine when the instruction before is its return,
+                                          --    otherwise one instruction back (the debuggers' Shift+F8)
 
 local r = ttd_reverse_continue({0x8000, 0x8010})
 -- --> { matched = true, pc = 0x8000, frame = 4700, tinframe = 812 }
@@ -1213,6 +1263,17 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+
+-- On a sound card's CPU ("gs" / "neogs", "ms" / "multisound"; command-interface.md -> TTD on a sound card's CPU):
+-- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
+ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
+ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
+                                     --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
+ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
+                                     --    main = {frame, tinframe, pc, t_offset, inside} }; nil: no such card
+ttd_card_position()                  --> every card CPU (an array)
+-- A bad request (unknown cpu) answers { ok = false, error = "..." }
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
@@ -1306,10 +1367,46 @@ ttd_seek_bookmark("umt entry")
 
 Bookmarks are advisory and never stop a seek; markers do.
 
+**Branches** (a resume in the past records on a new branch, named by its time from the trunk start such as
+`+00:01:25.150`, and the old future stays on the parent; the first history is the
+`trunk`, id 0; a branch is named by its id, its GUID or its name):
+
+```lua
+local b = ttd_branches()                    -- or ttd_branches{scope = "lineage", tag = "boss", pinned = true, limit = 20, offset = 0}
+-- more filters: run = "r1", created_by = "lua", name_prefix = "p", min_length = 5, max_length = 100,
+--   created_after = <unix s>, created_before = <unix s>
+-- --> { branches = { {id, guid, name, parent, fork = {frame, tinframe} | nil, ["end"] = {...}, length, created_by,
+--       reason, tags, note, pinned, children, active, on_lineage}, ... }, total, count, active, viewed,
+--       lineage = { {branch, from = {frame, tinframe}}, ... }, text }   (no branches: an empty list)
+for _, br in ipairs(b.branches) do print(br.id, br.name, br.length, br.active) end
+ttd_branch_switch("+00:00:25.150")               -- at its end; ttd_branch_switch(1, 4830, 0): a moment on it
+-- --> { switched = true, branch, arrived_at, state, check, text }  or  { switched = false, error = "..." }
+ttd_branch_switch_to("previous")            -- the branch left last (again: further back); "next_sibling" / "prev_sibling":
+-- the next / previous branch at the nearest fork (the reply adds fork_frame, siblings); error for another word
+ttd_branch_update("+00:00:25.150", {name = "boss fight", note = "...", add_tags = {"boss"}, pinned = true})
+-- also tags = {...} (replace), remove_tags = {...}; --> { updated = true, branch, text } or { updated = false, error }
+ttd_branch_delete("boss fight", true)       -- force: pinned ones too; its descendants go with it
+-- --> { deleted = true, removed = {ids}, removed_names = {...}, text }  or  { deleted = false, error = "..." }
+ttd_branch_info("probe")                    -- --> {branch, children, ancestors, files, file_bytes, folder, active, text}
+-- An explicit branch that stays while empty; with run_frames a what-if probe in one call (created_by "lua"):
+local p = ttd_branch_create{name = "probe", frame = 4823, run = "r1", run_frames = 50,
+                            input = {"0:a", "10:caps+5:4"}, read = {"#5C00:16"}, go_back = true}
+-- input: "frame:key[+key][:hold|:down|:up]" from the branch start (hold default 2 frames, 1..1000), "5:joy.fire:down",
+-- "9:release_all"; read: "addr[:len]"; poke = {"#8100=5"} and regs = {"a=1"} change the branch first (tool edits)
+-- --> {created, branch, parent, at, ran_frames, aborted, end, reads = {{address, length, bytes, hex}}, returned_to,
+--      media, state, text}  or  {created = false, error = "..."}  (media = "ask": needs_decision with the media)
+ttd_branch_prune{run = "r1"}                -- a dry run: {dry_run, would_delete, kept, frames, file_bytes, text}
+ttd_branch_prune{run = "r1", dry_run = false}   -- deletes; the active lineage and pinned ones stay (kept, with why)
+```
+
 **Sessions on disk:**
 
 ```lua
-ttd_dump("/tmp/session.ttd")               --> bool
+ttd_dump("/tmp/session.ttd")               --> true; every branch
+ttd_dump("/tmp/line.ttd", true)            --> true; only the active branch's lineage, one linear history
+-- A failure: false and the reason, the system's words ("... cannot create: Permission denied"; "disk full" only
+-- for a full disk); the partial file (<path>.partial) is removed and a file already under the name stays
+local ok, why = ttd_dump("/no/such/folder/s.ttd")   --> false, "Cannot open file: ... No such file or directory)"
 ttd_load("/tmp/session.ttd")
 -- --> { ok = true, checkpoint_count, session_start_frame, current_end_frame }
 --     or { ok = false, error = "..." }  (e.g. recorded on a different model: both model ids named)
@@ -1447,6 +1544,7 @@ return a result table; on failure the table carries an `error` string.
 emu.step_out()                       -- run until the current subroutine returns
 emu.skip_until(0x8000)               -- fast-forward until PC == target (breakpoints skipped)
 emu.skip_until("0x8000", 70000000)   -- optional explicit t-state budget
+emu.skip_until(0x4010, "gs")         -- the sound card CPU to the cursor (a breakpoint ends it; the card step's table + hit)
 
 -- Frame watches (command-interface.md, "Run until, and frame watches"): rules checked at every frame end
 run_until{text = "PRESS", max_frames = 500}   -- {met, outcome, frames, frame, pc, ms, hit = {reasons, text_line}, text}
@@ -1569,9 +1667,10 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   the on-screen keyboard, the machine's sound, one video frame per emulated
                                      --   frame); options: keyboard ("default", a picture id, false), codec ("prores" /
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
-                                     --   hardware, fit, picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
-                                     --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
-                                     --   audio, sample_rate, audio_samples }, or { ok = false, error, kind }
+                                     --   hardware, fit, picture_height (0..4320: the CRT at that height), width / height
+                                     --   (the frame), layout ("below" / "side"). Returns { recording, path, keyboard, frames, width, height, fps,
+                                     --   audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms, first_frame_ms,
+                                     --   slowest_frame_ms }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran
 emu.window_record_stop()             -- finish the file (waits for ffmpeg, muxes the sound in); its last status
 emu.window_record_status()           -- the recording's status; headless { ok = false, error, kind = "no-window" }
@@ -1693,6 +1792,8 @@ emu.analysis("findings", {kind = "bug"})             -- { count, total, by_kind,
 local item = emu.analysis("review")                  -- the next item: { item, sheet, sheet_bytes, queue, text }
 emu.analysis("review", {op = "resolve", id = item.item.id, verdict = "ok", label = "MainLoop"})
 emu.analysis("experiment", '{"poke": {"$8100": 5}, "frames": 50, "expect": {"mem:$8101": "$AA"}}')  -- the spec as JSON text
+-- keep_branch: replayed as a TTD branch of this machine afterwards (result.branch {created, guid, reproduced})
+emu.analysis("experiment", {spec = '{"poke": {"$8100": 5}, "frames": 50, "keep_branch": "mode 5"}', run = "r7"})
 emu.analysis("cover", "32")                          -- a string: the budget
 ```
 

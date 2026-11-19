@@ -21,6 +21,47 @@ and is adapted freely.
 The views and the adapter never share a translation unit: ecat's Emulator / CPU / Memory (namespace `ecatshim`) and
 the core's classes of the same names would clash.
 
+## Time travel
+
+While the machine has a recorded history (TTD), the toolbar shows a time group after the forward steps, the same as
+unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md)):
+
+| Button | Key | Verb |
+|--------|-----|------|
+| Step Back | Shift+F7 | `step-instruction {dir: back}` |
+| Step Over Back | Shift+F8 | `reverse-step-over` |
+| Run Back | Shift+F9 | `reverse-continue {pcs}`: the main CPU's breakpoints |
+| Frame Back | - | `step-back` |
+| Branch Here / Continue Rec | - | `seek` to the end when needed, then `resume` |
+
+The state label adds the moment (`Recording`, `History: frame 120 of 400, replaying`, `Live, not recorded`, the
+branch and `fork here: N other futures`); with branches a drop-down lists them (the active lineage first) with Switch,
+Rename, Tags, Note, Pin, Delete and Save Lineage. Nothing records unless asked: only Branch Here / Continue Rec.
+Every action is a TTDControl verb through `Emulator::ttd_call` (`ecat/dialogs/debugger/ttdcontrols.cpp`): in process
+directly, over the WebAPI as the `/ttd/...` routes (`GET` for `status` / `position` / `branches`, the branch routes
+for switch / update / delete, `POST /ttd/<verb>` for the rest).
+
+**On a sound card's CPU.** With the card's tab in front (`gs`: the General Sound or NeoGS; `ms`: the MultiSound's
+GS), the time group acts on the card, by card instructions
+([gs-debugger design §8](../../docs/inprogress/2026-09-27-gs-debugger/design.md)):
+
+| Button | Key | Verb on the card's tab |
+|--------|-----|------------------------|
+| Step Back | Shift+F7 | `step-instruction {cpu, dir: back}` |
+| Step (in the past only) | F7 | `step-instruction {cpu, dir: forward}`: one card instruction forward through the history; live, the card's own step |
+| Run Back | Shift+F9 | `reverse-continue {cpu}`: back to the previous hit of the card's own breakpoints |
+| Step Over Back | Shift+F8 | off: the main CPU's only |
+| Frame Back | - | `step-back`, as on the main CPU's tab |
+
+The state label then names both CPUs: `gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next
+instruction` (the main CPU's tab shows its registers at its last completed instruction; `at its instruction boundary`
+when the card's moment is not inside one). Without a card position the card's tab adds where the card stands
+(`gs at instruction 1200, PC #0A3C`, or `gs: no instruction counts in this recording`). A refusal (no card
+breakpoint, no counts) and an answer that moved nothing (the start or the end of the history, no earlier hit) are
+said in a message with the core's words. The main CPU's tab acts on the main CPU as before; any main-CPU move ends
+the card position. A move in time or a pause keeps the tab in front (only a processor's own stop, a breakpoint or
+a step, brings its tab forward).
+
 ## Run
 
 ```text

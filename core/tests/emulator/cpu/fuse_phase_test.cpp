@@ -108,7 +108,7 @@ protected:
 
 TEST_F(FusePhase_Test, AllOpcodes)
 {
-    auto cases = FuseVectors::LoadCases();
+    auto cases = FuseVectors::LoadMainCoreCases();
     ASSERT_GT(cases.size(), 1000u) << "FUSE tests.in not found or truncated";
 
     // Documented divergence from the FUSE vectors (justified, not bugs):

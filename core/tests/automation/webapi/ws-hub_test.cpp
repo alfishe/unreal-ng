@@ -27,6 +27,9 @@
 #include "emulator/actions/targetstate.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/debugmanager.h"
+#include "debugger/ttd/timetravelcontroller.h"
+#include "debugger/ttd/ttdcontrol.h"
+#include "base/featuremanager.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatormanager.h"
@@ -1010,6 +1013,61 @@ TEST_F(WsHub_Test, RunStateCarriesThePaceAndItsChangeIsPushed)
     ASSERT_EQ(states("run.state").size(), 2u);
     EXPECT_EQ(states("run.state")[1]["value"]["pace"]["preset"].asString(), "1op");
     EXPECT_EQ(states("run.state")[1]["value"]["pace"]["interval_ms"].asInt(), 300);
+}
+
+/// ttd.branches: the branch table's summary and its last change, pushed when a branch is created or switched to;
+/// ttd.position names the cursor's branch once there is more than the trunk.
+/// Runtime: 30 recorded frames (~20 ms)
+TEST_F(WsHub_Test, TtdBranchesPushesTheLastChangeAndThePositionNamesTheBranch)
+{
+    EmulatorContext* context = _emulator->GetContext();
+    _emulator->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    _emulator->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ASSERT_TRUE(context->pTimeTravelController->StartRecording());
+    const uint64_t start = context->emulatorState.frame_counter;
+    _emulator->RunNFrames(30);
+    context->pTimeTravelController->StopRecording();
+
+    Inbox inbox;
+    Connect(inbox);
+    Send(inbox, R"({"op":"subscribe","topics":["ttd.branches","ttd.position"],"max_hz":20})");
+    auto states = [&](const std::string& topic) {
+        std::vector<Json::Value> out;
+        for (const Json::Value& message : inbox.Ops("state"))
+            if (message["t"].asString() == topic && message["instance"].asString() == _id)
+                out.push_back(message);
+        return out;
+    };
+    ASSERT_EQ(states("ttd.branches").size(), 1u);
+    EXPECT_TRUE(states("ttd.branches")[0]["value"]["last"].isNull()) << "no branch event yet";
+    ASSERT_EQ(states("ttd.position").size(), 1u);
+    EXPECT_FALSE(states("ttd.position")[0]["value"].isMember("branch")) << "the trunk alone: no branch fields";
+
+    ttd::TTDControl control(context);
+    const ttd::TTDReply created =
+        control.Execute({"branch-create", {{"name", "probe"}, {"frame", std::to_string(start + 10)}}});
+    ASSERT_TRUE(created.Ok()) << created.message;
+    _hub->OnChange(_id);  // NC_READOUTS_CHANGED "ttd.branches"
+    Advance(50);
+    _hub->Tick();
+    ASSERT_GE(states("ttd.branches").size(), 2u);
+    const Json::Value branches = states("ttd.branches").back()["value"];
+    EXPECT_TRUE(branches["available"].asBool());
+    EXPECT_EQ(branches["count"].asUInt(), 2u);
+    EXPECT_EQ(branches["active"]["name"].asString(), "probe");
+    EXPECT_EQ(branches["last"]["event"].asString(), "created");
+    EXPECT_EQ(branches["last"]["branch"]["name"].asString(), "probe");
+    EXPECT_FALSE(branches["last"]["branch"]["guid"].asString().empty());
+    const Json::Value position = states("ttd.position").back()["value"];
+    EXPECT_EQ(position["branch"]["name"].asString(), "probe");
+    EXPECT_EQ(position["branch_count"].asUInt(), 2u);
+
+    ASSERT_TRUE(control.Execute({"branch-switch", {{"branch", "0"}}}).Ok());
+    _hub->OnChange(_id);
+    Advance(50);
+    _hub->Tick();
+    EXPECT_EQ(states("ttd.branches").back()["value"]["last"]["event"].asString(), "switched");
+    EXPECT_EQ(states("ttd.branches").back()["value"]["active"]["name"].asString(), "trunk");
 }
 
 /// endregion </Readouts and topics>

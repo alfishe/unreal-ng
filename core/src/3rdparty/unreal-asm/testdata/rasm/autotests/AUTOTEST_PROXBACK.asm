@@ -1,0 +1,1 @@
+ macro grouik: @truc djnz @truc: .unprox djnz .unprox: mend:ld b,2: unglobal nop: djnz unglobal: ld b,2: .unprox nop: djnz .unprox: beforelocal=$ :repeat 2: @unlocal: ld b,2: .unprox nop: djnz .unprox: grouik : djnz .unprox : rend: assert .unprox < beforelocal : nop

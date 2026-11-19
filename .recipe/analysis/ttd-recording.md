@@ -35,7 +35,7 @@ time_travel {"action":"step_forward_frame"}
 time_travel {"action":"step_back_instruction"}
 time_travel {"action":"step_forward_instruction"}
 time_travel {"action":"markers"}                               # replay barriers
-time_travel {"action":"resume"}                                # needs detached (seek/step first); truncates the future
+time_travel {"action":"resume"}                                # needs detached (seek/step first); before the end a new branch forks there, the old future stays
 
 # bookmarks
 time_travel {"action":"bookmark_add","label":"before-crash"}   # at the current position
@@ -147,7 +147,8 @@ curl -s "$BASE/emulator/$EMU_ID/ttd/status" | jq '{
 | `write_journal_records` | write journal entries (0 when it was not recorded) |
 | `write_journal_segments` | the spans the write journal covers |
 | `history_limit_frames` / `history_limit_bytes` | the history limit (0 = none), see below |
-| `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit |
+| `history_bytes` / `evicted_checkpoints` | checkpoint data held now / oldest checkpoints released by the limit (no recording folder) |
+| `evicted_to_disk_segments` / `read_back_*` | with a recording folder: segments on disk only (still seekable) / the read-back cache a seek into them fills |
 | `ttd_available` | `false` → build lacks TTD (treat status as capability probe) |
 
 MCP: `time_travel` `{"action":"status"}`.
@@ -181,8 +182,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/stop" | jq '.state'
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/invalidate" | jq '.state'
 
 # Keep only the newest history while recording (long sessions, big machines
-# such as TSL-VDAC2 at ~0.6 MB per frame): the oldest frames are released,
-# the session start moves forward, a file saved later replays what is left.
+# such as TSL-VDAC2 at ~0.6 MB per frame). With a recording folder (unreal-qt)
+# older segments only leave memory: their files keep them and a seek reads one
+# back. Without one the oldest frames are released, the session start moves
+# forward, a file saved later replays what is left.
 # 0 = no limit; a field left out is kept. MCP: time_travel action
 # "history_limit" with history_frames / history_bytes (also on "start").
 curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/history-limit" \
@@ -301,6 +304,10 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/load" \
      -d '{"path": "scratch/session-001.ttd"}' | jq .
 ```
 
+A failed dump answers with the real reason (`reason`: `io` 409 with the system's words, `session` 409, `no_space`
+507 only for a full disk, `too_large` 500) and removes its `<path>.partial` file (`partial_removed`). Long sessions
+need no splitting: streams over the 1 GiB record limit are chunked.
+
 The path is opened by the **emulator process** (relative paths resolve
 against its working directory). A load only succeeds into an instance of
 the same model the session was recorded on; otherwise it answers 400 with
@@ -411,7 +418,7 @@ bitmaps — queried via `time_travel` MCP actions `coverage_probe` /
   (`media_version_differs`) only for another medium in the slot or a version
   past the slot's undo log (64 MB per slot). A write after a seek back drops
   the old future of that medium, as the recording's own.
-- **Rec From Here / `POST /ttd/resume`** sets every medium back too. One
+- **Branch Here / Continue Rec (formerly Rec From Here) / `POST /ttd/resume`** sets every medium back too. One
   that cannot go back (another disk in the drive, past the undo log) is
   decided by `media`: `empty` (default) ejects it (an event of the
   recording), `keep` leaves it, `ask` resumes nothing and answers

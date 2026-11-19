@@ -116,6 +116,7 @@ struct TTDSearchResult
     TTDAccessType access = TTDAccessType::Write;
     uint16_t     addr = 0;                  ///< the address (or port) accessed
     uint8_t      flip = 0;                  ///< Memory::TtdKeyOf: the byte is at (addr & #3FFF) ^ (flip << 13) of the page
+    uint16_t     sp = 0;                    ///< Execute hits: SP at the instruction's start (0 for other accesses)
 };
 
 /// @brief A single M1 (instruction-start) cycle recorded during reverse
@@ -138,6 +139,7 @@ struct TTDM1Record
     uint64_t globalT = 0;    ///< Absolute t-state since session start
     uint16_t pc      = 0;    ///< PC at the M1 cycle (opcode byte address)
     PhysPage physPage = kPhysPageNone;  ///< Physical RAM page behind pc, or kPhysPageNone
+    uint16_t sp      = 0;    ///< SP at the instruction's start (the stack level a reverse step over compares)
 };
 
 /// @brief Lightweight access probe, armed during reverse-search replay.
@@ -200,9 +202,9 @@ public:
     /// on the caller side (the probe doesn't reach into EmulatorContext —
     /// keeps it dependency-free).
     inline void RecordHit(const TTDTimePoint& t, uint16_t addr, uint16_t pc, uint8_t value,
-                          PhysPage physPage, TTDAccessType kind, uint8_t flip = 0)
+                          PhysPage physPage, TTDAccessType kind, uint8_t flip = 0, uint16_t sp = 0)
     {
-        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind, addr, flip});
+        _hits.push_back(TTDSearchResult{t, pc, value, physPage, kind, addr, flip, sp});
     }
 
     /// @brief Read-only view of recorded hits (control thread, post-replay).

@@ -1,0 +1,1 @@
+ld hl,labelused :ifdef labelused:fail 'labelexiste':endif:ifndef labelused:else:fail 'labelexiste':endif:ifnused labelused:fail 'labelused':endif:ifused labelused:else:fail 'labelused':endif:labelused

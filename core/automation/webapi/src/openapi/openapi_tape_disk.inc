@@ -112,7 +112,9 @@
          ["properties"]["block"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/tape/seek"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["block"]["description"] = "Zero-based block index";
-    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["200"]["description"] = "Seeked; resulting position returned";
+    paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["200"]["description"] =
+        "Seeked; resulting position returned. A tape still on its way (loaded while a TTD recording runs) answers "
+        "queued: true and takes the seek when it lands";
     paths["/api/v1/emulator/{id}/tape/seek"]["post"]["responses"]["400"]["description"] = "Block index out of range";
 
     paths["/api/v1/emulator/{id}/tape/blocks/{index}"]["get"]["summary"] = "Get one tape block descriptor with a payload preview";
@@ -264,7 +266,7 @@
          ["properties"]["format"]["description"] = "auto (default), unformatted (raw), plus3 or trdos";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["cylinders"]["description"] =
-        "Number of cylinders/tracks (40 or 80; default: 80 unformatted / trdos, 40 plus3)";
+        "Number of cylinders/tracks (1..86 unformatted, 40 or 80 trdos / plus3; default: 80 unformatted / trdos, 40 plus3)";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["sides"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/disk/{drive}/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]

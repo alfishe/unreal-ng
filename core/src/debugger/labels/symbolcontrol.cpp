@@ -244,14 +244,14 @@ const std::vector<std::string>& SymbolControl::OptionsFor(const std::string& ver
     static const std::map<std::string, std::vector<std::string>> options = {
         {"formats", {}},
         {"detect", {"path"}},
-        {"sets", {}},
-        {"import", {"path", "data", "name", "format", "set", "space", "base", "policy"}},
-        {"export", {"path", "format", "sets", "pages", "space", "from", "to", "kinds", "name"}},
-        {"set", {"id", "enabled", "priority"}},
-        {"drop", {"id"}},
+        {"sets", {"cpu"}},
+        {"import", {"path", "data", "name", "format", "set", "space", "base", "policy", "cpu"}},
+        {"export", {"path", "format", "sets", "pages", "space", "from", "to", "kinds", "name", "cpu"}},
+        {"set", {"id", "enabled", "priority", "cpu"}},
+        {"drop", {"id", "cpu"}},
         {"scan", {}},
         {"import-live", {"scanner", "page", "offset", "set", "policy"}},
-        {"import-source", {"path", "main", "set", "policy", "generated"}},
+        {"import-source", {"path", "main", "set", "policy", "generated", "cpu"}},
     };
     static const std::vector<std::string> none;
     const auto it = options.find(verb);
@@ -288,6 +288,19 @@ SymbolReply SymbolControl::Execute(const SymbolRequest& request)
         return Formats();
     if (verb == "detect")
         return Detect(request);
+    // "cpu": a card CPU's own store (gs-debugger design §6.2); the RAM scans read the main CPU's memory only
+    if (const auto cpu = request.options.find("cpu"); cpu != request.options.end())
+    {
+        DebugCpuId id = DebugCpuId::Main;
+        if (!DebugManager::ParseCpuName(cpu->second, id))
+            return Fail(SymbolControlError::BadRequest, "unknown cpu '" + cpu->second + "' (main, gs, ms)");
+        if (id != DebugCpuId::Main)
+        {
+            _labels = _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager(id) : nullptr;
+            if (!_labels)
+                return Fail(SymbolControlError::NotAvailable, "no " + std::string(DebugCpuName(id)) + " CPU in this emulator");
+        }
+    }
     if (!_labels)
         return Fail(SymbolControlError::NotAvailable, "the emulator has no label manager (debug manager not available)");
     if (verb == "sets")
@@ -374,6 +387,7 @@ SymbolReply SymbolControl::Sets()
     for (const SymbolSet& set : _labels->GetSymbolSets())
         reply.body["sets"].items.push_back(SetValue(set));
     reply.body["labels"] = static_cast<uint64_t>(_labels->GetLabelCount());
+    reply.body["cpu"] = _labels->Cpu();
     return reply;
 }
 

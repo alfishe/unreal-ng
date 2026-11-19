@@ -1,0 +1,1 @@
+macro test,idx: defb idx:endm:macro test2,idx:defb {idx}:endm:repeat 2,idx:test idx-1:test2 idx-1:rend

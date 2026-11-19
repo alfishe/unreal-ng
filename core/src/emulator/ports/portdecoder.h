@@ -715,6 +715,9 @@ public:
 
     uint8_t Default_Port_FE_In(uint16_t port, uint16_t pc);
     void Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc);
+    /// Border colour bits above the FE colour Default_Port_FE_Out hands the screen: the bright bit (8) of a machine
+    /// with a 16 colour border, set by its FE handler before the call (Pentagon 2.666 LE: NOT A3)
+    uint8_t _borderHighBits = 0;
 
     /// Standard Kempston Mouse address decode (A5-A0 = 011111, A9 = 1; A8/A10 select the register)
     static bool Standard_IsPort_KempstonMouse(uint16_t port, uint8_t& outRegister);
@@ -858,6 +861,16 @@ public:
     /// Sprinter board mouse), never the Kempston interface (Mouse): that one is then not wired, and
     /// automation does not offer it as a device (docs/inprogress/2026-10-03-mouse-api-routing/design.md)
     virtual bool HasMachineMouse() const { return false; }
+
+    /// A byte of the app a coprocessor of the machine runs, at an address of the app's ELF image (the TS-Conf
+    /// VDAC4 board's ESP32: DOOM-VDAC4, R-Type VDAC4). No side effects; emulation thread (the haptic probes'
+    /// `cpu: esp`, read at the frame end). False: no such coprocessor, no app running, or the address outside its image
+    virtual bool PeekEspAppByte(uint32_t address, uint8_t& value) const
+    {
+        (void)address;
+        (void)value;
+        return false;
+    }
 
     /// Pads beyond the Kempston byte: the ZX Next's two joystick connectors, 12 buttons each. A connector's state: bit 0 right, 1 left, 2 down,
     /// 3 up, 4 B (fire), 5 C, 6 A, 7 START, 8 Y, 9 Z, 10 X, 11 MODE (zxnext.vhd i_JOY_LEFT / i_JOY_RIGHT). Connector 0 is the left one (the
@@ -1086,6 +1099,7 @@ public:
             Atm2Kbc,  ///< ATM Turbo 2+: the keyboard controller's RS-232 (its MCU's UART, not on #xxEF)
             Profi8251,   ///< ZX Profi v5: the board's 8251 USART at #D3 / #F3 (extended port map), clocked by its 8253
             NextUart,    ///< ZX Next: the two UARTs at #133B-#163B (ESP = UART 0 = attachSerialPeer, Pi = UART 1 = attachSecondSerialPeer)
+            P2666Uart,   ///< Pentagon 2.666 LE: the FPGA's own 16550-like UART on #F8EF..#FFEF (attachSerialPeer)
         } serialPort = SerialPort::None;
 
         /// The serial port's firmware by config name (EvoAvr: [EVO] Avr=, Atm2Kbc: [ATM] Kbc=)
@@ -1404,6 +1418,11 @@ public:
     /// nothing, the machine already behaves like a 128K
     virtual void EnterSpectrum128Paging(uint16_t pc) { (void)pc; }
 
+    /// A 48K / 128K Spectrum state was committed (snapshot load, state transfer): its RAM is in pages 0..7 and its
+    /// #7FFD written. A model whose window shows another page than #7FFD bits 2..0 name (the Pentagon 2.666 maps a
+    /// locked machine's #C000 to page 32 + bank, its D-3) puts the bank there. Default: nothing
+    virtual void FinishSpectrum128State() {}
+
     /// A disk autostart's TR-DOS cold start (Reset(RM_DOS)) reached the TR-DOS command loop, right before it runs the
     /// disk's program: leave the paging the way the user's own boot of a disk would. True when it changed the machine.
     /// Default: nothing, the cold start already is that boot
@@ -1416,6 +1435,16 @@ public:
     /// model has no clock select (0, nothing to restore)
     virtual uint16_t GetClockSelect() const { return 0; }
     virtual void RestoreClockSelect(uint16_t select) { (void)select; }
+
+    /// The frame INT window in CPU clocks at the clock now in use, for a board whose INT pulse is not a fixed number
+    /// of base T (the Pentagon 2.666 LE: 32 CPU clock edges at any speed). INT is taken when start < t < end. False
+    /// (default): the window comes from config.intstart / intlen
+    virtual bool FrameIntWindow(uint32_t& start, uint32_t& end)
+    {
+        (void)start;
+        (void)end;
+        return false;
+    }
 
     /// Whether #7FFD paging is latched off until reset. A locked #7FFD ignores
     /// every later write, screen bit included, and keeps the value that locked

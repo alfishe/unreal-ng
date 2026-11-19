@@ -35,6 +35,10 @@ struct HapticWatch
 {
     uint16_t address = 0;
     uint16_t page = 0xFFFF;  ///< 0xFFFF: `address` through the current mapping; else the RAM page, `address & #3FFF`
+    /// `cpu: esp`: a byte of the app a coprocessor runs (the TS-Conf VDAC4 board's ESP32 app, DOOM), `espAddress` an
+    /// address of the app's ELF image (PortDecoder::PeekEspAppByte); `address` and `page` unused
+    bool esp = false;
+    uint32_t espAddress = 0;
 };
 
 /// A sample stream the DSP filters read (haptics.md §4 source selectors)
@@ -96,9 +100,19 @@ struct HapticProbeEvent
     uint8_t value = 0;
 };
 
+/// The floppy drive's mechanics this frame (the WD1793 of Beta 128 / Profi / Sprinter, the +3's uPD765): what a real
+/// drive does under the hand: the stepper's pulses
+struct HapticDriveFrame
+{
+    bool present = false;  ///< the machine has a floppy controller
+    uint16_t steps = 0;    ///< step pulses this frame (fast disk mode packs many into one)
+    uint8_t stepMs = 0;    ///< the step period the controller was told (3..30 ms): the drive's own pace
+};
+
 struct HapticFrame
 {
     uint64_t frame = 0;
+    HapticDriveFrame drive;
     static constexpr unsigned kMaxAy = 3;  ///< TurboSound 2, the Next 3
     std::array<HapticAyFrame, kMaxAy> ay{};
     unsigned ayCount = 0;

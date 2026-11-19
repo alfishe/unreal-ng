@@ -1,6 +1,6 @@
 # TTD branches: user surfaces and automation planes
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Model: [architecture.md](architecture.md).
+Part of [TTD branches](README.md). Status: **partly built**: §1 Qt panel (`66f6811ae`), the debuggers ([debuggers.md](debuggers.md), `0744664bb`), §5 every verb on every plane (`e0ac62a53`, `c675c6a37`), the `ttd.branches` topic and §5.3 the analyzer's loop (2026-11-13). Open: §2 actions and readouts, §3 Stream Deck, §4 controllers. Design 2026-11-08. Model: [architecture.md](architecture.md).
 
 Rule for every surface: without branches nothing changes (no new widget, key face or reply field appears until the
 session has a second branch). With branches, the default view is the active lineage with fork marks and the
@@ -20,8 +20,43 @@ branch count; the tree is on demand (Q-5).
 | Edit in the past (memory viewer, registers) | refused / stops the recording | allowed; the toast names the branch the edit started |
 | Black-box menu (`menumanager.cpp:1287-1313`) | | + "Branches..." (opens the tree), "Previous branch" |
 
+**Done in the TTD panel (2026-11-10).** The owner's rule: extend the panel's existing expanding rows instead of new
+popups or docks. So the chip, the tree and the fork popup became:
+
+- **Branches (N)** pill next to Advanced, hidden while the trunk is alone. It opens a **Branches row** below the
+  scrubber, which works like the Advanced row: it expands, the window grows by its height, and its open state is
+  kept in `ttd/branchesOpen`.
+  - The row holds the lanes (`branchlanes.cpp`): one row per branch in tree order, frames horizontal, connectors to
+    the parent and the current-moment line. The active branch is bold and pinned branches end in " *". Five lanes
+    are in sight; more scroll.
+  - Below the lanes are the buttons Switch, Rename..., Tags..., Note..., Pin / Unpin, Delete and Save Lineage...
+    (`dump lineage=true`); a right click on a lane offers the same.
+  - Switch is off for the active branch, and Delete is off for any branch on the active lineage. Delete asks first
+    only when the branch has children or is pinned.
+- **Slider** (`journalspanslider.cpp`):
+  - The lineage's parts off the trunk are tinted along the top.
+  - A fork mark appears where another future goes on: a branch leaving the line, or the parent's own future at the
+    point where the line left it (after a resume, that is the trunk's old future). Several branches leaving at one
+    point make the mark taller.
+  - Hovering a mark lists each branch with its length; a double click on a mark selects the branch and opens the row.
+- **After a fork** the status line reads "New branch '+00:00:25.150', previous future kept on 'trunk'" for 8 s. There is
+  no Back button: Switch in the row does it.
+- **Status line**: " | Branch: <name> (N)".
+- **Rec From Here** is gone. Where a recorded future follows the position the button reads **Branch Here**: it
+  records a new branch from there (the owner's choice, 2026-11-10: the fork must be visible on the button, not only
+  in its tooltip). At the end of the recording it reads **Continue Rec**: the same session goes on, while Start Rec
+  begins a new one. Both names fit the button, so the slider keeps its length.
+- **Under remote control** the panel turns none of its controls on (it updates them every 100 ms, the guard relocks
+  every 250 ms: the two made the panel flicker).
+
+Not built (the owner closed the work 2026-11-16; [DONE.md](DONE.md)): the main window's status bar, the lane
+filters (creator / tags / run), edits in the past from the panel, and writing a rename, note, tag or pin of a folder
+session to `branches.tdx` (it has no update record; a save from memory keeps them).
+
 Keyboard: `Ctrl+Alt+B` previous branch (the one left last), `Ctrl+Alt+Shift+B` the tree. Assigned through the action
-catalogue like the other TTD actions.
+catalogue like the other TTD actions. As built: the debugger keyboard profile (`profiles/debug/keyboard-default.yaml`)
+binds `key.ctrl.alt.b` to `ttd.branch_prev` and `key.ctrl.alt.shift.b` to the GUI command `unrealqt.ttd_branches`
+(the TTD panel with its Branches row).
 
 ## 2. Actions (shared by Qt, Stream Deck, controllers)
 
@@ -40,6 +75,31 @@ New built-in actions (`emulator/actions/builtinactions.cpp`), each a thin call i
 Readouts (the `show:` vocabulary, `readouts.h`): `ttd.branch.name`, `ttd.branch.count`, `ttd.branch.depth`,
 `ttd.branch.created_ago`, `ttd.branch.pinned`.
 
+**As built (P6, 2026-11-14).** The actions live in `emulator/actions/branchactions.cpp`, each a call into the
+TTDControl verb `branch-switch` / `branch-update` / `branch-delete`:
+
+- `ttd.branch_prev` is `branch-switch {to: previous}`. The trail is the controller's (`TimeTravelController::BranchTrail`):
+  every branch left by a switch on any plane, and by a fork, is pushed (no repeats, at most 64); a press pops back to
+  the last live entry other than the active branch, so presses walk further back. A `branch-create` with `go_back`
+  is one step (the branch it returns from), its internal switches leave nothing. Loading a session clears the trail.
+- `ttd.branch_next_sibling` / `ttd.branch_prev_sibling` are `branch-switch {to: next_sibling | prev_sibling}`. The
+  nearest fork: the last fork of the lineage at or before the current frame, else the first after it. The siblings:
+  the lineage's own branch there and the branches leaving there, by creation (time, then id), wrapping.
+- `ttd.branch_switch {branch, frame?, tinframe?}` is the branch menu's key; `ttd.branch_menu` returns the
+  `ttd.branch_list` value.
+- `ttd.branch_pin` pins / unpins the active branch (toggle state `toggle.ttd.branch_pin`).
+- `ttd.branch_delete {branch, now?}` is held: it deletes on the release after 1 s (`now`: at the press), never with
+  `force`, so pinned branches and the active lineage are refused with the reason.
+
+The readouts are one object each, so `ttd.branch.name` etc. are paths into it: `ttd.branch` {available, id, guid,
+name, count, depth (ancestors on the lineage), pinned, created_ago / age ("12s", "5m", "3h", "2d"), viewed {id, name},
+previous {id, name} | null, siblings (at the nearest fork), forks (the lineage's fork frames, at most 64: the deck strip's ticks)} and `ttd.branch_list` {available, active, count, total,
+items[] (at most 100: the active lineage first, then newest first) {id, name, age, pinned, active, on_lineage,
+length}}. The list is not called `ttd.branches`: that is the WebSocket topic of the branch table (it gained
+`previous`). Both read the published branch table only. Planes: `POST /ttd/branches/switch {to}` (REST, WebSocket
+call), MCP `time_travel branch_switch {to}`, CLI `ttd branch back` / `ttd branch sibling [next|prev]`, Lua / Python
+`ttd_branch_switch_to(to)`; `GET /ttd/branches` names `previous`.
+
 ## 3. Stream Deck (`companions/streamdeck/`, scenario `data/streamdeck/scenarios/src/unreal.spec.yaml`)
 
 | Element | With branches |
@@ -56,6 +116,23 @@ Prerequisite fix (finding F-2): the FRAME key reads `ttd.position.current.frame`
 `ttd-surface-contract` verification gets a case for it. The new branch readouts go into that contract from the
 start.
 
+**As built (P6).** Three scenario v2 fields carry it ([pipeline.md §3](../../companions/streamdeck/pipeline.md)):
+`long` (a key's or a menu key's long press: held 600 ms or more, it runs on the release), `list` (a menu's free keys
+filled from a readout array, paged by a dial that shows `PAGE n/m`) and `press_turn` (a dial turned while pressed;
+the dial's press then runs on the release, only when it did not turn). The strip subscribes `ttd.branch` with the
+timeline: with more than one branch it draws the active branch's name after the state word and a green fork tick at
+every fork frame of the lineage (`StripLive::Key` holds the count, the name and the forks, so only a change of them
+repaints). The product scenario: home [3,2] BRANCH is the `branches` menu key, a value key `{name}` over `{count} BR`,
+a long press `ttd.branch_prev`; the OPS dial keeps turn `ttd.jog_instructions` and press `ttd.resume_live`, turned
+while held it walks the siblings (`ttd.branch_prev_sibling` / `ttd.branch_next_sibling`). The Time menu adds PREV BR
+[2,2], SIB < [2,6], SIB > [2,7] and PIN [3,4] (lit while `ttd.branch.pinned`). The `branches` menu (context ttd,
+strip status ttd) lists `ttd.branch_list.items` on its free keys: the name with `*` when pinned, the age as the value,
+lit when active, dimmed off the active lineage; a press is `ttd.branch_switch {branch: $id}`, a long press deletes it
+(`ttd.branch_delete {branch: $id, now: true}`): no DELETE key, the delete is the long press on a list item. PREV BR
+and PIN sit in its row 0; dial 0 turns the pages. Not built: the long touch on a fork tick (the strip seeks on a touch
+as before), and the BRANCH key is always shown (the scenario format has no visibility rule, so it cannot wait for a
+second branch).
+
 ## 4. Controllers
 
 | Device | Mapping |
@@ -66,6 +143,12 @@ start.
 | Paddles | unchanged |
 
 Profiles under `data/controllers/profiles/` get the new actions in their defaults; users remap as today.
+
+**As built (P6).** ShuttlePRO: K12 stays reverse continue; K14 held + K12 is the previous branch (a chord, like
+K14 + jog). Pad (`pad-default.yaml`): `view+east` chord, east alone stays resume. Surface Dial: not built. Windows'
+wheel menu is suppressed for the emulator's window by design (controller manager surface-dial.md §4.1: the emulator
+reads the Dial through HID), and the router has no long press, so there is no press-hold menu to add to; the Dial
+keeps scrubbing the active lineage. Tested by `BranchBindings_Test` (T-A6).
 
 ## 5. Automation planes
 
@@ -85,6 +168,30 @@ all through `TTDControl` verbs.
 | `branch-prune` | the `branches` filter, `dry_run` (default true) | the list that is (would be) deleted, bytes freed |
 | `save` (existing `dump`) | + `lineage=<branch>` | the file; default all branches |
 
+As built (2026-11-13):
+
+- **`branch-create`** takes flat options: `frame` / `tinframe` (default the current moment; on a stopped recording the
+  machine seeks there first, a moment outside the history is refused) or `branch` (fork on it, at `frame` / `tinframe`
+  on it, default its end), `name`, `reason` (stored as `create` or `create: <reason>`), `tags`, `note`, `pinned`,
+  `run` (the run id), `created_by` (default the calling plane: `cli`, `webapi`, `mcp`, `lua`, `python`, ...), `media`
+  (as `resume`). An explicit branch stays while it is still empty (a resume's empty tip is dropped, a created one is
+  not). The run: `run_frames` (at most 10000) recorded frames with an input script `input`, each line
+  `frame:key[+key][:hold|:down|:up]` (frame counted from the branch start, hold in frames, default 2, 1..1000; `down`
+  / `up` hold or release until told; the presses are journaled like any keyboard input), then `read` (`addr[:len]`,
+  len 1..256: `reads[] {address, length, bytes, hex}`) where the run ended, then `go_back` (the option is not called
+  `return`: a keyword in Lua and Python) switches back to the branch and moment the call started from. A run the user
+  takes control from stops (`aborted`).
+- **`branch-info`** gives `children` (with fork and length), `ancestors` (from the trunk), the branch's segment
+  `files` and `file_bytes`.
+- **`branch-prune`** needs at least one filter; it never deletes a branch on the active lineage, a pinned one or one
+  holding either below it: each stays in `kept` with the reason. A selected branch whose ancestor is selected goes
+  with it. The selected branches go in one delete (`TimeTravelController::DeleteBranches`): one batch of
+  delete records in `branches.tdx`, one sync, one sweep of the files, one publish and one `deleted` event counting
+  them all. The reply counts the frames, the file bytes and the memory freed.
+- **Events**: the controller publishes the last branch change (`created`, `switched`, `updated`, `deleted`, with a
+  sequence number, the branch and how many a delete removed) with the branch table; the WebSocket topic
+  `ttd.branches` pushes it (`NC_READOUTS_CHANGED` area `ttd.branches`, never per frame).
+
 Existing verbs: positions take an optional `branch` (`seek`, `resume`, `bookmark-add`, `memory-at`, `diff`
 between two moments of the lineage, `find-*`); replies carry `branch` in every position when the session has
 branches. `resume` reports `{branch: new, kept: old}` and no longer "history after that point was discarded".
@@ -95,15 +202,37 @@ branches. `resume` reports `{branch: new, kept: old}` and no longer "history aft
 |---|---|
 | CLI (`cli-processor-ttd.cpp`) | `ttd branches`, `ttd branch create|switch|update|delete|prune|info` |
 | REST (`emulator_api.h`, `api/ttd_api.cpp`) | `GET /api/v1/emulator/{id}/ttd/branches`, `POST .../branches`, `GET|PATCH|DELETE .../branches/{branch}`, `POST .../branches/{branch}/switch`, `POST .../branches/prune` |
-| WebSocket | every route as a `call`; topic `ttd.position` gains `branch {id, guid, name}` and `branch_count` (only with branches); new topic `ttd.branches` with `{event: created|updated|deleted|switched, branch}` |
+| WebSocket | every route as a `call`; topic `ttd.position` gains `branch {id, guid, name}` and `branch_count` (only with branches); new topic `ttd.branches` with `{available, count, revision, active, viewed, last: {seq, event: created|updated|deleted|switched, branch, removed}}` |
 | MCP `time_travel` (`mcp-tools.cpp`) | actions `branch_list`, `branch_info`, `branch_create`, `branch_switch`, `branch_update`, `branch_delete`, `branch_prune`; the text answers name the branch and stay inside the answer budgets (lists summarised past 20 rows) |
-| Lua / Python | `emu:ttd_branches()`, `emu:ttd_branch_create{...}` and the same set |
+| Lua / Python | Lua `ttd_branches{...}`, `ttd_branch_info`, `ttd_branch_create{...}`, `ttd_branch_switch`, `ttd_branch_update`, `ttd_branch_delete`, `ttd_branch_prune{...}`; Python `emu.ttd_branches(...)` and the same set with keyword options |
 
 ### 5.3 The analyzer (UC-5)
 
-The analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes its
-branches with `branch-prune {run: <id>}` after the run, unless it pins the ones it reports. Its positions name
+Design: the analysis pipeline uses `branch-create` with `run` and `createdBy = analyzer` plus its run id; it removes
+its branches with `branch-prune {run: <id>}` after the run, unless it pins the ones it reports. Its positions name
 branches by GUID so a human can open them.
+
+As built (2026-11-13, owner decision: clones, a branch on request):
+
+- **Experiments stay on analysis clones.** `analysis experiment` runs every spec on a muted headless clone seeked
+  from the captured trace (the L3 pool, `l3experiment.h`); the source instance is not touched by default. Running
+  hundreds of experiments as branches of the user's session would fill its table and pause the user's machine for
+  each one.
+- **A branch on request.** A spec with `"keep_branch": true` (or a name, 1..63 characters), or the action option
+  `keep_branches=observed|all` (default `asked`), replays the experiment in the source instance's TTD session after
+  the batch (`l3experimentbranch.h`): `branch-create` at the experiment's start frame, its pokes and registers as tool
+  edits (`poke` / `regs`, recorded so the branch replays them), its input as the input script (keys, `joy.<button>`,
+  `release_all`), its frames as `run_frames`, `created_by analyzer`, the batch's run id (`run`, default
+  `experiment-<n>`), tags `analyzer,experiment[,<finding>]`, the claim and the result line as the note, then
+  `go_back`. The memory checks' bytes are read on the branch and compared with the clone's: each result carries
+  `branch {created, id, guid, name, run, reproduced, mismatch}` (or `{created: false, error}`); the reply counts
+  `branches_kept` and names `branch_run`. `ttd branch prune --run <id> --apply` removes them.
+- **Not kept**: a coverage experiment's pins (a byte held before every instruction has no branch form), an
+  experiment that did not run, and one whose medium changed after its start frame (`media ask`: the reply names the
+  decision, the analyzer does not make it).
+- The source ends paused where it stood (`branch-create` pauses first). A recording in progress ends at its last
+  committed frame (the fork closes the branch it recorded), and `go_back` returns to that frame: the frame that was in
+  progress was never recorded.
 
 ## 6. External debuggers
 

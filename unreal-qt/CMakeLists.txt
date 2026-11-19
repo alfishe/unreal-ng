@@ -705,12 +705,22 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/recordingplan_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdwidget.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdbranchcommands.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/ttdbranchcommands.h"
+        # The TTD panel's Branches row: the lanes, the actions, the slider's fork marks (TTD branches surfaces.md §1)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/ttdwidget_branches_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/branchlanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/branchlanes.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/tintedsvgicon.h"
         # The window as a view of TargetState, the surface icon and the surfaces table (Stream Deck targeting.md)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/surfacetargets_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacetargets.h"
+        # The handheld menu's browser: a slot that takes a host folder is offered the folder shown
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/handheldbrowser_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/handheld/handheldbrowser.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/handheld/handheldbrowser.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestable.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/controllers/surfacestatusicon.cpp"
@@ -801,6 +811,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.h"
+        # The Embedded debugger's time controls and branch drop-down (TTD branches debuggers.md §4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggertimetravel_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
@@ -828,6 +842,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/savesnapshotchoices_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/savesnapshotchoices.h"
+        # Machine > Transfer State To: open instances, models, the request and the report (model what-if W0b)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/statetransferchoices_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/statetransferchoices.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/emulator/statetransferchoices.h"
         # The CRT model both screen backends share: the GPU picture is the software one bit for bit
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/crtrenderer_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/crtrenderer.cpp"

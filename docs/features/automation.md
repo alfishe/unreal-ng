@@ -72,7 +72,7 @@ Supported models (see [Profi 1024](../hardware/profi-1024.md) for that machine):
 ```
 pause                   # Pause emulation
 resume                  # Resume emulation
-reset                   # Hardware reset
+reset [hard]            # Soft reset (the reset button); hard = power cycle
 ops [n|all]             # Operation log: reset, snapshot, media changes, refusals (ops since <seq> polls)
 switch [turbo|cpm [on|off]] # Front-panel switches (Profi TURBO, v5 CP/M); recorded by TTD
 step / stepin           # Execute one instruction
@@ -88,6 +88,26 @@ run_to_interrupt        # Run until next interrupt
 stepout                 # Run until the current subroutine returns
 skip_until <pc> [max_tstates]  # Fast-forward until PC reaches target
 ```
+
+#### Reset: soft and hard
+
+A soft reset is the reset button (`Emulator::Reset()`); a hard reset is a power cycle (`Emulator::Reset(true)`: the
+same reset, then `PortDecoder::PowerCycle()` puts the board in its power-on state and held host keys are released).
+On most machines the two look alike; on the ZX Next the soft one restarts NextZXOS at once and the hard one runs the
+boot ROM, the logo and the firmware again ([command-interface.md](../emulator/design/control-interfaces/command-interface.md)).
+
+| Plane | Soft | Hard |
+|:--|:--|:--|
+| CLI | `reset` | `reset hard` (`--hard`) |
+| Python | `emu.reset()` | `emu.reset(hard=True)` |
+| Lua | `emu:reset()` | `emu:reset{hard = true}` (`emu:reset(true)`) |
+| MCP | `emulator_manage {action: reset}` | `emulator_manage {action: reset, hard: true}` |
+| REST | `POST /api/v1/emulator/{id}/reset` | the same with `{"hard": true}` or `?hard=true` |
+| WebSocket | `{"op":"call","method":"POST","path":"/api/v1/emulator/{id}/reset"}` | the same with `"body":{"hard":true}` |
+| Qt | Run > Reset | Run > Hard Reset (Power Cycle) |
+
+The answer names the kind (`"reset": "soft" | "hard"`; CLI `Emulator reset (soft)` / `(hard)`), and the operation
+log records it (`reset soft` / `reset hard`). No topic: a reset changes no state a client polls beyond `run.state`.
 
 #### State Inspection
 ```
@@ -218,6 +238,8 @@ audiocapture stop / clear         # Stop early / drop the buffer
 audiocapture status               # Captured/target sample counts
 audiocapture result               # Peak/RMS stats per channel
 audiocapture save <path.wav>      # Export captured audio to WAV
+sectiontimer start Plasma break-if "Frame>69888"   # Section timing at full speed
+sectiontimer status               # Count, min, avg, max, net per section
 videorecord status                # Recording state + stats (default)
 videorecord start [format] [file] # Start recording (gif default; --fps N, --scale N,
                                   #   --audio aac for a sound track, --video-bitrate / --audio-bitrate KBPS,
@@ -271,7 +293,7 @@ Interactive documentation available at `/api/swagger`
 | POST | `/api/v1/emulator/{id}/stop` | Stop |
 | POST | `/api/v1/emulator/{id}/pause` | Pause |
 | POST | `/api/v1/emulator/{id}/resume` | Resume |
-| POST | `/api/v1/emulator/{id}/reset` | Reset |
+| POST | `/api/v1/emulator/{id}/reset` | Reset: soft (the reset button); `{"hard": true}` or `?hard=true` = power cycle; the answer's `reset` says `soft` / `hard` |
 | GET | `/api/v1/emulator/{id}/operations` | Operation log (`?since=<seq>&limit=<n>`): reset, autostart, snapshot load, media changes, refusals - frame, mode, result, TTD effect |
 | GET | `/api/v1/emulator/{id}/switches` | Front-panel switches (Profi TURBO, v5 CP/M) |
 | POST | `/api/v1/emulator/{id}/switches` | Flip one: `{"name": "turbo", "on": true}` |
@@ -467,7 +489,7 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
 - The response is a per-item report: `items[]` with `status` `copied` / `dropped` / `refused` / `note`, plus `summary` as text. A device the target lacks is `dropped`; the rest proceeds.
 - **Floppies and the tape follow** into the same slots as the target's own in-memory copies: same contents (the source's unsaved writes included), clean, and standing for a postfixed file - `game.trd` becomes `game.pentagon-1a2b3c4d.trd` - so a save on the target never overwrites the source's image. Their controllers follow with them (Beta 128 / WD1793 mid-command, the tape deck mid-block): the target takes the source's time axis, so the disk's rotation phase and the pulse in flight hold. An empty source drive empties the target's. A target floppy or tape with unsaved writes refuses the transfer.
 - **NOT moved (by design, for now): SD cards, hard disks and CDs.** The target keeps its own, and their controllers (IDE channel, Z-Controller) keep the target's state. Every report carries an explicit `SD / HDD / CD` item saying so.
-- The target's TTD session is dropped (409 while it records).
+- The target leaves its own TTD history at the transfer's commit point (the state is teleported); a recording target is not refused.
 
 **What can be moved where (owner rule 2026-10-07).** The state transfer is the emulator's own mechanism, separate from loading and saving snapshot files, and it is never merged with them. It works as long as it is physically possible for the target to hold the state. A *Spectrum state* is a 48K state, or a 128K-class state (128K, +2, +2A / +3 in a plain mode, Pentagon, Scorpion without its extensions) - or a machine that runs a plain Spectrum 128K layout (an ATM, a Profi, a Sprinter in a ZX mode).
 
@@ -484,7 +506,39 @@ curl -X POST http://localhost:8090/api/v1/emulator/{id}/snapshot/transfer \
 
 The report names what moved (`items[]`) and, for a refusal, why. Not moved to a Sprinter: a TR-DOS session (its TR-DOS follows its own M1 trap rule), devices the source has and a Sprinter lacks (dropped, as everywhere); a Sprinter target is not reset, so devices the source lacks keep the Sprinter's own state.
 
-MCP: `emulator_manage` action `transfer_state` (`to` or `model` + optional `ram_size`, `check`). Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
+**Every plane.** One verb, `StateTransferControl` (`core/src/loaders/snapshot/statetransfercontrol.h`), behind every
+surface: the same options, the same report (`ok`, `mode` `clone` / `cross-model`, `reason`, `items[]`, `copied` /
+`dropped` / `refused`, `summary`, `source_id`, `target_id`, `created`, `state`, and `model` / `ram_kb` for a new
+instance) and the same refusals.
+
+| Plane | Into an existing instance | Into a new instance |
+|:--|:--|:--|
+| CLI | `snapshot transfer <id> [--check] [--no-keep-frame] [--json]` | `snapshot transfer --model PENTAGON [--ram 512] [--id <symbolic>] [--start \| --no-start]` |
+| Lua | `transfer_state{to = id, check = true}` | `transfer_state{model = "PENTAGON", ram_size = 512}` |
+| Python | `unreal.transfer_state(to=id, check=True)` | `unreal.transfer_state(model="PENTAGON", ram_size=512)` |
+| MCP | `emulator_manage` `transfer_state` with `to`, `check` | `transfer_state` with `model`, `ram_size`, `symbolic_id`, `start` |
+| REST | `POST /api/v1/emulator/{id}/snapshot/transfer` `{"to": id, "check": true}` | the same route `{"model": "PENTAGON", "ram_size": 512}` |
+| WebSocket | `{"op":"call","method":"POST","path":"/api/v1/emulator/{id}/snapshot/transfer","body":{"to": id}}` | the same `call` with `{"model": ...}` |
+| Qt | Machine > Transfer State To > an open instance: checked first, the report shown, the user confirms | Machine > Transfer State To > New Machine > a model |
+
+- `keep_frame_position` (CLI `--no-keep-frame`) keeps the source's in-frame position when both models share the frame
+  geometry (default true). `start` (new instance) defaults to "when the source runs and is not paused".
+- The source is the selected instance (CLI, Lua, Python; `emulator_id=` in Python), the route's `{id}` (REST, WebSocket),
+  `target` (MCP), the machine the window shows (Qt).
+- Answers: 200 the report (check, or a transfer into an existing instance), 201 a new instance, 422 a refused report
+  (nothing changed, nothing left behind), 400 / 404 / 409 / 503 `{"error", "message"}` without a report. The CLI prints
+  the report as text (`Transfer check <src> -> <dst>: possible`, `Transferred <src> -> <dst> (new instance, PENTAGON
+  512K)`, `Transfer refused ...`, then `mode: ...; copied N, dropped N, refused N`, then the item lines) or the JSON
+  with `--json`; Lua returns the table, or `nil, "Conflict: <reason>"` without a report; Python the dict, or
+  `RuntimeError` without a report.
+- An existing target's machine state coordinator is asked first (`Emulator::AskModelSwitch`): its refusal is the 409.
+  Today it refuses only a removed (retired) machine, which the 503 check answers first, so a 409 needs a removal racing
+  the request. A check (`check` / `--check`) opens no implicit run-control session; a transfer does, like every
+  changing request ([automation gate](../emulator/design/control-interfaces/command-interface.md)).
+- WebSocket: every REST route is a socket `call` running the same handler (no transfer-specific code); a new instance
+  shows up on the `instances` topic like any created machine.
+
+Core API: `MachineStateTransfer` (`core/src/loaders/snapshot/machinestatetransfer.h`).
 
 #### Command Batching
 For VideoWall and bulk operations:
@@ -537,7 +591,7 @@ end
 - `video_layout`, `video_pixel`, `video_pixel_at`, `video_address`, `video_address_in`, `video_address_z80`, `video_text` - Video debug translation (what makes a pixel, which pixels a byte, a sprite attribute word or a palette cell feeds)
 - `video_temporal`, `video_temporal_set` - ZX DLSS de-flicker status and switch (the picture and sound are delayed by the algorithm's look-ahead while it is on)
 - `operations(since, limit)` - the operation log: reset, autostart, snapshot load, media changes and refusals, with frame, machine mode, result and TTD effect
-- `coverage_*`, `ay_log_*`, `audio_capture_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
+- `coverage_*`, `ay_log_*`, `audio_capture_*`, `section_timer_*`, `video_record*` globals - Analyzers and capture (same surface as the CLI commands)
 - `assemble`, `listing_*` globals - In-place assembly and source-level stepping
 - `ttd_*` globals - Time-Travel Debugging (record, seek, reverse search, dump/load, file info before loading)
 
@@ -707,7 +761,7 @@ emu.save_state(slot) / emu.load_state(slot)
 ```python
 emu.run_frames(n) / emu.run_tstates(n)
 emu.pause() / emu.resume()
-emu.reset()
+emu.reset() / emu.reset(hard=True)   # soft (the reset button) / power cycle
 emu.get_switch("turbo") / emu.set_switch("turbo", True)   # Profi front-panel switch; None without it
 emu.step_out() / emu.skip_until(pc)
 ```

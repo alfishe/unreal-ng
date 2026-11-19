@@ -8,9 +8,11 @@
 #   ./install.sh --remove     # remove the app, the launcher and the Steam library entry
 #
 # Steam reads its library (shortcuts.vdf) and the artwork (grid/) when it starts and writes the library back when it
-# stops, so the entry and its pictures are written with Steam stopped (steam-library.py): Steam is stopped for a
-# moment and started again (Game Mode's session starts it by itself). Not while a game runs: the script says so and
-# leaves the library alone; run it again afterwards.
+# stops, so the entry and its pictures are written with Steam stopped (steam-library.py). Every run re-registers the
+# entry (an install, an update, a redeploy): Steam is stopped for a moment, the entry and its artwork are rewritten,
+# Steam is started again. In Game Mode Steam is the user unit steam-launcher.service, which gamescope-session.target
+# upholds (systemd starts it again at once): the unit is masked for the moment of the write and always unmasked and
+# started afterwards. Not while a game runs: the script says so and leaves the library alone; run it again afterwards.
 set -euo pipefail
 # The whole script is one block, parsed before it runs: an update that rewrites this file while it runs (install.sh
 # copies itself into the app) cannot make bash read half of the new file
@@ -40,6 +42,13 @@ done
 # Steam stopped around a library change and started again as it was; false when a game runs (it would end)
 STEAM_WAS_RUNNING=0
 GAME_MODE=0
+STEAM_UNIT=steam-launcher.service
+restore_game_mode_steam() {
+  [ "$GAME_MODE" = 1 ] || return 0
+  systemctl --user unmask --runtime "$STEAM_UNIT" > /dev/null 2>&1 || true
+  systemctl --user start "$STEAM_UNIT" > /dev/null 2>&1 || true
+  GAME_MODE=0
+}
 stop_steam() {
   pgrep -x steam > /dev/null || return 0
   if pgrep -f "reaper SteamLaunch" > /dev/null; then
@@ -47,15 +56,26 @@ stop_steam() {
     return 1
   fi
   STEAM_WAS_RUNNING=1
-  pgrep -f gamescope-session > /dev/null && GAME_MODE=1
-  steam -shutdown > /dev/null 2>&1 &
+  if systemctl --user is-active --quiet "$STEAM_UNIT" 2> /dev/null; then
+    # Game Mode: the session upholds the unit, so a plain shutdown is undone at once. Masked (in /run only, gone on
+    # reboot) it stays down; the trap brings Steam back whatever happens to this script
+    GAME_MODE=1
+    trap restore_game_mode_steam EXIT
+    systemctl --user mask --runtime "$STEAM_UNIT" > /dev/null 2>&1
+    systemctl --user stop "$STEAM_UNIT"
+  else
+    steam -shutdown > /dev/null 2>&1 &
+  fi
   for _ in $(seq 1 120); do pgrep -x steam > /dev/null || return 0; sleep 0.5; done
   echo "Steam library: Steam did not stop, not changed" >&2
+  restore_game_mode_steam
   return 1
 }
 start_steam() {
   [ "$STEAM_WAS_RUNNING" = 1 ] || return 0
-  if [ "$GAME_MODE" = 0 ]; then   # Game Mode's session starts Steam again by itself
+  if [ "$GAME_MODE" = 1 ]; then
+    restore_game_mode_steam
+  else
     systemd-run --user --quiet --collect steam > /dev/null 2>&1 || (setsid steam > /dev/null 2>&1 &)
   fi
   for _ in $(seq 1 120); do pgrep -x steam > /dev/null && break; sleep 0.5; done
@@ -76,6 +96,18 @@ if [ "$REMOVE" = 1 ]; then
 fi
 
 [ -f "$SRC/UnrealNG.AppImage" ] || { echo "no UnrealNG.AppImage beside $0" >&2; exit 1; }
+
+# A running Unreal NG (from Steam or the menu) is closed first: an update replaces it, and Steam counts it as a running
+# game, which would block the re-registration. Another game still blocks it (stop_steam says so)
+# the AppImage runtime and the app it starts from its mount (/tmp/.mount_UnrealN*/AppRun.wrapped)
+own_pids() { pgrep -f "^($APP_DIR/UnrealNG\.AppImage|[^ ]*/\.mount_UnrealN[^/ ]*/)" || true; }
+if [ -n "$(own_pids)" ]; then
+  kill $(own_pids) 2> /dev/null || true
+  for _ in $(seq 1 40); do [ -z "$(own_pids)" ] && break; sleep 0.25; done
+  [ -z "$(own_pids)" ] || kill -KILL $(own_pids) 2> /dev/null || true
+  for _ in $(seq 1 40); do pgrep -f "reaper SteamLaunch.*$LAUNCHER" > /dev/null || break; sleep 0.25; done
+  echo "app: the running Unreal NG closed"
+fi
 
 # The app: copied whole, then switched in (an update never leaves half an app behind)
 mkdir -p "$APP_DIR"
@@ -111,14 +143,17 @@ fi
 update-desktop-database "$APPS" 2>/dev/null || true
 echo "launcher: $DESKTOP_FILE"
 
-# The Steam library entry with its poster, wide capsule, hero, logo and icon, written while Steam is stopped; Steam
-# is left alone when they are in place already
-if python3 -I "$APP_DIR/steam-library.py" check --name "$NAME" --exe "$LAUNCHER" --art "$APP_DIR/art"; then
-  echo "Steam library: up to date"
-elif stop_steam; then
+# The Steam library entry with its poster, wide capsule, hero, logo and icon, re-registered on every run while Steam
+# is stopped (same app id, so the Game Mode entry and its launch id stay); then checked
+if stop_steam; then
   python3 -I "$APP_DIR/steam-library.py" add --name "$NAME" --exe "$LAUNCHER" --start-dir "$APP_DIR" \
     --icon "$APP_DIR/art/icon.png" --shortcut-path "$DESKTOP_FILE" --art "$APP_DIR/art" || true
   start_steam
+  if python3 -I "$APP_DIR/steam-library.py" check --name "$NAME" --exe "$LAUNCHER" --art "$APP_DIR/art"; then
+    echo "Steam library: $NAME registered"
+  else
+    echo "Steam library: $NAME NOT registered (see above)" >&2
+  fi
 fi
 
 # The Stream Deck (Elgato) over USB: the daemon in the AppImage reads it through hidraw, which needs the udev rule

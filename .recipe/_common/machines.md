@@ -29,6 +29,7 @@ what create requests accept). `ram_size` is validated against the model's
 | `SCORPION` | ZS Scorpion | 256, 1024 | creatable |
 | `PROFSCORP` | ZS Scorpion + PROF ROM | 256, 1024 | creatable |
 | `GMX` | ZS Scorpion + GMX | 2048 | creatable; the GMX card's loader (plane 0) enters the Scorpion 128 menu in plane 4, see [machines/gmx.md](../machines/gmx.md) |
+| `P2666` | Pentagon 2.666 LE | 2048 | creatable; always boots Gluk at 28 MHz, ATM shadow layer, RAM-disk Beta Disk, SD (see [machines/pentagon-2666.md](../machines/pentagon-2666.md)) |
 | `PROFI` (alias `PROFI5`) | Profi v5 | 512, **1024** | creatable; IDE hard disks on `ide0.master` / `ide0.slave` (see [machines/profi.md](../machines/profi.md)) |
 | `PROFI3` | Profi v3 | **512**, 1024 | creatable; Kramis BIOS, monochrome hi-res, no palette, extended ports, RTC or IDE (see [machines/profi.md](../machines/profi.md)) |
 | `TSL` (alias `TSCONF`) | TS-Config | 4096 | creatable; TS-BIOS, TSU, DMA, SD slot `sd.zc` (see [machines/tsconf.md](../machines/tsconf.md)) |
@@ -41,6 +42,7 @@ runtime list too:
 | Name | What it is |
 |:--|:--|
 | `48K-BETA128` (aliases `48K-TRDOS`, `48K-BETA`) | ZX-Spectrum 48K with the Beta 128 disk interface (TR-DOS 5.03, no `#7FFD`): the Leningrad-like 48K + TR-DOS target, see [machines/48k-beta128.md](../machines/48k-beta128.md) |
+| `48K-PLUSD`, `128K-PLUSD` (aliases `48K-PLUS-D`, `128K-PLUS-D`) | ZX-Spectrum 48K / 128K with the MGT +D disk interface (G+DOS, WD1772, 2 drives, `.mgt`, disk autostart), see [machines/plusd.md](../machines/plusd.md) |
 | `TSL-VDAC2` (alias `TSCONF-VDAC2`) | TS-Conf with the VDAC2 card (FT812 graphics on the IDE connector), see [machines/tsconf-vdac2.md](../machines/tsconf-vdac2.md); list entry has `variant: true`, `base_model` |
 | `PROFI-PLUS` (alias `PROFIPLUS`) | Profi v5 with the V0.03 port decoder (`[PROFI] ExtPorts=v003`) and ROM BIOS Plus 0.41h1: PQ-DOS, DOS Navigator, see [machines/profi.md](../machines/profi.md) |
 | `ZXPOLY-48K`, `ZXPOLY-128K`, `ZXPOLY-PENTAGON` | four synchronized instances of the base model, see [machines/zxpoly.md](../machines/zxpoly.md); list entry has `zxpoly: true`, `base_model` |

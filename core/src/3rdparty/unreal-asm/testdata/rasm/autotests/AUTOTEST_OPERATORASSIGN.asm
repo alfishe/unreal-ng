@@ -1,0 +1,1 @@
+a=5 : a*=3 : assert a==15 : a/=5 : assert a==3 : a&=2 : assert a==2 : a+=10 : assert a==12 : a-=3 : assert a==9 : a%=5 : assert a==4 : a|=1 : assert a==5 : a<<=3 : assert a==40 : a>>=1 : assert a==20 : nop

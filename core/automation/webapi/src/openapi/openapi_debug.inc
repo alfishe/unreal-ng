@@ -281,6 +281,108 @@
         post["responses"]["400"]["description"] = "Body without a boolean 'enabled'";
     }
 
+    // GET / PUT /api/v1/emulator/{id}/debug/selected_cpu - the CPU the front-ends show (gs-debugger design §5.2)
+    {
+        const char* kPath = "/api/v1/emulator/{id}/debug/selected_cpu";
+        Json::Value& get = paths[kPath]["get"];
+        get["summary"] = "The CPU the debugger front-ends show";
+        get["tags"].append("Debug Commands");
+        get["description"] =
+            "{cpu: main | gs | ms, follows}. One per machine, the last front-end's choice. A card CPU shown follows the "
+            "main CPU's steps of the paused machine (step, steps, run_tstates, run_frames) in tight mode: the card runs up "
+            "to the main CPU's time at every main instruction start and at the step's end, so its registers and memory "
+            "are the ones at the main CPU's moment (follows: a card is shown and is in its slot). Costs nothing while "
+            "the machine runs.";
+        get["parameters"][0]["name"] = "id";
+        get["parameters"][0]["in"] = "path";
+        get["parameters"][0]["required"] = true;
+        get["parameters"][0]["schema"]["type"] = "string";
+        get["responses"]["200"]["description"] = "{cpu, follows}";
+
+        Json::Value& put = paths[kPath]["put"];
+        put["summary"] = "Show a CPU in the debugger front-ends";
+        put["tags"].append("Debug Commands");
+        put["description"] = "Body {\"cpu\": \"gs\"} (or ?cpu=gs); main stops a card following the main CPU's steps.";
+        put["parameters"] = Json::Value(Json::arrayValue);
+        put["parameters"].append(get["parameters"][0]);
+        put["parameters"][1]["name"] = "cpu";
+        put["parameters"][1]["in"] = "query";
+        put["parameters"][1]["description"] = "main, gs or ms (or the body's cpu)";
+        put["parameters"][1]["schema"]["type"] = "string";
+        put["requestBody"]["required"] = false;
+        put["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        put["requestBody"]["content"]["application/json"]["schema"]["properties"]["cpu"]["type"] = "string";
+        put["responses"]["200"]["description"] = "{cpu, follows}";
+        put["responses"]["400"]["description"] = "No cpu or an unknown one";
+        put["responses"]["404"]["description"] = "A card CPU with no card in its slot";
+    }
+
+    // Device boards (debugger-model widget catalog §4, protocol §6.4; gs-debugger N4 / N8)
+    {
+        Json::Value idParam;
+        idParam["name"] = "id";
+        idParam["in"] = "path";
+        idParam["required"] = true;
+        idParam["schema"]["type"] = "string";
+        Json::Value boardParam = idParam;
+        boardParam["name"] = "board";
+        boardParam["description"] = "gs (the classic card), neogs, neogs_dma, neogs_sd, neogs_mp3, neogs_flash";
+
+        Json::Value& list = paths["/api/v1/emulator/{id}/debug/boards"]["get"];
+        list["summary"] = "The device boards the machine has now";
+        list["tags"].append("Debug Commands");
+        list["description"] =
+            "A device board is a device's hardware state as data: a layout of columns, groups and controls with their "
+            "values, which any front-end renders with one generic renderer. {boards: [{id, title, device, cpu, "
+            "available, actions[{id, title, param}]}]}. The GS slot publishes gs (classic GS, lightweight player) or "
+            "the NeoGS boards neogs, neogs_dma, neogs_sd, neogs_mp3 (available: a decoder is fitted), neogs_flash. "
+            "Built on read, side-effect free (CLI board list, MCP inspect_state aspect boards, Lua / Python boards()).";
+        list["parameters"].append(idParam);
+        list["responses"]["200"]["description"] = "{boards: [...]}";
+
+        Json::Value& one = paths["/api/v1/emulator/{id}/debug/boards/{board}"]["get"];
+        one["summary"] = "One device board: layout and values";
+        one["tags"].append("Debug Commands");
+        one["description"] =
+            "{id, title, device, cpu, available, actions[], columns: [{groups: [{title, raw, controls: [{id, label, "
+            "type, value, note, names (bits, bit 0 first), values (enum), min / max (bar)}]}]}]}. Control types: hex8, "
+            "hex16, hex21, dec, counter, rate, bool, led, text, bits, enum, bar. ?values=1: {id, available, "
+            "values: {control id: value}} for polling (CLI board <id>, MCP aspect board.<id>, Lua / Python board(id)).";
+        one["parameters"].append(idParam);
+        one["parameters"].append(boardParam);
+        one["parameters"][2]["name"] = "values";
+        one["parameters"][2]["in"] = "query";
+        one["parameters"][2]["description"] = "1: the values only";
+        one["parameters"][2]["schema"]["type"] = "string";
+        one["responses"]["200"]["description"] = "The board";
+        one["responses"]["404"]["description"] = "No such board on this machine (the message lists the boards)";
+
+        Json::Value& act = paths["/api/v1/emulator/{id}/debug/boards/{board}/actions/{action}"]["post"];
+        act["summary"] = "Run a board's action";
+        act["tags"].append("Debug Commands");
+        act["description"] =
+            "neogs_sd insert (arg: an image file or a host folder) and eject are requests to the media manager's slot "
+            "sd.ngs (the same as media insert / eject: at once while the machine is not running, else at the next "
+            "frame boundary; while a TTD recording runs, an event of the recording); neogs_flash save writes a "
+            "modified flash in persist mode. Body {\"arg\": \"...\"} (or \"path\", or ?arg=). {board, action, arg, "
+            "status: done | queued} (CLI board <id> <action> [arg], MCP emulator_manage board_action, Lua / Python "
+            "board_action(id, action, arg)).";
+        act["parameters"].append(idParam);
+        act["parameters"].append(boardParam);
+        act["parameters"][2]["name"] = "action";
+        act["parameters"][2]["in"] = "path";
+        act["parameters"][2]["required"] = true;
+        act["parameters"][2]["schema"]["type"] = "string";
+        act["requestBody"]["required"] = false;
+        act["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+        act["requestBody"]["content"]["application/json"]["schema"]["properties"]["arg"]["type"] = "string";
+        act["responses"]["200"]["description"] = "{board, action, arg, status}";
+        act["responses"]["400"]["description"] = "insert without a path";
+        act["responses"]["404"]["description"] = "No such board or action";
+        act["responses"]["409"]["description"] = "A TTD replay owns the machine";
+        act["responses"]["422"]["description"] = "No file or folder at the path; the request failed";
+    }
+
     // GET /api/v1/emulator/{id}/debug/wait - long-poll on the snapshot's seq (debugger additions tdd §6)
     {
         Json::Value& op = paths["/api/v1/emulator/{id}/debug/wait"]["get"];
@@ -499,12 +601,13 @@
         const char* step = "main (default), gs or ms: the CPU that steps. A card CPU's step resumes the machine until "
                            "the card ends it, then pauses it; the card runs as the main CPU's run takes it along (at "
                            "a host port access or the frame end), so the main CPU moves on to that point. A breakpoint "
-                           "of any CPU on the way ends it; no end within 2 s (over / out 5 s) pauses with the reason "
+                           "of any CPU on the way ends it; no end within 2 s (over / out / skip_until 5 s) pauses with the reason "
                            "timeout. The reply: stop {cpu, reason step / breakpoint / pause / timeout, cpu_pc, "
                            "breakpoint_id, address, access}, the card CPU's pc and sp, the main CPU's main_pc and "
                            "main_sp, state. 409 when not paused or a step of that CPU is under way";
         for (const char* path : {"/api/v1/emulator/{id}/step", "/api/v1/emulator/{id}/steps",
-                                 "/api/v1/emulator/{id}/stepover", "/api/v1/emulator/{id}/stepout"})
+                                 "/api/v1/emulator/{id}/stepover", "/api/v1/emulator/{id}/stepout",
+                                 "/api/v1/emulator/{id}/skip_until"})
         {
             Json::Value& operation = paths[path]["post"];
             Json::Value cpu;
@@ -522,4 +625,8 @@
         paths["/api/v1/emulator/{id}/steps"]["post"]["description"] =
             paths["/api/v1/emulator/{id}/steps"]["post"]["description"].asString() +
             " With cpu=gs / ms: count (1-10000) instructions of that card CPU.";
+        paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"] =
+            paths["/api/v1/emulator/{id}/skip_until"]["post"]["description"].asString() +
+            " With cpu=gs / ms: that card CPU runs to pc (run to the cursor; a cursor at its PC means the next run "
+            "of that instruction); breakpoints always end it, max_tstates is not used; the reply adds hit.";
     }

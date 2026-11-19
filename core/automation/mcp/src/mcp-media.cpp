@@ -468,7 +468,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["layer"]["enum"].append(layer);
     schema["properties"]["layer"]["description"] =
         "screenshot of a ZX Spectrum Next: ONE LAYER of the last completed frame instead of the composed picture - ula (with the border and "
-        "LoRes), layer2, tilemap, sprites (PNG with alpha 0 where the layer does not paint, same 640x512 geometry as the screenshot), or ids "
+        "LoRes), layer2, tilemap, sprites (PNG with alpha 0 where the layer does not paint, 640x512, the grid of the 720x576 screenshot at (32, 32)), or ids "
         "(each pixel coloured by the layer that won it; the legend is in the answer). Exactly as drawn, copper effects included. format=rgba "
         "gives the raw bytes; alpha=false flattens transparent pixels onto the fallback colour. 409 when the machine is not a Next, the "
         "capture is off (invoke_api POST /api/v1/emulator/{id}/next/layer-capture {enabled:true}) or no frame was completed yet; all layers of one frame at once: "
@@ -573,6 +573,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["hardware"]["description"] =
         "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
         "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+    schema["properties"]["engine"]["type"] = "string";
+    schema["properties"]["engine"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* engine : {"native", "ffmpeg"})
+        schema["properties"]["engine"]["enum"].append(engine);
+    schema["properties"]["engine"]["description"] =
+        "window_record_start: native (default: hardware H.264 / H.265 and ProRes by the Mac's own writer) or ffmpeg "
+        "(always ffmpeg: with hardware its GPU encoder, found by probing)";
     schema["properties"]["fit"]["type"] = "boolean";
     schema["properties"]["fit"]["description"] =
         "window_record_start: scale the picture to a given width x height frame (aspect kept, centred) instead of "
@@ -1335,7 +1342,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         return;
                     }
                     body["path"] = path;
-                    for (const char* field : {"keyboard", "codec", "hardware", "fit", "fps", "scale", "picture_height", "width", "height",
+                    for (const char* field : {"keyboard", "codec", "hardware", "engine", "fit", "fps", "scale", "picture_height", "width", "height",
                                         "layout"})
                         if (args.isMember(field))
                             body[field] = args[field];

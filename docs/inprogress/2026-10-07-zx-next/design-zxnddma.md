@@ -117,8 +117,8 @@ tested before the timing phase.
 |:--|:--|:--|:--|
 | 1 CPU, LDIR | 8.3 ms | 7.2 ms | CPU part, +15% |
 | 2 CPU, skip `$E3` | 18.9 ms | 15.6 ms | CPU part, +21% |
-| 3 zxnDMA, per column | 9.3 ms | 8.2 ms | mostly CPU code (OTIR set-up), +1.1 ms like way 1 |
-| 4/5 zxnDDMA, opaque / transparent | 2.2 ms | 2.1 ms | the new engine, +5% |
+| 3 zxnDMA, per column | 9.3 ms | 8.2 ms | mostly CPU code (OTIR set-up), +1.1 ms like way 1 (9.7 with the DMA SRAM wait on) |
+| 4/5 zxnDDMA, opaque / transparent | 2.2 ms | 2.1 ms | the new engine, +5% (2.5 ms with the DMA SRAM wait on) |
 
 - The new engine's own timing is inside the 64 us measuring step. The CPU ways are slower than the board: our LDIR costs 24.0 clocks
   a byte at 28 MHz (21 + one SRAM read wait for each of its three reads: two opcode bytes and `(HL)`; measured on 2026-11-11), while the
@@ -128,9 +128,12 @@ tested before the timing phase.
   (`cpu_rd_n` is the DMA's own read while it holds the bus, `dma_wait_n` includes `sram_wait_n`, lines 1830 and 1844). The commented-out
   line above it limits the wait to M1 and DMA reads. Core 3.03.00 may have changed it: its RTL is not public (phase 0). Pinned by
   `NextSkeleton_Test.At28MHzSramReadsWaitOneClockAndBank7DoesNot` and the RTL timing cases, so it stays as it is.
-- **Open, not done:** our DMA does not add the SRAM read wait for its own reads (`Bus` has `advance` and `contend` only); by 3.02.03's
-  RTL it should. Adding it makes way 4/5 slower than the guide's 2.1 ms (about 0.4 ms for the copied bytes), so it is held back until
-  the 3.03.00 RTL or a board measurement says which is right. Physical-mode accesses skip `contend` (the video logic decodes contention
-  from the CPU address, which a physical access does not carry); the SRAM wait is a different signal and would apply to them.
+- **Settled per core (2026-11-12, measured on a board by the owner):** core 3.02.03 waits a clock on each CPU and DMA read of the SRAM
+  at 28 MHz (a DMA read with cycle length 2 takes 2 + 1 clocks, a write 2); core 3.03 has no such wait for either (a DMA read takes its
+  cycle length, the Z80 no +1). The emulator follows the core: `SetSramWait28` in `PortDecoder_Next::UpdateContention` is on only for the
+  plain `NEXT` (3.02.03), off for `NEXT-DDMA` (3.03), and the DMA's reads in `BindDma()` take it from there (the 2026-11-11 constant
+  `kDmaSramWait` is gone). The guide's numbers fit: without the waits way 4/5 takes 2.2 ms (guide 2.1), way 3 9.3 ms (8.2), and the CPU
+  ways should lose most of their +15-21% (the LDIR's three read waits; not re-measured yet). Pinned by `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Physical-mode
+  accesses skip `contend` (the video logic decodes contention from the CPU address, which a physical access does not carry).
 - Fill mode costs one write cycle set a byte (the guide: twice as fast as a fixed source); not measured against a number.
 - Not checked: the IM2 + DI hold, 2D with auto restart, the burst/prescaler interplay with 2D.

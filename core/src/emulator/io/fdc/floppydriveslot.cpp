@@ -34,6 +34,30 @@ FloppyDriveSlot::FloppyDriveSlot(EmulatorContext* context, uint8_t drive) : _con
     _descriptor.aliases = {std::string(1, static_cast<char>('A' + drive))};
 }
 
+FloppyDriveSlot::FloppyDriveSlot(EmulatorContext* context, const CardDrive& drive)
+    : _context(context), _drive(0xFF), _cardFdd(drive.fdd)
+{
+    _descriptor.id = drive.id;
+    _descriptor.kind = MediaKind::Floppy;
+    _descriptor.label = drive.label;
+    _descriptor.removable = true;
+    _descriptor.swapDelayMs = kFloppySwapDelayMs;
+    _descriptor.acceptsFolder = true;
+    _descriptor.defaultAccess = AccessMode::Session;
+    _descriptor.hasWriteProtectSwitch = true;
+    _descriptor.tags = drive.tags;
+    _descriptor.aliases = drive.aliases;
+    if (_cardFdd)
+        _cardFdd->setSlotId(drive.id);
+}
+
+FDD* FloppyDriveSlot::Fdd() const
+{
+    if (_cardFdd)
+        return _cardFdd;
+    return (_context && _drive < 4) ? _context->coreState.diskDrives[_drive] : nullptr;
+}
+
 std::string FloppyDriveSlot::IdFor(uint8_t drive)
 {
     return std::string("fdd.") + static_cast<char>('a' + drive);
@@ -41,11 +65,26 @@ std::string FloppyDriveSlot::IdFor(uint8_t drive)
 
 void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, uint8_t drive, const char* detail)
 {
+    NoteSlotWrite(context, IdFor(drive), detail);
+}
+
+void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track)
+{
+    BeforeTrackWrite(context, IdFor(drive), track);
+}
+
+void FloppyDriveSlot::BeforeImageGrow(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage& disk)
+{
+    BeforeImageGrow(context, IdFor(drive), disk);
+}
+
+void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, const std::string& slotId, const char* detail)
+{
     if (!context)
         return;
     if (context->pMediaManager)
     {
-        context->pMediaManager->NoteWrite(IdFor(drive), detail);
+        context->pMediaManager->NoteWrite(slotId, detail);
         return;
     }
     // A controller without a machine around it (unit tests): the marker alone
@@ -53,15 +92,22 @@ void FloppyDriveSlot::NoteSlotWrite(EmulatorContext* context, uint8_t drive, con
         context->pTimeTravelHooks->RecordExternalEvent(ttd::TTDExternalEventKind::DiskWrite, detail);
 }
 
-void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track)
+void FloppyDriveSlot::BeforeTrackWrite(EmulatorContext* context, const std::string& slotId,
+                                       const unrealdisk::DiskImage::Track* track)
 {
     if (context && context->pMediaManager && track)
-        context->pMediaManager->BeforeTrackWrite(IdFor(drive), *track);
+        context->pMediaManager->BeforeTrackWrite(slotId, *track);
+}
+
+void FloppyDriveSlot::BeforeImageGrow(EmulatorContext* context, const std::string& slotId, const unrealdisk::DiskImage& disk)
+{
+    if (context && context->pMediaManager)
+        context->pMediaManager->BeforeImageGrow(slotId, disk);
 }
 
 void FloppyDriveSlot::Attach(Medium& medium)
 {
-    FDD* fdd = _context->coreState.diskDrives[_drive];
+    FDD* fdd = Fdd();
     if (!fdd || !medium.Floppy())
         return;
     _medium = &medium;
@@ -72,7 +118,7 @@ void FloppyDriveSlot::Attach(Medium& medium)
 
 void FloppyDriveSlot::Detach()
 {
-    if (FDD* fdd = _context->coreState.diskDrives[_drive])
+    if (FDD* fdd = Fdd())
     {
         fdd->ejectDisk();
         fdd->setWriteProtect(false);
@@ -96,14 +142,17 @@ void FloppyDriveSlot::ApplyWriteProtect()
 {
     // The floppy's tab is sensed by the drive and honored by the controller;
     // a read-only medium is a disk with its tab open
-    FDD* fdd = _context->coreState.diskDrives[_drive];
+    FDD* fdd = Fdd();
     if (fdd)
         fdd->setWriteProtect(_writeProtectSwitch || (_medium && _medium->Access() == AccessMode::ReadOnly));
 }
 
 void FloppyDriveSlot::MirrorPath(const Medium* medium)
 {
-    // coreState.diskFilePaths is what the surfaces show until they read the manager (M4)
+    // coreState.diskFilePaths is what the surfaces show until they read the manager (M4); it has the Beta 128 drives
+    // only, a card's drive is shown from the manager
+    if (_cardFdd || _drive >= 4)
+        return;
     std::string& path = _context->coreState.diskFilePaths[_drive];
     if (!medium)
         path.clear();

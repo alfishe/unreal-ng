@@ -456,13 +456,19 @@ void CLIProcessor::HandleTapeSeek(const ClientSession& session, std::shared_ptr<
 
     EmulatorPauseBracket bracket(emulator);
 
+    const TapeSeekResult seek = context->pTape->Seek(index);
+    if (seek == TapeSeekResult::Queued)
+    {
+        session.SendResponse("Seek to block " + std::to_string(index) + " when the tape is in" + NEWLINE);
+        return;
+    }
     if (!context->pTape->EnsureImageLoaded())
     {
         session.SendResponse(std::string("Error: Tape image has no loadable blocks") + NEWLINE);
         return;
     }
 
-    if (!context->pTape->SeekToBlock(index))
+    if (seek != TapeSeekResult::Done)
     {
         std::stringstream ss;
         ss << "Error: Block index " << index << " out of range (tape has " << context->pTape->GetBlocks().size()

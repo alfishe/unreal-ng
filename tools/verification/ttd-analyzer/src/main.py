@@ -76,7 +76,7 @@ def _require_schema_2(path: str) -> None:
 
 
 def _open_v2_or_die(path: str):
-    from .ttdcontainer import TtdContainerError, open_container
+    from ttdlib.ttdcontainer import TtdContainerError, open_container
     data = open(path, "rb").read()
     try:
         return data, open_container(data)
@@ -86,7 +86,7 @@ def _open_v2_or_die(path: str):
 
 
 def cmd_info(args: argparse.Namespace) -> int:
-    from .ttdcontainer import read_session
+    from ttdlib.ttdcontainer import read_session
     _require_schema_2(args.file)
     data, c = _open_v2_or_die(args.file)
     s = read_session(c)
@@ -113,7 +113,7 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    from .ttdcontainer import validate
+    from ttdlib.ttdcontainer import validate
     _require_schema_2(args.file)
     data = open(args.file, "rb").read()
     problems = validate(data)
@@ -127,14 +127,14 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_parts(args: argparse.Namespace) -> int:
-    from .ttdcontainer import RECORD_HEADER, STREAM_NAMES, reachable
+    from ttdlib.ttdcontainer import RECORD_HEADER, STREAM_NAMES, reachable
     _require_schema_2(args.file)
     _, c = _open_v2_or_die(args.file)
     for part in c.parts:
         sizes = {}
         for r in part.records:
             name = STREAM_NAMES.get(r.stream_id, f"stream {r.stream_id}")
-            sizes[name] = sizes.get(name, 0) + r.stored_size + RECORD_HEADER
+            sizes[name] = sizes.get(name, 0) + r.stored_size + RECORD_HEADER * max(1, len(r.chunks))
         state = "damaged: " + part.damage if part.damaged else ("ok" if reachable(c, part.index) else "unreachable")
         start = " [file start]" if part.file_start else ""
         print(f"part {part.index}: frames {part.first_frame}+{part.frame_count}, {len(part.records)} records, "
@@ -144,7 +144,7 @@ def cmd_parts(args: argparse.Namespace) -> int:
 
 
 def cmd_recover(args: argparse.Namespace) -> int:
-    from .ttdcontainer import reachable
+    from ttdlib.ttdcontainer import reachable
     _require_schema_2(args.file)
     _, c = _open_v2_or_die(args.file)
     kept = [p for p in c.parts if reachable(c, p.index)]

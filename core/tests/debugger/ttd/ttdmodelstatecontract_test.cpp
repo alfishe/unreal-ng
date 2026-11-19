@@ -60,7 +60,7 @@ public:
 /// fails here rather than at someone's seek months later.
 TEST(TTDModelStateContract_Test, DeclaredStateIsCoveredBySerializers)
 {
-    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "GMX", "ATM710", "ATM3", "PROFI", "SPRINTER"})
+    for (const char* model : {"48K", "128k", "PENTAGON", "SCORPION", "PROFSCORP", "GMX", "ATM710", "ATM3", "PROFI", "SPRINTER", "P2666"})
     {
         Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator(model, LoggerLevel::LogError);
         if (emulator == nullptr)
@@ -309,7 +309,7 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
     SoundCardScope cards{TestSound::All};
     size_t checked = 0;
     for (const char* model : {"48K", "128k", "PLUS2", "PLUS2A", "PLUS3", "PENTAGON", "SCORPION", "PROFSCORP", "GMX",
-                              "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL", "TSL-VDAC2", "SPRINTER"})
+                              "ATM710", "ATM450", "ATM3", "PROFI", "PROFI3", "TSL", "TSL-VDAC2", "SPRINTER", "P2666"})
     {
         for (GSTypeKind gs : {GSTypeKind::Z80, GSTypeKind::NGS})
         {
@@ -342,7 +342,7 @@ TEST(TTDModelStateContract_Test, EveryDeviceMatchesItsDescriptorOnEveryModel)
             EmulatorTestHelper::CleanupEmulator(emulator);
         }
     }
-    EXPECT_EQ(checked, 34u) << "every model is creatable in this build";
+    EXPECT_EQ(checked, 36u) << "every model is creatable in this build";
 
     // The cards the slots build themselves (the ZX-MultiSound), on every model with a ZX-bus: the card's devices
     // (MultiSound, SAA1099, SAM2695, its GS) next to the machine's own. The card replaces the config's slot set (a GS

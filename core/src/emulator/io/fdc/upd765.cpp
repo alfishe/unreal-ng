@@ -577,6 +577,7 @@ void UPD765::commandSeek(bool recalibrate)
 
     unitState.seeking = true;
     unitState.seekEndTime = _time + static_cast<uint64_t>(steps) * stepTStates();
+    _hapticSteps = static_cast<uint16_t>(std::min<int>(_hapticSteps + steps, UINT16_MAX));
 
     // The command phase is free again while the head steps
     _phase = PHASE_COMMAND;

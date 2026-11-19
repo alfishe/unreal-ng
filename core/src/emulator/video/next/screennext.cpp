@@ -278,13 +278,32 @@ void ScreenNext::SetVideoMode([[maybe_unused]] VideoModeEnum mode)
     Screen::SetVideoMode(M_NEXT);
     _lastTimingClass = _state ? _state->ula_timing_class : 2;
     _lastSixty = _state ? _state->ula_sixty_hz : 0;
+    _origin = NextPictureWindow::Origin(_lastTimingClass, _lastSixty != 0);
     if (_copperBound)
         UpdateCopperGeometry();  // the raster of the new family
 }
 
 bool ScreenNext::FramebufferReady() const
 {
-    return _framebuffer.memoryBuffer && _framebuffer.width == NextVideoRenderer::kWidth && _framebuffer.height == 2 * NextVideoRenderer::kHeight;
+    return _framebuffer.memoryBuffer && _framebuffer.width == kFrameWidth && _framebuffer.height == kFrameHeight;
+}
+
+uint32_t* ScreenNext::GridRow(uint32_t* fb, unsigned line) const
+{
+    return fb + static_cast<size_t>((_origin.top + static_cast<int>(line)) * NextPictureWindow::kScale) * kFrameWidth +
+           static_cast<size_t>(_origin.left * NextPictureWindow::kScale);
+}
+
+void ScreenNext::FillOuterRows(uint32_t* fb, unsigned fromRow, unsigned toRow, uint32_t colour) const
+{
+    const int firstShown = (_origin.top + _origin.firstLine) * NextPictureWindow::kScale;
+    const int lastShown = (_origin.top + _origin.lastLine + 1) * NextPictureWindow::kScale - 1;
+    for (unsigned r = fromRow; r < toRow && r < kFrameHeight; r++)
+    {
+        const bool black = _origin.blackOutside && (static_cast<int>(r) < firstShown || static_cast<int>(r) > lastShown);
+        uint32_t* row = fb + static_cast<size_t>(r) * kFrameWidth;
+        std::fill(row, row + kFrameWidth, black ? NextVideoRenderer::Rgba(0) : colour);
+    }
 }
 
 uint32_t ScreenNext::GridFirstT() const
@@ -315,6 +334,7 @@ bool ScreenNext::PictureWindowInputs(NextPictureWindow::Inputs& out) const
     out.nr70 = board.Stored(0x70);
     out.layer2Enabled = video.Layer2Enabled();
     out.spritesVisible = board.Sprites().AnyVisible();
+    out.origin = _origin;
     return true;
 }
 
@@ -324,8 +344,8 @@ PictureRect ScreenNext::WorkingWindow() const
     if (!PictureWindowInputs(in))
         return Screen::WorkingWindow();
     const NextPictureWindow::FrameBox box = NextPictureWindow::Screen(in);
-    // The frame is 640 x 512 whenever this picture is on; a frame of another size (a mode switch under way) has no window
-    if (_framebuffer.width != NextVideoRenderer::kWidth || _framebuffer.height != NextVideoRenderer::kHeight * 2)
+    // The frame is 720 x 576 whenever this picture is on; a frame of another size (a mode switch under way) has no window
+    if (!FramebufferReady())
         return Screen::WorkingWindow();
     return PictureRect{box.x, box.y, box.width, box.height};
 }
@@ -333,8 +353,7 @@ PictureRect ScreenNext::WorkingWindow() const
 PictureRect ScreenNext::ContentWindow() const
 {
     NextPictureWindow::Inputs in;
-    if (!PictureWindowInputs(in) || _framebuffer.width != NextVideoRenderer::kWidth ||
-        _framebuffer.height != NextVideoRenderer::kHeight * 2)
+    if (!PictureWindowInputs(in) || !FramebufferReady())
         return PictureRect{};
     const NextPictureWindow::FrameBox box = NextPictureWindow::Content(in);
     return PictureRect{box.x, box.y, box.width, box.height};
@@ -650,12 +669,26 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         NextLayer::LineSink lineSink;
         if (record)
             lineSink = record->Line(_nextLine);
-        uint32_t* row = fb + static_cast<size_t>(_nextLine) * 2 * kW;
+        uint32_t* row = GridRow(fb, _nextLine);
+        uint32_t* frameRow = row - _origin.left * NextPictureWindow::kScale;
+        const bool shown = static_cast<int>(_nextLine) >= _origin.firstLine && static_cast<int>(_nextLine) <= _origin.lastLine;
         const unsigned toX = _nextLine < lineLimit ? kPixels : std::min(xLimit, kPixels);
         const unsigned fromX = _nextX;
+        bool refreshed = false;
         if (toX > fromX)
         {
             refresh();
+            refreshed = true;
+            if (fromX == 0)
+            {
+                // the outer border (only the ULA's border is out there): the frame's lines above the grid with its first line, the
+                // left of each line as it starts
+                const uint32_t outer = NextVideoRenderer::OuterBorderRgba(in);
+                if (_nextLine == 0)
+                    FillOuterRows(fb, 0, static_cast<unsigned>(_origin.top * NextPictureWindow::kScale), outer);
+                if (shown)
+                    std::fill(frameRow, row, outer);
+            }
             // the engine's fill of this row: the passes whose fill has ended ran with the state they saw, the row's own runs if it has
             // started; a row ahead of the beam (a picture drawn early) is filled from the state as it is, its flags not posted
             if (_rowSeq[_nextLine] != _frameSeq)
@@ -674,7 +707,8 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
             if (record)
                 NextVideoRenderer::RecordSegment(*record, _nextLine, fromX, toX, in);
             NextVideoRenderer::RenderLine(in, _nextLine, segment);
-            std::memcpy(row + fromX, segment + fromX, (toX - fromX) * sizeof(uint32_t));
+            if (shown)
+                std::memcpy(row + fromX, segment + fromX, (toX - fromX) * sizeof(uint32_t));
             if (record && !whole)
             {
                 for (unsigned p = 0; p < NextLayer::kPlanes; p++)
@@ -686,9 +720,21 @@ void ScreenNext::RenderUpTo(unsigned lineLimit, unsigned xLimit)
         }
         if (_nextX < kPixels)
             break;  // the limit is inside this line
-        std::memcpy(row + kW, row, kW * sizeof(uint32_t));  // every line twice
+        if (!refreshed)
+            refresh();
+        const uint32_t outer = NextVideoRenderer::OuterBorderRgba(in);
+        const unsigned frameRowIndex = static_cast<unsigned>(frameRow - fb) / kFrameWidth;
+        if (shown)
+        {
+            std::fill(row + kW, frameRow + kFrameWidth, outer);  // the right of the line as it ends
+            std::memcpy(frameRow + kFrameWidth, frameRow, kFrameWidth * sizeof(uint32_t));  // every line twice
+        }
+        else
+            FillOuterRows(fb, frameRowIndex, frameRowIndex + NextPictureWindow::kScale, outer);  // outside the 60 Hz picture: black
         _nextLine++;
         _nextX = 0;
+        if (_nextLine == NextVideoRenderer::kHeight)  // the frame's lines below the grid
+            FillOuterRows(fb, frameRowIndex + NextPictureWindow::kScale, kFrameHeight, outer);
     }
     if (record && _nextLine >= NextVideoRenderer::kHeight)
         CompleteLayerFrame();

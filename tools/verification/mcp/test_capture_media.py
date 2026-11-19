@@ -155,8 +155,11 @@ def test_window_recording_records_every_frame(s):
     expect(idle.is_error and 'HTTP 409' in idle.text and 'video/window/record first' in idle.text,
            'frames need a recording', idle.text)
 
+    engine = s.call('capture_media', {'action': 'window_record_start', 'filename': path, 'codec': 'h264',
+                                      'engine': 'gpu'}, ok=False)
+    expect(engine.is_error and 'engine takes native or ffmpeg' in engine.text, 'a wrong engine is refused', engine.text)
     start = s.call('capture_media', {'action': 'window_record_start', 'filename': path, 'keyboard': 'default',
-                                     'codec': 'h264'})
+                                     'codec': 'h264', 'engine': 'ffmpeg'})
     expect(start.text.startswith('window recording to ' + path) and '0 frames, keyboard ' in start.text and
            ' fps, sound ' in start.text,
            'the file, its size and the keyboard in the text', start.text)
@@ -173,19 +176,22 @@ def test_window_recording_records_every_frame(s):
     stop = s.call('capture_media', {'action': 'window_record_stop'})
     expect(stop.text.startswith('window recording off, last ' + path), 'stopped, the file named', stop.text)
     if shutil.which('ffprobe'):
+        # A variable frame rate: a picture equal to the one before only lengthens it, so the file has at most the
+        # frames counted, and its picture and sound last as long as they do
         frames = int(subprocess.run(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v:0',
                                      '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', path],
                                     capture_output=True, text=True).stdout.strip() or 0)
-        expect(frames == stop.structured['frames'] and frames >= 10, 'the file holds the frames counted',
-               (frames, stop.structured))
-        # The sound track: the same frames, so the same length (AAC rounds to its 1024-sample packets)
+        expect(1 <= frames <= stop.structured['frames'] and stop.structured['frames'] >= 10,
+               'the file holds the pictures of the frames counted', (frames, stop.structured))
         probe = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
                                            'stream=codec_type,duration', '-of', 'json', path],
                                           capture_output=True, text=True).stdout)
         lengths = {st['codec_type']: float(st['duration']) for st in probe['streams']}
-        expect('audio' in lengths, 'a sound track', probe)
-        expect(abs(lengths['audio'] - frames / stop.structured['fps']) < 0.05, 'sound as long as the frames',
-               (lengths, frames, stop.structured['fps']))
+        expect('audio' in lengths and 'video' in lengths, 'a picture and a sound track', probe)
+        expected = stop.structured['frames'] / stop.structured['fps']
+        # AAC rounds to its 1024-sample packets; the picture's last frame lasts one frame
+        expect(abs(lengths['audio'] - expected) < 0.05, 'sound as long as the frames', (lengths, expected))
+        expect(abs(lengths['video'] - expected) < 0.1, 'picture as long as the frames', (lengths, expected))
     os.remove(path)
 
 if __name__ == '__main__':

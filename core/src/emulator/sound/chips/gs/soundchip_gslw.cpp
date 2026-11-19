@@ -113,6 +113,8 @@ void SoundChip_GSLightweight::setSynthesisSuppressed(bool suppressed)
 void SoundChip_GSLightweight::reset()
 {
     resetCard();
+    _activityCounters.resetsHost--; // a power-on, not a #33 pulse
+    _activityCounters.resetsCold++;
 
     // Host mailbox and the external DAC latches flip back to their power-on
     // state (resetCard - the #33 pulse - leaves the mailbox alone: it is
@@ -136,6 +138,7 @@ void SoundChip_GSLightweight::reset()
 
 void SoundChip_GSLightweight::resetCard()
 {
+    _activityCounters.resetsHost++;
     // Firmware reboot (POST + INITVAR) leaves exactly this state; the host
     // mailbox survives (external flip-flops)
     softReset(false);
@@ -250,6 +253,7 @@ void SoundChip_GSLightweight::pumpReply()
         _replyHead = static_cast<uint8_t>((_replyHead + 1) & (REPLY_QUEUE_CAPACITY - 1));
         _replyCount--;
         _mb.status |= 0x80;
+        _activityCounters.cardDataOut++;
     }
 }
 
@@ -265,6 +269,7 @@ void SoundChip_GSLightweight::consumeParam()
     // the get-then-set commands
     if (_paramCount != 0)
     {
+        _activityCounters.cardDataIn++;
         _mb.dataFromHost = _paramQueue[_paramHead];
         _paramHead = static_cast<uint8_t>((_paramHead + 1) & (PARAM_QUEUE_CAPACITY - 1));
         _paramCount--;
@@ -322,6 +327,8 @@ void SoundChip_GSLightweight::acceptHostData(uint8_t value)
 void SoundChip_GSLightweight::acceptHostCommand(uint8_t value)
 {
     _activityCounters.hostCommandsReceived++;
+    _activityCounters.cardCommandsRead++; // the interpreter takes it at once, and confirms it below
+    _activityCounters.cardCommandAcks++;
     _mb.commandFromHost = value;
     _mb.status |= 0x01; // command flip-flop; the dispatch acks (RSCOM analog)
 
@@ -857,6 +864,7 @@ uint8_t SoundChip_GSLightweight::portDeviceInMethod(uint16_t port)
         {
             flush();
             const uint8_t value = _mb.dataToHost;
+            logHostReplyRead(value);
             _mb.status &= 0x7F;
             _activityCounters.hostDataRead++;
             traceEvent(GSTraceSide::Host, PORT_DATA, value, false);
@@ -865,6 +873,7 @@ uint8_t SoundChip_GSLightweight::portDeviceInMethod(uint16_t port)
         }
         case 0xBB: // GSCOM read: status, bits 1-6 read as 1 (pull-ups)
             flush();
+            _activityCounters.hostStatusPolls++;
             traceEvent(GSTraceSide::Host, PORT_COMMAND, static_cast<uint8_t>(_mb.status | 0x7E), false);
             return _mb.status | 0x7E;
         default:
@@ -881,12 +890,14 @@ void SoundChip_GSLightweight::portDeviceOutMethod(uint16_t port, uint8_t value)
             traceEvent(GSTraceSide::Host, PORT_CONTROL, value, true);
             if (value & 0x80)
             {
+                logHostReset();
                 resetCard();
                 flush(); // re-execute the elapsed frame time from reset state
                 return;
             }
             if (value & 0x40)
             {
+                _activityCounters.nmiRequests++;
                 _nmiPending = true;
                 flush();
                 return;
@@ -895,11 +906,13 @@ void SoundChip_GSLightweight::portDeviceOutMethod(uint16_t port, uint8_t value)
         case 0xB3: // GSDAT write: the interpreter takes the byte in-call
             flush();
             traceEvent(GSTraceSide::Host, PORT_DATA, value, true);
+            logHostData(value);
             acceptHostData(value);
             return;
         case 0xBB: // GSCOM write: the interpreter reacts at once (no poll delay)
             flush();
             traceEvent(GSTraceSide::Host, PORT_COMMAND, value, true);
+            logHostCommand(value);
             acceptHostCommand(value);
             return;
         default:
@@ -919,6 +932,8 @@ uint8_t SoundChip_GSLightweight::readData()
 {
     flush();
     const uint8_t value = _mb.dataToHost;
+    logHostReplyRead(value, true);
+    noteAutomationRead(value);
     _mb.status &= 0x7F;
     pumpReply();
     return value;
@@ -927,18 +942,21 @@ uint8_t SoundChip_GSLightweight::readData()
 void SoundChip_GSLightweight::sendCommand(uint8_t command)
 {
     flush();
+    logHostCommand(command, true);
     acceptHostCommand(command);
 }
 
 void SoundChip_GSLightweight::sendData(uint8_t data)
 {
     flush();
+    logHostData(data, true);
     acceptHostData(data);
 }
 
 void SoundChip_GSLightweight::triggerNMI()
 {
     // Counted like the LLE, but there is no coprocessor to deliver it to
+    _activityCounters.nmiRequests++;
     _nmiPending = true;
     flush();
 }
@@ -1151,6 +1169,7 @@ void SoundChip_GSLightweight::traceEvent(GSTraceSide side, uint16_t port, uint8_
 void SoundChip_GSLightweight::handleFrameStart()
 {
     _frameHadActivity = false;
+    logFrame();
 
     // Nominal base, not the card's actual time: the player ends a frame up to one
     // 320-cycle quantum past it, and that overshoot must not pile up frame after

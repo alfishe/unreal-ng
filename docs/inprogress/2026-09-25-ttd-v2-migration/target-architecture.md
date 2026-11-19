@@ -192,6 +192,10 @@ Also persisted (they exist in memory today but are lost on save):
 
 ### 6.1 Memory as linked blocks (direction, 2026-09-29)
 
+> *Superseded 2026-10-04 by [D41](engine-decisions.md):* history in memory is a ring of minute segments or a growable
+> list, no linked blocks; history older than the memory window goes to disk and stays browsable (owner 2026-11-08,
+> [TTD branches](../2026-11-08-ttd-branches/README.md) P3). Kept as the history of the design.
+
 Direction from the user, recorded here for Phase 4 / Phase 5; the numbers and the spill
 mechanism are still **open** ([migration-trajectory.md](migration-trajectory.md)
 §6, item 3):

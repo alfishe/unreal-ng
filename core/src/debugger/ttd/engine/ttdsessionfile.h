@@ -55,6 +55,8 @@ namespace ttd
 {
 
 class TimeTravelEngine;
+class TTDPieceStore;
+struct TTDSegmentPieces;
 
 /// Part-end extra, bit 0: a file starts here (the loader restarts the
 /// numbering of versions and the journal positions)
@@ -146,6 +148,8 @@ struct TTDSessionSaveParams
     /// branch's creation in the branch table, and its own holder streams (ids <= 0x3F), with its last part
     std::map<uint32_t, std::vector<uint8_t>> lineMeta;
     std::map<uint32_t, std::vector<TTDHolderStream>> lineHolderStreams;
+    /// Tests: the container's record limit (0: kMaxRecordRaw, 1 GiB), so a chunked stream takes milliseconds
+    uint32_t recordLimit = 0;
 };
 
 struct TTDSessionLoadReport
@@ -221,6 +225,8 @@ public:
 
     bool Failed() const { return _failed.load(); }
     std::string Error() const;
+    /// What kind of failure Error() names (TTDWriteFailure::None while none)
+    TTDWriteFailure Failure() const;
     uint64_t QueuedBytes() const { return _queuedBytes.load(); }
     bool Behind() const { return QueuedBytes() > _limits.lagSoftBytes; }
     uint32_t PartsQueued() const { return _part; }
@@ -244,7 +250,7 @@ private:
     void Queue(PartJob&& job);
     void Write(PartJob& job);
     void Run();
-    void Fail(const std::string& why);
+    void Fail(const std::string& why, TTDWriteFailure kind = TTDWriteFailure::Layout);
 
     bool _background;
     Limits _limits;
@@ -293,13 +299,16 @@ private:
     std::atomic<bool> _ioFailed{false};   ///< a write failed: nothing more is written
     std::atomic<uint64_t> _queuedBytes{0};
     std::string _error;
+    TTDWriteFailure _failure = TTDWriteFailure::None;
 };
 
 class TTDSessionFile
 {
 public:
+    /// False with the reason; @p failure (optional) says its kind: TTDWriteFailure::Io / NoSpace for a refused
+    /// write (the system's words in @p error), TooLarge for a record over the format's limit, Layout otherwise
     static bool Save(const TimeTravelEngine& engine, ITTDByteSink& sink, std::string& error,
-                     const TTDSessionSaveParams& params = {});
+                     const TTDSessionSaveParams& params = {}, TTDWriteFailure* failure = nullptr);
     /// Replace @p engine's session by the file's. False with the reason when
     /// nothing could be loaded (not a session file, damaged header or tables)
     /// @p append: the next file of the same recording (the next segment), added to @p engine's session
@@ -313,6 +322,13 @@ public:
     static void SetBranchReadingForTesting(bool on);
     /// The recorded machine's devices (the session's device table), without loading the session (file-info)
     static bool ReadDevices(const ITTDByteSource& source, std::vector<TTDDeviceDescriptor>& out, std::string& error);
+
+    /// Two tiers (P3): the versions of a recording folder's segment file, per checkpoint, imported into @p store
+    /// (each with one reference: ReleaseSegmentPieces) for TimeTravelEngine::ReadBackSegment. False with the reason
+    /// when a part is damaged or a version does not fit; nothing is held then
+    static bool ReadSegmentPieces(const ITTDByteSource& source, TTDPieceStore& store, TTDSegmentPieces& out,
+                                  std::string& error);
+    static void ReleaseSegmentPieces(TTDPieceStore& store, TTDSegmentPieces& pieces);
 
     /// The copy frame-boundary stream @p stream (the engine's id) took at
     /// @p frame, from a session file; false with the reason when the stream

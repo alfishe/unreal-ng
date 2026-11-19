@@ -375,6 +375,34 @@ namespace
     }
 }
 
+/// MCP-04 (ZF6 mastering): count taps in a row, gap_frames released frames added after each release
+TEST_F(DebugKeyboardManager_test, TapKeyRepeated_CountAndGap)
+{
+    auto run = [this](uint16_t count, uint16_t gap, int& frames) {
+        int presses = 0;
+        bool wasDown = false;
+        frames = 0;
+        _keyboardManager->TapKeyRepeated("enter", 2, count, gap);
+        for (int i = 0; i < 2000 && _keyboardManager->IsSequenceRunning(); i++, frames++)
+        {
+            _keyboardManager->OnFrame();
+            const bool down = _keyboardManager->IsKeyPressed(ZXKEY_ENTER);
+            if (down && !wasDown)
+                presses++;
+            wasDown = down;
+        }
+        return presses;
+    };
+    int plain = 0, spaced = 0, single = 0;
+    EXPECT_EQ(run(4, 0, plain), 4);
+    EXPECT_EQ(run(4, 20, spaced), 4);
+    EXPECT_GE(spaced - plain, 3 * 20 - 3 * DebugKeyboardManager::REPRESS_RELEASED_FRAMES) << "the gaps add up";
+    EXPECT_EQ(run(1, 50, single), 1) << "no gap after the last tap";
+    EXPECT_LT(single, 20);
+    int capped = 0;
+    EXPECT_EQ(run(1000, 0, capped), DebugKeyboardManager::MAX_TAP_COUNT);
+}
+
 TEST_F(DebugKeyboardManager_test, TypeText_LineEndPressesEnter)
 {
     EXPECT_TRUE(_keyboardManager->TypeText("G,,1:TEST\n", 1).empty());

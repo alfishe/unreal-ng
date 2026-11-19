@@ -1,0 +1,1 @@
+buildcpr: bank 0: org #C000:nop: org #FF00: lzx0: defs 512: lzclose:defs 512: jp #C000

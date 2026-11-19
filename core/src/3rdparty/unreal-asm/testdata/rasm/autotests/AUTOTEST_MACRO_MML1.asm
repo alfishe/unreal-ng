@@ -1,0 +1,1 @@
+macro une,param1,param2:ld hl,{param1}:ld de,{param2}:add hl,de:mend:une #1000, : #2000

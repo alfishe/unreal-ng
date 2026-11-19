@@ -41,6 +41,7 @@
 #include "memoryview.h"
 #include "registersview.h"
 #include "sideviews.h"
+#include "ttdcontrols.h"
 #include "dialogs/numfmt.h"
 
 DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
@@ -203,9 +204,17 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
         if (CpuPane * p = pane()) p->code->toggle_breakpoint(address);
     });
     connect(m_cpu_tabs, &QTabWidget::currentChanged, this, [this](int) {
+        //The tab's CPU is the one shown: a card's follows the main CPU's steps of the paused machine
+        //(this->e: the constructor's parameter of the same name is not captured)
+        if (CPU * c = current_cpu(); c != nullptr && this->e->loaded) {
+            Emulator * em = this->e;
+            em->invoke([em, c]() { em->debug_select(c); });
+        }
         m_stack->set_cpu(current_cpu());
         refresh_side();
         update_cursor();
+        //The time group follows the tab: a card's back steps are the card's, the moment names where it stands
+        if (m_ttd != nullptr && this->e->loaded && m_ttd->shown()) m_ttd->poll(true);
     });
     connect(m_side_tabs, &QTabWidget::currentChanged, this, [this](int) { refresh_side(); });
 
@@ -236,8 +245,11 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
 
     m_paused = e->debug_paused();
     m_serial = e->debug_serial();
+    //The stop before the window: taken (the tab its caller asked for stays)
+    if (e->loaded) m_stop_serial = e->debug_stop_serial();
     refresh_all(true);
     mark_all();
+    if (e->loaded) m_ttd->poll(true);
     show_state();
     update_cursor();
 }
@@ -349,6 +361,13 @@ void DebuggerWindow::build_toolbar(QWidget * host)
 
     m_step_action = add(":/icons/forward", tr("Step"), QKeySequence(Qt::Key_F7),
         [](Emulator * e, CPU * c) { e->debug_step(c); });
+    //Not in ecat: the Step of a card's tab in the past is a step through the history by card instructions (the time
+    //group's verb, gs-debugger design §8); everywhere else the step above. Ahead of it: it runs first
+    disconnect(m_step_action, &QAction::triggered, this, nullptr);
+    connect(m_step_action, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward()) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step(c); });
+    });
     m_step_over = add(":/icons/step_over", tr("Step over"), QKeySequence(Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_over(c); });
     m_step_out = add(":/icons/top", tr("Step out of the routine"), QKeySequence(Qt::CTRL | Qt::Key_F8),
@@ -359,6 +378,18 @@ void DebuggerWindow::build_toolbar(QWidget * host)
     m_to_cursor->setToolTip(tr("Run to the cursor") + " (F4)");
     addAction(m_to_cursor);
     connect(m_to_cursor, &QAction::triggered, this, [this]() { run_to_cursor(); });
+
+    //Back in time (not in ecat): shown only while the machine has a recorded history
+    m_ttd = new TtdControls(this, tb, e, [this]() { return main_cpu(); }, [this]() { return current_cpu(); });
+    connect(m_ttd, &TtdControls::moved, this, [this]() {
+        //A move in time is a stop of its own: every view read again, PC in sight
+        m_serial = e->debug_serial();
+        m_paused = e->debug_paused() && !e->debug_stepping();
+        mark_all();
+        refresh_all(true);
+        show_state();
+    });
+    connect(m_ttd, &TtdControls::moment_changed, this, [this]() { show_state(); });
     tb->addSeparator();
 
     //An address of the listing: it follows the cursor, and Enter goes there
@@ -627,6 +658,7 @@ void DebuggerWindow::update_actions()
     m_bp_remove->setEnabled(on);
     m_bp_toggle->setEnabled(live);
     m_bp_clear->setEnabled(live && !p->cpu->get_breakpoints().empty());
+    if (m_ttd != nullptr) m_ttd->set_live(live);
 }
 
 void DebuggerWindow::run_command(void (*command)(Emulator *, CPU *))
@@ -706,9 +738,14 @@ void DebuggerWindow::show_state()
         case Emulator::DSTOP_NO_PROGRESS: text = tr("%1 executes nothing").arg(who); break;
         default:                          text = tr("Paused"); break;
         }
+        //A card's stop: where the main CPU stood at the card's moment
+        const std::string main = e->debug_stop_main_text();
+        if (!main.empty()) text += (QString(" ") + QChar(0x00B7) + " ") + QString::fromStdString(main);
     } else {
         text = tr("Running");
     }
+    //Where the machine is in time: "History: frame 12 of 40, replaying" (forward actions replay)
+    if (m_ttd != nullptr && !m_ttd->moment().isEmpty()) text += (QString(" ") + QChar(0x00B7) + " ") + m_ttd->moment();
     m_state->setText(text);
     //Read whole: the label as wide as its text
     m_state->setMinimumWidth(std::max((int)std::lround(200 * dbg::zoom(dbg::Zoom::Frame, m_zoom)), m_state->sizeHint().width()));
@@ -725,8 +762,16 @@ void DebuggerWindow::on_debug_event()
     const bool paused = e->debug_paused() && !e->debug_stepping();
     m_paused = paused;
     if (paused) {
-        CPU * c = e->debug_stop_cpu();
-        if (c != nullptr) select_cpu(c);
+        //A stop of a processor (a breakpoint, a step) brings its tab to the front, once. Not in ecat: the events
+        //after it (a move in time, a card's Step Back in the past, an edit, the stop's own event delivered late) find
+        //the same stop and leave the tab in front; a pause names no processor
+        const uint64_t stop = e->debug_stop_serial();
+        if (stop != m_stop_serial) {
+            m_stop_serial = stop;
+            const int reason = e->debug_stop_reason();
+            CPU * c = e->debug_stop_cpu();
+            if (c != nullptr && reason != Emulator::DSTOP_PAUSE && reason != Emulator::DSTOP_NONE) select_cpu(c);
+        }
         refresh_all(true);
         if (CpuPane * p = pane()) p->code->setFocus();
     }
@@ -742,6 +787,8 @@ void DebuggerWindow::on_timer()
         return;
     }
     if (follow_online()) return;
+    //The time travel session: once a second
+    m_ttd->poll();
     const bool paused = e->debug_paused() && !e->debug_stepping();
     if (paused != m_paused) {
         m_paused = paused;

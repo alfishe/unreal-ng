@@ -86,6 +86,14 @@ enum class TapePlayResult : uint8_t
     NoBlocks   ///< no tape, or one without a loadable block
 };
 
+/// What a seek request did (Tape::Seek)
+enum class TapeSeekResult : uint8_t
+{
+    Done,        ///< the cursor is at the block
+    Queued,      ///< the tape is on its way (a load while a TTD recording runs): the seek applies once it is in
+    OutOfRange   ///< no such block (or no tape)
+};
+
 enum class TapePlaybackState : uint8_t
 {
     Idle,
@@ -211,6 +219,7 @@ protected:
     std::string _attachedFormatId;
     uint64_t _attachGeneration = 0;
     bool _playWhenAttached = false;  // Play() while the tape was on its way (TapePlayResult::Queued)
+    size_t _seekWhenAttached = SIZE_MAX;  // Seek() while the tape was on its way (TapeSeekResult::Queued)
 
     TapeBlock* _currentTapeBlock;       // Shortcut to current block object
     // Consumption cursor: index of the NEXT block to deliver to the CPU, by signal
@@ -358,6 +367,9 @@ public:
     /// delivers). False: no image / out of range. Seeking the current index
     /// is a legal "restart this block" call.
     bool SeekToBlock(size_t index);
+    /// SeekToBlock for the automation planes: a tape still on its way (loaded while a TTD recording runs, in the deck
+    /// at the next frame boundary) takes the seek when it lands, before a queued play starts
+    TapeSeekResult Seek(size_t index);
 
     /// Rewind = seek to block 0, image and catalog kept (FR-5) — unlike
     /// legacy reset(), which dropped the image as well.
@@ -517,6 +529,7 @@ public:
     using Tape::_currentOffsetWithinPulse;
     using Tape::_currentClockCount;
     using Tape::_currentTapeBlock;
+    using Tape::_tapeBitState;
 };
 
 #endif // _CODE_UNDER_TEST

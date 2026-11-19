@@ -565,7 +565,7 @@ private:
         }
         CollectLostFunctions();             // D10
         CollectMedia();                     // D11
-        BuildResultingSlots(adapterId);
+        BuildResultingSlots(_plan.adapter);
     }
 
     void ApplyExceptions()
@@ -609,7 +609,21 @@ private:
         }
 
         const AdapterDef* adapter = nullptr;
-        if (!adapterId.empty())
+        if (adapterId.empty() && _bus->kind != _card->bus)
+        {
+            // No adapter named: the one that connects this card's bus to the slot's (as a model switch carries a card
+            // behind it); the user has no adapter to pick, so a fitting one is never asked for
+            for (const AdapterDef& candidate : _planner.Data().adapters)
+            {
+                if (candidate.cardSide == _card->bus && candidate.machineSide == _bus->kind)
+                {
+                    adapter = &candidate;
+                    _plan.adapter = candidate.id;
+                    break;
+                }
+            }
+        }
+        else if (!adapterId.empty())
         {
             adapter = _planner.FindAdapter(adapterId);
             if (adapter == nullptr || adapter->cardSide != _card->bus || adapter->machineSide != _bus->kind)

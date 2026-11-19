@@ -1,6 +1,6 @@
 # TTD branches: storage
 
-Part of [TTD branches](README.md). Status: **design** (2026-11-08). Format reference: `core/src/debugger/ttd/ttd.ksy`
+Part of [TTD branches](README.md). Status: **built** (P2, `e0ac62a53`, 2026-11-10) except the disk tier read back (P3) and media in the stream (P4). Format reference: `core/src/debugger/ttd/ttd.ksy`
 (schema 2), container `engine/ttdcontainer.*`, session `engine/ttdsessionfile.*`, folder `ttdrecordingfolders.*`,
 writer `engine/ttdrecordingwriter.*`.
 
@@ -115,7 +115,7 @@ per-unit index of architecture.md §7 is rebuilt from these records on load.
 | Resume / edit in the past | a new branch: the current segment file closes, the branch's first file opens; nothing deleted (F-1 fixed) |
 | Switch | the current segment closes; recording on the target opens its next file |
 | Delete / prune | `delete` records appended to `branches.tdx`, then the branch's files deleted |
-| Memory eviction | nothing on disk (the files are complete before a segment may leave memory) |
+| Memory eviction | nothing on disk (the files are complete before a segment may leave memory); a seek into an evicted segment reads its file back (P3, [architecture.md §5.3-5.4](architecture.md#53-history-limit-and-memory)) |
 | Disk full | warning at a free-space threshold (default 1 GB or 10 minutes at the measured rate), recording pauses at the limit (S-7) |
 | Clean close | unsaved folder deleted (S-8) |
 | Crash | folder kept; the next start offers recovery (as today), 7-day cleanup |
@@ -215,9 +215,15 @@ Option (b) + (c) of §4.1, with these choices:
   in the join's error; the folder alone does not load then (its branches' parents are in the source).
 - **Default names:** the per-kind counters ("resume 3") go on from the names in the table, so a loaded session
   names its next branch "resume 4", not "resume 1 (2)".
-- **Not covered (edges):** a black box drops the oldest files by count over all lines (P3 makes the window per
-  lineage); the branch state, per-branch coverage and bookmarks are not in the folder (a save from memory has
-  them).
+- **Two tiers (P3, 2026-11-16):** the history limit no longer deletes files, a black box's included: every segment
+  keeps its file for the session's life, and the limit only evicts segments from memory once their file is closed.
+  A seek into an evicted segment reads only that segment's file (S-4): `TTDSessionFile::ReadSegmentPieces` imports
+  its versions (a branch file through its twin streams, bases `(line + 1, number)` on its own line), the engine
+  rebuilds the segment's tables from them. Save reads every evicted segment back for the call. A branch forked
+  while the folder is written starts its files at its fork copy even when its first capture already began a
+  second segment (segments of one frame: before P3 such a branch got no files).
+- **Not covered (edges):** the branch state, per-branch coverage and bookmarks are not in the folder (a save from
+  memory has them).
 
 ## 6. Sizes and timings (measured, B-5 / B-9)
 

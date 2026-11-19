@@ -796,8 +796,11 @@ BreakpointConditionPtr BreakpointManager::CompileCondition(BreakpointTypeEnum ty
         dryRun.cpu = &registers;
         dryRun.target = _target;
         dryRun.state = _context ? &_context->emulatorState : nullptr;
+        // Labels in the condition are the card CPU's own (its firmware symbols)
+        const LabelManager* cardLabels =
+            _context && _context->pDebugManager ? _context->pDebugManager->GetLabelManager(_target->Id()) : nullptr;
         BreakpointConditionPtr program =
-            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, nullptr,
+            BreakpointConditionProgram::Compile(text, ConditionTriggerOf(type, access) | BRK_COND_TARGET, cardLabels,
                                                 error, dialect, cpu ? &dryRun : nullptr);
         if (!program)
             error = "condition: " + error;
@@ -2429,9 +2432,37 @@ void BreakpointManager::RemovePortBreakpointsByType(uint8_t ioType)
 /// region <Runtime methods>
 
 /// The out-of-line half of HandlePCChange / HandleMemoryRead / HandleMemoryWrite: the filter said "maybe"
+void BreakpointManager::BeginReplayEvaluate()
+{
+    _replayEvaluateCounts.clear();
+    for (const auto& [id, bp] : _breakpointMapByID)
+        if (bp)
+            _replayEvaluateCounts[id] = {bp->hitCount, bp->matchCount};
+    _replayEvaluateLast = _lastTriggeredBreakpointID.load(std::memory_order_relaxed);
+    _replayEvaluate = true;
+}
+
+void BreakpointManager::EndReplayEvaluate()
+{
+    _replayEvaluate = false;
+    for (const auto& [id, counts] : _replayEvaluateCounts)
+    {
+        const auto it = _breakpointMapByID.find(id);
+        if (it != _breakpointMapByID.end() && it->second)
+        {
+            it->second->hitCount = counts.first;
+            it->second->matchCount = counts.second;
+        }
+    }
+    _replayEvaluateCounts.clear();
+    _lastTriggeredBreakpointID.store(_replayEvaluateLast, std::memory_order_relaxed);
+}
+
 bool BreakpointManager::Silenced()
 {
     _replayWalk = false;
+    if (_replayEvaluate) [[unlikely]]
+        return false;
     if (!_context || !(_context->ttdReplayActive || _context->toolAccessActive))
         return false;
     // TTD silent-replay suppression (parent TDD 8.2 + Appendix C): the replay re-executes known history. Only a
@@ -2447,7 +2478,8 @@ uint16_t BreakpointManager::ResolveMemory(int kind, uint16_t address, int value)
 
     // Stepping on from the execution breakpoint the emulator is stopped at: no hit, no count (a taps-only walk
     // stops nothing, so it leaves the pass to the breakpoint)
-    if (kind == BRK_KIND_EXEC && !_replayWalk && !_tapsOnlyWalk && _execPassArmed && address == _execPassAddress)
+    if (kind == BRK_KIND_EXEC && !_replayWalk && !_tapsOnlyWalk && !_replayEvaluate && _execPassArmed &&
+        address == _execPassAddress)
     {
         _execPassArmed = false;
         return BRK_INVALID;
@@ -2587,13 +2619,15 @@ uint16_t BreakpointManager::ResolveMagic(uint16_t opcodeWord)
 
 uint16_t BreakpointManager::ResolveEvent(GSCardEvent kind, uint8_t value, int arg, bool stops)
 {
-    if (_context && (_context->ttdReplayActive || _context->toolAccessActive))
+    if (!_replayEvaluate && _context && (_context->ttdReplayActive || _context->toolAccessActive))
         return BRK_INVALID;
     uint16_t result = BRK_INVALID;
     for (const auto& [id, bp] : _breakpointMapByID)
     {
         if (!bp || !bp->active || bp->type != BRK_EVENT || bp->z80address != static_cast<uint16_t>(kind) ||
             (value & bp->nrMask) != (bp->nrValue & bp->nrMask))
+            continue;
+        if (_replayEvaluate && bp->tapSink != BRK_NO_TAP)   // a card scan: no sink hears a replay
             continue;
         if (!stops && bp->tapSink == BRK_NO_TAP)
             continue;
@@ -2764,6 +2798,9 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
             continue;
         if (_tapsOnlyWalk && bp->tapSink == BRK_NO_TAP) [[unlikely]]
             continue;
+        // A card scan's walk (BeginReplayEvaluate): the breakpoints only, no sink hears a replay
+        if (_replayEvaluate && bp->tapSink != BRK_NO_TAP) [[unlikely]]
+            continue;
         // A slot-only physical breakpoint fires only through the slot it was set in
         if (bp->slotOnly && slotShift >= 0 && (address >> slotShift) != (bp->z80address >> slotShift))
             continue;
@@ -2797,6 +2834,12 @@ uint16_t BreakpointManager::WalkCandidates(uint32_t set, int slotShift, uint16_t
                     if ((kind == BRK_TAP_READ || kind == BRK_TAP_PORT_IN) && !_replayWalk)
                         hit.replace = _replace;
                     sink->OnTap(hit);
+                    if (_tapStop) [[unlikely]]
+                    {
+                        _tapStop = false;
+                        if (!_replayWalk && !_tapsOnlyWalk && first == BRK_INVALID)
+                            first = bp->breakpointID;
+                    }
                 }
             continue;
         }

@@ -22,11 +22,24 @@
 #include "unrealdisk/diskimage.h"
 
 class EmulatorContext;
+class FDD;
 
 class FloppyDriveSlot : public IMediaSlot
 {
 public:
     FloppyDriveSlot(EmulatorContext* context, uint8_t drive);
+
+    /// A drive of a card (the +D's two): the slot holds `fdd` (owned by the card) under its own id, label, tags and
+    /// aliases, and names itself in the drive (FDD::setSlotId) so the controller reports writes to this slot
+    struct CardDrive
+    {
+        FDD* fdd = nullptr;
+        std::string id;                    ///< e.g. "fdd.plusd1"
+        std::string label;                 ///< e.g. "+D drive 1"
+        std::vector<std::string> tags;     ///< e.g. {"wd1772", "gdos", "boot"}
+        std::vector<std::string> aliases;  ///< e.g. {"plusd1"}
+    };
+    FloppyDriveSlot(EmulatorContext* context, const CardDrive& drive);
 
     /// "fdd.a" ... "fdd.d"
     static std::string IdFor(uint8_t drive);
@@ -36,6 +49,13 @@ public:
     static void NoteSlotWrite(EmulatorContext* context, uint8_t drive, const char* detail);
     /// A controller is about to change `track` of `drive`'s disk (emulation thread): the manager keeps it as it is
     static void BeforeTrackWrite(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage::Track* track);
+    /// `drive`'s disk is about to grow past its last cylinder (WRITE TRACK there): the manager keeps its size
+    static void BeforeImageGrow(EmulatorContext* context, uint8_t drive, const unrealdisk::DiskImage& disk);
+    /// The same by slot id (a card's drive)
+    static void NoteSlotWrite(EmulatorContext* context, const std::string& slotId, const char* detail);
+    static void BeforeTrackWrite(EmulatorContext* context, const std::string& slotId,
+                                 const unrealdisk::DiskImage::Track* track);
+    static void BeforeImageGrow(EmulatorContext* context, const std::string& slotId, const unrealdisk::DiskImage& disk);
 
     uint8_t Drive() const { return _drive; }
 
@@ -48,9 +68,12 @@ public:
 private:
     void ApplyWriteProtect();
     void MirrorPath(const Medium* medium);
+    /// The drive the slot holds: the card's, or coreState.diskDrives[_drive]
+    FDD* Fdd() const;
 
     EmulatorContext* _context = nullptr;
     uint8_t _drive = 0;
+    FDD* _cardFdd = nullptr;  ///< set for a card's drive; the Beta 128 slots look theirs up in coreState
     SlotDescriptor _descriptor;
     Medium* _medium = nullptr;
     bool _writeProtectSwitch = false;

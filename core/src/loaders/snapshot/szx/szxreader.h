@@ -29,6 +29,7 @@ private:
     static bool ParseRamPage(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseAy(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseBeta128(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
+    static bool ParsePlusD(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseBetaDisk(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseDskFile(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);
     static bool ParseTape(const uint8_t* body, uint32_t size, szx::Stage& stage, std::string& error);

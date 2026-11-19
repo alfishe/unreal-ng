@@ -14,9 +14,12 @@ Spec (JSON):
   {"name", "model", "settings"?, "icons"?: "$data/streamdeck/themes/unrealng/keys",
    "root": MENU}
   MENU   = {"id", "title", "menu": true (the root may omit it), "context"?, "icon"?, "label"?, "bg"?, "strip"?,
-            "back"?: [row, col] | false (submenus: default [0, 0]), "dials"?: [DIAL], "items": [MENU | KEY], "at"?}
-  KEY    = {"id", "title", "at"?, "icon"?, "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?,
-            "tags"?, STEP | "steps": [STEP]}
+            "width"?: columns (a menu wider than its window scrolls), "window"?: [first, last] deck columns that
+            show the scrolled grid (the others hold pinned keys), "back"?: [row, col] | false (submenus: default
+            [0, 0]), "dials"?: [DIAL], "items": [MENU | KEY], "at"?}
+  STRIP  = {"content", ..., "keys"?: [{"label", "span"?, "latch"?, STEP}]}  (content "keys": touch zones)
+  KEY    = {"id", "title", "at"?, "pin"? (a windowed menu: at is the deck's slot, it never scrolls), "icon"?,
+            "label"?, "bg"?, "icon_on"?, "label_on"?, "bg_on"?, "state"?, "then"?, "tags"?, STEP | "steps": [STEP]}
   STEP   = {"action": id, "value"?: ..., "hold"?: true}, {"gui": method, "params"?: {...}, "target"?: ...} (a
             GUI control plane command, checked against data/streamdeck/gui-catalogue.json) or {"kind": ..., ...} (any
             other step kind as it is)
@@ -24,7 +27,10 @@ Spec (JSON):
   Also (deckflow.py, the scenario pipeline): "face" / "face_on" given as objects are used as they are; "tags" on
   menus; "navigation" (more nav fields of a menu); "extra" (any other fields of the node, as they are); a spec with
   "shared": true is a menu of its own to be included: its root keeps a back key.
-  DIAL   = {"index", "label", "turn"?: STEP, "press"?: STEP, "left"? / "right"?: STEP (a dir turn)}
+  DIAL   = {"index", "label", "turn"?: STEP, "press"?: STEP, "left"? / "right"?: STEP (a dir turn),
+            "press_turn"?: STEP | {"left"?, "right"?: STEP} (turned while held)}
+  KEY and MENU also take "long": STEP (a press held 600 ms); MENU "list": {"readout", "label"?, "show"?, "do"?: STEP,
+  "long"?: STEP, "on"?, "dim"?, "key"?, "dial"?} (keys from a readout's items, scenarios.md / pipeline.md)
   An icon is a picture of the icon set (icons/<name>.png, the label is in the picture) or else a built-in icon drawn
   with the label.
 
@@ -187,6 +193,8 @@ class Generator:
             out["tags"] = list(n["tags"])
         if "at" in n:
             out["at"] = list(n["at"])
+        if n.get("pin"):
+            out["pin"] = True
         out["face"] = self.face(n)
         if isinstance(n.get("face_on"), dict):
             out["face_on"] = dict(n["face_on"])
@@ -207,6 +215,8 @@ class Generator:
         # else: a display-only key, its face shows a value (face.value) and a press does nothing
         if n.get("then"):
             out["then"] = n["then"]
+        if isinstance(n.get("long"), dict):
+            out["long"] = self.step(n["long"], n["id"])  # a press held 600 ms: this step (on the release)
         out.update(n.get("extra", {}))
         return out
 
@@ -236,6 +246,35 @@ class Generator:
                     out["turn"][side] = self.step(d[side], where)
         if "press" in d:
             out["press"] = self.step(d["press"], where)
+        if isinstance(d.get("press_turn"), dict):
+            # turned while held: one step with $ticks, or a step a detent each way (a dir turn)
+            pt = d["press_turn"]
+            if set(pt) & {"left", "right"} and set(pt) <= {"left", "right"}:
+                out["press_turn"] = {"kind": "dir"}
+                for side in ("left", "right"):
+                    if side in pt:
+                        out["press_turn"][side] = self.step(pt[side], where)
+            else:
+                out["press_turn"] = self.step(pt, where)
+        return out
+
+    def strip(self, st, where):
+        """A strip as it is, its keys' zones made steps: {label, span?, latch?, STEP} -> {label, span?, latch?, do}."""
+        if not isinstance(st, dict) or not isinstance(st.get("keys"), list):
+            return st
+        out = dict(st)
+        out["keys"] = []
+        for z in st["keys"]:
+            if not isinstance(z, dict):
+                self.fail(where, "strip.keys: each zone is {label, span?, latch?, action | gui | kind}")
+            zone = {"label": z.get("label", "")}
+            for f in ("span", "latch"):
+                if f in z:
+                    zone[f] = z[f]
+            step = {k: v for k, v in z.items() if k not in ("label", "span", "latch")}
+            zone["do"] = self.step(step["do"] if isinstance(step.get("do"), dict) else step,
+                                   f"{where} strip {zone['label']}")
+            out["keys"].append(zone)
         return out
 
     def menu(self, n, root=False):
@@ -246,6 +285,8 @@ class Generator:
             out["context"] = n["context"]
         if "at" in n:
             out["at"] = list(n["at"])
+        if n.get("pin"):
+            out["pin"] = True
         out["face"] = self.face(n)
         back = None if root and not self.spec.get("shared") else n.get("back", [0, 0])
         nav = {}
@@ -258,8 +299,21 @@ class Generator:
         nav.update(n.get("navigation", {}))
         if nav:
             out["nav"] = nav
+        if n.get("width"):
+            out["width"] = n["width"]
+        if n.get("window"):
+            out["window"] = list(n["window"])
         if n.get("strip"):
-            out["strip"] = n["strip"]
+            out["strip"] = self.strip(n["strip"], n["id"])
+        if isinstance(n.get("long"), dict):
+            out["long"] = self.step(n["long"], n["id"])
+        if isinstance(n.get("list"), dict):
+            # a list page: keys from a readout's items in the free slots; its steps take $<field> of the item
+            lst = dict(n["list"])
+            for f in ("do", "long"):
+                if isinstance(lst.get(f), dict):
+                    lst[f] = self.step(lst[f], n["id"])
+            out["list"] = lst
         if n.get("dials"):
             out["dials"] = [self.dial(d, n["id"]) for d in n["dials"]]
         items = [self.menu(c) if c.get("menu") else self.include(c) if c.get("include") else self.key(c)

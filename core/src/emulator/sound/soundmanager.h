@@ -29,6 +29,8 @@
 #include "emulator/sound/audioactivityindicators.h"
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/mixerchannel.h"
+#include "emulator/sound/chips/gs/gshostdriver.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -143,12 +145,18 @@ protected:
     std::unique_ptr<GSHistory> _gsHistory;  // the General Sound card's, named by its slot (gsporttrace.h)
     // The card CPU's instructions (`<slot>.cpu`, exechistory.h): kept across personality switches like _gsHistory
     std::unique_ptr<history::DeviceHistory<ExecRecord>> _gsExecHistory;
+    // The host's commands, decoded (`<slot>.commands`, gscommandlog.h): kept across personality switches too
+    std::unique_ptr<GSCommandLog> _gsCommandLog;
+    // The debugger's send (gshostdriver.h): steps at the frame start while it has one
+    std::shared_ptr<GSHostDriver> _gsHostDriver;
+    GSStatsPublisher _gsStats;  ///< the GS slot's statistics, published at frame ends while read (N7)
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
     IModelAudioSource* _modelAudio = nullptr;
+    std::vector<AudioSourceType> _modelAudioAddedRows;  ///< the rows its parts added (not the ones they took over)
     std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
     // Not under UNREALNG_HAVE_OPL4: the class must have one layout in every translation unit. Targets that read these
@@ -390,6 +398,15 @@ protected:
     /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
     std::atomic<std::thread::id> _emulationThread{};
 
+public:
+    /// True on the thread that runs the frames (a send never waits there for its own steps)
+    bool onEmulationThread() const
+    {
+        return _emulationThread.load(std::memory_order_relaxed) == std::this_thread::get_id();
+    }
+
+protected:
+
     /// Turbo mode forces the low-quality DSP path without touching the user's
     /// `soundhq` feature state; clearing the override restores the previous quality. Set on any thread (turbo
     /// toggles come from automation), reaches the TurboSound device at the next frame start (handleFrameStart)
@@ -621,6 +638,20 @@ public:
     {
         return _gsHistory.get();
     }
+    GSCommandLog* gsCommandLog() const
+    {
+        return _gsCommandLog.get();
+    }
+    /// The debugger's send to the machine's card (F6); nullptr without a card. Shared: a plane waiting for a reply
+    /// keeps it while the card goes
+    std::shared_ptr<GSHostDriver> gsHostDriver() const
+    {
+        return _gsHostDriver;
+    }
+    /// The GS slot's statistics (gsslotstats.h): any thread
+    void publishGsStats();
+    GSStatsPublisher& gsStats() { return _gsStats; }
+    const GSStatsPublisher& gsStats() const { return _gsStats; }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see
     /// ITurboSoundDevice::SetPsgClock. False when the slot is empty or its

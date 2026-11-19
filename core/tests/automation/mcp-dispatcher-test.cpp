@@ -260,7 +260,7 @@ TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentySixTools)
 
     const Json::Value& tools = response["result"]["tools"];
     ASSERT_TRUE(tools.isArray());
-    EXPECT_EQ(tools.size(), 27u);
+    EXPECT_EQ(tools.size(), 29u);
 
     const char* expected[] = {"emulator_manage",  "load_software",     "control_execution", "inspect_state",
                               "type_input",       "mouse_input",       "joystick_input",    "time_travel",       "manage_symbols",    "asm_source",
@@ -269,7 +269,7 @@ TEST_F(McpDispatcher_Test, ToolsList_ContainsAllTwentySixTools)
                               "invoke_api",       "media",             "rzx_playback",      "memory_access",     "bus_analyzer",
                               "device_history",
                               "companion_manage", "controllers",       "actions",           "streamdeck",
-                              "audio_mixer",      "analysis"};
+                              "audio_mixer",      "analysis",          "vdac4_state",       "vdac4_esp_memory"};
     for (const char* name : expected)
     {
         bool found = false;
@@ -621,18 +621,18 @@ TEST_F(McpDispatcher_Test, ToolsCall_UnknownTool_IsInvalidParams)
 // resources
 // ===========================================================================
 
-TEST_F(McpDispatcher_Test, ResourcesList_ContainsTenResources)
+TEST_F(McpDispatcher_Test, ResourcesList_ContainsElevenResources)
 {
     Json::Value response = DispatchSync(*_dispatcher, *_caller, Rpc("resources/list"));
 
     const Json::Value& resources = response["result"]["resources"];
     ASSERT_TRUE(resources.isArray());
-    EXPECT_EQ(resources.size(), 10u);
+    EXPECT_EQ(resources.size(), 11u);
 
     const char* expectedUris[] = {"unreal://keyboard-layout", "unreal://basic-reference", "unreal://z80-isa",
                                   "unreal://trdos-commands",  "unreal://memory-map",      "unreal://emulator-state",
                                   "unreal://machine/profi",   "unreal://machine/tsconf",  "unreal://machine/sprinter",
-                                  "unreal://machine/gmx"};
+                                  "unreal://machine/gmx",     "unreal://machine/p2666"};
     for (const char* uri : expectedUris)
     {
         bool found = false;

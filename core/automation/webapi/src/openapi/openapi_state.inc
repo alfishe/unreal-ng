@@ -35,7 +35,10 @@
         "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7). On GMX `gmx` is the card's "
         "register file: port_00 (scheme, fixrom, blkext, blkex2, pentagon_int, reconf_pending), port_7efd (rom_plane, "
         "turbo, video_640x200, magic_blocked), port_78fd + page_8000, port_dffd + page_c000, port_7afd / port_7cfd + "
-        "scroll_start, trdos_page_1ffd and magic (frozen, frozen_7afd, frozen_7efd, shift).";
+        "scroll_start, trdos_page_1ffd and magic (frozen, frozen_7afd, frozen_7efd, shift). On P2666 (Pentagon 2.666 LE) "
+        "`p2666` is the board: port_xx77 (video_mode, turbo1_28mhz, cpm, palette_blocked_in_dos), port_eff7 (p16, "
+        "mode128, ram0, turbo0_3_5mhz, cmos), cpu_mhz, dos, dos_kept_in_ram_bf0, map (#7FFD bit 4), windows (register, "
+        "kind pentagon / ram / rom, page), other_map registers, palette (16 words), border_bright and covox.";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["required"] = true;
@@ -864,7 +867,9 @@
         "General Sound card (classic GS, lightweight or NeoGS; [SOUND] GSType=Z80, LW or NGS). One report for every "
         "interface (DeviceState::Gs; CLI state audio gs, Lua/Python gs_state, MCP audio_gs): device, implementation, "
         "mailbox status with decoded flags, host command/data bytes, MPAG banking latch, per-channel DAC sample "
-        "and 6-bit volume, firmware/RAM fitment and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
+        "and 6-bit volume, firmware/RAM fitment, firmware_profile (a card with a ROM: known, id, title, symbols - the "
+        "bundle set of the card CPU's labels - for a built-in profile, sha256 of the 32 KB image and page_sha256 of "
+        "its pages; known false: an unknown firmware, no symbols) and the coprocessor PC/SP/AF/halted state. On NeoGS a 'neogs' "
         "object adds the card's registers, SD card, MP3 decoder and DMA modules; 'neogs.dma.zx' is the host's "
         "view of ZX-DMA: mode (off | watch | divert), overlay_installed, read_latch (the byte the next host read "
         "gets), pending (none | read | write) and pending_address, bytes_read / bytes_written / bytes_dropped, "
@@ -902,7 +907,9 @@
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
         "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary. "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
-        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame. "
+        "reset_counters stores the statistics counters as a baseline and returns its id ('baseline'; read with "
+        "GET state/audio/gs/stats?since=<baseline>); nothing on the card changes.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -925,6 +932,8 @@
                                                                ["properties"]["action"]["enum"].append("read_status");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("read_data");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("reset_counters");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["value"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
@@ -957,11 +966,30 @@
                                                                ["properties"]["action"]["enum"].append("dump_module");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["path"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("send");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("conversation");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["pre"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["params"]["type"] = "array";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["params"]["items"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["replies"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["wait_ms"]["type"] = "integer";
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["send_id"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["200"]["description"] =
         "Action result (read_status/read_data carry the byte in 'value'; switch_personality carries the slot "
-        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing')";
+        "change reply with 'personality' (the requested one) and 'previous'; dump_module carries 'path', 'bytes' and 'playing'; send (value = the command, pre, params, replies, wait_ms) and "
+        "conversation (send_id) carry the send: id, state queued / running / done / failed, command, name, pre, params "
+        "with their names, replies, reply_meaning, error, text)";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["400"]["description"] =
-        "Unknown action, invalid value or unknown personality";
+        "Unknown action, invalid value or unknown personality; send: a parameter count the firmware profile does not "
+        "take";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["404"]["description"] =
         "Emulator or GS card not found, or (dump_module) no completed module upload captured yet";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["responses"]["409"]["description"] =

@@ -43,7 +43,8 @@ struct Segment
 // What the surface client brings to the strip (sdb/surfaceclient.h): drawn restrained, in the UnrealNG colours, fine
 // lines. The TTD timeline is a strip readout only (never on keys).
 //   status "ttd" (or a dial scrubbing time) with ttd.position: the timeline - the recorded span as a fine track, the
-//     part up to the position, the position, a ruler of seconds and the marks of the last seek, frame and time code
+//     part up to the position, the position, a ruler of seconds and the marks of the last seek, frame and time code;
+//     with TTD branches (ttd.branch, count > 1) the active branch's name in the header and a green tick per fork
 //   status "run" (run.state), "tape" (media.tape), "target" (the target): one line of status words
 //   showTarget (strip.target, on by default): the target, small, at the top right ("RECONNECTING" when the link
 //     dropped)
@@ -64,6 +65,9 @@ struct StripLive
     static constexpr int kAllDials = 1000;
     int dialHint = -1;
     bool bannerInfo = false;  // the banner is information: the calm look instead of the error's red
+    // strip keys (content "keys"): the zones that hold (a latch on), and the zone just tapped (-1 none)
+    std::vector<int> latched;
+    int tapped = -1;
     [[nodiscard]] std::string Key() const;  // what the picture depends on (the runtime hashes it)
 };
 // A page whose strip shows the TTD timeline (strip.status "ttd", or a dial that scrubs time: ttd.seek_by)
@@ -71,6 +75,9 @@ struct StripLive
 // The timeline's track across the strip, [x0, x1) in logical pixels (after the page's chips); a tap or a swipe there
 // seeks the history
 [[nodiscard]] std::pair<int, int> TimelineSpan(const Page& page, int w);
+// Strip keys (strip.content "keys"): each zone's [x0, x1) in logical pixels, by span; the zone under x, or -1
+[[nodiscard]] std::vector<std::pair<int, int>> StripKeySpans(const Strip& strip, int w);
+[[nodiscard]] int StripKeyHit(const Strip& strip, int w, int x);
 // The target as one line: "PENTAGON 128K (1)"; "NO MACHINE" for null
 [[nodiscard]] std::string TargetLine(const json& target);
 

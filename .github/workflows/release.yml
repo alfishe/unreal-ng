@@ -213,6 +213,8 @@ jobs:
           test -f squashfs-root/usr/lib/udev/rules.d/70-unreal-streamdeck.rules
           test -f squashfs-root/usr/bin/streamdeck/themes/unrealng/theme.json   # data beside the daemon
           test -f squashfs-root/usr/bin/testsnapshots/z80/newbench.z80          # "$data/..." of the scenarios
+          test -f squashfs-root/usr/bin/controllers/keyboards/index.json        # the on-screen keyboard pictures
+          test -f squashfs-root/usr/bin/controllers/profiles/play/steam-deck.yaml  # the controller profiles
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \
             PATH=/usr/bin:/bin squashfs-root/usr/bin/unreal-streamdeck --help
           env -u LD_LIBRARY_PATH -u QT_PLUGIN_PATH -u QTDIR -u QT_ROOT_DIR -u PATH \

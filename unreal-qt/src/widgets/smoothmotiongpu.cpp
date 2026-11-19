@@ -986,6 +986,8 @@ void SmoothMotionGPU::Allocate(Texture texture, int width, int height, const voi
     {
         _gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format.format, format.type, data);
     }
+    // Back to GL's default: QPainter's glyph cache uploads its 4-byte aligned masks assuming it (the HUD's text broke)
+    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
 void SmoothMotionGPU::Grow(Texture texture, int width, int height, const void* data)
@@ -1001,6 +1003,7 @@ void SmoothMotionGPU::Grow(Texture texture, int width, int height, const void* d
     _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     _gl->glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     _gl->glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format.format, format.type, data);
+    _gl->glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 }
 
 std::vector<uint32_t>* SmoothMotionGPU::FrameCopy(Texture texture)

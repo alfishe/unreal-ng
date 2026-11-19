@@ -59,10 +59,30 @@ bool WD1793::drainSectorRead(const std::function<void(uint8_t byte)>& byteConsum
 
 /// region <Constructors / destructors>
 
-WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
+WD1793::WD1793(EmulatorContext* context) : WD1793(context, WdVariant::Wd1793, CreateBetaDrives(context), "beta128")
+{
+    _betaDrives = true;
+}
+
+std::array<FDD*, 4> WD1793::CreateBetaDrives(EmulatorContext* context)
+{
+    // The Beta 128 drives live in coreState.diskDrives[] (the Emulator owns and deletes them)
+    std::array<FDD*, 4> drives{};
+    for (size_t i = 0; i < drives.size(); i++)
+    {
+        context->coreState.diskDrives[i] = new FDD(context);
+        drives[i] = context->coreState.diskDrives[i];
+    }
+    return drives;
+}
+
+WD1793::WD1793(EmulatorContext* context, WdVariant variant, const std::array<FDD*, 4>& drives, const char* historyId)
+    : PortDecoder(context), _commandHistory{historyId, "FDC commands", kCommandHistorySize}
 {
     _context = context;
     _logger = context->pModuleLogger;
+    _variant = variant;
+    _drives = drives;
 
     _stateHandlers.resize(WDSTATE::WDSTATE_MAX);
     _stateHandlers[S_IDLE] = &WD1793::processIdle;
@@ -82,18 +102,21 @@ WD1793::WD1793(EmulatorContext* context) : PortDecoder(context)
     _stateHandlers[S_WAIT_INDEX] = &WD1793::processWaitIndex;
     _stateHandlers[S_END_COMMAND] = &WD1793::processEndCommand;
 
-    /// region <Create FDD instances
+    /// region <Attach FDD instances>
 
-    for (size_t i = 0; i < 4; i++)
+    for (FDD* drive : _drives)
     {
-        _context->coreState.diskDrives[i] = new FDD(_context);
-        _context->coreState.diskDrives[i]->setDiskChangedCallback([this](FDD* drive) { onDiskChanged(drive); });
+        if (drive)
+        {
+            drive->setDiskChangedCallback([this](FDD* changed) { onDiskChanged(changed); });
+        }
     }
+    _noDrive = std::make_unique<FDD>(_context);
 
-    /// endregion </Create FDD instances>
+    /// endregion </Attach FDD instances>
 
     // Set drive A: as default
-    _selectedDrive = _context->coreState.diskDrives[0];
+    _selectedDrive = _drives[0] ? _drives[0] : _noDrive.get();
 
     reset();
 
@@ -107,13 +130,25 @@ WD1793::~WD1793()
 {
     _context->histories.Remove(&_commandHistory);
 
-    // Note: Disk drives and disk images are owned by Emulator/CoreState
-    // They are managed and deleted by the Emulator, not by WD1793
-    // WD1793 only uses them via pointers stored in CoreState. The drives may
-    // outlive this controller: detach the disk-change callbacks
-    if (_context)
+    // Note: the drives and their disk images are not owned by the controller (the Beta 128 ones by the
+    // Emulator / CoreState, a card's by the card). The drives may outlive this controller: detach the
+    // disk-change callbacks. The Beta 128 drives may also be gone already (Emulator::Release deletes them
+    // before the Core deletes this controller and nulls their slots): they are reached through coreState,
+    // never through the copies in _drives
+    if (_betaDrives)
     {
-        for (FDD* drive : _context->coreState.diskDrives)
+        if (_context)
+        {
+            for (FDD* drive : _context->coreState.diskDrives)
+            {
+                if (drive)
+                    drive->setDiskChangedCallback(nullptr);
+            }
+        }
+    }
+    else
+    {
+        for (FDD* drive : _drives)
         {
             if (drive)
                 drive->setDiskChangedCallback(nullptr);
@@ -190,6 +225,7 @@ void WD1793::internalReset()
     _crcAccumulator = 0xFFFF;
     _writeTrackTarget = nullptr;
     _crcStartPosition = 0;
+    _writeTrackEscapeNext = false;
 
     // Clear timing state
     _time = 0;
@@ -204,6 +240,7 @@ void WD1793::internalReset()
     _indexPulseCounter = 0;
     _waitIndexPulseCount = SIZE_MAX;
     _motorTimeoutTStates = 0;
+    _spinUpDoneAt = SIZE_MAX;
 
     // Stop a spinning motor before the controller goes to sleep below: a sleeping
     // controller never runs processFDDMotorState(), so a motor left spinning here
@@ -215,9 +252,9 @@ void WD1793::internalReset()
         stopFDDMotor();
     }
     // The select latch follows _drive = 0 (drive A)
-    if (_context->coreState.diskDrives[0])
+    if (_drives[0])
     {
-        _selectedDrive = _context->coreState.diskDrives[0];
+        _selectedDrive = _drives[0];
     }
 
     _rateRetryState = WDSTATE::S_IDLE;
@@ -300,8 +337,11 @@ void WD1793::onDiskChanged(FDD* drive)
     // right after this, so every pointer into it goes now - wherever the
     // command in progress is. The command then ends on its next step the way
     // the chip ends one when the medium goes away: the read and write paths
-    // find no buffer and finish with NOT READY
-    if (drive != _selectedDrive)
+    // find no buffer and finish with NOT READY.
+    // The pointers belong to the drive the command started on, which need not be the selected one: a program may
+    // select another drive in the middle of a command or after it (the sector in hand stays). A change there freed
+    // their target as well (heap use after free under the format's writes: WD1793_Fuzz_Test)
+    if (drive != _selectedDrive && _commandDrive != nullptr && drive != _commandDrive)
         return;
     _currentSector = nullptr;
     _currentReadTrack = nullptr;
@@ -383,7 +423,7 @@ void WD1793::processBeta128(uint8_t value)
 void WD1793::selectDrive(uint8_t drive)
 {
     _drive = drive & 0b0000'0011;
-    FDD* target = _context->coreState.diskDrives[_drive];
+    FDD* target = _drives[_drive];
     if (!target || target == _selectedDrive)
     {
         return;
@@ -401,10 +441,123 @@ void WD1793::selectDrive(uint8_t drive)
     }
 }
 
+/// WD1772 spin-up (data sheet, Type I / II / III flowcharts): a command that finds MO low raises it; with h = 0 it
+/// then waits 6 index pulses before doing anything, with h = 1 it goes on at once (and status bit 5 stays clear).
+/// The command handler has already scheduled its first FSM state: the wait is put in front of it
+void WD1793::applySpinUp1772(uint8_t command, bool motorWasOn)
+{
+    if (motorWasOn)
+    {
+        return;  // MO was high: no spin-up, bit 5 keeps its value
+    }
+
+    if (command & CMD_SEEK_HEADLOAD)  // h = 1: spin-up disabled
+    {
+        _spinUpDoneAt = SIZE_MAX;
+        return;
+    }
+
+    // Without a disk there are no index pulses and the chip would wait for ever; the emulation ends the spin-up after
+    // the same time and lets the command fail the way it fails without a disk (seek error / record not found)
+    size_t spinUp = SPIN_UP_REVOLUTIONS_1772 * DISK_ROTATION_PERIOD_TSTATES;
+    if (isFastDiskArmed())
+    {
+        spinUp = fastDelay(_state == WDSTATE::S_WAIT ? _state2 : _state, spinUp);
+    }
+    _spinUpDoneAt = _time + spinUp;
+
+    if (_state == WDSTATE::S_WAIT)
+    {
+        _delayTStates += static_cast<int64_t>(spinUp);
+    }
+    else if (_state != WDSTATE::S_IDLE)
+    {
+        _state2 = _state;
+        _state = WDSTATE::S_WAIT;
+        _delayTStates = static_cast<int64_t>(spinUp);
+    }
+}
+
+/// The status register as a WD1772 shows it. The FSM keeps the WD1793 meaning of the bits; the 1772 differs in:
+/// bit 7 = motor on (MO), not NOT READY; Type I bit 5 = spin-up complete, not head loaded. A Type II / III command
+/// the FSM ended as not ready (no disk) reads as record not found: the 1772 has no READY input
+uint8_t WD1793::Status1772(uint8_t status) const
+{
+    const bool notReady = (status & WDS_NOTRDY) != 0;
+    status &= static_cast<uint8_t>(~WDS_NOTRDY);
+    if (_selectedDrive && _selectedDrive->getMotor())
+    {
+        status |= WDS_MOTORON_1772;
+    }
+
+    const bool type1 = isType1Command(_commandRegister) || _lastDecodedCmd == WD_CMD_FORCE_INTERRUPT;
+    if (type1)
+    {
+        status &= static_cast<uint8_t>(~WDS_SPINUP_1772);
+        if (_time >= _spinUpDoneAt)
+        {
+            status |= WDS_SPINUP_1772;
+        }
+    }
+    else if (notReady && !(status & WDS_BUSY))
+    {
+        status |= WDS_NOTFOUND;
+    }
+    return status;
+}
+
+void WD1793::RestoreNoDriveSelected()
+{
+    if (_noDrive)
+        _selectedDrive = _noDrive.get();
+}
+
+void WD1793::selectDriveLine(int drive)
+{
+    wakeUp();
+    process();
+
+    if (drive >= 0 && drive < static_cast<int>(_drives.size()) && _drives[drive])
+    {
+        selectDrive(static_cast<uint8_t>(drive));
+    }
+    else if (_selectedDrive != _noDrive.get())
+    {
+        // No drive on the select lines: the chip sees no disk and no index. The motor line stays the chip's: the
+        // drive that was selected stops listening to it
+        const bool motorOn = _selectedDrive && _selectedDrive->getMotor();
+        if (motorOn)
+        {
+            _selectedDrive->setMotor(false);
+        }
+        _selectedDrive = _noDrive.get();
+        if (motorOn)
+        {
+            _selectedDrive->setMotor(true);
+        }
+    }
+
+    notifyFDDStateChanged();
+    notifyFdcStateChanged();
+}
+
+void WD1793::setSide(bool side1)
+{
+    wakeUp();
+    process();
+    _sideUp = side1;
+    notifyFdcStateChanged();
+}
+
 void WD1793::RestoreSnapshotRegisters(uint8_t system, uint8_t track, uint8_t sector, uint8_t data, uint8_t status,
                                       bool stepIn)
 {
     processBeta128(system);
+    RestoreTaskRegisters(track, sector, data, status, stepIn);
+}
+
+void WD1793::RestoreTaskRegisters(uint8_t track, uint8_t sector, uint8_t data, uint8_t status, bool stepIn)
+{
     _trackRegister = track;
     _sectorRegister = sector;
     _dataRegister = data;
@@ -514,6 +667,13 @@ void WD1793::processFDDMotorState()
     if (_motorTimeoutTStates <= 0)
     {
         return;  // Motor already stopped or timeout not set
+    }
+
+    // WD1772: the 9 revolutions are counted from the end of the command, the motor never stops under one
+    if (Is1772() && (_statusRegister & WDS_BUSY))
+    {
+        _motorTimeoutTStates = static_cast<int64_t>(MOTOR_OFF_REVOLUTIONS_1772 * DISK_ROTATION_PERIOD_TSTATES);
+        return;
     }
 
     // Apply time difference from the previous call
@@ -705,7 +865,9 @@ void WD1793::prolongFDDMotorRotation()
     // Set motor timeout to 15 disk revolutions (3 seconds at 5 RPS)
     static constexpr const size_t REVOLUTIONS_FOR_TIMEOUT = 15;  // 15 revolutions at 5 RPS = 3 seconds
     static constexpr const size_t TSTATES_PER_REVOLUTION = Z80_FREQUENCY / FDD::DISK_REVOLUTIONS_PER_SECOND;
-    _motorTimeoutTStates = REVOLUTIONS_FOR_TIMEOUT * TSTATES_PER_REVOLUTION;
+    // WD1772: MO drops after 9 revolutions with no command (counted while idle, see processFDDMotorState())
+    const size_t revolutions = Is1772() ? MOTOR_OFF_REVOLUTIONS_1772 : REVOLUTIONS_FOR_TIMEOUT;
+    _motorTimeoutTStates = static_cast<int64_t>(revolutions * TSTATES_PER_REVOLUTION);
 
     // Start motor if not spinning yet
     if (!_selectedDrive->getMotor())
@@ -729,6 +891,7 @@ void WD1793::stopFDDMotor()
 {
     _selectedDrive->setMotor(false);
     _motorTimeoutTStates = 0;
+    _spinUpDoneAt = SIZE_MAX;  // WD1772 status bit 5: a new spin-up is needed
     notifyFDDStateChanged();
 
     // Reset index pulse counter and related state when motor is stopped
@@ -1197,6 +1360,8 @@ void WD1793::processWD93Command(uint8_t value)
         }
 
         // Persist information about command
+        if (command != WD_CMD_FORCE_INTERRUPT)
+            _commandDrive = _selectedDrive;
         _commandRegister = value;
         _lastDecodedCmd = command;
         _lastCmdValue = commandValue;
@@ -1248,8 +1413,15 @@ void WD1793::processWD93Command(uint8_t value)
             _beta128status = 0;
             _indexPulseCounter = 0;
 
+            const bool motorWasOn = _selectedDrive && _selectedDrive->getMotor();
+
             // Call the corresponding command method
             (this->*handler)(commandValue);
+
+            if (Is1772())
+            {
+                applySpinUp1772(value, motorWasOn);
+            }
         }
     }
 
@@ -1263,7 +1435,9 @@ void WD1793::processWD93Command(uint8_t value)
 uint8_t WD1793::getPositioningRateForType1CommandMs(uint8_t command)
 {
     uint8_t rateIndex = command & 0b0000'0011;
-    uint8_t result = (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex] : STEP_TIMINGS_MS_1MHZ[rateIndex];
+    uint8_t result = Is1772()                             ? STEP_TIMINGS_MS_1772[rateIndex]
+                     : (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex]
+                                                          : STEP_TIMINGS_MS_1MHZ[rateIndex];
 
     return result;
 }
@@ -1353,13 +1527,17 @@ const char* WD1793::ClockPolicyName(FdcClockPolicy policy)
 size_t WD1793::StepPeriodTStates(uint8_t rateIndex) const
 {
     rateIndex &= 0b0000'0011;
-    const size_t ms = (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex] : STEP_TIMINGS_MS_1MHZ[rateIndex];
+    const size_t ms = Is1772()                             ? STEP_TIMINGS_MS_1772[rateIndex]
+                      : (_fdcClock == FdcClock::Clock2MHz) ? STEP_TIMINGS_MS_2MHZ[rateIndex]
+                                                           : STEP_TIMINGS_MS_1MHZ[rateIndex];
     return ms * TSTATES_PER_MS;
 }
 
 size_t WD1793::HeadSettleTStates() const
 {
-    const size_t ms = (_fdcClock == FdcClock::Clock2MHz) ? HEAD_SETTLE_MS_2MHZ : HEAD_SETTLE_MS_1MHZ;
+    const size_t ms = Is1772()                             ? HEAD_SETTLE_MS_1772
+                      : (_fdcClock == FdcClock::Clock2MHz) ? HEAD_SETTLE_MS_2MHZ
+                                                           : HEAD_SETTLE_MS_1MHZ;
     return ms * TSTATES_PER_MS;
 }
 
@@ -1626,9 +1804,10 @@ void WD1793::cmdWriteSector(uint8_t value)
                       static_cast<unsigned>(_trackRegister),
                       static_cast<unsigned>(_sectorRegister),
                       static_cast<unsigned>(_sideUp));
-        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
+        const std::string slotId = SlotIdOfSelectedDrive();
+        FloppyDriveSlot::NoteSlotWrite(_context, slotId, reason);
         // The track under the head is the one the command writes: kept as it is now
-        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, _selectedDrive->trackUnderHead(_sideUp ? 1 : 0));
+        FloppyDriveSlot::BeforeTrackWrite(_context, slotId, _selectedDrive->trackUnderHead(_sideUp ? 1 : 0));
     }
 
     // Decode command bits:
@@ -1719,19 +1898,6 @@ void WD1793::cmdReadTrack(uint8_t value)
         return;
     }
 
-    // Phase 2 Item 6 - record a disk-write marker for the format command.
-    // Write Track reformats an entire track, which is heavily destructive
-    // to replay fidelity.
-    {
-        char reason[64];
-        std::snprintf(reason, sizeof(reason),
-                      "Write Track (format) trk=%u side=%u",
-                      static_cast<unsigned>(_trackRegister),
-                      static_cast<unsigned>(_sideUp));
-        FloppyDriveSlot::NoteSlotWrite(_context, _drive, reason);
-        FloppyDriveSlot::BeforeTrackWrite(_context, _drive, track);
-    }
-
     if (!track->rawData() || track->rawSize() == 0)
     {
         // Handle error - invalid track
@@ -1781,13 +1947,31 @@ void WD1793::cmdWriteTrack(uint8_t value)
         return;
     }
 
-    DiskImage::Track* track = _selectedDrive->trackUnderHead(_sideUp);
+    // Past the last cylinder of the image the disk still has a track (an image lists only what was dumped or
+    // created): the image grows. WRITE TRACK has no Record Not Found (status bit 4 is always 0 for it); with no
+    // surface under the head at all (a side the image lacks, between two 48 tpi tracks) the drive is not ready
+    DiskImage::Track* track = _selectedDrive->trackUnderHeadForWrite(_sideUp);
     if (!track)
     {
-        _statusRegister |= WDS_NOTFOUND;
+        _statusRegister |= WDS_NOTRDY;
         transitionFSM(S_END_COMMAND);
         return;
     }
+
+    // Disk-write marker and the track's undo copy (media versions, TTD): Write Track reformats the whole track
+    {
+        char reason[64];
+        std::snprintf(reason, sizeof(reason),
+                      "Write Track (format) trk=%u side=%u",
+                      static_cast<unsigned>(_trackRegister),
+                      static_cast<unsigned>(_sideUp));
+        const std::string slotId = SlotIdOfSelectedDrive();
+        FloppyDriveSlot::NoteSlotWrite(_context, slotId, reason);
+        FloppyDriveSlot::BeforeTrackWrite(_context, slotId, track);
+    }
+
+    // A new track starts with the control-byte language active (an escape left by an aborted command is void)
+    _writeTrackEscapeNext = false;
 
     // Set DRQ to request first byte from host (per datasheet: "The Data Request is activated immediately upon
     // receiving the command"). The byte must be loaded before the index pulse, so the service flag starts false
@@ -1837,6 +2021,30 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     WDSTATE prevState = _state;
     [[maybe_unused]] WDSTATE prevState2 = _state2;
 
+    // A write cut short leaves on the disk what it wrote so far: WRITE TRACK's partial stream is indexed (the
+    // index still described the old layout), WRITE SECTOR's data is there without its CRC (a CRC error on read)
+    if (!noCommandExecuted && _writeTrackTarget)
+    {
+        if (_lastDecodedCmd == WD_CMD_WRITE_TRACK && _rawDataBufferIndex > 0)
+        {
+            _writeTrackTarget->reindex();
+            _writeTrackTarget->markRawTrackDirty();
+            _writeTrackTarget->markDirty();
+        }
+        else if (_lastDecodedCmd == WD_CMD_WRITE_SECTOR && _currentSector && _currentSector->hasData &&
+                 _rawDataBuffer > _currentSector->data && _rawDataBuffer <= _currentSector->data + _currentSector->dataSize)
+        {
+            _currentSector->dataCrcValid = _currentSector->isDataCRCValid();
+            _currentSector->dirty = true;
+            _writeTrackTarget->markDirty();
+        }
+    }
+    _writeTrackTarget = nullptr;
+    _currentSector = nullptr;
+    _currentReadTrack = nullptr;
+    _rawDataBuffer = nullptr;
+    _writeTrackEscapeNext = false;
+
     // Terminate any current command - always happens regardless of I0-I3 flags
     _state = S_IDLE;
     _state2 = S_IDLE;
@@ -1848,8 +2056,8 @@ void WD1793::cmdForceInterrupt(uint8_t value)
     std::queue<FSMEvent> emptyQueue;
     _operationFIFO.swap(emptyQueue);
 
-    // Extract only the interrupt condition bits (I0-I3)
-    value &= 0b0000'1111;
+    // Extract only the interrupt condition bits (I0-I3); the WD1772 has no READY input, so no I0 / I1
+    value &= Is1772() ? 0b0000'1100 : 0b0000'1111;
 
     // Store interrupt conditions for monitoring (I0, I1, I2)
     // I3 is handled immediately, so we only store I0-I2
@@ -2339,11 +2547,12 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                                 return;
                             }
 
-                            // The head reads whatever lies under it: the drive's physical track (the ID field must then match trackReg)
-        DiskImage::Track* track = selectedDrive->trackUnderHead(sideUp);
+                            // The head writes the drive's physical track; past the image's last cylinder the image
+                            // grows (cmdWriteTrack grew it already when the command started there)
+                            DiskImage::Track* track = selectedDrive->trackUnderHeadForWrite(sideUp);
                             if (!track)
                             {
-                                this->_statusRegister |= WDS_NOTFOUND;
+                                this->_statusRegister |= WDS_NOTRDY;
                                 return;
                             }
 
@@ -2353,6 +2562,12 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             // length for that format (6250 MFM DD, 3125 FM DD, 12 500 MFM HD, 6250 FM HD)
                             const DiskImage::Encoding encoding = controllerEncoding();
                             const FdcDataRate writeRate = WriteRateForClock(_fdcClock);
+                            // The previous command's sector and buffers point into the stream and index this command
+                            // replaces (a resize below frees the stream, the reindex at the end rebuilds the index)
+                            _currentSector = nullptr;
+                            _currentReadTrack = nullptr;
+                            _sectorData = nullptr;
+                            _idamData = nullptr;
                             if (track->encoding() != encoding || track->RecordedDataRate() != writeRate)
                             {
                                 const bool mfm = (encoding == DiskImage::Encoding::MFM);
@@ -2367,6 +2582,9 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
                             _rawDataBuffer = track->rawData();
                             _rawDataBufferIndex = 0;
                             _crcAccumulator = 0xCDB4;  // WD1793 CRC preset value (after 3x A1 sync bytes)
+                            // An F7 before the first F5 / FM mark covers the stream from the index: never the
+                            // previous command's start, which may lie past the end of this (shorter) track
+                            _crcStartPosition = 0;
                             _writeTrackTarget = track;  // Store track for reindexing on completion
                         }, 0, tag);
         case FifoKind::NextReadSector:
@@ -2480,13 +2698,21 @@ WD1793::FSMEvent WD1793::MakeFifoEvent(const FifoTag& tag)
     return FSMEvent(WDSTATE::S_END_COMMAND, []() {}, 0, tag);
 }
 
+std::string WD1793::SlotIdOfSelectedDrive() const
+{
+    // A card's drive names its slot (fdd.plusd1); a Beta 128 drive is the slot of its select line (fdd.a ... fdd.d)
+    if (_selectedDrive && !_selectedDrive->getSlotId().empty())
+        return _selectedDrive->getSlotId();
+    return FloppyDriveSlot::IdFor(_drive);
+}
+
 uint8_t WD1793::DriveIndexOf(const FDD* drive) const
 {
-    if (!drive || !_context)
+    if (!drive)
         return 0xFF;
     for (uint8_t i = 0; i < 4; i++)
     {
-        if (_context->coreState.diskDrives[i] == drive)
+        if (_drives[i] == drive)
             return i;
     }
     return 0xFF;
@@ -2494,7 +2720,7 @@ uint8_t WD1793::DriveIndexOf(const FDD* drive) const
 
 FDD* WD1793::DriveAt(uint8_t index) const
 {
-    return (_context && index < 4) ? _context->coreState.diskDrives[index] : nullptr;
+    return index < _drives.size() ? _drives[index] : nullptr;
 }
 
 /// endregion </Command FIFO events>
@@ -2601,6 +2827,9 @@ void WD1793::processStep()
     fddTrack += stepCorrection;
     _selectedDrive->setTrack(fddTrack);
     notifyFDDStateChanged();
+    // A pulse the drive's stepper takes (outward at track 0 too: the head knocks the stop)
+    if (_hapticSteps < UINT16_MAX)
+        _hapticSteps++;
 
     /// endregion </Make head step>
 
@@ -2754,7 +2983,8 @@ DiskImage::Sector* WD1793::locateSectorForType2(DiskImage::Track* track, uint8_t
     }
 
     // Side compare: bit 1 (C) enables the comparison, bit 3 (S) carries the expected side
-    const int side = (_commandRegister & CMD_SIDE_CMP_FLAG) ? ((_commandRegister & CMD_SIDE) ? 1 : 0) : -1;
+    // The WD1772 has neither: bit 3 is h (spin-up), bit 1 is P (write precompensation)
+    const int side = (!Is1772() && (_commandRegister & CMD_SIDE_CMP_FLAG)) ? ((_commandRegister & CMD_SIDE) ? 1 : 0) : -1;
 
     // Flaky/"floating" sector emulation lives in its own module and only engages when the track actually
     // carries weak-bit marks (FDI never does; SCP/HFE/DSK/UDI captures of protected media can).
@@ -3216,101 +3446,118 @@ void WD1793::processWriteTrack()
     // F5 / F6 are not allowed and are written literally, the address marks themselves carry the C7 / D7 clocks.
     const bool fm = (_writeTrackEncoding == DiskImage::Encoding::FM);
 
-    switch (dataByte)
-    {
-        case 0xF5:
-            if (fm)
-            {
-                byteToWrite = dataByte;  // Not allowed in FM: written as an ordinary byte
-                break;
-            }
-            // Write A1 with missing clock (sync byte for MFM)
-            // Also presets CRC and records start position for F7 calculation
-            byteToWrite = 0xA1;
-            clockMark = true;
-            _crcAccumulator = 0xCDB4;  // Preset CRC after 3x A1 sync bytes
-            _crcStartPosition = _rawDataBufferIndex + 1;  // CRC calculation starts AFTER this byte
-            break;
+    // The byte that follows an F7 is not interpreted (WD177x / WD179x): it is written as is, with normal clocks,
+    // presets nothing and is accumulated into the running CRC, so the next F7 covers it. "F7 F7" therefore writes
+    // the CRC and then a literal F7 - the trick behind readable ID fields with N = #F7 (Atari ST Copy Protection,
+    // J. L. Guerin, sections 4.3 and 4.8). FM follows the same rule: the source describes MFM only, MAME's wd_fdc
+    // writes the F7 after a CRC literally in both encodings (its FM branch, WRITE_TRACK_DATA) - no hardware capture
+    // of an FM Read Track confirms it yet. MAME narrows the literal to an F7; the source's "next byte" is kept.
+    const bool literal = _writeTrackEscapeNext;
+    _writeTrackEscapeNext = false;
 
-        case 0xF6:
-            if (fm)
+    if (!literal)
+    {
+        switch (dataByte)
+        {
+            case 0xF5:
+                if (fm)
+                {
+                    byteToWrite = dataByte;  // Not allowed in FM: written as an ordinary byte
+                    break;
+                }
+                // Write A1 with missing clock (sync byte for MFM)
+                // Also presets CRC and records start position for F7 calculation
+                byteToWrite = 0xA1;
+                clockMark = true;
+                _crcAccumulator = 0xCDB4;  // Preset CRC after 3x A1 sync bytes
+                _crcStartPosition = _rawDataBufferIndex + 1;  // CRC calculation starts AFTER this byte
+                break;
+
+            case 0xF6:
+                if (fm)
+                {
+                    byteToWrite = dataByte;
+                    break;
+                }
+                // Write C2 with missing clock
+                byteToWrite = 0xC2;
+                clockMark = true;
+                break;
+
+            case 0xF7:
             {
+                // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
+                // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
+                // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
+                // A start past the write position (a restored or foreign state) would read beyond the stream
+                if (_crcStartPosition > _rawDataBufferIndex) _crcStartPosition = _rawDataBufferIndex;
+                size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
+                // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
+                uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
+                                  : CRCHelper::crcWD1793(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen));
+                
+                // Write CRC bytes in on-disk order: true CRC high byte first.
+                // crcWD1793 returns the value byte-swapped (its low byte is the true high byte), matching the
+                // little-endian uint16_t layout used by AddressMarkRecord::id_crc / Sector::dataCRC().
+                if (_rawDataBufferIndex < _writeTrackLength)
+                {
+                    if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
+                    _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // True CRC high byte
+                    _bytesToWrite--;
+                }
+                if (_rawDataBufferIndex < _writeTrackLength)
+                {
+                    if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
+                    _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);    // True CRC low byte
+                    _bytesToWrite--;
+                }
+                
+                // The next byte from the host is written literally
+                _writeTrackEscapeNext = true;
+
+                // CRC bytes written - they take two byte cells on the disk, so the next byte is due after both
+                // (one revolution is the whole track length in time, whatever the number of F7 in the stream)
+                _drq_served = false;
+                raiseDrq();
+                transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, 2 * _tstatesPerByte);
+                return;  // Don't write a third byte
+            }
+
+            case 0xF8:
+            case 0xF9:
+            case 0xFA:
+            case 0xFB:
+                // Data Address Mark bytes - written literally
+                // F8 = Deleted Data Mark, FB = Normal Data Mark
+                byteToWrite = dataByte;
+                if (fm)
+                {
+                    clockMark = true;                          // Clock C7
+                    _crcStartPosition = _rawDataBufferIndex;   // FM CRC covers the mark itself, preset FFFF
+                }
+                break;
+
+            case 0xFC:
+                // Index Address Mark
+                byteToWrite = 0xFC;
+                if (fm) clockMark = true;                      // Clock D7
+                break;
+
+            case 0xFE:
+                // ID Address Mark. In MFM it presets nothing: the CRC was preset by the last F5 (A1) before it
+                byteToWrite = 0xFE;
+                if (fm)
+                {
+                    clockMark = true;                          // Clock C7
+                    _crcStartPosition = _rawDataBufferIndex;
+                }
+                break;
+
+            default:
+                // Normal data byte - written literally
                 byteToWrite = dataByte;
                 break;
-            }
-            // Write C2 with missing clock
-            byteToWrite = 0xC2;
-            clockMark = true;
-            break;
-
-        case 0xF7:
-        {
-            // Generate and write 2 CRC bytes - calculate over range from _crcStartPosition
-            // Use CRCHelper::crcWD1793 which matches the algorithm used by MFMParser for validation
-            // Note: crcWD1793 includes a byte swap at the end, so the returned value is ready to write as-is
-            size_t crcLen = _rawDataBufferIndex - _crcStartPosition;
-            // MFM: preset 0xCDB4 after A1 A1 A1 (crcWD1793). FM: preset 0xFFFF at the address mark (crcWD1793FM)
-            uint16_t crc = fm ? CRCHelper::crcWD1793FM(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen))
-                              : CRCHelper::crcWD1793(&_rawDataBuffer[_crcStartPosition], static_cast<uint16_t>(crcLen));
-            
-            // Write CRC bytes in on-disk order: true CRC high byte first.
-            // crcWD1793 returns the value byte-swapped (its low byte is the true high byte), matching the
-            // little-endian uint16_t layout used by AddressMarkRecord::id_crc / Sector::dataCRC().
-            if (_rawDataBufferIndex < _writeTrackLength)
-            {
-                if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc & 0xFF);  // True CRC high byte
-                _bytesToWrite--;
-            }
-            if (_rawDataBufferIndex < _writeTrackLength)
-            {
-                if (_writeTrackTarget) _writeTrackTarget->setClockMark(_rawDataBufferIndex, false);
-                _rawDataBuffer[_rawDataBufferIndex++] = static_cast<uint8_t>(crc >> 8);    // True CRC low byte
-                _bytesToWrite--;
-            }
-            
-            // CRC bytes written - request next data with proper timing delay
-            _drq_served = false;
-            raiseDrq();
-            transitionFSMWithDelay(WDSTATE::S_WRITE_TRACK, _tstatesPerByte);
-            return;  // Don't write a third byte
         }
-
-        case 0xF8:
-        case 0xF9:
-        case 0xFA:
-        case 0xFB:
-            // Data Address Mark bytes - written literally
-            // F8 = Deleted Data Mark, FB = Normal Data Mark
-            byteToWrite = dataByte;
-            if (fm)
-            {
-                clockMark = true;                          // Clock C7
-                _crcStartPosition = _rawDataBufferIndex;   // FM CRC covers the mark itself, preset FFFF
-            }
-            break;
-
-        case 0xFC:
-            // Index Address Mark
-            byteToWrite = 0xFC;
-            if (fm) clockMark = true;                      // Clock D7
-            break;
-
-        case 0xFE:
-            // ID Address Mark - preset CRC after writing
-            byteToWrite = 0xFE;
-            _crcAccumulator = 0xCDB4;  // Preset CRC
-            if (fm)
-            {
-                clockMark = true;                          // Clock C7
-                _crcStartPosition = _rawDataBufferIndex;
-            }
-            break;
-
-        default:
-            // Normal data byte - written literally
-            byteToWrite = dataByte;
-            break;
     }
 
     // Write the byte to the raw track buffer, recording whether it carries a missing-clock mark
@@ -3488,6 +3735,7 @@ void WD1793::processWaitIndex()
 
 void WD1793::processEndCommand()
 {
+    _writeTrackEscapeNext = false;
     endCommand();
     _currentReadTrack = nullptr; // no read in progress: never a stale track for the next command
 
@@ -3578,7 +3826,7 @@ void WD1793::handleFrameEnd()
 
 /// region <PortDevice interface methods>
 
-uint8_t WD1793::portDeviceInMethod(uint16_t port)
+uint8_t WD1793::ReadRegister(uint8_t reg)
 {
     uint8_t result = 0xFF;
 
@@ -3589,7 +3837,7 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     // access made TR-DOS status polling a hot spot even with logging off
     auto memBankName = [this]() { return _context->pMemory->GetCurrentBankName(0); };
 
-    // MLOGINFO("In port:0x%04X, pc: 0x%04X bank: %s", port, pc, memBankName().c_str());
+    // MLOGINFO("In reg:%u, pc: 0x%04X bank: %s", reg, pc, memBankName().c_str());
 
     /// endregion </Debug print>
 
@@ -3600,10 +3848,14 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     process();
 
     // Handle FDC ports
-    switch (port)
+    switch (reg & 0b0000'0011)
     {
-        case PORT_1F:  // Return status register value
+        case REG_COMMAND_STATUS:  // Return status register value
             result = getStatusRegister();
+            if (Is1772())
+            {
+                result = Status1772(result);
+            }
 
             {
                 // Lazy as memBankName: built only when the debug level logs (a macro argument) - TR-DOS polls the
@@ -3632,17 +3884,17 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
             // Reset INTRQ (Interrupt request) flag - status register is read
             clearIntrq();
             break;
-        case PORT_3F:  // Return the current track number
+        case REG_TRACK:  // Return the current track number
             result = _trackRegister;
 
             MLOGDEBUG("In #3F (Get Track Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
-        case PORT_5F:  // Return current sector number
+        case REG_SECTOR:  // Return current sector number
             result = _sectorRegister;
 
             MLOGDEBUG("In #5F (Get Sector Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
-        case PORT_7F:  // Return data byte and update internal state
+        case REG_DATA:  // Return data byte and update internal state
             // Read Data Register
             result = readDataRegister();
 
@@ -3654,13 +3906,6 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
 
             MLOGDEBUG("In #7F (Get Data Register) - 0x%02X, pc: 0x%04X bank: %s", result, pc, memBankName().c_str());
             break;
-        case PORT_FF:  // Handle Beta128 system port (#FF)
-            // Only bits 6 and 7 are used
-            result = _beta128status | (_beta128Register & 0x3F);
-
-            MLOGDEBUG("In #FF Beta128: %s, pc: 0x%04X bank: %s", StringHelper::FormatBinary(result).c_str(), pc,
-                      memBankName().c_str());
-            break;
         default:
             break;
     }
@@ -3668,7 +3913,22 @@ uint8_t WD1793::portDeviceInMethod(uint16_t port)
     return result;
 }
 
-void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
+uint8_t WD1793::PeekRegister(uint8_t reg) const
+{
+    switch (reg & 0b0000'0011)
+    {
+        case REG_COMMAND_STATUS:
+            return Is1772() ? Status1772(_statusRegister) : _statusRegister;
+        case REG_TRACK:
+            return _trackRegister;
+        case REG_SECTOR:
+            return _sectorRegister;
+        default:
+            return _dataRegister;
+    }
+}
+
+void WD1793::WriteRegister(uint8_t reg, uint8_t value)
 {
     /// region <Debug print>
 
@@ -3677,7 +3937,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     // access made TR-DOS status polling a hot spot even with logging off
     auto memBankName = [this]() { return _context->pMemory->GetCurrentBankName(0); };
 
-    MLOGINFO("Out port:0x%04X, value: 0x%02X pc: 0x%04X bank: %s", port, value, pc, memBankName().c_str());
+    MLOGINFO("Out reg:%u, value: 0x%02X pc: 0x%04X bank: %s", reg, value, pc, memBankName().c_str());
 
     /// endregion </Debug print>
 
@@ -3688,9 +3948,9 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
     process();
 
     // Handle FDC ports
-    switch (port)
+    switch (reg & 0b0000'0011)
     {
-        case PORT_1F:  // Write to Command Register
+        case REG_COMMAND_STATUS:  // Write to Command Register
             // TODO: remove debug
             /// region <Debug logging>
             {
@@ -3711,7 +3971,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             processWD93Command(value);
 
             break;
-        case PORT_3F:  // Write to Track Register
+        case REG_TRACK:  // Write to Track Register
             _trackRegister = value;
 
             // TODO: remove debug
@@ -3726,7 +3986,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             // Track register was mutated after the process() call above — publish the new value
             notifyFdcStateChanged();
             break;
-        case PORT_5F:  // Write to Sector Register
+        case REG_SECTOR:  // Write to Sector Register
             // No clamp on the value: the real chip latches any byte, and protected media relies on it
             // (VORON's R=192..196 band is only addressable with sector numbers far above TR-DOS's 1..16)
             _sectorRegister = value;
@@ -3735,7 +3995,7 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             notifyFDDStateChanged();
             notifyFdcStateChanged();
             break;
-        case PORT_7F:  // Write to Data Register
+        case REG_DATA:  // Write to Data Register
             // Write and mark that Data Register was accessed (for Type 2 and Type 3 operations)
             writeDataRegister(value);
 
@@ -3758,7 +4018,57 @@ void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
             // TODO: remove debug
             MLOGINFO(StringHelper::Format("  #7F - Set data: 0x%02X", _dataRegister).c_str());
             break;
+        default:
+            break;
+    }
+}
+
+uint8_t WD1793::portDeviceInMethod(uint16_t port)
+{
+    switch (port)
+    {
+        case PORT_1F:
+            return ReadRegister(REG_COMMAND_STATUS);
+        case PORT_3F:
+            return ReadRegister(REG_TRACK);
+        case PORT_5F:
+            return ReadRegister(REG_SECTOR);
+        case PORT_7F:
+            return ReadRegister(REG_DATA);
+        case PORT_FF:  // Handle Beta128 system port (#FF)
+        {
+            wakeUp();
+            process();
+
+            // Only bits 6 and 7 are used
+            const uint8_t result = _beta128status | (_beta128Register & 0x3F);
+            MLOGDEBUG("In #FF Beta128: %s", StringHelper::FormatBinary(result).c_str());
+            return result;
+        }
+        default:
+            return 0xFF;
+    }
+}
+
+void WD1793::portDeviceOutMethod(uint16_t port, uint8_t value)
+{
+    switch (port)
+    {
+        case PORT_1F:
+            WriteRegister(REG_COMMAND_STATUS, value);
+            break;
+        case PORT_3F:
+            WriteRegister(REG_TRACK, value);
+            break;
+        case PORT_5F:
+            WriteRegister(REG_SECTOR, value);
+            break;
+        case PORT_7F:
+            WriteRegister(REG_DATA, value);
+            break;
         case PORT_FF:  // Write to Beta128 system register
+            wakeUp();
+            process();
             processBeta128(value);
             MLOGINFO(StringHelper::Format("  #FF - Set beta128: 0x%02X", value).c_str());
 
@@ -4158,6 +4468,7 @@ inline int64_t  get_i64(const uint8_t*& cur)        { int64_t v; std::memcpy(&v,
 static constexpr size_t kControllerStateSize = 146;
 static constexpr size_t kFdcSubsystemStateSize = kControllerStateSize + 4 * 27;  // = 254 (4×FDD @ 27 B each)
 static_assert(kFdcSubsystemStateSize == 254, "FDC subsystem state size drift");
+static_assert(kFdcSubsystemStateSize == WD1793::kTtdStateSize, "WD1793::kTtdStateSize drift");
 static_assert(kControllerStateSize == 146, "FDC controller state size drift");
 
 size_t WD1793::TTDStateSize() const
@@ -4260,7 +4571,7 @@ void WD1793::TTDSaveState(uint8_t* dst) const
     {
         for (size_t i = 0; i < 4; ++i)
         {
-            FDD* fdd = _context->coreState.diskDrives[i];
+            FDD* fdd = _drives[i];
             if (fdd)
             {
                 fdd->TTDSaveState(cur);
@@ -4377,7 +4688,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
     {
         for (size_t i = 0; i < 4; ++i)
         {
-            FDD* fdd = _context->coreState.diskDrives[i];
+            FDD* fdd = _drives[i];
             if (fdd)
             {
                 fdd->TTDLoadState(cur);
@@ -4388,7 +4699,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
         }
 
         // Re-resolve selected drive from _drive index (defensive bounds check)
-        _selectedDrive = (_drive < 4) ? _context->coreState.diskDrives[_drive] : nullptr;
+        _selectedDrive = (_drive < 4 && _drives[_drive]) ? _drives[_drive] : _noDrive.get();
     }
     else
     {
@@ -4397,6 +4708,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
     }
 
     // Pointers into disk image data are intentionally not restored
+    _commandDrive = nullptr;
     // (re-established by the next command setup). Reset them to nullptr so
     // any stale value from before the restore cannot be dereferenced.
     _rawDataBuffer    = nullptr;
@@ -4460,14 +4772,14 @@ uint32_t GetU32(const uint8_t*& cur)
 }
 
 /// The track of the drives' disks that holds `p` in its stream (the end included: a pointer runs one past)
-DiskRef Locate(EmulatorContext* context, const uint8_t* p)
+DiskRef Locate(const std::array<FDD*, 4>& drives, const uint8_t* p)
 {
     DiskRef ref;
-    if (!p || !context)
+    if (!p)
         return ref;
     for (uint8_t d = 0; d < 4; d++)
     {
-        FDD* fdd = context->coreState.diskDrives[d];
+        FDD* fdd = drives[d];
         DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
         if (!image)
             continue;
@@ -4489,32 +4801,33 @@ DiskRef Locate(EmulatorContext* context, const uint8_t* p)
     return ref;
 }
 
-DiskImage::Track* TrackOf(EmulatorContext* context, uint8_t drive, uint8_t track)
+DiskImage::Track* TrackOf(const std::array<FDD*, 4>& drives, uint8_t drive, uint8_t track)
 {
-    if (!context || drive >= 4 || track == 0xFF)
+    if (drive >= 4 || track == 0xFF)
         return nullptr;
-    FDD* fdd = context->coreState.diskDrives[drive];
+    FDD* fdd = drives[drive];
     DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
     return image ? image->getTrack(track) : nullptr;
 }
 
-uint8_t* Resolve(EmulatorContext* context, const DiskRef& ref)
+uint8_t* Resolve(const std::array<FDD*, 4>& drives, const DiskRef& ref)
 {
-    DiskImage::Track* track = TrackOf(context, ref.drive, ref.track);
+    DiskImage::Track* track = TrackOf(drives, ref.drive, ref.track);
     if (!track || !track->rawData() || ref.offset > track->rawSize())
         return nullptr;
     return track->rawData() + ref.offset;
 }
 
 /// A track pointer as (drive, track number)
-DiskRef LocateTrack(EmulatorContext* context, const DiskImage::Track* track)
+DiskRef LocateTrack(const std::array<FDD*, 4>& drives, const DiskImage::Track* track)
 {
-    DiskRef ref = track ? Locate(context, track->rawData()) : DiskRef{};
+    DiskRef ref = track ? Locate(drives, track->rawData()) : DiskRef{};
     ref.offset = 0;
     return ref;
 }
 
 constexpr size_t kFifoSlots = 4;
+constexpr size_t kTransferContextEscapeOffset = 99;  // after the 4 FIFO slots (59 + 4 x 10)
 }  // namespace
 
 // Layout (kTransferContextSize = 112 bytes; little-endian):
@@ -4530,7 +4843,8 @@ constexpr size_t kFifoSlots = 4;
 //   50   4  read-track noise seed                      54   4  its length (0 = none)
 //   58   1  queued steps (up to 4 kept)
 //   59  40  4 x step: FifoKind, state, drive, track, sector, side, delay (u32)
-//   99  13  reserved (0)
+//   99   1  WRITE TRACK escape: the next byte is written literally (0 in contexts saved before it existed)
+//  100  12  reserved (0)
 void WD1793::SaveTransferContext(uint8_t* dst) const
 {
     std::memset(dst, 0, kTransferContextSize);
@@ -4546,31 +4860,37 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
     // The sector in use: its track, then its index in the track's list
     DiskRef sectorTrack;
     uint16_t sectorIndex = 0xFFFF;
-    if (_currentSector && _currentSector->id)
+    // By address among the live index entries of the drives' tracks: the pointer is not followed (an entry that
+    // left the index is saved as no sector)
+    for (uint8_t d = 0; _currentSector && d < 4 && sectorIndex == 0xFFFF; d++)
     {
-        sectorTrack = Locate(_context, reinterpret_cast<const uint8_t*>(_currentSector->id));
-        if (DiskImage::Track* track = TrackOf(_context, sectorTrack.drive, sectorTrack.track))
+        FDD* fdd = _drives[d];
+        DiskImage* image = fdd ? fdd->getDiskImage() : nullptr;
+        for (unsigned t = 0; image && t < 255 && sectorIndex == 0xFFFF; t++)
         {
+            DiskImage::Track* track = image->getTrack(static_cast<uint8_t>(t));
+            if (!track)
+                break;
             const auto& sectors = track->sectors();
-            for (size_t i = 0; i < sectors.size(); i++)
-            {
-                if (&sectors[i] == _currentSector)
-                    sectorIndex = static_cast<uint16_t>(i);
-            }
+            if (sectors.empty() || _currentSector < sectors.data() || _currentSector >= sectors.data() + sectors.size())
+                continue;
+            sectorTrack.drive = d;
+            sectorTrack.track = static_cast<uint8_t>(t);
+            sectorIndex = static_cast<uint16_t>(_currentSector - sectors.data());
         }
     }
     put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.drive);
     put_u8(cur, sectorIndex == 0xFFFF ? 0xFF : sectorTrack.track);
     put_u16(cur, sectorIndex);
 
-    const DiskRef readTrack = LocateTrack(_context, _currentReadTrack);
+    const DiskRef readTrack = LocateTrack(_drives, _currentReadTrack);
     put_u8(cur, readTrack.drive);
     put_u8(cur, readTrack.track);
-    const DiskRef writeTrack = LocateTrack(_context, _writeTrackTarget);
+    const DiskRef writeTrack = LocateTrack(_drives, _writeTrackTarget);
     put_u8(cur, writeTrack.drive);
     put_u8(cur, writeTrack.track);
-    PutRef(cur, Locate(_context, _sectorData));
-    PutRef(cur, Locate(_context, _idamData));
+    PutRef(cur, Locate(_drives, _sectorData));
+    PutRef(cur, Locate(_drives, _idamData));
 
     const bool noise = _rawDataBuffer && !_readTrackNoise.empty() && _rawDataBuffer >= _readTrackNoise.data() &&
                        _rawDataBuffer <= _readTrackNoise.data() + _readTrackNoise.size();
@@ -4581,7 +4901,7 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
     }
     else
     {
-        const DiskRef raw = Locate(_context, _rawDataBuffer);
+        const DiskRef raw = Locate(_drives, _rawDataBuffer);
         put_u8(cur, raw.drive == 0xFF ? 0 : 1);
         PutRef(cur, raw);
     }
@@ -4603,11 +4923,13 @@ void WD1793::SaveTransferContext(uint8_t* dst) const
         put_u8(cur, tag.side);
         PutU32(cur, static_cast<uint32_t>(event.getDelay()));
     }
+    dst[kTransferContextEscapeOffset] = _writeTrackEscapeNext ? 1 : 0;
 }
 
 void WD1793::LoadTransferContext(const uint8_t* src)
 {
     const uint8_t* cur = src;
+    _writeTrackEscapeNext = src[kTransferContextEscapeOffset] != 0;
     _rateRetryState = static_cast<WDSTATE>(get_u8(cur));
     _rateRetryDeadline = get_u64(cur);
     _multiSectorOverrun = get_u8(cur) != 0;
@@ -4620,19 +4942,19 @@ void WD1793::LoadTransferContext(const uint8_t* src)
     const uint8_t sectorTrack = get_u8(cur);
     const uint16_t sectorIndex = get_u16(cur);
     _currentSector = nullptr;
-    if (DiskImage::Track* track = sectorIndex != 0xFFFF ? TrackOf(_context, sectorDrive, sectorTrack) : nullptr)
+    if (DiskImage::Track* track = sectorIndex != 0xFFFF ? TrackOf(_drives, sectorDrive, sectorTrack) : nullptr)
     {
         if (sectorIndex < track->sectors().size())
             _currentSector = &track->sectors()[sectorIndex];
     }
     const uint8_t readDrive = get_u8(cur);
     const uint8_t readTrack = get_u8(cur);
-    _currentReadTrack = TrackOf(_context, readDrive, readTrack);
+    _currentReadTrack = TrackOf(_drives, readDrive, readTrack);
     const uint8_t writeDrive = get_u8(cur);
     const uint8_t writeTrack = get_u8(cur);
-    _writeTrackTarget = TrackOf(_context, writeDrive, writeTrack);
-    _sectorData = Resolve(_context, GetRef(cur));
-    _idamData = Resolve(_context, GetRef(cur));
+    _writeTrackTarget = TrackOf(_drives, writeDrive, writeTrack);
+    _sectorData = Resolve(_drives, GetRef(cur));
+    _idamData = Resolve(_drives, GetRef(cur));
 
     const uint8_t rawKind = get_u8(cur);
     const DiskRef raw = GetRef(cur);
@@ -4642,7 +4964,7 @@ void WD1793::LoadTransferContext(const uint8_t* src)
         FillReadTrackNoise(noiseSeed, noiseLength);
     _rawDataBuffer = nullptr;
     if (rawKind == 1)
-        _rawDataBuffer = Resolve(_context, raw);
+        _rawDataBuffer = Resolve(_drives, raw);
     else if (rawKind == 2 && raw.offset <= _readTrackNoise.size())
         _rawDataBuffer = _readTrackNoise.data() + raw.offset;
 

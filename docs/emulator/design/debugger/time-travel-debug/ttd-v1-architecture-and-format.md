@@ -901,6 +901,7 @@ recording is refused (`tm.cpp:1349-1366`).
 | ATM 7.10 | AtmPaging (8), Atm2Kbc (26, the keyboard controller, when fitted), AtmIoBus (36, the INTERNAL I/O latch); MachineSerialPeer (27) and Atm2IoEsp (37) through the network peripherals when a peer / the card is fitted | `portdecoder_atm710.cpp` `CreateTTDSerializers`, `ttdmachineperipherals.cpp` |
 | ATM 4.50 | AtmPaging (8) | inherits the ATM 7.10 decoder without the v7.10 board logic |
 | ATM3 / ZX-Evo | AtmPaging (8), EvoSdCard (15), Ds12887 (18) | `portdecoder_atm3.cpp` `CreateTTDSerializers` |
+| Pentagon 2.666 LE | EvoSdCard (15, the Z-Controller SD), Ds12887 (18, the MCU clock), P2666Board (71, 407 bytes: the FPGA latches, palette words, INT pulse, CMOS RAM and the MCU copy), P2666Sound (72, 224: two YM2149 as AY blobs, register files, Covox, beeper bits, time base), P2666Uart (74, 108: registers, FIFOs, the line in flight), P2666BetaDisk (73, 51: the RAM-disk controller; its disk bytes ride with the RAM) when the RAM disk is the Beta Disk | `core/src/debugger/ttd/p2666/ttdp2666.cpp` (one field walk for size, save and load) |
 | +2A, +3 | Plus3Paging (13); Upd765 (14) only when the uPD765 exists (+3) | `portdecoder_spectrum3.cpp:445-460` |
 | 48K, 128K, +2, Pentagon 128/512/1024 | none | — |
 

@@ -536,7 +536,7 @@ TEST(Emulator_BlankDisk_Test, RefusesWhatNoDriveTakes)
     std::string error;
     EXPECT_FALSE(emulator->CreateBlankDisk(4, Emulator::BlankDiskFormat::Auto, 0, 0, &error));
     EXPECT_NE(error.find("invalid drive"), std::string::npos) << error;
-    EXPECT_FALSE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Unformatted, 42, 0, &error));
+    EXPECT_FALSE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Unformatted, 87, 0, &error));
     EXPECT_NE(error.find("cylinders"), std::string::npos) << error;
     EXPECT_FALSE(emulator->CreateBlankDisk(0, Emulator::BlankDiskFormat::Plus3, 40, 3, &error));
     EXPECT_NE(error.find("sides"), std::string::npos) << error;

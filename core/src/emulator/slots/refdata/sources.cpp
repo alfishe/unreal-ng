@@ -139,11 +139,19 @@ constexpr SourceRef kSources[] = {
       "https://www.timexsinclair.com/article/adding-a-joystick-for-the-spectrum-2068/" },
     { Src::MameBeta128, "MAME spectrum/beta128.cpp (I/O through connector only outside DOS)",
       "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/beta128.cpp" },
+    { Src::FusePlusD, "FUSE peripherals/disk/plusd.c (ports, control latch, paging traps)",
+      "https://sourceforge.net/p/fuse-emulator/fuse/ci/master/tree/peripherals/disk/plusd.c" },
+    { Src::MameMgt, "MAME spectrum/mgt.cpp (+D / DISCiPLE)",
+      "https://github.com/mamedev/mame/blob/master/src/devices/bus/spectrum/mgt.cpp" },
 
     { Src::RepoSlotsResearchMachines, "unreal-ng: ZX-bus slots research, machines",
       "docs/inprogress/2026-10-03-zx-bus-slots/research-machines.md" },
     { Src::RepoSlotsResearchCards, "unreal-ng: ZX-bus slots research, cards",
       "docs/inprogress/2026-10-03-zx-bus-slots/research-cards.md" },
+    { Src::KoePentagon2666, "koe, Pentagon 2.666 LE: FPGA sources (LE/PAE_FPGA/PaE.vhd)",
+      "https://github.com/koe1234/pentagon_2_666_le" },
+    { Src::RepoPentagon2666, "unreal-ng: Pentagon 2.666 LE hardware reference",
+      "docs/inprogress/2026-11-11-pentagon-2666-le/hardware-reference.md" },
 };
 
 } // namespace

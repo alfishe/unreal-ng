@@ -6,6 +6,7 @@
 #include "../common/upload_helper.h"
 
 #include <debugger/media/sectorwrite.h>
+#include <emulator/media/floppyformats.h>
 #include <base/featuremanager.h>
 #include <drogon/HttpResponse.h>
 #include <drogon/utils/Utilities.h>
@@ -19,6 +20,7 @@
 #include <emulator/io/tape/tapecatalog.h>
 #include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
+#include <emulator/ports/models/portdecoder_p2666.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
 #include <emulator/io/storage/fs/diskfs.h>
@@ -717,10 +719,16 @@ void EmulatorAPI::seekTape(const HttpRequestPtr& req,
     Json::Value ret;
     HttpStatusCode code = HttpStatusCode::k200OK;
     
-    if (!context->pTape->EnsureImageLoaded() || !context->pTape->SeekToBlock(blockIndex)) {
+    // A tape loaded while a TTD recording runs lands at the next frame boundary: its seek is queued till then
+    const TapeSeekResult seek = context->pTape->Seek(blockIndex);
+    if (seek == TapeSeekResult::OutOfRange) {
         ret["status"] = "error";
         ret["message"] = "Block index " + std::to_string(blockIndex) + " out of range";
         code = HttpStatusCode::k400BadRequest;
+    } else if (seek == TapeSeekResult::Queued) {
+        ret["status"] = "success";
+        ret["message"] = "Seek to block " + std::to_string(blockIndex) + " when the tape is in";
+        ret["queued"] = true;
     } else {
         // Resulting position — the leading fields of the full snapshot
         Json::Value snapshot = buildTapeSnapshot(context);
@@ -1341,6 +1349,14 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         ret["autostarted"] = autostartResult.started;
         ret["autostart_message"] = autostartResult.message;
         ret["ttd_session_ended"] = autostartResult.ttdSessionEnded;
+        if (!autostartResult.plan.empty())
+        {
+            // An MGT disk on the +D: the plan, the start command, where G+DOS comes from (the steps run after the
+            // answer: state fdc -> autostart)
+            ret["plan"] = autostartResult.plan;
+            ret["command"] = autostartResult.command;
+            ret["dos"] = autostartResult.dos;
+        }
     }
     ret["status"] = success ? "success" : "error";
     if (success)
@@ -1452,7 +1468,7 @@ void EmulatorAPI::createDisk(const HttpRequestPtr& req,
     {
         Json::Value error;
         error["error"] = "Bad Request";
-        error["message"] = geometryInRange ? createError : "cylinders must be 40 or 80, sides 1 or 2";
+        error["message"] = geometryInRange ? createError : std::string("expected ") + BlankFloppySpec::GeometryHelp;
         auto resp = HttpResponse::newHttpJsonResponse(error);
         resp->setStatusCode(HttpStatusCode::k400BadRequest);
         addCorsHeaders(resp);
@@ -1654,12 +1670,13 @@ void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
                 auto* fdd = context->coreState.diskDrives[i];
                 driveInfo["write_protected"] = fdd->isWriteProtect();
                 
-                // Get disk image info if available
-                auto* diskImage = fdd->getDiskImage();
-                if (diskImage) {
-                    driveInfo["cylinders"] = diskImage->getCylinders();
-                    driveInfo["sides"] = diskImage->getSides();
-                }
+                // Get disk image info if available (under the drive's lock: the image may change meanwhile)
+                fdd->WithDisk([&](const DiskImage* diskImage) {
+                    if (diskImage) {
+                        driveInfo["cylinders"] = diskImage->getCylinders();
+                        driveInfo["sides"] = diskImage->getSides();
+                    }
+                });
             }
         } else {
             driveInfo["mounted"] = false;
@@ -1668,8 +1685,14 @@ void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
         ret["drives"].append(driveInfo);
     }
     
-    // FDC state
-    if (context && context->pBetaDisk) {
+    // FDC state: the Pentagon 2.666 LE's controller is its RAM-disk Beta Disk (the WD1793 object is not wired there)
+    const auto* p2666 = context ? dynamic_cast<const PortDecoderP2666*>(context->pPortDecoder) : nullptr;
+    if (const P2666BetaDisk* ramDisk = p2666 ? p2666->GetRamDisk() : nullptr) {
+        Json::Value fdcState;
+        fdcState["track_reg"] = ramDisk->Track();
+        fdcState["sector_reg"] = ramDisk->Sector();
+        ret["fdc_state"] = fdcState;
+    } else if (context && context->pBetaDisk) {
         Json::Value fdcState;
         fdcState["track_reg"] = context->pBetaDisk->getTrackRegister();
         fdcState["sector_reg"] = context->pBetaDisk->getSectorRegister();
@@ -1752,7 +1775,9 @@ void EmulatorAPI::getDiskSector(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -1990,7 +2015,9 @@ void EmulatorAPI::getDiskSectorRaw(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2102,7 +2129,9 @@ void EmulatorAPI::getDiskTrack(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2210,7 +2239,9 @@ void EmulatorAPI::getDiskTrackRaw(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2297,7 +2328,9 @@ void EmulatorAPI::getDiskImage(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2392,7 +2425,9 @@ void EmulatorAPI::getDiskSysinfo(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";
@@ -2530,7 +2565,9 @@ void EmulatorAPI::getDiskCatalog(const HttpRequestPtr& /*req*/,
     }
     
     auto* fdd = context->coreState.diskDrives[driveNum];
-    auto* diskImage = fdd->getDiskImage();
+    // A copy of its own: the emulation thread may reshape or release the drive's image meanwhile (FDD::SnapshotDisk)
+    std::unique_ptr<DiskImage> snapshot = fdd->SnapshotDisk();
+    auto* diskImage = snapshot.get();
     if (!diskImage) {
         Json::Value error;
         error["error"] = "Not Available";

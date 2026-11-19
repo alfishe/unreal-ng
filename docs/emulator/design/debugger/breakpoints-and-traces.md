@@ -166,10 +166,52 @@ both card CPUs; `--cpu ms`, `cpu="ms"`, `?cpu=ms` name the MultiSound's.
 - **Where it stops.** An execute breakpoint before the instruction; a watchpoint, a port or an event at the card's next
   instruction boundary, with the PC of the instruction that did it. The machine parks (pause) inside the card's
   catch-up; a direct step of the main CPU ends after its instruction.
+- **Tight mode** (gs-debugger design §5.2). While a stopping card breakpoint is active or a card step is armed, the
+  main CPU catches the card up at every instruction start (`Z80::cardTight`), not only at a host port access and the
+  frame end. So a card stop finds the main CPU at the start of the instruction under way at that card time, not up
+  to a frame later; its memory path stays as it was. Tight mode only splits the card's catch-up into shorter runs: the card
+  executes the same instructions at the same card times as without it.
+- **The CPU shown** (gs-debugger design §5.2, the third trigger). A front-end says which CPU it shows
+  (`DebugManager::SelectCpu`; the Qt debugger with its CPU tab). A card shown follows the main CPU's steps of the paused
+  machine (step, steps, a run of T or frames on a control thread, `Emulator::DirectStepScope`): tight mode for that
+  run, and one more catch-up at its end, so the card's registers and memory are the ones at the main CPU's moment, not
+  at the last host port access or frame end. One choice per machine, the last front-end's; `main` ends it. It costs
+  nothing while the machine runs: tight mode comes only with a direct run. The card does not catch up at the choice
+  itself, only with the next step.
+
+  | Plane | The CPU shown |
+  | :--- | :--- |
+  | CLI | `selected-cpu [main\|gs\|ms]` |
+  | Lua | `select_cpu("gs")`, `selected_cpu()` |
+  | Python | `emu.select_cpu("gs")`, `emu.selected_cpu()` |
+  | MCP | `control_execution` `select_cpu` with `cpu` (none: the report) |
+  | REST | `GET` / `PUT /debug/selected_cpu {cpu}` |
+  | WebSocket | the REST routes as `call`s |
+
+  The answer: `{cpu, follows}` (`follows`: a card is shown and is in its slot). An unknown name is a 400 (a script
+  error, Python `ValueError`), a card CPU with no card a 404.
 - **Cost.** The hooks are on the card only while an active card breakpoint exists; without them the card runs its
-  fast loop unchanged.
+  fast loop unchanged. Tight mode splits the card's run into one piece per main instruction while a card breakpoint
+  or step asks for it (about a quarter more per host frame than the same breakpoint without it); with none, the
+  instruction start tests one more flag.
 - **Stops.** The pause, the breakpoint payload, a step's stop and `wait` carry `cpu` (`main` or `gs`) and, for a card
-  stop, `cpu_pc` (the card instruction) beside the main PC.
+  stop, `cpu_pc` (the card instruction) beside the main PC. A card's pause in the machine's own run (the `debug`
+  topic's `paused` event, the card step's `stop`) adds `main`: where the main CPU parked with the card - `pc` (the
+  instruction the card's moment falls in), `t_in_instruction` (T of it main has run), `gap_t` (main's time past the
+  card's, in main T; under one main instruction in tight mode), `frame_end` (the stop came in the frame-end catch-up,
+  main between frames) and `on_boundary` (tight mode's catch-up: main finished `pc` and stands at the next
+  instruction's start).
+- **Instruction progress** (gs-debugger design §5.4). `main.text` says it in one line ("main #8123 (finished): T 9 of
+  11, port write; 2 T past the card"): MCP `wait` adds it to its answer, the debugger's status line shows it after a
+  card's stop. When main runs its instruction-start debug work (debug mode,
+  exec taps, tight mode) and the card's moment is inside `pc`, `main` also has `elapsed_t` (T into `pc` at the card's
+  moment, `t_in_instruction - gap_t`), `total_t` (its T, uncontended; the way taken when it is known),
+  `total_t_alt` (a conditional instruction still under way: the other way's T), `bus_cycles` (its machine cycles,
+  `{kind, t}` with `kind` `ocf` opcode fetch, `od` operand read, `mr` / `mw` memory read / write, `pr` / `pw` port
+  read / write, `int` internal T), `bus_cycle` and `bus_cycle_index` (the cycle under way at `elapsed_t`) and
+  `contended` (main spent more T on `pc` than the table's - contention, an interrupt's acknowledge after it; the
+  cycle is then the uncontended one at `elapsed_t`). The cycles come from `Z80MCycleDecoder`, checked against the FUSE
+  vectors' bus traces opcode by opcode.
 
 | Plane | The CPU | Event breakpoint |
 | :--- | :--- | :--- |
@@ -211,36 +253,55 @@ boundary (`GSCardTarget::ArmStep`), resumes the machine and waits until it pause
 - **in** (`count` 1-10000): after that many card instructions;
 - **over**: a CALL, RST, DJNZ or block instruction runs to the next instruction with SP at or above the entry SP; any
   other instruction is a step in;
-- **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP.
+- **out**: after a taken return (RET, RET cc, RETI, RETN) run with SP at or above the entry SP;
+- **to** (run to the cursor): at the next card instruction at the address; a cursor at the card's PC means that
+  instruction's next run. The reply adds `hit` (false when a breakpoint or a pause ended it first).
 
-The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` (the snapshot's `pause`, the WebSocket `debug` topic's
-`paused` event). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
-2 s (over / out 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
+The pause names the card CPU: `reason` `step`, `cpu`, `cpu_pc` and `main` (the snapshot's and `wait`'s `pause`, the
+WebSocket `debug` topic's `paused` event; a card breakpoint's pause carries `main` too). A breakpoint of any CPU on the way ends the step there (its stop is the breakpoint's). No end within
+2 s (over / out / to 5 s) pauses the machine with the reason `timeout`. The reply: `stop` (`cpu`, `reason` `step` /
 `breakpoint` / `pause` / `timeout`, `cpu_pc`, `breakpoint_id`, `address`, `access`), the card CPU's `pc` and `sp`, the
 main CPU's `main_pc` and `main_sp`, `state`.
 
-The card has no lock-step mode: it runs behind the main CPU and catches up at a host port access (#B3 / #BB) or at
-the frame end, and its step parks inside that catch-up. So the main CPU moves on during a card step, up to the point
-where the card catches up (at most a frame). Paused inside the card's run (after a card step or breakpoint) the next
-step starts from that boundary; paused between frames, the card's first boundary is the instruction at its PC.
+The card never runs ahead of the main CPU: an armed step turns tight mode on, so the card catches up at every main
+instruction start and its step parks inside that catch-up, with the main CPU at the start of its next instruction
+(the stop's `main`). The main CPU moves on during a card step only as far as the card's time needs. Paused inside the card's run
+(after a card step or breakpoint) the next step starts from that boundary; paused between frames, the card's first
+boundary is the instruction at its PC.
 
-| Plane | Step in | Step over / out |
-| :--- | :--- | :--- |
-| CLI | `step [count] --cpu gs`, `steps <count> --cpu gs` | `stepover --cpu gs`, `stepout --cpu gs` |
-| Lua | `step("gs")`, `step(skip_bp, "gs")`, `steps(count, skip_bp, "gs")` | `stepover("gs")`, `step_out("gs")` |
-| Python | `emu.step(cpu="gs")`, `emu.steps(count, cpu="gs")` | `emu.stepover(cpu="gs")`, `emu.step_out(cpu="gs")` |
-| MCP | `control_execution` `step` / `step_n` `cpu` | `control_execution` `step_over` / `step_out` `cpu` |
-| REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` |
-| WebSocket | the REST routes as `call`s | the same |
+| Plane | Step in | Step over / out | Run to the cursor |
+| :--- | :--- | :--- | :--- |
+| CLI | `step [count] --cpu gs`, `steps <count> --cpu gs` | `stepover --cpu gs`, `stepout --cpu gs` | `skip_until <pc> --cpu gs` |
+| Lua | `step("gs")`, `step(skip_bp, "gs")`, `steps(count, skip_bp, "gs")` | `stepover("gs")`, `step_out("gs")` | `skip_until(pc, "gs")` |
+| Python | `emu.step(cpu="gs")`, `emu.steps(count, cpu="gs")` | `emu.stepover(cpu="gs")`, `emu.step_out(cpu="gs")` | `emu.skip_until(pc, cpu="gs")` |
+| MCP | `control_execution` `step` / `step_n` `cpu` | `control_execution` `step_over` / `step_out` `cpu` | `control_execution` `run_until_pc` `pc` `cpu` |
+| REST | `POST /step?cpu=gs`, `POST /steps?cpu=gs {count}` | `POST /stepover?cpu=gs`, `POST /stepout?cpu=gs` | `POST /skip_until?cpu=gs {pc}` |
+| WebSocket | the REST routes as `call`s | the same | the same |
 
 Lua and Python return the reply as a table / dict with `ok` (`ok` false and `error` when refused: not paused, a step
-already under way). The other runs (frames, t-states, run until PC) stay the machine's: MCP refuses a card `cpu` on
-them.
+already under way). A card's run to the cursor always stops at a breakpoint on the way and does not take a t-state
+budget (`max_tstates`, `breakpoints` are the main CPU's). The other runs (frames, t-states) stay the machine's: MCP
+refuses a card `cpu` on them. The Qt debugger runs a card to the cursor with a breakpoint of its own.
 
 The card's events have named callbacks too (`gs_on_command`, `gs_on_data`, `gs_on_reply`, `gs_on_int`, `gs_on_nmi`,
 `gs_on_page`, `gs_on_dac_fetch`, `gs_on_clock_change`, `gs_on_dma_start`, `gs_on_dma_done`, `gs_on_gscfg0`, `gs_on_port_in(port)`,
 `gs_on_port_out(port)` in Lua and Python): taps on the card CPU, the hit's `arg` the event's detail
 ([script-callbacks.md](../../../features/script-callbacks.md#the-sound-cards-cpu)).
+
+**Time travel on the card's CPU** ([TTD on a sound card's CPU](../control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu),
+[gs-debugger design §8](../../../inprogress/2026-09-27-gs-debugger/design.md)). In a recorded history the card's CPU
+is stepped both ways, seeked to an instruction count and reverse-continued to the previous hit of its own
+breakpoints (the list `bp_list` with `cpu gs` shows). Every move is a replay from the nearest checkpoint; the main CPU
+stands at its last completed instruction with the T-states into the next. The reverse search evaluates the card's
+breakpoints during the replay without counting hits or firing taps.
+
+| Plane | Seek | Step | Reverse continue |
+| :--- | :--- | :--- | :--- |
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back --cpu gs [--count N]`, `ttd si-forward --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` |
+| Lua | `ttd_card_seek("gs", n)` | `ttd_card_step("gs", -n)` | `ttd_card_reverse_continue("gs")` |
+| Python | `emu.ttd_card_seek("gs", n)` | `emu.ttd_card_step("gs", -n)` | `emu.ttd_card_reverse_continue("gs")` |
+| MCP | `time_travel` `card_seek` | `time_travel` `card_step` | `time_travel` `card_reverse_continue` |
+| REST / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}` | `POST /ttd/reverse-continue {cpu, max_frames}` |
 
 ## 9. Sound chip registers
 
@@ -369,4 +430,41 @@ controllers' `cpu_int` / `cpu_reti` above (which name a source and exist where a
   engine (the ZX Next, the Sprinter) decodes the return after the engine ran it, as the profile analyzer does.
 
 Exact section timing with interrupts excluded needs both: the time between them is the handler's, contention and
-waits included.
+waits included. The section timer below uses them.
+
+## 10. Section timing
+
+`SectionTimerAnalyzer` (`core/src/debugger/analyzers/sectiontimer/`, analyzer id `section-timer`) measures how long
+code sections take while the machine runs at full speed: exec taps on the markers (an entry and one or more exits per
+section) and on `int_accept` / `int_return`, no stop per marker, no script. The commands on every plane are in
+[command-interface §5.5c](../control-interfaces/command-interface.md#55c-section-timer); a worked example with a
+demo is `data/examples/01-section-timing` (`profile_sections.py --native`).
+
+- **Time.** Global T-states: frame x frame length + T in the frame, read at the start of the marker's instruction, so
+  a pass may cross frames. Gross = exit minus entry; net = gross minus the interrupts accepted inside the pass, each
+  from the start of its acknowledge to the end of the return that pops its slot (the acknowledge, a `JP` in the
+  vector table, the handler, its `RETI`, contention and waits). An interrupt is charged to every pass open at its
+  acceptance that is still open at its return.
+- **Pairing.** An entry pushes a pass. An entry of a section still open drops the open pass and the passes above it
+  (it left without its exit); `recursive` nests instead. An exit closes the innermost open pass of its section and
+  drops the passes above it; an exit with no open pass is an orphan once the section was entered. An address that
+  is both an exit and an entry closes first.
+- **Results.** Per section count, min, max, average, net min / max / average, interrupted passes, the last pass and
+  where the longest started; the passes one by one up to `capacity` (100000 by default; the statistics count all);
+  marker hits, orphans, dropped and open passes. Read at any time, running or paused: the timer takes a lock per
+  marker hit, a reader copies under it.
+- **Stop on a slow pass.** A break condition `[net:]NAME<op>T` stops the machine at the exit of the pass that meets
+  it, before the exit's instruction: the tap asks the breakpoint manager for a stop (`StopAtThisTap`), the hit then
+  goes through `Emulator::OnBreakpointHit` as an execution breakpoint's would (a pause with the reason breakpoint on
+  the emulator's run, the end of a direct run). Going on from there does not count the exit again. Like any breakpoint
+  it stops the runs that honour breakpoints: the machine's own run, `steps`, `run_until` / `run_until_pc` with
+  `breakpoints: true`; `run_frames` and the other runs that skip breakpoints measure and never stop, and record no
+  stop (the tap asks `TapStopsHere` first).
+- **Events.** `NC_SECTION_TIMER` (`SectionTimerPayload`): started, stopped, cleared, and break with the pass at a
+  stop, posted out of the timer's lock; the WebSocket sends them as `section_timer_*` on `debug.events`.
+- **Cost.** A marker hit is a tap: the instruction-start check the taps already need, a lock and a few stores. In
+  POC 050 (`tools/poc/050-section-timing-taps`) the timer was within noise of no taps at all on the demo and on a
+  marker hit 558 times a frame, 4.7x faster than the same timer in a Lua hook there; its passes matched the stepping
+  reference exactly on the 48K and the Pentagon.
+- **Limits.** The markers are CPU addresses (a paged-out copy of the code at the same address counts too); the main
+  Z80 only.

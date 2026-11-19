@@ -159,6 +159,9 @@ constexpr uint32_t kJpegMaxPixels = 524288;                          // TO VERIF
 constexpr uint32_t kPngMaxPixels = 483328;                           // TO VERIFY
 constexpr uint32_t kImageMaxWidth = 1024;                            // TO VERIFY
 constexpr uint32_t kImageMaxHeight = 768;                            // TO VERIFY
+// VDAC4 (BL616 copro/ft_image.c IMG_WMAX): an image loaded as is has each side below 2048
+// (the BITMAP_SIZE_H field), any pixel count; the FT812 limits above do not apply.
+constexpr uint32_t kVdac4ImageSideLimit = 2048;
 // spec §7.5, V3: 8-bit channels to RGB565 / ARGB4 by truncation (false: rounding).
 constexpr bool kLoadImageTruncates = true;                           // TO VERIFY
 // spec §7.5, V5: OPT_FULLSCREEN scales the image by an integer factor to fill the screen

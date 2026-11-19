@@ -12,6 +12,9 @@
 #include "emulator/io/controllers/controllerconfig.h"
 #include <loaders/snapshot/loader_z80.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <chrono>
 #include <functional>
 #include <iomanip>
@@ -29,6 +32,7 @@
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/labels/labelmanager.h"
+#include "debugger/targets/gscardtarget.h"
 #include <atomic>
 #include <cstdlib>
 
@@ -37,6 +41,10 @@
 #include "debugger/ttd/ttdsessionport.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/notifications.h"
+#include "emulator/slots/cards/plusd/plusdautostart.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
+#include "emulator/sound/chips/gs/generalsoundcard.h"
+#include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/tstaterunbudget.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/io/controllers/controllerconfig.h"
@@ -44,6 +52,7 @@
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/memory/memoryaccesstracker.h"
 #include "emulator/memory/scorpion/scorpionromwindow.h"
+#include "emulator/ports/models/portdecoder_next.h"
 #include "emulator/ports/models/portdecoder_scorpiongmx.h"
 #include "loaders/snapshot/loader_sna.h"
 #include "loaders/nex/loadernex.h"
@@ -74,6 +83,11 @@ struct Emulator::AutostartRequest
     DiskAutostart* autostart = nullptr;
     DiskAutostart::Plan plan;
     bool started = false;
+    // The MGT +D branch: its plan, the work's file (it goes back into drive 1 after the system disk), the system disk
+    bool plusd = false;
+    PlusDAutostart::Plan plusdPlan;
+    std::string workPath;
+    std::string systemDisk;
 };
 
 /// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, the RZX
@@ -915,6 +929,14 @@ std::string Emulator::RecordingGuard(ttd::TTDGuardedAction action) const
 
 std::string Emulator::EditMemoryFromTool(const char* source, const std::function<void()>& edit)
 {
+    ToolEdit what;
+    what.source = source;
+    return EditMemoryFromTool(what, edit);
+}
+
+std::string Emulator::EditMemoryFromTool(const ToolEdit& what, const std::function<void()>& edit)
+{
+    const char* source = what.source;
     NoteDebugChange();
     ttd::ITimeTravelHooks* ttd = _context ? _context->pTimeTravelHooks : nullptr;
     coordinator::MachineOp op;
@@ -939,12 +961,91 @@ std::string Emulator::EditMemoryFromTool(const char* source, const std::function
             ttd->EndToolEdit(source);
         return true;
     });
-    return result.Ok() ? std::string() : result.reason;
+    if (!result.Ok())
+        return result.reason;
+    // The debuggers refresh on it (WebSocket `edited`)
+    NoteToolEdit(what);
+    return std::string();
+}
+
+void Emulator::NoteToolEdit(const ToolEdit& what)
+{
+    std::string page = what.page;  // one spelling for every surface: RAM5, ROM2, CACHE0 (scripts name the kind "ram")
+    for (char& c : page)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::string kind = what.what ? what.what : "state";
+    const std::string cpu = what.cpu ? what.cpu : "main";
+    bool post = false;
+    {
+        std::lock_guard<std::mutex> lock(_toolEditsMutex);
+        ToolEditSummary& edits = _toolEdits;
+        if (edits.count == 0)
+        {
+            edits.cpu = cpu;
+            edits.what = kind;
+            edits.page = page;
+            edits.address = what.address;
+            edits.length = what.length;
+        }
+        else
+        {
+            // One range only for memory or page edits of one CPU and page; anything else has no address
+            const bool spannable = edits.cpu == cpu && edits.what == kind && edits.page == page &&
+                                   (kind == "memory" || kind == "page") && edits.address >= 0 && what.address >= 0;
+            if (spannable)
+            {
+                const int64_t begin = std::min<int64_t>(edits.address, what.address);
+                const int64_t end = std::max<int64_t>(int64_t(edits.address) + std::max<uint32_t>(edits.length, 1),
+                                                      int64_t(what.address) + std::max<uint32_t>(what.length, 1));
+                edits.address = static_cast<int32_t>(begin);
+                edits.length = static_cast<uint32_t>(end - begin);
+            }
+            else
+            {
+                edits.address = -1;
+                edits.length = 0;
+            }
+            if (edits.cpu != cpu)
+                edits.cpu = "mixed";
+            if (edits.what != kind)
+                edits.what = "mixed";
+            if (edits.page != page)
+                edits.page.clear();
+        }
+        edits.source = what.source ? what.source : "";
+        edits.count++;
+        constexpr auto kToolEditsRepost = std::chrono::milliseconds(100);
+        const auto now = std::chrono::steady_clock::now();
+        if (!_toolEditsPosted || now - _toolEditsPostedAt >= kToolEditsRepost)
+        {
+            _toolEditsPosted = true;
+            _toolEditsPostedAt = now;
+            post = true;
+        }
+    }
+    if (post)
+        MessageCenter::DefaultMessageCenter().Post(NC_DEBUG_EDITED, new DebugEditedPayload(GetId()), true);
+}
+
+ToolEditSummary Emulator::TakeToolEdits()
+{
+    std::lock_guard<std::mutex> lock(_toolEditsMutex);
+    ToolEditSummary taken = std::move(_toolEdits);
+    _toolEdits = ToolEditSummary();
+    _toolEditsPosted = false;
+    return taken;
 }
 
 void Emulator::EditMemoryFromToolOrThrow(const char* source, const std::function<void()>& edit)
 {
     const std::string refused = EditMemoryFromTool(source, edit);
+    if (!refused.empty())
+        throw std::runtime_error(refused);
+}
+
+void Emulator::EditMemoryFromToolOrThrow(const ToolEdit& what, const std::function<void()>& edit)
+{
+    const std::string refused = EditMemoryFromTool(what, edit);
     if (!refused.empty())
         throw std::runtime_error(refused);
 }
@@ -956,7 +1057,10 @@ bool Emulator::SetRegisterFromTool(const char* source, const std::string& name, 
     if (!info || !z80 || (info->maxValue && value > info->maxValue))
         return false;
     bool set = false;
-    const std::string refused = EditMemoryFromTool(source, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
+    ToolEdit what;
+    what.source = source;
+    what.what = "registers";
+    const std::string refused = EditMemoryFromTool(what, [&]() { set = Z80::SetRegisterValue(z80, name, value); });
     if (refusal)
         *refusal = refused;
     if (set)
@@ -1132,10 +1236,18 @@ void Emulator::ClearAudioCallback()
 
 // region Disk autostart
 
-Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, uint8_t drive)
+Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, uint8_t drive, const std::string& basic)
 {
     DiskAutostartResult result;
 
+    const bool mgt = IsMgtDisk(path);
+    if (drive != 0 && mgt)
+    {
+        result.message = "autostart boots the +D's drive 1 (A) - insert into drive " +
+                         std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
+        MLOGERROR("AutostartDisk: %s", result.message.c_str());
+        return result;
+    }
     if (drive != 0)
     {
         result.message = "autostart only supports drive A (TR-DOS/Beta 128's \"RUN boot\" convention "
@@ -1168,7 +1280,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
             NC_DISK_AUTOSTART, new DiskAutostartPayload(_context->emulatorId, text, started, error));
     };
 
-    FDD* driveA = _context->coreState.diskDrives[0];
+    PlusDCard* plusd = mgt ? PlusDCard::Find(_context) : nullptr;
+    FDD* driveA = plusd ? plusd->Drive(0) : _context->coreState.diskDrives[0];
     DiskImage* image = driveA ? driveA->getDiskImage() : nullptr;
     DiskAutostart* autostart = _context->pDiskAutostart;
     if (image == nullptr || autostart == nullptr)
@@ -1183,6 +1296,58 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     AutostartRequest request;
     request.image = image;
     request.autostart = autostart;
+    if (plusd)
+    {
+        // The plan from the directory (nothing changes); a disk with nothing to start stays mounted, no reset
+        request.plusd = true;
+        request.workPath = FileHelper::AbsolutePath(path);
+        request.systemDisk = PlusDAutostart::FindSystemDisk();
+        const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
+        if (!basic.empty() && basic != "48" && basic != "128")
+        {
+            result.message = "BASIC '" + basic + "': 48 or 128";
+            return result;
+        }
+        if (basic == "128" && is48K)
+        {
+            result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
+            return result;
+        }
+        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk);
+        request.plusdPlan.basic = !basic.empty() ? basic : (is48K ? "48" : "128");
+        result.basic = request.plusdPlan.basic;
+        result.plan = request.plusdPlan.kind;
+        result.command = request.plusdPlan.command;
+        result.dos = request.plusdPlan.dos;
+        if (!request.plusdPlan.Starts())
+        {
+            report(request.plusdPlan.message, false, false);
+            return result;
+        }
+        if (request.plusdPlan.dos == "system-disk")
+        {
+            // G+DOS from the emulator's system disk, read only: the work's disk goes back once the DOS is in the +D
+            // RAM (PlusDAutostart's swap step)
+            MediaSource source;
+            source.path = request.systemDisk;
+            InsertOptions options;
+            options.immediate = true;
+            options.access = AccessMode::ReadOnly;
+            options.disposition = Disposition::Discard;
+            options.ttdReason = "plusd-autostart";
+            MediaResult inserted;
+            {
+                CpuHold hold(*this, "plusd system disk");
+                inserted = _context->pMediaManager->Insert(PlusDCard::kDriveSlotIds[0], source, options);
+            }
+            if (!inserted.Ok())
+            {
+                result.plan = "mount";
+                report("Autostart: the system disk did not go into drive 1: " + inserted.message, false, true);
+                return result;
+            }
+        }
+    }
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::Autostart;
     op.summary = path;
@@ -1197,7 +1362,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
     result.started = request.started;
     result.ttdSessionEnded = hadSession && ttd->GetState() == ttd::TTDSessionState::Idle;
-    std::string text = request.plan.message;
+    std::string text = request.plusd ? request.plusdPlan.message : request.plan.message;
     if (result.ttdSessionEnded)
         text += " (the TTD session ended)";
     report(text, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
@@ -1207,10 +1372,13 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& stage)
 {
     CpuHold hold(*this, "disk autostart");   // nested in the coordinator's hold (free)
+    if (request.plusd)
+        return AutostartPlusDNow(request, stage);
     request.plan = request.autostart->Prepare(*request.image);
     const DiskAutostart::Action action = request.plan.action;
     request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
-                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated;
+                      action == DiskAutostart::Action::BootCommander || action == DiskAutostart::Action::BootGenerated ||
+                      action == DiskAutostart::Action::BootServiceMenu;
     if (!request.started)
     {
         stage.NoChange();
@@ -1219,11 +1387,33 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
 
     stage.CommitPoint();
     request.autostart->Disarm();
+    if (action == DiskAutostart::Action::BootServiceMenu)
+    {
+        // ZX-Evo: the configured reset (the service ROM), whose menu is then driven to boot drive A
+        _core->ResetKeepingClock();
+        RestartFrame();
+        request.autostart->ArmServiceMenuBoot();
+        return true;
+    }
     _core->ResetKeepingClock(RM_DOS);  // Quick reset straight into TR-DOS: PC = 0 with the DOS ROM active, the guest's clock kept
     RestartFrame();        // Frame 0 starts at the reset state (see Reset())
     request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)
     if (action == DiskAutostart::Action::BootNamed)
         request.autostart->Arm(request.plan.bootName);
+    return true;
+}
+
+bool Emulator::AutostartPlusDNow(AutostartRequest& request, coordinator::OpStage& stage)
+{
+    // The plan was made and the system disk inserted before the operation (AutostartDisk): reset and arm the steps
+    request.started = true;
+    stage.CommitPoint();
+    request.autostart->Disarm();
+    // The ROM boots (the +D pages in at the reset, G+DOS's ROM hands over to BASIC). Not the RESET= setting: 128
+    // BASIC starts from the 128K's menu (the typer chooses it), 48 BASIC from the 48K ROM
+    _core->ResetKeepingClock(request.plusdPlan.basic == "128" ? RM_128 : RM_SOS);
+    RestartFrame();
+    request.autostart->PlusD().Arm(request.plusdPlan, request.workPath);
     return true;
 }
 
@@ -1361,6 +1551,11 @@ void Emulator::ResetNow(bool hardReset, coordinator::OpStage& stage)
 
     // The interrupted frame is abandoned: frame 0 starts at the reset state
     RestartFrame();
+
+    // The ROM starts again (the 128K menu, BASIC): the controllers watch its port reads as a new program's, so a pad
+    // drives the menu with the cursor keys (retro-devices.md §6)
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
 }
 
 void Emulator::RequestNMI()
@@ -1522,6 +1717,10 @@ void Emulator::Start()
         MLOGINFO("Emulator::Start() aborted - Stop() raced the startup sequence");
         return;
     }
+
+    // The machine starts from its ROM (the 128K menu, BASIC): the controllers watch its port reads as a program's
+    if (_context && _context->pControllerManager)
+        _context->pControllerManager->WatchPortReads(true);
 
     // Broadcast notification - Emulator started (instance-tagged per GDB TDD §6.3)
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
@@ -1750,6 +1949,7 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
                            : edge.reason == "watch"  ? DebugStop::Reason::Watch
                                                      : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
+        _lastStop.serial++;
         {
             std::lock_guard<std::mutex> causes(_edgeCausesMutex);
             _edgeCauses.emplace_back(edge.seq, _pendingPauseCause);
@@ -1825,6 +2025,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->hitKind = cause.kind;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
+            payload->main = cause.main;
         }
         else if (cause.step)
         {
@@ -1832,6 +2033,7 @@ void Emulator::OnIntentEdge(const execution::IntentEdge& edge)
             payload->address = cause.address;
             payload->cpu = DebugCpuName(cause.cpu);
             payload->cpuPc = cause.cpuPc;
+            payload->main = cause.main;
         }
         messageCenter.Post(NC_EMULATOR_STATE_CHANGE, payload);
         return;
@@ -2031,6 +2233,22 @@ bool Emulator::LoadSnapshot(const std::string& path, const std::string& reported
         }
         return false;
     }
+
+    // A NEX program is started by NextZXOS, and on the board the OS runs only after a reset. A Next already running a program the loader
+    // started (rts_test, then game.nex opened over it) is soft-reset first and runs until NextZXOS is up - its welcome shows within 2 s of
+    // the reset, 150 frames are 3 s - so the new program finds the machine the OS leaves, not the old one's interrupt modes, MMU, devices
+    // and the OS's RAM it overwrote. A paused machine stays paused
+    if (ext == "nex" && _context)
+        if (auto* next = dynamic_cast<PortDecoder_Next*>(_context->pPortDecoder); next && next->ProgramStarted())
+        {
+            constexpr unsigned kNextOsStartFrames = 150;
+            const bool resume = !IsPaused();
+            MLOGINFO("NEX over a running program: soft reset, %u frames for NextZXOS to start", kNextOsStartFrames);
+            Reset(false);
+            RunNFrames(kNextOsStartFrames);
+            if (resume)
+                Resume();
+        }
 
     // The file the user opened: a temporary image is reported as the file it came from
     const std::string openedPath = reportedPath.empty() ? absolutePath : reportedPath;
@@ -2269,7 +2487,17 @@ bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& s
             options.beforeCommit();
         stage.CommitPoint();
     };
+    // The loaders reset the machine, and a reset pages an MGT +D in: a snapshot whose format keeps the +D paging (SZX
+    // PLSD, .z80 byte 59) restores it, every other one runs its program with the +D paged out
+    PlusDCard* plusd = PlusDCard::Find(_context);
+    if (plusd)
+        plusd->BeginSnapshotLoad();
     request.loaded = (*request.load)(request.error, planned);
+    if (plusd && request.loaded)
+        plusd->EndSnapshotLoad();
+    // A model whose window shows another page than #7FFD names puts the state's bank there (the Pentagon 2.666, D-3)
+    if (request.loaded && _context->pPortDecoder)
+        _context->pPortDecoder->FinishSpectrum128State();
     // The loader reset the machine and replaced its state (ports, memory,
     // registers): start the frame again from the loaded state, so devices
     // and the video raster take their frame bases from it
@@ -2719,6 +2947,27 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     return true;
 }
 
+bool Emulator::IsMgtDisk(const std::string& path)
+{
+    const std::string resolved = FileHelper::AbsolutePath(path);
+    return !FileHelper::IsFolder(resolved) && FileHelper::FileExists(resolved) && FloppyFormats::Probe(resolved) == "mgt";
+}
+
+std::string Emulator::MgtDriveSlot(const std::string& path, uint8_t drive, std::string& slotId) const
+{
+    if (!IsMgtDisk(path))
+        return {};
+    // An MGT disk is a +D (G+DOS) disk: a Beta 128 drive cannot run it (owner decision D-3: refuse, never switch the
+    // model)
+    if (PlusDCard::Find(_context) == nullptr)
+        return "no +D on this machine: an MGT disk needs the +D card (models 48K-PLUSD, 128K-PLUSD, or plusd in an edge "
+               "slot)";
+    if (drive >= PlusDCard::kDrives)
+        return std::string("the +D has drives 1 and 2 (A, B): drive ") + static_cast<char>('A' + drive) + " is not one";
+    slotId = PlusDCard::kDriveSlotIds[drive];
+    return {};
+}
+
 bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* error)
 {
     auto fail = [&](const std::string& message) -> bool
@@ -2736,7 +2985,9 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     if (drive >= 4)
         return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
 
-    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    std::string slotId = FloppyDriveSlot::IdFor(drive);
+    if (std::string refusal = MgtDriveSlot(path, drive, slotId); !refusal.empty())
+        return fail(refusal);
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
@@ -2994,7 +3245,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
             return false;
 
         if (!_directStop.hit)
-            _directStop = BreakpointStop{true, breakpointId, address, kind};
+            _directStop = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
         if (kind == BreakpointHitKind::Execute)
         {
             _stoppedAtExecBreakpoint = true;
@@ -3014,7 +3265,7 @@ bool Emulator::OnBreakpointHit(uint16_t breakpointId, uint16_t address, Breakpoi
         _stoppedAtExecBreakpoint = true;
         _stoppedAtExecPc = address;
     }
-    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind};
+    _pendingPauseCause = BreakpointStop{true, breakpointId, address, kind, DebugCpuId::Main, 0, false, {}};
     NoteBreakpointCallbacks(breakpointId, address, kind);
     Pause();
     _pendingPauseCause = BreakpointStop{};  // Pause() did not consume it when it returned early (not running)
@@ -3034,7 +3285,7 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
 {
     const BreakpointSnapshot bp = breakpoints.GetBreakpointById(breakpointId);
     const bool hidden = bp && bp->hidden;
-    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc};
+    const BreakpointStop stop{true, breakpointId, address, kind, cpu, cpuPc, false, {}};
     auto post = [&]() {
         auto* payload = new BreakpointTriggeredPayload(GetId(), breakpointId, address, hidden);
         payload->kind = kind;
@@ -3053,14 +3304,15 @@ void Emulator::OnTargetBreakpointHit(DebugCpuId cpu, BreakpointManager& breakpoi
     }
 
     // The emulator's own run: pause with the cause, notify, park this thread (inside the card's catch-up: a host
-    // port access of the main CPU or the frame end) until Resume()
+    // port access of the main CPU, the frame end, or in tight mode any main instruction start) until Resume()
     _pendingPauseOwner = bp ? bp->owner : std::string();
     _pendingPauseCause = stop;
+    _pendingPauseCause.main = MainPositionAt(cpu);
     Pause();
     _pendingPauseCause = BreakpointStop{};
     _pendingPauseOwner.clear();
     post();
-    WaitWhilePaused();
+    ParkInsideCardRun();
 }
 
 void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
@@ -3070,10 +3322,79 @@ void Emulator::OnTargetStep(DebugCpuId cpu, uint16_t cpuPc)
     stop.address = cpuPc;
     stop.cpu = cpu;
     stop.cpuPc = cpuPc;
+    stop.main = MainPositionAt(cpu);
     _pendingPauseCause = stop;
     Pause();
     _pendingPauseCause = BreakpointStop{};
+    ParkInsideCardRun();
+}
+
+MainPosition Emulator::MainPositionAt(DebugCpuId cpu) const
+{
+    MainPosition position;
+    Z80* z80 = _core ? _core->GetZ80() : nullptr;
+    GSCardTarget* target = _context && _context->pDebugManager ? _context->pDebugManager->GetCardTarget(cpu) : nullptr;
+    GeneralSoundCard* card = target ? target->Card() : nullptr;
+    if (!z80 || !card || card->cardUnitsPerSecond() <= 0.0)
+        return position;
+    position.known = true;
+    position.frameEnd = card->inFrameEndCatchUp();
+    position.pc = z80->m1_pc;
+    const double lead = static_cast<double>(card->hostLead()) /
+                        GSHostClock::unitsPerZxTact(_context, card->cardUnitsPerSecond());
+    position.gapT = static_cast<int32_t>(std::llround(lead));
+    // The instruction's start T is kept while the instruction-start debug work runs (debug mode, exec taps, tight
+    // mode). Tight mode's catch-up runs before the next start is taken: main finished m1_pc's instruction
+    if (position.frameEnd || !(z80->isDebugMode || z80->execTapHold || z80->cardTight) || z80->t < z80->instrStartT)
+        return position;
+    position.tInInstruction = z80->t - z80->instrStartT;
+    position.onBoundary = _context->pDebugManager->CatchingUp();
+    FillInstructionProgress(position);
+    return position;
+}
+
+void Emulator::FillInstructionProgress(MainPosition& position) const
+{
+    // The card's moment, in T of main's instruction; before its start: no progress to show
+    const int64_t elapsed = static_cast<int64_t>(position.tInInstruction) - position.gapT;
+    Memory* memory = _context->pMemory;
+    if (elapsed < 0 || !memory)
+        return;
+    uint8_t bytes[4];
+    for (uint16_t i = 0; i < sizeof(bytes); i++)
+        bytes[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(position.pc + i));
+    const Z80MCycles decoded = Z80MCycleDecoder::Decode(bytes, sizeof(bytes));
+    if (!decoded.valid)
+        return;
+
+    const Z80MCycleList* way = &decoded.met;
+    if (decoded.conditional)
+    {
+        if (position.onBoundary)
+        {
+            // Finished: the way main took is the one its T reach (the taken way is the longer one)
+            if (position.tInInstruction < decoded.met.total)
+                way = &decoded.notMet;
+        }
+        else
+            position.totalTAlt = decoded.notMet.total;  // still under way: the ways part only at the end
+    }
+    position.timed = true;
+    position.elapsedT = static_cast<uint32_t>(elapsed);
+    position.totalT = way->total;
+    position.cycles = *way;
+    position.contended = position.onBoundary && position.tInInstruction > way->total;
+    const Z80MCyclePosition at = Z80MCycleDecoder::Locate(*way, position.elapsedT);
+    if (at.inside)
+        position.busCycle = static_cast<int8_t>(at.index);
+}
+
+void Emulator::ParkInsideCardRun()
+{
+    // Nested parks do not happen (the card's run is one), the flag is only this thread's
+    _parkedInsideCardRun.store(true, std::memory_order_release);
     WaitWhilePaused();
+    _parkedInsideCardRun.store(false, std::memory_order_release);
 }
 
 Z80::StepResult Emulator::ExecuteStep(bool skipBreakpoints, bool* frameCompleted)
@@ -3244,6 +3565,9 @@ Emulator::DirectStepScope::DirectStepScope(Emulator& emulator, const char* tag) 
             else
                 brk->DisarmExecPass();
         }
+        // A card a front-end has selected follows this run in tight mode (gs-debugger design §5.2)
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(true);
     }
 }
 
@@ -3277,10 +3601,17 @@ Emulator::DirectStepScope::~DirectStepScope()
     // A refused run touched nothing: no stop, no picture, no refresh to report
     if (_emulator._directStepDepth.fetch_sub(1, std::memory_order_acq_rel) == 1 && !_refused)
     {
+        if (_emulator._context && _emulator._context->pDebugManager)
+            _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
+        // A time travel replay (a seek, a step in the past) runs the machine directly but is no stop of the
+        // debugger's: the stop before it stays the last one (a debugger would otherwise take every move in time for
+        // a main CPU step and bring that tab to the front)
+        if (!(_emulator._context && _emulator._context->ttdReplayActive))
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
+            _emulator._lastStop.serial++;
         }
         // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())
@@ -4344,10 +4675,21 @@ std::string Emulator::GetStatistics()
 
 // endregion
 
-void Emulator::ApplySymbolBundles()
+std::string Emulator::SymbolBundleFolder()
 {
     const char* setting = std::getenv("UNREAL_SYMBOL_BUNDLES");
     if (setting && std::string(setting) == "0")
+        return {};
+    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
+    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
+        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
+    return folder;
+}
+
+void Emulator::ApplySymbolBundles()
+{
+    const std::string folder = SymbolBundleFolder();
+    if (folder.empty())
         return;
     if (!_context || !_context->pDebugManager || !_context->pMemory || !_core || !_core->GetROM())
         return;
@@ -4358,8 +4700,5 @@ void Emulator::ApplySymbolBundles()
     std::vector<std::string> pages;
     for (uint8_t i = 0; i < rom.GetROMBanksLoaded(); i++)
         pages.push_back(rom.CalculateSignature(_context->pMemory->ROMPageHostAddress(i), PAGE_SIZE));
-    std::string folder = FileHelper::PathCombine(FileHelper::GetResourcesPath(), "symbols");
-    if (!FileHelper::FileExists(FileHelper::PathCombine(folder, "manifest.json")))
-        folder = FileHelper::PathCombine(FileHelper::GetExecutablePath(), "symbols");
     labels->ApplyBundles(folder, pages);
 }

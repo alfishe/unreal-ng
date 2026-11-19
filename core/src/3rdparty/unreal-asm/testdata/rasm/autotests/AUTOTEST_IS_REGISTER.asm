@@ -1,0 +1,1 @@
+assert is_register('bc')==1 : assert is_register('d')==1 : assert is_register('e')==1 : assert is_register('z')==0 : assert is_register('rr')==0 : nop 

@@ -111,11 +111,14 @@ matches; it names the recipe(s) for that action.
 | Starting a game from its title screen (which keys / joystick) | [analysis/game-start-input.md](analysis/game-start-input.md) | memory-counters, port-trace, input/joystick |
 | Building, installing or driving Unreal NG on a Steam Deck (the bundle, Game Mode, the Steam library, a Stream Deck on its USB-C, screenshots with gamescopectl) | [testing/steamdeck.md](testing/steamdeck.md) | everything else |
 | Finding where the emulator itself (the host process) spends its CPU time | [testing/host-profiling.md](testing/host-profiling.md) | analysis/* (they profile the guest) |
+| A test that crashes or fails only in CI's gcc job (`build-gcc-latest`): which test, the job's conditions, the `gcc:16` container repro, gdb, checking the fix | [testing/ci-gcc-crash.md](testing/ci-gcc-crash.md) | everything else |
 | Which video mode a machine is in, putting it into another, finding where frame / window / tile / recording disagree | [testing/steamdeck.md](testing/steamdeck.md) | Unreal NG on a Steam Deck: build the bundle, install or update it, start it in Game Mode through Steam, screenshots of the composed screen, a Stream Deck on the Deck's USB-C, logs |
 | [testing/video-modes.md](testing/video-modes.md) | media/agent-screenshot-view.md (it only shows a frame) |
 | A Sprinter boot straight into a program (tests, benchmarks, a GUI session) | [media/sprinter-test-images.md](media/sprinter-test-images.md) | demo-runner, Flex Navigator walking |
+| Showing the border in the window ("режим с бордюром"), overscan and its crops (full / horizontally centred) | [media/window-view-border.md](media/window-view-border.md) | crt-effects.md |
 | Recording a video (with sound) of a run | [media/video-recording.md](media/video-recording.md) | everything else |
 | A demo video of the GUI window (CRT effects, on-screen keyboard), every frame, 4K for YouTube | [media/window-recording.md](media/window-recording.md) | video-recording.md (the emulated frame only) |
+| [media/window-view-border.md](media/window-view-border.md) | Show the border or not: the window view (`full` / `screen` / `content`, `PUT /video/window`); the overscan (Pentagon only, for now) on / off (`PUT /state/screen/overscan`) and its crops (`full`, `symmetric` = horizontally centred, `standard`, `screen_only`); a handheld start shows `content` |
 | Smooth motion, VRR or the refresh grid, the display rate switch; the presenter's report (late presents, timing error, GPU time per pass) and its `video.present` topic | [media/frame-presenter.md](media/frame-presenter.md) | crt-effects.md (the picture's effects, not its timing) |
 | Debugging a visual/screen bug | [analysis/ttd-visual-inspection.md](analysis/ttd-visual-inspection.md) + [media/agent-screenshot-view.md](media/agent-screenshot-view.md) | everything else until you have a reproducible frame |
 | Detecting a custom loader / triaging a hang | [analysis/nonstandard-loader.md](analysis/nonstandard-loader.md) | port-trace (it's composed in already) |
@@ -218,7 +221,9 @@ call.
 
 | Recipe | What it covers |
 |:--|:--|
+| [machines/plusd.md](machines/plusd.md) | `48K-PLUSD` / `128K-PLUSD` (MGT +D): G+DOS paging traps, WD1772 drives `fdd.plusd1` / `fdd.plusd2`, the system disk, `.mgt` autostart plans and the `state fdc` autostart node, which machine a work needs |
 | [machines/pentagon.md](machines/pentagon.md) | Pentagon 128/512/1024 via `ram_size`, Pentagon-1024 `#EFF7` register (GigaScreen, 512x192, a4b), sound-stack defaults |
+| [machines/pentagon-2666.md](machines/pentagon-2666.md) | `P2666` (Pentagon 2.666 LE): Gluk boot at 28 MHz, the ATM shadow ports and two window maps, RAM-disk Beta Disk, SD / NedoOS, the `p2666` paging node, TTD blobs, snapshot rules |
 | [machines/scorpion.md](machines/scorpion.md) | SCORPION/PROFSCORP, Shadow Monitor `#1FFD`, ProfROM `#7EFD`, built-in Beta128, SOS/128K ROM bit |
 | [machines/profi.md](machines/profi.md) | Profi v5 (`PROFI`) and v3 (`PROFI3`): board differences, `#7FFD`+`#DFFD` paging, sync PROM timing, RTC/CMOS, Covox port arbitration, hi-res video, TTD paging, IDE hard disk |
 | [machines/tsconf.md](machines/tsconf.md) | TS-Conf (`TSL`): TS-BIOS, the `#xxAF` registers and memory map, TS video modes and TSU, DMA, SD slot `sd.zc`, `.spg` programs, `state tsconf` |
@@ -257,6 +262,7 @@ call.
 |:--|:--|
 | [testing/webapi-verification.md](testing/webapi-verification.md) | Verifying a WebAPI change end to end |
 | [testing/host-profiling.md](testing/host-profiling.md) | Where the emulator spends its host CPU time (macOS xctrace): a repeatable load, record, reports per function / source line / callee / thread |
+| [testing/ci-gcc-crash.md](testing/ci-gcc-crash.md) | A crash only CI's gcc job sees: the crashed test from the interleaved shard log, the job's conditions, reproducing in `gcc:16` with gdb, checking the fix there |
 | [testing/video-modes.md](testing/video-modes.md) | Which video mode a machine is in, how to reach the others on every platform, and `tools/verification/video/check_video_modes.py`: where the frame, the window, a video wall tile or a recording disagree with what the machine says |
 
 ### `articles/` — full workflows that combine recipes
