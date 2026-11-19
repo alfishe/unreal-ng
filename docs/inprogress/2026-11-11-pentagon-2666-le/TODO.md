@@ -44,8 +44,8 @@ See [README.md](README.md).
         tests `DeviceStateFdc_Test.P2666ReportsTheRamDiskBetaDisk`, live `test_p2666.py`
   - [x] Machine menus: the Pentagon family of `MachineCatalog` (`PENTAGON`, `P2666`; 2026-11-18): the Qt Machine
         menu, the handheld (Steam Deck) model picker, the machines lists of WebAPI / MCP / CLI / Python / Lua; test
-        `MachineCatalog_Test.TheMenuTreeHoldsOnlyCreatableMachines`. Not on the Elgato Stream Deck machine page (a
-        hand-made grid, owner not asked)
+        `MachineCatalog_Test.TheMenuTreeHoldsOnlyCreatableMachines`; the Stream Deck machine page: key `P2666` at
+        [1, 5] (2026-11-19, `unreal.spec.yaml`, deckflow build + check clean)
   - [x] `.recipe/machines/pentagon-2666.md`, `.recipe/_common/machines.md` row, `.recipe/README.md` row,
         `data/rom/README-ROMS.md` entry; slots refdata ZX-BUS note (`ebl`)
   - [x] Linux (gcc) / Windows checks (2026-11-16): gcc 16.2 (CI build-gcc-latest steps, long tier) 0 warnings, 11566
