@@ -7,7 +7,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${1:?path of cores/zxnext/src}
 OUT=${2:-scratch/2026-10-26-poc-036}
 shift 2 || true
-PROGS=${*:-mix mix5 mixir nreg5 nreg2 dmaburst dmacont zdmacont dmapaper nr08}
+PROGS=${*:-mix mix5 mixir nreg5 nreg2 dmaburst dmacont zdmacont dmapaper nr08 dmaprescc dmaprescb}
 mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 cd "$OUT"

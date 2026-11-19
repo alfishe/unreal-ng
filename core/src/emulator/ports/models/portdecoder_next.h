@@ -111,6 +111,8 @@ public:
     bool JoystickPortWired(bool port37) const;
     NextDma& Dma() { return _dma; }
     void BindDma();
+    /// im2_dma_delay at the CPU's clock now (NextInterruptSource::DmaDelayAt, the NMI holds of DivMMC and Multiface)
+    bool DmaDelayNow();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
