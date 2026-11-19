@@ -267,7 +267,7 @@
               "The machine's sound, frame for frame with the picture (default true; PCM in .mov, AAC in .mp4)");
         field("fps", "integer", "Left out or 0 = the machine's frame rate (needed with audio); 1..100 with audio false");
         field("scale", "integer", "1..4: the picture doubled in blocks, default 1");
-        field("picture_height", "integer", "0..4320: the CRT drawn at that height (GPU only), 0 = the window's");
+        field("picture_height", "integer", "0..4320: the CRT drawn at that height (GPU and software screen), 0 = the window's");
         field("width", "integer", "The file's frame width (with height); left out = picture + keyboard");
         field("height", "integer", "The file's frame height (with width)");
         field("layout", "string", "below (default) or side: where the keyboard goes in a given frame");

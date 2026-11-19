@@ -83,7 +83,7 @@ before the start: a delay changed while recording inserts silence (longer) or dr
   the picture only; a wrong id lists the offered ones), `codec` (`prores` = ProRes 4444 `.mov`, the default; `h264` = H.264 4:4:4 `.mp4`: full colour, so a
   mask a pixel wide survives), `audio` (default true: the sound track, PCM in `.mov`, AAC 320k in `.mp4`; false =
   picture only), `fps` (left out = the machine's rate; 1..100 only with `audio: false`, else 400), `scale` (1..4: the picture doubled in blocks, the default 1),
-  `picture_height` (0..4320: the CRT drawn at that height instead of the window's, GPU only), `width` + `height` (the
+  `picture_height` (0..4320: the CRT drawn at that height instead of the window's, on the GPU and the software screen alike), `width` + `height` (the
   file's frame; left out = the picture with the keyboard under it), `layout` (`below` or `side`, with a frame;
   with `fit` the picture and the keyboard fit the frame together: below, the keyboard as wide as the picture;
   beside, half the width at least),
@@ -108,7 +108,7 @@ before the start: a delay changed while recording inserts silence (longer) or dr
 ## MCP (preferred)
 
 ```text
-emulator_manage {"action":"start","model":"PENTAGON"}             # or the instance the window already shows
+emulator_manage {"action":"create","model":"PENTAGON"}            # unreal-qt starts with none; or the one the window shows
 capture_media {"action":"window_display_set","display":{"gpu":true,"crt_profile":"crt-lottes"}}
 control_execution {"action":"take_control"}                       # the GUI shows who drives it and locks
 control_execution {"action":"pause"}
@@ -227,7 +227,10 @@ ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,nb_fr
 - **The 128 editor drops keys right after Enter** (it is entering the line): wait ~40 frames after each Enter, or
   the next line's number is lost and the line runs as a direct command.
 - **The Pentagon 128 boot menu starts on Tape Loader**: 128 BASIC is one Down.
-- **`picture_height` needs the GPU** (`gpu: true`); the software screen records at the window's size.
+- **The window's post-processing is in the file**: the CRT profile or shader preset, temporal blending (each emulated
+  frame enters the blend once, however often the window draws it), as `screenshot source=window`
+  shows them. `picture_height` (the profiles 1080p / 1440p / 4K) draws the CRT at the file's height on both the GPU
+  and the software screen: scaling the window's picture afterwards would blur the scanlines.
 - **Switching `gpu` while recording** re-creates the screen the recording draws from: set the display first.
 - **A frame does not fit** (`width` / `height` smaller than picture × scale): 409 with the sizes; lower `scale` or
   `picture_height`.
