@@ -23,6 +23,24 @@ in the recipes: [Steam Deck](../../.recipe/testing/steamdeck.md), installer deta
   writes and always restores it. Do not ask the user to switch to Desktop Mode or to add the game by hand.
 - A running game blocks the change: say so, do not kill the game.
 
+## Use the deploy tools, keep them generic
+
+- Build, install and check with [tools/deploy/steamdeck](../../tools/deploy/steamdeck/README.md) (`remote-build.sh`,
+  `deploy.sh`, `check_machine_picker.py`), not with scripts of your own in `scratch/`: a step that works for you
+  belongs there, so the next session has it.
+- A tool takes hosts, folders and keys from its arguments, the `UNREAL_DEPLOY_*` variables and `~/.ssh/config`; it
+  never carries them. A new variable gets its row in
+  [environment variables](../emulator/environment-variables.md).
+- On a build host you work in a checkout of your own, named after the task; never in another session's.
+
+## Check the build you installed, not the user's session
+
+- After the install, check what the user will touch (the handheld menu, a game they asked for) on the Deck itself,
+  in an instance of your own: offscreen, own ports and settings folders, windowless (`check_machine_picker.py` is the
+  pattern). Stop it afterwards.
+- Never drive the user's running app on the Deck to test: switching its machine or resetting it restarts their
+  session. Closing it is the installer's job, at an install the user asked for.
+
 ## No local data in the repository
 
 Docs, recipes, scripts and commit messages name hosts, users and accounts with placeholders (`deck@<host>`,
