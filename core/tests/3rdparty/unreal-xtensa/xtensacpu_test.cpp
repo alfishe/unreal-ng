@@ -255,6 +255,45 @@ TEST_F(XtensaCpu_Test, Fpu)
         EXPECT_EQ(got[i], expected[i]) << "fpu result " << i;
 }
 
+TEST_F(XtensaCpu_Test, FusedMultiplyAddRoundsOnce)
+{
+    // MADD.S f0, f1, f2 = f0 + f1 * f2 and MSUB.S f0, f1, f2 = f0 - f1 * f2, one rounding. Operands where a C library
+    // fmaf that rounds twice (MinGW-w64) is one ulp off; expected values from the x86 FMA instruction.
+    struct Case
+    {
+        uint32_t a, b, c, fused;
+    };
+    const Case cases[] = {
+        {0x4B21C371, 0xD8C77CB7, 0xC4233F8E, 0xE47C1B76}, {0xD51F57FB, 0x26B7F794, 0xB303FD7B, 0xBC65041E},
+        {0x4D248917, 0x1E3465C5, 0xA535DC4E, 0x2BE7DDEB}, {0x8E8E3DB1, 0x74BE6D8A, 0x89DF33D1, 0xC3D39D4D},
+        {0xCFEADE59, 0xE843BDA5, 0xA9F4F39E, 0x78B3955B},
+    };
+    for (const uint32_t op2 : {4u, 5u}) // MADD.S, MSUB.S, each at its own address (decoded blocks are cached)
+    {
+        const uint32_t kAt = kIram + 0xF000 + 0x10 * op2;
+        const uint32_t word = (op2 << 20) | (0xAu << 16) | (0u << 12) | (1u << 8) | (2u << 4);
+        const uint8_t bytes[3] = {static_cast<uint8_t>(word), static_cast<uint8_t>(word >> 8),
+                                  static_cast<uint8_t>(word >> 16)};
+        xtensa::Insn in{};
+        ASSERT_TRUE(xtensa::Decode(kAt, bytes, sizeof(bytes), in));
+        ASSERT_EQ(in.op, op2 == 4 ? xtensa::Op::MaddS : xtensa::Op::MsubS);
+        std::memcpy(iram.data() + (kAt - kIram), bytes, sizeof(bytes));
+        for (const Case& t : cases)
+        {
+            xtensa::CpuState st = cpu.State();
+            st.pc = kAt;
+            st.fr[0] = t.c;
+            st.fr[1] = op2 == 4 ? t.a : t.a ^ 0x80000000u; // c - (-a) * b = c + a * b
+            st.fr[2] = t.b;
+            cpu.SetState(st);
+            const RunResult r = cpu.Run(1);
+            ASSERT_EQ(r.executed, 1u);
+            EXPECT_EQ(cpu.State().fr[0], t.fused) << std::hex << "op2 " << op2 << " a " << t.a << " b " << t.b
+                                                  << " c " << t.c;
+        }
+    }
+}
+
 // ---- register windows ----
 
 TEST_F(XtensaCpu_Test, WindowChainsOverflowAndUnderflowAllRegisters)

@@ -222,7 +222,10 @@ Better still, do the empty-check and wait under one lock hold inside `EventQueue
 
 In Game Mode the video no longer waits for audio (`AVSyncDelayFrames=0`). Audio then trails the picture by the ring depth (~50–60 ms), which is noticeable on sharp sound effects. Ways to shrink it, in order of payoff:
 
-**Status (2026-11-15, branch `low-latency`, not on master):** A1 and A3 done under the feature `lowlatency`; A2 dropped.
+**Status (2026-11-19, on master `e59af2004`):** A1 and A3 done under the feature `lowlatency`; A2 dropped. The video
+side of the same feature landed with them: each frame goes to the screen as soon as it is made (about 50 ms sooner,
+leading the sound by as much), on by default in Steam Deck Game Mode, Machine > Low Latency (Game Mode) in the menu,
+and the present report / View > Video Synchronization say what it does.
 - A1: an adaptive setpoint (`LowLatencyTarget`) starts at 15 ms and comes down to a per-host floor (6 ms macOS, 10 ms Linux, 15 ms Windows) while the trough stays clear; it rises on a gap.
 - A3: macOS 2 x 128 frames, Windows 2 x 10 ms WASAPI periods (−10 ms on the RME ADI-2 DAC). IAudioClient3 gives nothing smaller there: the devices report a 10 ms minimum.
 - Rejected on measurements: Steam Deck period 128 (5 gaps per 10 min vs 0), a faster setpoint descent, a Windows floor of 10 ms and a Deck floor of 6 ms (no gain: the loaded Deck holds the setpoint at 9–14 ms anyway).
