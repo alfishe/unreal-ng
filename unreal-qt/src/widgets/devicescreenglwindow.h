@@ -106,8 +106,8 @@ public:
     static constexpr int kNativeHeight = 288;
 
 signals:
-    void filesDropped(const QStringList& paths);
-    void dragEntered(const QString& filePath);  ///< the first dragged file (empty: not a local file)
+    void filesDropped(const QStringList& paths, const QString& refusal);  ///< DropPaths: the files, or why none
+    void dragEntered(const QString& filePath, const QString& refusal);    ///< the first dragged file, or why none
     void dragLeft();
 
 public slots:

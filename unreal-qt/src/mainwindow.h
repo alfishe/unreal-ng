@@ -386,7 +386,11 @@ private:
     /// While a file is dragged over the window: the highlight; nothing takes it:
     /// the red refusal over the screen at once; several slots take it: the drop
     /// zones after a 1.5 s hold
-    void showDropVerdict(const QString& filePath);
+    /// `refusal`: the drag carries no file that can be opened, and why (DropPaths)
+    void showDropVerdict(const QString& filePath, const QString& refusal = QString());
+    void connectScreenDrops();  ///< the screen window's drag and drop to this window's drop handling
+    /// A drop's files (DropPaths): opened after the drop event returns, or why none can be, over the screen
+    void onFilesDropped(const QStringList& paths, const QString& refusal);
     void clearDropVerdict();
     void onDropDragLeft();
     /// The screen area in global coordinates (where the overlay goes)

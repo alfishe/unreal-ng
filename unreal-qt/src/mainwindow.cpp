@@ -10,6 +10,8 @@
 
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
+#include "media/droppaths.h"
+#include "media/floppymove.h"
 #include "media/droptargetoverlay.h"
 #include "media/flattendialog.h"
 #include "media/core/closeprompt.h"
@@ -310,7 +312,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (plan.targets.size() < 2)
             return;
         _pendingPlacement = {_dragPath, false, LoadOrigin::Drop, true};
-        _dropOverlay->showZones(dropArea(), QFileInfo(_dragPath).fileName(), plan);
+        // Held still, the drop goes where a quick drop would (drive A, with autostart), not to the tile that
+        // happens to open under the cursor
+        _dropOverlay->showZones(dropArea(), QFileInfo(_dragPath).fileName(), plan,
+                                plan.defaultTarget >= 0 ? plan.defaultTarget : QuickDropTarget(plan));
     });
     connect(_dropOverlay, &DropTargetOverlay::targetChosen, this, [this](int index) {
         clearDropVerdict();
@@ -338,17 +343,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         clearDropVerdict();
     });
 
-    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
-        showDropVerdict(filePath);
-    });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
-        qDebug() << "Files dropped via GPU window:" << paths;
-        clearDropVerdict();
-        // After the drop event returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
-    });
+    connectScreenDrops();
 
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _hudWrapper->setVisible(false);
@@ -1822,9 +1817,9 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
-    // Highlight the drop area: red, with the reason in the status bar, when nothing takes the file
-    const QList<QUrl> urls = event->mimeData()->urls();
-    showDropVerdict(urls.isEmpty() ? QString() : urls.first().toLocalFile());
+    // Highlight the drop area: red, with the reason over the screen, when nothing takes the file
+    const DropPaths::Result dragged = DropPaths::FromMime(event->mimeData());
+    showDropVerdict(dragged.paths.isEmpty() ? QString() : dragged.paths.first(), dragged.refusal);
 
     // Allow dropping files into window (a refused file is told again, and nothing happens)
     event->acceptProposedAction();
@@ -1838,28 +1833,13 @@ void MainWindow::dragLeaveEvent(QDragLeaveEvent* event)
 
 void MainWindow::dropEvent(QDropEvent* event)
 {
-    const QMimeData* mimeData = event->mimeData();
-
-    if (mimeData->hasUrls())
+    if (event->mimeData()->hasUrls())
     {
-        QStringList pathList;
-        QList<QUrl> urlList = mimeData->urls();
-
-        // extract the local paths of the files
-        for (int i = 0; i < urlList.size() && i < 32; i++)
-        {
-            pathList.append(urlList.at(i).toLocalFile());
-        }
-
-        qDebug() << pathList.size() << "files dropped";
-        qDebug() << pathList.join(",");
-
-        // Shift held while dropping = mount a disk without autostart. After the drop event
-        // returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, pathList, mountOnly]() { dropFiles(pathList, mountOnly); });
+        const DropPaths::Result dropped = DropPaths::FromMime(event->mimeData());
+        qDebug() << dropped.paths.size() << "files dropped:" << dropped.paths.join(",") << dropped.refusal;
+        onFilesDropped(dropped.paths, dropped.refusal);
+        return;
     }
-
     clearDropVerdict();
 }
 
@@ -3277,6 +3257,24 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
             const uint8_t drive = static_cast<uint8_t>(target.slotId.back() - 'a');
             if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadDisk, drive, file))
                 return;
+            // The same image in another drive (a drop that went to D by mistake, then to A): moved, not refused
+            // as "already in slot" (FloppyMove)
+            if (EmulatorContext* context = _emulator->GetContext())
+            {
+                const int holder = FloppyMove::DriveHolding(context->coreState.diskFilePaths, drive, file);
+                std::string ejectError;
+                if (holder >= 0 && !_emulator->EjectDisk(static_cast<uint8_t>(holder), false, &ejectError))
+                {
+                    refuseFile(filePath,
+                               tr("it is in drive %1, which cannot give it up: %2")
+                                   .arg(QChar('A' + holder), QString::fromStdString(ejectError)),
+                               origin);
+                    return;
+                }
+                if (holder >= 0)
+                    qInfo() << "Moved" << filePath << "from drive" << QChar('A' + holder) << "to drive"
+                            << QChar('A' + drive);
+            }
             const bool autostart = target.autostart && _autostartDisks && !mountOnly &&
                                    (freshlyStarted || (_emulator->IsRunning() && !_emulator->IsPaused()));
             std::string error;
@@ -3397,11 +3395,18 @@ QRect MainWindow::dropArea() const
     return QRect(area->mapToGlobal(QPoint(0, 0)), area->size());
 }
 
-void MainWindow::showDropVerdict(const QString& filePath)
+void MainWindow::showDropVerdict(const QString& filePath, const QString& refusal)
 {
     _dragActive = true;
     _dragPath = filePath;
     _dropHoldTimer.stop();
+    if (filePath.isEmpty() && !refusal.isEmpty())
+    {
+        // The drag names no file that can be opened (DropPaths): why, at once
+        ui->contentFrame->setStyleSheet("border: 2px solid red;");
+        _dropOverlay->showRefusal(dropArea(), tr("Dragged file"), refusal);
+        return;
+    }
     if (filePath.isEmpty())
     {
         ui->contentFrame->setStyleSheet("border: 2px solid #3daee9;");
@@ -3440,6 +3445,30 @@ void MainWindow::onDropDragLeft()
     if (_dropOverlay && _dropOverlay->mode() == DropTargetOverlay::Mode::Refusal)
         _dropOverlay->dismiss();
     clearDropVerdict();
+}
+
+void MainWindow::connectScreenDrops()
+{
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this,
+            [this](const QString& filePath, const QString& refusal) { showDropVerdict(filePath, refusal); });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
+    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, &MainWindow::onFilesDropped);
+}
+
+void MainWindow::onFilesDropped(const QStringList& paths, const QString& refusal)
+{
+    clearDropVerdict();
+    if (paths.isEmpty())
+    {
+        // Files the drop could not name (DropPaths): why, over the screen, instead of "file not found: ''"
+        if (!refusal.isEmpty())
+            _dropOverlay->showRefusal(dropArea(), tr("Dropped file"), refusal, 2500);
+        return;
+    }
+    // Shift held while dropping = mount a disk without autostart. After the drop event returns: the slot chooser
+    // may open
+    const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+    QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
 }
 
 void MainWindow::insertMediumDialog()
@@ -4930,17 +4959,7 @@ void MainWindow::rebuildScreen(bool enabled, bool force)
     _screenWrapper->setHudOverlay(_hudWrapper->softwareOverlay());
 
     // Re-establish drag/drop connections for the new wrapper
-    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
-        showDropVerdict(filePath);
-    });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
-        qDebug() << "Files dropped via GPU window:" << paths;
-        clearDropVerdict();
-        // After the drop event returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
-    });
+    connectScreenDrops();
 
     // Restore state
     _hudWrapper->setVisible(hudVisible);

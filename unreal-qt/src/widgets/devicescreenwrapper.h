@@ -30,8 +30,10 @@ signals:
     void screenInitialized();
     /// The native picture size changed: a new framebuffer (video mode) or another crop
     void pictureGeometryChanged();
-    void filesDropped(const QStringList& paths);
-    void dragEntered(const QString& filePath);
+    /// A drop: its local files, or none and why (DropPaths)
+    void filesDropped(const QStringList& paths, const QString& refusal);
+    /// A drag came in: its first local file, or none and why ("" both: no file in it)
+    void dragEntered(const QString& filePath, const QString& refusal);
     void dragLeft();
     /// After every refresh(): windows that must show the same moment as the
     /// screen (FT812 Debug) refresh with it

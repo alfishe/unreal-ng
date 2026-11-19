@@ -1,4 +1,5 @@
 #include "devicescreenglwindow.h"
+#include "media/droppaths.h"
 #include "emulator/remotecontrolguard.h"
 #include "emulator/mousecapturecontroller.h"
 #include "hud/qt/hudoverlay.h"
@@ -2256,8 +2257,8 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             if (dragEvent->mimeData()->hasUrls())
             {
                 dragEvent->acceptProposedAction();
-                const QList<QUrl> urls = dragEvent->mimeData()->urls();
-                emit dragEntered(urls.isEmpty() ? QString() : urls.first().toLocalFile());
+                const DropPaths::Result dragged = DropPaths::FromMime(dragEvent->mimeData());
+                emit dragEntered(dragged.paths.isEmpty() ? QString() : dragged.paths.first(), dragged.refusal);
                 return true;
             }
             break;
@@ -2272,18 +2273,15 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             const QMimeData* mimeData = dropEvent->mimeData();
             if (mimeData->hasUrls())
             {
-                QStringList paths;
-                for (const QUrl& url : mimeData->urls())
+                const DropPaths::Result dropped = DropPaths::FromMime(mimeData);
+                if (!dropped.paths.isEmpty() || !dropped.refusal.isEmpty())
                 {
-                    if (url.isLocalFile())
-                        paths << url.toLocalFile();
+                    qDebug() << "DeviceScreenGLWindow: files dropped:" << dropped.paths << dropped.refusal;
+                    emit filesDropped(dropped.paths, dropped.refusal);
                 }
-                if (!paths.isEmpty())
-                {
-                    qDebug() << "DeviceScreenGLWindow: files dropped:" << paths;
-                    emit filesDropped(paths);
-                }
-                emit dragLeft();
+                // A refusal stays up a moment after the drop (MainWindow); the rest of the drag's marks go
+                if (dropped.refusal.isEmpty())
+                    emit dragLeft();
                 return true;
             }
             break;
