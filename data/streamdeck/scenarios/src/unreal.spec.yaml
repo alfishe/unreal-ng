@@ -266,7 +266,7 @@ menu media:
 # +-- screen machine: Machine (deckflow build writes this map from the keys below)
 #     0          1          2          3          4          5          6          7          8
 # 0 | <BACK      PREVIOUS   COLD RST   NOW        .          .          .          TURBO      CP/M
-# 1 | 48K        128K       +2         +2A        +3         .          NEXT       SPRINTER   .
+# 1 | 48K        128K       +2         +2A        +3         P2666      NEXT       SPRINTER   .
 # 2 | P128       P512       P1024      SCORP      SC1024     PROF       POLY48     POLY128    POLY P
 # 3 | ATM450     ATM710     EVO        TSCONF     VDAC2      PROFI      PROFI512   PROFI3     PROFI+
 # +--
@@ -286,6 +286,7 @@ menu machine:
     mplus2:  {at: [1, 2], uc: C3.1, action: mach.start, value: {model: PLUS2, replace: true}, label: '+2'}
     mplus2a: {at: [1, 3], uc: C3.1, action: mach.start, value: {model: PLUS2A, replace: true}, label: '+2A'}
     mplus3:  {at: [1, 4], uc: C3.1, action: mach.start, value: {model: PLUS3, replace: true}, label: '+3'}
+    mp2666:  {at: [1, 5], uc: C3.1, action: mach.start, value: {model: P2666, replace: true}, label: P2666}
     mnext:   {at: [1, 6], uc: C3.1, action: mach.start, value: {model: NEXT, replace: true}, label: NEXT}
     msprint: {at: [1, 7], uc: C3.1, action: mach.start, value: {model: SPRINTER, replace: true}, label: SPRINTER}
     mpent:   {at: [2, 0], uc: C3.1, action: mach.start, value: {model: PENTAGON, ram_kb: 128, replace: true}, label: P128}

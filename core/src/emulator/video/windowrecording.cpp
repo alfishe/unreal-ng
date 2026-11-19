@@ -177,6 +177,20 @@ Result RunFrames(Emulator& emulator, int frames)
         return Fail(Status::Unavailable,
                     r.error.empty() ? "The window is not being recorded: video/window/record first" : r.error);
     std::string why;
+    // The encoder (the Mac's writer, ffmpeg) still starting: the recorder drops the frames that run meanwhile, and a
+    // paused machine makes no other one, so the first step would wait out its 10 s for nothing
+    const auto readyBy = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (r.recording.encoderReadyMs <= 0)
+    {
+        if (!r.recording.recording)
+            return Fail(Status::Unavailable,
+                        "The recording stopped" + (r.recording.error.empty() ? std::string() : ": " + r.recording.error));
+        if (std::chrono::steady_clock::now() > readyBy)
+            return Fail(Status::Unavailable, "The recording's encoder did not start within 10 s");
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (!provider->GetWindowRecording(r.recording, why))
+            return Fail(Status::Unavailable, why.empty() ? "The recording stopped" : why);
+    }
     for (int frame = 0; frame < frames; ++frame)
     {
         if (!provider->GetWindowRecording(r.recording, why) || !r.recording.recording)

@@ -10,6 +10,7 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testthread.h"
 #include "_helpers/testwaithelper.h"
+#include "base/featuremanager.h"
 #include "common/sound/audiodevicedescriptor.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -203,6 +204,62 @@ TEST_F(FramesByTime_Test, AudioClockTimesTheFrames)
     EXPECT_NEAR(static_cast<double>(info.targetNs), static_cast<double>(heard(stream + 4000)), 1000.0);
     EXPECT_EQ(_screen->GetPresentTimingStats().source, FrameClockSource::Audio);
     EXPECT_FALSE(_screen->GetPresentTimingStats().delayClamped);
+}
+
+/// Feature `lowlatency`: a frame is due at its latch, not when its sound is heard; the newest latched frame is shown.
+/// Off again, the audio clock times the frames
+TEST_F(FramesByTime_Test, LowLatencyFrameIsDueAtItsLatch)
+{
+    FeatureManager* features = _emulator->GetContext()->pFeatureManager;
+    ASSERT_NE(features, nullptr);
+    EXPECT_FALSE(features->isEnabled(Features::kLowLatency)) << "off by default";
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), Screen::kAudioPathDelayFrames);
+    ASSERT_TRUE(features->setFeature(Features::kLowLatency, true));
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), 0);
+
+    // The sound on a device, heard ~54 ms after each frame's end (as AudioClockTimesTheFrames)
+    AudioDeviceDescriptor device;
+    _emulator->GetContext()->pAudioDeviceDescriptor.store(&device);
+    constexpr uint32_t rate = 44100;
+    constexpr int64_t start = kBase - 400'000'000;
+    uint64_t stream = 0;
+    for (int i = 0; i < 64; i++, stream += 256)
+        device.clock.OnDeviceCallback(start + static_cast<int64_t>(stream * 1e9 / rate), stream, 256, true, rate, 512);
+    const auto latchAndStampWithAudio = [&]() {
+        Latch();
+        FrameStampInput in = EmulatedStamp();
+        in.nowNs = start + static_cast<int64_t>(stream * 1e9 / rate);
+        in.haveAudio = true;
+        in.audioEndStreamFrame = stream + 4000 + static_cast<uint64_t>(_frames) * 882;
+        in.audioFramesPerFrame = 882;
+        _screen->StampPresentTiming(in);
+    };
+
+    for (int k = 0; k < 3; k++)
+        latchAndStampWithAudio();
+    std::vector<uint8_t> out(_size);
+    PresentFrameInfo info;
+    uint64_t serial = 0;
+    for (int k = 0; k < 3; k++)
+    {
+        ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+        EXPECT_EQ(out[0], Marker(k));
+        EXPECT_EQ(info.source, FrameClockSource::Latch) << "frame " << k;
+        EXPECT_EQ(info.targetNs, info.latchNs) << "frame " << k;
+        serial = info.serial;
+    }
+    const int64_t now =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    ASSERT_TRUE(_screen->CopyFrameAt(now, out.data(), out.size(), &info));
+    EXPECT_EQ(out[0], Marker(2)) << "the newest latched frame";
+    EXPECT_FALSE(info.early);
+
+    ASSERT_TRUE(features->setFeature(Features::kLowLatency, false));
+    EXPECT_EQ(_screen->GetEffectivePresentDelayFrames(), Screen::kAudioPathDelayFrames);
+    latchAndStampWithAudio();
+    ASSERT_TRUE(_screen->CopyNextFrame(serial, out.data(), out.size(), &info, false));
+    EXPECT_EQ(out[0], Marker(3));
+    EXPECT_EQ(info.source, FrameClockSource::Audio);
 }
 
 /// A seek repaints once and stops: that frame is shown at once, and the clock starts over after it

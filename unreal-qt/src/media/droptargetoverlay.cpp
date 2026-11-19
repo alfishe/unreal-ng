@@ -91,9 +91,27 @@ QString DropTargetOverlay::IconPath(FileKind kind)
     }
 }
 
-void DropTargetOverlay::showZones(const QRect& globalArea, const QString& fileName, const MediaPlan& plan)
+void DropTargetOverlay::showZones(const QRect& globalArea, const QString& fileName, const MediaPlan& plan, int restIndex)
 {
     open(Mode::Zones, globalArea, fileName, plan);
+    _restIndex = restIndex >= 0 && restIndex < static_cast<int>(plan.targets.size()) ? restIndex : -1;
+    _restSet = false;
+    _picking = _restIndex < 0;
+    _hovered = _restIndex;
+    update();
+}
+
+int DropTargetOverlay::zoneAt(const QPoint& pos)
+{
+    // The first drag event after the zones opened: where the cursor rests (the zones came up under it)
+    if (!_restSet)
+    {
+        _restSet = true;
+        _restPos = pos;
+    }
+    if (!_picking && (pos - _restPos).manhattanLength() > kPickSlop)
+        _picking = true;
+    return _picking ? tileAt(pos) : _restIndex;
 }
 
 void DropTargetOverlay::showChooser(const QRect& globalArea, const QString& fileName, const MediaPlan& plan)
@@ -439,6 +457,8 @@ void DropTargetOverlay::keyPressEvent(QKeyEvent* event)
 
 void DropTargetOverlay::dragEnterEvent(QDragEnterEvent* event)
 {
+    if (_mode == Mode::Zones)
+        setHovered(zoneAt(event->position().toPoint()));
     if (_mode == Mode::Zones || _mode == Mode::Refusal)
         event->acceptProposedAction();
     else
@@ -448,7 +468,7 @@ void DropTargetOverlay::dragEnterEvent(QDragEnterEvent* event)
 void DropTargetOverlay::dragMoveEvent(QDragMoveEvent* event)
 {
     if (_mode == Mode::Zones)
-        setHovered(tileAt(event->position().toPoint()));
+        setHovered(zoneAt(event->position().toPoint()));
     if (_mode == Mode::Zones || _mode == Mode::Refusal)
         event->acceptProposedAction();
 }
@@ -468,7 +488,7 @@ void DropTargetOverlay::dropEvent(QDropEvent* event)
     event->acceptProposedAction();
     if (_mode == Mode::Zones)
     {
-        const int index = tileAt(event->position().toPoint());
+        const int index = zoneAt(event->position().toPoint());
         if (index >= 0)
         {
             dismiss();

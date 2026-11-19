@@ -99,15 +99,24 @@ bool AppSoundManager::init()
     // WASAPI shared mode mixes in 10 ms engine periods: 2 x 5.8 ms left the device one
     // engine period of slack, and any scheduling hiccup (another window busy) was a
     // dropout. One engine period per callback, three of them (~30 ms); the ring and
-    // the DRC target (40 ms) sit on top as before
+    // the DRC target (40 ms) sit on top as before. Low latency takes two (~20 ms): on the
+    // RME ADI-2 DAC, 10 min runs with 12 cores busy and on an idle Next had no more gaps
+    // than three, 10 ms less latency
     config.periodSizeInMilliseconds = 10;
-    config.periods                  = 3;
+    config.periods                  = _lowLatency ? 2 : 3;
     // MMCSS for the WASAPI device thread. miniaudio requests it only when a usage is
     // set: without it the thread ran at plain priority and lost to any busy process
     config.wasapi.usage = ma_wasapi_usage_pro_audio;
 #else
     config.periodSizeInFrames = 256;                 // ~5.8ms period @ 44.1kHz
     config.periods            = 2;                   // 2 periods = 512 frames (~11.6ms hardware buffer @ 44.1kHz)
+#endif
+#ifdef __APPLE__
+    // Low latency: half the period (2 x 2.9 ms); CoreAudio's real-time thread kept the ring clean at it with every
+    // core busy. Linux keeps 256: the Steam Deck at 128 had 5 gaps per 10 min with all cores busy even under the
+    // adaptive setpoint (0 at 256). Windows (WASAPI shared: 10 ms engine periods) sets its count above
+    if (_lowLatency)
+        config.periodSizeInFrames = 128;
 #endif
     config.dataCallback      = AppSoundManager::audioDataCallback; // This function will be called when miniaudio needs more data.
     config.pUserData         = (void*)this;         // Can be accessed from the device object (device.pUserData).
@@ -176,6 +185,36 @@ void AppSoundManager::deinit()
     ma_device_uninit(&_audioDevice);
 }
 
+void AppSoundManager::setLowLatency(bool lowLatency)
+{
+    if (_lowLatency == lowLatency)
+        return;
+    _lowLatency = lowLatency;
+#if defined(__APPLE__) || defined(_WIN32)
+    // Another period (count): the device opens again (the ring's sound, at the old pace, is dropped with it)
+    if (ma_device_get_state(&_audioDevice) == ma_device_state_uninitialized || _shuttingDown.load())
+        return;
+    const bool started = ma_device_is_started(&_audioDevice);
+#ifdef __APPLE__
+    stopNominalRateWatch();
+#else
+    stopFormatWatch();  // not registered while the device is torn down (see handleDeviceRerouted)
+#endif
+    ma_device_uninit(&_audioDevice);
+    if (!init())
+    {
+        qWarning() << "AppSoundManager::setLowLatency() - the audio device did not open again";
+        return;
+    }
+    _ringBuffer.clear();
+    _deviceDescriptor.clock.Reset();  // the stream jumped: the audio clock starts over
+    _deviceDescriptor.ResetTrough();
+    _deviceDescriptor.reinitCount.fetch_add(1, std::memory_order_relaxed);
+    if (started)
+        start();
+#endif
+}
+
 void AppSoundManager::start()
 {
     ma_result result = ma_device_start(&_audioDevice);     // The device is sleeping by default, so you'll need to start it manually.
@@ -213,6 +252,7 @@ void AppSoundManager::stop()
     // Wipe ring buffer to prevent crackles during next emulation session
     _ringBuffer.clear();
     _deviceDescriptor.clock.Reset();  // the stream jumped: the audio clock starts over
+    _deviceDescriptor.ResetTrough();
 }
 
 /// Audio playback callback
@@ -301,8 +341,14 @@ void AppSoundManager::audioDataCallback(ma_device* pDevice, void* pOutput, const
     // per emulated frame and trims the resample ratio continuously.
     // Replaces the former NC_AUDIO_BUFFER_HALF_FULL watermark posts
     // (level trigger + async queue latency -> rubber-banding).
-    obj->_deviceDescriptor.occupancyFrames.store(
-        static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames()), std::memory_order_relaxed);
+    const uint32_t occupancyLeft = static_cast<uint32_t>(obj->_ringBuffer.getOccupancyStereoFrames());
+    obj->_deviceDescriptor.occupancyFrames.store(occupancyLeft, std::memory_order_relaxed);
+    // The trough the ring kept, and a gap when this callback came short while sound played
+    obj->_deviceDescriptor.OnCallbackConsumed(
+        occupancyLeft,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count(),
+        samplesDequeued < samplesRequested && !obj->_silent.load(std::memory_order_relaxed));
     obj->_deviceDescriptor.framesDequeued.fetch_add(frameCount, std::memory_order_relaxed);
     obj->_deviceDescriptor.dequeueErrors.store(obj->_ringBuffer.getDequeueErrorCount(),
                                                std::memory_order_relaxed);
@@ -399,6 +445,7 @@ void AppSoundManager::handleDeviceRerouted()
     // Frames queued in the ring were resampled for the previous device rate
     _ringBuffer.clear();
     _deviceDescriptor.clock.Reset();  // the stream jumped: the audio clock starts over
+    _deviceDescriptor.ResetTrough();
     _deviceDescriptor.reinitCount.fetch_add(1, std::memory_order_relaxed);
 
     start();  // Logs the re-established device the same way as the initial start

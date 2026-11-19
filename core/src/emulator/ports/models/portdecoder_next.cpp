@@ -1248,7 +1248,14 @@ void PortDecoder_Next::BindDma()
         if (wait)
             z80->InsertWaitStates(wait);
     };
+    bus.delay = [this]() { return DmaDelayNow(); };
+    bus.now28 = [this]() { return Now28(); };
     _dma.SetBus(std::move(bus));
+}
+
+bool PortDecoder_Next::DmaDelayNow()
+{
+    return _interrupts->DmaDelayAt(_context->pCore->GetZ80()->t, _divMmc->NmiHold() || _multiface->NmiHold());
 }
 
 /// NR #06 / #08 / #09: the AY or YM chips, turbosound, the DAC, the stereo mix
@@ -1500,20 +1507,22 @@ void PortDecoder_Next::StepDma()
         _dmaRequestLate = false;
     }
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
-    if (_interrupts->DmaDelay(_divMmc->NmiHold() || _multiface->NmiHold()))
-        return;
+    // (dma.vhd START_DMA); the DMA asks again at each byte boundary of a held bus (Bus::delay, WRITE_4)
+    _dma.SetClockTicks(8u / (_ratio ? _ratio : 1u));
     while (_dma.Active())
     {
+        if (!_dma.BusHeld() && DmaDelayNow())
+            break;
         const unsigned moved = _dma.Run(256, Now28());
         if (_dma.Waiting() && _dma.HoldsBus())
         {
-            // continuous mode with a prescaler: the DMA keeps the bus through the wait - the CPU does not run
+            // continuous mode with a prescaler: the DMA keeps the bus through the wait - the CPU does not run. The end is a CPU clock
+            // edge counted from the byte's start, so the clocks up to the first edge at or after it
             const uint64_t end = _dma.WaitEnd();
+            const uint64_t perCpuClock = 8u / (_ratio ? _ratio : 1u);  // 28 MHz clocks of one CPU clock
             while (Now28() < end)
             {
-                const double missing28 = static_cast<double>(end) - Now28();
-                const double perCpuClock = 8.0 / _ratio;  // 28 MHz clocks of one CPU clock
-                const unsigned clocks = static_cast<unsigned>(missing28 / perCpuClock) + 1;
+                const uint64_t clocks = (end - Now28() + perCpuClock - 1) / perCpuClock;
                 _context->pCore->GetZ80()->InsertWaitStates(static_cast<uint8_t>(clocks > 255 ? 255 : clocks));
             }
             continue;

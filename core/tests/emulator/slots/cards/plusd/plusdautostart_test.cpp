@@ -19,6 +19,8 @@
 #include "_helpers/emulatortesthelper.h"
 #include "_helpers/testpathhelper.h"
 #include "debugger/analyzers/rom-print/screenocr.h"
+#include "emulator/actions/actionregistry.h"
+#include "emulator/actions/builtinactions.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
@@ -346,8 +348,43 @@ TEST_F(PlusDAutostart_Test, ChoosesTheBasicOnThe128K)
     GdosDisk disk = SystemDisk();
     disk.AddBorderLoop("AUTO", 3);
     const Emulator::DiskAutostartResult refused = _emulator->AutostartDisk(disk.Save("auto48.mgt"), 0, "128");
+    EXPECT_FALSE(refused.mounted) << "refused before anything is mounted";
     EXPECT_FALSE(refused.started);
     EXPECT_NE(refused.message.find("128K-PLUSD"), std::string::npos) << refused.message;
+}
+
+/// The planes pass `basic` through: the action media.open (Stream Deck, handheld, every plane's action call) answers
+/// with the plan and the BASIC, and refuses 128 BASIC on a 48K by the core's message (~20 ms, the steps not run)
+TEST_F(PlusDAutostart_Test, MediaOpenPassesTheBasic)
+{
+    using namespace actions;
+    Create("48K", true);
+    GdosDisk disk = SystemDisk();
+    disk.AddBorderLoop("AUTO", 3);
+    const std::string path = disk.Save("action.mgt");
+    auto open = [&](const char* basic) {
+        ActionValue value;
+        value.pressed = true;
+        value.params["path"] = path;
+        value.params["basic"] = basic;
+        ActionOrigin origin;
+        origin.origin = execution::Origin::HostDevice;
+        origin.identity = "test";
+        origin.client = "test";
+        return ActionRegistry::Instance().Run("media.open", std::move(value), _emulator->GetId(), origin);
+    };
+    const ActionResult opened = open("48");
+    ASSERT_TRUE(opened.ok) << opened.message;
+    ASSERT_NE(opened.body.find("plan"), nullptr);
+    EXPECT_EQ(opened.body.find("plan")->s, "run");
+    EXPECT_EQ(opened.body.find("basic")->s, "48");
+
+    const ActionResult refused = open("128");
+    EXPECT_FALSE(refused.ok);
+    EXPECT_NE(refused.message.find("128K-PLUSD"), std::string::npos) << refused.message;
+    const ActionResult unknown = open("64");
+    EXPECT_FALSE(unknown.ok);
+    EXPECT_NE(unknown.message.find("48 or 128"), std::string::npos) << unknown.message;
 }
 
 /// `run+load` (~1 s): the system disk with another program: RUN, the DOS loads, then LOAD d1"..." of the first BASIC

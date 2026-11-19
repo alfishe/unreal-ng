@@ -1372,6 +1372,13 @@
    "state": null,
    "title": "Key macro"
   },
+  "mp2666": {
+   "glyph": "mach.start",
+   "glyph_on": null,
+   "hold": false,
+   "state": null,
+   "title": "Start a machine"
+  },
   "mpent": {
    "glyph": "mach.start",
    "glyph_on": null,
@@ -6521,6 +6528,23 @@
    ],
    "value": {
     "name": "move"
+   }
+  },
+  "mp2666": {
+   "action": "mach.start",
+   "at": [
+    1,
+    5
+   ],
+   "in": "machine",
+   "kind": "key",
+   "label": "P2666",
+   "uc": [
+    "C3.1"
+   ],
+   "value": {
+    "model": "P2666",
+    "replace": true
    }
   },
   "mpent": {

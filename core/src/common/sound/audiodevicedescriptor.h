@@ -76,7 +76,47 @@ struct AudioDeviceDescriptor
     std::atomic<uint64_t> enqueueErrors{0};
     std::atomic<uint64_t> dequeueErrors{0};
 
+    /// The ring's trough: the least occupancy a device callback left behind, over the last whole window of
+    /// kTroughWindowNs (the margin the ring kept against an underrun), and how many windows have closed (a reader
+    /// polling twice a window sees each). kNoTrough until the first window closes
+    static constexpr int64_t kTroughWindowNs = 1'000'000'000;
+    static constexpr uint32_t kNoTrough = UINT32_MAX;
+    std::atomic<uint32_t> troughFrames{kNoTrough};
+    std::atomic<uint64_t> troughWindows{0};
+
+    /// Gaps: a device callback that found the ring short of what it asked for after one that got all of it (a run
+    /// of short callbacks, a paused machine's included, counts once)
+    std::atomic<uint64_t> underruns{0};
+
     /// endregion </Live buffer state>
+
+    /// The device callback, after it took its frames: the occupancy it left (device thread only)
+    void OnCallbackConsumed(uint32_t occupancy, int64_t nowNs, bool shortRead)
+    {
+        if (shortRead && !_lastShort)
+            underruns.fetch_add(1, std::memory_order_relaxed);
+        _lastShort = shortRead;
+        if (occupancy < _windowTrough)
+            _windowTrough = occupancy;
+        if (_windowStartNs == 0)
+            _windowStartNs = nowNs;
+        else if (nowNs - _windowStartNs >= kTroughWindowNs)
+        {
+            troughFrames.store(_windowTrough, std::memory_order_relaxed);
+            troughWindows.fetch_add(1, std::memory_order_release);
+            _windowTrough = kNoTrough;
+            _windowStartNs = nowNs;
+        }
+    }
+
+    /// A fresh device (init, re-init): the trough window starts over (device stopped)
+    void ResetTrough()
+    {
+        _windowTrough = kNoTrough;
+        _windowStartNs = 0;
+        _lastShort = true;
+        troughFrames.store(kNoTrough, std::memory_order_relaxed);
+    }
 
     /// Ring occupancy in milliseconds at the current device rate
     /// (0.0 when no device is attached)
@@ -107,4 +147,10 @@ struct AudioDeviceDescriptor
         std::strncpy(deviceName, name ? name : "", sizeof(deviceName) - 1);
         deviceName[sizeof(deviceName) - 1] = '\0';
     }
+
+private:
+    // The open trough window (device thread only)
+    uint32_t _windowTrough = kNoTrough;
+    int64_t _windowStartNs = 0;
+    bool _lastShort = true;  // a fresh device starts on an empty ring: not a gap
 };
