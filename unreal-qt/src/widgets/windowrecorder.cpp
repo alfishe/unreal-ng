@@ -470,8 +470,8 @@ struct WindowRecorder::Writer
             failure = "The hardware encoder did not start: " + encoder.GetLastError();
         if (!failure.empty())
             failed = true;
-        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
+        encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
         for (;;)
         {
             Job job;
@@ -584,8 +584,8 @@ struct WindowRecorder::Writer
             failed = true;
         else
             process.write(MatroskaStreamHeader(size.width(), size.height()));
-        encoderReadyUs = sinceCreatedUs();
         ready = true;  // a failed start is told by `failed`
+        encoderReadyUs = std::max<int64_t>(1, sinceCreatedUs());  // after `ready`: > 0 tells a recorded step it may run
 
         // The last picture sent and its frame: a picture equal to it is not sent (a still screen; it only lengthens
         // the one before), unless a quarter second went by (seeking wants a frame that often)

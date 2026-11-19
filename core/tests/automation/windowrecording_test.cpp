@@ -53,6 +53,7 @@ public:
         status.fps = 48.828125;
         status.audio = r.audio;
         status.sampleRate = r.audio ? 44100 : 0;
+        status.encoderReadyMs = readyAtRead > 0 ? 0.0 : 1.0;
         out = status;
         return true;
     }
@@ -64,16 +65,35 @@ public:
     }
     bool GetWindowRecording(WindowRecordingStatus& out, std::string&) override
     {
-        if (failAtRead > 0 && ++reads >= failAtRead)  // the writer failed: the recorder stops itself
+        ++reads;
+        if (failAtRead > 0 && reads >= failAtRead)  // the writer failed: the recorder stops itself
         {
             status.recording = false;
             status.error = "ffmpeg stopped taking frames";
+        }
+        if (machine)  // the recorder: one picture per frame the machine ran since the encoder was up, none before
+        {
+            const uint64_t ran = machine->GetContext()->emulatorState.frame_counter;
+            if (readyAtRead > 0 && reads >= readyAtRead && status.encoderReadyMs <= 0)
+            {
+                status.encoderReadyMs = 250.0;
+                framesAtReady = ran;
+            }
+            if (status.encoderReadyMs <= 0)
+                ranBeforeReady = ran != framesAtStart;
+            else
+                status.frames = ran - framesAtReady;
         }
         out = status;
         return true;
     }
     int failAtRead = 0;  ///< > 0: the recording stops at this status read
+    int readyAtRead = 0;  ///< > 0: the encoder starts slowly, up at this status read (frames before it are dropped)
     int reads = 0;
+    Emulator* machine = nullptr;  ///< counts the recorded frames from this machine's frame counter
+    uint64_t framesAtStart = 0;
+    uint64_t framesAtReady = 0;
+    bool ranBeforeReady = false;  ///< a frame ran while the encoder was still starting
 };
 
 /// Registers a provider for one test, and always takes it away again: the registry is process-wide
@@ -274,5 +294,31 @@ TEST(WindowRecording_Test, FramesEndAtOnceWhenTheRecordingStops)
     EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1)) << "no wait for a dead recorder";
     EXPECT_EQ(stopped.status, WindowRecording::Status::Unavailable);
     EXPECT_EQ(stopped.error, "The recording stopped: ffmpeg stopped taking frames");
+    EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+TEST(WindowRecording_Test, FramesWaitForASlowEncoderStart)
+{
+    // 2026-11-19 the Mac's writer (VideoToolbox, ProRes) took longer to start than the first step: that frame was
+    // dropped, the paused machine made no other one, and the step failed after 10 s "recorded nothing (frame 0)"
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("PENTAGON", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    emulator->StartAsync();
+    ASSERT_TRUE(TestWait::For([emulator] { return emulator->GetState() == StateRun; }));
+    emulator->Pause();
+    ASSERT_TRUE(emulator->IsPaused());
+    auto fake = std::make_shared<FakeRecorder>();
+    fake->machine = emulator;
+    fake->framesAtStart = emulator->GetContext()->emulatorState.frame_counter;
+    fake->readyAtRead = 5;  // the step's first status read, then three more before the encoder is up
+    ScopedProvider registered(fake);
+    ASSERT_TRUE(WindowRecording::Start("id", Valid()).status == WindowRecording::Status::Ok);
+    const auto started = std::chrono::steady_clock::now();
+    const WindowRecording::Result ran = WindowRecording::RunFrames(*emulator, 3);
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1)) << ran.error;
+    EXPECT_EQ(ran.status, WindowRecording::Status::Ok) << ran.error;
+    EXPECT_EQ(ran.ran, 3);
+    EXPECT_FALSE(fake->ranBeforeReady) << "a frame ran before the encoder was up: the recorder drops it";
+    EXPECT_EQ(fake->status.frames, 3u);
     EmulatorTestHelper::CleanupEmulator(emulator);
 }
