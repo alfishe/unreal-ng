@@ -103,6 +103,10 @@ public:
     /// Null image when no framebuffer is attached.
     QImage grabFramebuffer();
 
+    /// The picture as the window draws it (temporal blending, CRT effects) at `pictureHeight` device pixels in the
+    /// window's shape: a recording's or a screenshot's own size. Null when no frame is there yet
+    QImage renderPicture(int pictureHeight);
+
     void clearDisplayViewport()
     {
         _hasViewport = false;
@@ -212,10 +216,22 @@ private:
     int _temporalWeightMode = 0;
     float _temporalDecay = 0.5f;
 
-    // CRT effects
-    std::unique_ptr<CRTRenderer> _crtRenderer;
-    std::unique_ptr<CRTBeamModel> _crtModel;  ///< the shader models (crt-lottes, ...)
-    QImage _crtFrame;
+    uint64_t _historySerial = 0;  ///< the frame pushed into _frameHistory last (0: the legacy buffer's)
+
+    /// The frame to draw now (the latched frame, smooth motion's, the blend), null when none: shared by the window's
+    /// paint and renderPicture. `legacyCopy` holds the legacy buffer's copy
+    const QImage* preparePicture(QImage& legacyCopy);
+
+    // CRT effects: one composer per output size (the window's, a recording's), each keeps its tables for its size
+    struct Composer
+    {
+        std::unique_ptr<CRTRenderer> renderer;
+        std::unique_ptr<CRTBeamModel> model;  ///< the shader models (crt-lottes, ...)
+        QImage frame;
+    };
+    bool composePicture(Composer& composer, const QImage& picture, QSize pixels);
+    Composer _windowComposer;
+    Composer _pictureComposer;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
 

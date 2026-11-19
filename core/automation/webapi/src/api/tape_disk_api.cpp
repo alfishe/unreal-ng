@@ -1310,12 +1310,25 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     // hardware convention, not a missing feature; requesting it for another drive is a hard error, not
     // silently ignored). Supported via JSON body ("autostart": true) or X-Autostart header for raw uploads
     bool autostart = false;
+    // An MGT disk on the +D: the BASIC of the reset ("" = the machine's own, "48", "128"); the core checks it
+    std::string basic;
     {
         auto json = req->getJsonObject();
         if (json && json->isMember("autostart"))
             autostart = (*json)["autostart"].asBool();
         else if (content.isEmbedded)
             autostart = (req->getHeader("X-Autostart") == "true");
+        if (json && json->isMember("basic"))
+        {
+            // "48" or 48 alike; anything else goes through as text and the core refuses it by name
+            const Json::Value& value = (*json)["basic"];
+            basic = value.isIntegral() ? std::to_string(value.asInt64())
+                    : value.isString() ? value.asString()
+                    : value.isNull()   ? std::string()
+                                       : std::string("(not text)");
+        }
+        else if (content.isEmbedded)
+            basic = req->getHeader("X-Autostart-Basic");
     }
     // TTD refuses this while recording: answer why instead of a bare failure
     if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, driveNum, path); !refusal.empty())
@@ -1335,7 +1348,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     bool success;
     if (autostart)
     {
-        autostartResult = emulator->AutostartDisk(path, driveNum);
+        autostartResult = emulator->AutostartDisk(path, driveNum, basic);
         success = autostartResult.mounted;
     }
     else
@@ -1356,6 +1369,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
             ret["plan"] = autostartResult.plan;
             ret["command"] = autostartResult.command;
             ret["dos"] = autostartResult.dos;
+            ret["basic"] = autostartResult.basic;
         }
     }
     ret["status"] = success ? "success" : "error";

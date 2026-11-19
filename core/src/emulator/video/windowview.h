@@ -251,7 +251,7 @@ struct WindowRecordingRequest
     int fps = 0;       ///< 0: the machine's frame rate (3.5 MHz / t-states per frame: 48.83 on a Pentagon)
     bool audio = true; ///< the machine's sound, frame for frame with the picture (needs fps 0)
     int scale = 1;  ///< the window's pixels as scale x scale blocks (1..4); the keyboard drawn at the file's width
-    int pictureHeight = 0;  ///< > 0: the CRT drawn at this height in device pixels, not the window's (GPU only)
+    int pictureHeight = 0;  ///< > 0: the CRT drawn at this height in device pixels, not the window's (GPU and software screen)
     bool fit = false;  ///< scale the picture to the frame (aspect kept, centred), up or down, instead of refusing a mismatch
     uint16_t frameWidth = 0;   ///< the file's frame; 0: the picture with the keyboard under it
     uint16_t frameHeight = 0;

@@ -1,7 +1,8 @@
 # TODO: Pentagon 2.666 LE
 
-Status 2026-11-16: P0..P4 built, tested and checked with real software
-([testdata/machines/p2666/software/README.md](../../../testdata/machines/p2666/software/README.md)); P5 in progress.
+Status 2026-11-18: P0..P5 done, landed on master (8a6481e3e); real software checked
+([testdata/machines/p2666/software/README.md](../../../testdata/machines/p2666/software/README.md)). Left: the gcc 16
+check of the last changes (fdc report, MCP line, machine catalog) in the day's batch.
 See [README.md](README.md).
 
 ## Phases
@@ -41,7 +42,10 @@ See [README.md](README.md).
         controller on the board, manual 2.9): registers, status, `phase` (every level-set flag, `restore+step`),
         INTRQ / DRQ, system register, head, RAM-disk pages, drive A; WebAPI disk info `fdc_state`; MCP text line;
         tests `DeviceStateFdc_Test.P2666ReportsTheRamDiskBetaDisk`, live `test_p2666.py`
-  - [x] Qt menu: the model comes from `Config::IsModelCreatable` (no list to edit); check on a build
+  - [x] Machine menus: the Pentagon family of `MachineCatalog` (`PENTAGON`, `P2666`; 2026-11-18): the Qt Machine
+        menu, the handheld (Steam Deck) model picker, the machines lists of WebAPI / MCP / CLI / Python / Lua; test
+        `MachineCatalog_Test.TheMenuTreeHoldsOnlyCreatableMachines`; the Stream Deck machine page: key `P2666` at
+        [1, 5] (2026-11-19, `unreal.spec.yaml`, deckflow build + check clean)
   - [x] `.recipe/machines/pentagon-2666.md`, `.recipe/_common/machines.md` row, `.recipe/README.md` row,
         `data/rom/README-ROMS.md` entry; slots refdata ZX-BUS note (`ebl`)
   - [x] Linux (gcc) / Windows checks (2026-11-16): gcc 16.2 (CI build-gcc-latest steps, long tier) 0 warnings, 11566

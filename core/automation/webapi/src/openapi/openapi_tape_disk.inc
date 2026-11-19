@@ -215,7 +215,21 @@
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
          ["properties"]["autostart"]["type"] = "boolean";
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-         ["properties"]["autostart"]["description"] = "Quick-reset into TR-DOS and run (drive A only, default false)";
+         ["properties"]["autostart"]["description"] =
+        "Run the disk (drive A only, default false): TR-DOS quick reset; an .mgt on the MGT +D runs its plan (run, "
+        "run+load, system-disk+load, mount; the answer has plan, command, dos, basic; the steps go on after the "
+        "answer: state/fdc -> autostart)";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["basic"]["type"] = "string";
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["basic"]["enum"].append("48");
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["basic"]["enum"].append("128");
+    paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["properties"]["basic"]["description"] =
+        "MGT +D autostart only: the BASIC of the reset. Omitted = the machine's own (48 BASIC on a 48K, 128 BASIC on "
+        "a 128K); 48 = 48 BASIC on any machine (a 128K in 48K mode); 128 = 128 BASIC (refused on a 48K). Raw "
+        "uploads: header X-Autostart-Basic";
     // Multipart upload option
     paths["/api/v1/emulator/{id}/disk/{drive}/insert"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
          ["properties"]["file"]["type"] = "string";

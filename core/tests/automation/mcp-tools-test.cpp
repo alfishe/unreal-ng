@@ -748,6 +748,32 @@ TEST_F(McpTools_Test, LoadSoftware_Disk_UsesDriveParameter)
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/disk/B/insert"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_MgtAutostart_ForwardsTheBasicAndSaysThePlan)
+{
+    Json::Value answer(Json::objectValue);
+    answer["status"] = "success";
+    answer["autostarted"] = true;
+    answer["autostart_message"] = "Autostart: RUN (G+DOS from the disk)";
+    answer["plan"] = "run";
+    answer["basic"] = "48";
+    _caller->routes["POST /api/v1/emulator/emu-1/disk/A/insert"] = {200, answer};
+
+    Json::Value args;
+    args["path"] = "no-such-dir/work.mgt";  // not a local file: the path goes in the JSON body
+    args["autostart"] = true;
+    args["basic"] = "48";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/disk/A/insert");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["autostart"].asBool());
+    EXPECT_EQ(call->body["basic"].asString(), "48");
+    // An agent may see only the text: the plan, its BASIC and where the progress is
+    EXPECT_NE(result.text.find("plan run, 48 BASIC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("inspect_state fdc"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, LoadSoftware_UnknownExtension_IsError)
 {
     Json::Value args;
@@ -1946,6 +1972,47 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("ch2 key-on mask 8 alg 7 228.5 Hz"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[fdc] S_IDLE, last restore"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
+}
+
+// The MGT +D after a reset has no drive on the select lines (selected_drive -1): the call answers (an unsigned read of
+// -1 threw in the formatter and the request never answered), the text says "drive none", names the controller and
+// shows the autostart
+TEST_F(McpTools_Test, InspectState_FdcWithNoDriveSelected)
+{
+    Json::Value fdc;
+    fdc["available"] = true;
+    fdc["controller"] = "WD1772 (MGT +D)";
+    fdc["fsm_state"] = "S_IDLE";
+    fdc["last_command"] = "restore";
+    fdc["registers"]["status"] = 0;
+    fdc["registers"]["track"] = 0;
+    fdc["registers"]["sector"] = 1;
+    fdc["selected_drive"] = -1;
+    fdc["side"] = 0;
+    fdc["density"] = "MFM";
+    fdc["drives"] = Json::Value(Json::arrayValue);
+    fdc["autostart"]["plan"] = "run+load";
+    fdc["autostart"]["basic"] = "48";
+    fdc["autostart"]["command"] = "LOAD d1\"CONFIG\"";
+    fdc["autostart"]["active"] = true;
+    fdc["autostart"]["stage"] = "run";
+    fdc["autostart"]["message"] = "";
+    Json::Value step;
+    step["step"] = "reset";
+    step["frame"] = 0;
+    fdc["autostart"]["steps"].append(step);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/fdc"] = {200, fdc};
+
+    Json::Value args;
+    args["aspects"] = Json::Value(Json::arrayValue);
+    args["aspects"].append("fdc");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[fdc] WD1772 (MGT +D): S_IDLE, last restore, status 0 track 0 sector 1, drive none side 0, MFM"),
+              std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("autostart run+load, 48 BASIC, LOAD d1\"CONFIG\", running (stage run); steps reset @0"),
+              std::string::npos) << result.text;
 }
 
 // device_history: read goes to /history/{device}?last=N and answers with the stats line and one line per record;
