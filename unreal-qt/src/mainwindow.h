@@ -217,6 +217,9 @@ private slots:
     void handleStepOut();
     void handleRunToCursor();
     void submitGuiAction(const char* id, StateNode params = StateNode::Object());
+    /// A step of the card in front of the Embedded debugger (`kind` in / over / out / to): false with the main CPU in
+    /// front or the debugger hidden (the step is the main CPU's as before)
+    bool cardStepInDebugger(const char* kind, uint16_t address = 0);
     // Debug menu: breakpoints and the debugger's panes
     void handleToggleBreakpoint();
     void handleClearAllBreakpoints();

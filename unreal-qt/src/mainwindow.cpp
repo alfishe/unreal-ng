@@ -4225,8 +4225,23 @@ void MainWindow::handleAutostartDisksToggled(bool enabled)
     qDebug() << "Disk autostart" << (enabled ? "enabled" : "disabled");
 }
 
+bool MainWindow::cardStepInDebugger(const char* kind, uint16_t address)
+{
+    // The Embedded debugger shown with a sound card's tab in front: the step is that card's (its window says why a
+    // refused one did not run)
+    if (debuggerWindow == nullptr || !debuggerWindow->isVisible() || !IsCardCpu(debuggerWindow->currentCpu()))
+        return false;
+    QString error;
+    debuggerWindow->cardStep(kind, address, &error);
+    if (!error.isEmpty())
+        statusBar()->showMessage(tr("Card step: %1").arg(error), 5000);
+    return true;
+}
+
 void MainWindow::handleStepIn()
 {
+    if (cardStepInDebugger("in"))
+        return;
     if (_emulator)
     {
         _emulator->RunSingleCPUCycle(false);
@@ -4236,6 +4251,8 @@ void MainWindow::handleStepIn()
 
 void MainWindow::handleStepOver()
 {
+    if (cardStepInDebugger("over"))
+        return;
     if (_emulator)
     {
         _emulator->StepOver();
@@ -4245,6 +4262,8 @@ void MainWindow::handleStepOver()
 
 void MainWindow::handleStepOut()
 {
+    if (cardStepInDebugger("out"))
+        return;
     submitGuiAction("run.step_out");
 }
 
@@ -4257,6 +4276,8 @@ void MainWindow::handleRunToCursor()
         statusBar()->showMessage(tr("Run to cursor: the disassembly has no cursor row, click one first"), 5000);
         return;
     }
+    if (cardStepInDebugger("to", *cursor))
+        return;
     StateNode params = StateNode::Object();
     params["addr"] = static_cast<int>(*cursor);
     submitGuiAction("run.to_cursor", std::move(params));

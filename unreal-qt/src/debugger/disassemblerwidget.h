@@ -15,6 +15,7 @@
 #include <atomic>
 #include <deque>
 #include <functional>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -23,6 +24,7 @@
 #include "emulator/memory/memory.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/disassembler/disassemblywindow.h"
+#include "debugger/targets/debugcpuid.h"
 #include "disassemblystrip.h"
 
 QT_BEGIN_NAMESPACE
@@ -164,6 +166,12 @@ public:
 
     void setDisassemblerAddress(uint16_t pc);
 
+    /// The CPU listed (the window's processor tab): a sound card's code by peeks of its 64 KB, its labels and
+    /// breakpoints (the breakpoint column toggles the card's), no markup. Each CPU keeps its own place, address
+    /// history and marks; the rows are decoded again for the new CPU
+    void setCpu(DebugCpuId cpu);
+    DebugCpuId cpu() const { return m_cpu; }
+
     /// region <Controls the GUI control plane drives (disassembly.follow_pc, .goto, .scroll_mode; metadata.set)>
     /// Show the disassembly at PC again (Home; disassembly.follow_pc); a jump of the address history
     void followPc();
@@ -292,6 +300,19 @@ private:
     DisassemblyStrip m_strip;
     int m_rowsShown = 0;  ///< rows (not label lines) wholly visible in the last layout
     std::optional<uint16_t> m_cursorAddress;
+    DebugCpuId m_cpu = DebugCpuId::Main;
+    /// A card CPU's registers as last read (getZ80Registers on a card's tab)
+    Z80Registers m_cardRegisters{};
+    /// What each CPU not in front left: its place, address history and marks
+    struct CpuPlace
+    {
+        ViewPlace place;
+        bool shown = false;
+        std::deque<ViewPlace> back;
+        std::deque<ViewPlace> forward;
+        std::array<std::optional<uint16_t>, 5> marks{};
+    };
+    std::map<DebugCpuId, CpuPlace> m_cpuPlaces;
     /// endregion </The rows>
 };
 

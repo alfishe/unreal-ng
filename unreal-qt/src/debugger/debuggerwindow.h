@@ -13,6 +13,8 @@
 #include <emulator/emulator.h>
 #include <emulator/emulatorbinding.h>
 #include "debugger/breakpointstopline.h"
+#include "debugger/targets/debugcpuid.h"
+#include "emulator/cpu/z80.h"
 
 #include <QLabel>
 #include <QMenu>
@@ -30,6 +32,7 @@ class DebuggerWindow;
 }
 QT_END_NAMESPACE
 
+class DebuggerCpuTabs;
 class Emulator;
 class PaneFocus;
 class SpeedControlWidget;
@@ -82,13 +85,32 @@ public:
     void sendPaneKey(int key);
     /// The memory view at a CPU address: its 16 KB page, the cursor on it; false without a machine
     bool showMemoryAt(uint16_t address);
-    /// The memory view's first byte and cursor as CPU addresses (none: its page is not mapped now)
+    /// The memory view's first byte and cursor as CPU addresses (none: its page is not mapped now); a card's tab: the
+    /// card CPU's 16 KB window shown
     std::optional<uint16_t> memoryTop() const { return memoryViewBase(); }
     std::optional<uint16_t> memoryCursor() const;
     /// Where the memory view goes when the machine stops: "pc" (the default), "sp", "bc", "de", "hl", "ix", "iy" or
     /// "off" (it stays)
     const QString& memoryFollow() const { return _memoryFollow; }
     bool setMemoryFollow(const QString& name);
+
+    /// region <The processor tabs (debuggercpu.h): the main CPU and each sound card CPU fitted>
+    /// The CPU in front: the panes, the disassembly's breakpoints, the steps and the time group act on it
+    DebugCpuId currentCpu() const;
+    /// The CPUs with a tab (the main CPU first); the bar shows with more than one
+    std::vector<DebugCpuId> cpus() const;
+    /// Put `cpu`'s tab in front; false when it has none (no such card fitted)
+    bool selectCpu(DebugCpuId cpu);
+    DebuggerCpuTabs* cpuTabs() const { return _cpuTabs; }
+    class DebuggerTimeTravel* timeTravel() const { return _timeTravel; }
+    /// A byte as the CPU in front sees it (no side effects)
+    uint8_t readCpuByte(uint16_t address);
+    /// Step In / Over / Out (`kind` "in", "over", "out") or run to `address` ("to") on the card in front
+    /// (RunControl::CardStep: the machine runs until the card ends it, then pauses); Step In in the recorded past is
+    /// the time group's card step forward. False with the main CPU in front: the caller steps as before. `error`:
+    /// why a card step was refused ("" when it ran)
+    bool cardStep(const char* kind, uint16_t address = 0, QString* error = nullptr);
+    /// endregion </The processor tabs>
     /// endregion </The GUI control plane>
 
     /// region <Helper methods>
@@ -101,6 +123,11 @@ protected:
     void paintMemoryMetadata();
     /// The CPU address of the memory view's first byte: the window mapping its page now (none: not mapped)
     std::optional<uint16_t> memoryViewBase() const;
+    /// The panes read the CPU in front (a tab changed, a card fitted or removed): the registers, stack, pages,
+    /// disassembly, memory view and the time group
+    void retargetPanes();
+    /// The registers of the CPU in front for the registers pane (a card's: a copy read now); null without it
+    Z80State* cpuState();
     /// The memory view's tooltip for the byte at `offset` in the page: the address, byte and word, the label at or
     /// before it with the distance, the markup block (kind, extent, place in it, source, title, a variable's value)
     /// and the comments on it
@@ -197,6 +224,9 @@ signals:
     /// emulator's debug instrumentation on only while the window is visible.
     void visibilityChanged(bool visible);
 
+    /// Another CPU's tab is in front (a click, a stop of that CPU, debugger.select_cpu)
+    void cpuChanged(DebugCpuId cpu);
+
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
@@ -275,6 +305,13 @@ private:
     QLabel* _markupLegend = nullptr;   // under the memory view: the kinds it colours
     PaneFocus* _paneFocus = nullptr;
     QString _memoryFollow = QStringLiteral("pc");  // the memory view's register on a stop (memoryFollow)
+    DebuggerCpuTabs* _cpuTabs = nullptr;            // the processor tabs above the panes
+    Z80State _cardState{};                          // the card in front's registers, for the registers pane
+    std::optional<uint16_t> _cardMemoryBase;        // the card CPU's 16 KB window the memory view shows
+    QString _memoryTitle;                           // the panes' titles of the main CPU
+    QString _disasmTitle;
+    QString _registersTitle;
+    QString _stackTitle;
 };
 
 #endif  // DEBUGGERWINDOW_H

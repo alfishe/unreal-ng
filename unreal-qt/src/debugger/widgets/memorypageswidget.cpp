@@ -1,5 +1,6 @@
 #include "memorypageswidget.h"
 
+#include "debugger/debuggercpu.h"
 #include "debugger/debuggerwindow.h"
 #include "ui_memorypageswidget.h"
 
@@ -92,6 +93,16 @@ void MemoryPagesWidget::refresh()
     }
     else
     {
+        // A card's windows: its own ROM / RAM pages
+        if (IsCardCpu(m_cpu))
+        {
+            EmulatorContext* context = getEmulatorContext();
+            QLabel* values[] = {page0Value, page1Value, page2Value, page3Value};
+            for (uint8_t w = 0; w < 4; w++)
+                values[w]->setText(debuggercpu::CardWindowName(context, m_cpu, w));
+            update();
+            return;
+        }
         Memory* memory = getMemory();
         if (!memory)
             return;

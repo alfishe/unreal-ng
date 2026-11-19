@@ -815,6 +815,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggertimetravel_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.h"
+        # The Embedded debugger's processor tabs: Main CPU and each sound card CPU fitted (gs-debugger design §7.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercputabs_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"

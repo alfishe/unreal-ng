@@ -60,6 +60,13 @@ public:
     DisasmView * current_code();
     //The machine's own processor (the first tab), whose history the time travel records
     CPU * main_cpu() { return m_panes.empty() ? nullptr : m_panes.front().cpu; }
+    //Every processor with a tab, the machine's own first (not in ecat: the GUI control plane's debugger.select_cpu)
+    std::vector<CPU *> cpus() const
+    {
+        std::vector<CPU *> r;
+        for (const CpuPane &p : m_panes) r.push_back(p.cpu);
+        return r;
+    }
     MemoryView * current_memory(bool shown = false);
     //The pane the keyboard is in: "disassembly", "registers", "memory", "stack", or "" (none of them)
     QString focused_pane();

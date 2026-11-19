@@ -11,6 +11,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "debugger/debuggercpu.h"
 #include "ui_stackwidget.h"
 
 StackWidget::StackWidget(QWidget* parent) : QWidget(parent), ui(new Ui::StackWidget)
@@ -152,8 +153,8 @@ void StackWidget::refresh()
     }
 
     std::array<uint16_t, kEntries> words{};
-    Memory* memory = getMemory();
-    if (!memory || !readStack(words))
+    EmulatorContext* context = getEmulatorContext();
+    if (!context || !readStack(words))
     {
         reset();
         return;
@@ -161,7 +162,8 @@ void StackWidget::refresh()
     for (size_t i = 0; i < words.size(); i++)
     {
         m_values[i]->setText(QStringLiteral("$%1").arg(words[i], 4, 16, QLatin1Char('0')).toUpper());
-        const QString hint = ReturnHint(*memory, words[i]);
+        const QString hint =
+            ReturnHint([context, cpu = m_cpu](uint16_t at) { return debuggercpu::Peek(context, cpu, at); }, words[i]);
         m_hints[i]->setText(hint.isEmpty() ? QString() : QStringLiteral("<- %1").arg(hint));
         m_hints[i]->setToolTip(hint.isEmpty() ? QString()
                                               : tr("A return address: the %1 that ends right before it pushes it")
@@ -172,16 +174,21 @@ void StackWidget::refresh()
 
 QString StackWidget::ReturnHint(Memory& memory, uint16_t address)
 {
+    return ReturnHint([&memory](uint16_t at) { return memory.DirectReadFromZ80Memory(at); }, address);
+}
+
+QString StackWidget::ReturnHint(const std::function<uint8_t(uint16_t)>& read, uint16_t address)
+{
     // CALL nn (CD) and CALL cc,nn (C4 CC D4 DC E4 EC F4 FC) end 3 bytes before the return address
-    const uint8_t call = memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 3));
+    const uint8_t call = read(static_cast<uint16_t>(address - 3));
     if (call == 0xCD || (call & 0xC7) == 0xC4)
     {
-        const uint16_t target = static_cast<uint16_t>(memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 2)) |
-                                                      (memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 1)) << 8));
+        const uint16_t target = static_cast<uint16_t>(read(static_cast<uint16_t>(address - 2)) |
+                                                      (read(static_cast<uint16_t>(address - 1)) << 8));
         return QStringLiteral("CALL %1").arg(target, 4, 16, QLatin1Char('0')).toUpper();
     }
     // RST n one byte before; RST 38 (FF) is left out: FF fills empty memory, a word after it is rarely a return
-    const uint8_t rst = memory.DirectReadFromZ80Memory(static_cast<uint16_t>(address - 1));
+    const uint8_t rst = read(static_cast<uint16_t>(address - 1));
     if ((rst & 0xC7) == 0xC7 && rst != 0xFF)
         return QStringLiteral("RST %1").arg(rst & 0x38, 2, 16, QLatin1Char('0')).toUpper();
     return {};
@@ -195,16 +202,16 @@ std::vector<QWidget*> StackWidget::cursorCells() const
 /// region <Helper methods>
 bool StackWidget::readStack(std::array<uint16_t, kEntries>& out)
 {
-    Memory* memory = getMemory();
+    // The CPU shown: a card's stack is in its own 64 KB
     EmulatorContext* context = getEmulatorContext();
-    if (!memory || !context || !context->pCore)
+    Z80Registers registers{};
+    if (!context || !context->pMemory || !debuggercpu::Registers(context, m_cpu, registers))
         return false;
-    Z80State* z80 = context->pCore->GetZ80();
-    uint16_t sp = static_cast<uint16_t>(z80->Z80Registers::sp + kFirstOffset);
+    uint16_t sp = static_cast<uint16_t>(registers.sp + kFirstOffset);
     for (uint16_t& word : out)
     {
-        const uint8_t loByte = memory->DirectReadFromZ80Memory(sp++);
-        const uint16_t hiByte = memory->DirectReadFromZ80Memory(sp++);
+        const uint8_t loByte = debuggercpu::Peek(context, m_cpu, sp++);
+        const uint16_t hiByte = debuggercpu::Peek(context, m_cpu, sp++);
         word = static_cast<uint16_t>((hiByte << 8) | loByte);
     }
     return true;

@@ -22,6 +22,7 @@
 
 #include "common/dumphelper.h"
 #include "common/stringhelper.h"
+#include "debugger/debuggercpu.h"
 #include "debugger/debugmanager.h"
 #include "debugger/disassembler/z80disasm.h"
 #include "debugger/markup/memorymarkup.h"
@@ -605,20 +606,31 @@ bool DisassemblerWidget::decodeAt(uint16_t address, DecodedInstruction& decoded)
     Memory* memory = getMemory();
     Z80Registers* registers = getZ80Registers();
     std::unique_ptr<Z80Disassembler>& disassembler = getDisassembler();
-    if (!memory || !registers || !disassembler)
+    EmulatorContext* context = getEmulatorContext();
+    if (!memory || !registers || !disassembler || !context)
         return false;
+    // The CPU listed: a card's bytes by peeks (no main memory for its RET's return address: the card's stack is not
+    // there)
     std::vector<uint8_t> buffer(Z80Disassembler::MAX_INSTRUCTION_LENGTH);
     for (size_t i = 0; i < buffer.size(); i++)
-        buffer[i] = memory->DirectReadFromZ80Memory(static_cast<uint16_t>(address + i));
+        buffer[i] = debuggercpu::Peek(context, m_cpu, static_cast<uint16_t>(address + i));
+    Memory* runtimeMemory = IsCardCpu(m_cpu) ? nullptr : memory;
     uint8_t commandLen = 0;
     try
     {
-        disassembler->disassembleSingleCommandWithRuntime(buffer, address, &commandLen, registers, memory, &decoded);
+        disassembler->disassembleSingleCommandWithRuntime(buffer, address, &commandLen, registers, runtimeMemory,
+                                                          &decoded);
     }
     catch (const std::exception&)
     {
         return false;
     }
+    // A card's RET: the return address from the card's own stack
+    if (IsCardCpu(m_cpu) && decoded.hasReturn)
+        decoded.returnAddr = static_cast<uint16_t>(debuggercpu::Peek(context, m_cpu, registers->sp) |
+                                                   (debuggercpu::Peek(context, m_cpu,
+                                                                      static_cast<uint16_t>(registers->sp + 1))
+                                                    << 8));
     return decoded.isValid;
 }
 
@@ -813,6 +825,9 @@ Z80Registers* DisassemblerWidget::getZ80Registers()
     if (!emu) return nullptr;
     EmulatorContext* ctx = emu->GetContext();
     if (!ctx || !ctx->pCore) return nullptr;
+    // A card's tab: the card CPU's registers now (null without the card)
+    if (IsCardCpu(m_cpu))
+        return debuggercpu::Registers(ctx, m_cpu, m_cardRegisters) ? &m_cardRegisters : nullptr;
     return ctx->pCore->GetZ80();
 }
 
@@ -831,7 +846,42 @@ std::unique_ptr<Z80Disassembler>& DisassemblerWidget::getDisassembler()
 BreakpointManager* DisassemblerWidget::getBreakpointManager() const
 {
     Emulator* emu = m_debuggerWindow->getEmulator();
+    if (emu && IsCardCpu(m_cpu))
+        return emu->GetDebugManager() ? emu->GetDebugManager()->GetBreakpointsManager(m_cpu) : nullptr;
     return emu ? emu->GetBreakpointManager() : nullptr;
+}
+
+void DisassemblerWidget::setCpu(DebugCpuId cpu)
+{
+    if (cpu == m_cpu)
+        return;
+    // The place, history and marks of the CPU left are kept; the CPU's own come back
+    CpuPlace& left = m_cpuPlaces[m_cpu];
+    left.place = currentPlace();
+    left.shown = hasRows();
+    left.back = std::move(m_back);
+    left.forward = std::move(m_forward);
+    left.marks = m_marks;
+    m_cpu = cpu;
+    CpuPlace& back = m_cpuPlaces[cpu];
+    m_back = std::move(back.back);
+    m_forward = std::move(back.forward);
+    m_marks = back.marks;
+    m_cursorAddress = back.place.cursor;
+    m_strip.Clear();  // another CPU's bytes
+    m_view->setLines({});
+    m_displayAddress = back.place.top;
+    // A running machine is read at its next stop
+    if (!getEmulator() || !getEmulator()->IsPaused() || getEmulator()->IsDirectStepping())
+    {
+        emit viewChanged();
+        return;
+    }
+    if (back.shown)
+        setDisassemblerAddress(back.place.top);
+    else
+        refresh();  // to its PC
+    emit viewChanged();
 }
 
 void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
@@ -875,6 +925,8 @@ void DisassemblerWidget::setDisassemblerAddress(uint16_t pc)
 
 uint64_t DisassemblerWidget::markupRevision()
 {
+    if (IsCardCpu(m_cpu))
+        return 0;  // the markup is the main CPU's
     EmulatorContext* context = getEmulatorContext();
     markup::MemoryMarkup* markup =
         context && context->pDebugManager ? context->pDebugManager->GetMemoryMarkup() : nullptr;
@@ -892,8 +944,30 @@ bool DisassemblerWidget::withWindow(
     // Labels off (metadata.set {switch: labels}): plain addresses in the operands; this thread only
     const MetadataSettings& settings = MetadataSettings::Instance();
     std::optional<Z80Disassembler::NoLabelsScope> noLabels;
+    std::optional<Z80Disassembler::LabelsScope> cardLabels;
     if (!settings.Uses(MetadataSettings::Switch::Labels))
         noLabels.emplace();
+    else if (IsCardCpu(m_cpu))
+    {
+        // A card's operands are named by its own labels, never the main CPU's
+        if (LabelManager* labels = context->pDebugManager ? context->pDebugManager->GetLabelManager(m_cpu) : nullptr)
+            cardLabels.emplace(labels);
+        else
+            noLabels.emplace();
+    }
+
+    // A card's tab: its 64 KB by peeks, its PC, labels and breakpoints as anchors
+    if (IsCardCpu(m_cpu))
+    {
+        debuggercpu::CardSource source(context, m_cpu);
+        if (!source.Valid())
+            return false;
+        disasm::Window window(*disassembler, source);
+        if (!m_strip.Validate(source, 0))
+            m_strip.ResetAt(window, source, 0, m_displayAddress, static_cast<size_t>(std::max(1, m_view->lineCapacity())));
+        body(window, source, 0);
+        return true;
+    }
 
     // Direct reads of the memory as mapped now: the view never holds the emulation thread. The metadata's regions
     // off: no anchors or data rows from the markup
@@ -917,11 +991,13 @@ void DisassemblerWidget::layoutLines()
     Z80Disassembler& disassembler = *disassemblerPtr;
     // Labels off: no label column either
     const MetadataSettings& settings = MetadataSettings::Instance();
+    // A card's own labels; no markup on a card (the markup is the main CPU's)
     LabelManager* labelManager =
-        settings.Uses(MetadataSettings::Switch::Labels) ? context->pDebugManager->GetLabelManager() : nullptr;
+        settings.Uses(MetadataSettings::Switch::Labels) ? context->pDebugManager->GetLabelManager(m_cpu) : nullptr;
     // The metadata's notes off: no block descriptions or comments from the markup
-    markup::MemoryMarkup* markup =
-        settings.Uses(MetadataSettings::Switch::Notes) ? context->pDebugManager->GetMemoryMarkup() : nullptr;
+    markup::MemoryMarkup* markup = settings.Uses(MetadataSettings::Switch::Notes) && !IsCardCpu(m_cpu)
+                                       ? context->pDebugManager->GetMemoryMarkup()
+                                       : nullptr;
 
     const size_t capacity = static_cast<size_t>(std::max(1, m_view->lineCapacity()));
     const size_t fullLines = static_cast<size_t>(std::max(0, m_view->fullLines()));
@@ -1178,6 +1254,7 @@ void DisassemblerWidget::toggleScrollMode()
 
 void DisassemblerWidget::reset()
 {
+    m_cpuPlaces.clear();  // the places of another machine's CPUs
     m_strip.Clear();
     m_view->setLines({});
     m_view->setScrollAddress(0);
@@ -1197,6 +1274,20 @@ void DisassemblerWidget::updateBankIndicator(uint16_t address)
 {
     if (!getEmulator() || !getMemory())
         return;
+    // A card's window: its own ROM / RAM page
+    if (IsCardCpu(m_cpu))
+    {
+        const uint8_t window = static_cast<uint8_t>(address >> 14);
+        const QString range = QString("%1-%2")
+                                  .arg(window * 0x4000, 4, 16, QLatin1Char('0'))
+                                  .arg(window * 0x4000 + 0x3FFF, 4, 16, QLatin1Char('0'))
+                                  .toUpper();
+        m_bankIndicator->setText(QString("%1 bank: %2 (%3)")
+                                     .arg(debuggercpu::Title(getEmulatorContext(), m_cpu),
+                                          debuggercpu::CardWindowName(getEmulatorContext(), m_cpu, window), range));
+        m_bankIndicator->setToolTip(m_bankIndicator->text());
+        return;
+    }
 
     Memory& memory = *getMemory();
     EmulatorContext* ctx = getEmulator()->GetContext();
@@ -1267,6 +1358,12 @@ void DisassemblerWidget::updateSignalIndicators()
     Z80Registers* registers = getZ80Registers();
     EmulatorContext* ctx = getEmulatorContext();
     if (!ctx || !memory || !registers || !m_dosIndicator)
+        return;
+    // The machine's signals: not a card's (its ROM window is in the bank indicator)
+    m_dosIndicator->setVisible(!IsCardCpu(m_cpu));
+    m_romIndicator->setVisible(!IsCardCpu(m_cpu));
+    m_intIndicator->setVisible(!IsCardCpu(m_cpu));
+    if (IsCardCpu(m_cpu))
         return;
 
     const bool dos = (ctx->emulatorState.flags & CF_TRDOS) != 0;

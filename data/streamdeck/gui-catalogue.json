@@ -84,6 +84,20 @@
                     "params": [
                     ],
                     "repeats": false
+                },
+                {
+                    "description": "Put a processor's tab in front: the panes, steps and time controls act on that CPU.",
+                    "label": "Processor tab",
+                    "method": "debugger.select_cpu",
+                    "params": [
+                        {
+                            "description": "main, gs or ms (a sound card's CPU, when fitted)",
+                            "kind": "string",
+                            "name": "cpu",
+                            "optional": false
+                        }
+                    ],
+                    "repeats": false
                 }
             ],
             "description": "The program's debugger: there even while its window is closed.",
@@ -91,7 +105,9 @@
             "name": "debugger",
             "state": [
                 "open",
-                "pane"
+                "pane",
+                "cpu",
+                "cpus"
             ]
         },
         {
@@ -232,7 +248,8 @@
                 "top",
                 "cursor",
                 "pc",
-                "scroll_mode"
+                "scroll_mode",
+                "cpu"
             ]
         },
         {
@@ -365,7 +382,8 @@
                 "top",
                 "cursor",
                 "selection",
-                "follow"
+                "follow",
+                "cpu"
             ]
         },
         {
