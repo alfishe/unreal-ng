@@ -1910,7 +1910,7 @@ forwards to these routes.
 ### Media Operations (Implemented Separately)
 ```
 POST /api/v1/emulator/{id}/tape/*         ✅ Implemented — see [Tape Control](#tape-control)
-POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented
+POST /api/v1/emulator/{id}/disk/{drive}/insert  ✅ Implemented ({"path", "autostart", "basic"}: basic 48 / 128 for an .mgt on the MGT +D; raw upload headers X-Autostart, X-Autostart-Basic; the +D answer adds plan, command, dos, basic)
 POST /api/v1/emulator/{id}/disk/{drive}/eject   ✅ Implemented
 PUT  /api/v1/emulator/{id}/disk/{drive}/sector/{cyl}/{side}/{sec}   Write into a sector's data field ({"offset": 245, "hex": "4D59..."} | "data": [..] | "base64"): sector by its ID, data CRC recalculated, image modified, TTD tool edit; 400 with the reason when refused (empty drive, write-protected, no such sector, past the data field), 503 when busy
 ```

@@ -359,6 +359,9 @@ local r = disk_load("/path/to/game.trd", 0, true) -- + autostart: quick-reset in
                                                     -- "autostart":true / CLI "disk insert
                                                     -- <drive> <file> autostart) - drive 0 only
 -- r = {success, started, message}; message explains what autostart did
+local r = disk_load("/path/to/work.mgt", 0, true, "48") -- an .mgt on the MGT +D: its plan, the
+                                                    -- reset in 48 BASIC ("" = the machine's own,
+                                                    -- "128" refused on a 48K); r adds plan, command, dos, basic
 --     (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
 local ok = disk_eject(0)
 

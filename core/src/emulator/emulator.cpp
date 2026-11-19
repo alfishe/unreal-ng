@@ -1257,6 +1257,22 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         return result;
     }
 
+    // The BASIC of an MGT reset is the caller's parameter: a wrong one is refused before anything is mounted, so
+    // every plane answers an error, not "mounted, not started"
+    // (without the card the MGT refusal below names the models that have it)
+    const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
+    const bool plusdCard = mgt && PlusDCard::Find(_context) != nullptr;
+    if (plusdCard && !basic.empty() && basic != "48" && basic != "128")
+    {
+        result.message = "BASIC '" + basic + "': 48 or 128";
+        return result;
+    }
+    if (plusdCard && basic == "128" && is48K)
+    {
+        result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
+        return result;
+    }
+
     // A boot ends the TTD session (D42; a black box starts a new one at the next frame): the answer says so, else
     // a caller sees "Autostart: boot" and keeps asking a session that is gone
     ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
@@ -1302,17 +1318,6 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
         request.plusd = true;
         request.workPath = FileHelper::AbsolutePath(path);
         request.systemDisk = PlusDAutostart::FindSystemDisk();
-        const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
-        if (!basic.empty() && basic != "48" && basic != "128")
-        {
-            result.message = "BASIC '" + basic + "': 48 or 128";
-            return result;
-        }
-        if (basic == "128" && is48K)
-        {
-            result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
-            return result;
-        }
         request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk);
         request.plusdPlan.basic = !basic.empty() ? basic : (is48K ? "48" : "128");
         result.basic = request.plusdPlan.basic;

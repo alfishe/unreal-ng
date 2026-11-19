@@ -2792,14 +2792,16 @@ public:
             return effectiveEmulator()->EjectDisk(static_cast<uint8_t>(drive), /*force*/ true);
         });
 
-        // disk_load(path [, drive=0] [, autostart=false]) - insert a disk image (.trd/.scl/.fdi/.udi/...)
+        // disk_load(path [, drive=0] [, autostart=false] [, basic=""]) - insert a disk image (.trd/.scl/.fdi/.udi/...)
         // into the requested drive (0-3 / A-D). autostart quick-resets into TR-DOS and runs the disk,
         // matching the Qt UI's drag-and-drop autostart and the WebAPI's "autostart" insert flag/CLI's
         // "disk insert <drive> <file> autostart" - drive A (0) only, a TR-DOS/Beta 128 hardware
         // convention: requesting it for another drive is a hard failure (result.success=false,
-        // result.message explains why), not silently ignored or redirected to drive A.
+        // result.message explains why), not silently ignored or redirected to drive A. An .mgt on the MGT +D runs
+        // its plan; basic "48" / "128" picks the BASIC of its reset ("" = the machine's own, "128" refused on a 48K)
         lua.set_function("disk_load", [this](const std::string& path, sol::optional<int> driveOpt,
-                                              sol::optional<bool> autostartOpt) -> sol::table {
+                                              sol::optional<bool> autostartOpt,
+                                              sol::optional<std::string> basicOpt) -> sol::table {
             sol::state_view lua_view(*_lua);
             sol::table result = lua_view.create_table();
             Emulator* emulator = effectiveEmulator();
@@ -2821,11 +2823,20 @@ public:
 
             if (autostart)
             {
-                Emulator::DiskAutostartResult r = emulator->AutostartDisk(path, static_cast<uint8_t>(drive));
+                Emulator::DiskAutostartResult r =
+                    emulator->AutostartDisk(path, static_cast<uint8_t>(drive), basicOpt.value_or(""));
                 result["success"] = r.mounted;
                 result["started"] = r.started;
                 result["ttd_session_ended"] = r.ttdSessionEnded;
                 result["message"] = r.message;
+                if (!r.plan.empty())
+                {
+                    // An MGT disk on the +D: the steps go on after the call (state fdc -> autostart)
+                    result["plan"] = r.plan;
+                    result["command"] = r.command;
+                    result["dos"] = r.dos;
+                    result["basic"] = r.basic;
+                }
             }
             else
             {

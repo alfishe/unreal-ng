@@ -935,6 +935,8 @@ emu.disk_load("/path/to/game.trd", drive=0, autostart=True)  # + autostart: quic
     # into TR-DOS and run the disk (same as the Qt UI's drag-and-drop autostart /
     # WebAPI "autostart": true / CLI "disk insert <drive> <file> autostart") - drive 0 only
 # -> {"success", "started", "message"}; message explains what autostart did
+emu.disk_load("/path/to/work.mgt", 0, True, basic="48")  # an .mgt on the MGT +D: its plan, the
+    # reset in 48 BASIC ("" = the machine's own, "128" refused on a 48K); adds "plan", "command", "dos", "basic"
 #    (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
 emu.disk_eject(0)
 
