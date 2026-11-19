@@ -201,6 +201,19 @@ void NextInterruptSource::Raise(Source source)
     _pulseStart = BaseT(_context->pCore->GetZ80()->t) % _timing.frame;
 }
 
+bool NextInterruptSource::DmaDelayAt(uint32_t t, bool nmiActive)
+{
+    if ((_dma[0] | _dma[1] | _dma[2]) == 0)
+        return false;  // nothing chosen (the usual case): asked at every DMA byte, so no catching up
+    if (HardwareMode())
+    {
+        if (_poller)
+            _poller();
+        Latch(BaseT(t));
+    }
+    return DmaDelay(nmiActive);
+}
+
 bool NextInterruptSource::DmaDelay(bool nmiActive) const
 {
     if (nmiActive && (_dma[0] & 0x80))

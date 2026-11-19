@@ -710,9 +710,12 @@ TEST_F(TTDControl_Test, AFailedDumpSaysWhyAndLeavesNoPartialFile)
     EXPECT_NE(r.message.find("no session"), std::string::npos) << r.message;
     EXPECT_NE(r.message.find("was removed"), std::string::npos) << r.message;
     EXPECT_FALSE(fs::exists(FileHelper::ToFsPath(kept + ".partial")));
-    std::ifstream in(FileHelper::ToFsPath(kept));
-    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    EXPECT_EQ(content, "keep");
+    {
+        // Closed before the dump below: Windows refuses to rename over a file that is open
+        std::ifstream in(FileHelper::ToFsPath(kept));
+        const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(content, "keep");
+    }
 
     // A good dump: the file under the name, no partial file
     Record(2);

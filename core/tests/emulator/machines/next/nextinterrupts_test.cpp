@@ -543,3 +543,45 @@ TEST(NextTiming_Test, IntPulseLengthPerTiming)
     ASSERT_TRUE(NextTimingFor(4, t));
     EXPECT_EQ(t.intLength, 36u);
 }
+
+// zxnext.vhd im2_dma_delay reaches the DMA between the bytes of a block: a continuous block that runs over the ULA interrupt stops at
+// the byte after the request, lets the CPU take the interrupt and goes on after its RETI. Before, the request was latched only at an
+// instruction boundary, so the whole block ran first
+TEST_F(NextInterrupts_Test, AChosenInterruptStopsARunningDmaBlockUntilItsReti)
+{
+    NextReg(0x07, 0x00);  // 3.5 MHz: base T = CPU T
+    NextReg(0xC0, 0x01);  // hardware IM2
+    NextReg(0xC4, 0x81);  // the ULA interrupt on
+    NextReg(0xCC, 0x01);  // the ULA delays the DMA
+    const uint16_t kLength = 1024;  // 6 T a byte (timing 3 + 3): 6144 T, over the ULA interrupt at 1845
+    auto dma = [this](std::initializer_list<uint8_t> bytes) {
+        for (uint8_t b : bytes)
+            _ports->DecodePortOut(0x006B, b, 0);
+    };
+    dma({0x83, 0xC3});
+    dma({0x7D, 0x00, 0x80, static_cast<uint8_t>(kLength & 0xFF), static_cast<uint8_t>(kLength >> 8)});
+    dma({0x14, 0x10, 0xAD, 0x00, 0xA0});  // A, B memory incrementing; continuous, B #A000
+    _z80->t = 1000;
+    _int->IsIntAsserted(_z80->t);
+    dma({0xCF, 0x87});
+    NextDma& d = _ports->Dma();
+    for (unsigned i = 0; i < 4 && d.Active() && d.Counter() == 0; i++)
+        _ports->StepDma();  // the enable's own instruction and the late request
+    ASSERT_TRUE(d.Active()) << "stopped at " << _z80->t << " after " << d.Counter() << " bytes";
+    EXPECT_GT(d.Counter(), 0);
+    EXPECT_LT(d.Counter(), kLength);
+    EXPECT_GE(_z80->t, 1845u);
+    EXPECT_LT(_z80->t, 1845u + 6 + 6 + 3) << "the byte under way, then START_DMA drops BUSRQ";
+    EXPECT_TRUE(_int->IsIntAsserted(_z80->t));
+
+    const uint16_t stoppedAt = d.Counter();
+    _ports->StepDma();
+    EXPECT_EQ(d.Counter(), stoppedAt) << "requested: the DMA stays off the bus";
+    _int->AcknowledgeInterrupt(_z80->t);
+    _ports->StepDma();
+    EXPECT_EQ(d.Counter(), stoppedAt) << "in service";
+    _int->OnReti();
+    _ports->StepDma();
+    EXPECT_FALSE(d.Active()) << "after the RETI the block ends";
+    EXPECT_EQ(d.Counter(), kLength);
+}

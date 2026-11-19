@@ -401,7 +401,7 @@
    "group": "Media",
    "kind": "press",
    "held": false,
-   "params": "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), switch_model?"
+   "params": "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), basic? (48|128: an MGT +D disk), switch_model?"
   },
   {
    "id": "media.tape",

@@ -145,6 +145,30 @@ def body_dma(run_at, mode_port, continuous):
     return a.done()
 
 
+def body_dmapresc(run_at, continuous, prescaler=4):
+    """DMA from #8000 to port #FE, 16 bytes, with a prescaler (WR2 timing byte bit 5): the spacing of the port writes is the period"""
+    a = Asm(run_at)
+    a.db(0x21); a.dw(0x8000)
+    a.db(0x06, 16)
+    a.label("fill")
+    a.db(0x7D, 0xE6, 0x07, 0x77, 0x23)          # LD A,L / AND 7 / LD (HL),A / INC HL
+    a.jr(0x10, "fill")
+    wr4 = 0xAD if continuous else 0xCD
+    # WR2 #68: I/O fixed, a timing byte follows; timing #21: 3 cycles, the prescaler follows
+    prog = [0xC3, 0x7D, 0x00, 0x80, 0x10, 0x00, 0x14, 0x68, 0x21, prescaler, wr4, 0xFE, 0x00, 0x82, 0xCF, 0x87]
+    a.db(0x21); a.abs16([], "prog")
+    a.db(0x01); a.dw(0x6B | (len(prog) << 8))
+    a.db(0xED, 0xB3)                            # OTIR
+    a.db(0x06, 0)
+    a.label("spin")                             # the CPU runs here in the burst mode's waits
+    a.db(0x00)
+    a.jr(0x10, "spin")
+    a.db(0xF3, 0x76)
+    a.label("prog")
+    a.db(*prog)
+    return a.done()
+
+
 def body_dmapaper(run_at):
     """The DMA in the paper area: 256 bytes from #4000 (contended on every timing) to port #FE (the ULA port), then 256 bytes from
     #8000 to #4000 (contended writes); a delay loop first takes the run into the paper"""
@@ -210,6 +234,8 @@ PROGRAMS = {
     "zdmacont": lambda: rom(body_dma(0x8100, 0x0B, True), 0x8100),
     "nr08": lambda: rom(body_nr08(0x8100), 0x8100),
     "dmapaper": lambda: rom(body_dmapaper(0x8100), 0x8100),
+    "dmaprescc": lambda: rom(body_dmapresc(0x8100, True), 0x8100),
+    "dmaprescb": lambda: rom(body_dmapresc(0x8100, False), 0x8100),
 }
 
 if __name__ == "__main__":

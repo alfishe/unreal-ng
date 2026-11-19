@@ -8,6 +8,8 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMouseEvent>
 #include <QTableWidget>
 #include <QPushButton>
@@ -100,6 +102,30 @@ TEST_F(RemoteControlGuard_Test, ASessionLocksEveryControlButTheExemptOnesAndTheV
     EXPECT_TRUE(_action->isEnabled());
     EXPECT_FALSE(_disabledByWindow->isEnabled()) << "only what the guard locked is given back";
     EXPECT_FALSE(RemoteControlGuard::InputBlocked(_emulator.get()));
+}
+
+/// A menu item that only shows something (Tools > Video Synchronization...) is exempt: it stays enabled through a
+/// session, its neighbours in the same menu are locked and given back
+TEST_F(RemoteControlGuard_Test, AnExemptMenuItemStaysEnabledInALockedMenu)
+{
+    QMenuBar bar(&_window);
+    QMenu* tools = bar.addMenu(QStringLiteral("Tools"));
+    QAction* show = tools->addAction(QStringLiteral("Video Synchronization..."));
+    QAction* act = tools->addAction(QStringLiteral("Take Screenshot"));
+    _guard.exempt(show);
+    _guard.setEmulator(_emulator);
+
+    const unreal::UUID owner = unreal::UUID::Generate();
+    ASSERT_TRUE(Context()->TakeRunControl(owner, "webapi", nullptr, "bot", std::chrono::milliseconds(0)));
+    _guard.refresh();
+    ASSERT_TRUE(_guard.active());
+    EXPECT_TRUE(show->isEnabled()) << "looking is not acting";
+    EXPECT_FALSE(act->isEnabled());
+
+    Context()->ReleaseRunControl(owner);
+    _guard.refresh();
+    EXPECT_TRUE(show->isEnabled());
+    EXPECT_TRUE(act->isEnabled());
 }
 
 TEST_F(RemoteControlGuard_Test, TakingControlBackEndsTheSessionAndAllowAgainLiftsTheCooldown)

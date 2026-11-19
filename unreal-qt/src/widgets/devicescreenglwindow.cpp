@@ -1,4 +1,5 @@
 #include "devicescreenglwindow.h"
+#include "media/droppaths.h"
 #include "emulator/remotecontrolguard.h"
 #include "emulator/mousecapturecontroller.h"
 #include "hud/qt/hudoverlay.h"
@@ -378,10 +379,13 @@ void DeviceScreenGLWindow::renderNative(bool force)
     // The presenter paces (b-vsync on a display link): its tick gives the refresh to draw for, the timer only forced
     // repaints. A wake of the timer left over from before draws nothing. Ticks that stop (the system stops a display
     // link whose view it does not show: an occluded window) leave the timer's way in charge until they come again
+    // Low-latency video: a latch's wake draws its frame now, not at the next tick (half a refresh later on average)
     const bool paced = linkPacing();
     const int64_t linkRefreshNs = _linkRefreshNs;
     _linkRefreshNs = 0;
-    if (paced && linkRefreshNs == 0 && !force)
+    const bool latchWake = _latchWake;
+    _latchWake = false;
+    if (paced && linkRefreshNs == 0 && !force && !latchWake)
     {
         scheduleNative();
         return;
@@ -483,6 +487,10 @@ void DeviceScreenGLWindow::renderNative(bool force)
                                              _shownInfo.serial, at};
             if (newFrame && pacedRefreshNs != 0)
                 at = pacedRefreshNs - _linkPeriodNs / 2;  // shown at the first refresh after it: that one
+            // Low-latency video: the newest frame at once, at the first refresh it can make (a refresh asked for a
+            // lead ahead would hold it that long)
+            if (newFrame && _shownInfo.atOnce)
+                at = 0;
             if (newFrame && _smoothRefreshNs != 0)
             {
                 at = _smoothRefreshNs - _smoothPeriodNs / 2;
@@ -704,6 +712,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
         out.presenter = "gl-timed";
 #endif
         const NativePresenter::Stats s = _presenter->GetStats();
+        out.timedAt = "screen";
         out.minRefreshHz = s.minRefreshHz;
         out.maxRefreshHz = s.maxRefreshHz;
         out.presented = s.presented;
@@ -767,6 +776,7 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
     out.originalHz = _originalHz;
     out.machineHz = _frameRate.Hz();
     out.clock = FrameClockSourceName(_shownInfo.source);
+    out.lowLatency = _shownInfo.atOnce;
     return out;
 }
 
@@ -1118,8 +1128,9 @@ void DeviceScreenGLWindow::updateDisplayRate()
 
 bool DeviceScreenGLWindow::smoothActive() const
 {
+    // Low-latency video shows each frame at once: smooth motion would wait for the next one
     return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
-           (!_smoothAuto || _sync == VideoSync::Interpolate);
+           !_shownInfo.atOnce && (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
 void DeviceScreenGLWindow::feedSmooth()
@@ -1187,10 +1198,18 @@ void DeviceScreenGLWindow::refresh()
         {
             _presenter->WantRefreshes(true);
             if (linkPacing())
+            {
+                if (_shownInfo.atOnce)
+                {
+                    _latchWake = true;
+                    _presentTimer->start(0);
+                }
                 return;
+            }
         }
-        // The timer runs while frames come; started again after an idle stop
-        if (!_presentTimer->isActive())
+        // The timer runs while frames come; started again after an idle stop. Low-latency video: a new frame is
+        // drawn and presented now, not at the wake planned for the next refresh
+        if (!_presentTimer->isActive() || _shownInfo.atOnce)
             _presentTimer->start(0);
         return;
     }
@@ -2285,8 +2304,8 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             if (dragEvent->mimeData()->hasUrls())
             {
                 dragEvent->acceptProposedAction();
-                const QList<QUrl> urls = dragEvent->mimeData()->urls();
-                emit dragEntered(urls.isEmpty() ? QString() : urls.first().toLocalFile());
+                const DropPaths::Result dragged = DropPaths::FromMime(dragEvent->mimeData());
+                emit dragEntered(dragged.paths.isEmpty() ? QString() : dragged.paths.first(), dragged.refusal);
                 return true;
             }
             break;
@@ -2301,18 +2320,15 @@ bool DeviceScreenGLWindow::event(QEvent* event)
             const QMimeData* mimeData = dropEvent->mimeData();
             if (mimeData->hasUrls())
             {
-                QStringList paths;
-                for (const QUrl& url : mimeData->urls())
+                const DropPaths::Result dropped = DropPaths::FromMime(mimeData);
+                if (!dropped.paths.isEmpty() || !dropped.refusal.isEmpty())
                 {
-                    if (url.isLocalFile())
-                        paths << url.toLocalFile();
+                    qDebug() << "DeviceScreenGLWindow: files dropped:" << dropped.paths << dropped.refusal;
+                    emit filesDropped(dropped.paths, dropped.refusal);
                 }
-                if (!paths.isEmpty())
-                {
-                    qDebug() << "DeviceScreenGLWindow: files dropped:" << paths;
-                    emit filesDropped(paths);
-                }
-                emit dragLeft();
+                // A refusal stays up a moment after the drop (MainWindow); the rest of the drag's marks go
+                if (dropped.refusal.isEmpty())
+                    emit dragLeft();
                 return true;
             }
             break;

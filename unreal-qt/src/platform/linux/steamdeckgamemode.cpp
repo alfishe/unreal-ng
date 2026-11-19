@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QToolBar>
 
+#include "base/featuremanager.h"
 #include "mainwindow.h"
 
 namespace steamdeck
@@ -68,6 +69,12 @@ void ApplyGameMode(MainWindow& window, bool startMachine)
     QTimer::singleShot(0, filter, [filter]() { filter->Apply(); });
     if (startMachine)
         QTimer::singleShot(0, &window, [&window]() { window.startEmulatorIfNone("Pentagon", 128); });
+}
+
+void ApplyGameModeFeatures(FeatureManager* features)
+{
+    if (IsGameMode() && features)
+        features->setFeature(Features::kLowLatency, true);
 }
 
 }  // namespace steamdeck
