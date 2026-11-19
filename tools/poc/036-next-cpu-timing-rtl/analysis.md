@@ -59,6 +59,13 @@ shifted: 372 instruction durations of the `mix` program were off; with `UlaConte
   to all 2 x 255 byte spacings of `dmapaper-p3` (reads and writes) and is the only family of the search that fits both blocks with
   the CPU's window (`UlaContention::DmaDelayAt`).
 
+### The prescaler (2026-11-18)
+
+`dmaprescc` / `dmaprescb`: 16 bytes from #8000 to port #FE, timing 3 + 3, prescaler 4, continuous / burst. The RTL's port writes are
+152 clocks of 28 MHz apart in the continuous mode (32 N + 3 CPU clocks: READ_1 clears the timer, WAITING_CYCLES compares it registered,
+then WAITING_ACK, READ_1) and 176-192 in the burst mode. Ours had 32 N + 1; after the fix 0 durations differ on the continuous runs and
+the burst runs differ only in which instruction holds the byte (sum equal).
+
 ## NR #08 bit 6
 
 `i_contention_en` takes the effective switch (`eff_nr_08_contention_disable`, zxnext.vhd 5822), which follows the register at

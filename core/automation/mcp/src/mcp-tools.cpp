@@ -1106,7 +1106,15 @@ void RegisterLoadSoftware(ToolRegistry& registry)
         "Run the software after loading it. Disk images, drive A only: quick-reset into TR-DOS and run the disk, "
         "same as the Qt UI's drag-and-drop autostart (ignored for other drives). Tapes: playback starts and "
         "LOAD \"\" is typed (a 128K menu is left for 128 BASIC first), as the media.open action; a paused machine "
-        "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots.";
+        "runs for the typing and is paused again, so run_frames go on loading. Ignored for snapshots. An .mgt on "
+        "a machine with the MGT +D (48K-PLUSD, 128K-PLUSD) runs its plan (run, run+load, system-disk+load, mount): "
+        "the steps go on after the answer, their progress is inspect_state fdc -> autostart.";
+    schema["properties"]["basic"]["type"] = "string";
+    schema["properties"]["basic"]["enum"].append("48");
+    schema["properties"]["basic"]["enum"].append("128");
+    schema["properties"]["basic"]["description"] =
+        "MGT +D disk autostart only: the BASIC of the reset. Omitted = the machine's own (48 BASIC on a 48K, 128 "
+        "BASIC on a 128K); '48' = 48 BASIC on any machine (a 128K in 48K mode); '128' = 128 BASIC (refused on a 48K)";
     schema["properties"]["commit"]["type"] = "string";
     schema["properties"]["commit"]["description"] =
         "Snapshots only: who writes the machine. Omitted = the plan decides (the machine's own policy, else the legacy "
@@ -1175,6 +1183,11 @@ void RegisterLoadSoftware(ToolRegistry& registry)
 
             bool play = args.isMember("play") && args["play"].asBool();
             bool autostart = args.isMember("autostart") && args["autostart"].asBool();
+            // MGT +D autostart: the BASIC of the reset; the route checks the value
+            const std::string basic = !args.isMember("basic") || args["basic"].isNull() ? std::string()
+                                      : args["basic"].isIntegral()                    ? std::to_string(args["basic"].asInt64())
+                                      : args["basic"].isString()                      ? args["basic"].asString()
+                                                                                      : std::string("(not text)");
             const bool inspect = args.isMember("inspect") && args["inspect"].asBool();
             const bool pausedFirst = args.isMember("paused") && args["paused"].asBool();
             // Not given: the surface's default (the launcher's rule for a snapshot, a switch for a recording)
@@ -1197,7 +1210,7 @@ void RegisterLoadSoftware(ToolRegistry& registry)
             const bool isLocalFile = TryReadLocalFile(path, *fileContent);
             const std::string filename = ExtractFilename(path);
 
-            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, drive, inspect, commit, switchModel, &caller, done,
+            TargetResolver::ResolveFromArgs(args, caller, [path, ext, pausedFirst, isSnapshot, isTape, isDisk, play, autostart, basic, drive, inspect, commit, switchModel, &caller, done,
                                                            isLocalFile, fileContent, filename](bool ok, const std::string& idOrError) {
                 if (!ok)
                 {
@@ -1214,6 +1227,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                     if (autostart && isDisk)
                     {
                         headers["X-Autostart"] = "true";
+                        if (!basic.empty())
+                            headers["X-Autostart-Basic"] = basic;
                     }
 
                     // An RZX recording plays on the model it needs (the model
@@ -1324,6 +1339,11 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                             result.text += result.structured["autostarted"].asBool() ? "; autostarted" : "; not autostarted";
                             if (!message.empty())
                                 result.text += " (" + message + ")";
+                            // An MGT disk on the +D: the plan and its BASIC; the steps go on after the answer
+                            const std::string plan = result.structured.get("plan", "").asString();
+                            if (!plan.empty())
+                                result.text += "; plan " + plan + ", " + result.structured.get("basic", "").asString() +
+                                               " BASIC (progress: inspect_state fdc -> autostart)";
                         }
                         done(std::move(result));
                     };
@@ -1339,6 +1359,8 @@ void RegisterLoadSoftware(ToolRegistry& registry)
                         if (autostart)
                         {
                             body["autostart"] = true;
+                            if (!basic.empty())
+                                body["basic"] = basic;
                         }
                         ForwardCall("POST", Endpoint(id, "/disk/" + drive + "/insert"), &body, caller,
                                     "Inserted disk " + path + " into drive " + drive + " of " + id, diskDone);
@@ -4859,16 +4881,47 @@ void RegisterInspectState(ToolRegistry& registry)
                                 }
                                 else
                                 {
-                                    out << "\n[fdc] " << value["fsm_state"].asString() << ", last " << value["last_command"].asString()
+                                    out << "\n[fdc] ";
+                                    // The controller when the report names it (a card: "WD1772 (MGT +D)")
+                                    if (value.isMember("controller"))
+                                        out << value["controller"].asString() << ": ";
+                                    out << value["fsm_state"].asString() << ", last " << value["last_command"].asString()
                                         << ", status " << value["registers"]["status"].asUInt() << " track " << value["registers"]["track"].asUInt()
-                                        << " sector " << value["registers"]["sector"].asUInt() << ", drive " << value["selected_drive"].asUInt()
-                                        << " side " << value["side"].asUInt() << ", " << value["density"].asString();
+                                        << " sector " << value["registers"]["sector"].asUInt() << ", drive ";
+                                    // -1: no drive on the select lines (the MGT +D after a reset); asUInt would throw
+                                    if (value["selected_drive"].asInt() < 0)
+                                        out << "none";
+                                    else
+                                        out << value["selected_drive"].asInt();
+                                    out << " side " << value["side"].asUInt() << ", " << value["density"].asString();
                                     const Json::Value& drives = value["drives"];
                                     for (Json::ArrayIndex i = 0; i < drives.size(); ++i)
                                         if (drives[i]["present"].asBool() && drives[i]["inserted"].asBool())
-                                            out << "\n  " << drives[i]["letter"].asString() << ": " << drives[i]["path"].asString()
+                                            out << "\n  "
+                                                << (drives[i].isMember("letter") ? drives[i]["letter"].asString()
+                                                                                 : drives[i]["media_slot"].asString())
+                                                << ":" << (drives[i].isMember("path") ? " " + drives[i]["path"].asString() : std::string())
                                                 << " track " << drives[i]["track"].asInt() << (drives[i]["motor_on"].asBool() ? " motor on" : "")
                                                 << (drives[i]["write_protected"].asBool() ? " wp" : "");
+                                    // The MGT +D disk autostart: its plan and BASIC, the stage, the steps done with their frames
+                                    if (value.isMember("autostart"))
+                                    {
+                                        const Json::Value& a = value["autostart"];
+                                        out << "\n  autostart " << a["plan"].asString();
+                                        if (!a["basic"].asString().empty())
+                                            out << ", " << a["basic"].asString() << " BASIC";
+                                        out << ", " << a["command"].asString();
+                                        if (a["active"].asBool())
+                                            out << ", running (stage " << a["stage"].asString() << ")";
+                                        else if (a["finished"].asBool())
+                                            out << (a["ok"].asBool() ? ", done" : ", failed");
+                                        if (!a["message"].asString().empty())
+                                            out << ": " << a["message"].asString();
+                                        const Json::Value& steps = a["steps"];
+                                        for (Json::ArrayIndex i = 0; i < steps.size(); ++i)
+                                            out << (i == 0 ? "; steps " : ", ") << steps[i]["step"].asString() << " @"
+                                                << steps[i]["frame"].asInt64();
+                                    }
                                     // The last commands of the history (the report keeps up to 64)
                                     const Json::Value& history = value["history"];
                                     if (history.isArray() && !history.empty())

@@ -34,7 +34,15 @@ public:
         std::function<void(uint32_t, uint8_t)> writePhysical;
         /// zxnDDMA Layer 2 X,Y destination: the 16K bank (NR #12, or the shadow NR #13 when `hidden`) and the resolution (NR #70 bits 5:4)
         std::function<void(bool hidden, uint8_t& bank, uint8_t& resolution)> layer2;
+        /// zxnext.vhd im2_dma_delay at the current clock: asked after each byte that is neither the last of its block nor followed by a
+        /// prescaler wait (dma.vhd WRITE_4); true gives the bus back until the host sees the delay end
+        std::function<bool()> delay;
+        /// The 28 MHz clock now (the prescaler timer starts at a byte's first read clock, after the bus grant); not set: Run's `now28`
+        std::function<uint64_t()> now28;
     };
+
+    /// 28 MHz clocks of one CPU clock (8, 4, 2, 1): the DMA's states take CPU clocks, its prescaler timer counts 28 MHz ones
+    void SetClockTicks(unsigned ticks) { _clockTicks = ticks ? ticks : 1; }
 
     /// The core has the zxnDDMA extension (the blitter commands #D7-#FB on port #6B). Off: those bytes fall through as on core 3.02.03
     void SetExtended(bool on) { _extended = on; }
@@ -62,7 +70,10 @@ public:
     /// The bus is held except in a BURST-mode prescaler wait (dma.vhd: only mode 10 releases it; continuous mode with a prescaler
     /// keeps the CPU stopped for the whole block)
     bool HoldsBus() const { return _transferring && !(_waiting && _mode == 2); }
-    /// 28 MHz clock the current prescaler wait ends at (0: not waiting)
+    /// Between the CPU's BUSAK and the release of BUSRQ: a byte boundary of a held bus goes on without asking for the bus again
+    bool BusHeld() const { return _busHeld; }
+    /// 28 MHz clock the current prescaler wait ends at (0: not waiting): continuous mode reads the next byte then, burst mode asks for the
+    /// bus again, the last byte's wait ends the block
     uint64_t WaitEnd() const { return _waiting ? _nextByteAt : 0; }
 
     /// Move up to `maxBytes` bytes at 28 MHz clock `now`; the count of bytes moved (0 while waiting for the prescaler)
@@ -130,6 +141,12 @@ private:
     static constexpr unsigned kGrantT = 1;
     static constexpr unsigned kFinishReleaseT = 4;
     static constexpr unsigned kBurstReleaseT = 3;
+    // WRITE_4 -> START_DMA under im2_dma_delay: START_DMA drops BUSRQ, one state before FINISH_DMA -> IDLE would (dma.vhd, not measured)
+    static constexpr unsigned kDelayReleaseT = 3;
+    // An auto restart on a held bus: WRITE_4 -> FINISH_DMA -> WAITING_ACK -> READ_1, two states more than WRITE_4 -> READ_1 (dma.vhd)
+    static constexpr unsigned kRestartT = 2;
+    /// The end of a prescaler wait for a byte that started at `byteStart` (dma.vhd WAITING_CYCLES)
+    uint64_t PrescalerWaitEnd(uint64_t byteStart, bool last) const;
     static unsigned Cycles(uint8_t timing);
     void ReleaseBus(unsigned clocks);
     /// Clocks the DMA holds the bus without a strobe: the source address is on it (dma.vhd WAITING_ACK, WRITE_4), and the video
@@ -163,6 +180,7 @@ private:
     uint16_t _counter = 0;
     // zxnDDMA (core 3.03.00)
     bool _extended = false;
+    unsigned _clockTicks = 8;
     uint8_t _extA = 0, _extB = 0;
     bool _phys = false, _2d = false, _transparent = false, _fill = false, _l2xy = false, _hidden = false;
     uint16_t _l2x = 0;
