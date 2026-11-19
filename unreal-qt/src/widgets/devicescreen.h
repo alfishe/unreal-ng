@@ -8,6 +8,8 @@
 #include <mutex>
 #include <cstdint>
 
+#include "emulator/video/paintpacer.h"
+#include "emulator/video/painttiming.h"
 #include "emulator/video/pictureview.h"
 #include "emulator/video/screen.h"  // For DisplayViewport
 #include "framehistory.h"
@@ -103,6 +105,10 @@ public:
     /// Null image when no framebuffer is attached.
     QImage grabFramebuffer();
 
+    /// The picture as the window draws it (temporal blending, CRT effects) at `pictureHeight` device pixels in the
+    /// window's shape: a recording's or a screenshot's own size. Null when no frame is there yet
+    QImage renderPicture(int pictureHeight);
+
     void clearDisplayViewport()
     {
         _hasViewport = false;
@@ -170,7 +176,7 @@ private:
     QImage _latchedFrame;           // Owned backing store filled via _frameSource
     FrameSourceFn _frameSource;     // Tear-free frame provider (empty = legacy live-buffer path)
     NextFrameSourceFn _nextFrameSource;  // The frames in order, for smooth motion
-    bool _repaintScheduled = false; // a repaint waits for the next frame's target
+    PaintPacer _paintPacer;  // when the next paint comes: the next frame's target, or a refresh on (smooth motion)
     mutable std::mutex _frameSourceMutex;  // Guards _frameSource, _nextFrameSource + devicePixels across threads
 
     // Smooth motion (GUI thread)
@@ -185,6 +191,10 @@ private:
     std::string _syncReason;
     FrameRateMeter _frameRate;   // the machine's rate from the shown frames' targets
     FrameClockSource _shownClock = FrameClockSource::None;  // the clock that timed the frame drawn last
+    uint64_t _preparedSerial = 0;   // the frame preparePicture() took last (0: none, the legacy buffer)
+    int64_t _preparedTargetNs = 0;  // its target: paintEvent times its paint against it
+    PaintTiming _paintTiming;   // the new frames' paint times: the report's numbers (no screen times here)
+    bool _shownAtOnce = false;  // low-latency video (feature lowlatency) timed it: each frame at once, no smooth motion
     uint64_t _meteredSerial = 0; // the last frame pushed into it
     QImage _nextFrame;    // a frame on its way into _smooth
     QImage _smoothFrame;  // the picture drawn
@@ -212,10 +222,22 @@ private:
     int _temporalWeightMode = 0;
     float _temporalDecay = 0.5f;
 
-    // CRT effects
-    std::unique_ptr<CRTRenderer> _crtRenderer;
-    std::unique_ptr<CRTBeamModel> _crtModel;  ///< the shader models (crt-lottes, ...)
-    QImage _crtFrame;
+    uint64_t _historySerial = 0;  ///< the frame pushed into _frameHistory last (0: the legacy buffer's)
+
+    /// The frame to draw now (the latched frame, smooth motion's, the blend), null when none: shared by the window's
+    /// paint and renderPicture. `legacyCopy` holds the legacy buffer's copy
+    const QImage* preparePicture(QImage& legacyCopy);
+
+    // CRT effects: one composer per output size (the window's, a recording's), each keeps its tables for its size
+    struct Composer
+    {
+        std::unique_ptr<CRTRenderer> renderer;
+        std::unique_ptr<CRTBeamModel> model;  ///< the shader models (crt-lottes, ...)
+        QImage frame;
+    };
+    bool composePicture(Composer& composer, const QImage& picture, QSize pixels);
+    Composer _windowComposer;
+    Composer _pictureComposer;
     bool _crtEnabled = false;
     CRTProfileParams _crtParams;
 

@@ -68,8 +68,9 @@ P2666 matter.
 
 ## ATM Turbo disks on P2666
 
-TR-DOS disks for the ATM Turbo 2+ (`testdata/machines/atm/`, the collection's `collected/consoles-zx/ATM Turbo`),
-booted through Gluk's "trdos" entry from the RAM disk:
+TR-DOS disks for the ATM Turbo 2+, booted through Gluk's "trdos" entry from the RAM disk. In the repository
+(`testdata/machines/atm/`): `nedodem2.trd`, `thebrd2.trd`, `tuneltro.scl`, `ballq_gr.scl`, `2048.scl`,
+`nedoos-cdplay.scl`; the others only in the local collection (`collected/consoles-zx/ATM Turbo`):
 
 | Disk | Result |
 |:--|:--|

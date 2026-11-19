@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "base/featuremanager.h"
 #include "_helpers/soundcardscope.h"
 #include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
@@ -786,6 +787,137 @@ TEST_F(SoundAdaptivity_Test, AVLatencyBudget)
         << "Hard resync must not trigger on normal DRC transients";
     EXPECT_LE(SoundManager::HARD_RESYNC_MS, 250.0)
         << "Hard resync threshold high enough to let audible lag persist";
+}
+
+TEST_F(SoundAdaptivity_Test, LowLatencyBudget)
+{
+    // The feature lowlatency holds the ring at LOW_LATENCY_DRC_TARGET_MS. What the DRC regulates is the occupancy
+    // before a frame's sound goes in (the sawtooth's trough, measured on the live host: target 40 -> trough 36 ms,
+    // target 10 -> trough 8.5 ms), so the setpoint is the margin against a gap, not the mean. It must clear the
+    // device's own buffering pull (macOS 2 x 128 frames, the Deck 2 x 256, WASAPI shared one 10 ms engine period)
+    // and stay well under the default
+    constexpr double DEVICE_PULL_MS = 256.0 * 1000.0 / 48000.0;  // the largest pull a callback makes off Windows
+    constexpr double WASAPI_SHARED_ENGINE_PERIOD_MS = 10.0;
+    EXPECT_LT(SoundManager::LOW_LATENCY_DRC_TARGET_MS, SoundManager::DRC_TARGET_MS / 2.0)
+        << "Low latency must cut the ring delay well below the default";
+    EXPECT_GE(SoundManager::LOW_LATENCY_DRC_START_MS, SoundManager::LOW_LATENCY_DRC_TARGET_MS)
+        << "The adaptive setpoint starts at or above its floor";
+    EXPECT_LE(SoundManager::LOW_LATENCY_DRC_START_MS, SoundManager::DRC_TARGET_MS / 2.0)
+        << "Even its start must cut the ring delay well below the default";
+#ifdef _WIN32
+    EXPECT_GT(SoundManager::LOW_LATENCY_DRC_TARGET_MS, WASAPI_SHARED_ENGINE_PERIOD_MS)
+        << "Below one WASAPI engine period every pull starves";
+#else
+    (void)WASAPI_SHARED_ENGINE_PERIOD_MS;
+    EXPECT_GT(SoundManager::LOW_LATENCY_DRC_TARGET_MS, DEVICE_PULL_MS)
+        << "Below one device pull every callback starves";
+#endif
+
+    // The emergency refill reads the ring after the frame's sound went in (the trough plus a frame): at the low
+    // setpoint, after the frame clock's worst wake lateness, it must still not fire in steady state
+    constexpr double SHORTEST_FRAME_MS = 69888.0 / 3500.0;  // ZX 48K, 19.97 ms
+    EXPECT_GT(SoundManager::LOW_LATENCY_DRC_TARGET_MS + SHORTEST_FRAME_MS - TimeHelper::FRAME_PACING_JITTER_BUDGET_MS,
+              SoundManager::EMERGENCY_REFILL_MS)
+        << "The refill would fire every frame at the low-latency setpoint";
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_LowLatencyFollowsFeatureAndConverges)
+{
+    // The feature switches the setpoint at once; the ring then drains from the default to the low setpoint's start through
+    // the trim alone (+-0.5 %), and holds it
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_NE(_context->pFeatureManager, nullptr);
+    EXPECT_DOUBLE_EQ(sound->drcTargetMs(), SoundManager::DRC_TARGET_MS);
+    _context->pFeatureManager->setFeature(Features::kLowLatency, true);
+    EXPECT_DOUBLE_EQ(sound->drcTargetMs(), SoundManager::LOW_LATENCY_DRC_START_MS);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+    _context->config.frame = 71680;
+    const double consumePerFrame = 71680.0 * 44100.0 / 3500000.0;
+
+    sound->reset();
+    double ring = SoundManager::DRC_TARGET_MS * 44100.0 / 1000.0;  // where the default left it
+    occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    auto step = [&] {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        ring = std::max(0.0, ring - consumePerFrame);
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    };
+    auto converged = [&] {
+        const double ms = ring * 1000.0 / 44100.0;
+        return std::abs(ms - SoundManager::LOW_LATENCY_DRC_START_MS) < 2.0 &&
+               std::abs(sound->getDrcRatio() - 1.0) < 0.001;
+    };
+    RunUntilStable(3000, kHoldFrames, step, converged);
+    EXPECT_NEAR(ring * 1000.0 / 44100.0, SoundManager::LOW_LATENCY_DRC_START_MS, 2.0)
+        << "DRC must hold the ring at the low-latency setpoint";
+    EXPECT_GT(ring, 0.0) << "The drain must not empty the ring";
+    EXPECT_NEAR(sound->drcTrim(), 0.0, 0.001);
+
+    // Off again: back to the default setpoint
+    _context->pFeatureManager->setFeature(Features::kLowLatency, false);
+    EXPECT_DOUBLE_EQ(sound->drcTargetMs(), SoundManager::DRC_TARGET_MS);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
+}
+
+TEST_F(SoundAdaptivity_Test, DRC_LowLatencyTrimStaysOffTheRailsWithChunkedPulls)
+{
+    // A device that pulls 10 ms at a time (WASAPI shared mode) takes 2 or 3 chunks per emulated frame, so the
+    // occupancy the DRC samples jumps by a whole chunk. At the low setpoint the loop gain must stay what it was tuned
+    // for: a gain scaled by 40 / setpoint swung the trim rail to rail every few seconds (an audible pitch wobble)
+    SoundManager* sound = _context->pSoundManager;
+    ASSERT_NE(sound, nullptr);
+    ASSERT_NE(_context->pFeatureManager, nullptr);
+    _context->pFeatureManager->setFeature(Features::kLowLatency, true);
+
+    CallbackCapture capture;
+    _context->pAudioCallback.store(&CallbackCapture::callback, std::memory_order_release);
+    _context->pAudioManagerObj.store(&capture, std::memory_order_release);
+    std::atomic<uint32_t> occCell{0};
+    _context->pAudioRingOccupancy.store(&occCell, std::memory_order_release);
+    _context->config.frame = 71680;
+    const double consumePerFrame = 71680.0 * 44100.0 / 3500000.0;  // ~903 frames: 2.05 chunks
+    constexpr double kChunk = 441.0;                                 // 10 ms at 44.1 kHz
+    constexpr double kMaxTrim = 0.005;                               // SoundManager::DRC_MAX_TRIM (protected)
+
+    sound->reset();
+    double ring = SoundManager::LOW_LATENCY_DRC_TARGET_MS * 44100.0 / 1000.0 + kChunk;
+    double due = 0.0;  // device time owed, pulled in whole chunks
+    auto step = [&] {
+        sound->handleFrameStart();
+        sound->handleFrameEnd();
+        ring += static_cast<double>(capture.lastNumSamples) / AUDIO_CHANNELS;
+        due += consumePerFrame;
+        while (due >= kChunk)
+        {
+            due -= kChunk;
+            ring = std::max(0.0, ring - kChunk);
+        }
+        occCell.store(static_cast<uint32_t>(ring), std::memory_order_relaxed);
+    };
+    for (int i = 0; i < 500; i++)  // settle
+        step();
+    double maxTrim = 0.0;
+    int railed = 0;
+    for (int i = 0; i < 3000; i++)  // one minute
+    {
+        step();
+        maxTrim = std::max(maxTrim, std::abs(sound->drcTrim()));
+        if (std::abs(sound->drcTrim()) >= kMaxTrim * 0.99)
+            railed++;
+    }
+    EXPECT_EQ(railed, 0) << "the trim reached the rail; max |trim| " << maxTrim;
+    EXPECT_LT(maxTrim, kMaxTrim / 2) << "max |trim| " << maxTrim;
+
+    _context->pFeatureManager->setFeature(Features::kLowLatency, false);
+    _context->pAudioRingOccupancy.store(nullptr, std::memory_order_release);
 }
 
 TEST_F(SoundAdaptivity_Test, EmergencyRefill_NeverFiresAtSteadyState)

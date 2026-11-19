@@ -249,6 +249,8 @@ void NextDma::FinishBlock()
     {
         InitAddresses();
         _counter = _z80Compat ? 0xFFFF : 0;
+        if (_busHeld)
+            HoldBus(kRestartT);
     }
     else
     {
@@ -348,6 +350,19 @@ void NextDma::AdvanceReadSequence(int after)
     _readSeq = 0;
 }
 
+/// dma.vhd: DMA_timer_s is cleared in TRANSFERING_READ_1 and adds 8 / 4 / 2 / 1 (the 28 MHz clocks of a CPU clock) each CPU clock;
+/// WAITING_CYCLES compares the REGISTERED timer, so it leaves at the clock after the one that reached prescaler x 32, the clock
+/// ceil(32 N / k) + 1 counted from READ_1. The next state takes the clock after: FINISH_DMA (the last byte), START_DMA (burst: it asks
+/// for the bus) or WAITING_ACK (continuous), whose next clock is the next READ_1. A board-free check: POC 036 `dmaprescc` (GHDL, 3.5 MHz,
+/// N = 4): the bytes are 152 clocks of 28 MHz apart, 32 N + 3 CPU clocks
+uint64_t NextDma::PrescalerWaitEnd(uint64_t byteStart, bool last) const
+{
+    const uint64_t k = _clockTicks;
+    const uint64_t passed = (static_cast<uint64_t>(_prescaler) * 32 + k - 1) / k;  // CPU clocks until the timer reaches the period
+    const uint64_t next = byteStart + (passed + 2) * k;                          // the state after WAITING_CYCLES
+    return last || _mode == 2 ? next : next + k;
+}
+
 unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
 {
     if (!_transferring)
@@ -378,6 +393,7 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
             _busHeld = true;
             HoldBus(kGrantT);
         }
+        const uint64_t byteStart = _prescaler && _bus.now28 ? _bus.now28() : now28;
         const bool srcPhys = _phys && !srcIo, dstPhys = _phys && !dstIo;
         const uint16_t srcAddr = static_cast<uint16_t>(_src), dstAddr = static_cast<uint16_t>(_dst);
         if (_fill)
@@ -450,8 +466,23 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
         {
             // the wait after a byte: prescaler * 32 clocks of 28 MHz (875 kHz steps), also after the LAST byte of a block - the
             // end-of-block flag, the stop and the auto-restart come after it
+            // WRITE_4 (the byte's last clock) sees the registered timer of the clock before: k x (byte clocks - 2). A byte that long
+            // already goes on (or ends the block) without a wait
+            const uint64_t after = _bus.now28 ? _bus.now28() : now28;
+            const uint64_t byteClocks = after > byteStart ? (after - byteStart) / _clockTicks : 0;
+            if (byteClocks >= 2 && (byteClocks - 2) * _clockTicks >= static_cast<uint64_t>(_prescaler) * 32) [[unlikely]]
+            {
+                if (blockDone)
+                {
+                    FinishBlock();
+                    break;
+                }
+                if (_mode == 2)
+                    break;
+                continue;
+            }
+            _nextByteAt = PrescalerWaitEnd(byteStart, blockDone);
             _waiting = true;
-            _nextByteAt = now28 + static_cast<uint64_t>(_prescaler) * 32;
             _finishPending = blockDone;
             if (_mode == 2)
                 ReleaseBus(kBurstReleaseT);  // WAITING_CYCLES gives the bus back one state before FINISH_DMA / IDLE would
@@ -460,6 +491,13 @@ unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
         if (blockDone)
         {
             FinishBlock();
+            break;
+        }
+        // dma.vhd WRITE_4: a chosen interrupt requested or in service (NR #CC-#CE) sends the sequencer to START_DMA, which gives the bus
+        // back and waits for the delay to end; the gate is not looked at after a prescaler wait or the last byte
+        if (_bus.delay && _bus.delay()) [[unlikely]]
+        {
+            ReleaseBus(kDelayReleaseT);
             break;
         }
         if (_mode == 2)

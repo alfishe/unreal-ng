@@ -71,6 +71,11 @@ curl -s -X POST http://localhost:8092/mcp -H 'Content-Type: application/json' \
      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools | length'
 ```
 
+**unreal-qt starts with no machine**, with a window or headless (`-platform offscreen`): `.emulators | length` is 0
+until the user presses Start or a script creates one (step 4, `POST /emulator/start`). Do not wait for a machine
+to appear: create it. The first instance created is the one the window shows (and the one `source=window`
+screenshots and window recordings use); a second one runs beside it, not in the window.
+
 Port map (all bind without authentication — trusted network only):
 
 | Port | Surface |

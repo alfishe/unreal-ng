@@ -3221,7 +3221,7 @@ namespace PythonBindings
                                             static_cast<uint8_t>(sides));
             }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; unformatted / raw, plus3, trdos (formatted, empty catalogue); 0 = the format's geometry)",
                py::arg("drive"), py::arg("cylinders") = 0, py::arg("sides") = 0, py::arg("format") = "auto")
-            .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
+            .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart, const std::string& basic) -> py::dict {
                 py::dict result;
                 if (drive < 0 || drive > 3)
                 {
@@ -3234,11 +3234,19 @@ namespace PythonBindings
                     // Drive A (0) only - a TR-DOS/Beta 128 hardware convention: requesting it for another
                     // drive is a hard failure (result["success"]=False, message explains why), never
                     // silently ignored or redirected to drive A.
-                    Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
+                    Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive), basic);
                     result["success"] = r.mounted;
                     result["started"] = r.started;
                     result["ttd_session_ended"] = r.ttdSessionEnded;
                     result["message"] = r.message;
+                    if (!r.plan.empty())
+                    {
+                        // An MGT disk on the +D: the steps go on after the call (state fdc -> autostart)
+                        result["plan"] = r.plan;
+                        result["command"] = r.command;
+                        result["dos"] = r.dos;
+                        result["basic"] = r.basic;
+                    }
                 }
                 else
                 {
@@ -3251,8 +3259,9 @@ namespace PythonBindings
                 return result;
             }, "Insert a disk image (.trd/.scl/.fdi/.udi/...) into the requested drive (0-3 / A-D), optionally "
                "quick-resetting into TR-DOS to run it (autostart, drive A only - same as the Qt UI's "
-               "drag-and-drop autostart)",
-               py::arg("path"), py::arg("drive") = 0, py::arg("autostart") = false)
+               "drag-and-drop autostart). An .mgt on the MGT +D runs its plan; basic = '48' / '128' picks the BASIC of "
+               "its reset ('' = the machine's own, '128' refused on a 48K)",
+               py::arg("path"), py::arg("drive") = 0, py::arg("autostart") = false, py::arg("basic") = "")
             .def("disk_list", [](Emulator& self) -> py::list {
                 py::list drives;
                 auto* ctx = self.GetContext();
@@ -8134,7 +8143,7 @@ namespace PythonBindings
         }, "Record the GUI window as it draws (CRT and all) with the on-screen keyboard and the machine's sound, one "
            "video frame per emulated frame, to path (.mov: prores, .mp4: h264): keyboard= ('default', a picture id, "
            "False), codec= ('prores', 'h264'), audio= (bool), fps= (1..100, audio=False only), scale= (1..4), "
-           "hardware= / fit= (booleans), picture_height= (0..4320, GPU), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
+           "hardware= / fit= (booleans), picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
            "path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples} or {ok: False, error, kind}",
            py::arg("path"))
         .def("window_record_frames", [](Emulator& self, int frames) -> py::object {

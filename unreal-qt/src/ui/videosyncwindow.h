@@ -64,6 +64,8 @@ private:
     };
     /// A row: its caption in column 0 and value cells from column 1, each `span` columns wide
     QLabel* cell(QGridLayout* grid, const char* key, int row, int column, Align align, int span = 1);
+    /// A text cell that runs on to `lines` lines (its height fixed to them) instead of being cut
+    static void Wrap(QLabel* label, int lines);
     void set(const char* key, const QString& text);
     void clearValues();
 
@@ -71,6 +73,7 @@ private:
     QTimer* _timer = nullptr;
     QCheckBox* _sync = nullptr;
     std::map<std::string, QLabel*> _cells;
+    QLabel* _errorCaption = nullptr;  ///< "On screen vs asked"; "Handed over to screen" under low-latency video; "Painted vs asked" / "Made to painted" on the software screen
     int _numberWidth = 0;
 
     // The counters a second ago: the rates per second
