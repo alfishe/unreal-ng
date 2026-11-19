@@ -642,7 +642,10 @@ TEST(Mb01Fs, FilesAndDirectoriesWritten)
 
     // On the disk: both FAT copies alike (FAT1 at LSN 3-4, FAT2 at 5-6), the files there again; used past LSN 12:
     // new 3, hello one less, f1..f27, d62/inner, a sector more of each list
-    auto at = [&](uint32_t lsn) { return disk->getTrackForCylinderAndSide(0, lsn / 5)->findSector(lsn % 5 + 1)->data; };
+    auto at = [&](uint32_t lsn) {
+        DiskImage::Track* track = disk->getTrackForCylinderAndSide(0, static_cast<uint8_t>(lsn / 5));
+        return track->findSector(static_cast<uint8_t>(lsn % 5 + 1))->data;
+    };
     EXPECT_EQ(std::memcmp(at(3), at(5), 1024), 0);
     EXPECT_EQ(std::memcmp(at(4), at(6), 1024), 0);
     DiskFs reread(*disk);
