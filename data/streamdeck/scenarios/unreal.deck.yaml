@@ -3217,6 +3217,24 @@ root:
         -
           at:
             - 1
+            - 5
+          do:
+            id: mach.start
+            kind: action
+            value:
+              model: P2666
+              replace: true
+          face:
+            glyph: mach.start
+            label: P2666
+          id: mp2666
+          tags:
+            - uc:C3.1
+          title: "Start a machine"
+          type: action
+        -
+          at:
+            - 1
             - 6
           do:
             id: mach.start
