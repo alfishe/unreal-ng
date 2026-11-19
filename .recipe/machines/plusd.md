@@ -30,6 +30,7 @@ results in [docs/inprogress/2026-11-15-mgt-plus-d/](../../docs/inprogress/2026-1
 ```text
 emulator_manage {"action":"create","model":"128K-PLUSD"}
 load_software {"path":"/path/work.mgt","autostart":true}      # plan: run / run+load / system-disk+load / mount
+load_software {"path":"/path/work.mgt","autostart":true,"basic":"48"}   # a 128K reset into 48 BASIC
 inspect_state {"aspects":["fdc"]}                               # the +D node: autostart stage, steps, message
 ```
 
@@ -42,5 +43,9 @@ curl -s -X POST $B/emulator/$id/disk/A/insert -H 'Content-Type: application/json
      -d '{"path":"/path/work.mgt","autostart":true}'
 curl -s $B/emulator/$id/state/fdc | jq .autostart               # stage, steps [{step, frame}], message
 ```
+
+`basic` (WebAPI / MCP; Python / Lua `disk_load` argument, CLI `disk insert A <file> autostart 48`, action `media.open`):
+omitted = the machine's own BASIC (48 on a 48K, 128 BASIC on a 128K), `48` = 48 BASIC on any machine (works that need
+a 128K in 48K mode), `128` = 128 BASIC (refused on a 48K: `no 128 BASIC on a 48K: use 128K-PLUSD`).
 
 An `.mgt` on a machine without the card is refused (`no +D on this machine`), never mounted in a Beta drive.

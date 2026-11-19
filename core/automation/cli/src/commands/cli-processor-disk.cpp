@@ -143,7 +143,7 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
 {
     if (args.size() < 3)
     {
-        session.SendResponse(std::string("Error: Missing arguments") + NEWLINE + "Usage: disk insert <drive> <file> [autostart]" +
+        session.SendResponse(std::string("Error: Missing arguments") + NEWLINE + "Usage: disk insert <drive> <file> [autostart [48|128]]" +
                              NEWLINE);
         return;
     }
@@ -163,16 +163,20 @@ void CLIProcessor::HandleDiskInsert(const ClientSession& session, std::shared_pt
     // Beta 128 hardware convention, not a missing feature; requesting it for another drive is now a hard
     // error via AutostartDisk() itself, not silently ignored)
     const bool autostart = args.size() > 3 && (args[3] == "autostart" || args[3] == "--autostart");
+    // An MGT disk on the +D: the BASIC of the reset after "autostart" (48 / 128; the core refuses anything else)
+    const std::string basic = autostart && args.size() > 4 ? args[4] : std::string();
 
     std::string autostartNote;
     std::string errorMessage;
     bool success;
     if (autostart)
     {
-        Emulator::DiskAutostartResult result = emulator->AutostartDisk(filepath, drive);
+        Emulator::DiskAutostartResult result = emulator->AutostartDisk(filepath, drive, basic);
         success = result.mounted;
         errorMessage = result.message;
         autostartNote = std::string(" (") + result.message + ")";
+        if (!result.plan.empty())
+            autostartNote += " plan " + result.plan + ", " + result.basic + " BASIC";
     }
     else
     {

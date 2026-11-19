@@ -386,6 +386,9 @@ struct PresentFrameInfo
     PictureGeometry geometry;
     /// CopyFrameAt: every frame's target is after the time asked for (start up): the oldest one is served
     bool early = false;
+    /// Low-latency video (feature `lowlatency`): the frame goes to the screen at once, not on a refresh asked for a
+    /// presenter's lead ahead; the window draws no smooth motion (it waits for the next frame)
+    bool atOnce = false;
     /// CopyFrameAt: the frame after this one, if latched and timed; blend = where the time asked for lies
     /// between the two targets (0 = this frame, 1 = the next one; 0 without a next frame)
     uint64_t nextSerial = 0;
@@ -1100,6 +1103,9 @@ protected:
     int64_t _lastStampEmulatedEnd = 0;
     bool _lastStampHadEmulated = false;
     std::atomic<bool> _frameClockResetPending{false};
+    // Feature `lowlatency`: frames are due at their latch, not when their sound is heard (any thread writes, the
+    // emulation thread and the readers read)
+    std::atomic<bool> _lowLatency{false};
     void ResetSlotTimingLocked(size_t index);
     /// The slots readers may be served by time, oldest first (caller holds _presentMutex)
     size_t EligibleSlotsLocked(size_t* indices) const;
@@ -1202,11 +1208,12 @@ public:
     static_assert(kAudioPathDelayFrames < kMaxVideoDelayFrames);
 
     /// The video's delay behind the latch in frames: the audio path's, or more while a temporal effect needs its
-    /// look-ahead (the audio is delayed by the difference)
+    /// look-ahead (the audio is delayed by the difference). Feature `lowlatency`: the look-ahead only (0 without one)
     uint8_t GetEffectivePresentDelayFrames() const
     {
         const uint8_t temporal = _temporalDelayFrames.load(std::memory_order_acquire);
-        const uint8_t native = temporal > kAudioPathDelayFrames ? temporal : kAudioPathDelayFrames;
+        const uint8_t floor = _lowLatency.load(std::memory_order_acquire) ? 0 : kAudioPathDelayFrames;
+        const uint8_t native = temporal > floor ? temporal : floor;
         return IsExternalPictureActive() ? ExternalDelayFrames(native) : native;
     }
     /// The native delay (machine frames) as external frames of the same

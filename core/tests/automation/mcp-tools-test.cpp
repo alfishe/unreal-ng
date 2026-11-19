@@ -748,6 +748,32 @@ TEST_F(McpTools_Test, LoadSoftware_Disk_UsesDriveParameter)
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/disk/B/insert"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_MgtAutostart_ForwardsTheBasicAndSaysThePlan)
+{
+    Json::Value answer(Json::objectValue);
+    answer["status"] = "success";
+    answer["autostarted"] = true;
+    answer["autostart_message"] = "Autostart: RUN (G+DOS from the disk)";
+    answer["plan"] = "run";
+    answer["basic"] = "48";
+    _caller->routes["POST /api/v1/emulator/emu-1/disk/A/insert"] = {200, answer};
+
+    Json::Value args;
+    args["path"] = "no-such-dir/work.mgt";  // not a local file: the path goes in the JSON body
+    args["autostart"] = true;
+    args["basic"] = "48";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/disk/A/insert");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["autostart"].asBool());
+    EXPECT_EQ(call->body["basic"].asString(), "48");
+    // An agent may see only the text: the plan, its BASIC and where the progress is
+    EXPECT_NE(result.text.find("plan run, 48 BASIC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("inspect_state fdc"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, LoadSoftware_UnknownExtension_IsError)
 {
     Json::Value args;
@@ -1946,6 +1972,47 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("ch2 key-on mask 8 alg 7 228.5 Hz"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("[fdc] S_IDLE, last restore"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
+}
+
+// The MGT +D after a reset has no drive on the select lines (selected_drive -1): the call answers (an unsigned read of
+// -1 threw in the formatter and the request never answered), the text says "drive none", names the controller and
+// shows the autostart
+TEST_F(McpTools_Test, InspectState_FdcWithNoDriveSelected)
+{
+    Json::Value fdc;
+    fdc["available"] = true;
+    fdc["controller"] = "WD1772 (MGT +D)";
+    fdc["fsm_state"] = "S_IDLE";
+    fdc["last_command"] = "restore";
+    fdc["registers"]["status"] = 0;
+    fdc["registers"]["track"] = 0;
+    fdc["registers"]["sector"] = 1;
+    fdc["selected_drive"] = -1;
+    fdc["side"] = 0;
+    fdc["density"] = "MFM";
+    fdc["drives"] = Json::Value(Json::arrayValue);
+    fdc["autostart"]["plan"] = "run+load";
+    fdc["autostart"]["basic"] = "48";
+    fdc["autostart"]["command"] = "LOAD d1\"CONFIG\"";
+    fdc["autostart"]["active"] = true;
+    fdc["autostart"]["stage"] = "run";
+    fdc["autostart"]["message"] = "";
+    Json::Value step;
+    step["step"] = "reset";
+    step["frame"] = 0;
+    fdc["autostart"]["steps"].append(step);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/fdc"] = {200, fdc};
+
+    Json::Value args;
+    args["aspects"] = Json::Value(Json::arrayValue);
+    args["aspects"].append("fdc");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[fdc] WD1772 (MGT +D): S_IDLE, last restore, status 0 track 0 sector 1, drive none side 0, MFM"),
+              std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("autostart run+load, 48 BASIC, LOAD d1\"CONFIG\", running (stage run); steps reset @0"),
+              std::string::npos) << result.text;
 }
 
 // device_history: read goes to /history/{device}?last=N and answers with the stats line and one line per record;
@@ -3353,6 +3420,70 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     mcp::ToolResult fits = RunTool(*_registry, "capture_media", args, *_caller);
     ASSERT_FALSE(fits.isError) << fits.text;
     EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
+}
+
+/// Low-latency video asks for each frame at once: the text says so and names neither a lead, nor refreshes late, nor
+/// the interpolation it turns off
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesLowLatency)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["sync"]["mode"] = "interpolate";
+    present["clock"] = "latch";
+    present["low_latency"] = true;
+    present["presented"] = 600;
+    present["late"] = 250;
+    present["lead_ms"] = 36.7;
+    present["error_ms"]["p50"] = 24.75;
+    present["error_ms"]["p99"] = 54.34;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"low latency: each frame at once", "hand-over to screen p50 24.75 p99 54.34 ms"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+    for (const char* part : {"a refresh late", "lead 36.7", "video sync interpolate"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+}
+
+/// The software screen times its paints: the text gives them as such, without a refresh grid, a lead or a sound offset
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheSoftwareScreensPaintTimes)
+{
+    Json::Value settings;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "software";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["timed_at"] = "paint";
+    present["presented"] = 480;
+    present["dropped"] = 3;
+    present["error_ms"]["p50"] = 4.25;
+    present["error_ms"]["p99"] = 11.5;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    EXPECT_NE(read.text.find("480 new frames painted, 3 skipped, painted vs asked p50 4.25 p99 11.5 ms (paint times, "
+                             "not the screen)"),
+              std::string::npos)
+        << read.text;
+    for (const char* part : {"a refresh late", "off the beat", "screen to sound"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+
+    // Low latency: the time asked for is the latch
+    settings["present"]["low_latency"] = true;
+    settings["present"]["clock"] = "latch";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult low = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(low.isError) << low.text;
+    EXPECT_NE(low.text.find("made to painted p50 4.25"), std::string::npos) << low.text;
 }
 
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)

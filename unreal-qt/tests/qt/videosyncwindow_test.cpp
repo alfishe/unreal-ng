@@ -136,3 +136,41 @@ TEST(VideoSyncWindow_Test, TheDisplayRateSaysHowManyRefreshesAFrameTakes)
     window.refresh();
     EXPECT_TRUE(window.readout("mode").endsWith("each frame for 2 refreshes")) << window.readout("mode").toStdString();
 }
+
+TEST(VideoSyncWindow_Test, TheSoftwareScreensLongTextsWrapAndItsScreenTimesShowAsNotMeasured)
+{
+    WindowDisplaySettings now = Quiet();
+    WindowPresentStats& p = now.present;
+    p.presenter = "software";
+    p.timedAt = "paint";
+    p.sync = "interpolate";
+    p.vrr = false;
+    p.fixedDisplay = true;
+    p.minRefreshHz = p.maxRefreshHz = 60.0;
+    p.displayReason = "the software screen does not switch the display's rate (gpu on does)";
+    p.presented = p.shown = 500;
+    p.dropped = 13;
+    VideoSyncWindow window([&now]() { return now; });
+    window.show();
+    window.refresh();
+    QApplication::processEvents();
+
+    // Display rate and presenter run on to a second line inside their cells: nothing cut at the window's width
+    for (const char* key : {"display_rate", "presenter"})
+    {
+        const QLabel* label = window.findChildren<QLabel*>().value(0);
+        for (QLabel* l : window.findChildren<QLabel*>())
+            if (l->text() == window.readout(key))
+                label = l;
+        ASSERT_EQ(label->text(), window.readout(key));
+        EXPECT_TRUE(label->wordWrap()) << key;
+        EXPECT_LE(label->heightForWidth(label->width()), label->height()) << key << ": " << label->text().toStdString();
+    }
+    Grab(window, "videosync-software.png");
+
+    // A paint is not a refresh: no grid to be late or off the beat on, no lead
+    EXPECT_EQ(window.readout("late"), "—");
+    EXPECT_EQ(window.readout("off_beat"), "—");
+    EXPECT_EQ(window.readout("lead"), "—");
+    EXPECT_EQ(window.readout("dropped"), "13");
+}

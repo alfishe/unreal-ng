@@ -2,7 +2,8 @@
 
 Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18): the card, the autostart, the
 `48K-PLUSD` / `128K-PLUSD` machines in the Sinclair family of the Qt and handheld menus, the recipe
-`.recipe/machines/plusd.md`. Open: P5 (the `basic` param on the planes), P6.
+`.recipe/machines/plusd.md`. 2026-11-19: P5.2 (the `basic` param on every plane, the MCP `inspect_state fdc` text
+for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). Open: P5.1, P5.3-P5.5, P6.
 
 ## Phases
 
@@ -74,7 +75,7 @@ Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18
   it on the second (as Fuse), IN `#F7` reads `#FF` (no printer: busy). `state fdc` shows `printer.data_latch`,
   `bytes_printed`, `last_byte`. **File sink deferred**: the codebase has no printer infrastructure and slot options are
   enum / set only (no path option); a sink goes with a shared printer device later
-- [x] P3.3 TTD device type `PlusD = 71` (free on master and every branch), instance `<slot>.plusd`, blob v1 (paging,
+- [x] P3.3 TTD device type `PlusD = 75` (was 71; master took 71-74 for the Pentagon 2.666 LE at the landing), instance `<slot>.plusd`, blob v1 (paging,
   latch, printer, no-drive line, spin-up deadline, 8K RAM, the WD1772's 254-byte blob + 112-byte command context);
   fingerprint adds `slots.<slot>.rom` (FNV-1a of the ROM); MachineStateTransfer binds it as a floppy device.
   `WD1793` gained `kTtdStateSize`, `SpinUpDoneAt` / `RestoreSpinUpDoneAt`, `NoDriveSelected` /
@@ -175,14 +176,15 @@ Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18
 | The Thirty-Nine Steps | `df02a394c3c8` | 128K | 128K 128K/48 | 48K: reset |
 | The Pendant of Logryn | `0e015504a91a` | 128K | 128K 128K/48 | 48K: reset |
 
-  Open: **Super Mario Fruit Machine 2** checks `PEEK 23611 = 221` (FLAGS) at line 10 and says "128K game in 48K mode"
-  otherwise. Ours: 204 in 48 BASIC, 220 in 128 BASIC (bit 0, "no leading space", differs). With that line removed
-  it runs on the 128K. Which value the real 128K + +D gives after `RUN` is not known: compare Fuse / MAME before
-  changing anything.
+  Closed, not an emulator bug: **Super Mario Fruit Machine 2** checks `PEEK 23611 = 221` (FLAGS) at line 10 and says
+  "128K game in 48K mode" otherwise. Ours: 204 in 48 BASIC, 220 in 128 BASIC (bit 0, "no leading space", differs).
+  MAME 0.289 (`spec128 -exp plusd`, the same ROMs and `plusd_g.rom` CRC 569f7e55, 128 BASIC, `RUN`) stops the same
+  way: "EPIC FAIL!" and `0 OK, 200:1`; on `spectrum -exp plusd` it says `C Nonsense in BASIC, 200:1` as ours does.
+  The check in the disk fails on this ROM + GDOS; with line 10 removed the game runs on the 128K.
 
 ### P5: docs, planes, platforms
 - [ ] P5.1 Docs and recipes of design.md §11
-- [ ] P5.2 All planes for the new fields / actions; MCP live block `plusd.py`
+- [x] P5.2 All planes for the new fields / actions (`basic` on REST, WebSocket, MCP, CLI, Python, Lua, `media.open`); MCP live block `test_plusd.py`
 - [ ] P5.3 Build zero warnings; `docker/linux/build.sh --test`; MSVC / MinGW
 - [ ] P5.4 A/B benchmark (test-plan §7)
 - [ ] P5.5 New-platform review checklist §6

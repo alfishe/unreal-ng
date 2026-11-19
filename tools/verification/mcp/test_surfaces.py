@@ -243,7 +243,12 @@ def test_no_id_follows_the_focused_view_and_pins_hold(s):
 
 def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
     """The Stream Deck strip polls /ttd/position 50 times a second (2026-10-18 a poll parked the recording machine
-    each time); here the machine records at 1x for 3 s alone and 3 s beside the poller: the same frames per second"""
+    each time); here the machine records at 1x in rounds alone and beside the poller: the same frames per second, and
+    the position answers as fast as a route that never touches the machine.
+
+    Both sides are measured against a control taken at the same time, never against a fixed number: on a loaded
+    host (load average 110-150 while other builds run) the frame rate drifts by 4 % between two 3 s windows and the
+    p99 of any local request reaches 100 ms, which made the old absolute bounds fail one run in three"""
     emu = instance(s)
     release_mcp_session(s)
     # Leave the past: record from here (the resume runs the machine)
@@ -252,25 +257,29 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
     if position(s, emu)['paused']:
         rest(s, 'POST', f'/api/v1/emulator/{emu}/resume', None, session)
     try:
+        latencies = {'position': [], 'control': []}
+        statuses = set()
+
         def frames_in(seconds, poll):
-            latencies = []
-            statuses = set()
             stop = threading.Event()
 
             def poller():
                 # One kept-alive connection, as the companion's: a fresh local connect alone takes a timer tick
-                # (15.6 ms) on Windows, whatever the server
+                # (15.6 ms) on Windows, whatever the server. Each tick asks the position, then the control route
+                # (the instance count: no machine state), so both see the same host
                 url = urllib.parse.urlparse(webapi(s))
                 connection = HTTPConnection(url.hostname, url.port, timeout=30)
                 next_at = time.monotonic()
                 while not stop.is_set():
-                    # perf_counter: monotonic ticks in 15.6 ms steps on Windows (GetTickCount64)
-                    started = time.perf_counter()
-                    connection.request('GET', f'/api/v1/emulator/{emu}/ttd/position')
-                    response = connection.getresponse()
-                    response.read()
-                    latencies.append((time.perf_counter() - started) * 1000)
-                    statuses.add(response.status)
+                    for kind, path in (('position', f'/api/v1/emulator/{emu}/ttd/position'),
+                                       ('control', '/api/v1/emulator/status')):
+                        # perf_counter: monotonic ticks in 15.6 ms steps on Windows (GetTickCount64)
+                        started = time.perf_counter()
+                        connection.request('GET', path)
+                        response = connection.getresponse()
+                        response.read()
+                        latencies[kind].append((time.perf_counter() - started) * 1000)
+                        statuses.add(response.status)
                     next_at += 0.02
                     time.sleep(max(0.0, next_at - time.monotonic()))
                 connection.close()
@@ -285,21 +294,36 @@ def test_the_position_polled_at_50_hz_does_not_slow_a_recording_machine(s):
             if thread:
                 thread.join()
             after = position(s, emu)['current']['frame']
-            expect(statuses <= {200}, 'every poll answers the position', statuses)
-            return (after - before) / (time.monotonic() - started), latencies
+            return after - before, time.monotonic() - started
 
         at = position(s, emu)
         expect(at['state'] == 'recording' and not at['paused'], 'recording, running', at)
-        alone, _ = frames_in(3, False)
-        polled, latencies = frames_in(3, True)
-        latencies.sort()
-        p50 = statistics.median(latencies)
-        p99 = latencies[int(len(latencies) * 0.99) - 1]
-        print(f'        frames/s alone {alone:.2f}, with 50 Hz polling {polled:.2f}; {len(latencies)} polls, '
-              f'p50 {p50:.2f} ms, p99 {p99:.2f} ms, max {latencies[-1]:.2f} ms')
+        # Alternating rounds: a slow drift of the host's load falls on both sides alike
+        totals = {False: [0, 0.0], True: [0, 0.0]}
+        for _ in range(4):
+            for poll in (False, True):
+                frames, seconds = frames_in(1.5, poll)
+                totals[poll][0] += frames
+                totals[poll][1] += seconds
+        alone = totals[False][0] / totals[False][1]
+        polled = totals[True][0] / totals[True][1]
+        expect(statuses <= {200}, 'every poll answers', statuses)
+
+        def quantiles(values):
+            values = sorted(values)
+            return statistics.median(values), values[int(len(values) * 0.90) - 1], values[int(len(values) * 0.99) - 1]
+
+        p50, p90, p99 = quantiles(latencies['position'])
+        c50, c90, c99 = quantiles(latencies['control'])
+        print(f'        frames/s alone {alone:.2f}, with 50 Hz polling {polled:.2f}; {len(latencies["position"])} '
+              f'polls, position p50 / p90 / p99 {p50:.2f} / {p90:.2f} / {p99:.2f} ms, '
+              f'control {c50:.2f} / {c90:.2f} / {c99:.2f} ms')
         expect(abs(polled - alone) <= 0.03 * alone, 'the poller does not slow the frames', (alone, polled))
-        expect(len(latencies) >= 120, 'about 50 polls a second', len(latencies))
-        expect(p99 < 25, 'a poll answers without waiting for the machine', p99)
+        expect(len(latencies['position']) >= 240, 'about 50 polls a second', len(latencies['position']))
+        # A poll that waits for the machine waits up to a frame (20 ms) for its boundary: some 10 ms on the median
+        # and up to 20 ms on the p90, over what the host alone costs
+        expect(p50 - c50 < 3, 'a poll answers without waiting for the machine (median over the control)', (p50, c50))
+        expect(p90 - c90 < 8, 'a poll answers without waiting for the machine (p90 over the control)', (p90, c90))
     finally:
         rest(s, 'POST', f'/api/v1/emulator/{emu}/pause', None, session)
         rest(s, 'POST', f'/api/v1/emulator/{emu}/ttd/stop', None, session)

@@ -1548,6 +1548,7 @@ StateNode PlusDNode(const PlusDCard& card, EmulatorContext* context)
             autostart["plan"] = status.plan.kind;
             autostart["dos"] = status.plan.dos;
             autostart["command"] = status.plan.command;
+            autostart["basic"] = status.plan.basic;
             autostart["start_file"] = status.plan.startFile;
             autostart["active"] = status.active;
             autostart["finished"] = status.finished;

@@ -467,7 +467,7 @@ inline Result Set(const WindowDisplayChange& change)
 }
 
 /// The frame presenter's part of the report: presenter, fixed_display, vrr, vrr_support {state, reason}, sync {mode, reason}, refresh_hz {min, max},
-/// clock, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
+/// clock, low_latency, timed_at, timing {delay_clamped, max_delay_ms, clamped_frames, early, carried, cuts, carry_ms}, presented, shown,
 /// dropped, late, beat {frames, off}, lead_ms, error_ms {p50, p99, max}, sound_offset_ms {p50, p99}, gpu_wait_ms
 /// {p50, max}, gpu_ms {smooth, picture: {p50, max, longest, measured}}, smooth {mode, device, game, frames, pictures,
 /// renders, blended, interpolated, motion_fields, on_device, held_flicker}, display {state, reason, hz, original_hz,
@@ -491,6 +491,8 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     refresh["max"] = p.maxRefreshHz;
     node["refresh_hz"] = refresh;
     node["clock"] = p.clock;
+    node["low_latency"] = p.lowLatency;
+    node["timed_at"] = p.timedAt;
     StateNode timing = StateNode::Object();
     timing["delay_clamped"] = p.delayClamped;
     timing["max_delay_ms"] = p.maxDelayMs;
