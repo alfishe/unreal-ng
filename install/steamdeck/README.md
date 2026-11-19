@@ -5,7 +5,9 @@ with every release (the GitHub release's downloads). The installer puts the emul
 non-Steam game, with its own artwork, so it starts from Game Mode like any other game.
 
 Recipes for building, installing and checking it from another machine are in
-[.recipe/testing/steamdeck.md](../../.recipe/testing/steamdeck.md).
+[.recipe/testing/steamdeck.md](../../.recipe/testing/steamdeck.md); the scripts that do it (a build on a remote Linux
+host, the install over SSH, a check of the installed build) are in
+[tools/deploy/steamdeck](../../tools/deploy/steamdeck/README.md).
 
 ## What is in the bundle
 

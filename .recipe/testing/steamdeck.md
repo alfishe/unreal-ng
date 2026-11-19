@@ -39,11 +39,33 @@ Pitfalls:
 - Images without the X11 / Wayland dev headers fail SDL3's configure ("no desktop windows"): the `apt-get` line above.
 - Packaging on macOS works too (`package.sh` writes the tar without extended attributes).
 
+## Build on a remote host
+
+From a Mac (or any machine) with a branch or uncommitted work, the tools in
+[tools/deploy/steamdeck](../../tools/deploy/steamdeck/README.md) do all of the above on an x86_64 Linux host:
+
+```bash
+tools/deploy/steamdeck/remote-build.sh --host <build-host> --dir <path> [--deck <deck>]
+# <path>: your own checkout on the host (clone or worktree with submodules, scratch/wt-<task>)
+# -> scratch/deploy-steamdeck/UnrealNG-SteamDeck-x86_64.tar.gz, and with --deck installed on the Deck
+```
+
+- It copies the files that differ from the host's HEAD (commits since it, uncommitted edits, new files) and the files
+  of its previous run; the host's HEAD must be a commit you have. Deleted files and submodule changes are not copied.
+- The first run configures `build-deck/` and builds the image `unreal-ng-deck-build`: tens of minutes. Later runs
+  rebuild what changed.
+- SSH options come from `~/.ssh/config` or `UNREAL_DEPLOY_SSH="ssh -i <key>"`; the targets can come from
+  `UNREAL_DEPLOY_BUILD_HOST`, `UNREAL_DEPLOY_BUILD_DIR`, `UNREAL_DEPLOY_DECK`.
+
 ## Install or update
 
 ```bash
 install/steamdeck/package.sh build --deploy deck@<host>   # copy, unpack in a temporary folder, run install.sh
+tools/deploy/steamdeck/deploy.sh <bundle.tar.gz> deck@<host>   # the same for a bundle you have (remote-build.sh's)
 ```
+
+`deploy.sh` exits 0 only when the entry is registered, 3 when a running game kept it unchanged, and says so when the
+Deck does not answer (asleep: wake it and run it again).
 
 or on the Deck: `tar xzf UnrealNG-SteamDeck-x86_64.tar.gz && UnrealNG-SteamDeck/install.sh`. The output says each
 step:
@@ -135,6 +157,10 @@ import sys; sys.path.insert(0, "tools/guicontrol")
 from guicontrol import WebGui
 gui = WebGui(18090)
 menu = lambda: gui.list()["hosts"][0]["state"]["handheld_menu"]   # WebGui.list() answers per host
+def choose(state, text):                             # move the picker's cursor to a row, then A
+    for _ in range(abs(state["picker"]["items"].index(text) - state["picker"]["row"])):
+        state = gui.call("handheld.nav", dir="down" if state["picker"]["items"].index(text) > state["picker"]["row"] else "up")
+    return gui.call("handheld.accept")
 gui.call("handheld.menu", on=True)
 state = menu()
 while state["section"] != "machine":                 # the sections vary per machine: walk to one by name
@@ -144,22 +170,33 @@ if state["focus"] != "page":
 labels = [i["label"] for i in state["items"]]
 for _ in range(labels.index("Model") - state["row"]):
     state = gui.call("handheld.nav", dir="down")
-state = gui.call("handheld.accept")                  # the model picker
-print(state["picker"]["items"])                      # the models and the variants ("TS-Conf + VDAC4")
-target = state["picker"]["items"].index("TS-Conf + VDAC4")
-for _ in range(target - state["picker"]["row"]):
-    state = gui.call("handheld.nav", dir="down")
-gui.call("handheld.accept")                          # picks it: the machine restarts as that model
+state = gui.call("handheld.accept")                  # the model picker: the families ("ZX-Evo  ›", "Sprinter 2000")
+state = choose(state, "ZX-Evo  ›")                   # its machines, "..  Model" first
+state = choose(state, "TS-Conf + VDAC4")             # one RAM size: picks it, the machine restarts as that variant
 gui.call("handheld.menu", on=False)
 PY
 ```
 
+- The picker is the machine catalog's tree (`GET /emulator/machines`): families, then machines, then RAM sizes; a
+  level with one entry is skipped. A row with `  ›` opens a level; `..  <title>` goes up one, `.   Model` to the
+  families (A on them, or B for `..`).
 - The menu opens on the section it was left on, not always on Resume; `handheld.section` keeps the focus where it
   was (on the sections or on the page).
 - A machine variant (`TSL-VDAC4`, `TSL-VDAC2`) reports its base model in `GET /emulator` (`"model":"TSL"`); check the
   board itself (`GET /emulator/{id}/vdac4/state`).
 - `handheld.back` closes the picker, then the page, then the menu.
 - The full live check of the menu on a desktop build: `tools/guicontrol/verify_unrealqt.py` (`check_handheld`).
+
+## Check the machine picker after a deploy
+
+```bash
+ssh <deck> python3 - < tools/deploy/steamdeck/check_machine_picker.py    # PASS / FAIL per check, exit 0 = all pass
+```
+
+It starts an instance of its own beside whatever runs on the Deck (offscreen, ports from 8790, its own settings
+folders, no sound, controllers or Stream Deck), drives its handheld menu over the GUI control plane and stops it.
+The user's running app is never driven: switching its machine would restart their session. The same script checks a
+desktop build with `--app <unreal-qt>`.
 
 ## A game from an SD card or a host folder, its profile and events
 
