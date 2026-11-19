@@ -1,6 +1,11 @@
 # Machine families: a grouped machine picker
 
-Status: in progress (branch `machine-families`).
+Status: done, on master.
+
+- `bcaa8ca97`: the catalog (`MachineCatalog`), the grouped Qt Machine menu and handheld Model picker (with `.` / `..`
+  rows), `GET /emulator/machines`, MCP `list_machines`, CLI / Python / Lua `machines`
+- `3aefa523f`: the running configuration (`MachineCatalog::TitleOf`) as a read-only first entry of the Machine menu
+  and in the main window title
 
 ## 1. Problem
 
