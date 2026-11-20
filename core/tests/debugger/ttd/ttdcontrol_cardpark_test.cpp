@@ -6,6 +6,7 @@
 #include <string>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/ttdcardbench.h"
 #include "_helpers/gsslot.h"
 #include "_helpers/soundcardscope.h"
 #include "_helpers/testwaithelper.h"
@@ -18,6 +19,8 @@
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
+#include "emulator/emulatormanager.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/sound/audio.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -25,8 +28,9 @@
 /// Time travel while the machine stands inside the sound card's run (TTD branches debuggers.md §7): a General Sound
 /// breakpoint that fires in the card's catch-up at the frame end parks the machine's thread there, its frame counter
 /// already moved and the frame's boundary work not done. A recording started there begins at the next frame boundary
-/// (before the fix its baseline was taken there and the first boundary refused the frame: capture-failed); a move in
-/// time there is refused until the machine leaves it.
+/// (before the fix its baseline was taken there and the first boundary refused the frame: capture-failed). A move in
+/// time there first leaves it: the machine runs on to the next main CPU instruction start and pauses (D-3, the moves
+/// after a live card step at the history's end).
 ///
 /// The main CPU runs a loop that never touches the card's ports, so the card catches up only at the frame end.
 /// Runtime: the machine at real speed for about 5 frames (~0.1 s)
@@ -83,12 +87,6 @@ TEST(TTDControl_CardPark_Test, ARecordingAskedInsideTheCardsFrameEndRunStartsAtT
     EXPECT_TRUE(status.body.find("start_pending")->b);
     EXPECT_EQ(status.body.find("checkpoint_count")->i, 0);
 
-    // A move in time is refused while the machine stands there
-    const ttd::TTDReply back = Verb(context, "step-back");
-    EXPECT_FALSE(back.Ok());
-    EXPECT_EQ(back.error, ttd::TTDControlError::Conflict);
-    EXPECT_NE(back.message.find("sound card"), std::string::npos) << back.message;
-
     // Leaving it: the recording begins at the boundary and goes on (not capture-failed at its first frame)
     breakpoints->RemoveBreakpointByID(id);
     emulator->Resume();
@@ -142,4 +140,54 @@ TEST(TTDControl_CardPark_Test, AStopCancelsTheStartThatWaitsForTheBoundary)
 
     emulator->Stop();
     EmulatorTestHelper::CleanupEmulator(emulator);
+}
+
+/// D-3: a live card step at the history's end (F7 on the card's tab: RunControl::CardStep) parks the machine inside
+/// the card's run; a move in time from there (a main frame step back, a card instruction step back) leaves it first
+/// and goes on, no 409. A card step back from past the history's end lands at the history's newest card instruction
+/// (history_end), as the main CPU's step back from a live position lands on its last recorded one.
+/// Runtime: 3 recorded frames, the machine resumed twice up to its next main instruction (~0.1 s)
+TEST(TTDControl_CardPark_Test, AMoveAfterALiveCardStepLeavesTheCardsRunFirst)
+{
+    ttdtest::Bench b;
+    ASSERT_TRUE(ttdtest::Build(b, ttdtest::Card::GS));
+    ASSERT_TRUE(ttdtest::LoadCardRoutines(b));
+    ttdtest::Record(b, 3);
+    const ttd::TTDTimePoint end = b.ttd->SessionEndPosition();
+    std::shared_ptr<Emulator> shared = EmulatorManager::GetInstance()->GetEmulator(b.emulator->GetId());
+    ASSERT_NE(shared, nullptr);
+    b.emulator->StartAsync();
+    b.emulator->Pause();
+    ASSERT_TRUE(TestWait::For([&] { return b.emulator->IsEmulationParked(); }, std::chrono::milliseconds(5000)));
+
+    execution::RunControl control(shared);
+    const execution::Requester requester{execution::Origin::WebApi, {}};
+    auto liveStep = [&]() {
+        const execution::RunReply step = control.CardStep(requester, b.cpu, "in", 1);
+        ASSERT_TRUE(step.Ok()) << step.message;
+        ASSERT_TRUE(b.emulator->IsParkedInsideCardRun()) << "a card step parks inside the card's run";
+    };
+
+    // A main frame step back
+    liveStep();
+    const ttd::TTDReply back = Verb(b.context, "step-back");
+    ASSERT_TRUE(back.Ok()) << back.message;
+    EXPECT_FALSE(b.emulator->IsParkedInsideCardRun());
+    EXPECT_TRUE(b.emulator->IsPaused());
+    EXPECT_LT(b.ttd->CurrentPosition().frame, end.frame + 1) << "in the history";
+
+    // Back to the end, a live card step again, a card instruction step back: the history's newest card instruction
+    ASSERT_TRUE(Verb(b.context, "seek", {{"frame", std::to_string(end.frame)}, {"tinframe", std::to_string(end.tInFrame)}}).Ok());
+    liveStep();
+    uint64_t live = 0;
+    ASSERT_TRUE(b.card()->cardInstructionCount(live));
+    const ttd::TTDReply cardBack = Verb(b.context, "step-instruction", {{"cpu", "gs"}, {"dir", "back"}});
+    ASSERT_TRUE(cardBack.Ok()) << cardBack.message;
+    EXPECT_EQ(cardBack.body.find("status")->s, "ok") << cardBack.body.find("message")->s;
+    ASSERT_NE(cardBack.body.find("history_end"), nullptr);
+    EXPECT_TRUE(cardBack.body.find("history_end")->b);
+    EXPECT_LT(static_cast<uint64_t>(cardBack.body.find("target")->i), live);
+    EXPECT_FALSE(b.emulator->IsParkedInsideCardRun());
+
+    b.emulator->Stop();
 }

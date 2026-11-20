@@ -696,7 +696,7 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
           "ttd card: Step Over Back, the card back");
     // Step over (F8) and Step out (Ctrl+F8) in the past: the card's steps through the history, no live run. From well
     // inside the history: the checks so far stand at its end, where F7 / F8 / Ctrl+F8 step on live (D-3) and leave the
-    // machine inside the card's run, which no move in time takes
+    // machine inside the card's run (a move in time from there first leaves it)
     const uint64_t past = count(cb) > 5000 ? count(cb) - 5000 : count(cb);
     auto seek_card = [&](uint64_t n) {
         ttd->call("seek", {{"cpu", name.toStdString()}, {"instruction", std::to_string(n)}}, nullptr);
@@ -716,6 +716,23 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
               m->debug_paused() && ttd->last_result().startsWith("Step out: " + name),
           "ttd card: Step out (Ctrl+F8) in the past, through the history");
     if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    // Run to cursor (F4) in the past: the card's next instruction at the cursor, through the history; one never
+    // reached is said and nothing moves (no live run)
+    seek_card(past + 1);
+    const unsigned int cursor = (unsigned int)card().value("pc").toInteger();
+    seek_card(past);
+    said = Said();
+    const bool ran = ttd->step_forward("to", cursor);
+    const QJsonObject ct = card();
+    check(ran && said.count == 0 && ct.value("card_position").toBool() && count(ct) == past + 1 && m->debug_paused() &&
+              ttd->last_result().startsWith("Run to the cursor: " + name),
+          "ttd card: Run to cursor (F4) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    said = Said();
+    const bool missed = ttd->step_forward("to", 0xFFFF);
+    check(missed && said.count == 1 && count(card()) == past + 1,
+          "ttd card: Run to cursor (F4) in the past never reached: said, nothing moved");
+    if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
     // The checks below start in the past too (their F7s replay the history, not live steps)
     const uint64_t base = count(c2) > 2000 ? count(c2) - 2000 : count(c2);
     seek_card(base);

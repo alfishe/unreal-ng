@@ -26,8 +26,9 @@
 ///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
 ///   ttd replay-check [F [G]]   — replay each frame and compare it with the next checkpoint
 ///   ttd seek-check [on|off]    — every seek also replay-checks the frame it lands in
-///   ttd ... --cpu gs|ms        — seek, si-back / si-forward (--over / --out: step over / out in the history),
-///                                reverse-step, reverse-step-over and reverse-continue on a sound card's CPU
+///   ttd ... --cpu gs|ms        — seek, si-back / si-forward (--over / --out: step over / out in the history,
+///                                --to <pc>: run to the cursor in the history), reverse-step, reverse-step-over and
+///                                reverse-continue on a sound card's CPU
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -500,6 +501,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "  ttd si-back --cpu gs [--count N] / ttd si-forward --cpu gs [--count N]   N card instructions" << NEWLINE;
     ss << "  ttd si-forward --cpu gs --over | --out   Card step over / step out through the history (its" << NEWLINE;
     ss << "                                  breakpoints end it; not ended: to the history's end)" << NEWLINE;
+    ss << "  ttd si-forward --cpu gs --to <pc> [--max-frames N]   Card run to the cursor through the history (not" << NEWLINE;
+    ss << "                                  reached: nothing moves)" << NEWLINE;
     ss << "  ttd reverse-step --cpu gs [--count N]                                     N card instructions back" << NEWLINE;
     ss << "  ttd reverse-continue --cpu gs [--max-frames N]   Back to the card's previous breakpoint hit" << NEWLINE;
     ss << "  ttd reverse-step-over --cpu gs   Card step over back: past a card routine whose return comes before" << NEWLINE;
@@ -1771,6 +1774,14 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
                 options["count"] = args[i + 1];
             else if (args[i] == "--over" || args[i] == "--out")
                 options["kind"] = args[i].substr(2);   // `ttd si-forward --cpu gs --over`: a card step over in the past
+            else if (args[i] == "--to" && i + 1 < args.size())
+            {
+                // `ttd si-forward --cpu gs --to 0x8000`: the card's run to the cursor in the past
+                options["kind"] = "to";
+                options["pc"] = args[++i];
+            }
+            else if (args[i] == "--max-frames" && i + 1 < args.size())
+                options["max_frames"] = args[++i];
         session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"step-instruction", options}), NEWLINE));
         return;
     }

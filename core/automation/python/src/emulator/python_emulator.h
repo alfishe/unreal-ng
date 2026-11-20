@@ -7220,6 +7220,18 @@ namespace PythonBindings
                "ended in the history, the card at its end)",
                py::arg("cpu"))
 
+            .def("ttd_card_run_to_cursor", [](Emulator& self, const std::string& cpu, uint32_t pc,
+                                              std::optional<uint64_t> maxFrames) -> py::object {
+                std::map<std::string, std::string> options{
+                    {"cpu", cpu}, {"dir", "forward"}, {"kind", "to"}, {"pc", std::to_string(pc)}};
+                if (maxFrames)
+                    options["max_frames"] = std::to_string(*maxFrames);
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", options));
+            }, "A sound card CPU's run to the cursor through the history: its next instruction at pc after the card's "
+               "position, its breakpoints first (not reached in the history or in max_frames frames: reached False, "
+               "status no_hit, nothing moved)",
+               py::arg("cpu"), py::arg("pc"), py::arg("max_frames") = py::none())
+
             .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
                 std::map<std::string, std::string> options{{"cpu", cpu}};
                 if (maxFrames)

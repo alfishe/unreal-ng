@@ -965,3 +965,115 @@ TEST(TTD_CardStepForward_Edges_Test, FromAMainPositionAndTheRefusals)
     ASSERT_TRUE(expected);
     EXPECT_EQ(r.position.instruction, *expected);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The card's run to the cursor through the history (RunCardToCursor, the debuggers' F4 on a card's tab in the past)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace
+{
+/// The first boundary after n in the trace with the card's PC at pc (nullopt: none before end)
+std::optional<uint64_t> ExpectedCursor(const std::map<uint64_t, CardBoundary>& trace, uint64_t n, uint16_t pc, uint64_t end)
+{
+    for (auto it = trace.upper_bound(n); it != trace.end() && it->first < end; ++it)
+        if (it->second.pc == pc)
+            return it->first;
+    return std::nullopt;
+}
+
+class TTD_CardRunToCursor_Test : public ::testing::TestWithParam<Card>
+{
+};
+}  // namespace
+
+/// The oracle: the recording's own trace names the card's next boundary at the cursor; the run lands there, byte for
+/// byte the card a direct seek gives, the main CPU at that boundary. A card breakpoint on the way ends it first; a
+/// cursor the card never reaches answers no_hit and moves nothing (max_frames bounds the search: truncated); at the
+/// history's end nothing moves (at_end: the debuggers run on live)
+TEST_P(TTD_CardRunToCursor_Test, LandsAtTheCardsNextInstructionThereOrMovesNothing)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, GetParam()));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    const uint64_t perFrame = PerFrame(b);
+    const uint64_t from = b.Count() + perFrame;
+    const std::map<uint64_t, CardBoundary> trace = RecordTraced(b, 4, from, UINT64_MAX);
+    const ttd::TTDTimePoint end = b.ttd->SessionEndPosition();
+    ASSERT_TRUE(b.ttd->SeekTo({end.frame, 0}));
+    const uint64_t endCount = b.ttd->CardPositionNow(b.cpu).instruction;
+    ASSERT_GT(endCount, from + perFrame * 2);
+    const std::string name = CardName(GetParam());
+
+    // From the outer loop's CALL (PC #4000): to the innermost routine, and to the outer loop's NOP after the calls
+    std::optional<uint64_t> start;
+    for (uint64_t n = from + 1; n < from + perFrame && !start; n++)
+        if (trace.count(n) && trace.at(n).pc == 0x4000)
+            start = n;
+    ASSERT_TRUE(start) << name << ": the card runs its outer loop";
+    for (const uint16_t cursor : {uint16_t(0x4020), uint16_t(0x4003), uint16_t(0x4000)})
+    {
+        const std::string what = name + " to #" + std::to_string(cursor);
+        const std::optional<uint64_t> expected = ExpectedCursor(trace, *start, cursor, endCount);
+        ASSERT_TRUE(expected) << what;
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *expected).Ok()) << what;
+        const GSCardTarget::CardState direct = b.CardNow();
+        const ttd::TTDTimePoint directMain = b.ttd->CurrentPosition();
+        ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok()) << what;
+        const ttd::TTDCardMoveResult r = b.ttd->RunCardToCursor(b.cpu, cursor);
+        ASSERT_TRUE(r.Ok()) << what << ": " << r.message;
+        EXPECT_EQ(r.from, *start) << what;
+        EXPECT_EQ(r.position.instruction, *expected) << what;
+        EXPECT_EQ(r.position.pc, cursor) << what;
+        EXPECT_FALSE(r.stoppedByBreakpoint) << what;
+        ExpectSameCard(b.CardNow(), direct, what);
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, directMain.frame) << what;
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, directMain.tInFrame) << what;
+    }
+
+    // A breakpoint on the way (the middle routine's first instruction) ends it there first, counting no hits
+    BreakpointManager* breakpoints = b.context->pDebugManager->GetBreakpointsManager(b.cpu);
+    BreakpointSpec spec;
+    spec.type = BRK_MEMORY;
+    spec.access = BRK_MEM_EXECUTE;
+    spec.address = 0x4010;
+    std::string error;
+    const uint16_t id = breakpoints->AddBreakpoint(spec, error);
+    ASSERT_NE(id, BRK_INVALID) << error;
+    const uint32_t hitsBefore = breakpoints->GetBreakpointById(id)->hitCount;
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok());
+    const ttd::TTDCardMoveResult hit = b.ttd->RunCardToCursor(b.cpu, 0x4020);
+    ASSERT_TRUE(hit.Ok()) << hit.message;
+    EXPECT_TRUE(hit.stoppedByBreakpoint);
+    EXPECT_EQ(hit.breakpointId, id);
+    EXPECT_EQ(hit.position.instruction, *ExpectedCursor(trace, *start, 0x4010, endCount));
+    EXPECT_EQ(breakpoints->GetBreakpointById(id)->hitCount, hitsBefore) << "the search counts no hits";
+    breakpoints->RemoveBreakpointByID(id);
+
+    // Never reached: no_hit, the machine where it stood; one frame searched: truncated
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, *start).Ok());
+    const GSCardTarget::CardState before = b.CardNow();
+    const ttd::TTDTimePoint beforeMain = b.ttd->CurrentPosition();
+    for (const uint64_t maxFrames : {uint64_t(1000), uint64_t(1)})
+    {
+        const ttd::TTDCardMoveResult miss = b.ttd->RunCardToCursor(b.cpu, 0x5000, maxFrames);
+        EXPECT_EQ(miss.status, ttd::TTDCardMoveResult::Status::NoHit) << miss.message;
+        EXPECT_FALSE(miss.Ok());
+        EXPECT_EQ(miss.truncated, maxFrames == 1) << miss.message;
+        EXPECT_NE(miss.message.find("#5000"), std::string::npos) << miss.message;
+        ExpectSameCard(b.CardNow(), before, "not reached");
+        EXPECT_EQ(b.ttd->CurrentPosition().frame, beforeMain.frame);
+        EXPECT_EQ(b.ttd->CurrentPosition().tInFrame, beforeMain.tInFrame);
+        EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, *start);
+    }
+
+    // At the history's end: nothing moves
+    ASSERT_TRUE(b.ttd->SeekToCardInstruction(b.cpu, endCount).Ok());
+    const GSCardTarget::CardState atEnd = b.CardNow();
+    const ttd::TTDCardMoveResult r = b.ttd->RunCardToCursor(b.cpu, 0x4020);
+    EXPECT_EQ(r.status, ttd::TTDCardMoveResult::Status::AtEnd) << r.message;
+    ExpectSameCard(b.CardNow(), atEnd, "at the history's end");
+    EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, endCount);
+}
+
+INSTANTIATE_TEST_SUITE_P(Cards, TTD_CardRunToCursor_Test, ::testing::Values(Card::GS, Card::NeoGS, Card::MultiSound),
+                         [](const ::testing::TestParamInfo<Card>& info) { return std::string(CardName(info.param)); });

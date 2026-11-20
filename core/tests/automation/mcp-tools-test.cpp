@@ -4745,6 +4745,56 @@ TEST_F(McpTools_Test, TimeTravel_CardStepOverAndOut_GoToStepInstructionWithTheKi
     EXPECT_NE(refused.text.find("did not move (at_end)"), std::string::npos) << refused.text;
 }
 
+TEST_F(McpTools_Test, TimeTravel_CardRunToCursor_GoesToStepInstructionWithKindTo)
+{
+    Json::Value reply = CardMoveReply(true, "ok", 1200, 1214);
+    reply["kind"] = "to";
+    reply["cursor"] = 0x4020;
+    reply["hit"] = true;
+    reply["searched_frames"] = 1;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, reply};
+
+    Json::Value missing;
+    missing["action"] = "card_run_to_cursor";
+    missing["cpu"] = "gs";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", missing, *_caller);
+    EXPECT_TRUE(result.isError) << "addr is required";
+    EXPECT_NE(result.text.find("requires 'addr'"), std::string::npos) << result.text;
+    missing["addr"] = 70000;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "addr out of range";
+
+    Json::Value args;
+    args["action"] = "card_run_to_cursor";
+    args["cpu"] = "neogs";
+    args["addr"] = "0x4020";
+    args["max_frames"] = 50;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "neogs");
+    EXPECT_EQ(call->body["dir"].asString(), "forward");
+    EXPECT_EQ(call->body["kind"].asString(), "to");
+    EXPECT_EQ(call->body["pc"].asUInt(), 0x4020u);
+    EXPECT_EQ(call->body["max_frames"].asUInt(), 50u);
+    EXPECT_NE(result.text.find("gs at card instruction 1214 (from 1200)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("at the cursor 0x4020"), std::string::npos) << result.text;
+
+    // Not reached: nothing moved, an error the model reads
+    Json::Value miss = CardMoveReply(false, "no_hit", 1200, 0);
+    miss["kind"] = "to";
+    miss["cursor"] = 0x5000;
+    miss["hit"] = false;
+    miss["truncated"] = true;
+    miss["message"] = "the card does not reach #5000 in the 50 frames searched (max_frames)";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, miss};
+    args["addr"] = "$5000";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    EXPECT_NE(result.text.find("did not move (no_hit)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("does not reach #5000"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_CardPosition_ReadsThePositionsCards)
 {
     Json::Value position;

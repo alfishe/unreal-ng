@@ -205,6 +205,13 @@ void GSCardTarget::Note(uint16_t id, uint16_t address, uint8_t value, Breakpoint
 
 void GSCardTarget::Park(Stop stop, uint16_t boundaryPc)
 {
+    // The machine leaves the card's run for a move in time (Emulator::LeaveCardRun, TTD branches D-3): nothing parks
+    // on the way out, the move goes elsewhere anyway
+    if (_context && _context->pEmulator && _context->pEmulator->LeavingCardRun()) [[unlikely]]
+    {
+        _stepKind.store(StepKind::None, std::memory_order_release);
+        return;
+    }
     GeneralSoundCard* card = Card();
     stop.boundaryPc = boundaryPc;
     stop.cardTime = card ? card->cardTime() : 0;
@@ -846,13 +853,13 @@ void GSCardTarget::ScanStackLevel(uint16_t level, uint64_t before)
     _scanStackCount = 0;
 }
 
-void GSCardTarget::ScanStep(StepKind kind, uint64_t after)
+void GSCardTarget::ScanStep(StepKind kind, uint64_t after, uint16_t target)
 {
     _scanStepKind = kind;
     _scanStepAfter = after;
     _scanStepStarted = false;
     _scanStepLast = after;
-    _scanStepTarget = 0;
+    _scanStepTarget = kind == StepKind::To ? target : 0;
     _scanStepSp = 0;
     _scanStepReturning = false;
     _scanStepReturnSp = 0;
@@ -898,6 +905,8 @@ void GSCardTarget::ScanStepBoundary(GeneralSoundCard* card, uint16_t pc, uint64_
         ends = true;
     else if (_scanStepKind == StepKind::Over)
         ends = pc == _scanStepTarget && regs.sp >= _scanStepSp;
+    else if (_scanStepKind == StepKind::To)
+        ends = pc == _scanStepTarget;
     else if (_scanStepKind == StepKind::Out)
     {
         ends = _scanStepReturning && regs.sp > _scanStepReturnSp;

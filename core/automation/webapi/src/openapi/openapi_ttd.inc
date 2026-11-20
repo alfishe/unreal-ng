@@ -1100,8 +1100,8 @@
         "so the resulting position is always at an instruction start. Backward "
         "step uses the M1 probe to locate the previous M1; forward step replays "
         "forward to the next M1. Fails (stepped=false) at session boundaries. With cpu naming a sound card: card "
-        "instructions (count), or with kind over / out the card's step over / step out through the history; the "
-        "reply is a TTDCardMoveResponse.";
+        "instructions (count), or with kind over / out the card's step over / step out through the history, with "
+        "kind to (and pc) the card's run to the cursor through the history; the reply is a TTDCardMoveResponse.";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["required"] = true;

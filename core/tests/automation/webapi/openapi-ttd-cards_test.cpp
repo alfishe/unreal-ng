@@ -60,7 +60,13 @@ TEST(OpenApiTTDCards_Test, TheCardOptionsAndReadoutsAreDescribed)
               std::string::npos);
     EXPECT_NE(manifest.find("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"kind\"][\"enum\"].append(\"out\")"),
               std::string::npos);
-    for (const char* field : {"over_call", "skipped", "call_out_of_reach", "kind", "history_end"})
+    EXPECT_NE(manifest.find("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"kind\"][\"enum\"].append(\"to\")"),
+              std::string::npos);
+    for (const char* field : {"pc", "max_frames"})
+        EXPECT_NE(manifest.find(std::string("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"") + field + "\"]"),
+                  std::string::npos)
+            << field;
+    for (const char* field : {"over_call", "skipped", "call_out_of_reach", "kind", "history_end", "hit", "cursor"})
         EXPECT_NE(manifest.find(std::string("schemas[\"TTDCardMoveResponse\"][\"properties\"][\"") + field + "\"]"),
                   std::string::npos)
             << field;

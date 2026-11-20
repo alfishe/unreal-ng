@@ -807,6 +807,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointeditor_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.h"
+        # The per-hit record of a counting breakpoint: the editor's fields, the list's expanding rows (PLAN #122 V4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointhits_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.h"
         # The debugger's stop line: the breakpoint the machine stopped at, in words
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"

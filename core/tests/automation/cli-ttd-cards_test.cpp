@@ -105,3 +105,31 @@ TEST(CliTTDCards_Test, AStepOverInThePastSaysWhereItEnded)
     EXPECT_NE(cut.find("did not end in the frames searched"), std::string::npos) << cut;
     EXPECT_EQ(cut.find("max_frames reached"), std::string::npos) << cut;
 }
+
+/// `ttd si-forward --cpu gs --to <pc>`: the run to the cursor's text names the cursor when the card stands there; not
+/// reached it names the status and the frames searched
+TEST(CliTTDCards_Test, ARunToTheCursorInThePastSaysWhereItEnded)
+{
+    ttd::TTDReply reply;
+    reply.body["cpu"] = "gs";
+    reply.body["kind"] = "to";
+    reply.body["reached"] = true;
+    reply.body["hit"] = true;
+    reply.body["cursor"] = 0x4020;
+    reply.body["from"] = 1200;
+    reply.body["target"] = 1214;
+    reply.body["searched_frames"] = 1;
+    reply.body["truncated"] = false;
+    const std::string hit = CliTTDCards::FormatCardMove(reply, "\n");
+    EXPECT_EQ(hit.rfind("TTD: gs at instruction 1214 (from 1200), at the cursor #4020\n", 0), 0u) << hit;
+
+    reply.body["reached"] = false;
+    reply.body["hit"] = false;
+    reply.body["status"] = "no_hit";
+    reply.body["truncated"] = true;
+    reply.body["message"] = "the card does not reach #4020 in the 1 frames searched (max_frames)";
+    const std::string miss = CliTTDCards::FormatCardMove(reply, "\n");
+    EXPECT_NE(miss.find("no_hit"), std::string::npos) << miss;
+    EXPECT_NE(miss.find("does not reach #4020"), std::string::npos) << miss;
+    EXPECT_NE(miss.find("(max_frames reached)"), std::string::npos) << miss;
+}

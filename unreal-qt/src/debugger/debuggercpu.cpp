@@ -255,15 +255,40 @@ bool DebuggerCpuTabs::followStop()
 {
     if (!_emulator)
         return false;
+    // A card another front-end picked (select_cpu, a script) comes to the front: the window shows the machine's choice
+    bool changed = adoptMachineChoice();
     const Emulator::DebugStop stop = _emulator->LastStop();
     if (stop.serial == _stopSerial)
-        return false;
+        return changed;
     _stopSerial = stop.serial;
     const std::optional<DebugCpuId> cpu = debuggercpu::StopCpu(stop);
     if (!cpu || *cpu == _current)
-        return false;
+        return changed;
+    // A main CPU step keeps the card in front: the card shown follows the main CPU's steps (design §5.2). A main CPU
+    // breakpoint brings the main CPU forward
+    if (*cpu == DebugCpuId::Main && stop.reason == Emulator::DebugStop::Reason::Step)
+        return changed;
     update();  // a card's stop may come before the window saw the card
-    return select(*cpu) && _current == *cpu;
+    return (select(*cpu) && _current == *cpu) || changed;
+}
+
+DebugCpuId DebuggerCpuTabs::MachineChoice() const
+{
+    const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+    const DebugManager* debug = lease ? lease.get()->pDebugManager : nullptr;
+    return debug ? debug->SelectedCpu() : DebugCpuId::Main;
+}
+
+bool DebuggerCpuTabs::adoptMachineChoice()
+{
+    if (!_active || !_emulator)
+        return false;
+    const DebugCpuId chosen = MachineChoice();
+    if (chosen == _current)
+        return false;
+    if (std::find(_cpus.begin(), _cpus.end(), chosen) == _cpus.end())
+        update();  // a card fitted since
+    return select(chosen) && _current == chosen;
 }
 
 void DebuggerCpuTabs::setActive(bool active)
@@ -271,10 +296,12 @@ void DebuggerCpuTabs::setActive(bool active)
     if (_active == active)
         return;
     _active = active;
-    if (active)
-        applySelection();
-    else
+    // Shown: a card another front-end picked comes to the front, else the window's tab is the machine's choice (the
+    // main CPU there is only this window's own release on hide)
+    if (!active)
         release();
+    else if (MachineChoice() == DebugCpuId::Main || !adoptMachineChoice())
+        applySelection();
 }
 
 void DebuggerCpuTabs::applySelection()

@@ -15,7 +15,9 @@
 ///   - the per-frame series (frames=true, the default): every frame's self / inclusive per active routine, in a ring
 ///     (the last few thousand frames) and optionally streamed to a JSONL file by a writer thread.
 /// The interrupt acknowledge is booked to the handler's first instruction (and so to the interrupt's routine); a halted
-/// CPU's idle stretch to its HALT, which lets the CPU run the stretch in one go.
+/// CPU's idle stretch to its HALT, which lets the CPU run the stretch in one go. The frame end and the end of a run
+/// (onFrameEnd, onRunStop) book the last instruction and the frame end it crossed at once (CatchUp), so a report read
+/// after any run has every frame end and T-state the CPU ran; the next start books only the time after it.
 ///
 /// Threads: the step runs on the emulation thread and is the only writer of the counters; every counter is a relaxed
 /// atomic written by a plain load + store, so a reader on another thread never parks the emulation thread and never
@@ -164,6 +166,10 @@ public:
     /// starts the window
     void onActivate(AnalyzerManager* manager) override;
     void onDeactivate() override;
+    /// The frame end and the end of a run (a direct run, a park): the last instruction and the frame end it crossed
+    /// are booked now (CatchUp), not at the next instruction start
+    void onFrameEnd() override;
+    void onRunStop() override;
 
     /// region <Control (the CPU held by the caller)>
     /// The settings of the next activation (while inactive)
@@ -268,6 +274,7 @@ private:
     bool ResolveFlow(uint8_t flow, uint16_t spAfter, uint16_t next, uint16_t pc, uint32_t phys);
     void Called(uint16_t target, uint32_t phys, uint16_t slot, uint16_t ret, profile::EntryKind kind);
     void Returned(uint16_t target, uint32_t phys, uint16_t slot);
+    bool CatchUp();
     void Settle();
     void Discontinuity();
     void FlushFrame();
@@ -304,6 +311,7 @@ private:
     uint32_t _lastT = 0;
     uint64_t _lastFrameCounter = 0;
     uint64_t _ackSeen = 0;
+    uint32_t _heldAck = 0;  ///< an acknowledge's T-states a catch-up left to the handler's first step (CatchUp)
     uint32_t _frameT = 69888;
     uint32_t _beamMul = 0;
     std::vector<Frame> _stack;

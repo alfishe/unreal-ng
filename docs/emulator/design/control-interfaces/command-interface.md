@@ -503,8 +503,9 @@ Commands to control the CPU execution flow for the selected emulator instance. T
   travel move ends the timeline: the next run counts from where the machine stands. Time travel's own internal
   `RunTStates` calls stay off the timeline (one instruction at least, counted from the current position). A state
   transfer (`MachineStateTransfer`, clone) hands the source's timeline to the target, so both continue alike.
-  The CPU profile books an instruction, and a frame end it crossed, when the next one starts: a report read right
-  after a run whose target lies within the first instruction of a frame shows that frame's end with the next run.
+  The CPU profile books the run's last instruction and a frame end it crossed when the run ends: a report read right
+  after a run counts every frame end and T-state it ran, wherever its target lies
+  ([cpu-profile.md](../../analysis/cpu-profile.md), "The window's end").
 
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
@@ -3371,6 +3372,7 @@ history, so the card is seeked, stepped and reverse-continued like the main CPU
 | `seek` | `cpu`, `instruction` (required) | The card at that instruction count |
 | `step-instruction` | `cpu`, `dir` (`back` / `forward`), `count` (default 1) | N card instructions back or forward |
 | `step-instruction` | `cpu`, `kind` (`over` / `out`), `dir` (`forward` only) | The card's step over / step out through the history: where a live card step from there would end (`over`: past a CALL / RST / DJNZ / block instruction to the address after it with the stack at its level again, any other instruction one step; `out`: after the next return at the stack's level). The card's own breakpoints end it first (`breakpoint`). Not ended in the history: the card goes to the history's end (`history_end`; the debuggers' next step runs live, D-3); not ended in 1000 frames: as far as they reach (`truncated`, step again). At the history's end already: `at_end` |
+| `step-instruction` | `cpu`, `kind` `to`, `pc` (required), `max_frames` (default 1000), `dir` (`forward` only) | The card's run to the cursor through the history: its first instruction at `pc` after the card's position (standing at `pc`: its next time there). The card's own breakpoints end it first (`breakpoint`, `hit: false`). Not reached in the history or in `max_frames` frames: `no_hit`, nothing moved (`truncated` when the frame limit ended the search). At the history's end already: `at_end` (the debuggers run the card live) |
 | `reverse-step` | `cpu`, `count` (required) | N card instructions back |
 | `reverse-step-over` | `cpu` | The card's step over back: one card instruction back, or, when that instruction is a return (RET, RET cc taken, RETI, RETN) that lifted the card's stack to where it is now, back past the whole routine to the newest card instruction at this stack level before it (the CALL / RST, or the instruction an interrupt came after). Searched by replay at most 1000 frames back; out of reach the card stays on the return (`call_out_of_reach`) |
 | `reverse-continue` | `cpu`, `max_frames` (default 1000) | Back to the latest earlier hit of the card's own breakpoints (`bp ... --cpu gs`); the hits are found by replay, the breakpoints' hit counts stay as they were and taps do not fire |
@@ -3378,31 +3380,48 @@ history, so the card is seeked, stepped and reverse-continued like the main CPU
 The reply: `cpu`, `status` (`ok`, `at_start`, `at_end`, `no_hit`, `no_card`, `no_count`, `no_history`,
 `no_breakpoints`, `failed`), `reached`, `from`, `target`, `message` (when nothing moved), `card` (the readout above),
 `frame`, `tinframe`, `state`, `check`; reverse-continue adds `searched_frames`, `truncated` and
-`breakpoint {id, kind, address}`; step-instruction with `kind` adds `kind`, `searched_frames`, `history_end`,
-`truncated` and `breakpoint` when one ended the step; reverse-step-over adds the main CPU's reply words `stepped`,
+`breakpoint {id, kind, address}`; step-instruction with `kind` adds `kind`, `searched_frames`, `history_end`
+(`over` / `out`), `truncated` and `breakpoint` when one ended the step, with `kind to` also `cursor` and `hit` (the
+card stands at the cursor); a step back (step-instruction `dir back`, reverse-step, reverse-step-over) from a card
+past the history's end (it stepped on live, unrecorded) lands at the history's newest card instruction and adds
+`history_end: true`; reverse-step-over adds the main CPU's reply words `stepped`,
 `over_call`, `skipped` (with `over_call`), `call_out_of_reach`, `pc` and `text`. `at_start` / `at_end` / `no_hit` are answers (HTTP 200, `reached: false`, the
 machine where it was); `no_card`, `no_count`, `no_history`, `no_breakpoints` are 409; a bad option is 400 (an
-unknown `cpu`; `instruction`, `max_frames` or `kind` without `cpu`; another unit with `cpu`; `kind` with `count` or
-`dir back`). `cpu main` is the main CPU's verb as before.
+unknown `cpu`; `instruction`, `max_frames`, `kind` or `pc` without `cpu`; another unit with `cpu`; `kind` with
+`count` or `dir back`; `kind to` without `pc`; `pc` or `max_frames` on another kind). `cpu main` is the main CPU's
+verb as before.
 
-| Plane | Seek | Step | Step over / out (forward) | Step over back | Reverse continue | Readout |
-|---|---|---|---|---|---|---|
-| CLI | `ttd seek --cpu gs <n>` | `ttd si-back` / `si-forward --cpu gs [--count N]`, `ttd reverse-step --cpu gs [--count N]` | `ttd si-forward --cpu gs --over` / `--out` | `ttd reverse-step-over --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` | `ttd position` (a `Card gs:` line) |
-| WebAPI / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}`, `POST /ttd/reverse-step {cpu, count}` | `POST /ttd/step-instruction {cpu, kind}` | `POST /ttd/reverse-step-over {cpu}` | `POST /ttd/reverse-continue {cpu, max_frames}` | `GET /ttd/position`, `GET /ttd/status` (`cards`) |
-| MCP `time_travel` | `card_seek` (`cpu`, `instruction`) | `card_step` (`cpu`, `count`; negative: back) | `card_step_over` / `card_step_out` (`cpu`) | `card_reverse_step_over` (`cpu`), or `reverse_step_over` with `cpu` | `card_reverse_continue` (`cpu`, `max_frames`) | `card_position` (`cpu` optional) |
-| Lua | `ttd_card_seek(cpu, n)` | `ttd_card_step(cpu [, n])` | `ttd_card_step_over(cpu)` / `ttd_card_step_out(cpu)` | `ttd_card_reverse_step_over(cpu)` | `ttd_card_reverse_continue(cpu [, max_frames])` | `ttd_card_position([cpu])` |
-| Python | `emu.ttd_card_seek(cpu, instruction)` | `emu.ttd_card_step(cpu, n=1)` | `emu.ttd_card_step_over(cpu)` / `emu.ttd_card_step_out(cpu)` | `emu.ttd_card_reverse_step_over(cpu)` | `emu.ttd_card_reverse_continue(cpu, max_frames=None)` | `emu.ttd_card_position(cpu=None)` |
+**Moves while the machine stands inside the card's run.** A General Sound breakpoint, or a live card step (F7 / F8 /
+Ctrl+F8 on a card's tab at the history's end), parks the machine's thread inside the card's catch-up, in the middle
+of a main CPU instruction or of the frame end. A move in time asked there (seek, step-back / step-forward,
+step-instruction, reverse-step, reverse-step-over, reverse-continue, resume, branch-switch, branch-create, load) first
+leaves it: the machine runs on to the next main CPU instruction start, the cards' stops dropped on the way, and pauses
+there (live, unrecorded, D-3); then the move goes on. Only when it cannot leave (the call runs on the machine's own
+thread or holds its CPU, the resume is refused, or it does not get out within 2 s) is the move refused, 409, with the
+reason.
+
+| Plane | Seek | Step | Step over / out (forward) | Run to the cursor | Step over back | Reverse continue | Readout |
+|---|---|---|---|---|---|---|---|
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back` / `si-forward --cpu gs [--count N]`, `ttd reverse-step --cpu gs [--count N]` | `ttd si-forward --cpu gs --over` / `--out` | `ttd si-forward --cpu gs --to <pc> [--max-frames N]` | `ttd reverse-step-over --cpu gs` | `ttd reverse-continue --cpu gs [--max-frames N]` | `ttd position` (a `Card gs:` line) |
+| WebAPI / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}`, `POST /ttd/reverse-step {cpu, count}` | `POST /ttd/step-instruction {cpu, kind}` | `POST /ttd/step-instruction {cpu, kind: "to", pc, max_frames}` | `POST /ttd/reverse-step-over {cpu}` | `POST /ttd/reverse-continue {cpu, max_frames}` | `GET /ttd/position`, `GET /ttd/status` (`cards`) |
+| MCP `time_travel` | `card_seek` (`cpu`, `instruction`) | `card_step` (`cpu`, `count`; negative: back) | `card_step_over` / `card_step_out` (`cpu`) | `card_run_to_cursor` (`cpu`, `addr`, `max_frames`) | `card_reverse_step_over` (`cpu`), or `reverse_step_over` with `cpu` | `card_reverse_continue` (`cpu`, `max_frames`) | `card_position` (`cpu` optional) |
+| Lua | `ttd_card_seek(cpu, n)` | `ttd_card_step(cpu [, n])` | `ttd_card_step_over(cpu)` / `ttd_card_step_out(cpu)` | `ttd_card_run_to_cursor(cpu, pc [, max_frames])` | `ttd_card_reverse_step_over(cpu)` | `ttd_card_reverse_continue(cpu [, max_frames])` | `ttd_card_position([cpu])` |
+| Python | `emu.ttd_card_seek(cpu, instruction)` | `emu.ttd_card_step(cpu, n=1)` | `emu.ttd_card_step_over(cpu)` / `emu.ttd_card_step_out(cpu)` | `emu.ttd_card_run_to_cursor(cpu, pc, max_frames=None)` | `emu.ttd_card_reverse_step_over(cpu)` | `emu.ttd_card_reverse_continue(cpu, max_frames=None)` | `emu.ttd_card_position(cpu=None)` |
 
 Example: `ttd si-back --cpu gs --count 5` prints `TTD: gs at instruction 1200 (from 1205)` and
 `  Card gs: instruction 1200, PC #0A3C (card position; main CPU at frame 12 t 30411, PC #8009, +7 T inside its
 instruction)`. `ttd reverse-step-over --cpu gs` from just after a card routine prints
 `TTD: gs at instruction 1186 (from 1205), stepped back over a routine of 18 instruction(s)`; `ttd si-forward --cpu gs
---over` from that CALL prints `TTD: gs at instruction 1205 (from 1186)` and `  Searched 1 frame(s)`.
+--over` from that CALL prints `TTD: gs at instruction 1205 (from 1186)` and `  Searched 1 frame(s)`; `ttd si-forward
+--cpu gs --to 0x4020` prints `TTD: gs at instruction 1214 (from 1200), at the cursor #4020`.
 
 In the debuggers (Embedded and eCat) the card's tab uses these verbs: Shift+F7 / Shift+F8 / Shift+F9 are the card's
 step back, step over back and run back. F7 / F8 / Ctrl+F8 in the recorded past are the card's step / step over /
-step out through the history. At the history's end (`at_end`) they run the card's live step instead, unrecorded, as
-the main CPU's steps do (TTD branches D-3). Run to cursor (F4) on a card's tab is always the live card step.
+step out through the history, and Run to cursor (F4) is the card's run to the cursor through the history (not
+reached: a message, the live machine untouched). At the history's end (`at_end`) they run the card's live step
+instead, unrecorded, as the main CPU's steps do (TTD branches D-3). The time moves after such a live card step work:
+the machine leaves the card's run first (above); a card step back from there lands at the history's newest card
+instruction.
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 

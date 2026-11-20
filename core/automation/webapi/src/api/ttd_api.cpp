@@ -754,6 +754,8 @@ void EmulatorAPI::findLastTTD(const HttpRequestPtr& req,
 }
 
 /// @brief POST /api/v1/emulator/{id}/ttd/step-instruction
+/// The body is the TTDControl verb's options: dir; with cpu naming a card also count, or kind over / out (the card's
+/// step through the history) or to with pc and max_frames (the card's run to the cursor through the history)
 void EmulatorAPI::stepInstructionTTD(const HttpRequestPtr& req,
                                        std::function<void(const HttpResponsePtr&)>&& callback,
                                        const std::string& id) const

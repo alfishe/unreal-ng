@@ -9,6 +9,7 @@
 ///   ttd si-back --cpu gs --count 5     5 card instructions back (the main CPU follows by replay)
 ///   ttd reverse-continue --cpu ms      back to the MultiSound GS's previous breakpoint hit
 ///   ttd si-forward --cpu gs --over     the card's step over through the history (--out: its step out)
+///   ttd si-forward --cpu gs --to 0x8000   the card's run to the cursor through the history
 ///
 /// Worked example: `ttd si-back --cpu gs --count 5` prints
 /// `TTD: gs at instruction 1200 (from 1205)` and
@@ -95,7 +96,7 @@ inline std::string FormatCardLine(const StateNode& card, const char* newline)
     return ss.str();
 }
 
-/// The reply of a move on a card CPU (seek / step-instruction (kind over / out too) / reverse-step / reverse-step-over
+/// The reply of a move on a card CPU (seek / step-instruction (kind over / out / to too) / reverse-step / reverse-step-over
 /// / reverse-continue with cpu)
 inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newline)
 {
@@ -111,9 +112,13 @@ inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newlin
             ss << ", stepped back over a routine of " << Int(b.find("skipped")) << " instruction(s)";
         else if (Bool(b.find("call_out_of_reach")))
             ss << ", on the return: the routine's start is out of reach";
+        const bool toCursor = b.find("kind") && Text(b.find("kind")) == "to";
+        if (toCursor && Bool(b.find("hit")))
+            ss << ", at the cursor " << Hex4(Int(b.find("cursor")));
         if (Bool(b.find("history_end")))
-            ss << ", the step did not end in the history: at its end (the next step runs on live)";
-        else if (Bool(b.find("truncated")) && b.find("kind"))
+            ss << (b.find("kind") ? ", the step did not end in the history: at its end (the next step runs on live)"
+                                  : ", from past the history (stepped on live): at its end");
+        else if (Bool(b.find("truncated")) && b.find("kind") && !toCursor)
             ss << ", the step did not end in the frames searched (step again to go on)";
         if (const StateNode* hit = b.find("breakpoint"))
             ss << ", breakpoint " << Int(hit->find("id")) << " (" << Text(hit->find("kind")) << " "
@@ -124,7 +129,8 @@ inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newlin
         ss << "TTD: " << cpu << " did not move (" << Text(b.find("status")) << "): " << Text(b.find("message")) << newline;
     if (const StateNode* searched = b.find("searched_frames"))
         ss << "  Searched " << Int(searched) << " frame(s)"
-           << (Bool(b.find("truncated")) && !b.find("kind") ? " (max_frames reached)" : "")
+           << (Bool(b.find("truncated")) && (!b.find("kind") || Text(b.find("kind")) == "to") ? " (max_frames reached)"
+                                                                                                : "")
            << newline;
     if (const StateNode* card = b.find("card"))
         ss << FormatCardLine(*card, newline);

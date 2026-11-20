@@ -5,7 +5,11 @@
 #define BREAKPOINTDIALOG_H
 
 #include <QDialog>
+#include <QHash>
+#include <QSet>
 #include <QTableWidget>
+#include <QTimer>
+#include <QTreeWidget>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QComboBox>
@@ -35,6 +39,16 @@ public:
     explicit BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent = nullptr);
     ~BreakpointDialog();
 
+    /// The hits shown under an expanded breakpoint that only counts: at most this many of its record (the first ones
+    /// of a record of the first N, the newest of a record of the newest)
+    static constexpr int kShownHits = 200;
+    /// How often the expanded records are read (a read never parks the emulation: BreakpointManager::GetHitLog)
+    static constexpr int kHitPollMs = 250;
+
+    /// Reads the expanded breakpoints' records and updates their rows (the poll timer's tick); a record whose counts
+    /// did not move is not read again unless `force`
+    void refreshHitLogs(bool force = false);
+
 private slots:
     // Table actions
     void addBreakpoint();
@@ -49,7 +63,9 @@ private slots:
     
     // Table events
     void onBreakpointSelectionChanged();
-    void onBreakpointDoubleClicked(QTableWidgetItem* item);
+    void onBreakpointDoubleClicked(QTreeWidgetItem* item, int column);
+    void onItemExpanded(QTreeWidgetItem* item);
+    void onItemCollapsed(QTreeWidgetItem* item);
     void showContextMenu(const QPoint& pos);
     
     // Dialog events
@@ -68,12 +84,35 @@ private:
     void populateGroupComboBox();
     void updateButtonStates();
     void updateStatusBar();
+    /// The selected breakpoint's row (a hit row selects its breakpoint), nullptr when none
+    QTreeWidgetItem* selectedBreakpointItem() const;
+    static uint16_t breakpointIdOf(const QTreeWidgetItem* item);
+    /// Enables or disables the selected breakpoint
+    void setSelectedActive(bool active);
+    /// Sets the Status column of a breakpoint row from its state
+    static void setStatus(QTreeWidgetItem* item, bool active, bool countOnly, bool conditionFailed,
+                          const QString& conditionError);
+
+    /// The expanded row under a breakpoint that only counts: its record's summary and hits
+    struct HitView
+    {
+        QTreeWidgetItem* row = nullptr;   ///< the child row holding the widget
+        QLabel* summary = nullptr;
+        QTableWidget* table = nullptr;
+        uint64_t lastHitCount = UINT64_MAX;  ///< the counts the rows were made from (a record only moves with them)
+        uint64_t lastTotal = UINT64_MAX;
+        bool sized = false;                  ///< the columns fitted to the first hits
+    };
+    void refreshHitView(uint16_t id, HitView& view, bool force);
     
     std::shared_ptr<Emulator> _emulator;
     uint64_t m_breakpointObserverId = 0;  // Store the observer ID for cleanup
     QMutex m_mutex;  // For thread-safe access to the dialog
     QVBoxLayout* _mainLayout = nullptr;
-    QTableWidget* _breakpointTable = nullptr;
+    QTreeWidget* _breakpointTable = nullptr;
+    QTimer* _hitTimer = nullptr;            ///< runs while a record is expanded
+    QSet<uint16_t> _expandedIds;            ///< kept across a rebuild of the list
+    QHash<uint16_t, HitView> _hitViews;
     
     // Filter UI elements
     QComboBox* _groupFilter = nullptr;

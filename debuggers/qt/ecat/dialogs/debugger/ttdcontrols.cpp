@@ -340,7 +340,9 @@ bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::ma
     if (answer.value("call_out_of_reach").toBool())
         m_last_result += tr(", on the return: the routine's start is out of reach");
     if (answer.value("history_end").toBool())
-        m_last_result += tr(", the step did not end in the history: at its end (the next step runs live)");
+        m_last_result += answer.contains("kind")
+                             ? tr(", the step did not end in the history: at its end (the next step runs live)")
+                             : tr(", from past the history (stepped on live): at its end");
     else if (answer.value("truncated").toBool() && answer.contains("kind"))
         m_last_result += tr(", the step did not end in the frames searched (step again to go on)");
     poll(true);
@@ -348,7 +350,7 @@ bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::ma
     return true;
 }
 
-bool TtdControls::step_forward(const std::string &kind)
+bool TtdControls::step_forward(const std::string &kind, unsigned int address)
 {
     const QString card = card_cpu();
     if (card.isEmpty() || !m_shown || !m_live) return false;
@@ -358,7 +360,11 @@ bool TtdControls::step_forward(const std::string &kind)
     //At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step
     std::map<std::string, std::string> options{{"dir", "forward"}};
     if (kind != "in") options["kind"] = kind;
-    const QString title = kind == "over" ? tr("Step over") : kind == "out" ? tr("Step out") : tr("Step");
+    if (kind == "to") options["pc"] = std::to_string(address & 0xFFFF);
+    const QString title = kind == "over" ? tr("Step over")
+                          : kind == "out" ? tr("Step out")
+                          : kind == "to" ? tr("Run to the cursor")
+                                         : tr("Step");
     bool at_end = false;
     card_move(card, "step-instruction", std::move(options), title, &at_end);
     return !at_end;

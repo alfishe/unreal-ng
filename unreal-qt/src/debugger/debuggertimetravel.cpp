@@ -352,7 +352,9 @@ bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std:
     if (const StateNode* reach = reply.body.find("call_out_of_reach"); reach && reach->b)
         _lastResult += tr(", on the return: the routine's start is out of reach");
     if (const StateNode* end = reply.body.find("history_end"); end && end->b)
-        _lastResult += tr(", the step did not end in the history: at its end (the next step runs live)");
+        _lastResult += reply.body.find("kind")
+                           ? tr(", the step did not end in the history: at its end (the next step runs live)")
+                           : tr(", from past the history (stepped on live): at its end");
     else if (const StateNode* cut = reply.body.find("truncated"); cut && cut->b && reply.body.find("kind"))
         _lastResult += tr(", the step did not end in the frames searched (step again to go on)");
     emit moved();
@@ -360,7 +362,7 @@ bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std:
     return true;
 }
 
-bool DebuggerTimeTravel::stepForward(const std::string& kind)
+bool DebuggerTimeTravel::stepForward(const std::string& kind, uint16_t address)
 {
     const DebugCpuId front = cpu();
     if (!IsCardCpu(front) || !_emulator)
@@ -378,7 +380,12 @@ bool DebuggerTimeTravel::stepForward(const std::string& kind)
     std::map<std::string, std::string> options{{"dir", "forward"}};
     if (kind != "in")
         options["kind"] = kind;
-    const QString title = kind == "over" ? tr("Step Over") : kind == "out" ? tr("Step Out") : tr("Step");
+    if (kind == "to")
+        options["pc"] = std::to_string(address);
+    const QString title = kind == "over" ? tr("Step Over")
+                          : kind == "out" ? tr("Step Out")
+                          : kind == "to"  ? tr("Run to Cursor")
+                                          : tr("Step");
     bool atEnd = false;
     cardMove(front, "step-instruction", options, title, &atEnd);
     return !atEnd;

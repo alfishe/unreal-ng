@@ -171,9 +171,10 @@ public:
     /// @p after ends. The card's registers and code at that boundary arm it as ArmStep arms a step from a standing
     /// card; each later boundary is decided as StepBoundary decides it live: Over ends at the first one at the
     /// address after the instruction passed (StepOverTarget; anything else is a step in) with SP at or above the
-    /// start's; Out at the first one after a return ran with SP at or above the start's. A card step through the
-    /// recorded past (TimeTravelController::StepCardForward)
-    void ScanStep(StepKind kind, uint64_t after);
+    /// start's; Out at the first one after a return ran with SP at or above the start's; To (run to the cursor) at the
+    /// first one at @p target (the instruction at the start runs first, as ArmStep's To). A card step through the
+    /// recorded past (TimeTravelController::StepCardForward, RunCardToCursor)
+    void ScanStep(StepKind kind, uint64_t after, uint16_t target = 0);
     /// The scan has seen the step's start boundary
     bool ScanStepStarted() const { return _scanStepStarted; }
     /// The boundary the step ends at (false: not seen yet)

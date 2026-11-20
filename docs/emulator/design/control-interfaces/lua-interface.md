@@ -1283,6 +1283,10 @@ ttd_card_step_over("gs")             --> the card's step over through the histor
                                      --    its breakpoints end it first: breakpoint = {...}; history_end = true:
                                      --    not ended in the history, the card at its end; at the end: "at_end")
 ttd_card_step_out("gs")              --> the card's step out through the history (the same reply)
+ttd_card_run_to_cursor("gs", 0x4020) --> the card's run to the cursor through the history: its next instruction at
+                                     --    #4020 (hit = true, cursor); its breakpoints first (hit = false); not
+                                     --    reached (in the history or in max_frames, the 3rd argument, default
+                                     --    1000): reached = false, status "no_hit", nothing moved
 ttd_card_reverse_step_over("gs")     --> one card instruction back, or past a whole card routine to its CALL / RST
                                      --    when that instruction is its return: over_call, skipped, text
 ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
