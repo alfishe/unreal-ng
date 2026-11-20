@@ -39,6 +39,18 @@ best of three interleaved rounds with LTO, with and without PGO.
 | Frame benchmark Sprinter | 3160 us | 2102 us | -33 % |
 | Frame benchmark Next | 10297 us | 7439 us | -28 % |
 
+The release package itself, same machine, 2026-11-20: the CI `Windows-x86_64` package of pgo-ci `a31affcba` against
+a plain LTO build of the same commit (the CI configuration without `UNREAL_PGO`). Each machine boots for 300 frames,
+then 1000 frames are timed; the figures are the mean of three interleaved rounds. The training boots these models for
+300 frames only, so the timed stretch is beyond it.
+
+| Machine | Without PGO | With PGO | Change |
+|---------|-------------|----------|--------|
+| PENTAGON | 0.492 ms/frame | 0.368 ms/frame | -25 % |
+| TSL | 5.893 ms/frame | 3.723 ms/frame | -37 % |
+| SPRINTER | 2.610 ms/frame | 2.031 ms/frame | -22 % |
+| NEXT | 12.889 ms/frame | 7.247 ms/frame | -44 % |
+
 The pictures are byte-identical with and without PGO: PGO changes the layout and the inlining of the code, never
 what the code computes.
 
@@ -79,5 +91,5 @@ cmake --build scratch/build-pgo
 - MSVC needs LTO (the default), because the profile applies at the LTCG link. Run the instrumented binary in a
   developer shell, where `pgort140.dll` is on `PATH`.
 - `train.py --quick` runs a tenth of the frames, for checking the script itself.
-- The instrumented run is several times slower than a normal build. The full training takes a few minutes on
-  the CI runners.
+- The instrumented run is several times slower than a normal build. On the CI runners the full training takes
+  about 2 minutes with Clang (macOS), 5 to 10 with GCC and 13 to 17 with MSVC.
