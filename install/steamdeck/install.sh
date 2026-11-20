@@ -99,8 +99,9 @@ fi
 
 # A running Unreal NG (from Steam or the menu) is closed first: an update replaces it, and Steam counts it as a running
 # game, which would block the re-registration. Another game still blocks it (stop_steam says so)
-# the AppImage runtime and the app it starts from its mount (/tmp/.mount_UnrealN*/AppRun.wrapped)
-own_pids() { pgrep -f "^($APP_DIR/UnrealNG\.AppImage|[^ ]*/\.mount_UnrealN[^/ ]*/)" || true; }
+# the AppImage runtime and the app it starts from its mount: /tmp/.mount_<first 6 letters of the name><6 random>/,
+# so /tmp/.mount_UnrealgLLcJg/AppRun.wrapped (the random part need not start with the name's 7th letter)
+own_pids() { pgrep -f "^($APP_DIR/UnrealNG\.AppImage|[^ ]*/\.mount_Unreal[^/ ]*/)" || true; }
 if [ -n "$(own_pids)" ]; then
   kill $(own_pids) 2> /dev/null || true
   for _ in $(seq 1 40); do [ -z "$(own_pids)" ] && break; sleep 0.25; done

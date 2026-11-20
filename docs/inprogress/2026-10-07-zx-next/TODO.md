@@ -80,7 +80,10 @@ Not planned yet:
 - [ ] NR #8F memory mapping modes (Pentagon 512 / 1024 paging through #EFF7): stored only
 - [ ] SPI flash on port #E7 (config mode, 16 MB, a `[NEXT] FlashFile=`): the select is decoded and ignored
 - [ ] The generic `DivMmcPaging` as a `divmmc` slot card (machine reset, TTD blob, the +2A/+3 ROM-3-only automap); the Next has its own
-- [ ] Border colour changes of the CPU (#FE) inside a line: `ScreenNext::UpdateScreen` draws whole lines, only the copper splits one
+- [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` queues the place where the new
+  colour reaches the output and the line is drawn once with its border in runs (2000 changes a frame: +3.3 %), by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
+  next 8-pixel cell; the Pentagon timing at once); design-video-timing.md section 6a, `NextBorder*_Test`. The outer border around
+  the grid and the Timex hi-res border do not change mid-line
 - [ ] Sound: the AY through the standard stack's voicing and the `ym2149.vhd` volume table (NextAudio uses the generic AY levels); a test
   of the rendered levels of ABC / ACB / mono (NR #08 bit 5, NR #09 bits 7:5); PT3 players through NextZXOS, the demos' music phase against
   jnext, `zxnext_sfx` / DMA sample play
@@ -111,8 +114,23 @@ Not planned yet:
 - [x] Media: the esxDOS-only mode (requirements.md Q11); refresh phases.md (2026-10-26: feature `esxdos`, `NextEsxDos`
   serves the API on the SD card's FAT volume without the firmware, esxdos-and-sd.md section 5a, `*NextEsxDos*` tests;
   phases.md carries a status line, stale notes removed)
-- [ ] Reference compares: the NextZXOS welcome-screen border (palette paper entry, bright / flash) against a board or jnext screenshot;
-  the full ZEsarUX `tbblue.c` diff, the wiki pages and the manual (research-fpga-vhdl.md section 23)
+- [x] Reference compares (2026-11-20): the NextZXOS welcome-screen border matches jnext's headless reference pixel for pixel
+  (`(182, 182, 182)`, palette entry 23; bright / flash have no part in a plain border, zxula.vhd 419 / 471), the wiki pages and the
+  manual ([research-reference-compares.md](research-reference-compares.md)), the full ZEsarUX `tbblue.c` diff
+  ([research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md)). Bug candidates, each against the VHDL, none fixed yet:
+- [ ] NextREG read-back of narrow and unknown registers follows the VHDL mux (zxnext.vhd 5881-6285; tbblue diff #1)
+- [ ] NR #22 bit 7 reads the INT pulse (zxnext.vhd 5991; tbblue diff #2, reference compares #2)
+- [ ] NR #C0 bits 2:1 read the CPU's IM mode (zxnext.vhd 6229; tbblue diff #3)
+- [ ] NR #02 bits 3:2 kept when NR #06 refuses the NMI (zxnext.vhd 2090, 3843; tbblue diff #4)
+- [ ] NR #20 generates interrupts (im2_peripheral.vhd 186-192; tbblue diff #5)
+- [ ] Interrupt status set for a disabled source and in pulse mode (im2_peripheral.vhd 160; tbblue diff #6)
+- [ ] Boot ROM window 8K mirrored at #2000, writes to SRAM (zxnext.vhd 3199-3204; tbblue diff #7)
+- [ ] Copper mode 11 restarts at cvc 0, not at the paper top with NR #64 (copper.vhd 80; tbblue diff #8)
+- [ ] Blend modes 110 / 111 and the stencil use the full 3-bit blue (zxnext.vhd 7286-7341; tbblue diff #9)
+- [ ] Blend source 00 keeps the ULA mix when NR #68 bit 7 disables the ULA (zxnext.vhd 7100; tbblue diff #10, check on a board first)
+- [ ] ULANext full-ink paper / border is the NR #4A colour, not transparent (zxula.vhd 500-525; tbblue diff #11)
+- [ ] Banks 5 and 7 exist twice: MMU pages #0A / #0B / #0E reach the BRAM, Layer 2 and the #123B / NR #04 mappings the SRAM
+  (zxnext.vhd 2961, 3039-3063, 3077; reference compares bug A)
 - [ ] A/B benchmarks: the N2 `Read/WriteDebugEffects` Debug lean (+0.8 %) on a quiet machine, the N3c changes
 - [ ] The `NextState` golden: `testdata/slots/fitted-devices.txt` pins `62:<size>`, so every Next state change regenerates it; switch the
   `next` block to presence only (`62:var`) or keep regenerating
