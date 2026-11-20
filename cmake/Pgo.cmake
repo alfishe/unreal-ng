@@ -6,8 +6,8 @@
 #   USE       optimise with the profile in UNREAL_PGO_DIR
 #   (empty)   off: a normal build
 # Toolchains:
-#   MSVC      unreal-qt only (unreal_pgo_target): /GENPROFILE, /USEPROFILE on the LTCG link. Needs LTO (/GL objects);
-#             USE only relinks. The training writes unreal-qt!N.pgc beside unreal-qt.pgd.
+#   MSVC      unreal-qt only (unreal_pgo_target): /GENPROFILE:EXACT, /USEPROFILE on the LTCG link. Needs LTO (/GL objects);
+#             USE only relinks. The training writes unreal-qt!N.pgc into UNREAL_PGO_DIR (VCPROFILE_PATH), beside the .pgd.
 #   GCC       every object: -fprofile-generate / -fprofile-use. The .gcda files are named after the object paths,
 #             so GENERATE and USE build in the same directory.
 #   Clang     every object: -fprofile-generate writes .profraw files; train.py merges them into default.profdata
@@ -56,9 +56,11 @@ if (UNREAL_PGO)
             if (NOT EXISTS "${UNREAL_PGO_DIR}/default.profdata")
                 message(FATAL_ERROR "UNREAL_PGO=USE: ${UNREAL_PGO_DIR}/default.profdata is missing (tools/pgo/train.py makes it)")
             endif ()
-            # Functions the profile does not cover (the other applications, the build-time tools) are not errors
+            # Functions the profile does not cover (the other applications, the build-time tools) are not errors, nor
+            # is an inline function whose profile came from a translation unit that built it differently ("function
+            # control flow change detected (hash mismatch)", -Wbackend-plugin): its counts are dropped
             set(_unrealPgoFlags "-fprofile-use=${UNREAL_PGO_DIR}/default.profdata" -Wno-profile-instr-unprofiled
-                -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
+                -Wno-profile-instr-out-of-date -Wno-profile-instr-missing -Wno-backend-plugin)
         endif ()
     else ()
         message(FATAL_ERROR "UNREAL_PGO: no profile-guided optimisation for ${CMAKE_CXX_COMPILER_ID}")
@@ -79,7 +81,10 @@ function(unreal_pgo_target target)
         return()
     endif ()
     if (UNREAL_PGO STREQUAL "GENERATE")
-        target_link_options(${target} PRIVATE "$<$<CONFIG:Release>:/GENPROFILE:PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
+        # EXACT: interlocked counters. The emulation, sound and WebAPI threads run the same functions at once; with the
+        # plain counters the instrumented build crashed on Windows arm64 (two threads in NeoGS at the same address)
+        target_link_options(${target} PRIVATE
+                            "$<$<CONFIG:Release>:/GENPROFILE:EXACT,PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
     else ()
         target_link_options(${target} PRIVATE "$<$<CONFIG:Release>:/USEPROFILE:PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
     endif ()

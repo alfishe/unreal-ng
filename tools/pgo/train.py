@@ -119,6 +119,9 @@ def load(api, emulator, path, sd=None):
 
 def workload(api, scratch, quick):
     scale = 0.1 if quick else 1.0
+    # The window's own machine would run beside the workload the whole time: pause it
+    for instance in api.call('GET', '/emulator').get('emulators', []):
+        pause(api, f"/emulator/{instance['id']}")
     models = [m['name'] for m in api.call('GET', '/emulator/models')['models'] if m.get('creatable', True)]
     for model in models:
         # A model that cannot start here (a ROM the build machine lacks) only narrows the profile
@@ -199,6 +202,9 @@ def main():
     for name, offset in (('UNREAL_WEBAPI_PORT', 0), ('UNREAL_CLI_PORT', 1), ('UNREAL_MCP_PORT', 2),
                          ('UNREAL_GDB_PORT', 3), ('UNREAL_DEZOG_PORT', 4), ('UNREAL_ZRCP_PORT', 5)):
         env[name] = str(args.port_base + offset)
+    # MSVC: the instrumented binary writes its .pgc files where VCPROFILE_PATH says (else beside the executable);
+    # the USE link reads them beside the .pgd, which is in the profile directory
+    env['VCPROFILE_PATH'] = profile_dir
     # No companion daemon, no saved window state or recent files from or into the user's settings
     env.update(UNREAL_STREAMDECK_SUPERVISOR='off', UNREAL_QT_VIEW_SETTINGS='off', UNREAL_RECENT_FILES='off')
 
@@ -230,6 +236,9 @@ def main():
             print_log_tail(log_path)
             return 1
 
+    # .pgc files left beside the executable (an MSVC runtime that ignores VCPROFILE_PATH) go to the .pgd
+    for stray in glob.glob(os.path.join(os.path.dirname(os.path.abspath(args.binary)), '*.pgc')):
+        shutil.move(stray, os.path.join(profile_dir, os.path.basename(stray)))
     merge_clang_profile(profile_dir, args.llvm_profdata)
     found = {pattern: len(glob.glob(os.path.join(profile_dir, '**', pattern), recursive=True))
              for pattern in ('*.pgc', '*.gcda', 'default.profdata')}
