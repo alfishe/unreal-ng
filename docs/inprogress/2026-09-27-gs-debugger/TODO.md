@@ -205,6 +205,31 @@ reach its boundary.
   `LastStop().serial`; a move in time does not. Guiplane: `debugger.select_cpu {cpu}`, `cpu` / `cpus` in the
   `debugger` state, `cpu` in the views'. Code: `unreal-qt/src/debugger/debuggercpu.cpp`. Tests:
   `DebuggerCpuTabs_Test` (unreal-qt-tests).
+- [x] The card tab's open ends (2026-11-19, branch `card-tails`, not landed):
+  - Labels: the card's own `LabelManager` (`DebugManager::GetLabelManager(cpu)`) in the Embedded memory view's
+    tooltip and Label Manager, and in eCat's card disassembly (`Z80DisAsm` with the card's labels); no markup and no
+    main CPU labels on a card's tab.
+  - Step over back on the card: `TimeTravelController::ReverseStepOverCard` (one card instruction back, or past the
+    whole routine when that instruction is a return that lifted the stack to the level now: a replay scan
+    backwards with the card's SP at each boundary, `GSCardTarget::ScanStackLevel`, at most 1000 frames; out of
+    reach the card stays on the return, `call_out_of_reach`). `reverse-step-over {cpu}` on every plane
+    (CLI `ttd reverse-step-over --cpu`, Lua / Python `ttd_card_reverse_step_over`, MCP `card_reverse_step_over` and
+    `reverse_step_over` with `cpu`, REST / WebSocket). Shift+F8 on the card's tab in both debuggers.
+  - Step over / step out forward in the past: `TimeTravelController::StepCardForward` (a forward replay scan that
+    decides each card boundary as a live card step does, `GSCardTarget::ScanStep`; the card's breakpoints end it
+    first; not ended in the history: to its end, `history_end`; 1000 frames at most, `truncated`).
+    `step-instruction {cpu, kind: over | out}` on every plane (CLI `ttd si-forward --cpu gs --over` / `--out`,
+    Lua / Python `ttd_card_step_over` / `ttd_card_step_out`, MCP `card_step_over` / `card_step_out`). F8 /
+    Ctrl+F8 on the card's tab in the past in both debuggers.
+  - F7 / F8 / Ctrl+F8 at the history's end (`at_end`) run the card's live step, unrecorded (D-3, as the main CPU).
+  - Left: run to cursor (F4) on a card's tab in the past is still the live card step (it leaves the card position).
+  - Tests: `TTD_CardReverseStepOver_*`, `TTD_CardStepForward_*` (trace oracles: the recording's own card PC / SP at
+    every boundary), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`, Lua, MCP and OpenAPI tests,
+    `DebuggerTimeTravelCard_Test.TheCardsTabStepsOverBackAndThroughThePast`, `unreal-debugger --self-check`, live
+    `test_ttd_card_oracle.py` (step over back against single steps back, step over / out against single steps
+    forward). The firmware right after its boot (the classic card's RAM test, the NeoGS's command wait loop) runs
+    no CALL for frames on end, so these tests give the card nested routines of its own in its RAM, interrupts off
+    (`ttdtest::LoadCardRoutines`, the live script's `plant_card_routines`).
 
 ### Later
 

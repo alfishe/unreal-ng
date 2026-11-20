@@ -699,10 +699,12 @@ void EmulatorAPI::reverseStepTTD(const HttpRequestPtr& req,
 
 /// @brief POST /api/v1/emulator/{id}/ttd/reverse-step-over
 ///
-/// Body: {} (none). One instruction back, or back past a whole routine when that instruction is its return.
+/// Body: {} or { "cpu": "gs" | "neogs" | "ms" | "multisound" }. One instruction back, or back past a whole routine
+/// when that instruction is its return; with cpu the same in the card CPU's instructions (gs-debugger design §8).
 ///
 /// Response: { "stepped", "over_call", "skipped"?, "call_out_of_reach"?, "blocking_marker"?, "pc"?, "frame",
-///             "tinframe", "text" }
+///             "tinframe", "text" }; with cpu a card move's reply (cpu, status, reached, from, target, card) beside
+///             stepped, over_call, skipped?, call_out_of_reach?, pc?, text
 void EmulatorAPI::reverseStepOverTTD(const HttpRequestPtr& req,
                                      std::function<void(const HttpResponsePtr&)>&& callback,
                                      const std::string& id) const

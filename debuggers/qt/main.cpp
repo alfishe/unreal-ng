@@ -608,8 +608,13 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     };
     auto count = [](const QJsonObject &c) { return (uint64_t)c.value("instruction").toInteger(); };
     QAction * step = nullptr;
-    for (QAction * a : dw->actions())
+    QAction * step_over = nullptr;
+    QAction * step_out = nullptr;
+    for (QAction * a : dw->actions()) {
         if (a->text() == "Step") step = a;
+        if (a->text() == "Step over") step_over = a;
+        if (a->text() == "Step out of the routine") step_out = a;
+    }
 
     // The readout's words, inside an instruction of the main CPU and at its boundary
     const QJsonObject inside{{"cpu", "gs"}, {"known", true}, {"instruction", 1200}, {"pc", 0x0A3C}, {"card_position", true},
@@ -639,8 +644,9 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     check(ttd->card_cpu() == name && c0.value("known").toBool(), "ttd card: the card's tab, its count known");
     printf("    (card %s at instruction %llu)\n", name.toUtf8().constData(), (unsigned long long)c0.value("instruction").toInteger());
     check(ttd->step_back_action()->isEnabled() && ttd->run_back_action()->isEnabled() &&
-              !ttd->step_over_back_action()->isEnabled() && ttd->step_back_action()->toolTip().contains(name + " instruction"),
-          "ttd card: Step Back and Run Back the card's, Step Over Back off");
+              ttd->step_over_back_action()->isEnabled() && ttd->step_back_action()->toolTip().contains(name + " instruction") &&
+              ttd->step_over_back_action()->toolTip().contains(name + " instruction"),
+          "ttd card: Step Back, Step Over Back and Run Back the card's");
     check(ttd->moment().contains(name + " at instruction " + QString::number(count(c0))), "ttd card: the moment names the card");
 
     // Step Back: one card instruction; the card's view reads the card there, the moment names both CPUs
@@ -679,10 +685,43 @@ void card_ttd_check(ecatshim::Emulator * m, DebuggerWindow * dw, TtdControls * t
     check(step != nullptr && c2.value("card_position").toBool() && count(c2) == n1 + 1 && m->debug_paused(),
           "ttd card: Step (F7) in the past, one card instruction forward");
 
+    // Step Over Back (Shift+F8): the card back, one instruction or over a whole card routine
+    said = Said();
+    ttd->step_over_back();
+    const QJsonObject cb = card();
+    check(said.count == 0 && cb.value("card_position").toBool() && count(cb) < count(c2) &&
+              ttd->last_result().startsWith("Step Over Back: " + name),
+          "ttd card: Step Over Back, the card back");
+    // Step over (F8) and Step out (Ctrl+F8) in the past: the card's steps through the history, no live run. From well
+    // inside the history: the checks so far stand at its end, where F7 / F8 / Ctrl+F8 step on live (D-3) and leave the
+    // machine inside the card's run, which no move in time takes
+    const uint64_t past = count(cb) > 5000 ? count(cb) - 5000 : count(cb);
+    auto seek_card = [&](uint64_t n) {
+        ttd->call("seek", {{"cpu", name.toStdString()}, {"instruction", std::to_string(n)}}, nullptr);
+        ttd->poll(true);
+    };
+    seek_card(past);
+    if (step_over != nullptr) step_over->trigger();
+    const QJsonObject co = card();
+    check(step_over != nullptr && said.count == 0 && co.value("card_position").toBool() && count(co) > past &&
+              m->debug_paused() && ttd->last_result().startsWith("Step over: " + name),
+          "ttd card: Step over (F8) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    seek_card(past);
+    if (step_out != nullptr) step_out->trigger();
+    const QJsonObject cu = card();
+    check(step_out != nullptr && said.count == 0 && cu.value("card_position").toBool() && count(cu) > past &&
+              m->debug_paused() && ttd->last_result().startsWith("Step out: " + name),
+          "ttd card: Step out (Ctrl+F8) in the past, through the history");
+    if (!ttd->last_result().isEmpty()) printf("    (%s)\n", ttd->last_result().toUtf8().constData());
+    // The checks below start in the past too (their F7s replay the history, not live steps)
+    const uint64_t base = count(c2) > 2000 ? count(c2) - 2000 : count(c2);
+    seek_card(base);
+
     // Run Back without a card breakpoint: the core's refusal is said, nothing moved
     said = Said();
     ttd->run_back();
-    check(said.count == 1 && said.warning && !said.text.isEmpty() && count(card()) == count(c2),
+    check(said.count == 1 && said.warning && !said.text.isEmpty() && count(card()) == base,
           "ttd card: Run Back without a card breakpoint is refused, said");
     if (said.count == 1) printf("    (said: %s)\n", said.text.toUtf8().constData());
 

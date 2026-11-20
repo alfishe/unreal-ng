@@ -1531,6 +1531,19 @@ public:
     /// before the card's count now, replaying at most @p maxFrames frames backwards; none: the machine stays and the
     /// answer says so (NoHit, NoBreakpoints)
     ttd::TTDCardMoveResult ReverseContinueCard(DebugCpuId cpu, uint64_t maxFrames = kCardReverseMaxFrames);
+    /// The card's step over back (the debuggers' Shift+F8 on a card's tab), as ReverseStepOver on the main CPU: one
+    /// card instruction back, but when that instruction is a return (RET, RET cc taken, RETI, RETN) that lifted the
+    /// card's stack to where it is now, back past the whole routine to the newest card instruction at this stack level
+    /// before it (the CALL / RST that entered it, or the instruction an interrupt came after). Found by replaying
+    /// frames backwards with the card's SP at each boundary, at most kCardReverseMaxFrames; out of reach the card
+    /// stays on the return (callOutOfReach)
+    ttd::TTDCardMoveResult ReverseStepOverCard(DebugCpuId cpu);
+    /// The card's step over or step out (@p over false) through the recorded past (the debuggers' F8 / Ctrl+F8 on a
+    /// card's tab in the past): the step a live card step (RunControl::CardStep) would take from where the card
+    /// stands, found by replaying forward with the card's registers at each boundary (GSCardTarget::ScanStep). The
+    /// card's own stopping breakpoints end it first, as live. A step that does not end in the history goes to the
+    /// history's end (historyEnd: the next step runs on live); at the end already: AtEnd, nothing moved
+    ttd::TTDCardMoveResult StepCardForward(DebugCpuId cpu, bool over);
     /// Every card CPU's readout for a poll from another thread (the position and status verbs): the card position as
     /// its move published it, the other cards where they stand (read as CurrentPosition reads the main CPU, never
     /// parking the machine)
@@ -1850,7 +1863,7 @@ private:
     /// The move itself (SeekToCardInstruction's body, inside an operation)
     void CardSeekInternal(DebugCpuId cpu, uint64_t instruction, uint64_t hint, ttd::TTDCardMoveResult& result);
     /// The card's count where the machine stands, the card run up to the main CPU's moment when no card position
-    bool CardCountNow(DebugCpuId cpu, uint64_t& count);
+    bool CardCountNow(DebugCpuId cpu, uint64_t& count, uint16_t* sp = nullptr);
     /// Before the machine runs: the card's state as the main boundary's seek left it, the card position dropped
     void LeaveCardStand();
     /// A RestoreLiveState put the card's blob back without its regions: the card position's copy again

@@ -771,7 +771,7 @@ struct TTDCardPosition
 };
 
 /// @brief What a card seek, card step or card reverse continue did (TimeTravelController::SeekToCardInstruction,
-/// StepCardInstructions, ReverseContinueCard).
+/// StepCardInstructions, StepCardForward, ReverseStepOverCard, ReverseContinueCard).
 struct TTDCardMoveResult
 {
     enum class Status : uint8_t
@@ -796,6 +796,18 @@ struct TTDCardMoveResult
     uint16_t breakpointId = 0xFFFF;   ///< reverse continue: the hit's breakpoint
     uint8_t hitKind = 0;              ///< BreakpointHitKind of the hit
     uint16_t hitAddress = 0;          ///< the hit's PC, memory address, port or event kind
+    /// reverse step over: the card instruction stepped back over was a routine's return (or an interrupt handler's)
+    /// and the card went back past the whole routine, to the instruction at this stack level before it
+    bool overCall = false;
+    /// reverse step over: overCall wanted, but the routine's start is out of reach (older than the history or than
+    /// kCardReverseMaxFrames frames back): the card stays one instruction back, on the return
+    bool callOutOfReach = false;
+    uint64_t skipped = 0;             ///< reverse step over, overCall: the routine's instructions passed over
+    /// step over / step out through the past: the step did not end in the history; the card went to the history's
+    /// end (the next step runs on live, D-3)
+    bool historyEnd = false;
+    /// step over / step out through the past: one of the card's breakpoints ended the step before it ended itself
+    bool stoppedByBreakpoint = false;
     bool Ok() const { return status == Status::Ok; }
 };
 

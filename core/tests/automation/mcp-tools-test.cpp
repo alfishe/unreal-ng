@@ -4659,6 +4659,92 @@ TEST_F(McpTools_Test, TimeTravel_CardReverseContinue_NoHitIsAnErrorTheModelReads
     EXPECT_NE(found.text.find("breakpoint 3 (execute 0x0A3C)"), std::string::npos) << found.text;
 }
 
+TEST_F(McpTools_Test, TimeTravel_CardReverseStepOver_GoesToTheReverseStepOverRouteWithTheCpu)
+{
+    Json::Value reply = CardMoveReply(true, "ok", 1205, 1190);
+    reply["stepped"] = true;
+    reply["over_call"] = true;
+    reply["skipped"] = 14;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-step-over"] = {200, reply};
+
+    Json::Value missing;
+    missing["action"] = "card_reverse_step_over";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "cpu is required";
+
+    Json::Value args;
+    args["action"] = "card_reverse_step_over";
+    args["cpu"] = "ms";
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step-over");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "ms");
+    EXPECT_NE(result.text.find("gs at card instruction 1190 (from 1205), stepped back over a routine of 14 instruction(s)"),
+              std::string::npos)
+        << result.text;
+
+    // reverse_step_over with a card cpu: the same; without one (or main) the main CPU's, no cpu in the body
+    Json::Value withCpu;
+    withCpu["action"] = "reverse_step_over";
+    withCpu["cpu"] = "gs";
+    ASSERT_FALSE(RunTool(*_registry, "time_travel", withCpu, *_caller).isError);
+    EXPECT_EQ(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step-over")->body["cpu"].asString(), "gs");
+    Json::Value main;
+    main["action"] = "reverse_step_over";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-step-over"] = {200, Json::Value(Json::objectValue)};
+    RunTool(*_registry, "time_travel", main, *_caller);
+    EXPECT_FALSE(_caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-step-over")->body.isMember("cpu"));
+
+    // Nothing moved (the history's start): an error the model reads
+    Json::Value atStart = CardMoveReply(false, "at_start", 7, 6);
+    atStart["message"] = "card instruction 6 is before the history";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-step-over"] = {200, atStart};
+    const mcp::ToolResult refused = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("did not move (at_start)"), std::string::npos) << refused.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardStepOverAndOut_GoToStepInstructionWithTheKind)
+{
+    Json::Value reply = CardMoveReply(true, "ok", 1200, 1290);
+    reply["kind"] = "over";
+    reply["searched_frames"] = 1;
+    reply["history_end"] = true;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, reply};
+
+    Json::Value missing;
+    missing["action"] = "card_step_over";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "cpu is required";
+
+    for (const char* action : {"card_step_over", "card_step_out"})
+    {
+        Json::Value args;
+        args["action"] = action;
+        args["cpu"] = "gs";
+        const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+        ASSERT_FALSE(result.isError) << result.text;
+        const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+        ASSERT_NE(call, nullptr);
+        EXPECT_EQ(call->body["cpu"].asString(), "gs");
+        EXPECT_EQ(call->body["dir"].asString(), "forward");
+        EXPECT_EQ(call->body["kind"].asString(), std::string(action) == "card_step_over" ? "over" : "out");
+        EXPECT_FALSE(call->body.isMember("count"));
+        EXPECT_NE(result.text.find("gs at card instruction 1290 (from 1200)"), std::string::npos) << result.text;
+        EXPECT_NE(result.text.find("at its end (the next step runs on live)"), std::string::npos) << result.text;
+    }
+
+    // At the history's end: nothing moved, an error the model reads
+    Json::Value atEnd = CardMoveReply(false, "at_end", 1290, 0);
+    atEnd["message"] = "card instruction 1290 is the history's end: the next step runs on live";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, atEnd};
+    Json::Value args;
+    args["action"] = "card_step_out";
+    args["cpu"] = "neogs";
+    const mcp::ToolResult refused = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(refused.isError);
+    EXPECT_NE(refused.text.find("did not move (at_end)"), std::string::npos) << refused.text;
+}
+
 TEST_F(McpTools_Test, TimeTravel_CardPosition_ReadsThePositionsCards)
 {
     Json::Value position;

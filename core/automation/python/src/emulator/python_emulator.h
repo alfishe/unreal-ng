@@ -7168,6 +7168,24 @@ namespace PythonBindings
             }, "Step a sound card's CPU by n instructions (negative: back)",
                py::arg("cpu"), py::arg("n") = 1)
 
+            .def("ttd_card_reverse_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-step-over", {{"cpu", cpu}}));
+            }, "A sound card CPU's step over back: one card instruction back, or past a whole card routine to its "
+               "CALL / RST when that instruction is its return (over_call, skipped in the reply)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "over"}}));
+            }, "A sound card CPU's step over through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_out", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "out"}}));
+            }, "A sound card CPU's step out through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
             .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
                 std::map<std::string, std::string> options{{"cpu", cpu}};
                 if (maxFrames)

@@ -6813,6 +6813,21 @@ public:
                                                                                 {"count", std::to_string(count)}})));
         });
 
+        // ttd_card_reverse_step_over(cpu): the card's step over back: one card instruction back, or past a whole card
+        // routine to its CALL / RST when that instruction is its return (over_call, skipped in the reply)
+        lua.set_function("ttd_card_reverse_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("reverse-step-over", {{"cpu", cpu}})));
+        });
+
+        // ttd_card_step_over(cpu) / ttd_card_step_out(cpu): the card's step over / step out through the history (its
+        // breakpoints end it first; history_end: not ended in the history, the card at its end)
+        lua.set_function("ttd_card_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "over"}})));
+        });
+        lua.set_function("ttd_card_step_out", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "out"}})));
+        });
+
         // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
         lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
                                                              sol::optional<uint64_t> maxFrames) -> sol::object {

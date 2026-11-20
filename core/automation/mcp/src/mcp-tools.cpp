@@ -6252,6 +6252,14 @@ std::string FormatCardMove(const Json::Value& b)
     {
         text = b["cpu"].asString() + " at card instruction " + std::to_string(b["target"].asUInt64()) + " (from " +
                std::to_string(b["from"].asUInt64()) + ")";
+        if (b.get("over_call", false).asBool())
+            text += ", stepped back over a routine of " + std::to_string(b["skipped"].asUInt64()) + " instruction(s)";
+        else if (b.get("call_out_of_reach", false).asBool())
+            text += ", on the return: the routine's start is out of reach";
+        if (b.get("history_end", false).asBool())
+            text += ", the step did not end in the history: at its end (the next step runs on live)";
+        else if (b.isMember("kind") && b.get("truncated", false).asBool())
+            text += ", the step did not end in the frames searched (step again to go on)";
         if (b.isMember("breakpoint"))
             text += ": breakpoint " + std::to_string(b["breakpoint"]["id"].asUInt()) + " (" +
                     b["breakpoint"]["kind"].asString() + " " + Hex16(b["breakpoint"]["address"].asUInt()) + ")";
@@ -6260,7 +6268,7 @@ std::string FormatCardMove(const Json::Value& b)
         text = b["cpu"].asString() + " did not move (" + b["status"].asString() + "): " + b["message"].asString();
     if (b.isMember("searched_frames"))
         text += "; searched " + std::to_string(b["searched_frames"].asUInt64()) + " frame(s)" +
-                (b.get("truncated", false).asBool() ? " (max_frames reached)" : "");
+                (b.get("truncated", false).asBool() && !b.isMember("kind") ? " (max_frames reached)" : "");
     if (b.isMember("card"))
         text += "\n" + FormatCardReadout(b["card"]);
     return text;
@@ -6281,7 +6289,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
                                "memory_at", "memory_diff", "card_seek", "card_step", "card_reverse_continue",
-                               "card_position"})
+                               "card_reverse_step_over", "card_step_over", "card_step_out", "card_position"})
     {
         schema["properties"]["action"]["enum"].append(action);
     }
@@ -6299,6 +6307,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "completed instruction with the T-states into the next): 'card_seek' (to card 'instruction', its count), "
         "'card_step' ('count' card instructions, negative: back), 'card_reverse_continue' (back to the card's "
         "previous breakpoint hit, its own breakpoints; 'max_frames' bounds the search, default 1000), "
+        "'card_reverse_step_over' (the card's step over back: one card instruction back, or past a whole card routine "
+        "to its CALL / RST when that instruction is its return), "
+        "'card_step_over' / 'card_step_out' (the card's step over / step out through the history, as a live card step "
+        "would go; its breakpoints end it first; not ended in the history: the card at its end, history_end), "
         "'card_position' (each card's instruction, PC and where the main CPU stands), "
         "'reverse_step' (count instructions, tstates OR scanlines back), 'reverse_step_over' (one instruction back, "
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
@@ -6596,7 +6608,9 @@ void RegisterTimeTravel(ToolRegistry& registry)
     for (const char* cpu : {"gs", "neogs", "ms", "multisound"})
         schema["properties"]["cpu"]["enum"].append(cpu);
     schema["properties"]["cpu"]["description"] =
-        "card_seek / card_step / card_reverse_continue / card_position: the sound card's CPU (gs and neogs: the "
+        "card_seek / card_step / card_reverse_continue / card_reverse_step_over / card_step_over / card_step_out / "
+        "card_position (reverse_step_over "
+        "with cpu: as card_reverse_step_over): the sound card's CPU (gs and neogs: the "
         "General Sound slot; ms and multisound: the ZX-MultiSound's GS)";
     schema["properties"]["instruction"]["type"] = "integer";
     schema["properties"]["instruction"]["description"] =
@@ -7029,6 +7043,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 }
             }
             else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue" ||
+                     action == "card_reverse_step_over" || action == "card_step_over" || action == "card_step_out" ||
                      action == "card_position")
             {
                 const std::string cpu = args.get("cpu", "").asString();
@@ -7065,6 +7080,11 @@ void RegisterTimeTravel(ToolRegistry& registry)
                     (*body)["dir"] = n < 0 ? "back" : "forward";
                     (*body)["count"] = static_cast<Json::UInt64>(n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n));
                 }
+                else if (action == "card_step_over" || action == "card_step_out")
+                {
+                    (*body)["dir"] = "forward";
+                    (*body)["kind"] = action == "card_step_over" ? "over" : "out";
+                }
                 else if (action == "card_reverse_continue")
                 {
                     if (!CopyNumber(args, "max_frames", *body, error))
@@ -7073,6 +7093,13 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         return;
                     }
                 }
+            }
+            else if (action == "reverse_step_over")
+            {
+                // With a card CPU: as card_reverse_step_over (main or none: the main CPU's)
+                const std::string cpu = args.get("cpu", "").asString();
+                if (!cpu.empty() && cpu != "main")
+                    (*body)["cpu"] = cpu;
             }
             else if (action == "probe_frames")
             {
@@ -7420,11 +7447,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         return text;
                     }, done);
                 }
-                else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue")
+                else if (action == "card_seek" || action == "card_step" || action == "card_reverse_continue" ||
+                         action == "card_reverse_step_over" || action == "card_step_over" ||
+                         action == "card_step_out" || (action == "reverse_step_over" && body->isMember("cpu")))
                 {
-                    const std::string route = action == "card_seek"   ? "/ttd/seek"
-                                              : action == "card_step" ? "/ttd/step-instruction"
-                                                                      : "/ttd/reverse-continue";
+                    const bool stepForward =
+                        action == "card_step" || action == "card_step_over" || action == "card_step_out";
+                    const std::string route = action == "card_seek"               ? "/ttd/seek"
+                                              : stepForward                       ? "/ttd/step-instruction"
+                                              : action == "card_reverse_continue" ? "/ttd/reverse-continue"
+                                                                                  : "/ttd/reverse-step-over";
                     CallAndSummarize("POST", Endpoint(id, route), body.get(), caller, [](const Json::Value& b) {
                         return FormatCardMove(b) + FormatCheck(b);
                     }, [done](ToolResult result) {

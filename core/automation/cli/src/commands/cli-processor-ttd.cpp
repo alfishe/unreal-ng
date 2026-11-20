@@ -26,7 +26,8 @@
 ///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
 ///   ttd replay-check [F [G]]   — replay each frame and compare it with the next checkpoint
 ///   ttd seek-check [on|off]    — every seek also replay-checks the frame it lands in
-///   ttd ... --cpu gs|ms        — seek, si-back / si-forward, reverse-step and reverse-continue on a sound card's CPU
+///   ttd ... --cpu gs|ms        — seek, si-back / si-forward (--over / --out: step over / out in the history),
+///                                reverse-step, reverse-step-over and reverse-continue on a sound card's CPU
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -320,7 +321,7 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     }
     else if (subcommand == "reverse-step-over" || subcommand == "rso")
     {
-        HandleTTDReverseStepOver(session, context);
+        HandleTTDReverseStepOver(session, context, args);
     }
     else if (subcommand == "reverse-step"   ||
              subcommand == "reverse-continue" ||
@@ -485,8 +486,11 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Sound card CPU positions (--cpu gs|neogs|ms|multisound; the main CPU follows by replay):" << NEWLINE;
     ss << "  ttd seek --cpu gs <instruction>  The card at its instruction count (ttd position shows it)" << NEWLINE;
     ss << "  ttd si-back --cpu gs [--count N] / ttd si-forward --cpu gs [--count N]   N card instructions" << NEWLINE;
+    ss << "  ttd si-forward --cpu gs --over | --out   Card step over / step out through the history (its" << NEWLINE;
+    ss << "                                  breakpoints end it; not ended: to the history's end)" << NEWLINE;
     ss << "  ttd reverse-step --cpu gs [--count N]                                     N card instructions back" << NEWLINE;
     ss << "  ttd reverse-continue --cpu gs [--max-frames N]   Back to the card's previous breakpoint hit" << NEWLINE;
+    ss << "  ttd reverse-step-over --cpu gs   Card step over back: past a card routine whose return comes before" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
@@ -1750,9 +1754,11 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
     {
         // `ttd si-back --cpu gs [--count N]`: N card instructions (the main CPU follows by replay)
         std::map<std::string, std::string> options{{"cpu", cardCpu}, {"dir", forward ? "forward" : "back"}};
-        for (size_t i = 1; i + 1 < args.size(); ++i)
-            if (args[i] == "--count")
+        for (size_t i = 1; i < args.size(); ++i)
+            if (args[i] == "--count" && i + 1 < args.size())
                 options["count"] = args[i + 1];
+            else if (args[i] == "--over" || args[i] == "--out")
+                options["kind"] = args[i].substr(2);   // `ttd si-forward --cpu gs --over`: a card step over in the past
         session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"step-instruction", options}), NEWLINE));
         return;
     }
@@ -1838,8 +1844,22 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
     }
 }
 
-void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context)
+void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context,
+                                            const std::vector<std::string>& argsIn)
 {
+    // `ttd reverse-step-over --cpu gs`: the card CPU's step over back (the main CPU follows by replay)
+    std::vector<std::string> args = argsIn;
+    if (const std::string cpu = CliTTDCards::TakeCpuFlag(args); !cpu.empty())
+    {
+        session.SendResponse(CliTTDCards::FormatCardMove(
+            ttd::TTDControl(context).Execute({"reverse-step-over", {{"cpu", cpu}}}), NEWLINE));
+        return;
+    }
+    if (args.size() > 1)
+    {
+        session.SendResponse("Usage: ttd reverse-step-over [--cpu gs|neogs|ms|multisound]" + std::string(NEWLINE));
+        return;
+    }
     // Back over a routine when the instruction before is its return, else one instruction back
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step-over", {}});
     if (!reply.Ok())

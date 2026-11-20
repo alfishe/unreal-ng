@@ -870,7 +870,7 @@ TEST_F(AutomationLua_Test, TransferStateAnswersTheReportOfEverySurface)
 }
 
 /// Time travel on a sound card's CPU from Lua (gs-debugger design §8): ttd_card_seek / ttd_card_step /
-/// ttd_card_reverse_continue / ttd_card_position answer the TTDControl replies as tables
+/// ttd_card_reverse_step_over / ttd_card_step_over / ttd_card_step_out / ttd_card_reverse_continue / ttd_card_position answer the TTDControl replies as tables
 TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
 {
     ttdtest::Bench b;
@@ -897,6 +897,17 @@ TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
             "assert(p.card_position and p.instruction == " + t + " - 4 and p.main.frame ~= nil)\n"
             "assert(#ttd_card_position() == 1)\n"
             "assert(ttd_card_position('ms') == nil)\n"
+            "local over = ttd_card_reverse_step_over('gs')\n"
+            "assert(over.reached and over.stepped and over.from == " + t + " - 4, tostring(over.error or over.text))\n"
+            "assert(over.card.instruction == over.target and over.target < " + t + " - 4)\n"
+            "assert(type(over.over_call) == 'boolean' and type(over.text) == 'string')\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
+            "local so = ttd_card_step_over('gs')\n"
+            "assert(so.reached and so.kind == 'over' and so.from == " + t + " - 4 and so.target > so.from, "
+            "tostring(so.error or so.message))\n"
+            "local st = ttd_card_step_out('neogs')\n"
+            "assert(st.reached and st.kind == 'out' and st.from == so.target and st.target > st.from)\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
             "local none = ttd_card_reverse_continue('gs', 3)\n"
             "assert(none.ok == false and none.status == 'no_breakpoints', tostring(none.status))\n"
             "local bad = ttd_card_seek('zz', 1)\n"

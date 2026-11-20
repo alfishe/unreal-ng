@@ -1271,6 +1271,12 @@ local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit =
 -- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
 ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
 ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_step_over("gs")             --> the card's step over through the history (as a live card step would go;
+                                     --    its breakpoints end it first: breakpoint = {...}; history_end = true:
+                                     --    not ended in the history, the card at its end; at the end: "at_end")
+ttd_card_step_out("gs")              --> the card's step out through the history (the same reply)
+ttd_card_reverse_step_over("gs")     --> one card instruction back, or past a whole card routine to its CALL / RST
+                                     --    when that instruction is its return: over_call, skipped, text
 ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
                                      --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
 ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,

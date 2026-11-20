@@ -869,9 +869,35 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
         tip += QString(" '%1'").arg(QString(QChar(byte)).toHtmlEscaped());
     tip += QString("&nbsp; word #%1 = %2").arg(hex(word, 4)).arg(word);
 
-    // A card's 64 KB: the cell and the card's PC (the markup and the labels here are the main CPU's)
+    // The label at the cell or the nearest one before it (from `from` on): the CPU's own labels (a card's are its
+    // firmware symbols), never another CPU's
+    LabelManager* labels = _emulator->GetDebugManager() &&
+                                   MetadataSettings::Instance().Uses(MetadataSettings::Switch::Labels)
+                               ? _emulator->GetDebugManager()->GetLabelManager(cpu)
+                               : nullptr;
+    std::string labelComment;
+    const auto addLabel = [&](uint16_t from) {
+        if (!labels)
+            return;
+        std::shared_ptr<Label> nearest;
+        for (const auto& label : labels->GetLabelsInRange(from, address))
+            if (label->address <= address && (!nearest || label->address >= nearest->address) &&
+                labels->GetLabelByZ80Address(label->address) == label)
+                nearest = label;
+        if (!nearest)
+            return;
+        tip += "<br><b>" + escaped(nearest->name) + "</b>";
+        if (nearest->address != address)
+            tip += QString("+%1").arg(address - nearest->address);
+        if (!nearest->comment.empty())
+            tip += " - " + escaped(nearest->comment);
+        labelComment = nearest->comment;
+    };
+
+    // A card's 64 KB: the cell, the card's label and PC (the markup is the main CPU's: none here)
     if (IsCardCpu(cpu))
     {
+        addLabel(static_cast<uint16_t>(std::max(0, address - 0xFF)));
         tip += QString("<br>%1, %2")
                    .arg(debuggercpu::Title(context, cpu),
                         debuggercpu::CardWindowName(context, cpu, static_cast<uint8_t>(address >> 14)));
@@ -908,28 +934,7 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
             }
     }
     // The label at the cell or the nearest one before it (inside the block when there is one): the variable's name
-    std::string labelComment;
-    if (LabelManager* labels = _emulator->GetDebugManager() &&
-                                       MetadataSettings::Instance().Uses(MetadataSettings::Switch::Labels)
-                                   ? _emulator->GetDebugManager()->GetLabelManager()
-                                   : nullptr)
-    {
-        const uint16_t from = span ? span->lo : static_cast<uint16_t>(std::max(0, address - 0xFF));
-        std::shared_ptr<Label> nearest;
-        for (const auto& label : labels->GetLabelsInRange(from, address))
-            if (label->address <= address && (!nearest || label->address >= nearest->address) &&
-                labels->GetLabelByZ80Address(label->address) == label)
-                nearest = label;
-        if (nearest)
-        {
-            tip += "<br><b>" + escaped(nearest->name) + "</b>";
-            if (nearest->address != address)
-                tip += QString("+%1").arg(address - nearest->address);
-            if (!nearest->comment.empty())
-                tip += " - " + escaped(nearest->comment);
-            labelComment = nearest->comment;
-        }
-    }
+    addLabel(span ? span->lo : static_cast<uint16_t>(std::max(0, address - 0xFF)));
     // The block: its kind, extent, the cell's place in it, the layer it comes from, its title; a small variable's value
     if (span)
     {
@@ -2159,7 +2164,14 @@ void DebuggerWindow::showLabelManager()
         return;
     }
 
-    LabelEditor labelEditor(_emulator->GetDebugManager()->GetLabelManager(), this);
+    // The labels of the processor in front (a card's tab: the card's own store)
+    LabelManager* labels = _emulator->GetDebugManager()->GetLabelManager(currentCpu());
+    if (!labels)
+    {
+        QMessageBox::warning(this, "Warning", "The processor in front has no labels");
+        return;
+    }
+    LabelEditor labelEditor(labels, this);
     labelEditor.exec();
 
     // Update debugger state after dialog closes (if needed)
@@ -2287,8 +2299,10 @@ bool DebuggerWindow::cardStep(const char* kind, uint16_t address, QString* error
     clearStopBanner();
     if (m_speedControl)
         m_speedControl->stop();
-    // In the recorded past Step In replays one card instruction forward (rule 3); live, the card's own step runs
-    if (std::string(kind) == "in" && _timeTravel && _timeTravel->stepForward())
+    // In the recorded past Step In / Over / Out replay the card's step through the history (rule 3); live, or at the
+    // history's end (D-3: on live, unrecorded), the card's own step runs
+    const std::string step = kind;
+    if ((step == "in" || step == "over" || step == "out") && _timeTravel && _timeTravel->stepForward(step))
         return true;
     // The machine runs until the card ends the step (or a breakpoint, or the deadline), then pauses: as eCat's card
     // tab steps, on this thread

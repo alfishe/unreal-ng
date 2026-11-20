@@ -372,6 +372,18 @@ void DebuggerWindow::build_toolbar(QWidget * host)
         [](Emulator * e, CPU * c) { e->debug_step_over(c); });
     m_step_out = add(":/icons/top", tr("Step out of the routine"), QKeySequence(Qt::CTRL | Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_out(c); });
+    //Not in ecat either: on a card's tab in the past Step over and Step out go through the history too (at its end
+    //the card steps on live, as the main CPU does)
+    disconnect(m_step_over, &QAction::triggered, this, nullptr);
+    connect(m_step_over, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("over")) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step_over(c); });
+    });
+    disconnect(m_step_out, &QAction::triggered, this, nullptr);
+    connect(m_step_out, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("out")) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step_out(c); });
+    });
 
     m_to_cursor = tb->addAction(tool_icon(":/icons/finish"), tr("Run to the cursor"));
     m_to_cursor->setShortcut(QKeySequence(Qt::Key_F4));

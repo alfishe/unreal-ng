@@ -503,8 +503,9 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"journal-build", {"from_frame", "to_frame"}},
         {"seek", {"frame", "tinframe", "bookmark", "cpu", "instruction"}},
         {"resume", {"frame", "tinframe", "media"}},
-        {"step-instruction", {"dir", "cpu", "count"}},
+        {"step-instruction", {"dir", "cpu", "count", "kind"}},
         {"reverse-step", {"count", "tstates", "scanlines", "cpu"}},
+        {"reverse-step-over", {"cpu"}},
         {"bookmarks", {"tag", "text"}},
         {"bookmark-add", {"label", "frame", "tinframe", "note", "tags", "watch", "context"}},
         {"bookmark-note", {"label", "note", "append", "tags", "add_tags", "remove_tags", "rename"}},
@@ -625,7 +626,8 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
                     "the machine is stopped inside the sound card's run (a General Sound breakpoint or step): "
                     "run or step the machine out of it first, then move in time");
     // A move on a card CPU (the `cpu` option naming a card)
-    if (verb == "seek" || verb == "step-instruction" || verb == "reverse-step" || verb == "reverse-continue")
+    if (verb == "seek" || verb == "step-instruction" || verb == "reverse-step" || verb == "reverse-continue" ||
+        verb == "reverse-step-over")
     {
         std::optional<DebugCpuId> cpu;
         if (TTDReply fail; !CardCpuOf(request, cpu, fail))
@@ -636,6 +638,7 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         const char* cardOnly = Option(request, "instruction")  ? "instruction"
                                : Option(request, "max_frames") ? "max_frames"
                                : verb == "step-instruction" && Option(request, "count") ? "count"
+                               : verb == "step-instruction" && Option(request, "kind")  ? "kind"
                                                                                         : nullptr;
         if (cardOnly)
             return Fail(TTDControlError::BadRequest, std::string("'") + cardOnly +
@@ -1544,9 +1547,10 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     // What each verb takes on a card CPU
     static const std::map<std::string, std::set<std::string>> cardOptions = {
         {"seek", {"cpu", "instruction"}},
-        {"step-instruction", {"cpu", "dir", "count"}},
+        {"step-instruction", {"cpu", "dir", "count", "kind"}},
         {"reverse-step", {"cpu", "count"}},
         {"reverse-continue", {"cpu", "max_frames"}},
+        {"reverse-step-over", {"cpu"}},
     };
     const std::set<std::string>& allowed = cardOptions.at(verb);
     for (const auto& [name, value] : request.options)
@@ -1576,6 +1580,22 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
         PauseAndConfirm();
         result = _manager->SeekToCardInstruction(cpu, instruction);
     }
+    else if (verb == "step-instruction" && Option(request, "kind") && *Option(request, "kind") != "in")
+    {
+        // A step over / step out through the past: forward only, one step
+        const std::string& kind = *Option(request, "kind");
+        if (kind != "over" && kind != "out")
+            return Fail(TTDControlError::BadRequest, "kind must be in, over or out");
+        if (const std::string* dir = Option(request, "dir"); dir && *dir != "forward" && *dir != "fwd")
+            return Fail(TTDControlError::BadRequest,
+                        "kind " + kind + " steps forward only (a step over back is 'reverse-step-over' with 'cpu')");
+        if (Option(request, "count"))
+            return Fail(TTDControlError::BadRequest, "kind " + kind + " takes no 'count' (one step)");
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        result = _manager->StepCardForward(cpu, kind == "over");
+    }
     else if (verb == "step-instruction" || verb == "reverse-step")
     {
         bool forward = false;
@@ -1597,6 +1617,13 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
         PauseAndConfirm();
         const int64_t delta = forward ? static_cast<int64_t>(count) : -static_cast<int64_t>(count);
         result = _manager->StepCardInstructions(cpu, delta);
+    }
+    else if (verb == "reverse-step-over")
+    {
+        if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+            return refusal;
+        PauseAndConfirm();
+        result = _manager->ReverseStepOverCard(cpu);
     }
     else
     {
@@ -1620,6 +1647,53 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     if (!result.message.empty())
         body["message"] = result.message;
     body["card"] = CardPositionNode(result.position);
+    if (verb == "reverse-step-over")
+    {
+        // The main CPU's reply words beside the card move's: stepped, over_call, skipped, call_out_of_reach, pc, text
+        body["stepped"] = result.Ok();
+        body["over_call"] = result.Ok() && result.overCall && !result.callOutOfReach;
+        if (result.Ok() && result.overCall && !result.callOutOfReach)
+            body["skipped"] = result.skipped;
+        if (result.Ok() && result.callOutOfReach)
+            body["call_out_of_reach"] = true;
+        char pc[8];
+        std::snprintf(pc, sizeof(pc), "#%04X", static_cast<unsigned>(result.position.pc));
+        if (result.Ok())
+            body["pc"] = static_cast<uint64_t>(result.position.pc);
+        const std::string name = DebugCpuName(cpu);
+        std::string text;
+        if (!result.Ok())
+            text = name + ": no earlier card instruction stepped to (" + TTDCardMoveStatusName(result.status) +
+                   (result.message.empty() ? std::string(")") : "): " + result.message);
+        else if (result.overCall && !result.callOutOfReach)
+            text = name + ": stepped back over a routine (" + std::to_string(result.skipped) + " instructions) to " +
+                   pc + ", card instruction " + std::to_string(result.target);
+        else if (result.callOutOfReach)
+            text = name + ": stepped back one instruction to the return at " + pc +
+                   ": the routine's start is out of reach (older than the history or " +
+                   std::to_string(TimeTravelController::kCardReverseMaxFrames) + " frames)";
+        else
+            text = name + ": stepped back one instruction to " + pc + ", card instruction " +
+                   std::to_string(result.target);
+        body["text"] = text;
+    }
+    if (verb == "step-instruction" && Option(request, "kind"))
+        body["kind"] = *Option(request, "kind");
+    if (verb == "step-instruction" && Option(request, "kind") && *Option(request, "kind") != "in")
+    {
+        // Where the step over / out ended: itself, a breakpoint of the card, the history's end or the frame limit
+        body["searched_frames"] = result.searchedFrames;
+        body["history_end"] = result.historyEnd;
+        body["truncated"] = result.truncated;
+        if (result.Ok() && result.stoppedByBreakpoint)
+        {
+            StateNode hit = StateNode::Object();
+            hit["id"] = static_cast<unsigned>(result.breakpointId);
+            hit["kind"] = BreakpointHitKindName(static_cast<BreakpointHitKind>(result.hitKind));
+            hit["address"] = static_cast<unsigned>(result.hitAddress);
+            body["breakpoint"] = hit;
+        }
+    }
     if (verb == "reverse-continue")
     {
         body["searched_frames"] = result.searchedFrames;

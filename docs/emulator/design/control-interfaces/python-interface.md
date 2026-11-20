@@ -1718,6 +1718,10 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 # the TTDControl reply as a dict (cpu, status, reached, from, target, card, frame, tinframe, ...)
 emu.ttd_card_seek('gs', 123456)            # the card at its instruction count; the main CPU follows by replay
 emu.ttd_card_step('gs', -5)                # 5 card instructions back (positive: forward; default 1)
+emu.ttd_card_step_over('gs')               # the card's step over through the history ('history_end': not ended in
+emu.ttd_card_step_out('gs')                #  it, the card at its end; 'breakpoint': a card breakpoint ended it)
+emu.ttd_card_reverse_step_over('gs')       # one card instruction back, or past a whole card routine ('over_call',
+                                           #  'skipped', 'text')
 emu.ttd_card_reverse_continue('gs', max_frames=200)  # back to the card's previous breakpoint hit
 emu.ttd_card_position('gs')                # {'cpu', 'known', 'instruction', 'pc', 'card_position', 'caught_up',
                                            #  'main': {'frame', 'tinframe', 'pc', 't_offset', 'inside'}}; None: no card

@@ -2,12 +2,13 @@
 
 /// @file cli-ttd-cards.h
 /// @brief CLI time travel on a sound card's CPU (gs-debugger design §8): the `--cpu` flag of `ttd seek`, `ttd si-back`
-/// / `si-forward`, `ttd reverse-step` and `ttd reverse-continue`, and the text of a card move and of a card's readout
-/// (`ttd position`). Header-only so core-tests drive it without a CLI socket.
+/// / `si-forward`, `ttd reverse-step`, `ttd reverse-step-over` and `ttd reverse-continue`, and the text of a card move
+/// and of a card's readout (`ttd position`). Header-only so core-tests drive it without a CLI socket.
 ///
 ///   ttd seek --cpu gs 123456           the card at its instruction count 123456
 ///   ttd si-back --cpu gs --count 5     5 card instructions back (the main CPU follows by replay)
 ///   ttd reverse-continue --cpu ms      back to the MultiSound GS's previous breakpoint hit
+///   ttd si-forward --cpu gs --over     the card's step over through the history (--out: its step out)
 ///
 /// Worked example: `ttd si-back --cpu gs --count 5` prints
 /// `TTD: gs at instruction 1200 (from 1205)` and
@@ -94,7 +95,8 @@ inline std::string FormatCardLine(const StateNode& card, const char* newline)
     return ss.str();
 }
 
-/// The reply of a move on a card CPU (seek / step-instruction / reverse-step / reverse-continue with cpu)
+/// The reply of a move on a card CPU (seek / step-instruction (kind over / out too) / reverse-step / reverse-step-over
+/// / reverse-continue with cpu)
 inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newline)
 {
     if (!reply.Ok())
@@ -105,6 +107,14 @@ inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newlin
     if (Bool(b.find("reached")))
     {
         ss << "TTD: " << cpu << " at instruction " << Int(b.find("target")) << " (from " << Int(b.find("from")) << ")";
+        if (Bool(b.find("over_call")))
+            ss << ", stepped back over a routine of " << Int(b.find("skipped")) << " instruction(s)";
+        else if (Bool(b.find("call_out_of_reach")))
+            ss << ", on the return: the routine's start is out of reach";
+        if (Bool(b.find("history_end")))
+            ss << ", the step did not end in the history: at its end (the next step runs on live)";
+        else if (Bool(b.find("truncated")) && b.find("kind"))
+            ss << ", the step did not end in the frames searched (step again to go on)";
         if (const StateNode* hit = b.find("breakpoint"))
             ss << ", breakpoint " << Int(hit->find("id")) << " (" << Text(hit->find("kind")) << " "
                << Hex4(Int(hit->find("address"))) << ")";
@@ -113,7 +123,8 @@ inline std::string FormatCardMove(const ttd::TTDReply& reply, const char* newlin
     else
         ss << "TTD: " << cpu << " did not move (" << Text(b.find("status")) << "): " << Text(b.find("message")) << newline;
     if (const StateNode* searched = b.find("searched_frames"))
-        ss << "  Searched " << Int(searched) << " frame(s)" << (Bool(b.find("truncated")) ? " (max_frames reached)" : "")
+        ss << "  Searched " << Int(searched) << " frame(s)"
+           << (Bool(b.find("truncated")) && !b.find("kind") ? " (max_frames reached)" : "")
            << newline;
     if (const StateNode* card = b.find("card"))
         ss << FormatCardLine(*card, newline);
