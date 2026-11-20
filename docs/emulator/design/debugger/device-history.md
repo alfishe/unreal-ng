@@ -42,6 +42,7 @@ leaves out keep their value.
 | Device | What | Starts as | Record |
 |--------|------|-----------|--------|
 | `beta128` | WD1793 commands | ring of 64 | `start` / `end` / `duration` (T-states of the chip's clock), `frame`, `pc`, `command`, `name`, `track`, `sector`, `data` (when written), `drive`, `side`, `done`, `status` (at the end). A force interrupt ends at once; the command it cut short stays `done: false` |
+| `plusd` (the MGT +D card) | WD1772 commands | ring of 64 | the same as `beta128` |
 
 | the AY ports' owner: `ay` (built-in, the Next too), `ay-socket` or `zxbus.N` (a TurboSound / TSFM card shadowing it) | AY register writes | off | `frame`, `tacts`, `pc`, `port` (#FFFD select, #BFFD data), `chip` (0-1; the Next's three AYs 0-2), `type` (`select` / `switch` / `write`), `reg`, `reg_name`, `value`. One history per machine whatever device takes the AY ports (the TurboSound pair, the TSFM, the Next's NextAudio); the AY log analyzer (`/ay/log`, `aylog_*`) is its face: activation turns it to a ring of the analyzer's capacity, deactivation off |
 

@@ -5,12 +5,14 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "_helpers/emulatortesthelper.h"
+#include "_helpers/testpathhelper.h"
 #include "debugger/ttd/ttdmachineperipherals.h"
 #include "debugger/ttd/ttdperipheralregistry.h"
 #include "emulator/cpu/core.h"
@@ -21,6 +23,7 @@
 #include "emulator/io/fdc/fdd.h"
 #include "emulator/io/fdc/wd1793.h"
 #include "emulator/machinevariants.h"
+#include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediamanager.h"
 #include "emulator/memory/memory.h"
 #include "emulator/platform.h"
@@ -127,6 +130,7 @@ TEST_F(PlusDCard_Test, AbsentLeavesTheMachineAlone)
     Create("48K", {});
     EXPECT_EQ(Card(), nullptr);
     EXPECT_EQ(_context->cardFdcCount, 0u);
+    EXPECT_FALSE(_context->pMainLoop->StepsCardFdcs()) << "no card controller to step";
     EXPECT_EQ(Cpu()->machineM1Hook, nullptr);
     EXPECT_FALSE(_context->pMediaManager->HasSlot("fdd.plusd1"));
 }
@@ -200,6 +204,66 @@ TEST_F(PlusDCard_Test, OverlayShowsRomAndRam)
 
     In(0x00E7, drove);
     EXPECT_TRUE(card->IsPaged()) << "IN #E7 pages in again";
+}
+
+/// The card's bus overlay is on only while it is paged in: paged out, the memory runs the plain interfaces, as on
+/// a 48K without the card (test-plan §7: the idle card costs nothing per access) (~5 ms)
+TEST_F(PlusDCard_Test, OverlayOnlyWhilePagedIn)
+{
+    Create("48K", {{"edge.1", "plusd"}});
+    PlusDCard* card = Card();
+    ASSERT_NE(card, nullptr);
+    Core* core = _context->pCore;
+    ASSERT_FALSE(card->IsPaged());
+    EXPECT_FALSE(core->IsBusOverlayInstalled(card)) << "paged out after reset";
+    EXPECT_EQ(std::string(core->GetMemoryInterfaceName()).find("overlay"), std::string::npos)
+        << core->GetMemoryInterfaceName();
+
+    card->BeforeMachineM1(0x028E);
+    EXPECT_TRUE(core->IsBusOverlayInstalled(card)) << "the trap pages in";
+    EXPECT_NE(std::string(core->GetMemoryInterfaceName()).find("overlay"), std::string::npos);
+    EXPECT_EQ(CpuReads(0x0001), card->Rom()[1]);
+
+    Out(0x00E7, 0x00);
+    EXPECT_FALSE(core->IsBusOverlayInstalled(card)) << "OUT #E7 pages out";
+    bool drove = false;
+    In(0x00E7, drove);
+    EXPECT_TRUE(core->IsBusOverlayInstalled(card)) << "IN #E7 pages in";
+
+    // A snapshot that restores the card paged out, and a reset, take the overlay off too
+    card->SetPaged(false);
+    EXPECT_FALSE(core->IsBusOverlayInstalled(card));
+    card->SetPaged(true);
+    EXPECT_TRUE(core->IsBusOverlayInstalled(card));
+    card->BusReset();
+    EXPECT_FALSE(core->IsBusOverlayInstalled(card)) << "reset pages out";
+}
+
+/// The WD1772 is stepped only while it is awake: asleep (2 s idle) the machine's step skips it, a port access
+/// wakes it (test-plan §7) (~5 ms)
+TEST_F(PlusDCard_Test, WorkGateFollowsTheControllersSleep)
+{
+    Create("48K", {{"edge.1", "plusd"}});
+    PlusDCard* card = Card();
+    ASSERT_NE(card, nullptr);
+    WD1793CUT* fdc = reinterpret_cast<WD1793CUT*>(card->Fdc());
+    fdc->enterSleepMode();  // as after 2 s idle
+    EXPECT_FALSE(_context->pMainLoop->StepsCardFdcs()) << "asleep: not stepped";
+
+    bool drove = false;
+    In(0x00E3, drove);  // a status read
+    ASSERT_FALSE(card->Fdc()->IsAsleep()) << "a port access wakes it";
+    EXPECT_TRUE(_context->pMainLoop->StepsCardFdcs());
+
+    fdc->enterSleepMode();
+    EXPECT_FALSE(_context->pMainLoop->StepsCardFdcs()) << "asleep again";
+    fdc->wakeUp();
+
+    // Awake, the card's removal takes the work off and adding it back puts it on
+    _context->RemoveCardFdc(card->Fdc());
+    EXPECT_FALSE(_context->pMainLoop->StepsCardFdcs());
+    ASSERT_TRUE(_context->AddCardFdc(card->Fdc()));
+    EXPECT_TRUE(_context->pMainLoop->StepsCardFdcs());
 }
 
 /// An opcode fetch at a trap address pages in before the byte is read; other low fetches do not (~5 ms)
@@ -359,6 +423,50 @@ TEST_F(PlusDCard_Test, StateFdcReportsTheCard)
 
 /// The printer port (~5 ms): #F7 latches the data, a strobe pulse on #EF bit 6 (two edges) prints the byte latched at
 /// the first; no printer: #F7 reads busy
+/// The card's drives as media slots on a real 48K-PLUSD (new-platform checklist 6, ~10 ms): the aliases resolve, a
+/// disk inserts and swaps, a write of the guest's reaches the manager (the disk is dirty and holds the eject), an eject
+/// empties the drive
+TEST_F(PlusDCard_Test, DrivesAreMediaSlots)
+{
+    Create("48K", {{"edge.1", "plusd"}});
+    PlusDCard* card = Card();
+    ASSERT_NE(card, nullptr);
+    MediaManager& manager = *_context->pMediaManager;
+
+    std::string slot;
+    ASSERT_TRUE(MediaControl::ResolveSelector(manager, "plusd2", slot).Ok());
+    EXPECT_EQ(slot, "fdd.plusd2");
+
+    const std::string fixture = (TestPathHelper::FindProjectRoot() / "testdata/loaders/mgt/synthetic.mgt").string();
+    const std::string copy = TestPathHelper::GetUniqueTestScratchPath("plusd-slot.mgt");
+    std::filesystem::copy_file(fixture, copy, std::filesystem::copy_options::overwrite_existing);
+    MediaSource first;
+    first.path = fixture;
+    InsertOptions readOnly;
+    readOnly.access = AccessMode::ReadOnly;
+    ASSERT_TRUE(manager.Insert(slot, first, readOnly).Ok());
+    DiskImage* before = card->Drive(1)->getDiskImage();
+    ASSERT_NE(before, nullptr);
+    EXPECT_EQ(card->Drive(0)->getDiskImage(), nullptr) << "drive 1 untouched";
+
+    MediaSource second;
+    second.path = copy;
+    ASSERT_TRUE(manager.Insert(slot, second).Ok()) << "a swap replaces the disk";
+    DiskImage* disk = card->Drive(1)->getDiskImage();
+    ASSERT_NE(disk, nullptr);
+    EXPECT_EQ(disk, manager.GetMedium(slot)->Floppy());
+
+    const std::vector<uint8_t> sector(512, 0x42);
+    disk->getTrack(4)->writeSectorData(0, sector.data(), sector.size());
+    EXPECT_TRUE(manager.Info(slot)->dirty) << "the write reached NoteWrite";
+    EXPECT_FALSE(manager.Eject(slot).Ok()) << "unsaved writes hold the disk";
+
+    EjectOptions discard;
+    discard.disposition = Disposition::Discard;
+    ASSERT_TRUE(manager.Eject(slot, discard).Ok());
+    EXPECT_EQ(card->Drive(1)->getDiskImage(), nullptr);
+}
+
 TEST_F(PlusDCard_Test, PrinterStrobeTakesTheLatch)
 {
     Create("48K", {{"edge.1", "plusd"}});

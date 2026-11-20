@@ -190,7 +190,9 @@ public:
     WD1793* pBetaDisk = nullptr;
 
     // Floppy controllers of edge-connector cards (MGT +D: a WD1772), stepped like pBetaDisk. A card adds its controller
-    // when it attaches and removes it before it is deleted; cardFdcCount == 0 on every machine without such a card
+    // when it attaches and removes it before it is deleted; cardFdcCount == 0 on every machine without such a card.
+    // MainLoop::OnCPUStep steps them only while one of them is awake (RefreshCardFdcWork): a machine without one, or
+    // with an idle card (asleep), pays a flag test
     static constexpr size_t kMaxCardFdcs = 2;
     WD1793* cardFdcs[kMaxCardFdcs] = {};
     size_t cardFdcCount = 0;
@@ -202,8 +204,11 @@ public:
             if (cardFdcs[i] == fdc)
                 return true;
         cardFdcs[cardFdcCount++] = fdc;
+        RefreshCardFdcWork();
         return true;
     }
+    /// MainLoop steps the cards' controllers while one is awake (WD1793::setSleeping, AddCardFdc, RemoveCardFdc)
+    void RefreshCardFdcWork();
     void RemoveCardFdc(WD1793* fdc)
     {
         for (size_t i = 0; i < cardFdcCount; i++)
@@ -213,6 +218,7 @@ public:
                 for (size_t j = i + 1; j < cardFdcCount; j++)
                     cardFdcs[j - 1] = cardFdcs[j];
                 cardFdcs[--cardFdcCount] = nullptr;
+                RefreshCardFdcWork();
                 return;
             }
         }

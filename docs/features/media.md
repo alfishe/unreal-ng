@@ -36,6 +36,7 @@ common way to get a disk image rejected.
 |---|---|
 | Pentagon | `fdd.a` … `fdd.d` (aliases `A` … `D`), `tape`, `ide0.master` (`hd`), `ide0.slave` (Nemo IDE) |
 | Scorpion, 128K with Beta 128 | `fdd.a` … `fdd.d`, `tape` |
+| 48K / 128K with the MGT +D (`48K-PLUSD`, `128K-PLUSD`) | `fdd.plusd1`, `fdd.plusd2` (`plusd1`, `plusd2`; `A` / `B` on the disk verbs), `tape` |
 | +3 | `fdd.a`, `fdd.b` (`A`, `B`) — there is no drive C —, `tape` |
 | Profi | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (Profi IDE) |
 | ATM Turbo 2+ | `fdd.a` … `fdd.d`, `tape`, `ide0.master`, `ide0.slave` (ATM IDE) |

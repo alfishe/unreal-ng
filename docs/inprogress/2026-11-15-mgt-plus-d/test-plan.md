@@ -89,3 +89,24 @@ key, damaged image). Nothing is tuned to individual titles: the plan rules of
 
 A/B benchmark (performance guidelines): 48K without the card vs 48K with the card idle in BASIC vs a G+DOS read
 loop. Acceptance: no measurable change without the card; with the card idle within the A/A noise.
+
+Results (2026-11-19, Apple M-series, `core-benchmarks` Release, `plusd_frame_benchmark.cpp` and
+`BM_HostFrame_48K_Fast`; 16 interleaved rounds of three builds, median of the paired per-round differences of CPU
+time, the count is the rounds in which the first build was slower; load average 250-340, other sessions building):
+
+- A: master 922465c6e (the card as landed);
+- B: A + the fix (overlay only while paged in, card FDCs stepped behind a `MainLoop` flag that follows their sleep);
+- C: A with the per-step card FDC loops removed: the "no card code" reference for a machine without the card.
+
+| Row | A | B | C | B vs A | B vs C | A vs C |
+|-----|---|---|---|--------|--------|--------|
+| `BM_HostFrame_48K_Fast` | 492.9 us | 483.0 us | 480.8 us | -1.1 % (5/16) | +1.5 % (9/16) | +4.1 % (12/16) |
+| `BM_PlusD_48K_Idle` | 260.2 us | 256.1 us | 257.3 us | -2.4 % (4/16) | -0.3 % (6/16) | +0.6 % (8/16) |
+| `BM_PlusD_48KPLUSD_Idle` | 291.6 us | 256.0 us | 272.3 us | -13.4 % (0/16) | -8.8 % (1/16) | +5.0 % (13/16) |
+| `BM_PlusD_48KPLUSD_Read` | 513.2 us | 533.4 us | - | +4.2 % (13/16) | - | - |
+
+Without the card B is within the noise of C (9/16, 6/16): accepted. The card idle is now at the 48K's level (256.0 vs
+256.1 us). The read loop (the WD1772 busy all 150 frames) costs B one out-of-line call per instruction: +4 %, while
+loading only. Rejected variants: a `stepWork` bit for awake card FDCs (no-card cost 0, but every step of a read goes
+through `StepInstructionWithWork`: the read +23-30 %), and the loop inlined in `OnCPUStep` (48K without the card +3 %).
+C cannot run the read row (its card FDC is never stepped).

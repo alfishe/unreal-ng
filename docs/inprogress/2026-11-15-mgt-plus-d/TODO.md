@@ -3,7 +3,7 @@
 Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18): the card, the autostart, the
 `48K-PLUSD` / `128K-PLUSD` machines in the Sinclair family of the Qt and handheld menus, the recipe
 `.recipe/machines/plusd.md`. 2026-11-19: P5.2 (the `basic` param on every plane, the MCP `inspect_state fdc` text
-for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). Open: P5.1, P5.3-P5.5, P6.
+for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). P5.1, P5.4, P5.5, P6.1 done. Open: P5.3 (gcc / MSVC / MinGW, batched).
 
 ## Phases
 
@@ -183,14 +183,26 @@ for the card); Super Mario Fruit Machine 2 closed (MAME stops the same way). Ope
   The check in the disk fails on this ROM + GDOS; with line 10 removed the game runs on the 128K.
 
 ### P5: docs, planes, platforms
-- [ ] P5.1 Docs and recipes of design.md §11
+- [x] P5.1 Docs and recipes of design.md §11: `docs/features/slots.md` and `media.md`, `.recipe/machines/slots.md`,
+  `.recipe/media/insert-disk.md` and `load-snapshot.md`, `.recipe/run/autostart-disk.md`, the device-history table,
+  the `UNREAL_PLUSD_*` test variables in `docs/emulator/environment-variables.md`
 - [x] P5.2 All planes for the new fields / actions (`basic` on REST, WebSocket, MCP, CLI, Python, Lua, `media.open`); MCP live block `test_plusd.py`
 - [ ] P5.3 Build zero warnings; `docker/linux/build.sh --test`; MSVC / MinGW
-- [ ] P5.4 A/B benchmark (test-plan §7)
-- [ ] P5.5 New-platform review checklist §6
+- [x] P5.4 A/B benchmark (test-plan §7; results there). The card as landed cost a 48K without it about 3 % (the
+  per-step loop over card FDCs) and kept its bus overlay on for good (48K-PLUSD idle +13.6 % over 48K). Fixed: the
+  overlay is installed only while the card is paged in, and `MainLoop` steps card FDCs behind one flag that follows
+  their sleep (`WD1793::setSleeping` -> `EmulatorContext::RefreshCardFdcWork`). After: 48K without the card at the
+  level of a build with no card loop at all, 48K-PLUSD idle -13 % vs master, the G+DOS read +4 %
+  (`core/benchmarks/emulator/plusd_frame_benchmark.cpp`)
+- [x] P5.5 New-platform review checklist §6: the drives are media slots of the card (`fdd.plusd1/2`, the aliases,
+  insert / swap / dirty / refused eject: `PlusDCard_Test.DrivesAreMediaSlots`), the card opens no file itself, its
+  ports are claimed through the slot manager, the TTD round trip is tested (`TtdSeekDuringRead`,
+  `TimeTravelRegistersTheCard`), no endpoint bypasses the managers; no INI keys of its own.
+  The TSFM in the AY socket of `48K-PLUSD` is the shipped 48K's `[SLOTS]` (a retrofitted AY interface), and
+  `fdd.a`-`fdd.d` are the machine's Beta drives as on every 48K: neither comes from the card
 
 ### P6: catalog hand-over
-- [ ] P6.1 Note for zx-software-catalog: 48K / 128K + Plus D, SAM `skip:not-zx-format` (38), verdict from `plan`; move `classify_mgt.py` there
+- [x] P6.1 Note for zx-software-catalog ([catalog-handover.md](catalog-handover.md); moving `classify_mgt.py` is the catalog session's):: 48K / 128K + Plus D, SAM `skip:not-zx-format` (38), verdict from `plan`; move `classify_mgt.py` there
 
 ### P7 (later, D-4): DISCiPLE
 - [ ] P7.1 Card `disciple` on the same code: ports, traps `0001/0008/0066/028E`, inhibit, `/DDEN`, Kempston on `1F`
