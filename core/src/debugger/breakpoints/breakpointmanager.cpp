@@ -73,6 +73,7 @@ BreakpointManager::BreakpointManager(EmulatorContext* context)
     _context = context;
     _logger = _context->pModuleLogger;
     _candidateSets.assign(1, {});  // set 0: no candidates
+    // _tapSinks[BRK_COUNT_TAP] stays empty until a record takes hits (RefreshCountSink)
 }
 
 BreakpointManager::BreakpointManager(EmulatorContext* context, IDebugTarget* target) : BreakpointManager(context)
@@ -115,7 +116,10 @@ void BreakpointManager::DeleteAllBreakpoints()
 
     RebuildFilters();
     for (BreakpointDescriptor* descriptor : descriptors)
+    {
+        ReleaseHitLog(*descriptor);
         delete descriptor;
+    }
 }
 
 bool BreakpointManager::IsUserBreakpoint(const BreakpointDescriptor& descriptor)
@@ -531,6 +535,22 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
         error = "a tap never stops: 'stop' false is for a breakpoint of its own";
         return BRK_INVALID;
     }
+    // The per-hit record (PLAN #122 V4): a breakpoint that only counts keeps one unless asked for none
+    const uint32_t hitLog = spec.hitLog == BreakpointSpec::kHitLogDefault
+                                ? (spec.stop ? 0u : BreakpointHitLog::kDefaultCapacity)
+                                : spec.hitLog;
+    if (hitLog != 0 && spec.stop)
+    {
+        delete d;
+        error = "a hit log is kept by a breakpoint that only counts: 'hit_log' needs 'stop' false";
+        return BRK_INVALID;
+    }
+    if (hitLog > BreakpointHitLog::kMaxCapacity)
+    {
+        delete d;
+        error = "'hit_log' keeps at most " + std::to_string(BreakpointHitLog::kMaxCapacity) + " hits";
+        return BRK_INVALID;
+    }
     const uint8_t tapSink = spec.stop ? spec.tapSink : BRK_COUNT_TAP;
     if (tapSink != BRK_NO_TAP)
     {
@@ -545,26 +565,47 @@ uint16_t BreakpointManager::AddBreakpoint(const BreakpointSpec& spec, std::strin
             return BRK_INVALID;
         }
         d->tapSink = tapSink;
-        d->tapCookie = spec.tapCookie;
+        d->tapCookie = tapSink == BRK_COUNT_TAP ? 0 : spec.tapCookie;
+    }
+
+    // The record exists before the breakpoint can fire: both made under one hold of the CPU
+    std::optional<ChangeScope> logScope;
+    if (tapSink == BRK_COUNT_TAP && hitLog != 0)
+    {
+        logScope.emplace(*this);
+        size_t slot = 0;
+        while (slot < _hitLogs.size() && _hitLogs[slot].log)
+            ++slot;
+        if (slot == _hitLogs.size())
+            _hitLogs.emplace_back();
+        _hitLogs[slot].log = std::make_unique<BreakpointHitLog>(hitLog, spec.hitLogKeep);
+        _hitLogs[slot].descriptor = d;
+        d->tapCookie = static_cast<uint32_t>(slot + 1);
+        d->hitLogCapacity = hitLog;
+        d->hitLogKeep = spec.hitLogKeep;
     }
 
     bool adopted = false;
     const uint16_t id = AddBreakpointAdopting(d, adopted);
     if (id == BRK_INVALID)
     {
+        ReleaseHitLog(*d);
         delete d;
         error = "the breakpoint was not added";
         return BRK_INVALID;
     }
     if (!adopted)
     {
-        // The same plain breakpoint existed: the note and group of the request go to it
+        // The same plain breakpoint existed: the note and group of the request go to it (a plain one keeps no record)
+        ReleaseHitLog(*d);
         delete d;
         if (!spec.note.empty())
             SetBreakpointNote(id, spec.note);
         if (!spec.group.empty())
             SetBreakpointGroup(id, spec.group);
     }
+    if (logScope)
+        RefreshCountSink();
     return id;
 }
 
@@ -736,6 +777,13 @@ bool BreakpointManager::ResetHitCount(uint16_t breakpointID)
         return false;
     it->second->hitCount = 0;
     it->second->matchCount = 0;
+    const BreakpointDescriptor* bp = it->second;
+    if (bp->tapSink == BRK_COUNT_TAP && bp->tapCookie != 0 && bp->tapCookie <= _hitLogs.size() &&
+        _hitLogs[bp->tapCookie - 1].log)
+    {
+        _hitLogs[bp->tapCookie - 1].log->Clear();
+        RefreshCountSink();
+    }
     return true;
 }
 
@@ -748,6 +796,160 @@ void BreakpointManager::ResetAllHitCounts()
             bp->hitCount = 0;
             bp->matchCount = 0;
         }
+    for (HitLogSlot& slot : _hitLogs)
+        if (slot.log)
+            slot.log->Clear();
+    RefreshCountSink();
+}
+
+/// The hits of a breakpoint its hit policy passed (stops, or for a tap the hits its sink is told), from its count
+static uint64_t HitsPassingPolicy(const BreakpointDescriptor& bp)
+{
+    const uint64_t n = bp.hitCount;
+    const uint64_t target = bp.hitTarget;
+    switch (bp.hitMode)
+    {
+        case BRK_HIT_ALWAYS: return n;
+        case BRK_HIT_EQUAL: return target != 0 && n >= target ? 1 : 0;
+        case BRK_HIT_AT_LEAST: return target == 0 ? n : (n >= target ? n - target + 1 : 0);
+        case BRK_HIT_MULTIPLE: return target != 0 ? n / target : 0;
+    }
+    return n;
+}
+
+BreakpointManager::HitLogInfo BreakpointManager::GetHitLog(uint16_t breakpointID, uint64_t from, uint32_t limit) const
+{
+    HitLogInfo info;
+    std::lock_guard<std::recursive_mutex> lock(_mutex);
+    auto it = _breakpointMapByID.find(breakpointID);
+    if (it == _breakpointMapByID.end() || !it->second)
+        return info;
+    const BreakpointDescriptor& bp = *it->second;
+    info.found = true;
+    info.countOnly = bp.tapSink == BRK_COUNT_TAP;
+    info.hasCondition = bp.condition != nullptr;
+    info.hitCount = bp.hitCount;
+    info.matchCount = bp.condition ? bp.matchCount : bp.hitCount;
+    // A removal needs the lock held here, so the record stays while it is read
+    if (info.countOnly && bp.tapCookie != 0 && bp.tapCookie <= _hitLogs.size())
+        if (const BreakpointHitLog* log = _hitLogs[bp.tapCookie - 1].log.get())
+        {
+            info.hasLog = true;
+            info.view = log->Read(from, limit);
+            // A full record of the first N no longer hears the hits: the ones the sink would have been told follow
+            // from the count, as the condition gates the count and the policy (fixed when added) gates the sink
+            if (info.view.keep == BreakpointHitLogKeep::First)
+            {
+                const uint64_t told = HitsPassingPolicy(bp);
+                if (told > info.view.total)
+                {
+                    info.view.total = told;
+                    info.view.dropped = told - info.view.stored;
+                }
+            }
+        }
+    return info;
+}
+
+const char* BreakpointManager::HitLogKeepName(BreakpointHitLogKeep keep)
+{
+    return keep == BreakpointHitLogKeep::Last ? "last" : "first";
+}
+
+bool BreakpointManager::ParseHitLogKeep(const std::string& text, BreakpointHitLogKeep& keep)
+{
+    if (text.empty() || text == "first")
+        keep = BreakpointHitLogKeep::First;
+    else if (text == "last")
+        keep = BreakpointHitLogKeep::Last;
+    else
+        return false;
+    return true;
+}
+
+const char* BreakpointManager::HitKindName(uint8_t kind)
+{
+    switch (static_cast<BreakpointTapKind>(kind))
+    {
+        case BRK_TAP_EXEC: return "exec";
+        case BRK_TAP_READ: return "read";
+        case BRK_TAP_WRITE: return "write";
+        case BRK_TAP_PORT_IN: return "port_in";
+        case BRK_TAP_PORT_OUT: return "port_out";
+        case BRK_TAP_EVENT: return "event";
+        case BRK_TAP_MACHINE_EVENT: return "machine_event";
+        case BRK_TAP_CHIPREG: return "chipreg";
+    }
+    return "unknown";
+}
+
+void BreakpointManager::RecordCountHit(const BreakpointTapHit& hit)
+{
+    if (hit.cookie == 0 || hit.cookie > _hitLogs.size())
+        return;
+    const HitLogSlot& slot = _hitLogs[hit.cookie - 1];
+    if (!slot.log || !slot.descriptor)
+        return;
+    if (!slot.log->Wants())
+    {
+        slot.log->Skip();   // the first N are kept: the rest are only counted
+        return;
+    }
+    BreakpointHitRecord record{};
+    record.hit = slot.descriptor->hitCount;
+    record.address = hit.address;
+    record.value = static_cast<int16_t>(hit.value >= 0 ? hit.value : -1);
+    record.kind = static_cast<uint8_t>(hit.kind);
+    record.cpuTime = -1;
+    if (_target)
+    {
+        // Another CPU (the sound card's): its moment, in the ZX frame it runs in
+        DebugTargetHitClock clock;
+        if (_target->HitClock(hit.kind == BRK_TAP_EVENT, clock))
+        {
+            record.frame = clock.frame;
+            record.t = clock.t;
+            record.cpuTime = clock.cpuTime;
+            record.pc = clock.pc;
+        }
+    }
+    else if (_context)
+    {
+        record.frame = _context->emulatorState.frame_counter;
+        if (const Z80* z80 = _context->pCore ? _context->pCore->GetZ80() : nullptr)
+        {
+            record.t = z80->t;
+            record.pc = z80->m1_pc;
+        }
+    }
+    if (hit.kind == BRK_TAP_EXEC)
+        record.pc = hit.address;   // the instruction about to run
+    slot.log->Add(record);
+    // The first N kept: the record takes no more hits, the reader counts the rest from the breakpoint (GetHitLog).
+    // The last record that took hits empties the slot: the walk calls nothing again until a reset or a new record
+    if (!slot.log->Wants() && _countSinkWanting && --_countSinkWanting == 0)
+        _tapSinks[BRK_COUNT_TAP] = nullptr;
+}
+
+void BreakpointManager::ReleaseHitLog(const BreakpointDescriptor& descriptor)
+{
+    if (descriptor.tapSink != BRK_COUNT_TAP || descriptor.tapCookie == 0 || descriptor.tapCookie > _hitLogs.size())
+        return;
+    HitLogSlot& slot = _hitLogs[descriptor.tapCookie - 1];
+    if (slot.descriptor != &descriptor)
+        return;
+    slot.log.reset();
+    slot.descriptor = nullptr;
+    RefreshCountSink();
+}
+
+void BreakpointManager::RefreshCountSink()
+{
+    _countSinkWanting = 0;
+    for (const HitLogSlot& slot : _hitLogs)
+        if (slot.log && slot.log->Wants())
+            ++_countSinkWanting;
+    _tapSinks[BRK_COUNT_TAP] = _countSinkWanting ? &_countSink : nullptr;
 }
 
 /// The accesses a condition's trigger supplies (breakpointcondition.h) for a breakpoint watching `access`. A NextREG
@@ -955,6 +1157,7 @@ bool BreakpointManager::RemoveBreakpointByID(uint16_t breakpointID)
     }
 
     RebuildFilters();
+    ReleaseHitLog(*breakpoint);
     delete breakpoint;
 
     return true;
@@ -1762,7 +1965,11 @@ std::string BreakpointManager::FormatBreakpointInfo(uint16_t breakpointID) const
         if (bp->hitMode != BRK_HIT_ALWAYS)
             oss << " hits " << HitSpecName(*bp);
         if (bp->tapSink == BRK_COUNT_TAP)
+        {
             oss << " count only";
+            if (bp->hitLogCapacity)
+                oss << ", log " << HitLogKeepName(bp->hitLogKeep) << " " << std::dec << bp->hitLogCapacity;
+        }
         if (bp->hitCount)
             oss << " (hit " << std::dec << bp->hitCount << "x)";
         if (bp->condition && bp->matchCount != bp->hitCount)
@@ -2542,6 +2749,27 @@ uint16_t BreakpointManager::ResolveSpace(uint16_t spacePage, uint16_t offset, bo
             case BRK_HIT_EQUAL: stop = n == bp->hitTarget; break;
             case BRK_HIT_AT_LEAST: stop = n >= bp->hitTarget; break;
             case BRK_HIT_MULTIPLE: stop = bp->hitTarget != 0 && n % bp->hitTarget == 0; break;
+        }
+        // A tap or a breakpoint that only counts never stops: its sink is told
+        if (bp->tapSink != BRK_NO_TAP)
+        {
+            if (stop)
+                if (IBreakpointTapSink* sink = _tapSinks[bp->tapSink])
+                {
+                    BreakpointTapHit hit;
+                    hit.cookie = bp->tapCookie;
+                    hit.breakpointID = bp->breakpointID;
+                    hit.address = offset;
+                    hit.kind = write ? BRK_TAP_WRITE : BRK_TAP_READ;
+                    sink->OnTap(hit);
+                    if (_tapStop) [[unlikely]]
+                    {
+                        _tapStop = false;
+                        if (result == BRK_INVALID)
+                            result = bp->breakpointID;
+                    }
+                }
+            continue;
         }
         if (stop && result == BRK_INVALID)
             result = bp->breakpointID;

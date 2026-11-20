@@ -168,6 +168,9 @@ protected:
     /// events; the other steps tell it where they ended, Screen::NoteStepEnd)
     bool _stepScreen = true;
     bool _tailScreen = false;
+    /// An edge card's floppy controller (MGT +D) is awake: OnCPUStep steps the cards' controllers. Next to the screen
+    /// flags OnCPUStep reads anyway, so a machine without the card pays one byte test (test-plan §7 of the +D)
+    bool _stepCardFdcs = false;
     /// True while the previous frame rendered. A rendered frame that follows
     /// one or more skipped frames needs Screen::ResetPrevTstate() so DrawPeriod
     /// starts the beam at t=0 instead of a stale end-of-frame position.
@@ -253,6 +256,23 @@ public:
     void OnCPUStep();
     void OnFrameEnd();
     /// endregion </Event handlers>
+
+    /// EmulatorContext::RefreshCardFdcWork: one of the edge cards' floppy controllers is awake
+    void SetCardFdcsAwake(bool awake)
+    {
+        _stepCardFdcs = awake;
+    }
+    bool StepsCardFdcs() const
+    {
+        return _stepCardFdcs;
+    }
+
+private:
+    /// The edge cards' floppy controllers (MGT +D) at a step, out of line: an inline loop over them in OnCPUStep
+    /// cost a 48K without the card 3 % per frame (docs/inprogress/2026-11-15-mgt-plus-d/test-plan.md §7)
+    UNREAL_NOINLINE void StepCardFdcs();
+
+public:
 
 };
 

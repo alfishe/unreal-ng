@@ -1,9 +1,9 @@
 /// @file openapi-ttd-cards_test.cpp
 /// @brief The WebAPI's time travel on a sound card's CPU (gs-debugger design §8) in the OpenAPI manifest: the `cpu`
-/// option of POST /ttd/seek, /ttd/step-instruction, /ttd/reverse-step and /ttd/reverse-continue, the card move's
-/// response and the cards[] readout of GET /ttd/position and /ttd/status. The handlers pass the JSON body to
-/// TTDControl unchanged (OptionsFromJson), whose replies TTDControl_CardPositions_Test checks; the drogon code is not
-/// linked into core-tests, so the manifest is read from its sources.
+/// option of POST /ttd/seek, /ttd/step-instruction, /ttd/reverse-step, /ttd/reverse-step-over and
+/// /ttd/reverse-continue, the card move's response and the cards[] readout of GET /ttd/position and /ttd/status. The
+/// handlers pass the JSON body to TTDControl unchanged (OptionsFromJson), whose replies TTDControl_CardPositions_Test
+/// checks; the drogon code is not linked into core-tests, so the manifest is read from its sources.
 
 #include <gtest/gtest.h>
 
@@ -34,7 +34,7 @@ TEST(OpenApiTTDCards_Test, TheCardOptionsAndReadoutsAreDescribed)
 {
     const std::string manifest = Manifest();
     for (const char* request : {"TTDSeekRequest", "TTDStepInstructionRequest", "TTDReverseStepRequest",
-                                "TTDReverseContinueRequest"})
+                                "TTDReverseContinueRequest", "TTDReverseStepOverRequest"})
     {
         const std::string cpu = std::string("schemas[\"") + request + "\"][\"properties\"][\"cpu\"]";
         EXPECT_NE(manifest.find(cpu), std::string::npos) << request << " has no cpu";
@@ -56,4 +56,19 @@ TEST(OpenApiTTDCards_Test, TheCardOptionsAndReadoutsAreDescribed)
     for (const char* status : {"\"ok\"", "\"at_start\"", "\"at_end\"", "\"no_hit\"", "\"no_breakpoints\"", "\"no_count\""})
         EXPECT_NE(manifest.find(status), std::string::npos) << status;
     EXPECT_NE(manifest.find("schemas[\"TTDCardMoveResponse\"][\"properties\"][\"breakpoint\"]"), std::string::npos);
+    EXPECT_NE(manifest.find("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"kind\"][\"enum\"].append(\"over\")"),
+              std::string::npos);
+    EXPECT_NE(manifest.find("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"kind\"][\"enum\"].append(\"out\")"),
+              std::string::npos);
+    EXPECT_NE(manifest.find("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"kind\"][\"enum\"].append(\"to\")"),
+              std::string::npos);
+    for (const char* field : {"pc", "max_frames"})
+        EXPECT_NE(manifest.find(std::string("schemas[\"TTDStepInstructionRequest\"][\"properties\"][\"") + field + "\"]"),
+                  std::string::npos)
+            << field;
+    for (const char* field : {"over_call", "skipped", "call_out_of_reach", "kind", "history_end", "hit", "cursor"})
+        EXPECT_NE(manifest.find(std::string("schemas[\"TTDCardMoveResponse\"][\"properties\"][\"") + field + "\"]"),
+                  std::string::npos)
+            << field;
+    EXPECT_NE(manifest.find("#/components/schemas/TTDReverseStepOverRequest"), std::string::npos);
 }

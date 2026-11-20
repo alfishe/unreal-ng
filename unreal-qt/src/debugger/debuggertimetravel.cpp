@@ -39,6 +39,12 @@ DebuggerTimeTravel::DebuggerTimeTravel(QWidget* window, QToolBar* toolbar, QActi
     _commands = std::make_unique<ttdgui::BranchCommands>(window, [this]() { return _emulator; });
     _commands->moved = [this]() { emit moved(); };
     _commands->changed = [this]() { refresh(); };
+    inform = [window](const QString& title, const QString& text, bool warning) {
+        if (warning)
+            QMessageBox::warning(window, title, text);
+        else
+            QMessageBox::information(window, title, text);
+    };
 
     auto place = [&](QAction* action) {
         toolbar->insertAction(before, action);
@@ -105,6 +111,17 @@ void DebuggerTimeTravel::setEmulator(std::shared_ptr<Emulator> emulator)
     refresh();
 }
 
+void DebuggerTimeTravel::setCpu(std::function<DebugCpuId()> cpu)
+{
+    _cpu = std::move(cpu);
+    refresh();
+}
+
+DebugCpuId DebuggerTimeTravel::cpu() const
+{
+    return _cpu ? _cpu() : DebugCpuId::Main;
+}
+
 void DebuggerTimeTravel::setShown(bool shown)
 {
     if (_shown == shown)
@@ -131,16 +148,21 @@ std::string DebuggerTimeTravel::RunBackPcs(const BreakpointManager& breakpoints)
     return text;
 }
 
+QString DebuggerTimeTravel::CardReadout(const ttd::TTDCardPosition& card)
+{
+    const QString name = QString::fromLatin1(DebugCpuName(card.cpu));
+    if (!card.known)
+        return tr("%1: no instruction counts in this recording").arg(name);
+    return tr("%1 at instruction %2, PC %3").arg(name).arg(static_cast<qulonglong>(card.instruction)).arg(Hex(card.pc));
+}
+
 QString DebuggerTimeTravel::CardMoment(const std::vector<ttd::TTDCardPosition>& cards)
 {
     for (const ttd::TTDCardPosition& p : cards)
     {
         if (!p.cardPosition || !p.known)
             continue;
-        QString text = tr("%1 at instruction %2, PC %3")
-                           .arg(QString::fromLatin1(DebugCpuName(p.cpu)))
-                           .arg(static_cast<qulonglong>(p.instruction))
-                           .arg(Hex(p.pc));
+        QString text = CardReadout(p);
         // The main CPU at its last completed instruction; inside the next one by the T-states the card is ahead
         if (p.inside)
             text += tr("; main CPU PC %1, +%2 T into the next instruction").arg(Hex(p.mainPc)).arg(p.tOffset);
@@ -157,6 +179,8 @@ void DebuggerTimeTravel::refresh()
     uint64_t frame = 0;
     std::string pcs;
     std::vector<ttd::TTDCardPosition> cards;
+    const DebugCpuId front = cpu();
+    const bool onCard = IsCardCpu(front);
     {
         const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
         EmulatorContext* context = lease.get();
@@ -171,9 +195,10 @@ void DebuggerTimeTravel::refresh()
         if (const BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
             pcs = RunBackPcs(*breakpoints);
         // A card position exists only in the history with the machine paused (its first run leaves it): the
-        // published readout then (a read under the controller's lock, never a session operation)
-        if (info.state == ttd::TTDSessionState::Detached && (!_emulator->IsRunning() || _emulator->IsPaused()) &&
-            context->pTimeTravelController)
+        // published readout then (a read under the controller's lock, never a session operation). A card's tab in
+        // front reads where its card stands at any paused moment
+        if ((info.state == ttd::TTDSessionState::Detached || onCard) &&
+            (!_emulator->IsRunning() || _emulator->IsPaused()) && context->pTimeTravelController)
             cards = context->pTimeTravelController->PublishedCardPositions();
     }
     const ttdgui::MomentText moment = ttdgui::DescribeMoment(info, frame);
@@ -184,13 +209,32 @@ void DebuggerTimeTravel::refresh()
 
     const bool locked = RemoteControlGuard::Locked();
     const bool atStart = info.state == ttd::TTDSessionState::Detached && frame <= info.sessionStartFrame;
-    _stepBack->setEnabled(!locked && !atStart);
-    _stepOverBack->setEnabled(!locked && !atStart);
+    // A card's tab in front: the back steps are the card's. The frame of the main CPU's start is no limit for them
+    // (the card may have run in it); the core answers at the card's first position (at_start)
+    const QString card = QString::fromLatin1(DebugCpuName(front));
+    _stepBack->setEnabled(!locked && (onCard || !atStart));
+    _stepOverBack->setEnabled(!locked && (onCard || !atStart));
     _frameBack->setEnabled(!locked && !atStart);
-    _runBack->setEnabled(!locked && !pcs.empty());
-    _runBack->setToolTip(pcs.empty() ? tr("Run Back needs an enabled execution breakpoint (Shift+F9)")
-                                     : tr("Back to the last time one of %1 was reached (Shift+F9)")
-                                           .arg(QString::fromStdString(pcs.size() > 40 ? pcs.substr(0, 40) + "..." : pcs)));
+    // The card's breakpoints of any kind count for the card (the core refuses when none is active)
+    _runBack->setEnabled(!locked && (onCard || !pcs.empty()));
+    if (onCard)
+    {
+        _stepBack->setToolTip(tr("Step Back: one %1 instruction back in the recorded history (Shift+F7)").arg(card));
+        _stepOverBack->setToolTip(tr("Step Over Back: one %1 instruction back; back over a whole card routine when "
+                                     "that instruction is its return (Shift+F8)")
+                                      .arg(card));
+        _runBack->setToolTip(tr("Run Back: back to the previous hit of a %1 breakpoint (Shift+F9)").arg(card));
+    }
+    else
+    {
+        _stepBack->setToolTip(tr("Back one instruction through the recorded history (Shift+F7)"));
+        _stepOverBack->setToolTip(
+            tr("Back one instruction; back over a whole routine when that instruction is its return (Shift+F8)"));
+        _runBack->setToolTip(pcs.empty() ? tr("Run Back needs an enabled execution breakpoint (Shift+F9)")
+                                         : tr("Back to the last time one of %1 was reached (Shift+F9)")
+                                               .arg(QString::fromStdString(pcs.size() > 40 ? pcs.substr(0, 40) + "..."
+                                                                                           : pcs)));
+    }
     // As the TTD panel's button: only once the recording is stopped; with a recorded future after the moment it
     // forks, at the end (or live past it) it goes on recording
     const bool recording = info.state == ttd::TTDSessionState::Recording || info.recordingPaused;
@@ -201,8 +245,14 @@ void DebuggerTimeTravel::refresh()
                                   : tr("Go on recording from the end of the recording"));
 
     QString state = moment.state;
-    if (const QString card = CardMoment(cards); !card.isEmpty())
-        state += QStringLiteral(" · ") + card;
+    // A card position names both CPUs whatever tab is in front; else the card in front says where it stands
+    QString cardPart = CardMoment(cards);
+    if (cardPart.isEmpty() && onCard)
+        for (const ttd::TTDCardPosition& p : cards)
+            if (p.cpu == front)
+                cardPart = CardReadout(p);
+    if (!cardPart.isEmpty())
+        state += QStringLiteral(" · ") + cardPart;
     if (!moment.fork.isEmpty())
         state += QStringLiteral(" · ") + moment.fork;
     _moment->setText(state);
@@ -227,7 +277,8 @@ bool DebuggerTimeTravel::move(const std::string& verb, std::map<std::string, std
     }
     if (!reply.Ok())
     {
-        QMessageBox::warning(_window, title, QString::fromStdString(reply.message));
+        if (inform)
+            inform(title, QString::fromStdString(reply.message), true);
         refresh();
         return false;
     }
@@ -240,13 +291,122 @@ bool DebuggerTimeTravel::move(const std::string& verb, std::map<std::string, std
     return true;
 }
 
+bool DebuggerTimeTravel::cardMove(DebugCpuId card, const std::string& verb, std::map<std::string, std::string> options,
+                                  const QString& title, bool* atEnd)
+{
+    const QString name = QString::fromLatin1(DebugCpuName(card));
+    options["cpu"] = DebugCpuName(card);
+    ttd::TTDReply reply;
+    if (!_emulator || RemoteControlGuard::Refuse(_window))
+        return false;
+    {
+        const Emulator::ContextLease lease = _emulator->LeaseContext();
+        EmulatorContext* context = lease.get();
+        if (!context || !ttd::HasTimeTravelSession(context))
+            return false;
+        reply = ttd::TTDControl(context).Execute({verb, std::move(options)});
+    }
+    const StateNode* message = reply.body.find("message");
+    const QString said = message ? QString::fromStdString(message->s) : QString::fromStdString(reply.message);
+    // A refusal (no card, no counts, no history, no breakpoints): its text is the core's
+    if (!reply.Ok())
+    {
+        _lastResult = title + QStringLiteral(": ") + said;
+        if (inform)
+            inform(title, said, true);
+        refresh();
+        return false;
+    }
+    // An answer that moved nothing (at_start, at_end, no_hit): the machine stays where it was
+    const StateNode* reached = reply.body.find("reached");
+    const StateNode* status = reply.body.find("status");
+    if ((!reached || !reached->b) && atEnd && status && status->s == "at_end")
+    {
+        *atEnd = true;
+        return false;
+    }
+    if (!reached || !reached->b)
+    {
+        _lastResult = title + QStringLiteral(": ") + (said.isEmpty() ? tr("nothing moved") : said);
+        if (inform)
+            inform(title, said.isEmpty() ? tr("Nothing moved.") : said, false);
+        refresh();
+        return false;
+    }
+    const StateNode* position = reply.body.find("card");
+    const StateNode* instruction = position ? position->find("instruction") : nullptr;
+    const StateNode* from = reply.body.find("from");
+    const qulonglong at = instruction ? static_cast<qulonglong>(instruction->i) : 0;
+    _lastResult = tr("%1: %2 at instruction %3 (from %4)")
+                      .arg(title, name)
+                      .arg(at)
+                      .arg(from ? static_cast<qulonglong>(from->i) : 0);
+    if (const StateNode* hit = reply.body.find("breakpoint"))
+        if (const StateNode* address = hit->find("address"))
+            _lastResult = tr("%1: %2 at the breakpoint %3 (instruction %4)")
+                              .arg(title, name, Hex(static_cast<uint16_t>(address->i)))
+                              .arg(at);
+    if (const StateNode* over = reply.body.find("over_call"); over && over->b)
+        if (const StateNode* skipped = reply.body.find("skipped"))
+            _lastResult += tr(", back over a routine of %1 instruction(s)").arg(static_cast<qulonglong>(skipped->i));
+    if (const StateNode* reach = reply.body.find("call_out_of_reach"); reach && reach->b)
+        _lastResult += tr(", on the return: the routine's start is out of reach");
+    if (const StateNode* end = reply.body.find("history_end"); end && end->b)
+        _lastResult += reply.body.find("kind")
+                           ? tr(", the step did not end in the history: at its end (the next step runs live)")
+                           : tr(", from past the history (stepped on live): at its end");
+    else if (const StateNode* cut = reply.body.find("truncated"); cut && cut->b && reply.body.find("kind"))
+        _lastResult += tr(", the step did not end in the frames searched (step again to go on)");
+    emit moved();
+    refresh();
+    return true;
+}
+
+bool DebuggerTimeTravel::stepForward(const std::string& kind, uint16_t address)
+{
+    const DebugCpuId front = cpu();
+    if (!IsCardCpu(front) || !_emulator)
+        return false;
+    // In the past only (rule 3: forward actions there replay); live, the card's own step runs
+    {
+        const Emulator::ContextLease lease = _emulator->LeaseContext();
+        EmulatorContext* context = lease.get();
+        if (!context || !ttd::HasTimeTravelSession(context))
+            return false;
+        if (ttd::TTDSessionRef(context)->GetPublishedSessionInfo().state != ttd::TTDSessionState::Detached)
+            return false;
+    }
+    // At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step
+    std::map<std::string, std::string> options{{"dir", "forward"}};
+    if (kind != "in")
+        options["kind"] = kind;
+    if (kind == "to")
+        options["pc"] = std::to_string(address);
+    const QString title = kind == "over" ? tr("Step Over")
+                          : kind == "out" ? tr("Step Out")
+                          : kind == "to"  ? tr("Run to Cursor")
+                                          : tr("Step");
+    bool atEnd = false;
+    cardMove(front, "step-instruction", options, title, &atEnd);
+    return !atEnd;
+}
+
 void DebuggerTimeTravel::stepBack()
 {
-    move("step-instruction", {{"dir", "back"}}, tr("Step Back"));
+    if (const DebugCpuId front = cpu(); IsCardCpu(front))
+        cardMove(front, "step-instruction", {{"dir", "back"}}, tr("Step Back"));
+    else
+        move("step-instruction", {{"dir", "back"}}, tr("Step Back"));
 }
 
 void DebuggerTimeTravel::stepOverBack()
 {
+    // The card's: one card instruction back, or back past a whole card routine when that instruction is its return
+    if (const DebugCpuId front = cpu(); IsCardCpu(front))
+    {
+        cardMove(front, "reverse-step-over", {}, tr("Step Over Back"));
+        return;
+    }
     move("reverse-step-over", {}, tr("Step Over Back"));
 }
 
@@ -257,14 +417,20 @@ void DebuggerTimeTravel::frameBack()
 
 void DebuggerTimeTravel::runBack()
 {
+    // The card's: back to the previous hit of its own breakpoints (found by replay; their hit counts stay)
+    if (const DebugCpuId front = cpu(); IsCardCpu(front))
+    {
+        cardMove(front, "reverse-continue", {}, tr("Run Back"));
+        return;
+    }
     std::string pcs;
     if (_emulator)
         if (const BreakpointManager* breakpoints = _emulator->GetBreakpointManager())
             pcs = RunBackPcs(*breakpoints);
     if (pcs.empty())
     {
-        QMessageBox::information(_window, tr("Run Back"), tr("Run Back stops at the enabled execution breakpoints: "
-                                                            "there is none."));
+        if (inform)
+            inform(tr("Run Back"), tr("Run Back stops at the enabled execution breakpoints: there is none."), false);
         return;
     }
     // Not found: the machine stays where it is and the reply says so (matched false)
@@ -278,7 +444,8 @@ void DebuggerTimeTravel::runBack()
     else
     {
         _lastResult = tr("Run Back: no enabled execution breakpoint was reached earlier in the history");
-        QMessageBox::information(_window, tr("Run Back"), _lastResult);
+        if (inform)
+            inform(tr("Run Back"), _lastResult, false);
     }
     refresh();
 }

@@ -172,6 +172,8 @@ void PlusDCard::Attach()
         throw std::runtime_error("the machine has no room for another disk controller");
     _fdcAdded = true;
 
+    // The overlay is installed only while the card is paged in (SetPagedLine): paged out, the machine's memory runs
+    // the plain interfaces. One try here tells a machine with no room for it from the start
     if (!_context->pCore->AddBusOverlay(this))
         throw std::runtime_error("the host bus overlays are all taken");
     _overlayInstalled = true;
@@ -180,6 +182,7 @@ void PlusDCard::Attach()
     z80->machineM1Hook = this;
     z80->machineM1HookEnd = kTrapEnd;
     _hookInstalled = true;
+    SetPagedLine(_paged);
 
     if (MediaManager* media = _context->pMediaManager)
     {
@@ -251,7 +254,7 @@ uint8_t PlusDCard::portDeviceReadCycle(uint16_t port, bool& drives)
             return _fdc->ReadRegister(WD1793::REG_DATA);
         case kPortPaging:
             // A read pages the +D in; the card leaves the data bus alone (Fuse plusd_patch_read)
-            _paged = true;
+            SetPagedLine(true);
             drives = false;
             return 0xFF;
         default:
@@ -279,7 +282,7 @@ void PlusDCard::portDeviceOutMethod(uint16_t port, uint8_t value)
             WriteControl(value);
             break;
         case kPortPaging:
-            _paged = false;
+            SetPagedLine(false);
             break;
         case kPortPrinter:
             _printerData = value;
@@ -357,7 +360,7 @@ void PlusDCard::BusReset()
     // Paged out: the machine starts from its own ROM, the +D comes in at its first trap (Fuse: plusd_reset() sets
     // plusd_active but clears ram.romcs, so nothing is mapped). Paged in, the +D ROM's #0000 entry would hand over to
     // #11CB, the 48K ROM's START: on a 128K that is ROM 0's code, and the boot hangs on whatever the RAM holds
-    _paged = false;
+    SetPagedLine(false);
     _control = 0;
     _strobeFirstEdge = false;
     _fdc->reset();
@@ -385,8 +388,27 @@ void PlusDCard::onWrite(uint16_t addr, uint8_t value, bool romPaged)
 
 void PlusDCard::BeforeMachineM1(uint16_t address)
 {
-    if (IsTrapAddress(address))
-        _paged = true;
+    if (IsTrapAddress(address) && !_paged)
+        SetPagedLine(true);
+}
+
+void PlusDCard::SetPagedLine(bool paged)
+{
+    _paged = paged;
+    // Before Attach and after Detach the card is not on the bus: the flag only
+    if (!_hookInstalled)
+        return;
+    Core* core = _context->pCore;
+    if (paged && !_overlayInstalled)
+    {
+        // Core::AddBusOverlay logs a refusal (all overlay slots taken since Attach): the card then reads as absent
+        _overlayInstalled = core->AddBusOverlay(this);
+    }
+    else if (!paged && _overlayInstalled)
+    {
+        core->RemoveBusOverlay(this);
+        _overlayInstalled = false;
+    }
 }
 
 void PlusDCard::OnMachineM1(uint16_t address)
@@ -467,7 +489,7 @@ bool PlusDCard::LoadState(const uint8_t* src)
 {
     if (src == nullptr || src[0] != kStateVersion)
         return false;
-    _paged = src[1] != 0;
+    SetPagedLine(src[1] != 0);
     _control = src[2];
     _printerData = src[3];
     _strobeByte = src[4];

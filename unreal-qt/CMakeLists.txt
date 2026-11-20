@@ -807,6 +807,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointeditor_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointeditor.h"
+        # The per-hit record of a counting breakpoint: the editor's fields, the list's expanding rows (PLAN #122 V4)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointhits_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointdialog.h"
         # The debugger's stop line: the breakpoint the machine stopped at, in words
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/breakpointstopline_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/breakpointstopline.cpp"
@@ -815,6 +819,10 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggertimetravel_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggertimetravel.h"
+        # The Embedded debugger's processor tabs: Main CPU and each sound card CPU fitted (gs-debugger design §7.3)
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggercputabs_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/debuggercpu.h"
         # The debugger's machine panels: CMOS clock, port watch, port events (enhancements #4, #6, #7)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/debuggerpanels_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/rtcdialog.cpp"
@@ -831,6 +839,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorypane_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.h"
+        # The debugger's ZX Spectrum Next panes: NextREG, MMU, Copper, Sprites, DMA, CTC / IM2 (Next TODO "Qt panels")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextpanes_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

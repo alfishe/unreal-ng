@@ -617,8 +617,11 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
         
-    def run_frames(self, count: int):
-        """Run exactly N video frames"""
+    def run_frames(self, count: int, skip_breakpoints: bool = True) -> dict:
+        """N video frames on the run timeline (split-independent: 30 + 70 == 100); returns {count, unit, frames_run,
+        tstates_run, frame, t, stop: {cpu, reason: done|breakpoint|stopped, ...}, message}
+        (command-interface.md, Counted runs). run_tstates(count, skip_breakpoints=True) runs t-states on the same
+        timeline and returns the same dict"""
         
     def get_id(self) -> str:
         """Get emulator UUID"""
@@ -1246,9 +1249,15 @@ id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register wr
 id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
-emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp_reset_hits(id, cpu="")       # hit counter back to 0 and the per-hit record emptied (no id: all)
 emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp(0x0038, stop=False, hit_log=100, hit_log_keep="last")  # ... and records the newest 100 hits (default the
+                                    # first 1000; 0 none)
 emu.bp_hits(id)                     # the hit count; -1 for an unknown id
+r = emu.bp_hit_log(id, cpu="", from_index=0, limit=100)  # the per-hit record, as GET .../breakpoints/{bp_id}/hits:
+                                    # r["hit_count"], r["log"] {capacity, keep, total, stored, dropped, oldest},
+                                    # r["hits"][i] {index, hit, frame, t, pc, address, value, kind, cpu_time},
+                                    # r["more"] / r["next_from"]
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id
@@ -1718,6 +1727,12 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 # the TTDControl reply as a dict (cpu, status, reached, from, target, card, frame, tinframe, ...)
 emu.ttd_card_seek('gs', 123456)            # the card at its instruction count; the main CPU follows by replay
 emu.ttd_card_step('gs', -5)                # 5 card instructions back (positive: forward; default 1)
+emu.ttd_card_step_over('gs')               # the card's step over through the history ('history_end': not ended in
+emu.ttd_card_step_out('gs')                #  it, the card at its end; 'breakpoint': a card breakpoint ended it)
+emu.ttd_card_run_to_cursor('gs', 0x4020)   # the card's run to the cursor through the history ('hit', 'cursor';
+                                           #  not reached, max_frames=None -> 1000: 'reached' False, 'no_hit')
+emu.ttd_card_reverse_step_over('gs')       # one card instruction back, or past a whole card routine ('over_call',
+                                           #  'skipped', 'text')
 emu.ttd_card_reverse_continue('gs', max_frames=200)  # back to the card's previous breakpoint hit
 emu.ttd_card_position('gs')                # {'cpu', 'known', 'instruction', 'pc', 'card_position', 'caught_up',
                                            #  'main': {'frame', 'tinframe', 'pc', 't_offset', 'inside'}}; None: no card
@@ -1941,6 +1956,19 @@ now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
 # {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+# memory_at names its moment: 'moment' frame_start (before the frame's first instruction) | inside_frame | now,
+# 'at_tinframe' (where the CPU stood), 'moment_text'
+
+# Memory over many frames in one walk of the checkpoints (no seek per frame); every row equals ttd_memory_at there
+s = emu.ttd_memory_series('0x5C78:2, ram5:0x1B00:32', from_frame=100, to_frame=400, step=10, changes_only=True,
+                          format='hex')   # ranges also a list of strings or dicts {space, address|offset, page, length}
+# {'rows': [{'frame': 100, 'exact': True, 'at_tinframe': 7, 'data': ['6500', '...']}, ...], 'frames_read': 31,
+#  'truncated': False, ...}   frames=[...] instead of from/to/step; limit, max_bytes: truncated with next_from_frame
+# A past frame's screen, the machine put back
+shot = emu.ttd_screen_at(150)                                  # the final picture: 'data' (PNG, base64), 'mime'
+attrs = emu.ttd_screen_at(150, which='shadow', format='attributes', encoding='hex')
+# shot['shown'] = {'at_start': {'screen': 'normal', 'page': 5, 'p7ffd': 16}, 'at_end': {...},
+#                  'changed_during_frame': False, 'flips': []}
 
 timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],

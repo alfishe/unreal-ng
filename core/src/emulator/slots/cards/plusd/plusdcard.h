@@ -156,7 +156,7 @@ public:
     void RestoreSnapshot(const SnapshotRegisters& registers, const uint8_t* ram);
     void SetPaged(bool paged)
     {
-        _paged = paged;
+        SetPagedLine(paged);
         _snapshotPaging = true;
     }
     /// A snapshot load (Emulator::LoadSnapshotNow) around the loader: its reset pages the +D in; unless the snapshot
@@ -168,7 +168,7 @@ public:
     void EndSnapshotLoad()
     {
         if (!_snapshotPaging)
-            _paged = false;
+            SetPagedLine(false);
         _snapshotPaging = false;
     }
 
@@ -205,6 +205,9 @@ public:
     /// endregion </IMachineM1Hook>
 
 private:
+    /// The paging line: the host bus overlay (ROM / RAM at #0000-#3FFF) is installed only while it is high, so a
+    /// paged-out card costs the machine's memory accesses nothing (hostbusoverlay.h)
+    void SetPagedLine(bool paged);
     void LoadRom();
     void WriteControl(uint8_t value);
     void StrobeEdge();

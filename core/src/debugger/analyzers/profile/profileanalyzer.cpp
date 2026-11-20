@@ -126,6 +126,7 @@ void ProfileAnalyzer::Reset()
     _depth.store(0, std::memory_order_relaxed);
     _lastCell = nullptr;
     _started = false;
+    _heldAck = 0;
     _prevFlow = FlowNone;
     _topSince.store(0, std::memory_order_relaxed);
     _top.store(0, std::memory_order_relaxed);
@@ -462,18 +463,20 @@ void ProfileAnalyzer::AbandonAt(uint16_t slot)
         PopTop(true);
 }
 
-void ProfileAnalyzer::Settle()
+bool ProfileAnalyzer::CatchUp()
 {
-    // The CPU is held at an instruction start (a stop holds it, a replay run has returned): the time since the last
-    // step is the last instruction's, booked as the next step would book it, and a frame that ended meanwhile is
-    // closed. Without this a window of N frames would show N - 1 and miss its last instruction's T-states
+    // The CPU is between two instructions on the thread that drives it (a frame end, the end of a run, a park): the
+    // time since the last step is the last instruction's, booked now as the next step would book it, and a frame end
+    // it crossed is counted now. The next step books only the time after this point, so nothing is counted twice and
+    // a report read now has every frame end and every T-state the CPU ran. The step's state (the call stack, the
+    // previous instruction's flow) stays as it is: the next step goes on from it
     if (!_started || !_lastCell || !_context || !_context->pCore || !_memory)
-        return;
+        return false;
     if (_context->ttdReplayActive && !_settings.countReplay)
-        return;
+        return false;
     const Z80* cpu = _context->pCore->GetZ80();
     if (!cpu)
-        return;
+        return false;
     const uint32_t t = cpu->t;
     const uint32_t lastStart = _lastT;
     uint32_t d;
@@ -483,24 +486,24 @@ void ProfileAnalyzer::Settle()
         d = t + _frameT - lastStart;
         wrapped = true;
         if (_context->emulatorState.frame_counter != _lastFrameCounter + 1 || d > _frameT)
-            return;  // moved under the profile: nothing to book, the next start begins afresh
+            return false;  // moved under the profile: the next step sees the discontinuity
         _lastFrameCounter = _context->emulatorState.frame_counter;
     }
     else
     {
         d = t - lastStart;
         if (d > _frameT)
-            return;
+            return false;
     }
     _lastT = t;
     if (cpu->acknowledges != _ackSeen)
     {
-        // an interrupt accepted after the last instruction: its acknowledge, apart (its handler has not run yet)
-        _ackSeen = cpu->acknowledges;
-        const uint32_t ack = std::min(cpu->lastAcknowledgeT, d);
+        // an interrupt accepted after the last instruction: its acknowledge is held for the handler's first
+        // instruction, whose step pushes the interrupt's frame and books it (Step)
+        const uint32_t acknowledgeT = cpu->lastAcknowledgeT - std::min(cpu->lastAcknowledgeT, _heldAck);
+        const uint32_t ack = std::min(acknowledgeT, d);
         d -= ack;
-        Inc(_acks);
-        Add(_ackT, ack);
+        _heldAck += ack;
     }
     Add(_lastCell->t, d);
     Add(_now, d);
@@ -512,6 +515,35 @@ void ProfileAnalyzer::Settle()
         if (_settings.frames && _settings.stack)
             FlushFrame();
     }
+    return true;
+}
+
+void ProfileAnalyzer::onFrameEnd()
+{
+    CatchUp();
+}
+
+void ProfileAnalyzer::onRunStop()
+{
+    CatchUp();
+}
+
+void ProfileAnalyzer::Settle()
+{
+    // The CPU is held at an instruction start (a stop holds it, a replay run has returned): the last instruction and
+    // a frame end after it are booked (CatchUp), an acknowledge after it is counted apart (its handler has not run
+    // yet), and the next activation starts afresh. Without this a window of N frames would show N - 1 and miss its
+    // last instruction's T-states
+    if (!CatchUp())
+        return;
+    const Z80* cpu = _context->pCore->GetZ80();
+    if (cpu->acknowledges != _ackSeen)
+    {
+        _ackSeen = cpu->acknowledges;
+        Inc(_acks);
+        Add(_ackT, _heldAck);
+    }
+    _heldAck = 0;
     _started = false;
 }
 
@@ -681,6 +713,7 @@ void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
         p._started = true;
         p._lastT = t;
         p._ackSeen = cpu->acknowledges;
+        p._heldAck = 0;
         p._lastFrameCounter = p._context->emulatorState.frame_counter;
         p._prevFlow = FlowNone;
         p._prevSp = static_cast<uint16_t>(cpu->sp + 1);  // no transfer matches it: the opcode before is not ours
@@ -717,6 +750,9 @@ void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
     if (interrupted) [[unlikely]]
     {
         p._ackSeen = cpu->acknowledges;
+        // the part of the acknowledge a catch-up held back (CatchUp) is the handler's too
+        d += p._heldAck;
+        p._heldAck = 0;
         ack = std::min(cpu->lastAcknowledgeT, d);
         d -= ack;
         Inc(p._acks);

@@ -120,10 +120,32 @@ a step of the card; at the frame end or in a host port access, neither a moment 
 - `StartRecording` there does not capture: the start is pending (`start_pending` in `status` and in the `start`
   reply, `state` idle) and `OnFrameBoundary` starts the recording at the next frame boundary, its baseline the frame's
   start as every other checkpoint. `stop`, `invalidate` and a session end cancel it.
-- The moves (`seek`, the steps, `reverse-*`, `resume`, `branch-switch`, `load`) are refused there (409): the rest of
-  the card's run and of the frame end would go on over the restored machine.
+- The moves (`seek`, the steps, `reverse-*`, `resume`, `branch-switch`, `branch-create`, `load`) were refused there
+  (409): the rest of the card's run and of the frame end would go on over the restored machine. Since 2026-11-20 they
+  leave it first (below).
 
-Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp`. The eCat self-check no longer runs frames before its
+**As built (2026-11-20): moves leave the card's run first.** A live card step at the history's end (F7 / F8 /
+Ctrl+F8 on a card's tab, D-3) parks the machine inside the card's catch-up, so Step Back, Frame Back and every other
+move right after it answered 409. Now `TTDControl` calls `Emulator::LeaveCardRun` before such a move:
+
+- the machine resumes (an internal requester) with `_leavingCardRun` set: the card targets drop every stop on the way
+  (`GSCardTarget::Park` returns at once), and `DebugManager::CardTight` holds tight mode on, so the cards catch up at
+  each main CPU instruction start;
+- the first main instruction start after the card's run (`DebugManager::CatchUpCards`, after its catch-up) calls
+  `Emulator::NoteMainBoundaryAfterCardRun`, which pauses the machine; the loop parks at its clean per-instruction
+  point after that instruction (live, unrecorded, as D-3's live steps), not inside the start hooks;
+- the caller waits (`WaitDebugChange`, 2 s at most) until the machine is parked outside the card's run, then the
+  move goes on. A card step back from there lands at the history's newest card instruction (`history_end`), as the
+  main CPU's step back from a live position lands on its last recorded instruction.
+
+The refusal (409, with the reason) stays only where leaving cannot work: the call runs on the machine's own thread
+or holds its CPU, the resume is refused, or the machine is not out within 2 s. The extra checks run only while
+leaving (an atomic load on the card park and catch-up paths, which run in tight / debug mode only); the live hot path
+is unchanged. Moves that bypass `TTDControl` (direct `TimeTravelController` calls) are not covered: every plane and
+both debuggers' time groups go through `TTDControl`.
+
+Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp` (a start pending inside the frame end's card run; a frame
+step back and a card step back right after a live `RunControl::CardStep`). The eCat self-check no longer runs frames before its
 `start`.
 
 ## 8. Positions on a sound card's CPU (2026-11-18)
@@ -135,8 +157,14 @@ debuggers' time group, by the CPU in front.
 - **eCat** (in process and over REST alike; `ecat/dialogs/debugger/ttdcontrols.cpp`). With a card's tab in front
   (`gs`, `ms`): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's own
   breakpoints, any kind), and the window's Step (F7) in the past (`detached`) is `step-instruction {cpu, dir:
-  forward}`; live, F7 stays the card's own step. Step Over Back is off on the card's tab (the core has no card step
-  over back); Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
+  forward}`; live, F7 stays the card's own step. Since 2026-11-19 Step Over Back (Shift+F8) is `reverse-step-over
+  {cpu}` (back past a whole card routine when the instruction before is its return), and Step over (F8) / Step out
+  (Ctrl+F8) in the past are `step-instruction {cpu, kind: over | out}` (the card's step through the history, as a
+  live card step would go; its breakpoints end it). At the history's end (`at_end`) F7 / F8 / Ctrl+F8 run the
+  card's live step, unrecorded, as the main CPU's steps do there (D-3); no message. Since 2026-11-20 Run to cursor
+  (F4) on a card's tab in the past is `step-instruction {cpu, kind: to, pc}` (the card's next instruction at the
+  cursor, found by replay; not reached: a message, the live machine untouched; at the history's end the live run),
+  and the moves right after a live card step work (§7). Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
   processor (a pause, a move in time) no longer brings the main CPU's tab forward: the card's tab stays in front
   after its back step (`DebuggerWindow::on_debug_event`).
 - **The moment** (eCat's state label) names both CPUs at a card position, from `cards[]` of `position` (the poll
@@ -144,15 +172,22 @@ debuggers' time group, by the CPU in front.
   its instruction boundary`. Without one, the card's tab adds where the card stands.
 - **Refusals and answers** (`no_breakpoints`, `no_count`, `no_card`; `at_start`, `at_end`, `no_hit`) are said in a
   message (`TtdControls::inform`, a box; the self-check reads them) and in the branch button's tooltip.
-- **Embedded** has no card CPU view: its registers, listing and stack are the main CPU's (the card is seen only in
-  memory dumps of the card's RAM). Its moment label (`debuggertimetravel.cpp`, `DebuggerTimeTravel::CardMoment`, from
-  `TimeTravelController::PublishedCardPositions` while the machine is paused in the history) says where both CPUs
-  stand when another surface left the machine at a card position, so the main CPU's registers read right. Proposed,
-  not built: a CPU selector on the Embedded debugger's toolbar (Main / GS / MS) that switches the registers widget and
-  the disassembler to the card's `GSCardTarget` (an extension of the two existing widgets, the way eCat's tabs do it);
-  the time group would then route as eCat's does.
+- **Embedded** has processor tabs above its panes (`unreal-qt/src/debugger/debuggercpu.cpp`, `DebuggerCpuTabs`):
+  Main CPU and one per card CPU fitted (GS / NeoGS, MultiSound GS); with the main CPU alone there is no bar. The tab
+  in front is the CPU the registers, stack, memory pages, memory view (its 64 KB), disassembly (its labels and
+  breakpoints), the steps, run to cursor and the time group act on. With a card in front the time group routes as
+  eCat's (`DebuggerTimeTravel::setCpu`): Step Back `step-instruction {cpu, dir: back}`, Step In in the past
+  `step-instruction {cpu, dir: forward}`, Step Over / Step Out in the past `step-instruction {cpu, kind}` (live and
+  at the history's end: `RunControl::CardStep`), Step Over Back `reverse-step-over {cpu}`, Run Back
+  `reverse-continue {cpu}`. Run to cursor on a card's tab in the past is `step-instruction {cpu, kind: to, pc}`
+  (`DebuggerTimeTravel::stepForward("to", address)`; at the history's end the live card run).
+  The card's labels (its own `LabelManager`) are the ones its disassembly, memory tooltip and Label Manager show;
+  the main CPU's labels and markup never appear on a card's tab (eCat's card disassembly likewise). A breakpoint or step stop brings its CPU's tab to the front once per `Emulator::LastStop().serial`; a
+  pause and a move in time leave the tab alone, so the card's tab stays after its Step Back. The moment label
+  (`DebuggerTimeTravel::CardMoment`, from `TimeTravelController::PublishedCardPositions` while the machine is paused
+  in the history) names both CPUs at a card position; without one, a card's tab adds where its card stands.
 
 Tests: `DebuggerTimeTravelCard_Test` (unreal-qt-tests: the readout's words, a card position in the moment, a main move
-ending it); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
+ending it; Step Over Back, Step Over / Out in the past and the hand-over at the history's end on the card's tab), `DebuggerCpuTabs_Test` (the tabs, the readers per CPU, a card stop once, a card Step Back); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
 Back with and without a card breakpoint, at the start, a missing card, the main CPU's tab again).
 

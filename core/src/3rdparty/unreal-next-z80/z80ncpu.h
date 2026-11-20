@@ -198,6 +198,12 @@ void Z80nCpuSetTstates(Z80nCPU* cpu, uint32_t tstates);
 // cycle are added after the callback, so both add up (PS0182 p. 309).
 void Z80nCpuAddWaitStates(Z80nCPU* cpu, uint32_t tstates);
 
+// Inside the contend hook for a Z80nCpuAccessInternal T-state: the T-states
+// of its idle group from this one on (n at the group's first T, 1 at its
+// last). A host that tells machine cycles apart (a bus master granted at
+// their ends) reads the group's length there.
+int Z80nCpuIdleLeft(const Z80nCPU* cpu);
+
 // Address of the first byte (first prefix) of the instruction currently
 // executing / last executed - stable from the M1 fetch until the next
 // Z80nCpuStep. Behind redundant prefixes the instruction starts at its last

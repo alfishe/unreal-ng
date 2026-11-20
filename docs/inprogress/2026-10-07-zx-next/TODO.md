@@ -16,6 +16,11 @@ Planned, in this order:
   next byte boundary (dma.vhd WRITE_4 -> START_DMA; the requests are latched at the DMA's clock, `NextInterruptSource::DmaDelayAt`), and
   the prescaler period is the RTL's, 32 N + 3 CPU clocks in continuous mode (POC 036 `dmaprescc` in GHDL: 152 clocks of 28 MHz at
   3.5 MHz, N = 4; 0 durations differ after the fix). Audit: `audit-dma-timing-2026-10-09.md` section "MAME and the RTL, 2026-11-18"
+- [x] The DMA takes the bus inside an instruction (2026-11-19): the burst mode's next byte and the enable's first byte go at the T80's
+  machine-cycle ends (`Z80NEngine` contention hook, `IMachineCycleEndTurn`, `Z80nCpuIdleLeft`), the burst wait with the +1 clock of the
+  sampled BUSRQ. POC 036 `dmaprescb` / `dmaburst` / `dmaprescc` / `dmacont` on 48K / 128K / +3: 0 durations differ. `mod_player.nex`
+  NEXT-DDMA 3 blocks ahead of NEXT: no SRAM wait at 28 MHz on core 3.03, the init is shorter (audit section "The bus inside an
+  instruction, 2026-11-19")
 - [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
 - [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
   CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket
@@ -51,7 +56,8 @@ Planned, in this order:
   (`z80dma` `clk_i = i_CLK_CPU`, the +3 wait through `dma_wait_n`, zxnext.vhd 1844), so `NextDma::Bus::contend` gives its memory cycles
   the CPU's waits; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryNotOnPorts`; 2026-10-26 by the RTL (POC 036): its port
   cycles take no port contention, only the address's).
-  No change for the rest: the DMA steps between instructions, so it never runs inside a RETI and the tail ends with it as
+  No change for the rest: the DMA steps between instructions (since 2026-11-19 a burst byte and the enable's first byte also at a
+  machine-cycle end inside one, the in-service state lasting to the RETI's callback), and the tail ends with it as
   `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
   no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
 - [x] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo) (done 2026-10-26 by the RTL: POC 036
@@ -82,7 +88,11 @@ Not planned yet:
 - [ ] Tests: an NR #02 hard reset returns to config mode with the boot ROM at 0 (RAM survives, as on the board); Z80N: a masked INT is not
   taken right after EI or between a DD / FD prefix (also DD DD) and its opcode
 - [ ] Host M1 button (the Multiface NMI) in Qt and on the automation planes (`GenerateMultifaceNmi`; today only NR #02 bit 3)
-- [ ] Qt panels (NextREG table, MMU map, sprites, copper, DMA / CTC / IM2) and Next-aware GDB wiring (DeZog DZRP is done)
+- [x] Qt panels (2026-11-19): NextREG, MMU, Copper, Sprites, DMA, CTC / IM2 as tabs beside the PC history of the Embedded debugger
+  (its right pane, always shown, Next tabs on a Next only; the PC history records while its tab is in front) and as side tabs of the eCat debugger (on a Next only); each renders the report the planes
+  serve (`next_regs`, `next_mmu`, `next_copper`, `next_sprites`, `next_dma`, `next`'s `interrupts` / `ctc`), values changed since the
+  last stop lit. The catalog lists `next-regs`, `next-mmu`, `next-copper`, `next-sprites` (Devices tab, `state devices`)
+- [ ] Next-aware GDB wiring (DeZog DZRP is done)
 - [x] Native `.snx` loader (2026-10-26): `LoaderSNA`'s SNX mode (48K = 49179 bytes; 128K = the banks `#7FFD` leaves, then private
   data, counted in the report and not loaded), `SnapshotLauncher` takes the Next for it, every surface lists `.snx`; the tests load
   the release `.snx` directly. With it: `NextRealBoard_Test` follows core 3.02.03 (NR #0A bit 2 reads 0; z80bltst is red under the

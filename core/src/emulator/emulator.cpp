@@ -27,6 +27,7 @@
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
@@ -2065,6 +2066,10 @@ void Emulator::WaitWhilePaused()
         screen->UpdateScreen();
     if (IsPaused())
         NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
+    // The analyzers close what they keep pending: a report read while parked has the last instruction
+    if (_context && _context->pDebugManager)
+        if (AnalyzerManager* analyzers = _context->pDebugManager->GetAnalyzerManager())
+            analyzers->dispatchRunStop();
 
     // Parks until the machine may run again, serving posted commands meanwhile; false on stop (the frame then
     // finishes and MainLoop::Run sees the stop request). Parked, this thread does not drive the Z80
@@ -3394,6 +3399,75 @@ void Emulator::FillInstructionProgress(MainPosition& position) const
         position.busCycle = static_cast<int8_t>(at.index);
 }
 
+bool Emulator::LeaveCardRun(std::string& error, uint32_t timeoutMs)
+{
+    error.clear();
+    if (!IsParkedInsideCardRun())
+        return true;
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+    {
+        error = "the machine is stopped inside the sound card's run (a General Sound breakpoint or step) and this "
+                "call runs on its own thread or holds its CPU: run or step the machine out of it first, then move "
+                "in time";
+        return false;
+    }
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    _cardRunLeft.store(false, std::memory_order_release);
+    _leavingCardRun.store(true, std::memory_order_release);
+    if (debug)
+        debug->UpdateCardTight();   // every main instruction start catches the cards up: the next one ends it
+    struct EndLeave
+    {
+        Emulator& emulator;
+        DebugManager* debug;
+        ~EndLeave()
+        {
+            emulator._leavingCardRun.store(false, std::memory_order_release);
+            if (debug)
+                debug->UpdateCardTight();
+        }
+    } endLeave{*this, debug};
+
+    const execution::Result resumed = Resume(execution::Requester{execution::Origin::Internal, {}}, false);
+    if (resumed.outcome == execution::Outcome::Refused)
+    {
+        error = "the machine is stopped inside the sound card's run and could not be resumed out of it (" +
+                resumed.detail + "): run or step it out first, then move in time";
+        return false;
+    }
+    // Out of the card's run and paused again: at the main instruction start (NoteMainBoundaryAfterCardRun), or at a
+    // main CPU breakpoint on the way
+    auto settled = [this]() { return !IsParkedInsideCardRun() && IsPaused() && _arbiter.IsParked(); };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    uint64_t seq = DebugSeq();
+    while (!settled())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            break;
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        seq = WaitDebugChange(seq, static_cast<uint32_t>(std::min<int64_t>(left, 20) + 1));
+    }
+    if (settled())
+        return true;
+    Pause();
+    WaitForPauseConfirmation(500);
+    if (settled())
+        return true;
+    error = "the machine did not leave the sound card's run within " + std::to_string(timeoutMs) +
+            " ms: run or step it out first, then move in time";
+    return false;
+}
+
+void Emulator::NoteMainBoundaryAfterCardRun()
+{
+    if (!LeavingCardRun() || IsParkedInsideCardRun() || !_arbiter.IsLoopThread())
+        return;
+    bool expected = false;
+    if (_cardRunLeft.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        Pause();   // the loop parks at its next instruction boundary, after this instruction
+}
+
 void Emulator::ParkInsideCardRun()
 {
     // Nested parks do not happen (the card's run is one), the flag is only this thread's
@@ -3714,7 +3788,40 @@ void Emulator::RunFrame(bool skipBreakpoints)
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
 }
 
-void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
+uint64_t Emulator::RunTimelineCarry() const
+{
+    if (!_runTimeline.valid || !_core || !_context)
+        return 0;
+    const Z80& z80 = *_core->GetZ80();
+    const bool there = _runTimeline.frame == _context->emulatorState.frame_counter && _runTimeline.t == z80.t &&
+                       _runTimeline.frameLimit == z80._frameLimit && _runTimeline.pc == z80.pc &&
+                       _runTimeline.sp == z80.sp;
+    return there ? _runTimeline.overshoot : 0;
+}
+
+void Emulator::NoteRunTimelineEnd(uint64_t overshoot)
+{
+    const Z80& z80 = *_core->GetZ80();
+    _runTimeline.valid = true;
+    _runTimeline.frame = _context->emulatorState.frame_counter;
+    _runTimeline.t = z80.t;
+    _runTimeline.frameLimit = z80._frameLimit;
+    _runTimeline.pc = z80.pc;
+    _runTimeline.sp = z80.sp;
+    _runTimeline.overshoot = overshoot;
+}
+
+void Emulator::ContinueRunTimelineOf(const Emulator& source)
+{
+    _runTimeline.valid = false;
+    if (!_core || !_context || &source == this)
+        return;
+    const uint64_t carry = source.RunTimelineCarry();
+    if (carry != 0)
+        NoteRunTimelineEnd(carry);
+}
+
+Emulator::DirectRunResult Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 {
     DirectStepScope directStep(*this, "run_frames");
     CancelPendingStepOver();
@@ -3737,11 +3844,18 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
         WaitForPauseConfirmation(500);
     }
 
+    DirectRunResult result;
+
     Z80& z80 = *_core->GetZ80();
 
     // Run exactly N frames worth of t-states. The budget is in T-states of the frame length now in force and
-    // follows a hardware clock switch (TStateRunBudget), so "N frames" stays N frames of emulated time
+    // follows a hardware clock switch (TStateRunBudget), so "N frames" stays N frames of emulated time. On the
+    // timeline: the T-states the previous run's last instruction ran past its target are already spent, so the
+    // target is N frames after that target and a split run does not drift (RunTimeline)
     TStateRunBudget budget = TStateRunBudget::Frames(z80._frameLimit, frames);
+    const uint64_t carry = RunTimelineCarry();
+    budget.Credit(carry);
+    _runTimeline.valid = false;
 
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     // A halted CPU's idle cycles may run in one go, as one per step would: those that start inside the budget
@@ -3761,11 +3875,20 @@ void Emulator::RunNFrames(unsigned frames, bool skipBreakpoints)
 
         // Notify after each frame so debugger/visualizers can update
         if (frameCompleted)
+        {
+            result.frames++;
             messageCenter.Post(NC_EXECUTION_CPU_STEP);
+        }
     }
+
+    result.tstates = budget.Elapsed() > carry ? budget.Elapsed() - carry : 0;
+    result.reached = budget.Reached() && !RunHalted();
+    if (result.reached)
+        NoteRunTimelineEnd(budget.Overshoot());
+    return result;
 }
 
-void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
+Emulator::DirectRunResult Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints, bool onTimeline)
 {
     DirectStepScope directStep(*this, "run_tstates");
     CancelPendingStepOver();
@@ -3784,25 +3907,42 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
         WaitForPauseConfirmation(500);
     }
 
+    DirectRunResult result;
+
     Z80& z80 = *_core->GetZ80();
 
-    // 64-bit: the target is counted from the current frame start and a long run spans many frames
-    uint64_t targetT = static_cast<uint64_t>(z80.t) + tStates;
+    // 64-bit: the target is counted from the current frame start and a long run spans many frames. Signed: on the
+    // timeline the previous run's overshoot comes off it, and that target may lie before this frame's start (the
+    // last instruction crossed a frame end past it) or before the current t (it is already reached: nothing runs)
+    const uint64_t carry = onTimeline ? RunTimelineCarry() : 0;
+    if (onTimeline)
+        _runTimeline.valid = false;
+    int64_t targetT = static_cast<int64_t>(z80.t) + static_cast<int64_t>(tStates) - static_cast<int64_t>(carry);
+    // T-states run so far, counted at each frame end and at the end
+    uint64_t ranBeforeFrame = 0;
+    uint32_t frameStartT = z80.t;
+    uint64_t overshoot = 0;
+    bool reached = static_cast<int64_t>(z80.t) >= targetT;
+    if (reached)
+        overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) - targetT);
 
     // A halted CPU's idle cycles may run in one go, as one per step would: those that start before the target
     Z80::IdleSkipScope idleSkip(z80, 0);
 
-    while (z80.t < targetT && !RunHalted())
+    while (!reached && !RunHalted())
     {
         const uint32_t limitBefore = z80._frameLimit;
-        z80.idleSkipLimit = targetT < UINT32_MAX ? static_cast<uint32_t>(targetT) : UINT32_MAX;
+        z80.idleSkipLimit = targetT < static_cast<int64_t>(UINT32_MAX) ? static_cast<uint32_t>(targetT) : UINT32_MAX;
 
         bool frameCompleted = false;
         ExecuteStep(skipBreakpoints, &frameCompleted);
 
         if (frameCompleted)
         {
-            if (targetT >= limitBefore)
+            result.frames++;
+            ranBeforeFrame += static_cast<uint64_t>(limitBefore) - frameStartT;
+            frameStartT = 0;
+            if (targetT >= static_cast<int64_t>(limitBefore))
             {
                 targetT -= limitBefore;
             }
@@ -3812,14 +3952,27 @@ void Emulator::RunTStates(uint64_t tStates, bool skipBreakpoints)
                 // overshooting instruction already executed past it. Stop
                 // to avoid running an entire extra frame (which would
                 // inflate frame_counter and corrupt TTD probe records).
+                overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) + limitBefore - targetT);
+                reached = true;
                 break;
             }
         }
+        if (static_cast<int64_t>(z80.t) >= targetT)
+        {
+            overshoot = static_cast<uint64_t>(static_cast<int64_t>(z80.t) - targetT);
+            reached = true;
+        }
     }
+
+    result.tstates = ranBeforeFrame + (z80.t > frameStartT ? z80.t - frameStartT : 0);
+    result.reached = reached && !RunHalted();
+    if (onTimeline && result.reached)
+        NoteRunTimelineEnd(overshoot);
 
     // Notify debugger
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_EXECUTION_CPU_STEP);
+    return result;
 }
 
 void Emulator::RunUntilScanline(unsigned targetLine, bool skipBreakpoints)

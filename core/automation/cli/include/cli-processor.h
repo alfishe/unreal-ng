@@ -14,6 +14,11 @@
 
 #include "platform-sockets.h"
 
+namespace monitoring
+{
+struct Reply;
+}
+
 struct StateNode;
 struct BreakpointSpec;
 class BreakpointManager;
@@ -377,6 +382,8 @@ private:
                               const std::function<void(const std::vector<std::string>&)>& again);
     // Adds the breakpoint and says what was set ("Breakpoint #3 set at 0x8000 ...") or why not
     std::string AddBreakpointAndDescribe(BreakpointManager& manager, const BreakpointSpec& spec, const char* what);
+    /// The text of monitoring::Call breakpoint_hits: the counts and one line per recorded hit
+    static std::string BreakpointHitsText(const monitoring::Reply& reply);
 
     // Helper method to format text for terminal output (converts \n to \r\n)
     // This ensures proper line breaks in telnet/terminal clients
@@ -511,7 +518,8 @@ private:
                              const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
-    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context,
+                                  const std::vector<std::string>& args);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
@@ -529,6 +537,7 @@ private:
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDPastRead(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

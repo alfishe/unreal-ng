@@ -224,8 +224,10 @@ curl -s "$BASE/emulator/$EMU_ID/disk/A/info" | jq '.status'   # → "empty"
 - **Path unreadable by the emulator** → `400` with `Failed to insert disk`.
   Paths resolve in the emulator process, not the agent's shell; prefer
   absolute paths or the multipart upload.
-- **Non-TR-DOS images** (CP/M, +3 DSK, MGT) mount fine but autostart refuses
-  them (mount-only; on a +3 use `basic/run` with `LOAD "name"`) and `/catalog` reports `dos_type: "TR-DOS"` only for real
+- **Non-TR-DOS images** (CP/M, +3 DSK) mount fine but autostart refuses
+  them (mount-only; on a +3 use `basic/run` with `LOAD "name"`). An `.mgt` goes only to a machine with the MGT +D
+  (`48K-PLUSD`, `128K-PLUSD`), where the autostart is the card's ([plusd.md](../machines/plusd.md)); elsewhere it is
+  refused and `/catalog` reports `dos_type: "TR-DOS"` only for real
   TRD directories — inspect via `/disk/{drive}/sector/...` instead.
 - **Dirty writes**: disk images opened read-write accumulate changes. Keep
   master images pristine; work on copies under `scratch/`.

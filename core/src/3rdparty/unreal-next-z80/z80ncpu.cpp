@@ -533,6 +533,11 @@ int Z80nContendSlow(Z80nCPU* cpu, uint16_t addr, Z80nCpuAccessKind kind, int cyc
     return cpu->contend(cpu, addr, kind, cpu->contendData);
 }
 
+int Z80nCpuIdleLeft(const Z80nCPU* cpu)
+{
+    return cpu->idleLeft;
+}
+
 uint16_t Z80nCpuInstructionPc(const Z80nCPU* cpu)
 {
     return cpu->m1pc;

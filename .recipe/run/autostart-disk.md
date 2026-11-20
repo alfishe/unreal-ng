@@ -75,11 +75,12 @@ header.
 ## What autostart actually does (the decision table)
 
 The emulator inspects the TR-DOS catalog and picks the action — no keystrokes
-are ever synthesized:
+are ever synthesized (an `.mgt` on the MGT +D is the card's own autostart, which types its commands:
+[plusd.md](../machines/plusd.md)):
 
 | Disk content | Action |
 |:--|:--|
-| Not TR-DOS format (CP/M, +3 DSK, MGT, blank...): no TR-DOS id `#10` at byte `#E7` of track 0 sector 9, or catalog entries pointing outside a track | Mount only |
+| Not TR-DOS format (CP/M, +3 DSK, blank...): no TR-DOS id `#10` at byte `#E7` of track 0 sector 9, or catalog entries pointing outside a track | Mount only |
 | Has a `boot.B` file | Quick reset + direct entry into TR-DOS, boots it |
 | No `.B` files at all | Mount only |
 | Exactly **one** `.B` file (no `boot`) | Quick reset + direct entry; a one-shot hook rewrites TR-DOS's cold-start `RUN "boot"` into `RUN "<name>"` — disk stays untouched. If the loaded TR-DOS ROM lacks that cold-start hook, a generated one-line `boot.B` (`RUN "<name>"`) is injected into the image instead, so the image **is modified** (and the action degrades to mount only when the disk is full) |

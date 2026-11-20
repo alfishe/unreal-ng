@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QAction>
 #include <QApplication>
@@ -369,6 +370,101 @@ TEST(DebuggerTimeTravelCard_Test, ACardPositionShowsInTheMoment)
     tt.stepBack();
     EXPECT_FALSE(controller->CardPositionNow(DebugCpuId::GS).cardPosition);
     EXPECT_FALSE(tt.momentLabel()->text().contains(QStringLiteral("gs at"))) << tt.momentLabel()->text().toStdString();
+
+    controller->StopRecording();
+    machine.reset();
+    for (const auto& id : EmulatorManager::GetInstance()->GetEmulatorIds())
+        EmulatorManager::GetInstance()->RemoveEmulator(id);
+}
+
+/// With the card's tab in front the group's steps are the card's: Step Over Back is enabled and moves the card back
+/// (one card instruction, or over a whole card routine); the window's Step Over / Step Out in the past are the card's
+/// steps through the history (stepForward "over" / "out", Run to Cursor "to": forward by replay, the main CPU untouched
+/// by a live run);
+/// at the history's end stepForward hands over (false: the window steps the card live, D-3) without a message.
+/// Runtime: 3 recorded frames, a few card moves (~0.3 s)
+TEST(DebuggerTimeTravelCard_Test, TheCardsTabStepsOverBackAndThroughThePast)
+{
+    QTemporaryDir settings;
+    ASSERT_TRUE(settings.isValid());
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+    std::function<void(CONFIG&)> slotOverride;
+    std::string error;
+    ASSERT_TRUE(SlotControl::CreateOverride({{"zxbus.1", "gs"}}, slotOverride, error)) << error;
+    std::shared_ptr<Emulator> machine = EmulatorManager::GetInstance()->CreateEmulatorWithModel(
+        "debugger-ttd-card-steps", "PENTAGON", LoggerLevel::LogError, &error, slotOverride);
+    ASSERT_NE(machine, nullptr) << error;
+    machine->GetFeatureManager()->setFeature(Features::kDebugMode, true);
+    machine->GetFeatureManager()->setFeature(Features::kTimeTravel, true);
+    ttd::TimeTravelController* controller = machine->GetContext()->pTimeTravelController;
+    machine->RunNFrames(2, true);
+    ASSERT_TRUE(controller->StartRecording());
+    machine->RunNFrames(3, true);
+    controller->StopRecording();
+
+    QMainWindow window;
+    QToolBar* toolbar = window.addToolBar(QStringLiteral("debugger"));
+    DebuggerTimeTravel tt(&window, toolbar, nullptr);
+    std::vector<QString> said;
+    tt.inform = [&said](const QString& title, const QString& text, bool) { said.push_back(title + ": " + text); };
+    tt.setEmulator(machine);
+    tt.setCpu([]() { return DebugCpuId::GS; });
+    auto execute = [&](const std::string& verb, const std::map<std::string, std::string>& options) {
+        const Emulator::ContextLease lease = machine->LeaseContext();
+        return ttd::TTDControl(lease.get()).Execute({verb, options});
+    };
+    const uint64_t now = controller->CardPositionNow(DebugCpuId::GS).instruction;
+    const uint64_t start = now - 3000;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(start)}}).Ok());
+    tt.refresh();
+    EXPECT_TRUE(tt.stepOverBackAction()->isEnabled()) << "the card's step over back";
+    EXPECT_TRUE(tt.stepOverBackAction()->toolTip().contains(QStringLiteral("gs instruction back")))
+        << tt.stepOverBackAction()->toolTip().toStdString();
+
+    tt.stepOverBack();
+    ttd::TTDCardPosition at = controller->CardPositionNow(DebugCpuId::GS);
+    EXPECT_TRUE(at.cardPosition);
+    EXPECT_LT(at.instruction, start);
+    EXPECT_TRUE(said.empty()) << said.front().toStdString();
+
+    // Step Over / Step Out in the past: forward through the history
+    ASSERT_TRUE(tt.stepForward("over"));
+    const uint64_t overAt = controller->CardPositionNow(DebugCpuId::GS).instruction;
+    EXPECT_GT(overAt, at.instruction);
+    EXPECT_TRUE(tt.lastResult().startsWith(QStringLiteral("Step Over: gs at instruction"))) << tt.lastResult().toStdString();
+    ASSERT_TRUE(tt.stepForward("out"));
+    EXPECT_GT(controller->CardPositionNow(DebugCpuId::GS).instruction, overAt);
+    EXPECT_TRUE(tt.lastResult().startsWith(QStringLiteral("Step Out: gs"))) << tt.lastResult().toStdString();
+    EXPECT_TRUE(said.empty()) << said.front().toStdString();
+
+    // Run to Cursor in the past: the card's next instruction at the cursor; one never reached says so, nothing moves
+    // From well inside the history (the step out may have gone to its end: the firmware runs no routine there)
+    const uint64_t here = start;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(here + 1)}}).Ok());
+    const uint16_t cursor = controller->CardPositionNow(DebugCpuId::GS).pc;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(here)}}).Ok());
+    ASSERT_TRUE(tt.stepForward("to", cursor));
+    EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, here + 1);
+    EXPECT_TRUE(tt.lastResult().startsWith(QStringLiteral("Run to Cursor: gs at instruction")))
+        << tt.lastResult().toStdString();
+    EXPECT_TRUE(said.empty()) << said.front().toStdString();
+    ASSERT_TRUE(tt.stepForward("to", 0xFFFF)) << "an answer in the past, not a live run";
+    EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, here + 1) << "not reached: nothing moved";
+    ASSERT_EQ(said.size(), 1u);
+    EXPECT_NE(said.front().indexOf(QStringLiteral("#FFFF")), -1) << said.front().toStdString();
+    said.clear();
+
+    // At the history's end the window's own (live) step: no message, nothing moved
+    const ttd::TTDTimePoint end = controller->SessionEndPosition();
+    ASSERT_TRUE(controller->SeekTo({end.frame, 0}));
+    const uint64_t endCount = controller->CardPositionNow(DebugCpuId::GS).instruction;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(endCount)}}).Ok());
+    for (const char* kind : {"in", "over", "out", "to"})
+    {
+        EXPECT_FALSE(tt.stepForward(kind, 0x4000)) << kind << ": at the end the card steps on live";
+        EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, endCount) << kind;
+    }
+    EXPECT_TRUE(said.empty()) << said.front().toStdString();
 
     controller->StopRecording();
     machine.reset();

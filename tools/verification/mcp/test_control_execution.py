@@ -37,6 +37,25 @@ def test_run_tstates_and_frames(s):
     expect(not r.is_error, 'frames run', r.text)
 
 
+def test_counted_runs_say_what_ran(s):
+    """re-api-efficiency F1: the text comes from the answer (what ran, where it ended); a count over the limit is
+    refused, never cut"""
+    r = s.call('control_execution', {'action': 'run_frames', 'frames': 3})
+    st = r.structured or {}
+    expect(st.get('frames_run') == 3 and st.get('count') == 3, 'three frames ran', st)
+    expect((st.get('stop') or {}).get('reason') == 'done', 'stop done', st)
+    expect(('Ran 3 frames (frame %d, t %d)' % (st.get('frame', -1), st.get('t', -1))) in r.text,
+           'the text is the answer: frames, frame and t', r.text)
+    r = s.call('control_execution', {'action': 'run_frames', 'frames': 300000}, ok=False)
+    expect(r.is_error and '200000' in r.text, 'over the limit: refused with the limit named', r.text)
+    r = s.call('control_execution', {'action': 'step_n', 'count': 5})
+    expect('Ran 5 instructions' in r.text and (r.structured or {}).get('executed') == 5, 'step_n from the answer',
+           r.text)
+    r = s.call('control_execution', {'action': 'run_tstates', 'tstates': 700})
+    st = r.structured or {}
+    expect('t-states' in r.text and st.get('count') == 700 and 'tstates_run' in st, 't-states from the answer', r.text)
+
+
 def test_breakpoint_listed_and_hit(s):
     s.call('control_execution', {'action': 'bp_clear'})
     r = s.call('control_execution', {'action': 'bp_add', 'address': '0x0038'})

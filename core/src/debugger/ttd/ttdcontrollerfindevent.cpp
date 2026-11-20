@@ -199,6 +199,9 @@ std::string TTDFindEventText(const TTDFindEventQuery& query, const TTDFindEventR
                   static_cast<unsigned long long>(result.framesScanned),
                   static_cast<unsigned long long>(result.framesReplayed), result.ms);
     text += buf;
+    if (result.indexRejected)
+        text += ", " + std::to_string(result.indexRejected) + " index candidate" +
+                (result.indexRejected == 1 ? "" : "s") + " did not run it";
     if (result.more)
         text += query.last ? "; more up to frame " + std::to_string(result.nextToFrame)
                            : "; more from frame " + std::to_string(result.nextFromFrame);
@@ -864,21 +867,50 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
             };
             std::vector<TTDFindEventHit> ordered;
             const TTDCoverageScanResult scan = QueryCoverageScan(result.fromFrame, result.toFrame, TTDCoverageKind::Executed,
-                                                                 from, to, page, limit + 1, query.last, false);
+                                                                 from, to, page, kCoverageScanLimitMax, query.last, false);
             if (scan.indexAvailable && scan.coveredFrom <= result.fromFrame && result.toFrame <= scan.coveredTo)
             {
+                // The index answers "may have run" per page offset (any page without a page filter; both 8K halves on
+                // the Next), so every candidate frame is replayed and only a frame where the address ran is a hit. A
+                // candidate that did not run it is counted (index_rejected), never answered; the list goes on past it
+                // until limit + 1 hits are confirmed (the one past the list gives next_*) or the replay budget ends
                 result.framesScanned = scan.scannedFrames;
-                for (size_t k = 0; k < scan.frames.size(); ++k)
+                const uint64_t budget = std::clamp(query.maxFrames, 1u, TTDFindEventQuery::kMaxFramesReplayed);
+                uint64_t tried = 0;
+                bool outOfBudget = false;
+                uint64_t unconfirmed = 0;   // out of budget: the first candidate not replayed
+                TTDCoverageScanResult batch = scan;
+                while (true)
                 {
-                    TTDFindEventHit h;
-                    if (k < limit && runIn(scan.frames[k], h))
-                        ordered.push_back(std::move(h));
-                    else if (k >= limit)
+                    for (const uint64_t frame : batch.frames)
                     {
-                        // The one past the list: only its frame, for next_*
-                        h.time = {scan.frames[k], 0};
-                        ordered.push_back(std::move(h));
+                        if (ordered.size() > limit)
+                            break;
+                        if (tried >= budget)
+                        {
+                            outOfBudget = true;
+                            unconfirmed = frame;
+                            break;
+                        }
+                        ++tried;
+                        TTDFindEventHit h;
+                        if (runIn(frame, h))
+                            ordered.push_back(std::move(h));
+                        else
+                            ++result.indexRejected;
                     }
+                    if (outOfBudget || ordered.size() > limit || !batch.truncated)
+                        break;
+                    batch = QueryCoverageScan(batch.nextFrom, batch.nextTo, TTDCoverageKind::Executed, from, to, page,
+                                              kCoverageScanLimitMax, query.last, false);
+                }
+                if (outOfBudget && ordered.size() <= limit)
+                {
+                    result.more = true;
+                    (query.last ? result.nextToFrame : result.nextFromFrame) = unconfirmed;
+                    result.missing.push_back("exec: index candidates from frame " + std::to_string(unconfirmed) +
+                                             " on not replayed (max_frames " + std::to_string(budget) +
+                                             "); go on from next_" + (query.last ? "to" : "from") + "_frame");
                 }
             }
             else
@@ -898,7 +930,13 @@ TTDFindEventResult TimeTravelController::QueryFindEvent(const TTDFindEventQuery&
                         ordered.push_back(std::move(h));
                 }
                 if (count < span && ordered.size() <= limit)
+                {
+                    // The frames not searched may hold more: the answer says where to go on
+                    result.more = true;
+                    (query.last ? result.nextToFrame : result.nextFromFrame) =
+                        query.last ? result.toFrame - count : result.fromFrame + count;
                     result.missing.push_back("frames: " + std::to_string(span - count) + " of the window not searched");
+                }
             }
             takeOrdered(ordered);
             break;

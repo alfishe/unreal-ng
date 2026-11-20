@@ -112,7 +112,7 @@ TEST_F(ProfileAnalyzer_Test, CallBooksTheCalleeAndTheCaller)
     Poke(0x8100, {0x00, 0xC9});                    // NOP; RET
     Start();
     constexpr int n = 40;
-    Steps(2 + 4 * n);  // the last JR's time is booked at the next start: not run
+    Steps(2 + 4 * n);  // ends after the JR: the run's end books it
 
     const profile::Snapshot s = _analyzer->Read("", false);
     const profile::RoutineView* sub = At(s, 0x8100);
@@ -122,8 +122,8 @@ TEST_F(ProfileAnalyzer_Test, CallBooksTheCalleeAndTheCaller)
     EXPECT_EQ(sub->inclusive, uint64_t(14 * n));
     ASSERT_EQ(sub->callers.size(), 1u);
     EXPECT_EQ(sub->callers[0].first, 0u) << "called from the root";
-    EXPECT_EQ(s.routines[0].self, uint64_t(14 + 29 * n - 12)) << "DI, LD SP, then CALL 17 + JR 12 per loop";
-    EXPECT_EQ(s.totals.tstates, uint64_t(14 + 43 * n - 12));
+    EXPECT_EQ(s.routines[0].self, uint64_t(14 + 29 * n)) << "DI, LD SP, then CALL 17 + JR 12 per loop";
+    EXPECT_EQ(s.totals.tstates, uint64_t(14 + 43 * n));
     EXPECT_EQ(s.totals.routines, 1u);
 }
 
@@ -217,7 +217,7 @@ TEST_F(ProfileAnalyzer_Test, DiscardedReturnAddressAbandonsTheFrame)
     Poke(0x8100, {0xE1, 0xC3, 0x04, 0x80});  // POP HL; JP $8004
     Start();
     constexpr int n = 50;
-    Steps(2 + 3 * n + 2);  // n loops, then CALL and POP: the POP's time is not booked yet
+    Steps(2 + 3 * n + 2);  // n loops, then CALL and POP (booked at the run's end)
 
     const profile::Snapshot s = _analyzer->Read("", false);
     const profile::RoutineView* sub = At(s, 0x8100);
@@ -226,7 +226,8 @@ TEST_F(ProfileAnalyzer_Test, DiscardedReturnAddressAbandonsTheFrame)
     EXPECT_EQ(sub->abandoned, uint64_t(n)) << "each new CALL lands on the slot of the frame before";
     EXPECT_EQ(s.totals.depth, 1u);
     EXPECT_EQ(s.totals.stackOverflows, 0u);
-    EXPECT_EQ(sub->self, uint64_t(37 * n)) << "POP 10 + JP 10 + the CALL it jumped back to 17 (still in its frame)";
+    EXPECT_EQ(sub->self, uint64_t(37 * n + 10))
+        << "POP 10 + JP 10 + the CALL it jumped back to 17 (still in its frame), and the last POP";
 }
 
 /// A dispatch from outside any frame (a RET-driven main loop) replaces the routine it came from: no frames pile up
@@ -381,6 +382,90 @@ TEST_F(ProfileAnalyzer_Test, StopClosesTheLastFrame)
     Start();
     ASSERT_TRUE(Op("stop").Ok());
     EXPECT_EQ(_analyzer->ReadTotals().tstates, s.totals.tstates);
+}
+
+/// A run whose last instruction crossed a frame end: the frame end is booked at the frame end, the instruction at the
+/// run's end, so a report read right after the run (the profile still running) counts N frames and every T-state the
+/// run ran, and the next run books nothing twice
+TEST_F(ProfileAnalyzer_Test, RunEndingOnAFramesFirstInstructionCountsItsFrame)
+{
+    constexpr unsigned kFrames = 3;
+    Origin();
+    Poke(0x8004, {0x18, 0xFE});  // loop: JR loop (12 T: DI + LD SP 14, so a JR crosses each 48K frame end)
+    Start({{"frames", "true"}, {"ring_kib", "64"}});
+    const Emulator::DirectRunResult first = _emulator->RunNFrames(kFrames, true);
+    ASSERT_TRUE(first.reached);
+    ASSERT_EQ(first.frames, kFrames);
+    const uint32_t t = _context->pCore->GetZ80()->t;
+    ASSERT_GT(t, 0u);
+    ASSERT_LT(t, 12u) << "the run ends on the instruction that crossed the frame end: the edge";
+
+    const auto check = [&](const char* what, uint64_t frames, uint64_t ran) {
+        const profile::Snapshot s = _analyzer->Read("", true);
+        EXPECT_EQ(s.totals.frames, frames) << what;
+        EXPECT_EQ(s.totals.tstates, ran) << what << ": every T-state the runs ran";
+        EXPECT_EQ(s.totals.discontinuities, 0u) << what;
+        uint64_t cells = 0, selves = 0;
+        for (const profile::CellView& c : s.cells)
+            cells += c.tstates;
+        for (const profile::RoutineView& r : s.routines)
+            selves += r.self;
+        EXPECT_EQ(cells, s.totals.tstates) << what;
+        EXPECT_EQ(selves, s.totals.tstates) << what;
+        EXPECT_EQ(_analyzer->ReadFrames(0).size(), frames) << what << ": one series record per frame end";
+    };
+    check("after run_frames", kFrames, first.tstates);
+
+    // a run ending mid-frame, then one ending on the next frame's first instruction
+    const Emulator::DirectRunResult mid = _emulator->RunTStates(1000, true);
+    check("after run_tstates mid-frame", kFrames, first.tstates + mid.tstates);
+    const Emulator::DirectRunResult rest = _emulator->RunNFrames(1, true);
+    check("after the next frame", kFrames + 1, first.tstates + mid.tstates + rest.tstates);
+    ASSERT_TRUE(Op("stop").Ok());
+    EXPECT_EQ(_analyzer->ReadTotals().tstates, first.tstates + mid.tstates + rest.tstates) << "stop adds nothing twice";
+}
+
+/// A run that ends on an interrupt's acknowledge (the step that accepted it, the handler not run yet): the acknowledge
+/// waits for the handler's first instruction, which pushes the interrupt's frame and carries it
+TEST_F(ProfileAnalyzer_Test, RunEndingOnAnAcknowledgeKeepsItForTheHandler)
+{
+    Origin();
+    // LD A,$90; LD I,A; IM 2; EI; loop: HALT; JR loop
+    Poke(0x8004, {0x3E, 0x90, 0xED, 0x47, 0xED, 0x5E, 0xFB, 0x76, 0x18, 0xFD});
+    for (uint32_t a = 0x9000; a <= 0x9100; ++a)
+        _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(a), 0x92);
+    Poke(0x9292, {0xFB, 0xC9});  // EI; RET
+    Start();
+    Z80* cpu = _context->pCore->GetZ80();
+    _emulator->RunNFrames(1, true);  // into the HALT loop
+    const uint64_t acknowledges = cpu->acknowledges;
+    const uint64_t acknowledgesBooked = _analyzer->ReadTotals().acknowledges;
+    // the run ends with the step that accepted the next interrupt: the handler's first instruction not run yet
+    _emulator->RunUntilInterrupt(true);
+    ASSERT_EQ(cpu->acknowledges, acknowledges + 1);
+    ASSERT_EQ(cpu->pc, 0x9292) << "the run ended on the acknowledge";
+    const profile::Snapshot atAckSnapshot = _analyzer->Read("", false);
+    const profile::Totals& atAck = atAckSnapshot.totals;
+    const profile::RoutineView* handlerAtAck = At(atAckSnapshot, 0x9292);
+    EXPECT_EQ(atAck.acknowledges, acknowledgesBooked) << "the acknowledge waits for its handler";
+    Steps(1);  // EI in the handler: the acknowledge and the EI
+    const profile::Snapshot s = _analyzer->Read("", true);
+    EXPECT_EQ(s.totals.tstates - atAck.tstates, uint64_t(cpu->lastAcknowledgeT) + 4u);
+    EXPECT_EQ(s.totals.acknowledges, acknowledgesBooked + 1);
+    EXPECT_EQ(s.totals.acknowledgeT - atAck.acknowledgeT, uint64_t(cpu->lastAcknowledgeT));
+    const profile::RoutineView* handler = At(s, 0x9292);
+    ASSERT_NE(handler, nullptr);
+    EXPECT_EQ(handler->entries[profile::EntryInterrupt], acknowledgesBooked + 1);
+    EXPECT_TRUE(handler->onStack) << "the acknowledge pushed the interrupt's frame";
+    EXPECT_EQ(handler->self - (handlerAtAck ? handlerAtAck->self : 0), uint64_t(cpu->lastAcknowledgeT) + 4u)
+        << "the acknowledge and the EI are the handler's";
+    uint64_t cells = 0, selves = 0;
+    for (const profile::CellView& c : s.cells)
+        cells += c.tstates;
+    for (const profile::RoutineView& r : s.routines)
+        selves += r.self;
+    EXPECT_EQ(cells, s.totals.tstates);
+    EXPECT_EQ(selves, s.totals.tstates);
 }
 
 /// The operations' checks: unknown op / option, a mark's name, an unknown mark

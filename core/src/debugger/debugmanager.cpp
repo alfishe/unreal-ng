@@ -166,6 +166,9 @@ bool DebugManager::CardTight(const GSCardTarget* target) const
 {
     if (!target)
         return false;
+    // Leaving a card's run for a move in time (Emulator::LeaveCardRun): the next main instruction start ends it
+    if (_context && _context->pEmulator && _context->pEmulator->LeavingCardRun() && target->Available())
+        return true;
     return target->WantsTight() || (_directRun.load(std::memory_order_acquire) && SelectedCpu() == target->Id());
 }
 
@@ -177,6 +180,10 @@ void DebugManager::SelectCpu(DebugCpuId cpu)
 
 void DebugManager::OnDirectRun(bool running)
 {
+    // The run's last instruction ended: the analyzers close what they keep pending (the CPU profile books it and a
+    // frame end it crossed, instead of at the next run's first instruction)
+    if (!running && _analyzerManager)
+        _analyzerManager->dispatchRunStop();
     if (SelectedCpu() == DebugCpuId::Main)
     {
         _directRun.store(running, std::memory_order_release);
@@ -203,6 +210,9 @@ void DebugManager::CatchUpCards()
             card->catchUpToHost();
     }
     _catchingUp = false;
+    // Leaving a card's run for a move in time (Emulator::LeaveCardRun): this main instruction start is out of it
+    if (Emulator* emulator = _context ? _context->pEmulator : nullptr; emulator && emulator->LeavingCardRun()) [[unlikely]]
+        emulator->NoteMainBoundaryAfterCardRun();
 }
 
 int DebugManager::TargetsMask() const

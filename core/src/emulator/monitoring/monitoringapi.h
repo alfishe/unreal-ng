@@ -32,8 +32,12 @@
 /// | `debug.markup` | an instance | The memory markup (memorymarkup.h): available, revision, runtime (what the runtime layer is derived from: facts, facts-physical, coverage, none), layers [{layer, source, claims, entries, comments}] lowest first; a new value on every layer change and every L2 build |
 /// | `debug.watches` | an instance | The memory watches (memorywatch.h) as published at the last frame's end: available, session (stopped / capturing / paused), revision, watches [{name, kind (region / port), start + length or port + mask, reads, writes, executes (regions)}] |
 ///
-/// One more verb, not a topic: `breakpoint_groups` (instance) {groups: [{name, total, active, ids}]}, also WebAPI
-/// `GET /api/v1/emulator/{id}/breakpoints/groups`, Lua / Python `bp_groups()`.
+/// Two more verbs, not topics: `breakpoint_groups` (instance) {groups: [{name, total, active, ids}]}, also WebAPI
+/// `GET /api/v1/emulator/{id}/breakpoints/groups`, Lua / Python `bp_groups()`; `breakpoint_hits` (instance, cpu, id,
+/// from, limit) {cpu, id, stop, hit_count, match_count?, log: {capacity, keep, total, stored, dropped, oldest} or null,
+/// hits: [{index, hit, frame, t, pc, address, value?, kind, cpu_time?}], first_index, more, next_from?}: the per-hit
+/// record of a breakpoint that only counts (PLAN #122 V4), also WebAPI `GET /api/v1/emulator/{id}/breakpoints/{bp}/hits`,
+/// CLI `bphits <id>`, Lua / Python `bp_hit_log(id)`, MCP `bp_hits`.
 ///
 /// Reads are published state only: never a pause, never a wait for the emulation thread, no work proportional to the
 /// machine (a short lock of a manager at most). The `all` verb returns the process values and every instance's.
@@ -69,7 +73,7 @@ StateNode ReadInstance(const std::string& name, Emulator& emulator);
 /// dropped: the next read computes them (an event-driven reader after a change)
 void ForgetCached(const std::string& instanceId);
 
-/// Every verb: `all`, the names, `breakpoint_groups`
+/// Every verb: `all`, the names, `breakpoint_groups`, `breakpoint_hits`
 const std::vector<std::string>& Verbs();
 
 /// Run a verb. Args: `instance` (an id or an index; default the followed instance) for an instance's name and for

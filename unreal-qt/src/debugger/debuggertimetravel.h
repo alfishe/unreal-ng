@@ -5,19 +5,25 @@
 // breakpoints), Frame Back, Branch Here / Continue Rec - the moment ("History: frame ... replaying", "fork here")
 // and the branch drop-down with the branch management. Every button is a TTDControl verb; nothing records unless
 // asked (rule 7).
-// The window shows the main CPU only (no card CPU view): at a position on a sound card's CPU (a card seek or step
-// made by another surface, gs-debugger design §8) the moment names both CPUs - the card's instruction count and PC,
-// the main CPU's PC and the T-states the card is into its instruction - so the registers shown (the main CPU's at its
-// last boundary) are read right
+// With a sound card's tab in front (debuggercpu.h) the group acts on that card's CPU, as eCat's does (TTD branches
+// debuggers.md §8): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's
+// own breakpoints), Step Over Back `reverse-step-over {cpu}`, the window's Step In / Step Over / Step Out in the past
+// `step-instruction {cpu, dir: forward, kind: in | over | out}`, Run to Cursor `kind: to, pc` (stepForward; at the
+// history's end they run on live,
+// as the main CPU's do: D-3). At a position on a card's CPU (gs-debugger design §8) the moment names both CPUs - the
+// card's instruction count and PC, the main CPU's PC and the T-states the card is into its instruction; without one,
+// the card's tab adds where that card stands
 
 #include <QObject>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "debugger/targets/debugcpuid.h"
 #include "widgets/ttdbranchcommands.h"
 
 class BreakpointManager;
@@ -46,6 +52,11 @@ public:
     ~DebuggerTimeTravel() override;
 
     void setEmulator(std::shared_ptr<Emulator> emulator);
+    /// The CPU in front (the window's processor tabs); unset: the main CPU
+    void setCpu(std::function<DebugCpuId()> cpu);
+    /// What a move said that the user should read (a refusal: `warning`; an answer that moved nothing): a box by
+    /// default, the tests take it
+    std::function<void(const QString& title, const QString& text, bool warning)> inform;
     /// From the published session info: the group's visibility, the moment, the buttons' state
     void refresh();
 
@@ -57,6 +68,9 @@ public:
     /// for the card the machine stands at a position of (", at its instruction boundary" when not inside one); empty
     /// without a card position
     static QString CardMoment(const std::vector<ttd::TTDCardPosition>& cards);
+    /// Where one card stands without a card position: "gs at instruction 1200, PC #0A3C" ("gs: no instruction counts
+    /// in this recording" without counts)
+    static QString CardReadout(const ttd::TTDCardPosition& card);
 
     QAction* stepBackAction() const { return _stepBack; }
     QAction* stepOverBackAction() const { return _stepOverBack; }
@@ -70,6 +84,14 @@ public:
     ttdgui::BranchCommands& commands() { return *_commands; }
     /// The group shows (a history exists)
     bool shown() const { return _shown; }
+    /// What the last move said (the moment's tooltip)
+    QString lastResult() const { return _lastResult; }
+    /// The window's Step In ("in"), Step Over ("over"), Step Out ("out") or Run to Cursor ("to", to @p address) with
+    /// a card's tab in front in the recorded past: the card's step or run through the history (rule 3: forward
+    /// actions there replay; a run to the cursor not reached in the history says so and moves nothing). False when it
+    /// is not for the group (the main CPU in front, live, no history) or the card stands at the history's end (at_end,
+    /// D-3): the window steps the card live as before
+    bool stepForward(const std::string& kind = "in", uint16_t address = 0);
 
 signals:
     /// The machine moved in time: the debugger's views redraw
@@ -88,11 +110,18 @@ private:
     /// A moving verb; the refusal or what it said goes to the moment's tooltip. True when it ran
     bool move(const std::string& verb, std::map<std::string, std::string> options, const QString& title,
               ttd::TTDReply* out = nullptr);
+    /// A card's move (eCat's card_move): the verb with `cpu`; an answer that moved nothing (at_start, at_end, no_hit)
+    /// is said and moves nothing. True when the machine moved
+    /// `atEnd` given: an at_end answer is not said but set there (the caller steps on live)
+    bool cardMove(DebugCpuId cpu, const std::string& verb, std::map<std::string, std::string> options,
+                  const QString& title, bool* atEnd = nullptr);
+    DebugCpuId cpu() const;
     void buildBranchMenu();
     void setShown(bool shown);
 
     QWidget* _window = nullptr;
     std::shared_ptr<Emulator> _emulator;
+    std::function<DebugCpuId()> _cpu;
     std::unique_ptr<ttdgui::BranchCommands> _commands;
     std::vector<QAction*> _group;   // every toolbar entry of the group (shown together)
     QAction* _stepBack = nullptr;

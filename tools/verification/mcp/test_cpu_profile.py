@@ -37,7 +37,8 @@ def test_report_names_the_routine_and_its_share(s):
     row = next(x for x in r.structured['routines'] if x['entry'] == '$8100')
     expect(row['kinds'] == 'call' and row['calls'] > 1000, 'entered by calls', row)
     expect(row['self'] == row['inclusive'], 'a leaf: self = inclusive', row)
-    expect(r.structured['window']['frames'] >= 9, 'the window counts the frames', r.structured['window'])
+    # every frame end the run passed, read right after it (the last instruction is booked at the run's end)
+    expect(r.structured['window']['frames'] == 10, 'the window counts the frames run', r.structured['window'])
 
 
 def test_mark_frames_and_status(s):
@@ -48,7 +49,7 @@ def test_mark_frames_and_status(s):
     s.call('control_execution', {'action': 'run_frames', 'frames': 3})
     r = profile(s, 'report', since='later')
     expect('since mark later' in r.text, 'the report since the mark', r.text)
-    expect(2 <= r.structured['window']['frames'] <= 4, 'only the frames after the mark', r.structured['window'])
+    expect(r.structured['window']['frames'] == 3, 'only the frames after the mark', r.structured['window'])
     r = profile(s, 'frames', last=3, top=2)
     expect(len(r.structured['frames']) == 3, 'three frames of the series', r.structured)
     expect(len(re.findall(r'^  frame \d+ \(\d+ active\): ', r.text, re.M)) == 3, 'one text line a frame', r.text)

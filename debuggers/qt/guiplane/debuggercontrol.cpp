@@ -174,6 +174,21 @@ void DebuggerControl::BindHost()
         window->send_pane_key(Qt::Key_Return);
         return Result::Success(QJsonObject{{"pane", window->focused_pane()}});
     });
+    // A processor's tab in front by its name ("cpu", "gs", "ms"); "main" is the machine's own, as unreal-qt names it
+    root.SetCommand(QStringLiteral("debugger.select_cpu"), [self](const Call& call) {
+        DebuggerWindow* window = self ? self->_debugger.data() : nullptr;
+        if (window == nullptr)
+            return Gone();
+        const QString name = call.params.value(QStringLiteral("cpu")).toString().toLower();
+        for (CPU* cpu : window->cpus())
+            if (cpu != nullptr &&
+                (QString::fromStdString(cpu->name) == name || (name == QLatin1String("main") && cpu == window->main_cpu())))
+            {
+                window->select_cpu(cpu);
+                return Result::Success(QJsonObject{{"cpu", QString::fromStdString(cpu->name)}});
+            }
+        return Result::Failure(errors::kNotNow, QStringLiteral("cpu %1: no such processor tab").arg(name));
+    });
 }
 
 void DebuggerControl::BindDisassembly()
