@@ -4,6 +4,8 @@
 #include "3rdparty/message-center/messagecenter.h"
 #include <algorithm>
 #include "emulator/emulator.h"
+#include "emulator/io/fdc/wd1793.h"
+#include "emulator/mainloop.h"
 
 #include "common/modulelogger.h"
 #include "emulator/memory/devicememory.h"
@@ -552,3 +554,12 @@ EmulatorContext::RunControlState EmulatorContext::RunControlStateLocked() const
 }
 
 /// endregion </Run-control claim>
+
+void EmulatorContext::RefreshCardFdcWork()
+{
+    bool awake = false;
+    for (size_t i = 0; i < cardFdcCount; i++)
+        awake = awake || !cardFdcs[i]->IsAsleep();
+    if (pMainLoop)
+        pMainLoop->SetCardFdcsAwake(awake);
+}

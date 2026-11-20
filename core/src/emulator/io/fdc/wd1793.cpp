@@ -276,7 +276,7 @@ void WD1793::internalReset()
     _lastDebugLogTime = 0;
 
     // Start in sleep mode - will wake on first port access
-    _sleeping = true;
+    setSleeping(true);
     _wakeTimestamp = 0;
 
     // Force the next notifyFdcStateChanged() to post (registers were replaced wholesale)
@@ -364,7 +364,7 @@ void WD1793::wakeUp()
 {
     if (_sleeping)
     {
-        _sleeping = false;
+        setSleeping(false);
         updateTimeFromEmulatorState();
         _wakeTimestamp = _time;
         MLOGDEBUG("WD1793 waking up from sleep mode");
@@ -376,9 +376,18 @@ void WD1793::enterSleepMode()
 {
     if (!_sleeping)
     {
-        _sleeping = true;
+        setSleeping(true);
         MLOGDEBUG("WD1793 entering sleep mode");
     }
+}
+
+void WD1793::setSleeping(bool sleeping)
+{
+    _sleeping = sleeping;
+    // An edge card's controller (MGT +D) steps through the work gate only while awake: asleep, handleStep does
+    // nothing, so its machine runs the plain step (EmulatorContext::RefreshCardFdcWork). Sleep changes are rare
+    if (_context && _context->cardFdcCount != 0)
+        _context->RefreshCardFdcWork();
 }
 
 /// Handle Beta128 interface system controller commands
@@ -4665,7 +4674,7 @@ void WD1793::TTDLoadState(const uint8_t* src)
     _prevReady           = get_u8(cur) != 0;
 
     // Sleep mode
-    _sleeping      = get_u8(cur) != 0;
+    setSleeping(get_u8(cur) != 0);
     _wakeTimestamp = get_u64(cur);
 
     // FIFO: clear on load (closures not restorable — see header doc).
