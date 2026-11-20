@@ -76,6 +76,28 @@ step loop compares it with the current frame position at the same point where th
 timer thread. A MOVE executes at the WAIT position and takes the cycle count the VHDL gives (N-read; jnext
 test-plan `COPPER-TEST-PLAN-DESIGN.md` lists it).
 
+## 6a. A line in segments: the copper and the CPU's border writes (2026-11-20)
+
+`ScreenNext` draws a line in segments, each from the state of the moment its pixels leave the output. A copper MOVE splits a line
+(`RenderBeforeCopperClock`, the register's latency `PictureLatencyOf`, POC 028). A CPU write of the border colour does not: it queues
+its image position (`SetBorderColor` -> `QueueBorder`, up to 64 writes ahead of the drawing), and the segment that covers it draws its
+border in runs (`NextVideoInputs::borderChanges`), one `RenderLine` for the whole line; the layer record (on by default) keeps one
+segment per run, so the pixel inspector reads each run's colour. With the queue full the write splits the line like the copper. A write of port #FE that keeps the colour
+(the beeper's) queues nothing.
+
+The border rule (`BorderEffectHalfPixel`, POC 028 scenario 54 on the simulated RTL,
+[measurements](../../../tools/poc/028-next-video-pipeline-alignment/measurements-2026-11-20-border.md)): the OUT lands at its IORQ
+T-state; `port_fe_border` takes it on the CPU clock's next falling edge (zxnext.vhd 3600); the output shows it 17 clocks (28 MHz)
+later, from the next 8-pixel cell boundary in the 48K / 128K timings (the ULA takes the border at the cell load, zxula.vhd 420-450)
+and at once in the Pentagon timing (every CLK_14). A write in the blank after a line's grid ends that line in the old colour and splits
+the next line's left border. The screen keeps the colour it draws with (`_border`): the decoder stores port #FE before the screen
+hears of the write; a frame start and a state load take it from port #FE.
+
+Not split: the outer border around the 320 x 256 grid (the colour of each line's start and end; the rows above and below the grid, the
+colour of line 0's start and of the last line's end) and the Timex hi-res border (port #FF bits 5:3). Cost: a fill per run; the
+first version split the line at each write (one more `RenderLine` per change) and cost 2.7 times the frame in
+`BM_NextRuntime/screen_border_stripes` (about 2000 changes a frame).
+
 ## 7. Open points
 
 | Point | Next step |

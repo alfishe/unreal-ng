@@ -176,6 +176,11 @@ std::vector<Scene> Scenes()
     s.push_back({"screen_lores", false, [](Machine& m) { m.Nr(0x15, 0x80); }});
     s.push_back({"screen_radastan", false, [](Machine& m) { m.Nr(0x15, 0x80), m.Nr(0x6A, 0x20); }});
     s.push_back({"screen_ula_scrolled", false, [](Machine& m) { m.Nr(0x26, 3), m.Nr(0x27, 5); }});
+    // the border written by the CPU: the beeper's OUTs (the colour stays: no split), and a stripe demo (a new colour every 34 T-states,
+    // about 2000 splits a frame): DI; LD A,n; loop: OUT (#FE),A; XOR #10 / INC A, AND 7; JR loop
+    s.push_back({"screen_border_beeper", false, [](Machine& m) { m.Poke(0xC000, {0xF3, 0x3E, 0x01, 0xD3, 0xFE, 0xEE, 0x10, 0x18, 0xFA}), m.Run(0xC000); }});
+    s.push_back({"screen_border_stripes", false,
+                 [](Machine& m) { m.Poke(0xC000, {0xF3, 0x3E, 0x00, 0xD3, 0xFE, 0x3C, 0xE6, 0x07, 0x18, 0xF9}), m.Run(0xC000); }});
     // layers
     s.push_back({"layer_l2_256", false, [](Machine& m) { m.Out(0x123B, 0x02), m.Nr(0x70, 0x00), m.Nr(0x12, 8); }});
     s.push_back({"layer_l2_320", false, [](Machine& m) { m.Out(0x123B, 0x02), m.Nr(0x70, 0x10), m.Nr(0x12, 8); }});
