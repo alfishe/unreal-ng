@@ -60,7 +60,7 @@ nothing. There are no real-board numbers; this item stays "arithmetic" until a b
 | Port contention details | `#BF3B`, `#FF3B`, per-8K-page decision | **done 2026-10-24**: memory contention per 8K page, odd-port contention only `#7FFD` (128K timing) and the ULA+ pair, no wait before IORQ |
 | Other contended internal cycles (48K / 128K) | `o_cpu_contend` also for no-MREQ cycles | moderate confidence |
 | DMA bus contention / handover latency | DMA cycles go through the same waits | contention done (POC 036); the bus goes at the CPU's machine-cycle ends, inside instructions too (2026-11-19, section below) |
-| DMA power-on values, register read from #6B by the DMA | no initialisers in the VHDL | not determined |
+| DMA power-on values | no initialisers in the VHDL for the registers the reset leaves (direction, addresses, length, port types, address modes) | **done 2026-11-19** by the synthesis rule: XST (issue 2, Spartan-6 xc6slx16) and Vivado (issues 4 / 5, Artix-7 xc7a15t / xc7a35t) give a flip-flop without an initial value INIT 0, loaded at configuration (GSR): B -> A, memory, decrement, 0. `NextDmaPowerOn_Test` |
 | `Other Z80N opcodes` MREQ shapes | only `NEXTREG` was checked | PUSH nn, ADD rr,nn, LDIRX ... |
 
 ## MAME and the RTL, 2026-11-18
