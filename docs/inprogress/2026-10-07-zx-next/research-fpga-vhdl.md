@@ -458,6 +458,9 @@ Full treatment with the esxDOS flow: [esxdos-and-sd.md](esxdos-and-sd.md). Facts
 
 ## 22. Differences found against ZEsarUX (`machines/tbblue.c`, commit `2d8dba1`) and MAME
 
+The full read-through of `tbblue.c` against the FPGA and unreal-ng, with the unreal-ng bug candidates it found:
+[research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md).
+
 | Item | FPGA (this note) | ZEsarUX | Action |
 |:--|:--|:--|:--|
 | Copper modes (NR `#62` bits 7:6) | `01` from index 0 and loop, `10` from the last point and loop, `11` from 0 and restart at (0,0); 1024 x 16-bit entries, the 10-bit address wraps; same value written again does not restart; one instruction per 28 MHz clock; WAIT compares `hcount >= H*8 + 12` | modes named "run", "loop", "loop reset", "VBI"; `copper_pc` steps over `TBBLUE_COPPER_MEMORY`; the comment still says "stop at last address"; cost per MOVE 2 T and WAIT 1 T in CPU T-states | follow the FPGA; test with Tests/base/Copper |
@@ -471,11 +474,14 @@ Full treatment with the esxDOS flow: [esxdos-and-sd.md](esxdos-and-sd.md). Facts
 
 Multiface internals (paged-in view, `mf_is_active`), the Pi GPIO / I2S block, the expansion bus control
 (`nr_80`-`nr_8a`, `i_BUS_*`), the hdmi path (not needed), `membrane.vhd` scan timing and `membrane_stick.vhd`,
-the keymap RAM format, the remaining NextREG read-back table (`port_253b_dat` multiplexer at `zxnext.vhd`
-~5800-6300), and `ym2149.vhd`'s exact volume table. ZEsarUX `tbblue.c` (9005 lines) was sampled (reset, boot,
-copper, sprites, contention), not read through. CSpect is closed source. NextZXOS itself is a binary distribution; the
+the keymap RAM format, and `ym2149.vhd`'s exact volume table. The NextREG read-back table (`port_253b_dat`
+multiplexer, `zxnext.vhd` 5881-6285) and ZEsarUX `tbblue.c` (9005 lines) were read through on 2026-11-20:
+[research-zesarux-tbblue-diff.md](research-zesarux-tbblue-diff.md) (its coverage section lists the few helper and
+renderer ranges left out). CSpect is closed source. NextZXOS itself is a binary distribution; the
 parts that matter for the machine (the card driver in ROM page 2 and the DivMMC ROM) were disassembled from the
 shipped images ([esxdos-and-sd.md](esxdos-and-sd.md)).
+
+The welcome-screen border against jnext and the wiki / manual against the VHDL: [research-reference-compares.md](research-reference-compares.md).
 
 ## 24. Core version history that matters for emulation (`changelog.md`, 3.00 to 3.02.03)
 
