@@ -1491,21 +1491,30 @@ static bool NextInstructionReadsMemory(uint8_t op)
 void PortDecoder_Next::StepDma()
 {
     if (!_dma.Active())
+    {
+        if (_dmaBusTurnArmed) [[unlikely]]
+            ArmDmaBusTurn(false);
         return;
+    }
     if (_dmaRequestLate)
     {
         // The enable is written in the instruction's last cycle, after the T80 sampled BUSRQ for it: the bus goes over at the end of the next
-        // cycle, the next instruction's M1 (POC 036; ours runs that whole instruction first). The transfer is then done before that
-        // instruction's own data cycles, which an instruction that reads memory sees (zxnddma_compare probes the target with the very next
-        // instruction): ours cannot split an instruction, so such an instruction waits for the transfer, the others keep the measured order
-        const uint16_t pc = _context->pCore->GetZ80()->pc;
-        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+        // cycle, the next instruction's M1 (POC 036). The transfer is then done before that instruction's own data cycles, which an
+        // instruction that reads memory sees (zxnddma_compare probes the target with the very next instruction). The engine asks the DMA
+        // at that M1's end (DmaAtMachineCycleEnd); the native interpreter cannot split an instruction: an instruction that reads memory
+        // waits for the transfer there, the others run first
+        _dmaRequestLate = false;
+        if (_engine)
         {
-            _dmaRequestLate = false;
+            _dmaAfterM1 = 2;
+            ArmDmaBusTurn(true);
             return;
         }
-        _dmaRequestLate = false;
+        const uint16_t pc = _context->pCore->GetZ80()->pc;
+        if (!NextInstructionReadsMemory(Mem().PeekSlot(pc)))
+            return;
     }
+    _dmaAfterM1 = 0;  // a single-cycle instruction: its M1's end is the instruction's
     // im2_dma_delay: an interrupt the program chose in NR #CC-#CE (or an NMI with #CC bit 7) pending or in service holds the DMA off
     // (dma.vhd START_DMA); the DMA asks again at each byte boundary of a held bus (Bus::delay, WRITE_4)
     _dma.SetClockTicks(8u / (_ratio ? _ratio : 1u));
@@ -1530,7 +1539,39 @@ void PortDecoder_Next::StepDma()
         if (moved == 0 || _dma.Waiting())
             break;
     }
+    const bool turns = _dma.Active() && _dma.Mode() == 2;
+    if (turns != _dmaBusTurnArmed) [[unlikely]]
+        ArmDmaBusTurn(turns);
     NoteDmaActivity();
+}
+
+void PortDecoder_Next::DmaAtMachineCycleEnd(bool m1Next)
+{
+    if (_dmaAfterM1) [[unlikely]]
+    {
+        // the enable's first byte: not before the next instruction's M1, at its end
+        if (_dmaAfterM1 == 2 && m1Next)
+        {
+            _dmaAfterM1 = 1;
+            return;
+        }
+        _dmaAfterM1 = 0;
+        StepDma();
+        return;
+    }
+    // The burst mode's wait has released the bus: the DMA asks for it again when the prescaler period is over (dma.vhd WAITING_CYCLES ->
+    // START_DMA), and the T80 gives it at the end of the machine cycle running then (POC 036 `dmaprescb`: inside DJNZ after its M1, its
+    // displacement read or its internal cycle). The same rule as between instructions (StepDma): the DMA's cycles become the CPU's waits
+    if (!_dma.Active() || !_dma.Waiting() || _dma.HoldsBus() || Now28() < _dma.WaitEnd())
+        return;
+    StepDma();
+}
+
+void PortDecoder_Next::ArmDmaBusTurn(bool on)
+{
+    _dmaBusTurnArmed = on && _engine;
+    if (_engine)
+        _engine->SetMachineCycleEndTurn(on ? &_dmaBusTurn : nullptr);
 }
 
 void PortDecoder_Next::ReportDmaAccess(bool write, uint16_t address, uint8_t value)
@@ -1644,7 +1685,10 @@ void PortDecoder_Next::PerformReset(bool hard)
         RecordInt(e);
     }
     _dmaRequestLate = false;
+    _dmaAfterM1 = 0;
     _dma.Reset();         // zxnext.vhd: the DMA's reset_i is the hard or the soft reset
+    if (_dmaBusTurnArmed)
+        ArmDmaBusTurn(false);
     NoteDmaActivity();
     NoteMachineEvent(GSCardEvent::MachineReset, hard ? 1 : 0);
     _uart.Reset(hard);    // the FIFOs on any reset, the prescalers and frames on the hard one (uart.vhd)

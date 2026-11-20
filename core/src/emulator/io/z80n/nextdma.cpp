@@ -354,13 +354,15 @@ void NextDma::AdvanceReadSequence(int after)
 /// WAITING_CYCLES compares the REGISTERED timer, so it leaves at the clock after the one that reached prescaler x 32, the clock
 /// ceil(32 N / k) + 1 counted from READ_1. The next state takes the clock after: FINISH_DMA (the last byte), START_DMA (burst: it asks
 /// for the bus) or WAITING_ACK (continuous), whose next clock is the next READ_1. A board-free check: POC 036 `dmaprescc` (GHDL, 3.5 MHz,
-/// N = 4): the bytes are 152 clocks of 28 MHz apart, 32 N + 3 CPU clocks
+/// N = 4): the bytes are 152 clocks of 28 MHz apart, 32 N + 3 CPU clocks. Burst: START_DMA pulls BUSRQ, the T80 registers it a CPU clock
+/// later (BusReq_s) and grants it at the end of the machine cycle running then - from that clock on (POC 036 `dmaprescb`: the bus goes
+/// at an M-cycle end 20 CPU clocks or more after the previous byte's grant, never at 19)
 uint64_t NextDma::PrescalerWaitEnd(uint64_t byteStart, bool last) const
 {
     const uint64_t k = _clockTicks;
     const uint64_t passed = (static_cast<uint64_t>(_prescaler) * 32 + k - 1) / k;  // CPU clocks until the timer reaches the period
     const uint64_t next = byteStart + (passed + 2) * k;                          // the state after WAITING_CYCLES
-    return last || _mode == 2 ? next : next + k;
+    return last ? next : next + k;
 }
 
 unsigned NextDma::Run(unsigned maxBytes, uint64_t now28)
