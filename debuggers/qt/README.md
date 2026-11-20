@@ -52,6 +52,7 @@ GS), the time group acts on the card, by card instructions
 | Step Back | Shift+F7 | `step-instruction {cpu, dir: back}` |
 | Step (in the past only) | F7 | `step-instruction {cpu, dir: forward}`: one card instruction forward through the history; live, the card's own step |
 | Step over / Step out (in the past only) | F8 / Ctrl+F8 | `step-instruction {cpu, kind: over \| out}`: the card's step through the history, where a live card step would end (its breakpoints end it first); live, the card's own step |
+| Run to cursor (in the past only) | F4 | `step-instruction {cpu, kind: to, pc}`: the card's next instruction at the cursor, through the history (its breakpoints end it first; never reached: said, nothing moves); live, the card's own run to the cursor |
 | Run Back | Shift+F9 | `reverse-continue {cpu}`: back to the previous hit of the card's own breakpoints |
 | Step Over Back | Shift+F8 | `reverse-step-over {cpu}`: one card instruction back, or back past a whole card routine when that instruction is its return |
 | Frame Back | - | `step-back`, as on the main CPU's tab |
@@ -61,8 +62,9 @@ instruction` (the main CPU's tab shows its registers at its last completed instr
 when the card's moment is not inside one). Without a card position the card's tab adds where the card stands
 (`gs at instruction 1200, PC #0A3C`, or `gs: no instruction counts in this recording`). A refusal (no card
 breakpoint, no counts) and an answer that moved nothing (the start or the end of the history, no earlier hit) are
-said in a message with the core's words. At the history's end (`at_end`) F7, F8 and Ctrl+F8 run the card's live
-step instead, unrecorded, as the main CPU's steps do there. The card's disassembly shows the card's own labels
+said in a message with the core's words. At the history's end (`at_end`) F7, F8, Ctrl+F8 and F4 run the card's
+live step instead, unrecorded, as the main CPU's steps do there; a move in time right after such a live step works (the
+machine first leaves the card's run, up to the next main CPU instruction). The card's disassembly shows the card's own labels
 (its firmware symbols), never the main CPU's. The main CPU's tab acts on the main CPU as before; any main-CPU move ends
 the card position. A move in time or a pause keeps the tab in front (only a processor's own stop, a breakpoint or
 a step, brings its tab forward).

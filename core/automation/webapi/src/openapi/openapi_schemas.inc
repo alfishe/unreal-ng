@@ -1324,7 +1324,7 @@
 
     schemas["TTDCardMoveResponse"]["type"] = "object";
     schemas["TTDCardMoveResponse"]["description"] =
-        "Response of seek / step-instruction (kind in, over or out) / reverse-step / reverse-step-over / "
+        "Response of seek / step-instruction (kind in, over, out or to) / reverse-step / reverse-step-over / "
         "reverse-continue with cpu naming a card. reached false "
         "with status at_start, at_end or no_hit is an answer (HTTP 200: nothing moved); no_card, no_count, "
         "no_history and no_breakpoints are refused (409), failed is 500.";
@@ -1351,7 +1351,15 @@
     schemas["TTDCardMoveResponse"]["properties"]["history_end"]["type"] = "boolean";
     schemas["TTDCardMoveResponse"]["properties"]["history_end"]["description"] =
         "step-instruction kind over / out: the step did not end in the history; the card went to its end (the next "
-        "step runs on live). truncated instead: it did not end in the 1000 frames searched, step again to go on";
+        "step runs on live). truncated instead: it did not end in the 1000 frames searched, step again to go on. "
+        "A step back (step-instruction dir back, reverse-step, reverse-step-over) from a card past the history's end "
+        "(it stepped on live, unrecorded): the card went to the history's newest card instruction";
+    schemas["TTDCardMoveResponse"]["properties"]["hit"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["hit"]["description"] =
+        "step-instruction kind to: the card stands at the cursor (false: a card breakpoint ended the run first, or "
+        "it was not reached: reached false, status no_hit, nothing moved)";
+    schemas["TTDCardMoveResponse"]["properties"]["cursor"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["cursor"]["description"] = "step-instruction kind to: the pc asked for";
     schemas["TTDCardMoveResponse"]["properties"]["over_call"]["type"] = "boolean";
     schemas["TTDCardMoveResponse"]["properties"]["over_call"]["description"] =
         "reverse-step-over: the card went back past a whole card routine (its return was the instruction before)";
@@ -2059,11 +2067,21 @@
     schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("in");
     schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("over");
     schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("out");
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("to");
     schemas["TTDStepInstructionRequest"]["properties"]["kind"]["default"] = "in";
     schemas["TTDStepInstructionRequest"]["properties"]["kind"]["description"] =
         "With cpu: over or out is the card's step over / step out through the history, found by replay as a live "
         "card step would go (forward only, no count; the card's breakpoints end it first; not ended in the history: "
-        "the card goes to its end, history_end). in (default) is the plain card instruction step";
+        "the card goes to its end, history_end). to is the card's run to the cursor `pc` through the history (its "
+        "next instruction there; its breakpoints end it first; not reached in the history or in max_frames frames: "
+        "reached false, status no_hit, nothing moved). in (default) is the plain card instruction step";
+    schemas["TTDStepInstructionRequest"]["properties"]["pc"]["oneOf"][0]["type"] = "integer";
+    schemas["TTDStepInstructionRequest"]["properties"]["pc"]["oneOf"][1]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["pc"]["description"] =
+        "With cpu and kind to: the cursor's address on the card, 0..65535 (decimal, \"0x..\", \"#..\" or \"$..\")";
+    schemas["TTDStepInstructionRequest"]["properties"]["max_frames"]["type"] = "integer";
+    schemas["TTDStepInstructionRequest"]["properties"]["max_frames"]["description"] =
+        "With cpu and kind to: frames searched forward at most (default 1000); truncated in the reply when reached";
 
     schemas["TTDStepInstructionResponse"]["type"] = "object";
     schemas["TTDStepInstructionResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";

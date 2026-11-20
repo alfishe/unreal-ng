@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 
 #include "common/modulelogger.h"
@@ -481,6 +482,11 @@ void TimeTravelController::CardSeekInternal(DebugCpuId cpu, uint64_t instruction
 
 TTDCardMoveResult TimeTravelController::SeekToCardInstruction(DebugCpuId cpu, uint64_t instruction)
 {
+    return SeekCardImpl(cpu, instruction, false);
+}
+
+TTDCardMoveResult TimeTravelController::SeekCardImpl(DebugCpuId cpu, uint64_t instruction, bool backToHistory)
+{
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     const KnownMemoryScope knownMemory{*this};
     GSCardTarget* target = CardTargetOf(_context, cpu);
@@ -507,6 +513,22 @@ TTDCardMoveResult TimeTravelController::SeekToCardInstruction(DebugCpuId cpu, ui
     const uint64_t hint = _cardStand ? _cardStand->position.mainBoundary.frame : CurrentPosition().frame;
 
     CardSeekInternal(cpu, instruction, hint, result);
+    if (backToHistory && result.status == TTDCardMoveResult::Status::AtEnd && instruction < result.from)
+    {
+        // The card stands past the history (stepped on live, unrecorded): back to the history's newest card
+        // instruction, the end's checkpoint
+        const uint64_t last = TimelineEnd().frame;
+        uint64_t endCount = 0;
+        bool ignored = false;
+        if (CardCountAtFrame(cpu, last, endCount, ignored) && endCount < instruction)
+        {
+            const uint64_t from = result.from;
+            result = TTDCardMoveResult{};
+            result.from = from;
+            CardSeekInternal(cpu, endCount, last, result);
+            result.historyEnd = result.Ok();
+        }
+    }
     if (!result.Ok())
     {
         _cardStand.reset();
@@ -546,7 +568,7 @@ TTDCardMoveResult TimeTravelController::StepCardInstructions(DebugCpuId cpu, int
         return result;
     }
     const uint64_t targetCount = delta < 0 ? base - static_cast<uint64_t>(-delta) : base + static_cast<uint64_t>(delta);
-    TTDCardMoveResult result = SeekToCardInstruction(cpu, targetCount);
+    TTDCardMoveResult result = SeekCardImpl(cpu, targetCount, delta < 0);
     result.from = base;
     return result;
 }
@@ -576,10 +598,11 @@ TTDCardMoveResult TimeTravelController::ReverseStepOverCard(DebugCpuId cpu)
         return result;
     }
 
-    // One card instruction back (a refusal leaves the machine where it stood)
-    TTDCardMoveResult result = SeekToCardInstruction(cpu, base - 1);
+    // One card instruction back (a refusal leaves the machine where it stood); from past the history's end (stepped
+    // on live) to its end, no routine to pass over there
+    TTDCardMoveResult result = SeekCardImpl(cpu, base - 1, true);
     result.from = base;
-    if (!result.Ok())
+    if (!result.Ok() || result.historyEnd)
         return result;
     const uint64_t ret = base - 1;
     GeneralSoundCard* card = target->Card();
@@ -660,6 +683,17 @@ TTDCardMoveResult TimeTravelController::ReverseStepOverCard(DebugCpuId cpu)
 
 TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool over)
 {
+    return CardForwardScan(cpu, over ? CardForward::Over : CardForward::Out, 0, kCardReverseMaxFrames);
+}
+
+TTDCardMoveResult TimeTravelController::RunCardToCursor(DebugCpuId cpu, uint16_t address, uint64_t maxFrames)
+{
+    return CardForwardScan(cpu, CardForward::To, address, std::max<uint64_t>(maxFrames, 1));
+}
+
+TTDCardMoveResult TimeTravelController::CardForwardScan(DebugCpuId cpu, CardForward kind, uint16_t address,
+                                                        uint64_t maxFrames)
+{
     const SessionOperation op{*this, SessionOperation::Kind::Change};
     const KnownMemoryScope knownMemory{*this};
     GSCardTarget* target = CardTargetOf(_context, cpu);
@@ -675,6 +709,9 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
         return Refused(TTDCardMoveResult::Status::NoCount,
                        "the card's CPU has no instruction count (a recording made before them is loaded)");
     const uint64_t base = result.from;
+    const bool toCursor = kind == CardForward::To;
+    char cursor[8];
+    std::snprintf(cursor, sizeof(cursor), "#%04X", static_cast<unsigned>(address));
 
     const TTDSessionState stateBefore = _state;
     LiveStateSnapshot before;
@@ -703,8 +740,8 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
     if (inHistory && frame >= last)
     {
         result.status = TTDCardMoveResult::Status::AtEnd;
-        result.message =
-            "card instruction " + std::to_string(base) + " is the history's end: the next step runs on live";
+        result.message = "card instruction " + std::to_string(base) + " is the history's end: the next " +
+                         (toCursor ? "run to the cursor" : "step") + " runs on live";
     }
     if (!inHistory || frame >= last)
     {
@@ -712,7 +749,8 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
         return result;
     }
 
-    // The replay forward from there: the step's end, or the oldest hit of the card's breakpoints after `base`
+    // The replay forward from there: the step's end (the cursor's next instruction), or the oldest hit of the card's
+    // breakpoints after `base`
     const bool breakpoints = target->HasStoppingBreakpoints();
     Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
     uint64_t at = 0;
@@ -724,6 +762,9 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
         result.message = "a checkpoint of the history could not be restored";
         return result;
     }
+    const GSCardTarget::StepKind step = kind == CardForward::Over  ? GSCardTarget::StepKind::Over
+                                        : kind == CardForward::Out ? GSCardTarget::StepKind::Out
+                                                                   : GSCardTarget::StepKind::To;
     bool started = false;
     bool stepped = false;
     uint64_t stepCount = 0;
@@ -732,11 +773,11 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
     uint64_t frames = 0;
     {
         const GSCardTarget::ScanScope scan(*target, UINT64_MAX, breakpoints);
-        target->ScanStep(over ? GSCardTarget::StepKind::Over : GSCardTarget::StepKind::Out, base);
+        target->ScanStep(step, base, address);
         if (breakpoints)
             target->ScanFirstHitAfter(base);
         ReplayModeScope replay(*this);
-        while (_context->emulatorState.frame_counter < last && frames < kCardReverseMaxFrames)
+        while (_context->emulatorState.frame_counter < last && frames < maxFrames)
         {
             const uint64_t frameBefore = _context->emulatorState.frame_counter;
             RunToFrameEnd();
@@ -770,6 +811,19 @@ TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool ove
     }
     else if (stepped)
         endCount = stepCount;
+    else if (toCursor)
+    {
+        // Not reached: the answer, nothing moves (a run to the cursor never stops halfway)
+        const bool historyLeft = _context->emulatorState.frame_counter < last && frames >= maxFrames;
+        putBack();
+        result.status = TTDCardMoveResult::Status::NoHit;
+        result.truncated = historyLeft;
+        result.message = historyLeft ? "the card does not reach " + std::string(cursor) + " in the " +
+                                           std::to_string(frames) + " frames searched (max_frames)"
+                                     : "the card does not reach " + std::string(cursor) + " after card instruction " +
+                                           std::to_string(base) + " in the history";
+        return result;
+    }
     else
     {
         // Not ended in the frames replayed: the card goes as far as they reach (the history's end, or the limit)

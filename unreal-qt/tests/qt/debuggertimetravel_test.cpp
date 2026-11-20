@@ -379,7 +379,8 @@ TEST(DebuggerTimeTravelCard_Test, ACardPositionShowsInTheMoment)
 
 /// With the card's tab in front the group's steps are the card's: Step Over Back is enabled and moves the card back
 /// (one card instruction, or over a whole card routine); the window's Step Over / Step Out in the past are the card's
-/// steps through the history (stepForward "over" / "out": forward by replay, the main CPU untouched by a live run);
+/// steps through the history (stepForward "over" / "out", Run to Cursor "to": forward by replay, the main CPU untouched
+/// by a live run);
 /// at the history's end stepForward hands over (false: the window steps the card live, D-3) without a message.
 /// Runtime: 3 recorded frames, a few card moves (~0.3 s)
 TEST(DebuggerTimeTravelCard_Test, TheCardsTabStepsOverBackAndThroughThePast)
@@ -436,14 +437,31 @@ TEST(DebuggerTimeTravelCard_Test, TheCardsTabStepsOverBackAndThroughThePast)
     EXPECT_TRUE(tt.lastResult().startsWith(QStringLiteral("Step Out: gs"))) << tt.lastResult().toStdString();
     EXPECT_TRUE(said.empty()) << said.front().toStdString();
 
+    // Run to Cursor in the past: the card's next instruction at the cursor; one never reached says so, nothing moves
+    // From well inside the history (the step out may have gone to its end: the firmware runs no routine there)
+    const uint64_t here = start;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(here + 1)}}).Ok());
+    const uint16_t cursor = controller->CardPositionNow(DebugCpuId::GS).pc;
+    ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(here)}}).Ok());
+    ASSERT_TRUE(tt.stepForward("to", cursor));
+    EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, here + 1);
+    EXPECT_TRUE(tt.lastResult().startsWith(QStringLiteral("Run to Cursor: gs at instruction")))
+        << tt.lastResult().toStdString();
+    EXPECT_TRUE(said.empty()) << said.front().toStdString();
+    ASSERT_TRUE(tt.stepForward("to", 0xFFFF)) << "an answer in the past, not a live run";
+    EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, here + 1) << "not reached: nothing moved";
+    ASSERT_EQ(said.size(), 1u);
+    EXPECT_NE(said.front().indexOf(QStringLiteral("#FFFF")), -1) << said.front().toStdString();
+    said.clear();
+
     // At the history's end the window's own (live) step: no message, nothing moved
     const ttd::TTDTimePoint end = controller->SessionEndPosition();
     ASSERT_TRUE(controller->SeekTo({end.frame, 0}));
     const uint64_t endCount = controller->CardPositionNow(DebugCpuId::GS).instruction;
     ASSERT_TRUE(execute("seek", {{"cpu", "gs"}, {"instruction", std::to_string(endCount)}}).Ok());
-    for (const char* kind : {"in", "over", "out"})
+    for (const char* kind : {"in", "over", "out", "to"})
     {
-        EXPECT_FALSE(tt.stepForward(kind)) << kind << ": at the end the card steps on live";
+        EXPECT_FALSE(tt.stepForward(kind, 0x4000)) << kind << ": at the end the card steps on live";
         EXPECT_EQ(controller->CardPositionNow(DebugCpuId::GS).instruction, endCount) << kind;
     }
     EXPECT_TRUE(said.empty()) << said.front().toStdString();

@@ -66,10 +66,11 @@ public:
     //next instruction" at a card position (", at its instruction boundary" when not inside one); "gs at instruction
     //1200, PC #0A3C" without one; "gs: no instruction counts in this recording" when the recording has none
     static QString describe_card(const QJsonObject &card);
-    //The Step (F7, kind "in"), Step over (F8, "over") or Step out (Ctrl+F8, "out") of the card's tab in the past: the
-    //card's step through the history. False when that is not the case (the main CPU's tab, not in the past, or the
-    //card at the history's end: D-3, it steps on live): the window's own step runs
-    bool step_forward(const std::string &kind = "in");
+    //The Step (F7, kind "in"), Step over (F8, "over"), Step out (Ctrl+F8, "out") or Run to the cursor (F4, "to", to
+    //`address`) of the card's tab in the past: the card's step or run through the history (a run to the cursor not
+    //reached in the history says so and moves nothing). False when that is not the case (the main CPU's tab, not in
+    //the past, or the card at the history's end: D-3, it steps on live): the window's own step runs
+    bool step_forward(const std::string &kind = "in", unsigned int address = 0);
     //What the last move said (the branch button's tooltip)
     const QString &last_result() const { return m_last_result; }
 

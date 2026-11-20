@@ -3394,6 +3394,75 @@ void Emulator::FillInstructionProgress(MainPosition& position) const
         position.busCycle = static_cast<int8_t>(at.index);
 }
 
+bool Emulator::LeaveCardRun(std::string& error, uint32_t timeoutMs)
+{
+    error.clear();
+    if (!IsParkedInsideCardRun())
+        return true;
+    if (_arbiter.IsLoopThread() || _arbiter.HoldsCpu())
+    {
+        error = "the machine is stopped inside the sound card's run (a General Sound breakpoint or step) and this "
+                "call runs on its own thread or holds its CPU: run or step the machine out of it first, then move "
+                "in time";
+        return false;
+    }
+    DebugManager* debug = _context ? _context->pDebugManager : nullptr;
+    _cardRunLeft.store(false, std::memory_order_release);
+    _leavingCardRun.store(true, std::memory_order_release);
+    if (debug)
+        debug->UpdateCardTight();   // every main instruction start catches the cards up: the next one ends it
+    struct EndLeave
+    {
+        Emulator& emulator;
+        DebugManager* debug;
+        ~EndLeave()
+        {
+            emulator._leavingCardRun.store(false, std::memory_order_release);
+            if (debug)
+                debug->UpdateCardTight();
+        }
+    } endLeave{*this, debug};
+
+    const execution::Result resumed = Resume(execution::Requester{execution::Origin::Internal, {}}, false);
+    if (resumed.outcome == execution::Outcome::Refused)
+    {
+        error = "the machine is stopped inside the sound card's run and could not be resumed out of it (" +
+                resumed.detail + "): run or step it out first, then move in time";
+        return false;
+    }
+    // Out of the card's run and paused again: at the main instruction start (NoteMainBoundaryAfterCardRun), or at a
+    // main CPU breakpoint on the way
+    auto settled = [this]() { return !IsParkedInsideCardRun() && IsPaused() && _arbiter.IsParked(); };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    uint64_t seq = DebugSeq();
+    while (!settled())
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+            break;
+        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+        seq = WaitDebugChange(seq, static_cast<uint32_t>(std::min<int64_t>(left, 20) + 1));
+    }
+    if (settled())
+        return true;
+    Pause();
+    WaitForPauseConfirmation(500);
+    if (settled())
+        return true;
+    error = "the machine did not leave the sound card's run within " + std::to_string(timeoutMs) +
+            " ms: run or step it out first, then move in time";
+    return false;
+}
+
+void Emulator::NoteMainBoundaryAfterCardRun()
+{
+    if (!LeavingCardRun() || IsParkedInsideCardRun() || !_arbiter.IsLoopThread())
+        return;
+    bool expected = false;
+    if (_cardRunLeft.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+        Pause();   // the loop parks at its next instruction boundary, after this instruction
+}
+
 void Emulator::ParkInsideCardRun()
 {
     // Nested parks do not happen (the card's run is one), the flag is only this thread's

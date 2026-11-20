@@ -511,7 +511,7 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"journal-build", {"from_frame", "to_frame"}},
         {"seek", {"frame", "tinframe", "bookmark", "cpu", "instruction"}},
         {"resume", {"frame", "tinframe", "media"}},
-        {"step-instruction", {"dir", "cpu", "count", "kind"}},
+        {"step-instruction", {"dir", "cpu", "count", "kind", "pc", "max_frames"}},
         {"reverse-step", {"count", "tstates", "scanlines", "cpu"}},
         {"reverse-step-over", {"cpu"}},
         {"bookmarks", {"tag", "text"}},
@@ -627,15 +627,19 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
 {
     using coordinator::OpKind;
     // A move in time restores a checkpoint under the machine: not while its thread stands inside another CPU's run
-    // (a General Sound breakpoint), where the rest of that run and of the frame end would go on over the restored
-    // machine (debuggers.md §7). A start there waits for the next frame boundary (StartRecording)
+    // (a General Sound breakpoint or a live card step), where the rest of that run and of the frame end would go on
+    // over the restored machine (debuggers.md §7). The machine leaves it first: it runs on to the next main CPU
+    // instruction start, the cards' stops dropped, and pauses there (D-3: a move right after a live card step at the
+    // history's end). A start there waits for the next frame boundary (StartRecording)
     static const std::set<std::string> moves = {"seek", "step-back", "step-forward", "step-instruction",
                                                 "reverse-step-over", "reverse-step", "reverse-continue", "resume",
                                                 "branch-switch", "branch-create", "load"};
     if (_context && _context->pEmulator && _context->pEmulator->IsParkedInsideCardRun() && moves.count(verb))
-        return Fail(TTDControlError::Conflict,
-                    "the machine is stopped inside the sound card's run (a General Sound breakpoint or step): "
-                    "run or step the machine out of it first, then move in time");
+    {
+        std::string error;
+        if (!_context->pEmulator->LeaveCardRun(error))
+            return Fail(TTDControlError::Conflict, error);
+    }
     // A move on a card CPU (the `cpu` option naming a card)
     if (verb == "seek" || verb == "step-instruction" || verb == "reverse-step" || verb == "reverse-continue" ||
         verb == "reverse-step-over")
@@ -650,6 +654,7 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
                                : Option(request, "max_frames") ? "max_frames"
                                : verb == "step-instruction" && Option(request, "count") ? "count"
                                : verb == "step-instruction" && Option(request, "kind")  ? "kind"
+                               : verb == "step-instruction" && Option(request, "pc")    ? "pc"
                                                                                         : nullptr;
         if (cardOnly)
             return Fail(TTDControlError::BadRequest, std::string("'") + cardOnly +
@@ -1562,7 +1567,7 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     // What each verb takes on a card CPU
     static const std::map<std::string, std::set<std::string>> cardOptions = {
         {"seek", {"cpu", "instruction"}},
-        {"step-instruction", {"cpu", "dir", "count", "kind"}},
+        {"step-instruction", {"cpu", "dir", "count", "kind", "pc", "max_frames"}},
         {"reverse-step", {"cpu", "count"}},
         {"reverse-continue", {"cpu", "max_frames"}},
         {"reverse-step-over", {"cpu"}},
@@ -1582,6 +1587,11 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     }
 
     TTDCardMoveResult result;
+    uint64_t cursorPc = 0;   // step-instruction kind to: the cursor
+    if (verb == "step-instruction" && (Option(request, "pc") || Option(request, "max_frames")) &&
+        (!Option(request, "kind") || *Option(request, "kind") == "in"))
+        return Fail(TTDControlError::BadRequest, std::string("'") + (Option(request, "pc") ? "pc" : "max_frames") +
+                                                     "' goes with kind to (the card's run to the cursor)");
     if (verb == "seek")
     {
         const std::string* text = Option(request, "instruction");
@@ -1597,19 +1607,38 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     }
     else if (verb == "step-instruction" && Option(request, "kind") && *Option(request, "kind") != "in")
     {
-        // A step over / step out through the past: forward only, one step
+        // A step over / step out / run to the cursor through the past: forward only, one step
         const std::string& kind = *Option(request, "kind");
-        if (kind != "over" && kind != "out")
-            return Fail(TTDControlError::BadRequest, "kind must be in, over or out");
+        if (kind != "over" && kind != "out" && kind != "to")
+            return Fail(TTDControlError::BadRequest, "kind must be in, over, out or to");
         if (const std::string* dir = Option(request, "dir"); dir && *dir != "forward" && *dir != "fwd")
             return Fail(TTDControlError::BadRequest,
                         "kind " + kind + " steps forward only (a step over back is 'reverse-step-over' with 'cpu')");
         if (Option(request, "count"))
             return Fail(TTDControlError::BadRequest, "kind " + kind + " takes no 'count' (one step)");
+        uint64_t& pc = cursorPc;
+        uint64_t maxFrames = TimeTravelController::kCardReverseMaxFrames;
+        if (kind == "to")
+        {
+            const std::string* pcText = Option(request, "pc");
+            if (!pcText)
+                return Fail(TTDControlError::BadRequest, "kind to needs 'pc': the cursor's address on the card");
+            if (!ParseUpTo(*pcText, 0xFFFF, pc))
+                return Fail(TTDControlError::BadRequest,
+                            "pc must be 0..65535 (decimal, or hex as \"0x..\", \"#..\" or \"$..\")");
+            if (const std::string* text = Option(request, "max_frames");
+                text && (!ParseU64(*text, maxFrames) || maxFrames == 0))
+                return Fail(TTDControlError::BadRequest, "max_frames must be a positive integer");
+        }
+        else if (Option(request, "pc") || Option(request, "max_frames"))
+            return Fail(TTDControlError::BadRequest, "kind " + kind + " takes no '" +
+                                                         (Option(request, "pc") ? "pc" : "max_frames") +
+                                                         "' (only kind to: the run to the cursor)");
         if (TTDReply refusal; RefuseWhileRecording(refusal, true))
             return refusal;
         PauseAndConfirm();
-        result = _manager->StepCardForward(cpu, kind == "over");
+        result = kind == "to" ? _manager->RunCardToCursor(cpu, static_cast<uint16_t>(pc), maxFrames)
+                              : _manager->StepCardForward(cpu, kind == "over");
     }
     else if (verb == "step-instruction" || verb == "reverse-step")
     {
@@ -1694,11 +1723,23 @@ TTDReply TTDControlBackend::CardMove(const std::string& verb, DebugCpuId cpu, co
     }
     if (verb == "step-instruction" && Option(request, "kind"))
         body["kind"] = *Option(request, "kind");
+    // A move back from past the history's end (the card stepped on live) that landed at the history's end
+    if (result.historyEnd && (verb == "reverse-step" || verb == "reverse-step-over" ||
+                              (verb == "step-instruction" && !Option(request, "kind"))))
+        body["history_end"] = true;
     if (verb == "step-instruction" && Option(request, "kind") && *Option(request, "kind") != "in")
     {
-        // Where the step over / out ended: itself, a breakpoint of the card, the history's end or the frame limit
+        // Where the step over / out ended: itself, a breakpoint of the card, the history's end or the frame limit;
+        // the run to the cursor: there (hit), a breakpoint of the card first, or not reached (nothing moved)
+        const bool to = *Option(request, "kind") == "to";
+        if (to)
+        {
+            body["cursor"] = cursorPc;
+            body["hit"] = result.Ok() && !result.stoppedByBreakpoint;
+        }
         body["searched_frames"] = result.searchedFrames;
-        body["history_end"] = result.historyEnd;
+        if (!to)
+            body["history_end"] = result.historyEnd;
         body["truncated"] = result.truncated;
         if (result.Ok() && result.stoppedByBreakpoint)
         {

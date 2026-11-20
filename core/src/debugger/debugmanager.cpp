@@ -166,6 +166,9 @@ bool DebugManager::CardTight(const GSCardTarget* target) const
 {
     if (!target)
         return false;
+    // Leaving a card's run for a move in time (Emulator::LeaveCardRun): the next main instruction start ends it
+    if (_context && _context->pEmulator && _context->pEmulator->LeavingCardRun() && target->Available())
+        return true;
     return target->WantsTight() || (_directRun.load(std::memory_order_acquire) && SelectedCpu() == target->Id());
 }
 
@@ -203,6 +206,9 @@ void DebugManager::CatchUpCards()
             card->catchUpToHost();
     }
     _catchingUp = false;
+    // Leaving a card's run for a move in time (Emulator::LeaveCardRun): this main instruction start is out of it
+    if (Emulator* emulator = _context ? _context->pEmulator : nullptr; emulator && emulator->LeavingCardRun()) [[unlikely]]
+        emulator->NoteMainBoundaryAfterCardRun();
 }
 
 int DebugManager::TargetsMask() const

@@ -8,7 +8,8 @@
 // With a sound card's tab in front (debuggercpu.h) the group acts on that card's CPU, as eCat's does (TTD branches
 // debuggers.md §8): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's
 // own breakpoints), Step Over Back `reverse-step-over {cpu}`, the window's Step In / Step Over / Step Out in the past
-// `step-instruction {cpu, dir: forward, kind: in | over | out}` (stepForward; at the history's end they run on live,
+// `step-instruction {cpu, dir: forward, kind: in | over | out}`, Run to Cursor `kind: to, pc` (stepForward; at the
+// history's end they run on live,
 // as the main CPU's do: D-3). At a position on a card's CPU (gs-debugger design §8) the moment names both CPUs - the
 // card's instruction count and PC, the main CPU's PC and the T-states the card is into its instruction; without one,
 // the card's tab adds where that card stands
@@ -85,11 +86,12 @@ public:
     bool shown() const { return _shown; }
     /// What the last move said (the moment's tooltip)
     QString lastResult() const { return _lastResult; }
-    /// The window's Step In ("in"), Step Over ("over") or Step Out ("out") with a card's tab in front in the recorded
-    /// past: the card's step through the history (rule 3: forward actions there replay). False when it is not for the
-    /// group (the main CPU in front, live, no history) or the card stands at the history's end (at_end, D-3): the
-    /// window steps the card live as before
-    bool stepForward(const std::string& kind = "in");
+    /// The window's Step In ("in"), Step Over ("over"), Step Out ("out") or Run to Cursor ("to", to @p address) with
+    /// a card's tab in front in the recorded past: the card's step or run through the history (rule 3: forward
+    /// actions there replay; a run to the cursor not reached in the history says so and moves nothing). False when it
+    /// is not for the group (the main CPU in front, live, no history) or the card stands at the history's end (at_end,
+    /// D-3): the window steps the card live as before
+    bool stepForward(const std::string& kind = "in", uint16_t address = 0);
 
 signals:
     /// The machine moved in time: the debugger's views redraw

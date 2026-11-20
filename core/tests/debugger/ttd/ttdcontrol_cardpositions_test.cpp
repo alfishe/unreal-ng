@@ -142,6 +142,13 @@ TEST(TTDControl_CardPositions_Test, BadRequestsAreRefusedBeforeAnythingMoves)
         {"step-instruction", {{"cpu", "gs"}, {"kind", "sideways"}}, "kind must be"},
         {"step-instruction", {{"cpu", "gs"}, {"kind", "over"}, {"dir", "back"}}, "reverse-step-over"},
         {"step-instruction", {{"cpu", "gs"}, {"kind", "out"}, {"count", "2"}}, "no 'count'"},
+        {"step-instruction", {{"cpu", "gs"}, {"kind", "to"}}, "needs 'pc'"},
+        {"step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "70000"}}, "pc must be"},
+        {"step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "0x8000"}, {"max_frames", "0"}}, "positive"},
+        {"step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "0x8000"}, {"dir", "back"}}, "forward only"},
+        {"step-instruction", {{"cpu", "gs"}, {"kind", "over"}, {"pc", "0x8000"}}, "no 'pc'"},
+        {"step-instruction", {{"cpu", "gs"}, {"pc", "0x8000"}}, "goes with kind to"},
+        {"step-instruction", {{"pc", "0x8000"}}, "needs 'cpu'"},
     };
     const ttd::TTDTimePoint before = b.ttd->CurrentPosition();
     for (const Case& c : cases)
@@ -266,4 +273,47 @@ TEST(TTDControl_CardPositions_Test, StepInstructionKindOverAndOut)
     EXPECT_EQ(Field(atEnd, "status").s, "at_end");
     EXPECT_FALSE(Field(atEnd, "reached").b);
     EXPECT_NE(Field(atEnd, "message").s.find("live"), std::string::npos) << Field(atEnd, "message").s;
+}
+
+/// step-instruction with cpu, kind to and pc: the card's run to the cursor through the history, the card move's reply
+/// with cursor, hit, searched_frames and truncated; a cursor never reached is no_hit (200, nothing moved)
+TEST(TTDControl_CardPositions_Test, StepInstructionKindToRunsToTheCursor)
+{
+    Bench b;
+    ASSERT_TRUE(Build(b, Card::NeoGS));
+    ASSERT_TRUE(LoadCardRoutines(b));
+    const uint64_t perFrame = PerFrame(b);
+    Record(b, 3);
+    const uint64_t start = b.Count() - perFrame * 2;
+
+    ASSERT_TRUE(Verb(b, "seek", {{"cpu", "gs"}, {"instruction", std::to_string(start)}}).Ok());
+    const ttd::TTDReply to = Verb(b, "step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "#4020"}});
+    ASSERT_TRUE(to.Ok()) << to.message;
+    EXPECT_EQ(Field(to, "status").s, "ok");
+    EXPECT_TRUE(Field(to, "reached").b);
+    EXPECT_TRUE(Field(to, "hit").b);
+    EXPECT_EQ(Field(to, "kind").s, "to");
+    EXPECT_EQ(Field(to, "cursor").i, 0x4020);
+    EXPECT_EQ(static_cast<uint64_t>(Field(to, "from").i), start);
+    EXPECT_GT(static_cast<uint64_t>(Field(to, "target").i), start);
+    EXPECT_LE(static_cast<uint64_t>(Field(to, "target").i), start + 20) << "the routine is a few instructions away";
+    EXPECT_EQ(Field(to, "card").find("pc")->i, 0x4020);
+    EXPECT_EQ(to.body.find("history_end"), nullptr);
+    EXPECT_FALSE(Field(to, "truncated").b);
+    EXPECT_NE(to.body.find("searched_frames"), nullptr);
+    EXPECT_NE(to.body.find("check"), nullptr);
+
+    // Again: the next time round, not where it stands
+    const ttd::TTDReply again = Verb(b, "step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "16416"}});
+    ASSERT_TRUE(again.Ok()) << again.message;
+    EXPECT_GT(Field(again, "target").i, Field(to, "target").i);
+
+    // Never reached: an answer, nothing moved
+    const ttd::TTDReply miss = Verb(b, "step-instruction", {{"cpu", "gs"}, {"kind", "to"}, {"pc", "$5000"}});
+    ASSERT_TRUE(miss.Ok()) << miss.message;
+    EXPECT_EQ(Field(miss, "status").s, "no_hit");
+    EXPECT_FALSE(Field(miss, "reached").b);
+    EXPECT_FALSE(Field(miss, "hit").b);
+    EXPECT_NE(Field(miss, "message").s.find("#5000"), std::string::npos) << Field(miss, "message").s;
+    EXPECT_EQ(b.ttd->CardPositionNow(b.cpu).instruction, static_cast<uint64_t>(Field(again, "target").i));
 }
