@@ -54,7 +54,13 @@ public:
         }
     }
 
+    /// T-states already spent before the first step: the overshoot of the previous run on the direct-run timeline
+    /// (Emulator::RunTimeline), so this budget ends at that run's target plus its own length
+    void Credit(uint64_t tStates) { _elapsed += tStates; }
+
     bool Reached() const { return _elapsed >= _target; }
+    /// T-states run past the target (0 while not reached)
+    uint64_t Overshoot() const { return _elapsed > _target ? _elapsed - _target : 0; }
     /// T-states left to run (0 when reached)
     uint64_t Remaining() const { return _elapsed >= _target ? 0 : _target - _elapsed; }
     uint64_t Elapsed() const { return _elapsed; }

@@ -215,15 +215,16 @@ void TtdControls::update_actions()
     const QString shift_f9 = QKeySequence(Qt::SHIFT | Qt::Key_F9).toString(QKeySequence::NativeText);
 
     m_step_back->setEnabled(live && (on_card || !at_start));
-    m_step_over_back->setEnabled(live && !at_start && !on_card);
+    m_step_over_back->setEnabled(live && (on_card || !at_start));
     m_frame_back->setEnabled(live && !at_start);
     //The card's breakpoints of any kind count for the card (the core refuses when none is active)
     m_run_back->setEnabled(live && (on_card || (!at_start && any_breakpoint)));
     if (on_card) {
         m_step_back->setToolTip(tr("Step Back: one %1 instruction back in the recorded history (%2)").arg(card, shift_f7));
         m_step_back->setStatusTip(tr("One %1 instruction back in the recorded history").arg(card));
-        m_step_over_back->setToolTip(tr("Step Over Back: the main CPU's only (the card steps back by instructions) (%1)")
-                                         .arg(shift_f8));
+        m_step_over_back->setToolTip(tr("Step Over Back: one %1 instruction back; back over a whole card routine when "
+                                        "that instruction is its return (%2)")
+                                         .arg(card, shift_f8));
         m_run_back->setToolTip(tr("Run Back: back to the previous hit of a %1 breakpoint (%2)").arg(card, shift_f9));
         m_run_back->setStatusTip(tr("Back to the previous hit of a %1 breakpoint").arg(card));
     } else {
@@ -301,7 +302,7 @@ QString TtdControls::describe_card(const QJsonObject &card)
 }
 
 bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::map<std::string, std::string> options,
-                            const QString &title)
+                            const QString &title, bool * at_end)
 {
     options["cpu"] = cpu.toStdString();
     QJsonObject answer;
@@ -313,6 +314,10 @@ bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::ma
         return false;
     }
     //An answer that moved nothing (at_start, at_end, no_hit): the machine stays where it was
+    if (!answer.value("reached").toBool() && at_end != nullptr && answer.value("status").toString() == "at_end") {
+        *at_end = true;
+        return false;
+    }
     if (!answer.value("reached").toBool()) {
         m_last_result = title + ": " + answer.value("message").toString(tr("nothing moved"));
         if (inform) inform(title, answer.value("message").toString(tr("Nothing moved.")), false);
@@ -326,23 +331,37 @@ bool TtdControls::card_move(const QString &cpu, const std::string &verb, std::ma
                         .arg((qulonglong)answer.value("from").toInteger());
     const QJsonObject hit = answer.value("breakpoint").toObject();
     if (!hit.isEmpty())
-        m_last_result = tr("Run Back: %1 at the breakpoint %2 (instruction %3)")
-                            .arg(cpu, hex4((unsigned int)hit.value("address").toInteger()))
+        m_last_result = tr("%1: %2 at the breakpoint %3 (instruction %4)")
+                            .arg(title, cpu, hex4((unsigned int)hit.value("address").toInteger()))
                             .arg((qulonglong)card.value("instruction").toInteger());
+    if (answer.value("over_call").toBool())
+        m_last_result += tr(", back over a routine of %1 instruction(s)")
+                             .arg((qulonglong)answer.value("skipped").toInteger());
+    if (answer.value("call_out_of_reach").toBool())
+        m_last_result += tr(", on the return: the routine's start is out of reach");
+    if (answer.value("history_end").toBool())
+        m_last_result += tr(", the step did not end in the history: at its end (the next step runs live)");
+    else if (answer.value("truncated").toBool() && answer.contains("kind"))
+        m_last_result += tr(", the step did not end in the frames searched (step again to go on)");
     poll(true);
     emit moved();
     return true;
 }
 
-bool TtdControls::step_forward()
+bool TtdControls::step_forward(const std::string &kind)
 {
     const QString card = card_cpu();
     if (card.isEmpty() || !m_shown || !m_live) return false;
     //In the past only (rule 3: forward actions there replay); live, the card's own step runs
     poll(true);
     if (!m_shown || m_status.value("state").toString() != "detached") return false;
-    card_move(card, "step-instruction", {{"dir", "forward"}}, tr("Step"));
-    return true;
+    //At the history's end the card steps on live, unrecorded (D-3, as the main CPU's steps): the window's own step
+    std::map<std::string, std::string> options{{"dir", "forward"}};
+    if (kind != "in") options["kind"] = kind;
+    const QString title = kind == "over" ? tr("Step over") : kind == "out" ? tr("Step out") : tr("Step");
+    bool at_end = false;
+    card_move(card, "step-instruction", std::move(options), title, &at_end);
+    return !at_end;
 }
 
 void TtdControls::step_back()
@@ -356,7 +375,12 @@ void TtdControls::step_back()
 
 void TtdControls::step_over_back()
 {
-    if (m_step_over_back->isEnabled()) move("reverse-step-over", {}, tr("Step Over Back"));
+    if (!m_step_over_back->isEnabled()) return;
+    //The card's: one card instruction back, or back past a whole card routine when that instruction is its return
+    if (const QString card = card_cpu(); !card.isEmpty())
+        card_move(card, "reverse-step-over", {}, tr("Step Over Back"));
+    else
+        move("reverse-step-over", {}, tr("Step Over Back"));
 }
 
 void TtdControls::frame_back()

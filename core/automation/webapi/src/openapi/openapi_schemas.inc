@@ -1324,7 +1324,8 @@
 
     schemas["TTDCardMoveResponse"]["type"] = "object";
     schemas["TTDCardMoveResponse"]["description"] =
-        "Response of seek / step-instruction / reverse-step / reverse-continue with cpu naming a card. reached false "
+        "Response of seek / step-instruction (kind in, over or out) / reverse-step / reverse-step-over / "
+        "reverse-continue with cpu naming a card. reached false "
         "with status at_start, at_end or no_hit is an answer (HTTP 200: nothing moved); no_card, no_count, "
         "no_history and no_breakpoints are refused (409), failed is 500.";
     schemas["TTDCardMoveResponse"]["properties"]["cpu"]["type"] = "string";
@@ -1343,7 +1344,27 @@
     schemas["TTDCardMoveResponse"]["properties"]["truncated"]["type"] = "boolean";
     schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["type"] = "object";
     schemas["TTDCardMoveResponse"]["properties"]["breakpoint"]["description"] =
-        "reverse-continue: the card breakpoint hit (id, kind, address)";
+        "reverse-continue: the card breakpoint hit (id, kind, address); step-instruction kind over / out: the card "
+        "breakpoint that ended the step";
+    schemas["TTDCardMoveResponse"]["properties"]["kind"]["type"] = "string";
+    schemas["TTDCardMoveResponse"]["properties"]["kind"]["description"] = "step-instruction: the kind asked for";
+    schemas["TTDCardMoveResponse"]["properties"]["history_end"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["history_end"]["description"] =
+        "step-instruction kind over / out: the step did not end in the history; the card went to its end (the next "
+        "step runs on live). truncated instead: it did not end in the 1000 frames searched, step again to go on";
+    schemas["TTDCardMoveResponse"]["properties"]["over_call"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["over_call"]["description"] =
+        "reverse-step-over: the card went back past a whole card routine (its return was the instruction before)";
+    schemas["TTDCardMoveResponse"]["properties"]["skipped"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["skipped"]["description"] =
+        "reverse-step-over, over_call: the routine's card instructions passed over";
+    schemas["TTDCardMoveResponse"]["properties"]["call_out_of_reach"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["call_out_of_reach"]["description"] =
+        "reverse-step-over: the routine started before the history (or more than 1000 frames back): the card stays "
+        "one instruction back, on the return";
+    schemas["TTDCardMoveResponse"]["properties"]["stepped"]["type"] = "boolean";
+    schemas["TTDCardMoveResponse"]["properties"]["pc"]["type"] = "integer";
+    schemas["TTDCardMoveResponse"]["properties"]["text"]["type"] = "string";
     schemas["TTDCardMoveResponse"]["properties"]["frame"]["type"] = "integer";
     schemas["TTDCardMoveResponse"]["properties"]["tinframe"]["type"] = "integer";
     schemas["TTDCardMoveResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -2034,6 +2055,15 @@
     schemas["TTDStepInstructionRequest"]["properties"]["count"]["format"] = "uint64";
     schemas["TTDStepInstructionRequest"]["properties"]["count"]["description"] =
         "With cpu: card instructions to step (default 1)";
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["type"] = "string";
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("in");
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("over");
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["enum"].append("out");
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["default"] = "in";
+    schemas["TTDStepInstructionRequest"]["properties"]["kind"]["description"] =
+        "With cpu: over or out is the card's step over / step out through the history, found by replay as a live "
+        "card step would go (forward only, no count; the card's breakpoints end it first; not ended in the history: "
+        "the card goes to its end, history_end). in (default) is the plain card instruction step";
 
     schemas["TTDStepInstructionResponse"]["type"] = "object";
     schemas["TTDStepInstructionResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";
@@ -2091,6 +2121,15 @@
     schemas["TTDReverseStepResponse"]["properties"]["tinframe"]["format"] = "uint32";
 
     // POST /ttd/reverse-step-over
+    schemas["TTDReverseStepOverRequest"]["type"] = "object";
+    schemas["TTDReverseStepOverRequest"]["description"] = "Request body of POST /ttd/reverse-step-over (optional)";
+    schemas["TTDReverseStepOverRequest"]["properties"]["cpu"]["type"] = "string";
+    for (const char* cpu : {"main", "gs", "neogs", "ms", "multisound"})
+        schemas["TTDReverseStepOverRequest"]["properties"]["cpu"]["enum"].append(cpu);
+    schemas["TTDReverseStepOverRequest"]["properties"]["cpu"]["description"] =
+        "A sound card's CPU (gs-debugger design §8): the step over back is in its instructions, the main CPU follows "
+        "by replay; the reply is a TTDCardMoveResponse with stepped, over_call, skipped, call_out_of_reach, pc and "
+        "text beside it.";
     schemas["TTDReverseStepOverResponse"]["type"] = "object";
     schemas["TTDReverseStepOverResponse"]["description"] = "Response from POST /ttd/reverse-step-over.";
     schemas["TTDReverseStepOverResponse"]["properties"]["check"]["$ref"] = "#/components/schemas/TTDCheck";

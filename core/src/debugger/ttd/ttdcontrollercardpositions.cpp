@@ -20,6 +20,7 @@
 #include <cmath>
 #include <mutex>
 
+#include "common/modulelogger.h"
 #include "debugger/debugmanager.h"
 #include "debugger/targets/gscardtarget.h"
 #include "emulator/cpu/core.h"
@@ -171,15 +172,19 @@ bool TimeTravelController::CardCountAtFrame(DebugCpuId cpu, uint64_t frame, uint
     return card && card->cardInstructionCount(count);
 }
 
-bool TimeTravelController::CardCountNow(DebugCpuId cpu, uint64_t& count)
+bool TimeTravelController::CardCountNow(DebugCpuId cpu, uint64_t& count, uint16_t* sp)
 {
+    GSCardTarget* target = CardTargetOf(_context, cpu);
+    GeneralSoundCard* card = target ? target->Card() : nullptr;
     if (_cardStand && _cardStand->cpu == cpu)
     {
         count = _cardStand->position.instruction;
+        // The card holds the position's copy
+        Z80CpuRegisters regs{};
+        if (sp && card && card->cardRegisters(regs))
+            *sp = regs.sp;
         return true;
     }
-    GSCardTarget* target = CardTargetOf(_context, cpu);
-    GeneralSoundCard* card = target ? target->Card() : nullptr;
     if (!card)
         return false;
     // The card runs lazily: up to the main CPU's moment for the count, then back as it was (nothing parks)
@@ -190,6 +195,9 @@ bool TimeTravelController::CardCountNow(DebugCpuId cpu, uint64_t& count)
         const GSCardTarget::ScanScope scan(*target, UINT64_MAX);
         card->catchUpToHost();
         known = card->cardInstructionCount(count);
+        Z80CpuRegisters regs{};
+        if (sp && card->cardRegisters(regs))
+            *sp = regs.sp;
     }
     GSCardTarget::LoadCardState(card, saved);
     _engineMemoryKnown = false;
@@ -540,6 +548,246 @@ TTDCardMoveResult TimeTravelController::StepCardInstructions(DebugCpuId cpu, int
     const uint64_t targetCount = delta < 0 ? base - static_cast<uint64_t>(-delta) : base + static_cast<uint64_t>(delta);
     TTDCardMoveResult result = SeekToCardInstruction(cpu, targetCount);
     result.from = base;
+    return result;
+}
+
+TTDCardMoveResult TimeTravelController::ReverseStepOverCard(DebugCpuId cpu)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    const KnownMemoryScope knownMemory{*this};
+    GSCardTarget* target = CardTargetOf(_context, cpu);
+    if (!target || !target->Card())
+        return Refused(TTDCardMoveResult::Status::NoCard,
+                       std::string("cpu ") + DebugCpuName(cpu) + " not available: no card with a CPU in its slot");
+    if (_line->timeline.empty())
+        return Refused(TTDCardMoveResult::Status::NoHistory, "no recorded history");
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    // The stack level the step back over returns to: where the card stands now
+    uint64_t base = 0;
+    uint16_t level = 0;
+    if (!CardCountNow(cpu, base, &level))
+        return Refused(TTDCardMoveResult::Status::NoCount,
+                       "the card's CPU has no instruction count (a recording made before them is loaded)");
+    if (base == 0)
+    {
+        TTDCardMoveResult result = Refused(TTDCardMoveResult::Status::AtStart, "the card has run no instruction yet");
+        result.position = CardPositionNow(cpu);
+        return result;
+    }
+
+    // One card instruction back (a refusal leaves the machine where it stood)
+    TTDCardMoveResult result = SeekToCardInstruction(cpu, base - 1);
+    result.from = base;
+    if (!result.Ok())
+        return result;
+    const uint64_t ret = base - 1;
+    GeneralSoundCard* card = target->Card();
+    Z80CpuRegisters regs{};
+    if (!card || !card->cardRegisters(regs))
+        return result;
+    // Only a return that lifted the stack to this level closes a routine; any other instruction is the step back
+    if (!target->IsReturnAt(card, regs.pc) || static_cast<int16_t>(static_cast<uint16_t>(regs.sp - level)) >= 0)
+        return result;
+    result.overCall = true;
+    const TTDCardMoveResult onReturn = result;
+
+    // Walk back a frame at a time, newest first: the routine's instructions run below this level; the newest card
+    // boundary before the return at it or above is the CALL / RST that entered the routine, or the instruction an
+    // interrupt came after. The card's moment may lie in the frame after the main CPU's boundary: from there (the
+    // last frame of the history is its end, nothing to replay)
+    const uint64_t firstFrame = GetEarliestRecordedFrame();
+    const uint64_t last = TimelineEnd().frame;
+    const uint64_t here = _cardStand ? _cardStand->position.mainBoundary.frame : CurrentPosition().frame;
+    uint64_t frame = std::min<uint64_t>(here + 1, last > 0 ? last - 1 : 0);
+    bool found = false;
+    uint64_t foundCount = 0;
+    uint64_t foundFrame = 0;
+    for (uint64_t searched = 0; searched < kCardReverseMaxFrames; frame--)
+    {
+        uint64_t at = 0;
+        bool beforeHistory = false;
+        if (!CardCountAtFrame(cpu, frame, at, beforeHistory))
+            break;   // before the kept history
+        if (at < ret)
+        {
+            const GSCardTarget::ScanScope scan(*target, UINT64_MAX);
+            target->ScanStackLevel(level, ret);
+            ReplayModeScope replay(*this);
+            RunToFrameEnd();
+            replay.Exit();
+            searched++;
+            found = target->ScanStackFound(foundCount);
+        }
+        if (found)
+        {
+            foundFrame = frame;
+            break;
+        }
+        if (frame == 0 || frame <= firstFrame)
+            break;
+    }
+
+    if (found)
+    {
+        TTDCardMoveResult over;
+        over.from = base;
+        over.overCall = true;
+        CardSeekInternal(cpu, foundCount, foundFrame, over);
+        if (over.Ok())
+        {
+            over.skipped = ret - foundCount;
+            return over;
+        }
+        MLOGWARNING("TimeTravelController::ReverseStepOverCard — the seek to the routine's caller failed: %s",
+                    over.message.c_str());
+    }
+    // Out of reach: the card stays one instruction back, on the return
+    TTDCardMoveResult back;
+    CardSeekInternal(cpu, ret, onReturn.position.mainBoundary.frame, back);
+    result = back.Ok() ? back : onReturn;
+    result.from = base;
+    result.overCall = true;
+    result.callOutOfReach = true;
+    if (!back.Ok())
+    {
+        result.status = TTDCardMoveResult::Status::Failed;
+        result.message = "the card's return could not be reached again: " + back.message;
+        result.position = CardPositionNow(cpu);
+    }
+    return result;
+}
+
+TTDCardMoveResult TimeTravelController::StepCardForward(DebugCpuId cpu, bool over)
+{
+    const SessionOperation op{*this, SessionOperation::Kind::Change};
+    const KnownMemoryScope knownMemory{*this};
+    GSCardTarget* target = CardTargetOf(_context, cpu);
+    if (!target || !target->Card())
+        return Refused(TTDCardMoveResult::Status::NoCard,
+                       std::string("cpu ") + DebugCpuName(cpu) + " not available: no card with a CPU in its slot");
+    if (_line->timeline.empty())
+        return Refused(TTDCardMoveResult::Status::NoHistory, "no recorded history");
+    if (_state == TTDSessionState::Recording)
+        PauseRecordingForBrowsing();
+    TTDCardMoveResult result;
+    if (!CardCountNow(cpu, result.from))
+        return Refused(TTDCardMoveResult::Status::NoCount,
+                       "the card's CPU has no instruction count (a recording made before them is loaded)");
+    const uint64_t base = result.from;
+
+    const TTDSessionState stateBefore = _state;
+    LiveStateSnapshot before;
+    SaveLiveState(before, true);
+    GSCardTarget::CardState cardBefore;
+    GSCardTarget::SaveCardState(target->Card(), cardBefore);
+    const std::shared_ptr<CardStand> standBefore = _cardStand;
+    auto putBack = [&]() {
+        _cardStand.reset();
+        RestoreLiveState(before);
+        GSCardTarget::LoadCardState(target->Card(), cardBefore);
+        _cardStand = standBefore;
+        if (_state != stateBefore)
+            SetState(stateBefore);
+        UpdateInputWorkFlag();
+        PublishCardReadouts();
+        result.position = CardPositionNow(cpu);
+    };
+
+    // The frame whose checkpoint the card has not passed `base` at; the history's last frame: the card stands at
+    // the history's end, nothing recorded to step through
+    const uint64_t last = TimelineEnd().frame;
+    const uint64_t hint = _cardStand ? _cardStand->position.mainBoundary.frame : CurrentPosition().frame;
+    uint64_t frame = 0;
+    const bool inHistory = FindCardStartFrame(cpu, base, hint, frame, result);
+    if (inHistory && frame >= last)
+    {
+        result.status = TTDCardMoveResult::Status::AtEnd;
+        result.message =
+            "card instruction " + std::to_string(base) + " is the history's end: the next step runs on live";
+    }
+    if (!inHistory || frame >= last)
+    {
+        putBack();
+        return result;
+    }
+
+    // The replay forward from there: the step's end, or the oldest hit of the card's breakpoints after `base`
+    const bool breakpoints = target->HasStoppingBreakpoints();
+    Z80* z80 = _context && _context->pCore ? _context->pCore->GetZ80() : nullptr;
+    uint64_t at = 0;
+    bool beforeHistory = false;
+    if (!z80 || !CardCountAtFrame(cpu, frame, at, beforeHistory))
+    {
+        putBack();
+        result.status = TTDCardMoveResult::Status::Failed;
+        result.message = "a checkpoint of the history could not be restored";
+        return result;
+    }
+    bool started = false;
+    bool stepped = false;
+    uint64_t stepCount = 0;
+    GSCardTarget::ScanHit hit;
+    uint64_t stopFrame = frame;
+    uint64_t frames = 0;
+    {
+        const GSCardTarget::ScanScope scan(*target, UINT64_MAX, breakpoints);
+        target->ScanStep(over ? GSCardTarget::StepKind::Over : GSCardTarget::StepKind::Out, base);
+        if (breakpoints)
+            target->ScanFirstHitAfter(base);
+        ReplayModeScope replay(*this);
+        while (_context->emulatorState.frame_counter < last && frames < kCardReverseMaxFrames)
+        {
+            const uint64_t frameBefore = _context->emulatorState.frame_counter;
+            RunToFrameEnd();
+            frames++;
+            stopFrame = frameBefore;
+            started = target->ScanStepStarted();
+            stepped = target->ScanStepFound(stepCount);
+            hit = target->FirstScanHit();
+            if (!started || stepped || hit.hit || _context->emulatorState.frame_counter == frameBefore)
+                break;
+        }
+        replay.Exit();
+    }
+    result.searchedFrames = frames;
+    if (!started)
+    {
+        putBack();
+        result.status = TTDCardMoveResult::Status::Failed;
+        result.message = "the replay did not reach card instruction " + std::to_string(base);
+        return result;
+    }
+
+    uint64_t endCount = 0;
+    if (hit.hit && (!stepped || hit.count < stepCount))
+    {
+        endCount = hit.count;
+        result.stoppedByBreakpoint = true;
+        result.breakpointId = hit.breakpointId;
+        result.hitKind = static_cast<uint8_t>(hit.kind);
+        result.hitAddress = hit.address;
+    }
+    else if (stepped)
+        endCount = stepCount;
+    else
+    {
+        // Not ended in the frames replayed: the card goes as far as they reach (the history's end, or the limit)
+        stopFrame = std::min<uint64_t>(stopFrame + 1, last);
+        bool ignored = false;
+        if (!CardCountAtFrame(cpu, stopFrame, endCount, ignored) || endCount <= base)
+        {
+            putBack();
+            result.status = TTDCardMoveResult::Status::AtEnd;
+            result.message = "the step does not end before the history's end: the next step runs on live";
+            return result;
+        }
+        result.historyEnd = stopFrame >= last;
+        result.truncated = !result.historyEnd;
+    }
+    CardSeekInternal(cpu, endCount, stopFrame, result);
+    if (!result.Ok())
+        putBack();
     return result;
 }
 

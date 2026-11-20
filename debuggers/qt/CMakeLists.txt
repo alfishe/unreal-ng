@@ -19,6 +19,7 @@ add_library(unreal-debugger-views STATIC
     ${ECAT_DIR}/dialogs/debugger/disasmview.cpp
     ${ECAT_DIR}/dialogs/debugger/memoryview.cpp
     ${ECAT_DIR}/dialogs/debugger/memorywindow.cpp
+    ${ECAT_DIR}/dialogs/debugger/nextviews.cpp
     ${ECAT_DIR}/dialogs/debugger/pagedmemory.cpp
     ${ECAT_DIR}/dialogs/debugger/registersview.cpp
     ${ECAT_DIR}/dialogs/debugger/sideviews.cpp

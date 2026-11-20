@@ -13,7 +13,7 @@ namespace unrealdisk
 {
 
 
-/// MGT / IMG loader / writer (DISCiPLE, +D, SAM Coupe raw sector dumps).
+/// MGT / IMG loader / writer (DISCiPLE, +D raw sector dumps).
 ///
 /// Raw dump without any low-level information: 80 cylinders x 2 sides x 10 sectors x 512 bytes = 819 200 bytes
 /// (409 600 bytes for 40-cylinder dumps). Sectors are numbered 1..10, size code N = 2. The two extensions differ only

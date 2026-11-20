@@ -700,7 +700,10 @@ r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run earl
 -- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
 -- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
-emu:run_frames(count)    -- Run exactly N video frames
+r = emu:run_frames(count [, skip_breakpoints = true])  -- N video frames on the run timeline (split-independent)
+r = emu:run_tstates(count [, skip_breakpoints = true]) -- N t-states on the same timeline
+-- r = {count, unit, frames_run, tstates_run, frame, t, stop = {cpu, reason = done|breakpoint|stopped, ...}, message}
+-- (command-interface.md, Counted runs)
 
 -- Registers (global functions, the bound or selected emulator)
 regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t
@@ -1276,6 +1279,12 @@ local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit =
 -- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
 ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
 ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_step_over("gs")             --> the card's step over through the history (as a live card step would go;
+                                     --    its breakpoints end it first: breakpoint = {...}; history_end = true:
+                                     --    not ended in the history, the card at its end; at the end: "at_end")
+ttd_card_step_out("gs")              --> the card's step out through the history (the same reply)
+ttd_card_reverse_step_over("gs")     --> one card instruction back, or past a whole card routine to its CALL / RST
+                                     --    when that instruction is its return: over_call, skipped, text
 ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
                                      --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
 ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
@@ -1482,6 +1491,20 @@ local cpu = ttd_memory_at{space = "cpu", frame = 150, tinframe = 20000, offset =
 local now = ttd_memory_at{space = "cpu", offset = 0x5C00, length = 64}
 local diff = ttd_memory_diff{space = "neogs.ram", from_frame = 150, to_frame = 600}
 -- { space = "neogs.ram", changed_bytes = ..., ranges = { {offset = 4096, length = 64}, ... }, truncated = false }
+-- memory_at names its moment: moment = "frame_start" (before the frame's first instruction) | "inside_frame" | "now",
+-- at_tinframe (where the CPU stood), moment_text
+
+-- Memory over many frames in one walk of the checkpoints (no seek per frame); every row equals memory_at there
+local s = ttd_memory_series{ranges = {"0x5C78:2", {space = "ram", page = 5, offset = 0x1B00, length = 32}},
+                            from_frame = 100, to_frame = 400, step = 10, changes_only = true, format = "hex"}
+-- { rows = { {frame = 100, exact = true, at_tinframe = 7, data = {"6500", "..."}}, {frame = 110, changed = {0}, ...} },
+--   row_count = ..., frames_read = 31, truncated = false, ... }   -- frames = {F, ...} instead of from/to/step;
+--   limit (rows), max_bytes; truncated with next_from_frame past them
+-- A past frame's screen, the machine put back
+local shot = ttd_screen_at{frame = 150}                       -- the final picture: data (PNG, base64), mime
+local attrs = ttd_screen_at{frame = 150, which = "shadow", format = "attributes", encoding = "hex"}
+-- shot.shown = { at_start = {screen = "normal", page = 5, p7ffd = 16}, at_end = {...}, changed_during_frame = false,
+--                flips = {} }
 
 local timeline = ttd_timeline{min_phase_ms = 500}   -- also from_frame, to_frame, buckets, limit, bucket_size, ports
 -- { from_frame = ..., to_frame = ..., phases = { {frame_start = ..., frame_end = ...,

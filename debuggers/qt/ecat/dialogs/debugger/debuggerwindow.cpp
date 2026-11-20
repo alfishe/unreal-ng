@@ -145,6 +145,10 @@ DebuggerWindow::DebuggerWindow(QWidget *parent, Emulator * e):
     m_side_tabs->addTab(m_breakpoints, tr("Breakpoints"));
     m_side_tabs->addTab(m_history, tr("History"));
     m_side_tabs->addTab(m_devices, tr("Devices"));
+    //A Next's own tabs: shown while the machine has their reports
+    m_next_tabs = CreateNextTabs(e, m_side_tabs);
+    for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->addTab(t.view, t.title), false);
+    update_next_tabs();
     m_split_bottom->setStretchFactor(0, 2);
     m_split_bottom->setStretchFactor(1, 1);
     m_split_main->setStretchFactor(0, 2);
@@ -372,6 +376,18 @@ void DebuggerWindow::build_toolbar(QWidget * host)
         [](Emulator * e, CPU * c) { e->debug_step_over(c); });
     m_step_out = add(":/icons/top", tr("Step out of the routine"), QKeySequence(Qt::CTRL | Qt::Key_F8),
         [](Emulator * e, CPU * c) { e->debug_step_out(c); });
+    //Not in ecat either: on a card's tab in the past Step over and Step out go through the history too (at its end
+    //the card steps on live, as the main CPU does)
+    disconnect(m_step_over, &QAction::triggered, this, nullptr);
+    connect(m_step_over, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("over")) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step_over(c); });
+    });
+    disconnect(m_step_out, &QAction::triggered, this, nullptr);
+    connect(m_step_out, &QAction::triggered, this, [this]() {
+        if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("out")) return;
+        run_command([](Emulator * e, CPU * c) { e->debug_step_out(c); });
+    });
 
     m_to_cursor = tb->addAction(tool_icon(":/icons/finish"), tr("Run to the cursor"));
     m_to_cursor->setShortcut(QKeySequence(Qt::Key_F4));
@@ -680,6 +696,22 @@ void DebuggerWindow::mark_all()
     }
     m_memory_tabs->mark_stop();
     m_stack->mark_stop();
+    for (const NextTab &t : m_next_tabs) t.view->mark_stop();
+}
+
+//The Next tabs while the machine is one; a tab in sight that goes leaves the side on the stack
+void DebuggerWindow::update_next_tabs()
+{
+    const bool next = !m_next_tabs.empty() && m_next_tabs.front().view->present();
+    for (const NextTab &t : m_next_tabs) m_side_tabs->setTabVisible(m_side_tabs->indexOf(t.view), next);
+}
+
+NextReportView * DebuggerWindow::next_view_in_sight() const
+{
+    QWidget * side = m_side_tabs->currentWidget();
+    for (const NextTab &t : m_next_tabs)
+        if (t.view == side) return t.view;
+    return nullptr;
 }
 
 void DebuggerWindow::refresh_side()
@@ -691,6 +723,8 @@ void DebuggerWindow::refresh_side()
     m_breakpoints->refresh(c, fmt);
     if (side == m_history) m_history->refresh(c, fmt);
     if (side == m_devices) m_devices->refresh();
+    update_next_tabs();
+    if (NextReportView * v = next_view_in_sight()) v->refresh();
 }
 
 void DebuggerWindow::refresh_all(bool stopped)
@@ -798,9 +832,11 @@ void DebuggerWindow::on_timer()
         refresh_all(false);
         //The devices and the history cost a read of the machine each: once a second, the one in sight
         QWidget * side = m_side_tabs->currentWidget();
-        if ((side == m_devices || side == m_history) && ++m_device_tick >= 5) {
+        NextReportView * next = next_view_in_sight();
+        if ((side == m_devices || side == m_history || next != nullptr) && ++m_device_tick >= 5) {
             m_device_tick = 0;
-            if (side == m_devices) m_devices->refresh();
+            if (next != nullptr) next->refresh();
+            else if (side == m_devices) m_devices->refresh();
             else m_history->refresh(current_cpu(), [this](unsigned int a) { return code_text(a); });
         }
     }

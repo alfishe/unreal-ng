@@ -9,8 +9,9 @@
 //   zxdisk put <image> <host-file> [name] [--start n] [--type t] [--param2 n] [--attributes RA] [-o out-image]
 //              [--volume id]
 //       a host file onto the disk (TR-DOS NAME.T, +3DOS NAME.TYP, ATM CP/M USERn/NAME.TYP, FAT and iS-DOS
-//       dir/name.ext, MB-02 dir/name, MDOS NAME.T), an older file of that name replaced; --type program, numbers,
-//       chars or code (+3DOS; MB-02 program or code), --param2 (+3DOS, MB-02, MDOS: a program's length by default),
+//       dir/name.ext, MB-02 dir/name, MDOS NAME.T, G+DOS NAME), an older file of that name replaced; --type program,
+//       numbers, chars or code (+3DOS, G+DOS; MB-02 program or code), --param2 (+3DOS, MB-02, MDOS, G+DOS: a
+//       program's length by default),
 //       --attributes the letters attrib takes, set once the file is written
 //   zxdisk rm <image> <file> [-r] [-o out-image] [--volume id]
 //       delete a file or an empty directory (FAT, iS-DOS, MB-02; -r: a directory with everything in it)
@@ -20,7 +21,7 @@
 //       a new directory (FAT, iS-DOS, MB-02; -p: the missing ones on the way too; iS-DOS: a continuous catalogue, its
 //       size 1-16 blocks, as TASiS mkdir.com /c /s)
 //   zxdisk attrib <image> <file> [+R-H|RA] [--time t] [-o out-image] [--volume id]
-//       set or clear attribute letters (FAT RHSA, iS-DOS RWHD, +3DOS / ATM CP/M RSA, MDOS HSPARWED; "+R-H" changes
+//       set or clear attribute letters (FAT RHSA, iS-DOS RWHD, +3DOS / ATM CP/M RSA, MDOS HSPARWED, G+DOS HP; "+R-H" changes
 //       these, "RA" sets exactly these) and the file's time (FAT, iS-DOS, MB-02; "YYYY-MM-DD HH:MM[:SS]" of the DOS
 //       clock, "now")
 //   zxdisk label <image> <name> [-o out-image] [--volume id]
@@ -36,7 +37,7 @@
 //   hard disk image is changed in place, or copied to -o first and the copy changed
 //
 // <image>: a floppy in any format unreal-disk reads (TRD, SCL, FDI, UDI, TD0, DSK, MGT, IMG, HFE, SCP, ...) with
-// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01, MDOS or FAT12 (Sprinter DSS); else a raw hard disk
+// TR-DOS, +3DOS, iS-DOS / TASiS, ATM CP/M, MB-02, MB-01, MDOS, G+DOS (MGT +D) or FAT12 (Sprinter DSS); else a raw hard disk
 // or card image (512-byte sectors): MBR or superfloppy FAT partitions (Estex DSS, NedoOS), ATM CP/M partitions (the
 // configuration record in sector 0 and the .CDS descriptors), iS-DOS devices (the whole disk or at cylinder
 // boundaries), MDOS3 virtual disks (an .md3 container, an MBR partition of type #49, slot files on a FAT16 card), the

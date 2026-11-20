@@ -3336,8 +3336,11 @@ namespace PythonBindings
             }, "Execute one frame", py::arg("skip_breakpoints") = true)
             .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunNFrames(count, skipBreakpoints);
-            }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunNFrames(count, skipBreakpoints);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("frames", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N frames on the direct-run timeline (split-independent: 30 + 70 == 100); dict with count, "
+               "frames_run, tstates_run, frame, t, stop, message", py::arg("count"), py::arg("skip_breakpoints") = true)
 
             // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until(text="PRESS", max_frames=500)
             // (condition= for if=), watch_add(condition="...", then="notify"), watches(), watch_remove(id | "all")
@@ -3354,10 +3357,13 @@ namespace PythonBindings
             }, "Remove a frame watch by id, or \"all\"", py::arg("id"))
 
             // T-state and scanline stepping
-            .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            .def("run_tstates", [](Emulator& self, uint64_t count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunTStates(count, skipBreakpoints);
-            }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunTStates(count, skipBreakpoints, /*onTimeline=*/true);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("tstates", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N T-states on the run_frames timeline (slices end where one run ends); the run_frames dict",
+               py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilScanline(scanline, skipBreakpoints);
@@ -7196,6 +7202,24 @@ namespace PythonBindings
             }, "Step a sound card's CPU by n instructions (negative: back)",
                py::arg("cpu"), py::arg("n") = 1)
 
+            .def("ttd_card_reverse_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-step-over", {{"cpu", cpu}}));
+            }, "A sound card CPU's step over back: one card instruction back, or past a whole card routine to its "
+               "CALL / RST when that instruction is its return (over_call, skipped in the reply)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_over", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "over"}}));
+            }, "A sound card CPU's step over through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
+            .def("ttd_card_step_out", [](Emulator& self, const std::string& cpu) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu}, {"kind", "out"}}));
+            }, "A sound card CPU's step out through the history (its breakpoints end it first; history_end: not "
+               "ended in the history, the card at its end)",
+               py::arg("cpu"))
+
             .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
                 std::map<std::string, std::string> options{{"cpu", cpu}};
                 if (maxFrames)
@@ -7349,6 +7373,46 @@ namespace PythonBindings
                 return StateNodeToPy(value);
             }, "The byte ranges of a memory that differ between two checkpoints: {changed_bytes, ranges: [{offset, length}]}",
                 py::arg("space"), py::arg("from_frame"), py::arg("to_frame"), py::arg("limit") = 100)
+
+            // Reads of the past without seeking (PLAN #122 S1, V2). A bad argument raises ValueError; a refusal (no
+            // history, a frame that did not end in it) is a dict with error
+            .def("ttd_memory_series", [](Emulator& self, py::object ranges, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options;
+                // ranges: a string, or a list of strings / dicts {space, address | offset, page, length} (JSON text)
+                bool objects = false;
+                if (py::isinstance<py::list>(ranges) || py::isinstance<py::tuple>(ranges))
+                    for (const auto& item : ranges)
+                        objects = objects || py::isinstance<py::dict>(item);
+                options["ranges"] = objects ? py::module_::import("json").attr("dumps")(ranges).cast<std::string>()
+                                            : TtdOptionTextPy(ranges);
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "memory-series", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "Memory ranges at the start of many frames in one walk of the checkpoints (no seek): ranges "
+               "'[space:]offset:length, ...' or a list of such strings or dicts; keywords from_frame, to_frame, step, "
+               "frames (a list), changes_only, format (base64 | hex | values), limit, max_bytes. Returns {rows: "
+               "[{frame, exact, at_tinframe, data: [one per range]}], frames_read, truncated, next_from_frame?, ...}",
+                py::arg("ranges"))
+
+            .def("ttd_screen_at", [](Emulator& self, uint64_t frame, py::kwargs kwargs) -> py::object {
+                std::map<std::string, std::string> options{{"frame", std::to_string(frame)}};
+                TtdKwargsPy(options, kwargs);
+                const ttd::TTDReply reply = TtdRunPy(self, "screen-at", options);
+                if (reply.error == ttd::TTDControlError::BadRequest)
+                    throw py::value_error(reply.message);
+                StateNode value = reply.body;
+                if (!reply.Ok())
+                    value["error"] = reply.message;
+                return StateNodeToPy(value);
+            }, "A past frame's picture or screen bytes (no seek): keywords which (shown | normal | shadow), format (png "
+               "| bitmap | attributes | raw), area (full | screen), encoding (base64 | hex). Returns {data, mime?, "
+               "shown: {at_start, at_end, changed_during_frame, flips}, moment_text, ...}",
+                py::arg("frame"))
 
             .def("ttd_coverage_summary", [](Emulator& self, uint64_t fromFrame, py::object toFrameObj,
                                             py::object kindObj, uint64_t bucketSize, size_t limit) -> py::object {

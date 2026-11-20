@@ -940,7 +940,12 @@
         atBody["required"].append("frame");
         atBody["properties"]["tinframe"]["type"] = "integer";
         atBody["properties"]["tinframe"]["description"] = "A point inside the frame (ram, ramN, vram, cache, cpu)";
-        at["responses"]["200"]["description"] = "{space, offset, length, frame, at_frame, exact, hex}; space cpu adds banks";
+        at["responses"]["200"]["description"] =
+            "{space, offset, length, frame, at_frame, exact, moment (frame_start: the frame's start, before its first "
+            "instruction; inside_frame: at tinframe; now: the machine as it stands), at_tinframe (where the CPU stood: "
+            "at a frame start just past the instruction that crossed the boundary; a write it made after the boundary "
+            "counts in the frame and is not in the bytes), moment_text, hex}; space cpu adds "
+            "banks and live";
         Json::Value& diff = paths[kDiff]["post"];
         diff["summary"] = "What changed in a memory between two checkpoints";
         diff["description"] =
@@ -955,6 +960,97 @@
         diffBody["required"].append("to_frame");
         diff["responses"]["200"]["description"] =
             "{space, from_frame, to_frame, at_from, at_to, changed_bytes, ranges: [{offset, length}], truncated}";
+    }
+
+    // =====================================================================
+    // POST /ttd/memory-series, /ttd/screen-at - reads of the past without seeking (PLAN #122 S1, V2)
+    // =====================================================================
+    {
+        const char* kSeries = "/api/v1/emulator/{id}/ttd/memory-series";
+        const char* kScreen = "/api/v1/emulator/{id}/ttd/screen-at";
+        for (const char* route : {kSeries, kScreen})
+        {
+            Json::Value& op = paths[route]["post"];
+            op["tags"].append("Time-Travel Debug");
+            op["parameters"][0]["name"] = "id";
+            op["parameters"][0]["in"] = "path";
+            op["parameters"][0]["required"] = true;
+            op["parameters"][0]["schema"]["type"] = "string";
+            op["requestBody"]["required"] = true;
+            op["requestBody"]["content"]["application/json"]["schema"]["type"] = "object";
+            op["responses"]["404"]["description"] = "The instance is not found, or (memory-series) a piece not recorded by then";
+            op["responses"]["409"]["description"] = "A replay barrier cuts the frame, or a checkpoint cannot be read back";
+            op["responses"]["501"]["description"] = "Time travel is not available for this instance";
+        }
+        Json::Value& series = paths[kSeries]["post"];
+        series["summary"] = "Memory ranges at many frame starts in one walk, without seeking";
+        series["description"] =
+            "The bytes of up to 16 ranges at the start of every frame asked (from_frame..to_frame by step, or a frames "
+            "list), read in one forward walk of the checkpoints from the engine's store: each row equals memory-at at "
+            "that frame. Space cpu reads Z80 addresses through the paging stored with each checkpoint; a frame whose "
+            "mapping is not stored (a loaded session, a thinned history) is read by restoring its checkpoint, the "
+            "machine put back after. changes_only lists only the frames where a range differs from the frame read "
+            "before. Bounded: limit rows, max_bytes row bytes; past either, truncated with next_from_frame.";
+        Json::Value& sb = series["requestBody"]["content"]["application/json"]["schema"];
+        sb["properties"]["ranges"]["description"] =
+            "\"[space:]offset:length, ...\" (space cpu when absent: Z80 addresses; ram, ramN, a region name or alias), "
+            "or an array of such strings or of {space?, address | offset, page?, length}. At most 16 ranges, 65536 "
+            "bytes per frame";
+        sb["required"].append("ranges");
+        sb["properties"]["from_frame"]["type"] = "integer";
+        sb["properties"]["from_frame"]["description"] = "First frame, default the history's first";
+        sb["properties"]["to_frame"]["type"] = "integer";
+        sb["properties"]["to_frame"]["description"] = "Last frame, default the history's last";
+        sb["properties"]["step"]["type"] = "integer";
+        sb["properties"]["step"]["description"] = "Frames between rows, default 1";
+        sb["properties"]["frames"]["type"] = "array";
+        sb["properties"]["frames"]["items"]["type"] = "integer";
+        sb["properties"]["frames"]["description"] = "Explicit frames, ascending (instead of from_frame / to_frame / step)";
+        sb["properties"]["changes_only"]["type"] = "boolean";
+        sb["properties"]["format"]["type"] = "string";
+        sb["properties"]["format"]["enum"].append("base64");
+        sb["properties"]["format"]["enum"].append("hex");
+        sb["properties"]["format"]["enum"].append("values");
+        sb["properties"]["limit"]["type"] = "integer";
+        sb["properties"]["limit"]["description"] = "Rows per answer, 1..100000, default 1000";
+        sb["properties"]["max_bytes"]["type"] = "integer";
+        sb["properties"]["max_bytes"]["description"] = "Row bytes per answer before encoding, default 1 MiB, at most 16 MiB";
+        series["responses"]["200"]["description"] =
+            "{ranges, format, first_frame, last_frame, from_frame, to_frame, step | frames_asked, changes_only, moment, "
+            "moment_text, rows: [{frame, exact, at_frame?, at_tinframe, changed?, data: [per range]}], row_count, "
+            "frames_read, pieces_decoded, restored_frames, truncated, next_from_frame?, limits}";
+        series["responses"]["400"]["description"] = "Missing or bad option, a frame outside the history, too many ranges or bytes";
+        Json::Value& screen = paths[kScreen]["post"];
+        screen["summary"] = "A past frame's picture or screen bytes, without seeking";
+        screen["description"] =
+            "which shown, format png: the frame's final picture as positioning there shows it (the frame replayed in a "
+            "sandbox, the machine put back). which normal / shadow, or a bytes format: RAM page 5 / 7 at the frame's "
+            "end (bitmap 6144, attributes 768, raw 6912 bytes; png: those bytes drawn, 256 x 192). shown names the "
+            "screen shown at the frame's start and end and where inside the frame it changed (#7FFD bit 3, sampled).";
+        Json::Value& qb = screen["requestBody"]["content"]["application/json"]["schema"];
+        qb["properties"]["frame"]["type"] = "integer";
+        qb["required"].append("frame");
+        qb["properties"]["which"]["type"] = "string";
+        qb["properties"]["which"]["enum"].append("shown");
+        qb["properties"]["which"]["enum"].append("normal");
+        qb["properties"]["which"]["enum"].append("shadow");
+        qb["properties"]["format"]["type"] = "string";
+        qb["properties"]["format"]["enum"].append("png");
+        qb["properties"]["format"]["enum"].append("bitmap");
+        qb["properties"]["format"]["enum"].append("attributes");
+        qb["properties"]["format"]["enum"].append("raw");
+        qb["properties"]["area"]["type"] = "string";
+        qb["properties"]["area"]["enum"].append("full");
+        qb["properties"]["area"]["enum"].append("screen");
+        qb["properties"]["encoding"]["type"] = "string";
+        qb["properties"]["encoding"]["enum"].append("base64");
+        qb["properties"]["encoding"]["enum"].append("hex");
+        screen["responses"]["200"]["description"] =
+            "{frame, which, format, shadow_capable, border, shown: {at_start, at_end, changed_during_frame, flips: "
+            "[{tinframe, screen}], flip_samples}, mime?, width?, height?, area?, screen?, page?, offset?, length?, "
+            "encoding?, data, moment_text}";
+        screen["responses"]["400"]["description"] = "Missing or bad option, a frame that has not ended inside the "
+                                                    "history, which shadow on a 48K";
     }
 
     // =====================================================================
@@ -1003,7 +1099,9 @@
         "Single-instruction step in either direction. Uses M1-cycle boundaries "
         "so the resulting position is always at an instruction start. Backward "
         "step uses the M1 probe to locate the previous M1; forward step replays "
-        "forward to the next M1. Fails (stepped=false) at session boundaries.";
+        "forward to the next M1. Fails (stepped=false) at session boundaries. With cpu naming a sound card: card "
+        "instructions (count), or with kind over / out the card's step over / step out through the history; the "
+        "reply is a TTDCardMoveResponse.";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/step-instruction"]["post"]["parameters"][0]["required"] = true;
@@ -1063,7 +1161,11 @@
         "where it is now, back past the whole routine to the instruction at this stack level before it: the CALL / RST "
         "that entered it, or the instruction an interrupt came after. Nested calls and interrupts inside are passed "
         "over. call_out_of_reach: the routine started before the history (or behind a barrier), the machine stays on "
-        "the return.";
+        "the return. With cpu naming a sound card's CPU (gs, neogs, ms, multisound): the same in the card's "
+        "instructions, by the card's SP (a TTDCardMoveResponse).";
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["requestBody"]["required"] = false;
+    paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+         ["$ref"] = "#/components/schemas/TTDReverseStepOverRequest";
     paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/ttd/reverse-step-over"]["post"]["parameters"][0]["required"] = true;

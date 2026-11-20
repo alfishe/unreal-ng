@@ -30,6 +30,8 @@
 #include "engine/ttdrestoreresult.h"
 #include "engine/ttdwriteindex.h"
 
+struct FrameSnapshot;   // emulator/video/screen.h: one frame's pixels and geometry (screen-at)
+
 namespace ttd
 {
 /// @brief Recording mode: which surface owns the session lifecycle.
@@ -645,6 +647,85 @@ struct TTDCpuView
     Window windows[4];          ///< The four 16 KB windows' mapping
 };
 
+/// @brief One range of a memory series (memory-series, PLAN #122 S1): Z80 addresses through the CPU's mapping at
+/// each frame start, or bytes of one engine region (machine RAM, a device memory)
+struct TTDSeriesRange
+{
+    bool cpu = false;       ///< Z80 addresses (offset is the address, offset + length at most 0x10000)
+    uint32_t region = 0;    ///< !cpu: the engine region (TimeTravelEngine::Regions())
+    uint64_t offset = 0;    ///< cpu: the Z80 address; otherwise the byte offset in the region
+    uint32_t length = 0;
+};
+
+/// @brief What a memory series reads: the ranges at each asked frame's start, in ascending frame order.
+struct TTDSeriesQuery
+{
+    std::vector<TTDSeriesRange> ranges;
+    /// The frames: an explicit ascending list, or fromFrame..toFrame every step frames (list empty)
+    std::vector<uint64_t> frames;
+    uint64_t fromFrame = 0;
+    uint64_t toFrame = 0;
+    uint64_t step = 1;
+    bool fromStart = false;     ///< fromFrame is the history's first frame
+    bool toEnd = false;         ///< toFrame is the history's last frame
+    bool changesOnly = false;   ///< a row only where any range differs from the previous frame read (the first: always)
+    size_t maxRows = 1000;      ///< rows answered at most
+    size_t maxBytes = 1u << 20; ///< bytes of rows answered at most (one row always fits)
+};
+
+/// @brief One frame of a memory series: the bytes of every range back to back, as at the frame's start.
+struct TTDSeriesRow
+{
+    uint64_t frame = 0;          ///< the frame asked
+    uint64_t atFrame = 0;        ///< the checkpoint read (the newest at or before frame; equal when exact)
+    uint32_t atTinframe = 0;     ///< where the CPU stood in it (TTD units): past the instruction that crossed the
+                                 ///< boundary (a write it made after the boundary is not in the bytes)
+    uint32_t changed = 0;        ///< changesOnly: bit r set when range r differs from the previous frame read (r < 32)
+    bool restored = false;       ///< the CPU ranges were read from the restored checkpoint (no stored CPU windows)
+    std::vector<uint8_t> bytes;
+};
+
+/// @brief A memory series' answer.
+struct TTDSeriesResult
+{
+    bool ok = false;
+    std::string error;           ///< !ok: why
+    bool notRecorded = false;    ///< !ok: a range was not recorded by then (the session had not seen the memory)
+    uint64_t firstFrame = 0;     ///< the frames the history holds (the active lineage's)
+    uint64_t lastFrame = 0;
+    std::vector<TTDSeriesRow> rows;
+    uint64_t framesRead = 0;     ///< frames read (with changesOnly more than rows)
+    uint64_t restoredFrames = 0; ///< frames whose CPU ranges needed a checkpoint restore (no stored windows)
+    uint64_t piecesDecoded = 0;  ///< 4 KB pieces decoded (a piece unchanged since the frame before is not decoded again)
+    bool truncated = false;      ///< the row or byte limit stopped the walk
+    uint64_t nextFrame = 0;      ///< truncated: the first frame not answered (go on from there)
+};
+
+/// @brief The picture and the screens of one past frame (screen-at, PLAN #122 V2).
+struct TTDScreenAtResult
+{
+    bool ok = false;
+    std::string error;
+    bool barrier = false;            ///< !ok: a replay barrier cuts the frame
+    uint64_t frame = 0;
+    /// The frame's final picture: what the beam drew from its start to its end (the picture a live machine showed
+    /// when the frame ended; the same as positioning by frame number shows). RGBA8, geometry as Screen describes it
+    std::shared_ptr<const ::FrameSnapshot> picture;
+    bool shadowCapable = false;      ///< the machine has a second screen (#7FFD bit 3 picks RAM page 7)
+    uint8_t shownAtStart = 0;        ///< the screen the ULA showed at the frame's start: 0 normal (page 5), 1 shadow (page 7)
+    uint8_t shownAtEnd = 0;          ///< and at its end (the next frame's start)
+    uint16_t pageAtStart = 5;        ///< their RAM pages
+    uint16_t pageAtEnd = 5;
+    uint8_t p7FFDAtStart = 0;
+    uint8_t p7FFDAtEnd = 0;
+    uint8_t border = 0;              ///< the border color at the frame's start
+    /// Where inside the frame the shown screen changed: (tinframe in TTD units, the screen shown from there), sampled
+    /// at kScreenAtSamples points of the frame (a flip and back between two samples is not seen)
+    std::vector<std::pair<uint32_t, uint8_t>> flips;
+    std::vector<uint8_t> normal;     ///< 6912 bytes of RAM page 5 at the frame's end (bitmap then attributes)
+    std::vector<uint8_t> shadow;     ///< 6912 bytes of RAM page 7 at the frame's end; empty without a shadow screen
+};
+
 /// @brief How FindAccesses walks: one hit or a list, every access or only the writes that changed the byte.
 struct TTDFindOptions
 {
@@ -771,7 +852,7 @@ struct TTDCardPosition
 };
 
 /// @brief What a card seek, card step or card reverse continue did (TimeTravelController::SeekToCardInstruction,
-/// StepCardInstructions, ReverseContinueCard).
+/// StepCardInstructions, StepCardForward, ReverseStepOverCard, ReverseContinueCard).
 struct TTDCardMoveResult
 {
     enum class Status : uint8_t
@@ -796,6 +877,18 @@ struct TTDCardMoveResult
     uint16_t breakpointId = 0xFFFF;   ///< reverse continue: the hit's breakpoint
     uint8_t hitKind = 0;              ///< BreakpointHitKind of the hit
     uint16_t hitAddress = 0;          ///< the hit's PC, memory address, port or event kind
+    /// reverse step over: the card instruction stepped back over was a routine's return (or an interrupt handler's)
+    /// and the card went back past the whole routine, to the instruction at this stack level before it
+    bool overCall = false;
+    /// reverse step over: overCall wanted, but the routine's start is out of reach (older than the history or than
+    /// kCardReverseMaxFrames frames back): the card stays one instruction back, on the return
+    bool callOutOfReach = false;
+    uint64_t skipped = 0;             ///< reverse step over, overCall: the routine's instructions passed over
+    /// step over / step out through the past: the step did not end in the history; the card went to the history's
+    /// end (the next step runs on live, D-3)
+    bool historyEnd = false;
+    /// step over / step out through the past: one of the card's breakpoints ended the step before it ended itself
+    bool stoppedByBreakpoint = false;
     bool Ok() const { return status == Status::Ok; }
 };
 

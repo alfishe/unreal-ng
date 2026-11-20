@@ -1336,6 +1336,7 @@ MachineStateTransfer::Report MachineStateTransfer::Transfer(Emulator& source, Em
                     return false;
                 }
                 target.RestartFrame();
+                target.ContinueRunTimelineOf(source);
                 return true;
             });
         if (!done.Ok() && report.ok)

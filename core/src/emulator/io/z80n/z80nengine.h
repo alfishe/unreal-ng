@@ -73,7 +73,11 @@ public:
     void Uninstall();
     bool IsInstalled() const;
     /// The host's registers were replaced from outside (a TTD restore): its boundary is pushed to the library at the next step
-    void InvalidateBoundary() { _boundarySeen = 0xFF; }
+    void InvalidateBoundary()
+    {
+        _boundarySeen = 0xFF;
+        _turnNotBefore = 0;  // the frame's base may be another one
+    }
 
     /// NR #C0 bit 3: the NMI acknowledge writes no stack, the return address goes to `store`; RETN reads it back from there
     void SetStacklessNmi(bool on, INmiReturnStore* store);
@@ -85,7 +89,13 @@ public:
         _cycleEndTurn = master;
         _idleLeft = 0;
         _afterKind = Z80nCpuAccessM1;
+        _turnNotBefore = 0;
     }
+    /// The master has nothing to do at a machine-cycle end that starts before CPU T `t` (frame-relative, Z80::t): those ends cost a
+    /// compare. Cleared (every end asked) when the master changes, after a port write or a NEXTREG write inside an instruction (they can
+    /// reprogram it or switch the CPU speed) and when T went back between two steps (the frame rollover, a slower speed); the master
+    /// sets it again from its next turn
+    void SetMachineCycleEndTurnNotBefore(uint32_t t) { _turnNotBefore = t; }
 
     /// The library, for the machine's configuration calls (variant switches of the CPU model)
     Z80nCPU* Cpu() { return _cpu; }
@@ -131,6 +141,8 @@ private:
     Z80nCpuAccessKind _afterKind = Z80nCpuAccessM1;  ///< the cycle an idle group follows (Internal: another group)
     int _idleLen = 0;                                ///< the idle group in progress: its length and the T-states left after this one
     int _idleLeft = 0;
+    uint32_t _turnNotBefore = 0;  ///< no turn at a machine-cycle end starting before this CPU T
+    uint32_t _leftAt = 0;         ///< Z80::t at the end of the last step or acknowledge
     uint8_t _boundarySeen = Z80_BOUNDARY_NONE;  ///< the boundary the host last got from the library
     uint8_t _vector = 0xFF;                     ///< the data bus byte of the acknowledge in progress
 };

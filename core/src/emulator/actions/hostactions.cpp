@@ -799,37 +799,35 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
         [](const ActionCall& call) { return FromRun(RunControl(call.emulator).Resume(call.requester)); },
         RouteRules("POST", "/resume"));
     add(
-        "run.steps", "Step N instructions", run, ValueKind::Press, "count? (1..100000, 1)",
+        "run.steps", "Step N instructions", run, ValueKind::Press, "count? (1..10000000, 1; more is refused)",
         [](const ActionCall& call) {
             std::string error;
             const int64_t count = IntParam(call.value, "count", error).value_or(1);
             if (!error.empty())
                 return BadRequest(error);
-            return FromRun(RunControl(call.emulator)
-                               .Steps(call.requester, static_cast<unsigned>(std::clamp<int64_t>(count, 1, 100000))));
+            return FromRun(RunControl(call.emulator).Steps(call.requester, static_cast<uint64_t>(std::max<int64_t>(count, 0))));
         },
         RouteRules("POST", "/steps", true));
     add(
-        "run.frames", "Run N frames", run, ValueKind::Press, "count? (1..10000, 1)",
-        [](const ActionCall& call) {
-            std::string error;
-            const int64_t count = IntParam(call.value, "count", error).value_or(1);
-            if (!error.empty())
-                return BadRequest(error);
-            return FromRun(RunControl(call.emulator)
-                               .RunFrames(call.requester, static_cast<unsigned>(std::clamp<int64_t>(count, 1, 10000))));
-        },
-        RouteRules("POST", "/run_frames", true));
-    add(
-        "run.tstates", "Run N t-states", run, ValueKind::Press, "count? (1..10000000, 1)",
+        "run.frames", "Run N frames", run, ValueKind::Press, "count? (1..200000, 1; more is refused)",
         [](const ActionCall& call) {
             std::string error;
             const int64_t count = IntParam(call.value, "count", error).value_or(1);
             if (!error.empty())
                 return BadRequest(error);
             return FromRun(
-                RunControl(call.emulator)
-                    .RunTStates(call.requester, static_cast<uint64_t>(std::clamp<int64_t>(count, 1, 10000000))));
+                RunControl(call.emulator).RunFrames(call.requester, static_cast<uint64_t>(std::max<int64_t>(count, 0))));
+        },
+        RouteRules("POST", "/run_frames", true));
+    add(
+        "run.tstates", "Run N t-states", run, ValueKind::Press, "count? (1..14000000000, 1; more is refused)",
+        [](const ActionCall& call) {
+            std::string error;
+            const int64_t count = IntParam(call.value, "count", error).value_or(1);
+            if (!error.empty())
+                return BadRequest(error);
+            return FromRun(
+                RunControl(call.emulator).RunTStates(call.requester, static_cast<uint64_t>(std::max<int64_t>(count, 0))));
         },
         RouteRules("POST", "/run_tstates", true));
     // endregion </Run>

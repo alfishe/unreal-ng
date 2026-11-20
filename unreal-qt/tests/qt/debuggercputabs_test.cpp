@@ -305,7 +305,8 @@ TEST_F(DebuggerCpuTabs_Test, ACardStepBackLandsOnTheCardsPreviousInstruction)
     front = DebugCpuId::GS;
     tt.refresh();
     EXPECT_TRUE(tt.stepBackAction()->isEnabled());
-    EXPECT_FALSE(tt.stepOverBackAction()->isEnabled()) << "Step Over Back is the main CPU's only";
+    EXPECT_TRUE(tt.stepOverBackAction()->isEnabled()) << "Step Over Back is the card's too";
+    EXPECT_TRUE(tt.stepOverBackAction()->toolTip().contains(QStringLiteral("gs instruction")));
     EXPECT_TRUE(tt.stepBackAction()->toolTip().contains(QStringLiteral("gs instruction")));
     tt.stepBack();
     ttd::TTDCardPosition at = controller->CardPositionNow(DebugCpuId::GS);

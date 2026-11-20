@@ -135,8 +135,11 @@ debuggers' time group, by the CPU in front.
 - **eCat** (in process and over REST alike; `ecat/dialogs/debugger/ttdcontrols.cpp`). With a card's tab in front
   (`gs`, `ms`): Step Back is `step-instruction {cpu, dir: back}`, Run Back `reverse-continue {cpu}` (the card's own
   breakpoints, any kind), and the window's Step (F7) in the past (`detached`) is `step-instruction {cpu, dir:
-  forward}`; live, F7 stays the card's own step. Step Over Back is off on the card's tab (the core has no card step
-  over back); Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
+  forward}`; live, F7 stays the card's own step. Since 2026-11-19 Step Over Back (Shift+F8) is `reverse-step-over
+  {cpu}` (back past a whole card routine when the instruction before is its return), and Step over (F8) / Step out
+  (Ctrl+F8) in the past are `step-instruction {cpu, kind: over | out}` (the card's step through the history, as a
+  live card step would go; its breakpoints end it). At the history's end (`at_end`) F7 / F8 / Ctrl+F8 run the
+  card's live step, unrecorded, as the main CPU's steps do there (D-3); no message. Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
   processor (a pause, a move in time) no longer brings the main CPU's tab forward: the card's tab stays in front
   after its back step (`DebuggerWindow::on_debug_event`).
 - **The moment** (eCat's state label) names both CPUs at a card position, from `cards[]` of `position` (the poll
@@ -149,13 +152,16 @@ debuggers' time group, by the CPU in front.
   in front is the CPU the registers, stack, memory pages, memory view (its 64 KB), disassembly (its labels and
   breakpoints), the steps, run to cursor and the time group act on. With a card in front the time group routes as
   eCat's (`DebuggerTimeTravel::setCpu`): Step Back `step-instruction {cpu, dir: back}`, Step In in the past
-  `step-instruction {cpu, dir: forward}` (live: `RunControl::CardStep`), Run Back `reverse-continue {cpu}`, Step Over
-  Back off. A breakpoint or step stop brings its CPU's tab to the front once per `Emulator::LastStop().serial`; a
+  `step-instruction {cpu, dir: forward}`, Step Over / Step Out in the past `step-instruction {cpu, kind}` (live and
+  at the history's end: `RunControl::CardStep`), Step Over Back `reverse-step-over {cpu}`, Run Back
+  `reverse-continue {cpu}`. Run to cursor on a card's tab is the live card step in the past too (left as it was).
+  The card's labels (its own `LabelManager`) are the ones its disassembly, memory tooltip and Label Manager show;
+  the main CPU's labels and markup never appear on a card's tab (eCat's card disassembly likewise). A breakpoint or step stop brings its CPU's tab to the front once per `Emulator::LastStop().serial`; a
   pause and a move in time leave the tab alone, so the card's tab stays after its Step Back. The moment label
   (`DebuggerTimeTravel::CardMoment`, from `TimeTravelController::PublishedCardPositions` while the machine is paused
   in the history) names both CPUs at a card position; without one, a card's tab adds where its card stands.
 
 Tests: `DebuggerTimeTravelCard_Test` (unreal-qt-tests: the readout's words, a card position in the moment, a main move
-ending it), `DebuggerCpuTabs_Test` (the tabs, the readers per CPU, a card stop once, a card Step Back); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
+ending it; Step Over Back, Step Over / Out in the past and the hand-over at the history's end on the card's tab), `DebuggerCpuTabs_Test` (the tabs, the readers per CPU, a card stop once, a card Step Back); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
 Back with and without a card breakpoint, at the start, a missing card, the main CPU's tab again).
 
