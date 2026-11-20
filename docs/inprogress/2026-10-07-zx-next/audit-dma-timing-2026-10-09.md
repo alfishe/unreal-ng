@@ -100,7 +100,12 @@ T80's machine cycles are told apart there (`Z80NEngine::IdleGroupCycleStart`: an
 one or two machine cycles of its own, by its length and what it follows; `Z80nCpuIdleLeft` gives the group's length). While a burst
 block runs or the enable's first byte waits, `PortDecoder_Next` hands the engine an `IMachineCycleEndTurn`: at each machine-cycle end
 the DMA moves its byte when its wait is over (the first byte at the end of the next instruction's M1), its cycles going in as the CPU's
-waits. Nothing is asked otherwise (no cost outside a burst). The native interpreter (no Next uses it) keeps the old rule.
+waits. Nothing is asked otherwise. Between two bytes the turn costs a compare: the decoder turns the wait's end into this frame's CPU T
+(`PortDecoder_Next::UpdateDmaTurnNotBefore`), cleared to 0 (every end asked) after a port or NEXTREG write inside an instruction, a T
+that went back between steps (frame rollover, a slower speed) and a TTD restore. Measured on .20 (3000 frames headless, 9 interleaved
+rounds): `mod_player.nex`, a burst block nearly all the time, was +6.9 % with the full check at every end, -0.2 % against the code
+before the change with the threshold; the traces of all POC 036 programs and the frame / RAM hashes of the 247-file NEX corpus (NEXT
+and NEXT-DDMA, 1500 and 5000 frames) equal the full check's. The native interpreter (no Next uses it) keeps the old rule.
 
 POC 036 against GHDL, all of `dmaprescb`, `dmaburst`, `dmaprescc`, `dmacont` on 48K / 128K / +3 timing: 0 instruction durations
 differ (`dmaprescb` had 8). Unit: `NextDma_Test` burst spacing 88 clocks of 28 MHz at 3.5 MHz, N = 2 (80 + the sampled BUSRQ); the last

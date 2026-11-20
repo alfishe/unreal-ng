@@ -270,10 +270,7 @@ run with `--gtest_also_run_disabled_tests`). Runs a program on a Profi as a user
 | `UNREAL_NEXT_COSIM_FRAMES` | frames (1500) | Length of the co-simulation run. | `core/tests/emulator/machines/next/nextcosim_test.cpp` |
 | `UNREAL_PLUSD_SYSTEM_TAPE` | path to the Plus D System Tape v2a `.tzx` (unset: tests skip) | `PlusDSystemDisk_Test.ConfigWritesTheSystemDisk` runs `CONFIG` from the tape on a `48K-PLUSD` and writes the system disk ([`data/boot/plusd/README.md`](../../data/boot/plusd/README.md)). | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
 | `UNREAL_PLUSD_SYSTEM_OUT` | file path (the test scratch folder) | With `UNREAL_PLUSD_SYSTEM_TAPE`: where the written system disk goes. | `core/tests/emulator/slots/cards/plusd/plusdsystemdisk_test.cpp` |
-| `UNREAL_PLUSD_CORPUS` | path to the classified TSV of `classify_mgt.py` (unset: test skips) | `PlusDAutostart_Corpus.AllImages`: the autostart of every +D image of the table on three configurations ([MGT +D TODO, P4.4 / P4.5](../inprogress/2026-11-15-mgt-plus-d/TODO.md)). Needs `UNREAL_PLUSD_POOL`. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
-| `UNREAL_PLUSD_POOL` | folder path (the pool's `images`) | With `UNREAL_PLUSD_CORPUS`: where the images of the table are. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
-| `UNREAL_PLUSD_CORPUS_OUT` | file path (the test scratch folder) | With `UNREAL_PLUSD_CORPUS`: where the result table goes. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
-| `UNREAL_PLUSD_ONE` | path to an `.mgt` (unset: test skips) | `PlusDAutostart_Corpus.One`: the autostart of one image, for a closer look. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
+| `UNREAL_PLUSD_ONE` | path to an `.mgt` (unset: test skips) | `PlusDAutostart_Image.One`: the autostart of one image, for a closer look. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
 | `UNREAL_PLUSD_MODEL` | `48K` / `128K` (`48K`) | With `UNREAL_PLUSD_ONE`: the machine (the card in `edge.1`). | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
 | `UNREAL_PLUSD_BASIC` | `48` / `128` (the machine's own) | With `UNREAL_PLUSD_ONE`: the BASIC of the autostart's reset. | `core/tests/emulator/slots/cards/plusd/plusdautostart_test.cpp` |
 

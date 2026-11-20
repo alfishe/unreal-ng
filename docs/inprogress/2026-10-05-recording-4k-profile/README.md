@@ -52,7 +52,8 @@ bars are 0, 0, 0; against libx264 the NVENC frames score PSNR Y 43.9 / U 51.5 / 
 - Benchmark `FrameScaler` at 3840x2160 (A/B, quiet machine) and decide on SIMD / threads (`SIMD-CANDIDATE(frame scaler
   row expand)` in the code).
 - Real 4K recording check per encoder: VideoToolbox (h264, hevc), ffmpeg libx264 / libx265, NVENC on Windows;
-  `ffprobe` shows 3840x2160.
+  `ffprobe` shows 3840x2160. Linux window recording done 2026-11-19 (NVENC on a T1200 and VA-API on Tiger Lake, both
+  3840x2160, every frame, PSNR 41-52 dB against the source; `.recipe/media/window-recording.md`).
 - Videowall: the `QWidget::grab()` + `toImage()` + RGBA convert per tick is the remaining 4K cost; a direct
   `QOpenGLWidget` / window-buffer read would remove it.
 - Qt toolbar widget offers h264 only (the dialog also h265).

@@ -119,6 +119,9 @@ public:
     void DmaAtMachineCycleEnd(bool m1Next);
     /// Ask at every machine-cycle end while the DMA runs in the burst mode or waits for the M1 after its enable, not otherwise
     void ArmDmaBusTurn(bool on);
+    /// The first CPU T at which the armed turn can move a byte (Z80NEngine::SetMachineCycleEndTurnNotBefore): the burst wait's end
+    /// in this frame's CPU T, 0 (every machine-cycle end asked) whenever that is not known
+    void UpdateDmaTurnNotBefore();
     uint8_t ReadMemoryMapping() const override;
     void OnFrameEnd() override;
 
