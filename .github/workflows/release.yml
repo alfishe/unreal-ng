@@ -39,6 +39,7 @@
 # -DUNREAL_PGO=GENERATE, builds the instrumented unreal-qt, runs tools/pgo/train.py with it (headless: every model
 # boots, two programs, DOOM on VDAC4 with the ESP32 JIT and interpreter) and rebuilds everything with
 # -DUNREAL_PGO=USE in the same build directory. About 20 % less frame time; the jobs take about twice as long.
+# Windows arm64 builds without it (its instrumented build crashes in the training; see the job).
 #
 # Dependencies: everything except Qt is vendored and linked statically. Qt comes
 # from the Qt SDK - on Linux baked into the project's build image
@@ -337,11 +338,16 @@ jobs:
             qt-host: windows
             qt-arch: win64_msvc2022_64
             package: Windows-x86_64
+            pgo: GENERATE
           - runner: windows-11-arm
             arch: arm64
             qt-host: windows_arm64
             qt-arch: win64_msvc2022_arm64
             package: Windows-arm64
+            # No PGO: the instrumented MSVC arm64 build crashes in the training (two emulation threads in one
+            # NeoGS function, an access violation at a division even with /GENPROFILE:EXACT; x64 runs clean).
+            # The package is built with LTO as before (tools/pgo/README.md)
+            pgo: ''
     runs-on: ${{ matrix.runner }}
 
     steps:
@@ -389,22 +395,24 @@ jobs:
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
             -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}" \
-            -DUNREAL_PGO=GENERATE
+            -DUNREAL_PGO=${{ matrix.pgo }}
 
       # Profile-guided build (cmake/Pgo.cmake, tools/pgo/README.md): an instrumented unreal-qt, its training run,
       # then everything rebuilt with the profile in the same build directory
       - name: Build instrumented unreal-qt (PGO)
+        if: matrix.pgo != ''
         shell: bash
         run: cmake --build build --parallel --target unreal-qt
 
       - name: PGO training run
+        if: matrix.pgo != ''
         shell: bash
         run: python tools/pgo/train.py build/bin/unreal-qt.exe --profile-dir build/pgo
 
       - name: Build
         shell: bash
         run: |
-          cmake -S . -B build -DUNREAL_PGO=USE
+          if [ -n "${{ matrix.pgo }}" ]; then cmake -S . -B build -DUNREAL_PGO=USE; fi
           cmake --build build --parallel
 
       - name: Package Symbols

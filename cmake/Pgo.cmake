@@ -35,10 +35,13 @@ if (UNREAL_PGO)
             message(FATAL_ERROR "UNREAL_PGO with MSVC needs LTO (ENABLE_LTO=ON): the profile applies at the LTCG link")
         endif ()
     elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        # The profile counters (GENERATE) and the profile's inlining (USE) change what gcc's flow analysis sees: it
-        # reports false maybe-uninitialized (a scratch array read only up to its filled count, filter_decimator.h).
-        # The plain CI builds keep the warning as an error
-        add_compile_options("$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C,CXX>>:-Wno-maybe-uninitialized>")
+        # The profile counters (GENERATE) and the profile's inlining (USE) change what gcc's flow analysis sees, and
+        # it reports false positives: maybe-uninitialized (a scratch array read only up to its filled count,
+        # filter_decimator.h), array-bounds (a memcpy under `if (length)`, ethernetgateway.cpp), stringop-overflow
+        # (an atomic store "likely at address zero" in a Qt slot). The plain CI builds keep them as errors
+        foreach (_flag -Wno-maybe-uninitialized -Wno-array-bounds -Wno-stringop-overflow)
+            add_compile_options("$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:C,CXX>>:${_flag}>")
+        endforeach ()
         if (UNREAL_PGO STREQUAL "GENERATE")
             # Atomic counters: the emulation, sound and UI threads run the same code at once
             set(_unrealPgoFlags "-fprofile-generate=${UNREAL_PGO_DIR}" -fprofile-update=prefer-atomic)

@@ -10,6 +10,22 @@ It also moves code the run never reached out of their way.
 | [`train.py`](train.py) | the training run: drives the instrumented `unreal-qt` headless through the workload, lets it exit cleanly, merges Clang's raw profile |
 | [`.github/workflows/release.yml`](../../.github/workflows/release.yml) | every build job: configure `GENERATE`, build `unreal-qt`, `train.py`, reconfigure `USE`, build everything, package |
 
+## Platforms
+
+| Package | Compiler | PGO |
+|---------|----------|-----|
+| Linux x86_64 (AppImage, DEB, Steam Deck) | GCC 14 | yes |
+| Windows x86_64 | MSVC | yes |
+| Windows x86_64-MinGW | GCC (MSYS2) | yes |
+| macOS arm64, x86_64 | Apple Clang | yes |
+| Windows arm64 | MSVC | no: the instrumented build crashes during the training (see below) |
+
+On Windows arm64, the instrumented `unreal-qt` crashed during the training with an access violation, with and
+without `/GENPROFILE:EXACT`. Two emulation threads faulted at the same instruction, in
+`SoundChip_NeoGS::sleepQuietEventsBefore` (the timer reschedule, `soundchip_neogs.cpp:1003`), each in its own
+machine. The x64 build of the same code trains without a fault, and so do GCC and Clang. That most likely puts the
+fault in the MSVC arm64 instrumentation rather than the emulator, so this package is built with LTO only.
+
 ## Measured gain
 
 The figures were measured with MSVC x86_64 on a Threadripper 3975WX (Zen 2) on 2026-11-19. Each row compares the
