@@ -1646,6 +1646,30 @@ public:
     /// cache build). Fails on a replay barrier before the point, or a point outside the history.
     TTDCpuView ReadCpuView(const TTDTimePoint& at, uint16_t offset, size_t length);
 
+    /// @brief Memory over many frames in one walk (memory-series, PLAN #122 S1): each range as at the start of each
+    /// asked frame, the same bytes memory-at reads there (frame, tinframe 0). The checkpoints are walked forward
+    /// once: a piece's version follows the recorded changes, and a piece is decoded only when its version changed.
+    /// CPU ranges read the mapped pages from the store where the checkpoint holds the CPU's windows; elsewhere (a
+    /// session loaded from a file, the Next's 8K slots) the checkpoint is restored and read through the mapping,
+    /// and the machine is put back exactly where it stood. Frames outside the history are refused.
+    TTDSeriesResult ReadMemorySeries(const TTDSeriesQuery& query);
+    /// Whether ReadMemorySeries will restore checkpoints for @p query (CPU ranges over checkpoints without stored
+    /// windows): the caller parks a running machine first. False on any doubt the series refuses anyway
+    bool MemorySeriesRestores(const TTDSeriesQuery& query);
+
+    /// The sample points per frame ReadScreenAt looks for a change of the shown screen at
+    static constexpr uint32_t kScreenAtSamples = 312;
+    /// @brief One past frame's picture and screens (screen-at, PLAN #122 V2): its final picture (equal to what a
+    /// live machine showed when the frame ended), the screen shown at its start and end and where inside it the
+    /// shown screen changed, and the normal / shadow screen bytes at its end. Replays the frame silently and puts the
+    /// machine back exactly where it stood (its picture included). The frame must have ended inside the history.
+    TTDScreenAtResult ReadScreenAt(uint64_t frame);
+
+    /// @brief Where the CPU stood at the checkpoint of @p frame (the frame's start): {frame, the T-states past the
+    /// boundary the instruction that crossed it ran into the frame}, in TTD units. False when no checkpoint starts
+    /// that frame on the active lineage
+    bool CheckpointMoment(uint64_t frame, TTDTimePoint& at);
+
     /// @brief ReverseContinue with bounds, a page filter and the all mode.
     ///
     /// Single mode: the newest hit in (fromFrame, before], the machine moved there. All mode: up to `limit` hits,
@@ -1840,6 +1864,10 @@ private:
     /// the capture mapped, their pages decoded, the machine untouched. False where only a replay can tell (no
     /// window map, a window outside the stored regions and ROM, a point past the checkpoint)
     bool ReadCpuViewFromStore(const TTDTimePoint& at, uint16_t offset, size_t length, TTDCpuView& view);
+    /// A memory series' frames made concrete: the history's bounds for fromStart / toEnd, @p first / @p last the
+    /// active lineage's first and last checkpoint frames. False with @p error when there is no history or a frame
+    /// asked lies outside it
+    bool ResolveSeriesQuery(TTDSeriesQuery& query, uint64_t& first, uint64_t& last, std::string& error);
 
 
     /// @brief Internal seek implementation without the Recording-state guard.

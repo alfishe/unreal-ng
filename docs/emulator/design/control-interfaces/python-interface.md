@@ -1945,6 +1945,19 @@ now = emu.ttd_memory_at('cpu', offset=0x5C00, length=64)
 # {'space': 'cpu', 'banks': [{'window': 3, 'addr': '0xC000', 'kind': 'ram', 'page': 0, 'name': 'RAM 0'}, ...], 'hex': ...}
 diff = emu.ttd_memory_diff('neogs.ram', from_frame=150, to_frame=600)
 # {'space': 'neogs.ram', 'changed_bytes': 812, 'ranges': [{'offset': 4096, 'length': 64}, ...], 'truncated': False, ...}
+# memory_at names its moment: 'moment' frame_start (before the frame's first instruction) | inside_frame | now,
+# 'at_tinframe' (where the CPU stood), 'moment_text'
+
+# Memory over many frames in one walk of the checkpoints (no seek per frame); every row equals ttd_memory_at there
+s = emu.ttd_memory_series('0x5C78:2, ram5:0x1B00:32', from_frame=100, to_frame=400, step=10, changes_only=True,
+                          format='hex')   # ranges also a list of strings or dicts {space, address|offset, page, length}
+# {'rows': [{'frame': 100, 'exact': True, 'at_tinframe': 7, 'data': ['6500', '...']}, ...], 'frames_read': 31,
+#  'truncated': False, ...}   frames=[...] instead of from/to/step; limit, max_bytes: truncated with next_from_frame
+# A past frame's screen, the machine put back
+shot = emu.ttd_screen_at(150)                                  # the final picture: 'data' (PNG, base64), 'mime'
+attrs = emu.ttd_screen_at(150, which='shadow', format='attributes', encoding='hex')
+# shot['shown'] = {'at_start': {'screen': 'normal', 'page': 5, 'p7ffd': 16}, 'at_end': {...},
+#                  'changed_during_frame': False, 'flips': []}
 
 timeline = emu.ttd_timeline(min_phase_ms=500)   # also from_frame, to_frame, buckets, limit, bucket_size, ports
 # {'from_frame': ..., 'phases': [{'frame_start': ..., 'frame_end': ..., 'tags': ['halt', 'input'],

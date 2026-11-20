@@ -312,6 +312,7 @@ private:
     QString _disasmTitle;
     QString _registersTitle;
     QString _stackTitle;
+    QString _pagesTitle;
 };
 
 #endif  // DEBUGGERWINDOW_H

@@ -28,6 +28,14 @@ if (ENABLE_LTO AND NOT SANITIZE)
             # operator delete (core/tests/_helpers/heapcounter.cpp). None shows in a per-file compile, where the
             # warnings stay on
             add_link_options(-Wno-stringop-overflow -Wno-free-nonheap-object)
+            if (UNIX AND NOT APPLE)
+                # Every object position independent, as Qt requires (Qt6::Platform gives -fPIC to its users only):
+                # lto-wrapper builds the program with the weakest PIC mode among its objects, and the static
+                # libraries' PIE then reaches Qt's data directly through copy relocations. With binutils 2.46
+                # (Ubuntu 26.04) unreal-qt got a copy of QCoreApplication::self and crashed in QApplication's
+                # constructor (qGuiApp null in screenAdded)
+                set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+            endif ()
             if (MINGW)
                 # lto1: "visibility attribute not supported in this configuration" for every object with a
                 # visibility attribute (PE has none): nothing to fix on our side

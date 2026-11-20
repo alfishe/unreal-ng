@@ -330,6 +330,25 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-diff" -H 'Content-Type: appli
 
 A typical chain: memory-diff narrows "what changed between two frames" to a few ranges. find-last (`space` for video / fast RAM) or reverse-continue then names the instruction behind one of them. MCP: `time_travel` `memory_at` / `memory_diff`. CLI: `ttd memory-at` / `ttd memory-diff`. Lua: `ttd_memory_at{...}`. Python: `emu.ttd_memory_at(...)`.
 
+Every memory-at answer names the moment it read: `moment` `frame_start` ("the start of frame F, before its first instruction"; `at_tinframe` is where the checkpoint's CPU stood, a few T past the boundary, past the instruction that crossed it; the bytes are as the boundary left them, so a write that instruction made after the boundary counts in frame F and shows only in a seek to F or in frame F + 1), `inside_frame` (at `tinframe`) or `now`, and `moment_text` in words.
+
+### memory-series — memory over a frame range in one call
+
+A variable's history (lives, a score, a pointer table) is one call, not a memory-at loop: up to 16 ranges at the start of every frame asked, read in one forward walk of the checkpoints. Each row equals memory-at at that frame. `changes_only` keeps the frames where a range changed; `limit` and `max_bytes` bound the answer, and `next_from_frame` says where to go on.
+
+```bash
+curl -s -X POST "$BASE/emulator/$EMU_ID/ttd/memory-series" -H 'Content-Type: application/json' \
+     -d '{"ranges":"0x5C78:2, ram5:0x1B00:32","from_frame":100,"to_frame":400,"changes_only":true,"format":"hex"}'
+# {"rows":[{"frame":100,"exact":true,"at_tinframe":7,"data":["6500","..."]},{"frame":101,"changed":[0],...}],
+#  "frames_read":301,"pieces_decoded":...,"truncated":false,...}
+```
+
+Space `cpu` (the default) reads Z80 addresses through the paging stored with each checkpoint. A session loaded from a file stores none, so each such frame is read by restoring its checkpoint, the machine put back (`restored_frames`). MCP: `time_travel` `memory_series` (`memory_ranges`, hex by default). CLI: `ttd memory-series --ranges R`. Lua: `ttd_memory_series{ranges = ...}`. Python: `emu.ttd_memory_series(ranges, ...)`.
+
+### screen-at — a past frame's screen
+
+`screen-at` gives the frame's final picture as positioning there shows it (`which: shown`, PNG): the frame is replayed in a sandbox and the machine is put back. `which: normal` / `shadow` gives RAM page 5 / 7 at the frame's end, as a PNG or as bytes (`bitmap`, `attributes`, `raw`). The answer names the screen shown at the frame's start and end and where inside the frame it flipped (`#7FFD` bit 3, sampled at 312 points): a double-buffered game's back buffer is the other screen. The last recorded frame has not ended and is refused. MCP: `time_travel` `screen_at` (an image block). CLI: `ttd screen-at --frame F [--save FILE]`. Lua: `ttd_screen_at{frame = F}`. Python: `emu.ttd_screen_at(F)`.
+
 ## Workflow: crash post-mortem (summary)
 
 1. Record through the crash in development mode

@@ -5725,6 +5725,146 @@ TEST_F(McpTools_Test, TimeTravel_MemoryAtMemoryDiffAndCoverageSpace)
     EXPECT_NE(result.text.find("as at frame 40 t=1234 (the machine now): A15A"), std::string::npos) << result.text;
 }
 
+/// time_travel memory_series / screen_at (PLAN #122 S1, V2) and memory_at's moment (E4): the options reach POST
+/// /ttd/memory-series and /ttd/screen-at under the verb's names, the rows and the shown screens are in the text (an
+/// agent may read only it), a picture goes as an image block; missing options never reach the WebAPI
+TEST_F(McpTools_Test, TimeTravel_MemorySeriesScreenAtAndMoment)
+{
+    Json::Value series;
+    Json::Value range;
+    range["space"] = "cpu";
+    range["offset"] = 0x5B00;
+    range["length"] = 2;
+    series["ranges"].append(range);
+    range["space"] = "ram";
+    range["offset"] = 0x1C000;
+    range["length"] = 1;
+    series["ranges"].append(range);
+    series["format"] = "hex";
+    series["from_frame"] = 10;
+    series["to_frame"] = 12;
+    series["step"] = 1;
+    series["changes_only"] = true;
+    series["moment_text"] = "each row: the start of its frame, before its first instruction";
+    for (int f : {10, 12})
+    {
+        Json::Value row;
+        row["frame"] = f;
+        row["exact"] = true;
+        row["at_tinframe"] = 7;
+        row["data"].append(f == 10 ? "0102" : "0304");
+        row["data"].append("FF");
+        if (f == 12)
+            row["changed"].append(0);
+        series["rows"].append(row);
+    }
+    series["row_count"] = 2;
+    series["frames_read"] = 3;
+    series["restored_frames"] = 0;
+    series["truncated"] = true;
+    series["next_from_frame"] = 13;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-series"] = {200, series};
+    Json::Value args;
+    args["action"] = "memory_series";
+    args["memory_ranges"] = "0x5B00:2, ram:0x1C000:1";
+    args["from_frame"] = 10;
+    args["to_frame"] = 12;
+    args["changes_only"] = true;
+    args["limit"] = 2;
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-series");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["ranges"].asString(), "0x5B00:2, ram:0x1C000:1");
+    EXPECT_EQ(call->body["format"].asString(), "hex") << "readable bytes by default on MCP";
+    EXPECT_TRUE(call->body["changes_only"].asBool());
+    EXPECT_EQ(call->body["limit"].asUInt(), 2u);
+    EXPECT_NE(result.text.find("2 row(s) of 3 frame(s) read (frames 10..12 step 1), changes only"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("before its first instruction"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("[0] cpu:0x5B00+2 [1] ram:0x1C000+1"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 10: 0102 FF"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("frame 12 changed [0]: 0304 FF"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("go on with from_frame=13"), std::string::npos) << result.text;
+    // A list of ranges and an explicit format pass through
+    args["memory_ranges"] = Json::Value(Json::arrayValue);
+    args["memory_ranges"].append("0x4000:16");
+    args["data_format"] = "base64";
+    ASSERT_FALSE(RunTool(*_registry, "time_travel", args, *_caller).isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/memory-series");
+    EXPECT_TRUE(call->body["ranges"].isArray());
+    EXPECT_EQ(call->body["format"].asString(), "base64");
+
+    Json::Value screen;
+    screen["frame"] = 11;
+    screen["which"] = "shown";
+    screen["format"] = "png";
+    screen["mime"] = "image/png";
+    screen["width"] = 320;
+    screen["height"] = 256;
+    screen["data"] = "iVBORw0KGgo=";
+    screen["border"] = 2;
+    screen["moment_text"] = "the final picture of frame 11";
+    screen["shown"]["at_start"]["screen"] = "normal";
+    screen["shown"]["at_start"]["page"] = 5;
+    screen["shown"]["at_end"]["screen"] = "shadow";
+    screen["shown"]["at_end"]["page"] = 7;
+    screen["shown"]["changed_during_frame"] = true;
+    Json::Value flip;
+    flip["tinframe"] = 3000;
+    flip["screen"] = "shadow";
+    screen["shown"]["flips"].append(flip);
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/screen-at"] = {200, screen};
+    args = Json::Value();
+    args["action"] = "screen_at";
+    args["frame"] = 11;
+    args["which"] = "shown";
+    args["screen_format"] = "png";
+    args["area"] = "screen";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/screen-at");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["frame"].asUInt(), 11u);
+    EXPECT_EQ(call->body["format"].asString(), "png");
+    EXPECT_EQ(call->body["area"].asString(), "screen");
+    EXPECT_EQ(result.imageData, "iVBORw0KGgo=");
+    EXPECT_EQ(result.imageMimeType, "image/png");
+    EXPECT_NE(result.text.find("Frame 11 320x256 png (shown): the final picture of frame 11"), std::string::npos)
+        << result.text;
+    EXPECT_NE(result.text.find("Shown at the start: normal (page 5), at the end: shadow (page 7); it changed during "
+                               "the frame (shadow at t=3000)"),
+              std::string::npos)
+        << result.text;
+
+    // memory_at: the moment in words (E4)
+    Json::Value at;
+    at["space"] = "ram";
+    at["offset"] = 0;
+    at["length"] = 1;
+    at["at_frame"] = 7;
+    at["exact"] = true;
+    at["hex"] = "00";
+    at["moment_text"] = "the start of frame 7, before its first instruction";
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/memory-at"] = {200, at};
+    args = Json::Value();
+    args["action"] = "memory_at";
+    args["space"] = "ram";
+    args["frame"] = 7;
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("as at frame 7 - the start of frame 7, before its first instruction: 00"), std::string::npos)
+        << result.text;
+
+    const size_t calls = _caller->calls.size();
+    args = Json::Value();
+    args["action"] = "memory_series";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no memory_ranges";
+    args["action"] = "screen_at";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", args, *_caller).isError) << "no frame";
+    EXPECT_EQ(_caller->calls.size(), calls);
+}
+
 // reverse_continue first_per_pc reaches the WebAPI; the PCs without a hit are in the text; find_last refuses it
 TEST_F(McpTools_Test, TimeTravel_ReverseContinueFirstPerPc)
 {

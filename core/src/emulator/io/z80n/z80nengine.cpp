@@ -90,11 +90,14 @@ void Z80NEngine::Enter()
     if (_z80->boundary != _boundarySeen)
         Z80nCpuSetReg(_cpu, Z80nCpuRegBoundary, _z80->boundary);
     Z80nCpuSetTstates(_cpu, _z80->t);
+    if (_z80->t < _leftAt) [[unlikely]]
+        _turnNotBefore = 0;  // T went back between two steps (the frame rollover, a slower CPU speed): the threshold's base is gone
 }
 
 void Z80NEngine::Leave(bool wasHalted)
 {
     _z80->tt = (Z80nCpuTstates(_cpu) << 8) | (_z80->tt & 0xFF);
+    _leftAt = _z80->t;
     _boundarySeen = static_cast<uint8_t>(Z80nCpuGetReg(_cpu, Z80nCpuRegBoundary));
     _z80->boundary = _boundarySeen;
 
@@ -242,7 +245,7 @@ int Z80NEngine::MachineCycleEndTurn(Z80nCPU* cpu, Z80nCpuAccessKind kind)
             _idleLeft = 0;
             break;
     }
-    if (!cycleStart)
+    if (!cycleStart || Z80nCpuTstates(cpu) < _turnNotBefore)
         return 0;
     Publish(cpu);  // the hook's T is the cycle's start
     const uint32_t before = _z80->t;
@@ -274,6 +277,7 @@ void Z80NEngine::PortOut(Z80nCPU* cpu, uint16_t port, uint8_t value, void* user)
 {
     Z80NEngine& e = *static_cast<Z80NEngine*>(user);
     e.Publish(cpu);
+    e._turnNotBefore = 0;  // the write may reprogram the bus master or switch the CPU speed
     e._z80->out(port, value);
     e.Absorb(cpu);
 }
@@ -323,6 +327,7 @@ void Z80NEngine::NextReg(Z80nCPU* cpu, uint8_t reg, uint8_t value, void* user)
     if (!e._nextRegHost)
         return;
     e.Publish(cpu);
+    e._turnNotBefore = 0;  // NR #07 switches the CPU speed
     constexpr uint16_t kPortRegSelect = 0x243B;  // the NextREG select port
     constexpr uint16_t kPortRegData = 0x253B;    // the NextREG data port
     // TTD: the NEXTREG instruction has no bus cycle, so the port journal would never see it. It is journaled as the pair of writes the

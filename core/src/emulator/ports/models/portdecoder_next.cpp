@@ -1542,6 +1542,8 @@ void PortDecoder_Next::StepDma()
     const bool turns = _dma.Active() && _dma.Mode() == 2;
     if (turns != _dmaBusTurnArmed) [[unlikely]]
         ArmDmaBusTurn(turns);
+    if (_dmaBusTurnArmed)
+        UpdateDmaTurnNotBefore();
     NoteDmaActivity();
 }
 
@@ -1563,8 +1565,33 @@ void PortDecoder_Next::DmaAtMachineCycleEnd(bool m1Next)
     // START_DMA), and the T80 gives it at the end of the machine cycle running then (POC 036 `dmaprescb`: inside DJNZ after its M1, its
     // displacement read or its internal cycle). The same rule as between instructions (StepDma): the DMA's cycles become the CPU's waits
     if (!_dma.Active() || !_dma.Waiting() || _dma.HoldsBus() || Now28() < _dma.WaitEnd())
+    {
+        UpdateDmaTurnNotBefore();
         return;
+    }
     StepDma();
+}
+
+void PortDecoder_Next::UpdateDmaTurnNotBefore()
+{
+    // Now28() = t_states * 8 + t * 8 / multiplier (a power of two up to 8, the Next's 3.5 / 7 / 14 / 28 MHz): the first t whose Now28()
+    // reaches the wait's end. The answer of the full check is the same at every machine-cycle end before it (Now28() < WaitEnd())
+    if (!_engine)
+        return;
+    uint32_t notBefore = 0;
+    const uint32_t multiplier = _state->current_z80_frequency_multiplier ? _state->current_z80_frequency_multiplier : 1u;
+    if (!_dmaAfterM1 && _dma.Active() && _dma.Waiting() && !_dma.HoldsBus() && (multiplier & (multiplier - 1)) == 0 && multiplier <= 8)
+    {
+        const uint64_t base = static_cast<uint64_t>(_state->t_states) * 8;
+        const uint64_t end = _dma.WaitEnd();
+        const uint64_t perT = 8u / multiplier;  // clocks of 28 MHz per CPU T
+        if (end > base)
+        {
+            const uint64_t t = (end - base + perT - 1) / perT;
+            notBefore = t > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(t);
+        }
+    }
+    _engine->SetMachineCycleEndTurnNotBefore(notBefore);
 }
 
 void PortDecoder_Next::ArmDmaBusTurn(bool on)
