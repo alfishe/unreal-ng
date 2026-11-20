@@ -164,6 +164,17 @@ Read it with `bphits <id> [--from K] [--limit N] [--cpu gs]`, WebAPI `GET /api/v
 (`limit` 1..10000, default 100). `log` is null for a breakpoint that stops or keeps no record. The reset of the hit
 counts (`bphits reset`, `POST .../breakpoints/hits/reset`, `bp_reset_hits`) empties the record too.
 
+In the Qt debugger (Debug, Show Breakpoints...) the breakpoint editor sets the record under "Count only (never
+stops)": "Record hits" (0 is none, default 1000, at most 100000) and "keep" the first or the newest, editable only
+while Count only is ticked; editing a counting breakpoint shows its own values. In the breakpoint list a counting
+breakpoint that keeps a record has an expand arrow: the open row shows what the record holds (recorded, held, dropped
+or overwritten) and its hits, one line each: hit number, frame, T, PC, address (an event: its kind; a chip register
+breakpoint: the register), value, kind and, for a sound card CPU, its own clock. A record of the first N shows its
+first 200 hits, a record of the newest its newest 200 (the table follows the newest while scrolled to the end). The
+list reads an open record four times a second through the same read the other planes use (it never pauses the
+machine), and only its counts when they did not move; a closed row is not read. "Show Hits" in the row's context
+menu does the same as the arrow.
+
 Pentagon 128K at the 128 menu, a counting breakpoint at `#0038` kept for 3 hits, about a second of running:
 
 ```
@@ -295,7 +306,8 @@ the access, any other source at the frame end. See
 - The Qt breakpoint editor has a Condition field: it is checked while typed against the breakpoint's kind and access
   (OK stays off while it is refused), the reason shows under it with the offending word marked, and a good condition
   shows how it binds ("Stops when: (A == 5) & 1"). The breakpoint list has a Condition column and a Hits column (the
-  hits so far, the hit policy, the matches the condition was checked on in the tooltip); a condition that failed while
+  hits so far, the hit policy, the matches the condition was checked on in the tooltip; a counting breakpoint's row
+  expands to its per-hit record); a condition that failed while
   running shows as "Condition failed" with the reason in the tooltip. A stop shows in the debugger itself: a line
   under the speed control names the breakpoint, the access (execution at, write to, OUT to port ...), the condition
   that held and the hit count, with links to edit it and to the list; it goes when the machine moves on.

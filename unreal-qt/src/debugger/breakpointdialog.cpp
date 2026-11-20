@@ -1,6 +1,8 @@
 #include "breakpointdialog.h"
 #include "emulator/remotecontrolguard.h"
 
+#include <algorithm>
+
 #include <QApplication>
 #include <QComboBox>
 #include <QDebug>
@@ -18,6 +20,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QShortcut>
+#include <QScrollBar>
 #include <QTableWidgetItem>
 #include <QThread>
 #include <QVBoxLayout>
@@ -26,6 +29,73 @@
 #include "breakpointeditor.h"
 #include "breakpointgroupdialog.h"
 #include "emulator/emulator.h"
+
+namespace
+{
+// The list's columns
+enum Column
+{
+    ColId = 0,
+    ColType,
+    ColAddress,
+    ColAccess,
+    ColStatus,
+    ColHits,
+    ColGroup,
+    ColCondition,
+    ColNotes,
+    ColCount
+};
+
+// The columns of a record's hits (the per-hit record, BreakpointHitRecord)
+enum HitColumn
+{
+    HitColHit = 0,
+    HitColFrame,
+    HitColT,
+    HitColPc,
+    HitColAddress,
+    HitColValue,
+    HitColKind,
+    HitColCardTime,
+    HitColCount
+};
+
+constexpr int kHitRowsVisible = 8;  // the rows an expanded record shows before it scrolls
+
+QString Hex(uint32_t value, int digits)
+{
+    return QString("$%1").arg(value, digits, 16, QChar('0')).toUpper();
+}
+
+// What the address field of a hit is: the CPU address or port, the event's kind, the chip register
+QString HitAddressText(const BreakpointHitRecord& record)
+{
+    switch (static_cast<BreakpointTapKind>(record.kind))
+    {
+        case BRK_TAP_EVENT:
+        case BRK_TAP_MACHINE_EVENT:
+            return QString::number(record.address);
+        case BRK_TAP_CHIPREG:
+            return "reg " + Hex(record.address, 2);
+        default:
+            return Hex(record.address, 4);
+    }
+}
+
+void SetCell(QTableWidget* table, int row, int column, const QString& text)
+{
+    QTableWidgetItem* item = table->item(row, column);
+    if (!item)
+    {
+        item = new QTableWidgetItem();
+        item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        table->setItem(row, column, item);
+    }
+    if (item->text() != text)
+        item->setText(text);
+}
+}  // namespace
 
 BreakpointDialog::BreakpointDialog(std::shared_ptr<Emulator> emulator, QWidget* parent) : QDialog(parent), _emulator(emulator)
 {
@@ -98,8 +168,8 @@ BreakpointDialog::~BreakpointDialog()
     }
 
     // Save sort column and order
-    settings.setValue("BreakpointDialog/sortColumn", _breakpointTable->horizontalHeader()->sortIndicatorSection());
-    settings.setValue("BreakpointDialog/sortOrder", _breakpointTable->horizontalHeader()->sortIndicatorOrder());
+    settings.setValue("BreakpointDialog/sortColumn", _breakpointTable->header()->sortIndicatorSection());
+    settings.setValue("BreakpointDialog/sortOrder", _breakpointTable->header()->sortIndicatorOrder());
 }
 
 void BreakpointDialog::setupUI()
@@ -108,30 +178,39 @@ void BreakpointDialog::setupUI()
     _mainLayout = new QVBoxLayout();
     setLayout(_mainLayout);
 
-    // Create the table widget with proper parenting
-    _breakpointTable = new QTableWidget();
+    // The expanded records are read while any is open
+    _hitTimer = new QTimer(this);
+    _hitTimer->setInterval(kHitPollMs);
+    connect(_hitTimer, &QTimer::timeout, this, [this]() { refreshHitLogs(); });
+
+    // The list: one row per breakpoint; a breakpoint that only counts and records its hits expands to show them
+    _breakpointTable = new QTreeWidget();
     _mainLayout->addWidget(_breakpointTable);
-    _breakpointTable->setColumnCount(9);
+    _breakpointTable->setColumnCount(ColCount);
     _breakpointTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     _breakpointTable->setSelectionMode(QAbstractItemView::SingleSelection);
     _breakpointTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     _breakpointTable->setAlternatingRowColors(true);
+    _breakpointTable->setRootIsDecorated(true);
+    _breakpointTable->setUniformRowHeights(false);
+    _breakpointTable->setExpandsOnDoubleClick(false);  // a double click edits
 
     // Set the headers for the columns
     QStringList headers;
     headers << "ID" << "Type" << "Address" << "Access" << "Status" << "Hits" << "Group" << "Condition" << "Notes";
-    _breakpointTable->setHorizontalHeaderLabels(headers);
+    _breakpointTable->setHeaderLabels(headers);
 
     // Make table sortable
     _breakpointTable->setSortingEnabled(true);
-    _breakpointTable->horizontalHeader()->setSortIndicatorShown(true);
-    _breakpointTable->horizontalHeader()->setSectionsClickable(true);
+    _breakpointTable->header()->setSortIndicatorShown(true);
+    _breakpointTable->header()->setSectionsClickable(true);
 
     // Set initial sort order (by ID)
     _breakpointTable->sortByColumn(0, Qt::AscendingOrder);
 
     // Set column resize modes
-    QHeaderView* header = _breakpointTable->horizontalHeader();
+    QHeaderView* header = _breakpointTable->header();
+    header->setStretchLastSection(false);
     header->setSectionResizeMode(0, QHeaderView::ResizeToContents);  // ID
     header->setSectionResizeMode(1, QHeaderView::ResizeToContents);  // Type
     header->setSectionResizeMode(2, QHeaderView::ResizeToContents);  // Address
@@ -143,9 +222,11 @@ void BreakpointDialog::setupUI()
     header->setSectionResizeMode(8, QHeaderView::Stretch);           // Notes
 
     // Connect signals
-    connect(_breakpointTable, &QTableWidget::itemSelectionChanged, this,
+    connect(_breakpointTable, &QTreeWidget::itemSelectionChanged, this,
             &BreakpointDialog::onBreakpointSelectionChanged);
-    connect(_breakpointTable, &QTableWidget::itemDoubleClicked, this, &BreakpointDialog::onBreakpointDoubleClicked);
+    connect(_breakpointTable, &QTreeWidget::itemDoubleClicked, this, &BreakpointDialog::onBreakpointDoubleClicked);
+    connect(_breakpointTable, &QTreeWidget::itemExpanded, this, &BreakpointDialog::onItemExpanded);
+    connect(_breakpointTable, &QTreeWidget::itemCollapsed, this, &BreakpointDialog::onItemCollapsed);
 
     // Add table to layout
     _mainLayout->addWidget(_breakpointTable);
@@ -165,22 +246,8 @@ void BreakpointDialog::setupUI()
     connect(_addButton, &QPushButton::clicked, this, &BreakpointDialog::addBreakpoint);
     connect(_editButton, &QPushButton::clicked, this, &BreakpointDialog::editBreakpoint);
     connect(_deleteButton, &QPushButton::clicked, this, &BreakpointDialog::deleteBreakpoint);
-    connect(_enableButton, &QPushButton::clicked, [this]() {
-        toggleBreakpoint();
-        _breakpointTable->selectedItems()
-            .at(0)
-            ->tableWidget()
-            ->item(_breakpointTable->selectedItems().at(0)->row(), 4)
-            ->setText("Active");
-    });
-    connect(_disableButton, &QPushButton::clicked, [this]() {
-        toggleBreakpoint();
-        _breakpointTable->selectedItems()
-            .at(0)
-            ->tableWidget()
-            ->item(_breakpointTable->selectedItems().at(0)->row(), 4)
-            ->setText("Inactive");
-    });
+    connect(_enableButton, &QPushButton::clicked, this, [this]() { setSelectedActive(true); });
+    connect(_disableButton, &QPushButton::clicked, this, [this]() { setSelectedActive(false); });
     connect(_groupButton, &QPushButton::clicked, this, &BreakpointDialog::manageGroups);
 
     // Add buttons to layout
@@ -272,7 +339,7 @@ void BreakpointDialog::setupGroupFilter()
 void BreakpointDialog::setupTableContextMenu()
 {
     _breakpointTable->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(_breakpointTable, &QTableWidget::customContextMenuRequested, this, &BreakpointDialog::showContextMenu);
+    connect(_breakpointTable, &QTreeWidget::customContextMenuRequested, this, &BreakpointDialog::showContextMenu);
 }
 
 void BreakpointDialog::setupShortcuts()
@@ -307,16 +374,24 @@ void BreakpointDialog::setupShortcuts()
 
 void BreakpointDialog::populateBreakpointTable()
 {
-    _breakpointTable->setSortingEnabled(false);
-    _breakpointTable->setRowCount(0);
-
     BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    // The selection and the open records stay across the rebuild (an edit gives a breakpoint a new id: it closes)
+    const QTreeWidgetItem* selected = selectedBreakpointItem();
+    const uint16_t selectedId = selected ? breakpointIdOf(selected) : BRK_INVALID;
+    _hitViews.clear();
+    _breakpointTable->setSortingEnabled(false);
+    _breakpointTable->clear();
     if (!bpManager)
+    {
+        _expandedIds.clear();
+        _hitTimer->stop();
         return;
+    }
 
     const BreakpointListByID breakpoints = bpManager->GetAllBreakpoints();
+    QSet<uint16_t> expandable;
+    QTreeWidgetItem* reselect = nullptr;
 
-    int row = 0;
     for (const auto& pair : breakpoints)
     {
         uint16_t id = pair.first;
@@ -326,13 +401,9 @@ void BreakpointDialog::populateBreakpointTable()
         if (bp == nullptr || !BreakpointManager::IsUserBreakpoint(*bp))
             continue;
 
-        _breakpointTable->insertRow(row);
-
-        // ID column
-        QTableWidgetItem* idItem = new QTableWidgetItem(QString::number(id));
-        idItem->setData(Qt::UserRole, id);
-        idItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 0, idItem);
+        QTreeWidgetItem* item = new QTreeWidgetItem();
+        item->setData(ColId, Qt::DisplayRole, static_cast<int>(id));  // sorts as a number
+        item->setData(ColId, Qt::UserRole, id);
 
         // Type column
         QString typeStr;
@@ -363,9 +434,7 @@ void BreakpointDialog::populateBreakpointTable()
                 typeStr = "Unknown";
                 break;
         }
-        QTableWidgetItem* typeItem = new QTableWidgetItem(typeStr);
-        typeItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 1, typeItem);
+        item->setText(ColType, typeStr);
 
         // Address column
         QString addrStr;
@@ -404,9 +473,7 @@ void BreakpointDialog::populateBreakpointTable()
             addrStr += " " + QString::fromStdString(BreakpointManager::PageSpecName(*bp)) + (bp->slotOnly ? " (slot)" : "");
         if (bp->type == BRK_IO && bp->portMask != 0xFFFF)
             addrStr += QString(" &$%1").arg(bp->portMask, 4, 16, QChar('0')).toUpper();
-        QTableWidgetItem* addrItem = new QTableWidgetItem(addrStr);
-        addrItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 2, addrItem);
+        item->setText(ColAddress, addrStr);
 
         // Access column
         QString accessStr;
@@ -442,61 +509,266 @@ void BreakpointDialog::populateBreakpointTable()
             if (bp->keyType & BRK_KEY_RELEASE)
                 accessStr += "R";
         }
-        QTableWidgetItem* accessItem = new QTableWidgetItem(accessStr);
-        accessItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 3, accessItem);
+        item->setText(ColAccess, accessStr);
 
         // Status column (a condition that failed while running stops matching until it is set again; a count-only
         // breakpoint counts and never stops)
         const bool countOnly = bp->tapSink == BRK_COUNT_TAP;
-        QString statusStr = bp->conditionFailed ? "Condition failed"
-                            : !bp->active       ? "Inactive"
-                            : countOnly         ? "Counting"
-                                                : "Active";
-        QTableWidgetItem* statusItem = new QTableWidgetItem(statusStr);
-        statusItem->setForeground(bp->conditionFailed ? QColor(192, 0, 0)
-                                  : bp->active        ? QColor(0, 128, 0)
-                                                      : QColor(128, 128, 128));
-        if (bp->conditionFailed)
-            statusItem->setToolTip(QString::fromStdString(bp->conditionError));
-        statusItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 4, statusItem);
+        setStatus(item, bp->active, countOnly, bp->conditionFailed, QString::fromStdString(bp->conditionError));
 
         // Hits column: the hits so far (sorts as a number), the policy that picks the ones that stop
-        QTableWidgetItem* hitsItem = new QTableWidgetItem();
         if (bp->hitMode == BRK_HIT_ALWAYS || countOnly)
-            hitsItem->setData(Qt::DisplayRole, static_cast<qulonglong>(bp->hitCount));
+            item->setData(ColHits, Qt::DisplayRole, static_cast<qulonglong>(bp->hitCount));
         else
-            hitsItem->setText(QString("%1 (stops on %2)")
-                                  .arg(bp->hitCount)
-                                  .arg(QString::fromStdString(BreakpointManager::HitSpecName(*bp))));
+            item->setText(ColHits, QString("%1 (stops on %2)")
+                                       .arg(bp->hitCount)
+                                       .arg(QString::fromStdString(BreakpointManager::HitSpecName(*bp))));
+        QString hitsTip;
         if (bp->condition)
-            hitsItem->setToolTip(QString("%1 of %2 matches held the condition").arg(bp->hitCount).arg(bp->matchCount));
-        hitsItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 5, hitsItem);
+            hitsTip = QString("%1 of %2 matches held the condition").arg(bp->hitCount).arg(bp->matchCount);
+        // A breakpoint that only counts and records its hits: the row expands to show them
+        if (countOnly && bp->hitLogCapacity > 0)
+        {
+            item->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+            if (!hitsTip.isEmpty())
+                hitsTip += "\n";
+            hitsTip += QString("Records %1 %2 hits: expand the row to see them")
+                           .arg(bp->hitLogKeep == BreakpointHitLogKeep::Last ? "the newest" : "the first")
+                           .arg(bp->hitLogCapacity);
+            expandable.insert(id);
+        }
+        if (!hitsTip.isEmpty())
+            item->setToolTip(ColHits, hitsTip);
 
         // Group column
-        QTableWidgetItem* groupItem = new QTableWidgetItem(QString::fromStdString(bp->group));
-        groupItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 6, groupItem);
+        item->setText(ColGroup, QString::fromStdString(bp->group));
 
         // Condition column: as written (the editor shows how it binds)
-        QTableWidgetItem* conditionItem =
-            new QTableWidgetItem(bp->condition ? QString::fromStdString(bp->condition->Source()) : QString());
         if (bp->condition)
-            conditionItem->setToolTip("Stops when: " + QString::fromStdString(bp->condition->Canonical()));
-        _breakpointTable->setItem(row, 7, conditionItem);
+        {
+            item->setText(ColCondition, QString::fromStdString(bp->condition->Source()));
+            item->setToolTip(ColCondition, "Stops when: " + QString::fromStdString(bp->condition->Canonical()));
+        }
 
         // Note column
-        QTableWidgetItem* noteItem = new QTableWidgetItem(QString::fromStdString(bp->note));
-        noteItem->setTextAlignment(Qt::AlignCenter);
-        _breakpointTable->setItem(row, 8, noteItem);
+        item->setText(ColNotes, QString::fromStdString(bp->note));
 
-        row++;
+        for (int column = 0; column < ColCount; ++column)
+            if (column != ColCondition)
+                item->setTextAlignment(column, Qt::AlignCenter);
+
+        _breakpointTable->addTopLevelItem(item);
+        if (id == selectedId)
+            reselect = item;
     }
 
     _breakpointTable->setSortingEnabled(true);
-    _breakpointTable->resizeColumnsToContents();
+    for (int column = 0; column < ColCount; ++column)
+        _breakpointTable->resizeColumnToContents(column);
+
+    // Reopen the records that were open
+    _expandedIds.intersect(expandable);
+    const QSet<uint16_t> reopen = _expandedIds;
+    for (int i = 0; i < _breakpointTable->topLevelItemCount(); ++i)
+    {
+        QTreeWidgetItem* item = _breakpointTable->topLevelItem(i);
+        if (reopen.contains(breakpointIdOf(item)))
+            item->setExpanded(true);
+    }
+    if (_expandedIds.isEmpty())
+        _hitTimer->stop();
+    if (reselect)
+        _breakpointTable->setCurrentItem(reselect);
+}
+
+void BreakpointDialog::setStatus(QTreeWidgetItem* item, bool active, bool countOnly, bool conditionFailed,
+                                 const QString& conditionError)
+{
+    const QString statusStr = conditionFailed ? "Condition failed"
+                              : !active       ? "Inactive"
+                              : countOnly     ? "Counting"
+                                              : "Active";
+    item->setText(ColStatus, statusStr);
+    item->setForeground(ColStatus, conditionFailed ? QColor(192, 0, 0)
+                                   : active        ? QColor(0, 128, 0)
+                                                   : QColor(128, 128, 128));
+    item->setToolTip(ColStatus, conditionFailed ? conditionError : QString());
+}
+
+QTreeWidgetItem* BreakpointDialog::selectedBreakpointItem() const
+{
+    const QList<QTreeWidgetItem*> items = _breakpointTable->selectedItems();
+    if (items.isEmpty())
+        return nullptr;
+    QTreeWidgetItem* item = items.first();
+    return item->parent() ? item->parent() : item;
+}
+
+uint16_t BreakpointDialog::breakpointIdOf(const QTreeWidgetItem* item)
+{
+    return item ? static_cast<uint16_t>(item->data(ColId, Qt::UserRole).toUInt()) : BRK_INVALID;
+}
+
+void BreakpointDialog::onItemExpanded(QTreeWidgetItem* item)
+{
+    if (!item || item->parent())
+        return;
+    const uint16_t id = breakpointIdOf(item);
+    if (_hitViews.contains(id))
+        return;
+
+    // One row under the breakpoint, across all columns: the record's summary over its hits
+    QTreeWidgetItem* row = new QTreeWidgetItem(item);
+    row->setFlags(Qt::ItemIsEnabled);  // not selectable: the breakpoint's row is
+    row->setFirstColumnSpanned(true);
+
+    QWidget* widget = new QWidget();
+    QVBoxLayout* layout = new QVBoxLayout(widget);
+    layout->setContentsMargins(4, 2, 4, 6);
+    layout->setSpacing(2);
+    HitView view;
+    view.row = row;
+    view.summary = new QLabel();
+    view.summary->setObjectName("breakpointHitSummary");
+    layout->addWidget(view.summary);
+    view.table = new QTableWidget(0, HitColCount);
+    view.table->setObjectName("breakpointHits");
+    view.table->setHorizontalHeaderLabels({"Hit", "Frame", "T", "PC", "Address", "Value", "Kind", "Card time"});
+    view.table->horizontalHeaderItem(HitColKind)->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    view.table->verticalHeader()->setVisible(false);
+    view.table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    view.table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    view.table->setAlternatingRowColors(true);
+    view.table->setWordWrap(false);
+    view.table->horizontalHeader()->setDefaultAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    // Compact rows, as dense as the list's own
+    const int lineHeight = view.table->fontMetrics().height() + 4;
+    view.table->verticalHeader()->setMinimumSectionSize(lineHeight);
+    view.table->verticalHeader()->setDefaultSectionSize(lineHeight);
+    view.table->setColumnHidden(HitColCardTime, true);
+    view.table->horizontalHeader()->setToolTip("Hit: the breakpoint's count after the hit. Frame and T: when it came (a card CPU: the ZX "
+                           "frame and its time since the frame began). PC: the instruction. Value: the byte the hit "
+                           "carried");
+    layout->addWidget(view.table);
+    _breakpointTable->setItemWidget(row, 0, widget);
+
+    _hitViews.insert(id, view);
+    _expandedIds.insert(id);
+    refreshHitView(id, _hitViews[id], true);
+    if (!_hitTimer->isActive())
+        _hitTimer->start();
+}
+
+void BreakpointDialog::onItemCollapsed(QTreeWidgetItem* item)
+{
+    if (!item || item->parent())
+        return;
+    const uint16_t id = breakpointIdOf(item);
+    _hitViews.remove(id);
+    _expandedIds.remove(id);
+    // The row goes (its widget with it): a closed record is not read
+    while (item->childCount() > 0)
+        delete item->takeChild(0);
+    if (_expandedIds.isEmpty())
+        _hitTimer->stop();
+}
+
+void BreakpointDialog::refreshHitLogs(bool force)
+{
+    for (auto it = _hitViews.begin(); it != _hitViews.end(); ++it)
+        refreshHitView(it.key(), it.value(), force);
+}
+
+void BreakpointDialog::refreshHitView(uint16_t id, HitView& view, bool force)
+{
+    BreakpointManager* bpManager = _emulator ? _emulator->GetBreakpointManager() : nullptr;
+    if (!bpManager || !view.table)
+        return;
+    // The counts first (no records copied): a record only changes when they move
+    const BreakpointManager::HitLogInfo counts = bpManager->GetHitLog(id, 0, 0);
+    if (!counts.found)
+        return;
+    if (!force && counts.hitCount == view.lastHitCount && counts.view.total == view.lastTotal)
+        return;
+    view.lastHitCount = counts.hitCount;
+    view.lastTotal = counts.view.total;
+
+    // The breakpoint's row follows its count
+    if (QTreeWidgetItem* parent = view.row ? view.row->parent() : nullptr)
+        if (parent->data(ColHits, Qt::DisplayRole).toULongLong() != counts.hitCount)
+            parent->setData(ColHits, Qt::DisplayRole, static_cast<qulonglong>(counts.hitCount));
+
+    if (!counts.hasLog)
+    {
+        view.summary->setText("This breakpoint keeps no record of its hits.");
+        view.table->setRowCount(0);
+        view.table->hide();
+        view.row->setSizeHint(0, QSize(0, view.summary->sizeHint().height() + 2 + 6));
+        return;
+    }
+
+    // The first ones of a record of the first N, the newest of a record of the newest
+    const BreakpointHitLog::View& log = counts.view;
+    const bool keepLast = log.keep == BreakpointHitLogKeep::Last;
+    const uint64_t shown = std::min<uint64_t>(log.stored, kShownHits);
+    const uint64_t from = keepLast ? log.oldest + log.stored - shown : log.oldest;
+    const BreakpointManager::HitLogInfo page = bpManager->GetHitLog(id, from, static_cast<uint32_t>(shown));
+    const std::vector<BreakpointHitRecord>& records = page.view.records;
+
+    QString summary = QString("Records %1 %2 hits").arg(keepLast ? "the newest" : "the first").arg(page.view.capacity);
+    if (page.view.total == 0)
+        summary += ": no hits yet.";
+    else
+    {
+        summary += QString(": %1 recorded, %2 held").arg(page.view.total).arg(page.view.stored);
+        if (page.view.dropped > 0)
+            summary += QString(", %1 %2").arg(page.view.dropped).arg(keepLast ? "overwritten" : "dropped (only counted)");
+        summary += ".";
+        if (records.size() < page.view.stored)
+            summary += QString(" Showing the %1 %2.").arg(keepLast ? "newest" : "first").arg(records.size());
+    }
+    view.summary->setText(summary);
+
+    QScrollBar* scroll = view.table->verticalScrollBar();
+    const bool followNewest = keepLast && scroll->value() == scroll->maximum();
+    bool cardTime = false;
+    view.table->setUpdatesEnabled(false);
+    view.table->setRowCount(static_cast<int>(records.size()));
+    for (int row = 0; row < static_cast<int>(records.size()); ++row)
+    {
+        const BreakpointHitRecord& record = records[static_cast<size_t>(row)];
+        SetCell(view.table, row, HitColHit, QString::number(record.hit));
+        SetCell(view.table, row, HitColFrame, QString::number(record.frame));
+        SetCell(view.table, row, HitColT, QString::number(record.t));
+        SetCell(view.table, row, HitColPc, Hex(record.pc, 4));
+        SetCell(view.table, row, HitColAddress, HitAddressText(record));
+        SetCell(view.table, row, HitColValue, record.value >= 0 ? Hex(static_cast<uint32_t>(record.value), 2) : QString());
+        SetCell(view.table, row, HitColKind, QString(BreakpointManager::HitKindName(record.kind)).replace('_', ' '));
+        view.table->item(row, HitColKind)->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        SetCell(view.table, row, HitColCardTime, record.cpuTime >= 0 ? QString::number(record.cpuTime) : QString());
+        cardTime = cardTime || record.cpuTime >= 0;
+    }
+    view.table->setColumnHidden(HitColCardTime, !cardTime);
+    if (!records.empty() && !view.sized)
+    {
+        view.table->resizeColumnsToContents();  // once: the columns stay where the human put them
+        view.sized = true;
+    }
+    view.table->setUpdatesEnabled(true);
+
+    // The row's height follows the hits held, up to kHitRowsVisible before it scrolls
+    const int rows = std::clamp(static_cast<int>(records.size()), 1, kHitRowsVisible);
+    const int tableHeight = view.table->horizontalHeader()->sizeHint().height() +
+                            rows * view.table->verticalHeader()->defaultSectionSize() + 2 * view.table->frameWidth();
+    if (view.table->minimumHeight() != tableHeight)
+    {
+        view.table->setFixedHeight(tableHeight);
+        const int height = view.summary->sizeHint().height() + tableHeight + 2 + 2 + 6;
+        view.row->setSizeHint(0, QSize(0, height));
+    }
+    // After the row took its height (a row just opened is laid out later): the newest stay in view
+    if (followNewest)
+        QMetaObject::invokeMethod(view.table, &QTableWidget::scrollToBottom, Qt::QueuedConnection);
 }
 
 void BreakpointDialog::populateGroupComboBox()
@@ -524,7 +796,7 @@ void BreakpointDialog::populateGroupComboBox()
 
 void BreakpointDialog::updateButtonStates()
 {
-    bool hasSelection = !_breakpointTable->selectedItems().isEmpty();
+    bool hasSelection = selectedBreakpointItem() != nullptr;
 
     _editButton->setEnabled(hasSelection);
     _deleteButton->setEnabled(hasSelection);
@@ -538,10 +810,10 @@ void BreakpointDialog::updateStatusBar()
     int visibleRows = 0;
 
     // Count total and visible rows
-    for (int row = 0; row < _breakpointTable->rowCount(); ++row)
+    for (int row = 0; row < _breakpointTable->topLevelItemCount(); ++row)
     {
         totalRows++;
-        if (!_breakpointTable->isRowHidden(row))
+        if (!_breakpointTable->topLevelItem(row)->isHidden())
             visibleRows++;
     }
 
@@ -574,17 +846,13 @@ void BreakpointDialog::addBreakpoint()
 void BreakpointDialog::editBreakpoint()
 {
     // Get the selected breakpoint
-    QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
-    if (selectedItems.isEmpty())
+    const QTreeWidgetItem* selected = selectedBreakpointItem();
+    if (!selected)
     {
         QMessageBox::information(this, "Edit Breakpoint", "Please select a breakpoint to edit.");
         return;
     }
-
-    // Get the breakpoint ID from the selected row
-    int row = selectedItems.first()->row();
-    QTableWidgetItem* idItem = _breakpointTable->item(row, 0);
-    uint16_t id = idItem->data(Qt::UserRole).toUInt();
+    const uint16_t id = breakpointIdOf(selected);
 
     // Open the breakpoint editor with the selected breakpoint
     BreakpointEditor editor(_emulator, BreakpointEditor::Edit, id, this);
@@ -604,13 +872,10 @@ void BreakpointDialog::deleteBreakpoint()
 {
     if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
         return;
-    QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
-    if (selectedItems.isEmpty())
+    const QTreeWidgetItem* selected = selectedBreakpointItem();
+    if (!selected)
         return;
-
-    int row = selectedItems.first()->row();
-    QTableWidgetItem* idItem = _breakpointTable->item(row, 0);
-    uint16_t id = idItem->data(Qt::UserRole).toUInt();
+    const uint16_t id = breakpointIdOf(selected);
 
     QMessageBox::StandardButton reply;
     reply = QMessageBox::question(this, "Confirm Delete",
@@ -632,39 +897,39 @@ void BreakpointDialog::deleteBreakpoint()
     }
 }
 
-void BreakpointDialog::toggleBreakpoint()
+void BreakpointDialog::setSelectedActive(bool active)
 {
     if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
         return;
-    QList<QTableWidgetItem*> selectedItems = _breakpointTable->selectedItems();
-    if (selectedItems.isEmpty())
-        return;
-
-    int row = selectedItems.first()->row();
-    QTableWidgetItem* idItem = _breakpointTable->item(row, 0);
-    uint16_t id = idItem->data(Qt::UserRole).toUInt();
-
+    QTreeWidgetItem* selected = selectedBreakpointItem();
     BreakpointManager* bpManager = _emulator->GetBreakpointManager();
-    if (!bpManager)
+    if (!selected || !bpManager)
         return;
-
-    QTableWidgetItem* statusItem = _breakpointTable->item(row, 4);
-    if (statusItem->text() == "Active")
-    {
-        bpManager->DeactivateBreakpoint(id);
-        statusItem->setText("Inactive");
-        statusItem->setForeground(QColor(128, 128, 128));
-    }
-    else
-    {
+    const uint16_t id = breakpointIdOf(selected);
+    const BreakpointSnapshot bp = bpManager->GetBreakpointById(id);
+    if (!bp)
+        return;
+    if (active)
         bpManager->ActivateBreakpoint(id);
-        statusItem->setText("Active");
-        statusItem->setForeground(QColor(0, 128, 0));
-    }
+    else
+        bpManager->DeactivateBreakpoint(id);
+    setStatus(selected, active, bp->tapSink == BRK_COUNT_TAP, bp->conditionFailed,
+              QString::fromStdString(bp->conditionError));
 
     // Broadcast notification that breakpoints have changed
     MessageCenter& messageCenter = MessageCenter::DefaultMessageCenter();
     messageCenter.Post(NC_BREAKPOINT_CHANGED, nullptr, true);
+}
+
+void BreakpointDialog::toggleBreakpoint()
+{
+    const QTreeWidgetItem* selected = selectedBreakpointItem();
+    BreakpointManager* bpManager = _emulator->GetBreakpointManager();
+    if (!selected || !bpManager)
+        return;
+    const BreakpointSnapshot bp = bpManager->GetBreakpointById(breakpointIdOf(selected));
+    if (bp)
+        setSelectedActive(!bp->active);
 }
 
 void BreakpointDialog::createGroup()
@@ -689,38 +954,44 @@ void BreakpointDialog::onBreakpointSelectionChanged()
     updateButtonStates();
 }
 
-void BreakpointDialog::onBreakpointDoubleClicked(QTableWidgetItem* item)
+void BreakpointDialog::onBreakpointDoubleClicked(QTreeWidgetItem* item, int column)
 {
-    editBreakpoint();
+    Q_UNUSED(column);
+    if (item && !item->parent())
+        editBreakpoint();
 }
 
 void BreakpointDialog::showContextMenu(const QPoint& pos)
 {
-    QTableWidgetItem* item = _breakpointTable->itemAt(pos);
+    QTreeWidgetItem* item = _breakpointTable->itemAt(pos);
     if (!item)
         return;
-
-    int row = item->row();
-    QTableWidgetItem* idItem = _breakpointTable->item(row, 0);
-    uint16_t id = idItem->data(Qt::UserRole).toUInt();
+    if (item->parent())
+        item = item->parent();
+    _breakpointTable->setCurrentItem(item);
 
     QMenu contextMenu(this);
 
     QAction* editAction = contextMenu.addAction("Edit Breakpoint");
     connect(editAction, &QAction::triggered, this, &BreakpointDialog::editBreakpoint);
 
-    QTableWidgetItem* statusItem = _breakpointTable->item(row, 4);
-    bool isActive = (statusItem->text() == "Active");
-
+    const bool isActive = item->text(ColStatus) == "Active" || item->text(ColStatus) == "Counting";
     QAction* toggleAction = contextMenu.addAction(isActive ? "Disable" : "Enable");
     connect(toggleAction, &QAction::triggered, this, &BreakpointDialog::toggleBreakpoint);
+
+    // A breakpoint that records its hits: the same as its row's arrow
+    if (item->childIndicatorPolicy() == QTreeWidgetItem::ShowIndicator)
+    {
+        QAction* hitsAction = contextMenu.addAction(item->isExpanded() ? "Hide Hits" : "Show Hits");
+        connect(hitsAction, &QAction::triggered, this, [item]() { item->setExpanded(!item->isExpanded()); });
+    }
 
     contextMenu.addSeparator();
 
     QAction* deleteAction = contextMenu.addAction("Delete");
     connect(deleteAction, &QAction::triggered, this, &BreakpointDialog::deleteBreakpoint);
 
-    contextMenu.exec(_breakpointTable->mapToGlobal(pos));
+    contextMenu.exec(_breakpointTable->viewport()->mapToGlobal(pos));
 }
 
 void BreakpointDialog::refreshBreakpointList()
@@ -741,8 +1012,9 @@ void BreakpointDialog::applyFilters()
     _clearSearchButton->setEnabled(!searchText.isEmpty() || groupFilter != "All Groups");
 
     // Hide rows that don't match the search text and group filter
-    for (int row = 0; row < _breakpointTable->rowCount(); ++row)
+    for (int row = 0; row < _breakpointTable->topLevelItemCount(); ++row)
     {
+        QTreeWidgetItem* item = _breakpointTable->topLevelItem(row);
         bool matchesSearch = true;
 
         // Apply text search if there's search text
@@ -762,25 +1034,23 @@ void BreakpointDialog::applyFilters()
             }
 
             // Define columns to search in
-            const int columnsToSearch[] = {0, 2, 3, 6, 7, 8};  // ID, Address, Access, Group, Condition, Notes
+            const int columnsToSearch[] = {ColId, ColAddress, ColAccess, ColGroup, ColCondition, ColNotes};
 
             for (int colIndex : columnsToSearch)
             {
-                QTableWidgetItem* item = _breakpointTable->item(row, colIndex);
-                if (!item)
-                    continue;
+                const QString text = item->text(colIndex);
 
                 // Special handling for address column
-                if (isAddressSearch && colIndex == 2)  // Address column
+                if (isAddressSearch && colIndex == ColAddress)  // Address column
                 {
                     // For address searches, we want to match the address format exactly
-                    if (item->text().contains(addressSearchText, Qt::CaseInsensitive))
+                    if (text.contains(addressSearchText, Qt::CaseInsensitive))
                     {
                         matchesSearch = true;
                         break;
                     }
                 }
-                else if (item->text().contains(searchText, Qt::CaseInsensitive))
+                else if (text.contains(searchText, Qt::CaseInsensitive))
                 {
                     matchesSearch = true;
                     break;
@@ -791,13 +1061,10 @@ void BreakpointDialog::applyFilters()
         // Apply group filter if not "All Groups"
         bool matchesGroup = true;
         if (groupFilter != "All Groups")
-        {
-            QTableWidgetItem* groupItem = _breakpointTable->item(row, 6);
-            matchesGroup = groupItem && groupItem->text() == groupFilter;
-        }
+            matchesGroup = item->text(ColGroup) == groupFilter;
 
         // Hide row if it doesn't match both filters
-        _breakpointTable->setRowHidden(row, !(matchesSearch && matchesGroup));
+        item->setHidden(!(matchesSearch && matchesGroup));
     }
 
     // Update status bar with filtered count
@@ -810,10 +1077,8 @@ void BreakpointDialog::clearFilters()
     _groupFilter->setCurrentText("All Groups");
 
     // Show all rows
-    for (int row = 0; row < _breakpointTable->rowCount(); ++row)
-    {
-        _breakpointTable->setRowHidden(row, false);
-    }
+    for (int row = 0; row < _breakpointTable->topLevelItemCount(); ++row)
+        _breakpointTable->topLevelItem(row)->setHidden(false);
 
     updateStatusBar();
 }
