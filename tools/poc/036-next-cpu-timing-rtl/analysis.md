@@ -64,7 +64,12 @@ shifted: 372 instruction durations of the `mix` program were off; with `UlaConte
 `dmaprescc` / `dmaprescb`: 16 bytes from #8000 to port #FE, timing 3 + 3, prescaler 4, continuous / burst. The RTL's port writes are
 152 clocks of 28 MHz apart in the continuous mode (32 N + 3 CPU clocks: READ_1 clears the timer, WAITING_CYCLES compares it registered,
 then WAITING_ACK, READ_1) and 176-192 in the burst mode. Ours had 32 N + 1; after the fix 0 durations differ on the continuous runs and
-the burst runs differ only in which instruction holds the byte (sum equal).
+the burst runs differed only in which instruction holds the byte (sum equal).
+
+2026-11-19: the burst grants are at the T80's machine-cycle ends (after DJNZ's M1, its displacement read, its internal M3, the NOP),
+19 < D <= 22 CPU clocks from the previous grant (BUSRQ registered a clock late, as in the continuous mode), and the first byte after
+the enable at the end of the next instruction's M1. Ours now grants at those ends through the engine's contention hook: 0 durations
+differ on `dmaprescb`, `dmaburst`, `dmaprescc`, `dmacont`, 48K / 128K / +3.
 
 ## NR #08 bit 6
 

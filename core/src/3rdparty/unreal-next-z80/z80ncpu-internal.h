@@ -284,6 +284,7 @@ struct Z80nCPU
     void* retnData;
     Z80nCpuContendFn contend;  // wait-state hook (null = uncontended)
     void* contendData;
+    int idleLeft;  // an internal T-state's hook call: the T-states of its group from this one on (Z80nCpuIdleLeft)
 
     uint16_t m1pc;  // address of the current instruction's first byte
 
