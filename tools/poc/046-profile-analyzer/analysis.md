@@ -26,7 +26,8 @@ so the order holds; differences under ~3 % are not significant (Nether's K2 belo
   count's high bits, so the entry test reads nothing more.
 - **Flow source.** The CPU flow events (K1) remove the stack's cost; the opcode decoder (K1o) is +1 ns, the
   memory re-read (K1m, the POC's original way) +3 ns. The three give the same profile (unit test
-  `FlowSourcesAgree`), so the events are the default and the decoders stay only for the A/B and that test.
+  `FlowSourcesAgree`), so the events are the default and the decoders stay only for the A/B and that test (both decoders removed
+  2026-11-20: the events are the only source).
 - **Idle.** The idle-tolerant subscription is what makes the profile usable on HALT-paced programs: the delta model
   needs no callback per idle fetch, the stretch lands on the HALT at the next instruction start.
 

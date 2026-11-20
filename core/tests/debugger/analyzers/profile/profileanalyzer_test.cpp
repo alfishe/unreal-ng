@@ -248,56 +248,44 @@ TEST_F(ProfileAnalyzer_Test, RootDispatchDoesNotPileUp)
     EXPECT_EQ(s.totals.stackOverflows, 0u);
 }
 
-/// The call stack's three flow sources (the CPU's flow events, the previous opcode, the byte from memory) book the
-/// same: taken and untaken conditional calls and returns, nested calls, a PUSH + RET dispatch
-TEST_F(ProfileAnalyzer_Test, FlowSourcesAgree)
+/// The call stack from the CPU's flow events: taken and untaken conditional calls and returns, nested calls, a PUSH +
+/// RET dispatch. The stack is exact right after the step of a CALL or a RET (a run ending on one reads it at once)
+TEST_F(ProfileAnalyzer_Test, ConditionalTransfersAndADispatch)
 {
     constexpr int loops = 30;
-    std::vector<profile::Snapshot> runs;
-    for (uint8_t source = 0; source < 3; ++source)
+    Origin();
+    // loop: XOR A; CALL $8100; CALL NZ,$8200 (not taken); CALL Z,$8300; JR loop
+    Poke(0x8004, {0xAF, 0xCD, 0x00, 0x81, 0xC4, 0x00, 0x82, 0xCC, 0x00, 0x83, 0x18, 0xF4});
+    Poke(0x8100, {0xCD, 0x00, 0x82, 0xC9});        // CALL $8200; RET
+    Poke(0x8200, {0x00, 0xC8, 0xC9});              // NOP; RET Z (taken)
+    Poke(0x8300, {0x21, 0x00, 0x82, 0xE5, 0xC9});  // LD HL,$8200; PUSH HL; RET (a dispatch)
+    Start({{"frames", "false"}, {"reset", "true"}});
+
+    // Read after each step of the first pass: the transfer of the step just run is on the stack already
+    const std::vector<uint32_t> depths = {1, 2, 2, 1, 0};  // CALL $8100, CALL $8200, NOP, RET Z, RET
+    Steps(2 + 1);                                          // to the loop, XOR A
+    for (size_t i = 0; i < depths.size(); ++i)
     {
-        Origin();
-        // loop: XOR A; CALL $8100; CALL NZ,$8200 (not taken); CALL Z,$8300; JR loop
-        Poke(0x8004, {0xAF, 0xCD, 0x00, 0x81, 0xC4, 0x00, 0x82, 0xCC, 0x00, 0x83, 0x18, 0xF4});
-        Poke(0x8100, {0xCD, 0x00, 0x82, 0xC9});        // CALL $8200; RET
-        Poke(0x8200, {0x00, 0xC8, 0xC9});              // NOP; RET Z (taken)
-        Poke(0x8300, {0x21, 0x00, 0x82, 0xE5, 0xC9});  // LD HL,$8200; PUSH HL; RET (a dispatch)
-        profile::Settings settings = _analyzer->ReadTotals().settings;
-        settings.flowSource = source;
-        settings.frames = false;
-        std::string error;
-        ASSERT_TRUE(_analyzer->Configure(settings, error)) << error;
-        Start({{"frames", "false"}, {"reset", "true"}});
-        Steps(2 + 14 * loops + 1);  // ends after XOR A: no transfer waits for the next start
-        runs.push_back(_analyzer->Read("", false));
-        ASSERT_TRUE(Op("stop").Ok());
+        Steps(1);
+        EXPECT_EQ(_analyzer->Read("", false).totals.depth, depths[i]) << "after step " << i;
     }
-    const profile::Snapshot& events = runs[0];
-    ASSERT_EQ(events.totals.routines, 3u);
-    const profile::RoutineView* dispatched = At(events, 0x8200);
+
+    Steps(14 * loops - 5);  // ends after XOR A
+    const profile::Snapshot s = _analyzer->Read("", false);
+    ASSERT_EQ(s.totals.routines, 3u);
+    EXPECT_EQ(s.totals.depth, 0u);
+    const profile::RoutineView* first = At(s, 0x8100);
+    const profile::RoutineView* dispatched = At(s, 0x8200);
+    const profile::RoutineView* dispatcher = At(s, 0x8300);
+    ASSERT_NE(first, nullptr);
     ASSERT_NE(dispatched, nullptr);
+    ASSERT_NE(dispatcher, nullptr);
+    EXPECT_EQ(first->entries[profile::EntryCall], uint64_t(loops));
+    EXPECT_EQ(dispatcher->entries[profile::EntryCall], uint64_t(loops)) << "CALL Z taken, CALL NZ not";
     EXPECT_EQ(dispatched->entries[profile::EntryCall], uint64_t(loops));
     EXPECT_EQ(dispatched->entries[profile::EntryDispatch], uint64_t(loops));
-    EXPECT_EQ(events.totals.depth, 0u);
-    for (size_t source = 1; source < runs.size(); ++source)
-    {
-        const profile::Snapshot& other = runs[source];
-        EXPECT_EQ(other.totals.tstates, events.totals.tstates) << "source " << source;
-        ASSERT_EQ(other.routines.size(), events.routines.size()) << "source " << source;
-        for (size_t id = 0; id < events.routines.size(); ++id)
-        {
-            const profile::RoutineView& a = events.routines[id];
-            const profile::RoutineView& b = other.routines[id];
-            EXPECT_EQ(a.address, b.address) << "source " << source << " routine " << id;
-            EXPECT_EQ(a.self, b.self) << "source " << source << " routine " << id;
-            EXPECT_EQ(a.inclusive, b.inclusive) << "source " << source << " routine " << id;
-            EXPECT_EQ(a.jumpIns, b.jumpIns) << "source " << source << " routine " << id;
-            EXPECT_EQ(a.abandoned, b.abandoned) << "source " << source << " routine " << id;
-            EXPECT_EQ(a.dispatchesOut, b.dispatchesOut) << "source " << source << " routine " << id;
-            for (uint32_t k = 0; k < profile::EntryKinds; ++k)
-                EXPECT_EQ(a.entries[k], b.entries[k]) << "source " << source << " routine " << id << " kind " << k;
-        }
-    }
+    EXPECT_EQ(dispatcher->dispatchesOut, uint64_t(loops));
+    EXPECT_EQ(s.totals.stackOverflows, 0u);
 }
 
 /// IM 2 with a halted main loop over frames: the handler is an interrupt entry, every T-state is booked once (the
