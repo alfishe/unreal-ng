@@ -835,6 +835,12 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/pchistorypane_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/pchistorypane.h"
+        # The debugger's ZX Spectrum Next panes: NextREG, MMU, Copper, Sprites, DMA, CTC / IM2 (Next TODO "Qt panels")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/nextpanes_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/nextpanes.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/debugger/reportpane.h"
         # The Network traffic window (network #91 T4): rows, filter, decode, Seek here
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/trafficwindow_test.cpp"
         # Windows against an instance automation removes while they show it (BUGS.md #11)

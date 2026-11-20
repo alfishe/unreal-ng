@@ -4,14 +4,15 @@ eCat3's debugger window (Mikhail Revzin, <https://github.com/Ptr314/ecat3>, GPL-
 the machine, a tab per processor (the main Z80, a General Sound card's Z80: its step buttons step the card's CPU, in
 this process and over the WebAPI's `?cpu=gs`), dumps of every address space and memory
 page, stack, breakpoints, history and a Devices tab with every report the machine has (the device catalog,
-`GET /state/devices`). Ported and measured in [POC 041](../../tools/poc/041-ecat-debugger/README.md); the port is ours
+`GET /state/devices`); on a ZX Spectrum Next also NextREG, MMU, Copper, Sprites, DMA and CTC / IM2 tabs, each a catalog report
+read whole (fields, its list as a table, values changed since the last stop in the changed colour). Ported and measured in [POC 041](../../tools/poc/041-ecat-debugger/README.md); the port is ours
 and is adapted freely.
 
 ## Layout
 
 | Folder | What |
 |--------|------|
-| `ecat/` | the window and its views, from ecat3 `dev` @ 27a98108 (`src/dialogs/debugger/`, `emulator/disasm_buffer.*`), plus our own paged-memory tab and bank strip |
+| `ecat/` | the window and its views, from ecat3 `dev` @ 27a98108 (`src/dialogs/debugger/`, `emulator/disasm_buffer.*`), plus our own paged-memory tab, bank strip and Next tabs (`nextviews.*`) |
 | `shimapi/ecatshim.h` | the part of ecat's core API the views call (Emulator, CPU, DisAsm, devices), declared over nothing |
 | `shim/` | ecat's header names (`emulator/core.h`, ...) standing for that API |
 | `adapter/` | the API over unreal-ng: `unrealmachine.cpp` (the core in this process), `remotemachine.cpp` (a running emulator through its WebAPI) |
