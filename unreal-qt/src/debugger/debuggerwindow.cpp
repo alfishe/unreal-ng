@@ -16,6 +16,7 @@
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
@@ -37,6 +38,9 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/nextpanes.h"
+#include "emulator/emulatorcontext.h"
+#include "debugger/reportpane.h"
 #include "debugger/markup/memorymarkup.h"
 #include "debugger/panefocus.h"
 #include "debugger/pchistorypane.h"
@@ -73,20 +77,41 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Panels: one frame style for all of them (the speed control's), the panels' text in the window's monospace font
     // (a group box's style sheet font would pass its small title size down to the contents)
-    // The PC history: a third splitter pane right of the disassembly, shown (and recording) by its toolbar toggle
-    QGroupBox* historyGroup = new QGroupBox("PC history", this);
-    historyGroup->setObjectName("historyGroup");
-    QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
+    // The splitter's third pane, right of the disassembly: tabs of every view the machine has, the PC history (recording
+    // while its tab is in front) and, on a ZX Spectrum Next, its panes (NextREG, MMU, Copper, Sprites, DMA, CTC / IM2)
+    _sideGroup = new QGroupBox("PC history", this);
+    _sideGroup->setObjectName("historyGroup");
+    QVBoxLayout* historyLayout = new QVBoxLayout(_sideGroup);
     historyLayout->setSpacing(0);
-    _pcHistoryPane = new PcHistoryPane(_emulator, historyGroup);
-    historyLayout->addWidget(_pcHistoryPane);
-    ui->mainSplitter->addWidget(historyGroup);
-    historyGroup->hide();
+    _sideTabs = new QTabWidget(_sideGroup);
+    _sideTabs->setObjectName("debuggerSideTabs");
+    _sideTabs->setDocumentMode(true);
+    _pcHistoryPane = new PcHistoryPane(_emulator, _sideTabs);
+    _sideTabs->addTab(_pcHistoryPane, "PC history");
+    for (const NextPanes::Pane& pane : NextPanes::Create(_sideTabs))
+    {
+        const int index = _sideTabs->addTab(pane.pane, pane.title);
+        _sideTabs->setTabToolTip(index, pane.tooltip);
+        _sideTabs->setTabVisible(index, false);
+        _nextPanes.push_back(pane.pane);
+    }
+    historyLayout->addWidget(_sideTabs);
+    ui->mainSplitter->addWidget(_sideGroup);
+    connect(_sideTabs, &QTabWidget::currentChanged, this, [this]() {
+        updateSidePane();
+        refreshNextPanes(_emulator && !_emulator->IsPaused());
+    });
+    _nextPanesTimer = new QTimer(this);
+    _nextPanesTimer->setInterval(200);
+    connect(_nextPanesTimer, &QTimer::timeout, this, [this]() {
+        if (_emulator && !_emulator->IsPaused())
+            refreshNextPanes(true);
+    });
 
     const QFont panelFont = font();
     for (QWidget* contents : std::initializer_list<QWidget*>{ui->registersWidget, ui->stackWidget,
                                                               ui->memorypagesWidget, ui->hexView,
-                                                              ui->disassemblerWidget, _pcHistoryPane})
+                                                              ui->disassemblerWidget, _sideTabs})
         contents->setFont(panelFont);
     setStyleSheet(QStringLiteral(R"(
         QGroupBox#registersGroup, QGroupBox#stackGroup, QGroupBox#pagesGroup, QGroupBox#memoryGroup,
@@ -128,7 +153,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     ui->mainSplitter->setStretchFactor(0, 0);
     ui->mainSplitter->setStretchFactor(1, 1);
     ui->mainSplitter->setStretchFactor(2, 0);
-    ui->mainSplitter->setSizes({400, 700, 260});
+    ui->mainSplitter->setSizes({400, 640, 380});
 
     // Create floating toolbar
     // toolBar = new QToolBar("Debugger toolbar", this);
@@ -241,11 +266,6 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     liveSourceAction = new QAction("Live source", this);
     liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
     toolBar->addAction(liveSourceAction);
-    pcHistoryAction = new QAction("PC history", this);
-    pcHistoryAction->setToolTip("The PC history pane: the newest instructions the CPU started, with their window's page "
-                                "(records while shown)");
-    pcHistoryAction->setCheckable(true);
-    toolBar->addAction(pcHistoryAction);
     QMenu* machineMenu = new QMenu(this);
     QAction* portWatchAction = machineMenu->addAction("Ports");
     portWatchAction->setToolTip("Every port the machine decodes, the latched ones with their values (changes lit)");
@@ -290,7 +310,6 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
     connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
     connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
-    connect(pcHistoryAction, &QAction::toggled, this, &DebuggerWindow::showPcHistory);
     connect(_pcHistoryPane, &PcHistoryPane::addressPicked, ui->disassemblerWidget, &DisassemblerWidget::goToAddress);
     connect(this, &DebuggerWindow::readyForChildren, _pcHistoryPane, &PcHistoryPane::refresh);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
@@ -353,6 +372,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _cpuTabs = new DebuggerCpuTabs(cpuBar, this);
     _registersTitle = ui->registersGroup->title();
     _stackTitle = ui->stackGroup->title();
+    _pagesTitle = ui->pagesGroup->title();
     _memoryTitle = ui->memoryGroup->title();
     _disasmTitle = ui->disasmGroup->title();
     connect(_cpuTabs, &DebuggerCpuTabs::cpuChanged, this, [this](DebugCpuId cpu) {
@@ -650,6 +670,7 @@ void DebuggerWindow::updateMachineActions()
     diskSectorAction->setToolTip(drives ? "View and edit a floppy sector's data field (CRC recalculated, the image "
                                           "counts as modified)"
                                         : "This machine has no floppy drives");
+    updateSidePane();
 }
 
 void DebuggerWindow::onBindingBound()
@@ -726,10 +747,9 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
 void DebuggerWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    if (pcHistoryAction && pcHistoryAction->isChecked() && !_pcHistoryPane->isRecording())
-        _pcHistoryPane->setRecording(true);
     if (_cpuTabs)
         _cpuTabs->setActive(true);  // a card in front follows the main CPU's steps again
+    updateSidePane();
     emit visibilityChanged(true);
 }
 
@@ -740,6 +760,7 @@ void DebuggerWindow::hideEvent(QHideEvent* event)
         _pcHistoryPane->setRecording(false);  // a closed debugger costs the emulation nothing
     if (_cpuTabs)
         _cpuTabs->setActive(false);  // nor does a card it showed
+    _nextPanesTimer->stop();  // nor do the Next panes
     emit visibilityChanged(false);
 }
 
@@ -869,9 +890,35 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
         tip += QString(" '%1'").arg(QString(QChar(byte)).toHtmlEscaped());
     tip += QString("&nbsp; word #%1 = %2").arg(hex(word, 4)).arg(word);
 
-    // A card's 64 KB: the cell and the card's PC (the markup and the labels here are the main CPU's)
+    // The label at the cell or the nearest one before it (from `from` on): the CPU's own labels (a card's are its
+    // firmware symbols), never another CPU's
+    LabelManager* labels = _emulator->GetDebugManager() &&
+                                   MetadataSettings::Instance().Uses(MetadataSettings::Switch::Labels)
+                               ? _emulator->GetDebugManager()->GetLabelManager(cpu)
+                               : nullptr;
+    std::string labelComment;
+    const auto addLabel = [&](uint16_t from) {
+        if (!labels)
+            return;
+        std::shared_ptr<Label> nearest;
+        for (const auto& label : labels->GetLabelsInRange(from, address))
+            if (label->address <= address && (!nearest || label->address >= nearest->address) &&
+                labels->GetLabelByZ80Address(label->address) == label)
+                nearest = label;
+        if (!nearest)
+            return;
+        tip += "<br><b>" + escaped(nearest->name) + "</b>";
+        if (nearest->address != address)
+            tip += QString("+%1").arg(address - nearest->address);
+        if (!nearest->comment.empty())
+            tip += " - " + escaped(nearest->comment);
+        labelComment = nearest->comment;
+    };
+
+    // A card's 64 KB: the cell, the card's label and PC (the markup is the main CPU's: none here)
     if (IsCardCpu(cpu))
     {
+        addLabel(static_cast<uint16_t>(std::max(0, address - 0xFF)));
         tip += QString("<br>%1, %2")
                    .arg(debuggercpu::Title(context, cpu),
                         debuggercpu::CardWindowName(context, cpu, static_cast<uint8_t>(address >> 14)));
@@ -908,28 +955,7 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
             }
     }
     // The label at the cell or the nearest one before it (inside the block when there is one): the variable's name
-    std::string labelComment;
-    if (LabelManager* labels = _emulator->GetDebugManager() &&
-                                       MetadataSettings::Instance().Uses(MetadataSettings::Switch::Labels)
-                                   ? _emulator->GetDebugManager()->GetLabelManager()
-                                   : nullptr)
-    {
-        const uint16_t from = span ? span->lo : static_cast<uint16_t>(std::max(0, address - 0xFF));
-        std::shared_ptr<Label> nearest;
-        for (const auto& label : labels->GetLabelsInRange(from, address))
-            if (label->address <= address && (!nearest || label->address >= nearest->address) &&
-                labels->GetLabelByZ80Address(label->address) == label)
-                nearest = label;
-        if (nearest)
-        {
-            tip += "<br><b>" + escaped(nearest->name) + "</b>";
-            if (nearest->address != address)
-                tip += QString("+%1").arg(address - nearest->address);
-            if (!nearest->comment.empty())
-                tip += " - " + escaped(nearest->comment);
-            labelComment = nearest->comment;
-        }
-    }
+    addLabel(span ? span->lo : static_cast<uint16_t>(std::max(0, address - 0xFF)));
     // The block: its kind, extent, the cell's place in it, the layer it comes from, its title; a small variable's value
     if (span)
     {
@@ -1130,6 +1156,8 @@ void DebuggerWindow::updateState()
         ui->stackWidget->refresh();
 
         _pcHistoryPane->refresh();
+        updateSidePane();  // a model switch keeps the machine: the Next panes follow it
+        refreshNextPanes(false);
         showMemoryAtPc();
     }
     else
@@ -1824,10 +1852,45 @@ void DebuggerWindow::showLiveSource()
     _liveSourceWindow->activateWindow();
 }
 
-void DebuggerWindow::showPcHistory(bool shown)
+void DebuggerWindow::updateSidePane()
 {
-    _pcHistoryPane->parentWidget()->setVisible(shown);
-    _pcHistoryPane->setRecording(shown);
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: read once, not kept
+    const bool next = context && context->config.mem_model == MM_NEXT;
+    if (next != _nextMachine)
+    {
+        _nextMachine = next;
+        for (ReportPane* pane : _nextPanes)
+        {
+            pane->clearMarks();  // another machine: nothing to compare with
+            _sideTabs->setTabVisible(_sideTabs->indexOf(pane), next);
+        }
+        _sideGroup->setTitle(next ? "PC history / Next" : "PC history");
+    }
+    // The PC history records while its tab is in front of a shown window (records cost every instruction); the live
+    // refresh of a Next tab runs while one is in front, a paused machine is refreshed by its stop (updateState)
+    const bool shown = isVisible();
+    const bool history = shown && _sideTabs->currentWidget() == _pcHistoryPane;
+    if (_pcHistoryPane->isRecording() != history)
+        _pcHistoryPane->setRecording(history);
+    if (shown && qobject_cast<ReportPane*>(_sideTabs->currentWidget()))
+        _nextPanesTimer->start();
+    else
+        _nextPanesTimer->stop();
+}
+
+void DebuggerWindow::refreshNextPanes(bool live)
+{
+    if (!_emulator || !_nextMachine || !isVisible())
+        return;
+    ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
+    if (!pane)
+        return;
+    if (!live && _emulator->IsDirectStepping())
+        return;  // the stepping's end refreshes (updateState)
+    Emulator::ContextLease lease = _emulator->LeaseContext();
+    if (!lease)
+        return;
+    pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
 }
 
 void DebuggerWindow::showPortWatch()
@@ -2159,7 +2222,14 @@ void DebuggerWindow::showLabelManager()
         return;
     }
 
-    LabelEditor labelEditor(_emulator->GetDebugManager()->GetLabelManager(), this);
+    // The labels of the processor in front (a card's tab: the card's own store)
+    LabelManager* labels = _emulator->GetDebugManager()->GetLabelManager(currentCpu());
+    if (!labels)
+    {
+        QMessageBox::warning(this, "Warning", "The processor in front has no labels");
+        return;
+    }
+    LabelEditor labelEditor(labels, this);
     labelEditor.exec();
 
     // Update debugger state after dialog closes (if needed)
@@ -2254,6 +2324,7 @@ void DebuggerWindow::retargetPanes()
     ui->disassemblerWidget->setCpu(cpu);
     ui->registersGroup->setTitle(_registersTitle + suffix);
     ui->stackGroup->setTitle(_stackTitle + suffix);
+    ui->pagesGroup->setTitle(_pagesTitle + suffix);
     ui->memoryGroup->setTitle(_memoryTitle + suffix);
     ui->disasmGroup->setTitle(_disasmTitle + suffix);
     // The view of the other CPU's memory goes; the CPU's own comes at its PC
@@ -2287,8 +2358,10 @@ bool DebuggerWindow::cardStep(const char* kind, uint16_t address, QString* error
     clearStopBanner();
     if (m_speedControl)
         m_speedControl->stop();
-    // In the recorded past Step In replays one card instruction forward (rule 3); live, the card's own step runs
-    if (std::string(kind) == "in" && _timeTravel && _timeTravel->stepForward())
+    // In the recorded past Step In / Over / Out replay the card's step through the history (rule 3); live, or at the
+    // history's end (D-3: on live, unrecorded), the card's own step runs
+    const std::string step = kind;
+    if ((step == "in" || step == "over" || step == "out") && _timeTravel && _timeTravel->stepForward(step))
         return true;
     // The machine runs until the card ends the step (or a breakpoint, or the deadline), then pauses: as eCat's card
     // tab steps, on this thread

@@ -2,6 +2,7 @@
 
 #include "emulator/io/ide/cdaudiocontrol.h"
 #include "emulator/io/z80n/nextdivmmcjournal.h"
+#include "emulator/io/z80n/nextreportquery.h"
 #include "emulator/io/z80n/nextsdjournal.h"
 #include "emulator/state/devicestate.h"
 
@@ -26,6 +27,14 @@ StateNode BuildCdAudio(EmulatorContext* context)
     return CdAudioControl::State(context);
 }
 
+StateNode BuildNextCopper(EmulatorContext* context)
+{
+    return NextCopper(context, NextCopperQuery());  // the default window: the first 64 words, the words around the PC
+}
+StateNode BuildNextSprites(EmulatorContext* context)
+{
+    return NextSprites(context, NextSpritesQuery());  // the visible sprites
+}
 StateNode BuildNextSd(EmulatorContext* context)
 {
     NextSdJournalQuery query;
@@ -156,6 +165,10 @@ const std::vector<ReportEntry>& CatalogEntries()
         {"tsconf", "TS-Conf", "state/tsconf", "state tsconf", "tsconf_state", "tsconf", &TsConf, nullptr, &TsConfSummary},
         {"sprinter", "Sprinter", "state/sprinter", "state sprinter", "sprinter_state", "sprinter", &Sprinter, nullptr, nullptr},
         {"next", "ZX Spectrum Next", "state/next", "state next", "next_state", "next", &Next, nullptr, nullptr},
+        {"next-regs", "Next registers", "state/next/regs", "state next regs", "next_regs", "next_regs", &NextRegs, nullptr, nullptr},
+        {"next-mmu", "Next MMU", "state/next/mmu", "state next mmu", "next_mmu", "next_mmu", &NextMmu, nullptr, nullptr},
+        {"next-copper", "Next copper", "state/next/copper", "state next copper", "next_copper", "next_copper", &BuildNextCopper, nullptr, nullptr},
+        {"next-sprites", "Next sprites", "state/next/sprites", "state next sprites", "next_sprites", "next_sprites", &BuildNextSprites, nullptr, nullptr},
         {"next-audio", "Next sound", "state/next/audio", "state next audio", "next_audio", "next_audio", &NextAudioReport, nullptr, &NextAudioSummary},
         {"next-dma", "Next DMA", "state/next/dma", "state next dma", "next_dma", "next_dma", &NextDma, nullptr, nullptr},
         {"next-uart", "Next UARTs", "state/next/uart", "state next uart", "next_uart", "next_uart", &NextUartReport, nullptr, nullptr},

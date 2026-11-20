@@ -511,7 +511,8 @@ private:
                              const std::vector<std::string>& args);
     void HandleTTDStepInstruction(const ClientSession& session, EmulatorContext* context,
                                    const std::vector<std::string>& args);
-    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context);
+    void HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context,
+                                  const std::vector<std::string>& args);
     void HandleTTDReverseStep(const ClientSession& session, EmulatorContext* context,
                               const std::vector<std::string>& args);
     void HandleTTDReverseContinue(const ClientSession& session, EmulatorContext* context,
@@ -529,6 +530,7 @@ private:
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDPastRead(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;

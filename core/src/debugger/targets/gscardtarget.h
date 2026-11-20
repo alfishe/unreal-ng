@@ -158,6 +158,40 @@ public:
     uint64_t ScanHitCount() const { return _scanHits; }
     /// The first boundary the scan saw was past `captureAt` (the count lies before the replay's start)
     bool ScanStartedPast() const { return _scanStartedPast; }
+    /// After BeginScan: the scan also keeps the newest boundary before `before` whose SP is at stack level `level`
+    /// or above it (the difference taken modulo 64K): a card reverse step over looks for the instruction that
+    /// entered a routine (TimeTravelController::ReverseStepOverCard)
+    void ScanStackLevel(uint16_t level, uint64_t before);
+    /// After BeginScan: @p trace is called at every boundary of the scan with the card and its count (the oracle of
+    /// tests and tools that need each card instruction; the card's registers and memory read from it are the
+    /// boundary's). Cleared at the scan's start and end
+    using ScanTraceFn = std::function<void(GeneralSoundCard* card, uint64_t count, uint16_t pc)>;
+    void ScanTrace(ScanTraceFn trace) { _scanTrace = std::move(trace); }
+    /// After BeginScan: the scan also finds where a card step of @p kind (Over or Out) taken from the boundary
+    /// @p after ends. The card's registers and code at that boundary arm it as ArmStep arms a step from a standing
+    /// card; each later boundary is decided as StepBoundary decides it live: Over ends at the first one at the
+    /// address after the instruction passed (StepOverTarget; anything else is a step in) with SP at or above the
+    /// start's; Out at the first one after a return ran with SP at or above the start's. A card step through the
+    /// recorded past (TimeTravelController::StepCardForward)
+    void ScanStep(StepKind kind, uint64_t after);
+    /// The scan has seen the step's start boundary
+    bool ScanStepStarted() const { return _scanStepStarted; }
+    /// The boundary the step ends at (false: not seen yet)
+    bool ScanStepFound(uint64_t& count) const
+    {
+        count = _scanStepCount;
+        return _scanStepFound;
+    }
+    /// After BeginScan with breakpoints: the oldest hit after the boundary @p after is kept too (a forward step ends
+    /// at it)
+    void ScanFirstHitAfter(uint64_t after);
+    ScanHit FirstScanHit() const { return _scanFirstHit; }
+    /// That boundary's count (false: none seen)
+    bool ScanStackFound(uint64_t& count) const
+    {
+        count = _scanStackCount;
+        return _scanStackFound;
+    }
     /// An active breakpoint that stops (what a reverse continue looks for)
     bool HasStoppingBreakpoints() const { return _stopWanted.load(std::memory_order_acquire); }
     /// RAII: a scan for one replay
@@ -216,6 +250,12 @@ public:
     void onEvent(GSCardEvent kind, uint16_t port, uint8_t value) override;
     void onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value) override;
 
+    /// The instruction at `pc` of the card CPU is a return (RET, RET cc, RETI, RETN and their aliases)
+    bool IsReturnAt(GeneralSoundCard* card, uint16_t pc) const;
+    /// The instruction at `pc` is one a step over passes as a whole (CALL, RST, DJNZ, a block instruction): true and
+    /// `target` the address after it; false: a step over is a step in there
+    bool StepOverTarget(GeneralSoundCard* card, uint16_t pc, uint16_t& target) const;
+
 private:
     /// The hooks on the current card when wanted, off it otherwise
     void Attach();
@@ -226,8 +266,6 @@ private:
     void Park(Stop stop, uint16_t boundaryPc);
     /// An armed step at this boundary: true when it parked
     bool StepBoundary(uint16_t pc);
-    /// The instruction at `pc` of the card CPU is a return (RET, RET cc, RETI, RETN and their aliases)
-    bool IsReturnAt(GeneralSoundCard* card, uint16_t pc) const;
     /// The waiting edits due at this boundary
     void ApplyEdits(GeneralSoundCard* card);
     /// The ZX frame the card is in (its frame-end catch-up runs after the frame counter moved on)
@@ -236,6 +274,8 @@ private:
     bool ReplayRead(ttd::TTDCardEdit::Kind kind, uint16_t address, uint8_t& value);
     /// A scan's boundary (beforeStep while scanning): its breakpoint hits and the capture
     void ScanBoundary(GeneralSoundCard* card, uint16_t pc);
+    /// A scan's step (ScanStep) at the boundary with `count` instructions done
+    void ScanStepBoundary(GeneralSoundCard* card, uint16_t pc, uint64_t count);
     /// A scan's hit at the boundary with `count` instructions done
     void ScanNoteHit(const Stop& stop, uint64_t count);
 
@@ -276,6 +316,24 @@ private:
     ScanCapture _capture;
     ScanHit _scanLastHit;
     uint64_t _scanHits = 0;
+    ScanTraceFn _scanTrace;                  // ScanTrace: called at every boundary of the scan
+    StepKind _scanStepKind = StepKind::None; // ScanStep: the step looked for, and its state
+    uint64_t _scanStepAfter = 0;
+    bool _scanStepStarted = false;
+    uint64_t _scanStepLast = 0;
+    uint16_t _scanStepTarget = 0;
+    uint16_t _scanStepSp = 0;
+    bool _scanStepReturning = false;
+    uint16_t _scanStepReturnSp = 0;
+    bool _scanStepFound = false;
+    uint64_t _scanStepCount = 0;
+    uint64_t _scanFirstAfter = UINT64_MAX;   // ScanFirstHitAfter: the oldest hit after it
+    ScanHit _scanFirstHit;
+    bool _scanStack = false;                 // ScanStackLevel: the newest boundary at the stack level is kept
+    uint16_t _scanStackLevel = 0;
+    uint64_t _scanStackBefore = 0;
+    bool _scanStackFound = false;
+    uint64_t _scanStackCount = 0;
 };
 
 /// The host side of the mailbox (the main CPU's access to #B3 / #BB, inside its instruction): a host-side event

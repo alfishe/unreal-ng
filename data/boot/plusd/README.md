@@ -39,7 +39,7 @@ The run is deterministic: two runs give the same file (the sha256 above).
 
 ## Comparison with S-DISK
 
-S-DISK (catalog pool `87a3c8ae4a7ff742…`, the +D system disk found in the wild) holds only `+SYS 2a`. Its directory
+S-DISK (`plusd_gdos_clean_dsdd.mgt`, the +D system disk found in the wild) holds only `+SYS 2a`. Its directory
 entry (all 256 bytes) and the 14 sectors of `+SYS 2a` are identical to this disk's: the body sha256 is
 `ba1582991bed6c7c…` on both. No configuration byte differs: S-DISK was written with the default answers too. The 53
 sectors that differ are CONFIG's own four files and their directory entries.

@@ -6823,6 +6823,21 @@ public:
                                                                                 {"count", std::to_string(count)}})));
         });
 
+        // ttd_card_reverse_step_over(cpu): the card's step over back: one card instruction back, or past a whole card
+        // routine to its CALL / RST when that instruction is its return (over_call, skipped in the reply)
+        lua.set_function("ttd_card_reverse_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("reverse-step-over", {{"cpu", cpu}})));
+        });
+
+        // ttd_card_step_over(cpu) / ttd_card_step_out(cpu): the card's step over / step out through the history (its
+        // breakpoints end it first; history_end: not ended in the history, the card at its end)
+        lua.set_function("ttd_card_step_over", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "over"}})));
+        });
+        lua.set_function("ttd_card_step_out", [this](sol::this_state ts, const std::string& cpu) -> sol::object {
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "out"}})));
+        });
+
         // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
         lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
                                                              sol::optional<uint64_t> maxFrames) -> sol::object {
@@ -7026,6 +7041,56 @@ public:
                 return StateNodeToLua(ts, TtdScriptValue(TtdRun(verb, options)));
             });
         }
+
+        // Reads of the past without seeking (PLAN #122 S1, V2):
+        // ttd_memory_series{ranges = "0x5B00:32, ram7:0x1800:768" | {"0x5B00:32", {space = "ram", page = 7,
+        //                   offset = 0x1800, length = 768}}, from_frame = F1, to_frame = F2, step = 1,
+        //                   frames = {F, ...}, changes_only = true, format = "hex", limit = 1000, max_bytes = N}
+        // ttd_screen_at{frame = F, which = "shown" | "normal" | "shadow", format = "png" | "bitmap" | "attributes" |
+        //               "raw", area = "full" | "screen", encoding = "base64" | "hex"}
+        lua.set_function("ttd_memory_series", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+            {
+                const std::string name = key.as<std::string>();
+                if (name != "ranges" || value.get_type() != sol::type::table)
+                {
+                    options[name] = TtdOptionText(value);
+                    continue;
+                }
+                // A list of ranges: strings as they are, tables as "space:offset:length" (page N: space ramN)
+                const sol::table list = value.as<sol::table>();
+                std::string text;
+                for (size_t i = 1; i <= list.size(); ++i)
+                {
+                    const sol::object item = list[i];
+                    std::string one = TtdOptionText(item);
+                    if (item.get_type() == sol::type::table)
+                    {
+                        const sol::table r = item.as<sol::table>();
+                        const sol::object page = r["page"];
+                        const sol::object space = r["space"];
+                        const sol::object address = r["address"];
+                        const sol::object offset = r["offset"];
+                        const sol::object length = r["length"];
+                        const std::string where = page.valid()    ? "ram" + TtdOptionText(page)
+                                                  : space.valid() ? TtdOptionText(space)
+                                                                  : std::string("cpu");
+                        one = where + ":" + TtdOptionText(address.valid() ? address : offset) + ":" +
+                              TtdOptionText(length);
+                    }
+                    text += (text.empty() ? "" : ",") + one;
+                }
+                options[name] = text;
+            }
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("memory-series", options)));
+        });
+        lua.set_function("ttd_screen_at", [this](sol::this_state ts, sol::table argsTable) -> sol::object {
+            std::map<std::string, std::string> options;
+            for (const auto& [key, value] : argsTable)
+                options[key.as<std::string>()] = TtdOptionText(value);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("screen-at", options)));
+        });
 
         // ====================================================================
         // Phase-2 analysis capabilities — parity with WebAPI/MCP/CLI:

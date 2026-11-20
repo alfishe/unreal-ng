@@ -224,22 +224,8 @@ std::string GSCardTarget::ArmStep(StepKind kind, uint32_t count, uint16_t target
     _stepSkip = (inside ? 0u : 1u) + std::max<uint32_t>(count, 1) - 1;
     if (kind == StepKind::Over)
     {
-        std::vector<uint8_t> bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH, 0);
-        for (size_t i = 0; i < bytes.size(); i++)
-            card->peekCardMemory(static_cast<uint16_t>(pc + i), bytes[i]);
-        // The machine's disassembler, or one of its own for a card without a machine (tests)
-        std::unique_ptr<Z80Disassembler> own;
-        Z80Disassembler* disassembler =
-            _context && _context->pDebugManager ? _context->pDebugManager->GetDisassembler().get() : nullptr;
-        if (!disassembler)
-            disassembler = (own = std::make_unique<Z80Disassembler>(_context)).get();
-        uint8_t length = 0;
-        if (disassembler->shouldStepOver(bytes))
-        {
-            disassembler->disassembleSingleCommand(bytes, pc, &length);
-            _stepTarget = static_cast<uint16_t>(pc + std::max<uint8_t>(length, 1));
+        if (StepOverTarget(card, pc, _stepTarget))
             _stepSkip = inside ? 0u : 1u;
-        }
         else
         {
             kind = StepKind::In;
@@ -275,6 +261,25 @@ void GSCardTarget::UpdateTight()
 {
     if (_context && _context->pDebugManager)
         _context->pDebugManager->UpdateCardTight();
+}
+
+bool GSCardTarget::StepOverTarget(GeneralSoundCard* card, uint16_t pc, uint16_t& target) const
+{
+    std::vector<uint8_t> bytes(Z80Disassembler::MAX_INSTRUCTION_LENGTH, 0);
+    for (size_t i = 0; i < bytes.size(); i++)
+        card->peekCardMemory(static_cast<uint16_t>(pc + i), bytes[i]);
+    // The machine's disassembler, or one of its own for a card without a machine (tests)
+    std::unique_ptr<Z80Disassembler> own;
+    Z80Disassembler* disassembler =
+        _context && _context->pDebugManager ? _context->pDebugManager->GetDisassembler().get() : nullptr;
+    if (!disassembler)
+        disassembler = (own = std::make_unique<Z80Disassembler>(_context)).get();
+    if (!disassembler->shouldStepOver(bytes))
+        return false;
+    uint8_t length = 0;
+    disassembler->disassembleSingleCommand(bytes, pc, &length);
+    target = static_cast<uint16_t>(pc + std::max<uint8_t>(length, 1));
+    return true;
 }
 
 bool GSCardTarget::IsReturnAt(GeneralSoundCard* card, uint16_t pc) const
@@ -742,6 +747,15 @@ void GSCardTarget::BeginScan(uint64_t captureAt, bool breakpoints, uint64_t hits
     _capture = ScanCapture{};
     _scanLastHit = ScanHit{};
     _scanHits = 0;
+    _scanStack = false;
+    _scanStackFound = false;
+    _scanStackCount = 0;
+    _scanTrace = nullptr;
+    _scanStepKind = StepKind::None;
+    _scanStepFound = false;
+    _scanStepStarted = false;
+    _scanFirstAfter = UINT64_MAX;
+    _scanFirstHit = ScanHit{};
     _pending = Stop{};
     if (breakpoints)
         _breakpoints->BeginReplayEvaluate();
@@ -766,6 +780,10 @@ void GSCardTarget::EndScan()
     if (_scanBreakpoints)
         _breakpoints->EndReplayEvaluate();
     _scanBreakpoints = false;
+    _scanStack = false;
+    _scanTrace = nullptr;
+    _scanStepKind = StepKind::None;
+    _scanFirstAfter = UINT64_MAX;
     _scanning.store(false, std::memory_order_release);
     Attach();
     UpdateTight();
@@ -774,6 +792,16 @@ void GSCardTarget::EndScan()
 void GSCardTarget::ScanNoteHit(const Stop& stop, uint64_t count)
 {
     _scanHits++;
+    if (count > _scanFirstAfter && (!_scanFirstHit.hit || count < _scanFirstHit.count))
+    {
+        _scanFirstHit.hit = true;
+        _scanFirstHit.count = count;
+        _scanFirstHit.breakpointId = stop.breakpointId;
+        _scanFirstHit.address = stop.address;
+        _scanFirstHit.value = stop.value;
+        _scanFirstHit.kind = stop.kind;
+        _scanFirstHit.pc = stop.pc;
+    }
     if (count >= _scanHitsBefore || (_scanLastHit.hit && count < _scanLastHit.count))
         return;
     _scanLastHit.hit = true;
@@ -785,11 +813,102 @@ void GSCardTarget::ScanNoteHit(const Stop& stop, uint64_t count)
     _scanLastHit.pc = stop.pc;
 }
 
+void GSCardTarget::ScanStackLevel(uint16_t level, uint64_t before)
+{
+    _scanStack = true;
+    _scanStackLevel = level;
+    _scanStackBefore = before;
+    _scanStackFound = false;
+    _scanStackCount = 0;
+}
+
+void GSCardTarget::ScanStep(StepKind kind, uint64_t after)
+{
+    _scanStepKind = kind;
+    _scanStepAfter = after;
+    _scanStepStarted = false;
+    _scanStepLast = after;
+    _scanStepTarget = 0;
+    _scanStepSp = 0;
+    _scanStepReturning = false;
+    _scanStepReturnSp = 0;
+    _scanStepFound = false;
+    _scanStepCount = 0;
+}
+
+void GSCardTarget::ScanFirstHitAfter(uint64_t after)
+{
+    _scanFirstAfter = after;
+    _scanFirstHit = ScanHit{};
+}
+
+void GSCardTarget::ScanStepBoundary(GeneralSoundCard* card, uint16_t pc, uint64_t count)
+{
+    if (_scanStepFound || count < _scanStepAfter)
+        return;
+    Z80CpuRegisters regs{};
+    if (!card->cardRegisters(regs))
+        return;
+    // The step's start: the card standing at `after` (as ArmStep arms a step from a boundary, not parked inside)
+    if (!_scanStepStarted)
+    {
+        if (count != _scanStepAfter)
+            return;
+        _scanStepStarted = true;
+        _scanStepSp = regs.sp;
+        if (_scanStepKind == StepKind::Over && !StepOverTarget(card, pc, _scanStepTarget))
+            _scanStepKind = StepKind::In;   // nothing to pass as a whole: a step in
+        else if (_scanStepKind == StepKind::Out)
+        {
+            _scanStepReturning = IsReturnAt(card, pc);
+            _scanStepReturnSp = regs.sp;
+        }
+        return;
+    }
+    // Each later boundary once, in order, decided as StepBoundary decides it for a live step
+    if (count <= _scanStepLast)
+        return;
+    _scanStepLast = count;
+    bool ends = false;
+    if (_scanStepKind == StepKind::In)
+        ends = true;
+    else if (_scanStepKind == StepKind::Over)
+        ends = pc == _scanStepTarget && regs.sp >= _scanStepSp;
+    else if (_scanStepKind == StepKind::Out)
+    {
+        ends = _scanStepReturning && regs.sp > _scanStepReturnSp;
+        if (!ends)
+        {
+            _scanStepReturning = regs.sp >= _scanStepSp && IsReturnAt(card, pc);
+            _scanStepReturnSp = regs.sp;
+        }
+    }
+    if (ends)
+    {
+        _scanStepFound = true;
+        _scanStepCount = count;
+    }
+}
+
 void GSCardTarget::ScanBoundary(GeneralSoundCard* card, uint16_t pc)
 {
     uint64_t count = 0;
     if (!card->cardInstructionCount(count))
         return;
+    if (_scanTrace)
+        _scanTrace(card, count, pc);
+    if (_scanStepKind != StepKind::None)
+        ScanStepBoundary(card, pc, count);
+    if (_scanStack && count < _scanStackBefore && (!_scanStackFound || count > _scanStackCount))
+    {
+        Z80CpuRegisters regs{};
+        if (card->cardRegisters(regs) &&
+            static_cast<int16_t>(static_cast<uint16_t>(regs.sp - _scanStackLevel)) >= 0)
+        {
+            _scanStackFound = true;
+            _scanStackCount = count;
+        }
+    }
     if (_scanBreakpoints)
     {
         // A bus or event hit of the instruction just run parks here, then an execution breakpoint at this PC

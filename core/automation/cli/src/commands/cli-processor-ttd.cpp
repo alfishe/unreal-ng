@@ -26,7 +26,8 @@
 ///   ttd diff F[+T] [G[+T]]     — diff of two moments: registers, paging, memory with the last writes, screen, devices
 ///   ttd replay-check [F [G]]   — replay each frame and compare it with the next checkpoint
 ///   ttd seek-check [on|off]    — every seek also replay-checks the frame it lands in
-///   ttd ... --cpu gs|ms        — seek, si-back / si-forward, reverse-step and reverse-continue on a sound card's CPU
+///   ttd ... --cpu gs|ms        — seek, si-back / si-forward (--over / --out: step over / out in the history),
+///                                reverse-step, reverse-step-over and reverse-continue on a sound card's CPU
 ///
 /// All commands operate on the currently selected emulator instance. The TTD
 /// engine requires the emulator to be paused for seek/step/resume operations
@@ -37,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include <common/base64.h>
 #include <debugger/ttd/timetravelcontroller.h>
 #include <debugger/ttd/ttdcausechain.h>
 #include <debugger/ttd/ttdcontrol.h>
@@ -320,7 +322,7 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     }
     else if (subcommand == "reverse-step-over" || subcommand == "rso")
     {
-        HandleTTDReverseStepOver(session, context);
+        HandleTTDReverseStepOver(session, context, args);
     }
     else if (subcommand == "reverse-step"   ||
              subcommand == "reverse-continue" ||
@@ -375,6 +377,10 @@ void CLIProcessor::HandleTTD(const ClientSession& session, const std::vector<std
     else if (subcommand == "memory-at" || subcommand == "mat" || subcommand == "memory-diff" || subcommand == "mdiff")
     {
         HandleTTDMemoryAt(session, context, args);
+    }
+    else if (subcommand == "memory-series" || subcommand == "mser" || subcommand == "screen-at" || subcommand == "sat")
+    {
+        HandleTTDPastRead(session, context, args);
     }
     else if (subcommand == "help" || subcommand == "?")
     {
@@ -467,6 +473,13 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "                                   region: vram, cache, neogs.ram, ... - memory regions lists them)" << NEWLINE;
     ss << "  ttd memory-diff --space S --from F1 --to F2 [--limit N]       (alias: mdiff)" << NEWLINE;
     ss << "                                   The bytes of a memory that differ between two checkpoints" << NEWLINE;
+    ss << "  ttd memory-series --ranges R [--from F1] [--to F2] [--step N] [--frames F,F,..]   (alias: mser)" << NEWLINE;
+    ss << "    [--changes-only] [--format hex|base64|values] [--limit ROWS] [--max-bytes N]" << NEWLINE;
+    ss << "                                   Ranges at many frame starts in one walk, without seeking" << NEWLINE;
+    ss << "                                   (R: \"[space:]offset:length, ...\", e.g. \"0x5B00:32,ram7:0x1800:768\")" << NEWLINE;
+    ss << "  ttd screen-at --frame F [--which shown|normal|shadow] [--format png|bitmap|attributes|raw]   (alias: sat)" << NEWLINE;
+    ss << "    [--area full|screen] [--encoding base64|hex] [--save FILE]" << NEWLINE;
+    ss << "                                   A past frame's picture or screen bytes, without seeking" << NEWLINE;
     ss << "  ttd port-events <event> [arg] [option=value ...]   (alias: pe)" << NEWLINE;
     ss << "                                   When did the program ... - from the port journals, no replay:" << NEWLINE;
     ss << "    key [KEY]       saw a key down (KEY: a, enter, space, caps, symbol...; none: any key)" << NEWLINE;
@@ -485,8 +498,11 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "Sound card CPU positions (--cpu gs|neogs|ms|multisound; the main CPU follows by replay):" << NEWLINE;
     ss << "  ttd seek --cpu gs <instruction>  The card at its instruction count (ttd position shows it)" << NEWLINE;
     ss << "  ttd si-back --cpu gs [--count N] / ttd si-forward --cpu gs [--count N]   N card instructions" << NEWLINE;
+    ss << "  ttd si-forward --cpu gs --over | --out   Card step over / step out through the history (its" << NEWLINE;
+    ss << "                                  breakpoints end it; not ended: to the history's end)" << NEWLINE;
     ss << "  ttd reverse-step --cpu gs [--count N]                                     N card instructions back" << NEWLINE;
     ss << "  ttd reverse-continue --cpu gs [--max-frames N]   Back to the card's previous breakpoint hit" << NEWLINE;
+    ss << "  ttd reverse-step-over --cpu gs   Card step over back: past a card routine whose return comes before" << NEWLINE;
     ss << NEWLINE;
     ss << "Phase 4 — Reverse Execution:" << NEWLINE;
     ss << "  ttd reverse-step [--count N]     Step back N instructions (default: 1)" << NEWLINE;
@@ -1750,9 +1766,11 @@ void CLIProcessor::HandleTTDStepInstruction(const ClientSession& session, Emulat
     {
         // `ttd si-back --cpu gs [--count N]`: N card instructions (the main CPU follows by replay)
         std::map<std::string, std::string> options{{"cpu", cardCpu}, {"dir", forward ? "forward" : "back"}};
-        for (size_t i = 1; i + 1 < args.size(); ++i)
-            if (args[i] == "--count")
+        for (size_t i = 1; i < args.size(); ++i)
+            if (args[i] == "--count" && i + 1 < args.size())
                 options["count"] = args[i + 1];
+            else if (args[i] == "--over" || args[i] == "--out")
+                options["kind"] = args[i].substr(2);   // `ttd si-forward --cpu gs --over`: a card step over in the past
         session.SendResponse(CliTTDCards::FormatCardMove(ttd::TTDControl(context).Execute({"step-instruction", options}), NEWLINE));
         return;
     }
@@ -1838,8 +1856,22 @@ void CLIProcessor::HandleTTDReverseStep(const ClientSession& session, EmulatorCo
     }
 }
 
-void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context)
+void CLIProcessor::HandleTTDReverseStepOver(const ClientSession& session, EmulatorContext* context,
+                                            const std::vector<std::string>& argsIn)
 {
+    // `ttd reverse-step-over --cpu gs`: the card CPU's step over back (the main CPU follows by replay)
+    std::vector<std::string> args = argsIn;
+    if (const std::string cpu = CliTTDCards::TakeCpuFlag(args); !cpu.empty())
+    {
+        session.SendResponse(CliTTDCards::FormatCardMove(
+            ttd::TTDControl(context).Execute({"reverse-step-over", {{"cpu", cpu}}}), NEWLINE));
+        return;
+    }
+    if (args.size() > 1)
+    {
+        session.SendResponse("Usage: ttd reverse-step-over [--cpu gs|neogs|ms|multisound]" + std::string(NEWLINE));
+        return;
+    }
     // Back over a routine when the instruction before is its return, else one instruction back
     const ttd::TTDReply reply = ttd::TTDControl(context).Execute({"reverse-step-over", {}});
     if (!reply.Ok())
@@ -2705,6 +2737,9 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
                << (b.find("tinframe")->i ? " t=" + std::to_string(b.find("tinframe")->i) : std::string())
                << (b.find("exact")->b ? "" : " (the checkpoint at or before frame " + std::to_string(b.find("frame")->i) + ")")
                << ":" << NEWLINE;
+        // E4: the moment the bytes stand for, in words
+        if (const StateNode* moment = b.find("moment_text"))
+            ss << "  (" << moment->s << ")" << NEWLINE;
         const int64_t offset = b.find("offset")->i;
         for (size_t i = 0; i < hex.size(); i += 32)
         {
@@ -2715,6 +2750,116 @@ void CLIProcessor::HandleTTDMemoryAt(const ClientSession& session, EmulatorConte
             ss << NEWLINE;
         }
     }
+    session.SendResponse(ss.str());
+}
+
+/// `ttd memory-series --ranges R ...` and `ttd screen-at --frame F ...` (PLAN #122 S1, V2): reads of the past
+/// without seeking
+void CLIProcessor::HandleTTDPastRead(const ClientSession& session, EmulatorContext* context,
+                                     const std::vector<std::string>& args)
+{
+    const bool screen = args[0] == "screen-at" || args[0] == "sat";
+    static const std::map<std::string, std::string> flags = {
+        {"--ranges", "ranges"},  {"--from", "from_frame"}, {"--to", "to_frame"},        {"--step", "step"},
+        {"--frames", "frames"},  {"--format", "format"},   {"--limit", "limit"},        {"--max-bytes", "max_bytes"},
+        {"--frame", "frame"},    {"--which", "which"},     {"--area", "area"},          {"--encoding", "encoding"}};
+    std::map<std::string, std::string> options;
+    std::string save;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        const auto flag = flags.find(args[i]);
+        if (args[i] == "--changes-only")
+            options["changes_only"] = "true";
+        else if (args[i] == "--save" && i + 1 < args.size())
+            save = args[++i];
+        else if (flag != flags.end() && i + 1 < args.size())
+            options[flag->second] = args[++i];
+    }
+    if (!screen && !options.count("format"))
+        options["format"] = "hex";   // readable on a terminal
+    const std::string verb = screen ? "screen-at" : "memory-series";
+    // A flag the other subcommand takes is ignored
+    const auto& allowed = ttd::TTDControl::OptionsFor(verb);
+    for (auto it = options.begin(); it != options.end();)
+        it = std::find(allowed.begin(), allowed.end(), it->first) == allowed.end() ? options.erase(it) : std::next(it);
+    const ttd::TTDReply reply = ttd::TTDControl(context).Execute({verb, options});
+    if (!reply.Ok())
+    {
+        session.SendResponse("Error: " + reply.message + NEWLINE +
+                             (reply.error == ttd::TTDControlError::BadRequest
+                                  ? std::string(screen ? "Usage: ttd screen-at --frame F [--which shown|normal|shadow] "
+                                                         "[--format png|bitmap|attributes|raw] [--save FILE]"
+                                                       : "Usage: ttd memory-series --ranges \"[space:]offset:length,...\" "
+                                                         "[--from F1] [--to F2] [--step N] [--frames F,F] [--changes-only]") +
+                                        NEWLINE
+                                  : std::string()));
+        return;
+    }
+    const StateNode& b = reply.body;
+    std::ostringstream ss;
+    if (screen)
+    {
+        const StateNode* shown = b.find("shown");
+        const StateNode* mime = b.find("mime");
+        const std::string& data = b.find("data") && b.find("data")->kind == StateNode::Kind::String ? b.find("data")->s
+                                                                                                   : std::string();
+        ss << "frame " << b.find("frame")->i << ": " << b.find("moment_text")->s << NEWLINE;
+        ss << "  shown at start: " << shown->find("at_start")->find("screen")->s << " (page "
+           << shown->find("at_start")->find("page")->i << "), at end: " << shown->find("at_end")->find("screen")->s
+           << " (page " << shown->find("at_end")->find("page")->i << ")"
+           << (shown->find("changed_during_frame")->b ? ", changed during the frame" : "") << NEWLINE;
+        for (const StateNode& f : shown->find("flips")->items)
+            ss << "  flip to " << f.find("screen")->s << " at t=" << f.find("tinframe")->i << NEWLINE;
+        if (!save.empty())
+        {
+            std::vector<uint8_t> bytes;
+            const bool base64 = mime || b.find("encoding")->s == "base64";
+            if (base64)
+                base64::Decode(data, bytes);
+            else
+                for (size_t i = 0; i + 1 < data.size(); i += 2)
+                    bytes.push_back(static_cast<uint8_t>(std::stoul(data.substr(i, 2), nullptr, 16)));
+            std::ofstream out(save, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            if (!out)
+            {
+                session.SendResponse("Error: cannot write " + save + NEWLINE);
+                return;
+            }
+            ss << "  saved " << bytes.size() << " bytes to " << save << NEWLINE;
+        }
+        else if (mime)
+            ss << "  " << b.find("width")->i << "x" << b.find("height")->i << " png, " << b.find("size")->i
+               << " bytes (base64 in the data; --save FILE writes it)" << NEWLINE;
+        else
+            ss << "  " << data.substr(0, std::min<size_t>(data.size(), 512)) << (data.size() > 512 ? "..." : "") << NEWLINE;
+        session.SendResponse(ss.str());
+        return;
+    }
+    ss << b.find("row_count")->i << " row(s), " << b.find("frames_read")->i << " frame(s) read; each row: the start of "
+       << "its frame, before its first instruction" << NEWLINE;
+    for (const StateNode& row : b.find("rows")->items)
+    {
+        ss << "  frame " << row.find("frame")->i;
+        if (!row.find("exact")->b)
+            ss << " (as at " << row.find("at_frame")->i << ")";
+        ss << ":";
+        for (const StateNode& d : row.find("data")->items)
+        {
+            if (d.kind == StateNode::Kind::String)
+                ss << " " << d.s;
+            else
+            {
+                ss << " [";
+                for (size_t i = 0; i < d.items.size(); ++i)
+                    ss << (i ? "," : "") << d.items[i].i;
+                ss << "]";
+            }
+        }
+        ss << NEWLINE;
+    }
+    if (b.find("truncated")->b)
+        ss << "  ... more: --from " << b.find("next_from_frame")->i << NEWLINE;
     session.SendResponse(ss.str());
 }
 

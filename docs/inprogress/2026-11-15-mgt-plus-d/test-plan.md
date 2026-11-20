@@ -11,8 +11,7 @@ Rules of `core/tests/README.md` apply: about 10 ms per test, integration under 1
 | G+DOS v1a ROM | 8 KB | `data/rom/plusd/gdos-1a.rom` (today `data/rom/gdos-pd.rom`) |
 | System disk | `+SYS 2a` only | `data/boot/plusd/gdos-2a-system.mgt` ([autostart.md §2](autostart.md#2-the-emulators-system-disk)) |
 | Synthetic MGT | existing | `testdata/loaders/mgt/synthetic.{mgt,img}` |
-| Small work disks | 4-6 images, one per autostart plan (`+SYS` + `AUTO`; `+SYS` only; no DOS + `Loader`; no DOS + one 48K snapshot; one 128K snapshot; CODE only) | `testdata/machines/plusd/` (chosen from the corpus list in P0, or built by the emulator with G+DOS `SAVE`) |
-| Corpus | the 243 +D images of the catalog | not in the repository; a `tools/verification/plusd/` script reads them from a path |
+| Small work disks | 4-6 images, one per autostart plan (`+SYS` + `AUTO`; `+SYS` only; no DOS + `Loader`; no DOS + one 48K snapshot; one 128K snapshot; CODE only) | `testdata/machines/plusd/` (built by the emulator with G+DOS `SAVE`) |
 
 ## 2. Unit tests
 
@@ -71,21 +70,13 @@ Rules of `core/tests/README.md` apply: about 10 ms per test, integration under 1
   `load_software` an MGT with autostart, read `inspect_state` `fdc`, eject, insert into `plusd2`.
 - WebAPI: `.recipe/testing/webapi-verification.md` steps for `media insert fdd.plusd1`.
 
-## 5. The corpus run (P4 acceptance)
-
-`tools/verification/plusd/corpus_run.py <pool path> <classified tsv>`: for every +D image (243) create the preset,
-`load_software` with autostart, run 12 s emulated, record plan, command, outcome and a screenshot. Table in the
-TODO with counts per plan and outcome; every failure gets a reason (wrong plan, DOS did not load, work needs a
-key, damaged image). Nothing is tuned to individual titles: the plan rules of
-[autostart.md §3](autostart.md#3-the-autostart-plan) are generic.
-
-## 6. Oracles
+## 5. Oracles
 
 - MAME (`/Volumes/TB4-4Tb/Projects/emulators/github/mame/zx`, `spectrum -exp plusd`) and Fuse for the same disk:
   CAT output and the first frames of a work after `LOAD`.
 - FDC: register traces of a G+DOS boot in Fuse (debugger log) against ours (WD state per command).
 
-## 7. Performance
+## 6. Performance
 
 A/B benchmark (performance guidelines): 48K without the card vs 48K with the card idle in BASIC vs a G+DOS read
 loop. Acceptance: no measurable change without the card; with the card idle within the A/A noise.

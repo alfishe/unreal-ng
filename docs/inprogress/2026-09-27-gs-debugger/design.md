@@ -1285,6 +1285,25 @@ the GS slot.
 > - *Reverse continue* (`ReverseContinueCard`) replays frames backwards from the current one with the card's breakpoint
 >   manager armed in the scan. The newest hit before the current card count is the answer; with none, the machine is
 >   put back exactly where it stood and the answer says so.
+> - *Step over back* (`ReverseStepOverCard`, 2026-11-19) mirrors the main CPU's `ReverseStepOver`. It goes one card
+>   instruction back. When that instruction is a return (`IsReturnAt`) and the card's SP there is below the level
+>   it has now (int16 compare), frames are replayed backwards with the scan watching the card's SP at every boundary
+>   (`ScanStackLevel`). The newest boundary before the return with SP at or above the level is the landing (the
+>   CALL / RST, or the instruction an interrupt came after). At most `kCardReverseMaxFrames` frames are searched;
+>   with no landing in them the card stays on the return (`callOutOfReach`).
+> - *Step over / step out forward in the past* (`StepCardForward`, 2026-11-19) give the step a live card step would
+>   take from the card's position. The replay runs forward from the frame holding the card's count. The scan arms
+>   the step at the start boundary from the card's registers and code, as `ArmStep` arms a step from a standing card
+>   (`ScanStep`). It decides each later boundary as `StepBoundary` does:
+>   - over: the address after a CALL / RST / DJNZ / block instruction with SP at or above the start's; any other
+>     instruction is a step in;
+>   - out: the first boundary after a return at the start's stack level or above.
+>
+>   The card's stopping breakpoints end the step at their oldest hit after the start, as live; the hit counts are
+>   untouched. A step that does not end in the history goes to the history's end (`historyEnd`). There the
+>   debuggers run the next step live, unrecorded (TTD branches D-3). If it does not end within
+>   `kCardReverseMaxFrames` frames, it goes as far as they reach (`truncated`). At the history's end already the
+>   answer is `AtEnd` and nothing moves. Run to cursor in the past is not covered: it is the live card step.
 > - *Leaving a card position*: the card's natural state (the one a plain seek to the main boundary gives) is kept
 >   with the position (`CardStand`). The machine leaves the position at the first input service outside a replay
 >   (`ServiceInput` -> `LeaveCardStand`: a resume, a run of frames or T-states), at a main-CPU step forward, on

@@ -9,6 +9,7 @@
 
 #include "dialogs/genericdbgwnd.h"
 #include "emulator/emulator.h"
+#include "nextviews.h"
 
 class QAction;
 class QLabel;
@@ -123,6 +124,9 @@ private:
     BreakpointsView * m_breakpoints;
     HistoryView * m_history;
     DevicesView * m_devices;
+    std::vector<NextTab> m_next_tabs;
+    void update_next_tabs();
+    NextReportView * next_view_in_sight() const;
     QLabel * m_state;
     QToolBar * m_toolbar;
     QLabel * m_zoom_label;

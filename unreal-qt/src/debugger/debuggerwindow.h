@@ -35,6 +35,10 @@ QT_END_NAMESPACE
 class DebuggerCpuTabs;
 class Emulator;
 class PaneFocus;
+class QGroupBox;
+class QTabWidget;
+class QTimer;
+class ReportPane;
 class SpeedControlWidget;
 
 class DebuggerWindow : public QWidget, public Observer
@@ -186,7 +190,6 @@ private slots:
     void showDiskSector();
     void showDiskFiles();
     void showLiveSource();
-    void showPcHistory(bool shown);
     /// Device memory / Disk sector on only when the machine has regions / drives
     void updateMachineActions();
     void showPortWatch();
@@ -226,6 +229,12 @@ signals:
 
     /// Another CPU's tab is in front (a click, a stop of that CPU, debugger.select_cpu)
     void cpuChanged(DebugCpuId cpu);
+
+public:
+    /// region <For the tests>
+    QTabWidget* sideTabs() const { return _sideTabs; }
+    const std::vector<class ReportPane*>& nextPanes() const { return _nextPanes; }
+    /// endregion
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -273,7 +282,6 @@ private:
     QAction* diskSectorAction;
     QAction* diskFilesAction;
     QAction* liveSourceAction;
-    QAction* pcHistoryAction;
     QToolButton* machineButton = nullptr;  ///< Machine: Ports, CMOS clock, Port events
     QAction* breakpointsAction;
     QAction* labelsAction;
@@ -292,6 +300,16 @@ private:
     class DebugVisualizationWindow* _visualizationWindow = nullptr;
     class LiveSourceWindow* _liveSourceWindow = nullptr;
     class PcHistoryPane* _pcHistoryPane = nullptr;
+    // The splitter's third pane: tabs of every view the machine has (the PC history; a Next's panes)
+    class QGroupBox* _sideGroup = nullptr;
+    class QTabWidget* _sideTabs = nullptr;
+    std::vector<class ReportPane*> _nextPanes;
+    class QTimer* _nextPanesTimer = nullptr;  // a live refresh of the Next tab in front while the machine runs (5 Hz)
+    bool _nextMachine = false;
+    /// Refresh the Next tab in front (when shown); `live`: the machine runs
+    void refreshNextPanes(bool live);
+    /// The Next tabs on a Next only; the PC history records while in front, the live refresh while a Next tab is
+    void updateSidePane();
     class DebuggerTimeTravel* _timeTravel = nullptr;   // the toolbar's time controls (debuggers.md §4)  // in the splitter, right of the disassembly
     QPointer<class PortEventsDialog> _portEventsDialog;  // not modal: open while the program runs
 
@@ -312,6 +330,7 @@ private:
     QString _disasmTitle;
     QString _registersTitle;
     QString _stackTitle;
+    QString _pagesTitle;
 };
 
 #endif  // DEBUGGERWINDOW_H

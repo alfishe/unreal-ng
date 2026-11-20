@@ -78,7 +78,7 @@ curl -s -X POST "$BASE/emulator/$EMU_ID/debug/pchist" -H 'Content-Type: applicat
 One entry per instruction the CPU starts (not per prefix; an accepted interrupt adds none), newest first, the newest
 1024 kept. While it records, every instruction costs a little; stopped, it costs nothing. MCP `inspect_state
 {"aspects":["pchist"],"count":8}`, CLI `pchist 8`, Lua `pc_history(8)`, Python `emu.pc_history(depth=8)`, Qt
-debugger toolbar "PC history".
+debugger tab "PC history" (records while in front).
 
 ## Lua / Python / CLI
 

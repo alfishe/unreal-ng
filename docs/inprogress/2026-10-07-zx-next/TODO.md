@@ -88,7 +88,11 @@ Not planned yet:
 - [ ] Tests: an NR #02 hard reset returns to config mode with the boot ROM at 0 (RAM survives, as on the board); Z80N: a masked INT is not
   taken right after EI or between a DD / FD prefix (also DD DD) and its opcode
 - [ ] Host M1 button (the Multiface NMI) in Qt and on the automation planes (`GenerateMultifaceNmi`; today only NR #02 bit 3)
-- [ ] Qt panels (NextREG table, MMU map, sprites, copper, DMA / CTC / IM2) and Next-aware GDB wiring (DeZog DZRP is done)
+- [x] Qt panels (2026-11-19): NextREG, MMU, Copper, Sprites, DMA, CTC / IM2 as tabs beside the PC history of the Embedded debugger
+  (its right pane, always shown, Next tabs on a Next only; the PC history records while its tab is in front) and as side tabs of the eCat debugger (on a Next only); each renders the report the planes
+  serve (`next_regs`, `next_mmu`, `next_copper`, `next_sprites`, `next_dma`, `next`'s `interrupts` / `ctc`), values changed since the
+  last stop lit. The catalog lists `next-regs`, `next-mmu`, `next-copper`, `next-sprites` (Devices tab, `state devices`)
+- [ ] Next-aware GDB wiring (DeZog DZRP is done)
 - [x] Native `.snx` loader (2026-10-26): `LoaderSNA`'s SNX mode (48K = 49179 bytes; 128K = the banks `#7FFD` leaves, then private
   data, counted in the report and not loaded), `SnapshotLauncher` takes the Next for it, every surface lists `.snx`; the tests load
   the release `.snx` directly. With it: `NextRealBoard_Test` follows core 3.02.03 (NR #0A bit 2 reads 0; z80bltst is red under the

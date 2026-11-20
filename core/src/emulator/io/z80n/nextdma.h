@@ -163,11 +163,14 @@ private:
 
     Bus _bus;
     std::function<void(const NextDma&)> _onBlock;
-    // WR0-WR2, WR4
-    bool _aToB = true;
+    // WR0-WR2, WR4. Power-on values: dma.vhd gives the registers its reset leaves alone (direction, addresses, block length, port
+    // types and address modes) no initial value; Xilinx synthesis (XST for the issue 2's Spartan-6, Vivado for the issue 4 / 5's Artix-7)
+    // makes such a flip-flop's INIT 0, which the configuration loads (GSR). So: B -> A, both ports memory, decrement, all addresses 0.
+    // The timing bytes have an initial value ("01") and are reset anyway
+    bool _aToB = false;
     uint16_t _portAAddress = 0, _portBAddress = 0, _blockLength = 0;
     bool _portAIsIo = false, _portBIsIo = false;
-    uint8_t _portAMode = 1, _portBMode = 1;  // 0 decrement, 1 increment, 2/3 fixed
+    uint8_t _portAMode = 0, _portBMode = 0;  // 0 decrement, 1 increment, 2/3 fixed
     uint8_t _portATiming = 1, _portBTiming = 1, _prescaler = 0;
     uint8_t _mode = 1;  // 0 byte, 1 continuous, 2 burst
     bool _autoRestart = false, _ceWait = false;
