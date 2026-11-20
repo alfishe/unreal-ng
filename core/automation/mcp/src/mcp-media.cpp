@@ -568,11 +568,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
         schema["properties"]["codec"]["enum"].append(codec);
     schema["properties"]["codec"]["description"] =
         "window_record_start: prores (default: ProRes 4444, .mov), h264 or h265 (4:4:4 through ffmpeg; with "
-        "hardware = true the Mac's VideoToolbox encoder, 4:2:0 / 4:2:2, no ffmpeg); a CRT mask survives 4:4:4";
+        "hardware = true the GPU's encoder: the Mac's VideoToolbox 4:2:0 / 4:2:2, NVENC / VA-API 4:4:4 where the "
+        "card has it); a CRT mask survives 4:4:4";
     schema["properties"]["hardware"]["type"] = "boolean";
     schema["properties"]["hardware"]["description"] =
-        "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
-        "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+        "window_record_start: h264 / h265 on the GPU's encoder, real time at 4K (macOS VideoToolbox, no ffmpeg: "
+        "4:2:0, H.265 4:2:2 10-bit; elsewhere ffmpeg's NVENC: 4:4:4 on Turing and later, Linux VA-API: HEVC 4:4:4 "
+        "on Intel Ice Lake and later, H.264 4:2:0, QuickSync, AMF); false = x264 / x265 4:4:4 through ffmpeg";
     schema["properties"]["engine"]["type"] = "string";
     schema["properties"]["engine"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* engine : {"native", "ffmpeg"})

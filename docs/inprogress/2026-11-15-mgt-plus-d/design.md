@@ -229,7 +229,7 @@ menu and the status bar disk LED per controller; `Snapshot button (+D)` action. 
 | P2 | `PlusDCard`: claims, overlay, M1 hook, latch, two drive slots, presets `48K-PLUSD` / `128K-PLUSD`, `DeviceState` | G+DOS boots from the clean system disk on 48K and 128K; `CAT 1` lists the disk |
 | P3 | NMI button action, printer port, TTD serializer, SZX `PLSD`, `.z80` modes 3 / 6 | snapshot button saves a 48K snapshot to disk and it loads back; TTD seek round trip during a disk read |
 | P4 | Autostart (+D branch), the emulator's system disk, `load_software` routing, results | the autostart plans run on the test disks and the system disk |
-| P5 | Docs and recipes (list in §11), slots matrix regenerated, MCP live scripts, gcc / MSVC builds | review checklist of `new-platform-guidelines.md` §6 all "yes" |
+| P5 | Docs and recipes (list in §11), slots matrix regenerated, MCP live scripts | review checklist of `new-platform-guidelines.md` §6 all "yes" |
 | P7 (later, D-4) | DISCiPLE: ports `1B/5B/9B/DB`, `1F` (control, Kempston), `3B` network, `7B` boot, `BB` page, `FB` printer; traps `0001/0008/0066/028E`; inhibit; GDOS 3d ROM (`data/rom/gdos.rom`) | GDOS 3d boots |
 
 ## 11. Documentation to update (P5)

@@ -529,6 +529,7 @@ private:
     void HandleTTDCoverage(const ClientSession& session, EmulatorContext* context,
                            const std::vector<std::string>& args);
     void HandleTTDMemoryAt(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
+    void HandleTTDPastRead(const ClientSession& session, EmulatorContext* context, const std::vector<std::string>& args);
 
     // Command map
     std::unordered_map<std::string, CommandHandler> _commandHandlers;
