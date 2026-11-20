@@ -4682,6 +4682,8 @@ TTDReply TTDControlBackend::FindEvent(const TTDRequest& request)
     }
     reply.body["frames_scanned"] = res.framesScanned;
     reply.body["frames_replayed"] = res.framesReplayed;
+    if (res.indexRejected)
+        reply.body["index_rejected"] = res.indexRejected;
     reply.body["ms"] = res.ms;
     if (text)
         reply.body["text"] = TTDFindEventText(q, res);

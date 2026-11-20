@@ -579,6 +579,7 @@ public:
     ADD_METHOD_TO(EmulatorAPI::disableBreakpoint, "/api/v1/emulator/{id}/breakpoints/{bp_id}/disable", drogon::Put);
     ADD_METHOD_TO(EmulatorAPI::getBreakpointStatus, "/api/v1/emulator/{id}/breakpoints/status", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::resetBreakpointHits, "/api/v1/emulator/{id}/breakpoints/hits/reset", drogon::Post);
+    ADD_METHOD_TO(EmulatorAPI::getBreakpointHits, "/api/v1/emulator/{id}/breakpoints/{bp_id}/hits", drogon::Get);
     // Breakpoints by selection (all, an id, a kind, group:<name>), groups, notes (debug tools gaps, use cases D4.5)
     ADD_METHOD_TO(EmulatorAPI::getBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::setBreakpointsActive, "/api/v1/emulator/{id}/breakpoints/active", drogon::Put);
@@ -1027,6 +1028,10 @@ public:
     /// GET /api/v1/emulator/{id}/breakpoints/groups: monitoring::Call `breakpoint_groups` ({groups: [{name, total,
     /// active, ids}]}, the user breakpoints)
     void getBreakpointGroups(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id) const;
+    /// GET /api/v1/emulator/{id}/breakpoints/{bp_id}/hits?cpu=&from=&limit=: monitoring::Call `breakpoint_hits` (the
+    /// counts and the per-hit record of a breakpoint that only counts; PLAN #122 V4)
+    void getBreakpointHits(const drogon::HttpRequestPtr& req, SurfaceCallback&& callback, const std::string& id,
+                           const std::string& bpId) const;
     /// POST /api/v1/controllers/actions/{action} {instance?, value?}: run it on the instance's actions worker
     void postAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& action) const;

@@ -230,8 +230,15 @@ Json::Value BreakpointJson(const BreakpointDescriptor& bp)
     if (bp.hitMode != BRK_HIT_ALWAYS)
         j["hit_target"] = static_cast<Json::UInt>(bp.hitTarget);
     j["hit_count"] = static_cast<Json::UInt>(bp.hitCount);
-    // False: the breakpoint only counts its hits (BRK_COUNT_TAP)
+    // False: the breakpoint only counts its hits (BRK_COUNT_TAP); its per-hit record (GET .../breakpoints/{bp}/hits)
     j["stop"] = bp.tapSink != BRK_COUNT_TAP;
+    if (bp.tapSink == BRK_COUNT_TAP)
+    {
+        Json::Value log(Json::objectValue);
+        log["capacity"] = static_cast<Json::UInt>(bp.hitLogCapacity);
+        log["keep"] = BreakpointManager::HitLogKeepName(bp.hitLogKeep);
+        j["hit_log"] = bp.hitLogCapacity ? log : Json::Value(Json::nullValue);
+    }
     if (bp.condition)
     {
         // Counted on every match; hit_count counts the matches whose condition held
@@ -1346,6 +1353,25 @@ void EmulatorAPI::addBreakpoint(const HttpRequestPtr& req, std::function<void(co
             return;
         }
         spec.stop = body["stop"].asBool();
+    }
+    // hit_log: the hits a breakpoint that only counts records (frame, t, pc; 0: none; default 1000); hit_log_keep:
+    // first (default) or last
+    if (body.isMember("hit_log"))
+    {
+        uint32_t capacity = 0;
+        if (!ParseJsonUInt(body["hit_log"], BreakpointHitLog::kMaxCapacity, capacity))
+        {
+            badRequest("'hit_log' must be 0.." + std::to_string(BreakpointHitLog::kMaxCapacity));
+            return;
+        }
+        spec.hitLog = capacity;
+    }
+    if (body.isMember("hit_log_keep") &&
+        (!body["hit_log_keep"].isString() ||
+         !BreakpointManager::ParseHitLogKeep(body["hit_log_keep"].asString(), spec.hitLogKeep)))
+    {
+        badRequest("'hit_log_keep' must be first or last");
+        return;
     }
     // Condition: an expression in the Unreal language (condition_dialect "c": C precedence, decimal numbers)
     if (body.isMember("condition"))

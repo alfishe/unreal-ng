@@ -871,9 +871,14 @@ id = gs_on_dac_fetch(fn, {mode="sync"})  -- a card event callback (hit.arg its d
                                -- MultiSound's
 id, why = bp_chipreg("ay", 7, {value=0x3F, vmask=0x3F})  -- a sound chip register write by the main CPU: ay, fm,
                                -- saa, opl4, opl4wave, dac, cbl; to= a range end, unit= one chip of the kind
-bp_reset_hits(id)              -- hit counter back to 0 (no id: all)
+bp_reset_hits(id[, cpu])       -- hit counter back to 0 and the per-hit record emptied (no id: all)
 bp(0x0038, {stop=false})       -- only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+bp(0x0038, {stop=false, hit_log=100, hit_log_keep="last"})  -- ... and records the newest 100 hits (default the first
+                               -- 1000; 0 none)
 bp_hits(id)                    -- the hit count; -1 for an unknown id
+r = bp_hit_log(id, {cpu=, from=, limit=})  -- the per-hit record, as GET .../breakpoints/{bp_id}/hits: r.hit_count,
+                               -- r.log {capacity, keep, total, stored, dropped, oldest}, r.hits[i] {index, hit,
+                               -- frame, t, pc, address, value, kind, cpu_time}, r.more / r.next_from
 bp_remove(id); bp_clear()
 bp_enable(id); bp_disable(id)
 bp_note(id, "main loop")       -- annotation (empty clears); false for an unknown id

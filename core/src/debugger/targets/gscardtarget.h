@@ -187,6 +187,7 @@ public:
     bool Registers(Z80Registers& out) const override;
     bool Peek(uint16_t address, uint8_t& out) const override;
     void OnBreakpointDemand(const BreakpointTapDemand& demand) override;
+    bool HitClock(bool event, DebugTargetHitClock& out) const override;
 
     /// A card hook's writes (gs-debugger design §8A.7, Q3), made at the card's next instruction boundary: `view`
     /// ones only while no time travel session is open, `logic` ones while none or a recording one is, which keeps
@@ -256,6 +257,8 @@ private:
     std::vector<ttd::TTDCardEdit> _replay;    // the replay's edits of this frame, in order
     GeneralSoundCard* _attached = nullptr;   // the card the hooks are on (compared, never called once replaced)
     Stop _pending;                           // a bus or event hit waiting for the boundary
+    uint16_t _accessPc = 0;                  // the instruction of the access being resolved (HitClock)
+    bool _busMasterAccess = false;           // the access being resolved is a bus master's (no instruction of its own)
     Stop _lastStop;
     uint64_t _stopCount = 0;
     // An armed step: set by the caller with the machine paused, read by the emulation thread after the resume

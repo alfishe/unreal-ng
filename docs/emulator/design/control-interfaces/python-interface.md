@@ -1246,9 +1246,15 @@ id = emu.bp_chipreg("ay", 7, value=0x3F, vmask=0x3F)  # a sound chip register wr
 id = emu.gs_on_dma_done(fn)          # a card event callback (hit["arg"] its detail); also gs_on_command, gs_on_data,
                                     # gs_on_reply, gs_on_int, gs_on_nmi, gs_on_page, gs_on_dac_fetch, gs_on_clock_change,
                                     # gs_on_dma_start, gs_on_gscfg0, gs_on_port_in(port, fn), gs_on_port_out(port, fn); cpu="ms"
-emu.bp_reset_hits(id)               # hit counter back to 0 (no id: all)
+emu.bp_reset_hits(id, cpu="")       # hit counter back to 0 and the per-hit record emptied (no id: all)
 emu.bp(0x0038, stop=False)          # only counts its hits, never stops (bp, bp_read, bp_write, bp_port_in/out)
+emu.bp(0x0038, stop=False, hit_log=100, hit_log_keep="last")  # ... and records the newest 100 hits (default the
+                                    # first 1000; 0 none)
 emu.bp_hits(id)                     # the hit count; -1 for an unknown id
+r = emu.bp_hit_log(id, cpu="", from_index=0, limit=100)  # the per-hit record, as GET .../breakpoints/{bp_id}/hits:
+                                    # r["hit_count"], r["log"] {capacity, keep, total, stored, dropped, oldest},
+                                    # r["hits"][i] {index, hit, frame, t, pc, address, value, kind, cpu_time},
+                                    # r["more"] / r["next_from"]
 emu.bp_remove(id); emu.bp_clear()
 emu.bp_enable(id); emu.bp_disable(id)
 emu.bp_note(id, "main loop")        # annotation (empty clears); False for an unknown id

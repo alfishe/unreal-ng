@@ -1,6 +1,6 @@
 # TODO — RE agents vs MCP / WebAPI efficiency (2026-11-12)
 
-**Status:** analysis done; F3 done. PLAN row **#122** (T2).
+**Status:** analysis done; F3, F6, V4 done. PLAN row **#122** (T2).
 
 ## Documents
 - [analysis.md](analysis.md) — every fault, slow path, missing verb and ergonomics gap the reverse-engineering agents hit, with evidence in the reverse cases repo, the master code places, and proposals (§6 summary table).
@@ -25,7 +25,17 @@
 
 ### P2
 - [ ] F5: tape play after `$2A` / pause; play answer reports state and block; `$2A` 48K decision; last-block edge (M).
-- [ ] F6: `find_event` exec sentinel hits (S).
+- [x] F6: `find_event` exec sentinel hits (S).
+  As built (2026-11-19, uncommitted on `find-count`): reproduced. The coverage index answers "may contain" and, with
+  no page, matches the same offset in any page, so false candidate frames came back; the exec path replayed only
+  `limit` of them, dropped a miss silently and listed the rest as hits `{frame, 0}` with no text, so real hits were
+  lost behind them and the answer changed with `limit`. Now every candidate is replayed (batch after batch of
+  `QueryCoverageScan`) until `limit` hits are confirmed or the window ends; a candidate that does not run the range
+  counts in `index_rejected` (the text: "N index candidate(s) did not run it"); `max_frames` bounds the replays and,
+  when it runs out, `more` / `next_from_frame` point at the first candidate not replayed; without the index a window
+  longer than `max_frames` also answers `more`. Test `TTDFindEvent_Test.T13_ExecIndexCandidatesThatDidNotRun`
+  (the same offset #1000 in two pages; it fails on the old code with hits at `t` 0 and no text). Docs:
+  [find-event design §exec](../2026-11-02-ttd-find-event/design.md), `command-interface.md` `ttd find-event`.
 - [ ] S2: job model / long-poll for long verbs; clients drop `sleep(5)` (M).
 - [ ] S3: server-side input script player with TTD recording (M).
 - [ ] V1: L1 over several sessions (M).
@@ -39,7 +49,20 @@
 - [ ] F8: port history flush and frame counter (verify first) (S).
 - [ ] F9: L1 `root` at a snapshot's first PC (verify first) (S).
 - [ ] S4: history / trace filters, event-only trace (M).
-- [ ] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
+- [x] V4: counting breakpoints with per-hit frames (with PLAN #6) (M).
+  As built (2026-11-19, uncommitted on `find-count`): a breakpoint that only counts (`stop: false`, CLI `--count`)
+  records its hits in a bounded `BreakpointHitLog` (`hit_log` N, default 1000, 0 none, at most 100000;
+  `hit_log_keep` first / last): hit number, frame, T, PC, address, value, kind; a card CPU adds its own clock
+  (`cpu_time`, `DebugTargetHitClock` from `GSCardTarget`). Written by the manager's own count sink at tap id 255, held
+  in its slot only while a record takes hits: the walk is unchanged, a count-only breakpoint with no record or a full
+  record of the first N calls nothing (the drop follows from the count and the policy). A/B `BM_BreakpointFrame_*`
+  over 40 interleaved rounds: off / unarmed / armed and counting with a full record within noise (paired +-2 %);
+  `--log-keep last` (a record written on every hit) +22 % on a whole-ROM breakpoint. Read without pausing (a spin lock per record / per 256 copied): monitoring
+  verb `breakpoint_hits`, WebAPI `GET /breakpoints/{bp_id}/hits?cpu=&from=&limit=` (WebSocket `call`), CLI
+  `bphits <id>`, Lua / Python `bp_hit_log`, MCP `control_execution` `bp_hits`; the hit reset empties it (Lua / Python
+  `bp_reset_hits` take `cpu` now). Tests: `BreakpointHitLog_Test.*` (oracle: the counting run's frame / T / PC equal
+  a stop-on-every-hit run's, across a frame boundary), `GSCardTarget_Test.ACountingBreakpointRecordsTheCardsMoments`,
+  `tools/verification/mcp/test_breakpoint_hits.py`. Docs: [conditional-breakpoints](../../features/conditional-breakpoints.md#when-each-hit-came-the-per-hit-record).
 - [ ] V5: L1 first / last frame per instruction; reader-PC filter (S).
 - [ ] V6: GS firmware state view (M).
 - [ ] V7: `--port-base auto` and a ports file (S).

@@ -664,8 +664,9 @@ protected:
     }
 
     /// bp / bp_read / bp_write / bp_port_in / bp_port_out: `options` is nothing, a page string ("ram32"), or
-    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=} (stop = false: it only counts,
-    /// bp_hits reads the count). The breakpoint id; -1 and the reason when refused
+    /// a table {page=, to=, slot_only=, mask=, hits=, condition=, dialect=, cpu=, stop=, hit_log=, hit_log_keep=}
+    /// (stop = false: it only counts, bp_hits reads the count, bp_hit_log the per-hit record of hit_log hits, default
+    /// 1000, 0 none; hit_log_keep "first" or "last"). The breakpoint id; -1 and the reason when refused
     std::tuple<int, sol::optional<std::string>> AddScriptBreakpoint(BreakpointTypeEnum type, uint8_t access,
                                                                     uint16_t address,
                                                                     const sol::optional<sol::object>& options)
@@ -694,6 +695,15 @@ protected:
             slotOnly = t.get<sol::optional<bool>>("slot_only").value_or(false);
             mask = t.get<sol::optional<int32_t>>("mask").value_or(-1);
             spec.stop = t.get<sol::optional<bool>>("stop").value_or(true);
+            if (auto log = t.get<sol::optional<int64_t>>("hit_log"))
+            {
+                if (*log < 0 || *log > BreakpointHitLog::kMaxCapacity)
+                    return {-1, "hit_log must be 0.." + std::to_string(BreakpointHitLog::kMaxCapacity)};
+                spec.hitLog = static_cast<uint32_t>(*log);
+            }
+            if (auto keep = t.get<sol::optional<std::string>>("hit_log_keep"))
+                if (!BreakpointManager::ParseHitLogKeep(*keep, spec.hitLogKeep))
+                    return {-1, std::string("hit_log_keep must be 'first' or 'last'")};
             hits = t.get<sol::optional<std::string>>("hits").value_or("");
             if (hits.empty())
                 if (auto n = t.get<sol::optional<int64_t>>("hits"))
@@ -4326,9 +4336,9 @@ public:
             return std::make_tuple(sol::make_object(ts, id), sol::make_object(ts, sol::lua_nil));
         });
 
-        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id) -> bool {
-            if (!effectiveEmulator()) return false;
-            BreakpointManager* bpm = effectiveEmulator()->GetBreakpointManager();
+        // bp_reset_hits([id][, cpu]): hit counters back to 0 and per-hit records emptied (one breakpoint, or all)
+        lua.set_function("bp_reset_hits", [this](sol::optional<uint16_t> id, sol::optional<std::string> cpu) -> bool {
+            BreakpointManager* bpm = ScriptBreakpoints(cpu.value_or(""));
             if (!bpm) return false;
             if (id)
                 return bpm->ResetHitCount(*id);
@@ -4348,6 +4358,25 @@ public:
                 args["instance"] = emulator->GetId();
             args["cpu"] = cpu.value_or("");
             return StateNodeToLua(s, monitoring::Call("breakpoint_groups", args).body);
+        });
+
+        // bp_hit_log(id[, {cpu=, from=, limit=}]) -> {ok, instance, cpu, id, stop, hit_count, log, hits = {{index, hit,
+        // frame, t, pc, address, value, kind, cpu_time}}, first_index, more, next_from}: as GET .../breakpoints/{bp}/hits;
+        // a refusal: ok = false, error, message
+        lua.set_function("bp_hit_log", [this](sol::this_state s, int64_t id, sol::optional<sol::table> opts) {
+            StateNode args = StateNode::Object();
+            if (Emulator* emulator = effectiveEmulator())
+                args["instance"] = emulator->GetId();
+            args["id"] = std::to_string(id);
+            if (opts)
+            {
+                args["cpu"] = opts->get_or<std::string>("cpu", "");
+                if (auto from = opts->get<sol::optional<int64_t>>("from"))
+                    args["from"] = std::to_string(*from);
+                if (auto limit = opts->get<sol::optional<int64_t>>("limit"))
+                    args["limit"] = std::to_string(*limit);
+            }
+            return StateNodeToLua(s, monitoring::Call("breakpoint_hits", args).body);
         });
 
         lua.set_function("bp_list", [this](sol::optional<std::string> cpu) -> std::string {

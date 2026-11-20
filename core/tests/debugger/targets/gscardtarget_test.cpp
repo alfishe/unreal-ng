@@ -223,6 +223,52 @@ TEST(GSCardTarget_Test, APortBreakpointSeesTheIdlePoll)
     EXPECT_EQ(stop.address & 0xFF, 0x04);
 }
 
+/// A breakpoint of the card CPU that only counts (PLAN #122 V4): every hit counted as a stopping one counts them, the
+/// newest recorded with the card's moment (the ZX frame, its time since the frame's start, its own clock) and the
+/// instruction doing the access; the newest record is the last stop
+TEST(GSCardTarget_Test, ACountingBreakpointRecordsTheCardsMoments)
+{
+    Card card;
+    BreakpointSpec spec;
+    spec.type = BRK_IO;
+    spec.access = BRK_IO_IN;
+    spec.address = 0x04;  // FLAGS
+    spec.portMask = 0x00FF;
+    BreakpointSpec counting = spec;
+    counting.stop = false;
+    counting.hitLog = 16;
+    counting.hitLogKeep = BreakpointHitLogKeep::Last;
+    card.boot();
+    const uint16_t stopId = card.add(spec);
+    const uint16_t countId = card.add(counting);
+    card.ctx.emulatorState.frame_counter = 7;
+    card.frame();
+
+    const BreakpointManager::HitLogInfo info = card.bp().GetHitLog(countId, 0, 100);
+    ASSERT_TRUE(info.found && info.countOnly && info.hasLog);
+    EXPECT_GT(info.hitCount, 16u) << "the idle poll reads FLAGS all the frame";
+    EXPECT_EQ(info.hitCount, card.bp().GetBreakpointById(stopId)->hitCount) << "as many hits as the stopping one";
+    ASSERT_EQ(info.view.records.size(), 16u);
+    EXPECT_EQ(info.view.oldest, info.hitCount - 16u);
+    const GSCardTarget::Stop stop = card.target->LastStop();
+    const BreakpointHitRecord& newest = info.view.records.back();
+    EXPECT_EQ(newest.hit, info.hitCount);
+    EXPECT_EQ(newest.pc, stop.pc) << "the instruction doing the read";
+    EXPECT_EQ(newest.address, stop.address);
+    EXPECT_EQ(newest.kind, BRK_TAP_PORT_IN);
+    for (size_t i = 0; i < info.view.records.size(); ++i)
+    {
+        const BreakpointHitRecord& r = info.view.records[i];
+        EXPECT_TRUE(r.frame == 7 || r.frame == 6) << "the ZX frame the card runs in";
+        EXPECT_GE(r.cpuTime, 0) << "the card's own clock";
+        if (i > 0)
+        {
+            EXPECT_GT(r.cpuTime, info.view.records[i - 1].cpuTime);
+            EXPECT_EQ(r.hit, info.view.records[i - 1].hit + 1);
+        }
+    }
+}
+
 TEST(GSCardTarget_Test, CardEventsStopTheCard)
 {
     Card card;

@@ -1443,7 +1443,7 @@ void RegisterControlExecution(ToolRegistry& registry)
     for (const char* action : {"run", "pause", "resume", "step", "step_n", "step_over", "step_out", "run_frame", "run_frames",
                                "run_tstates", "run_to_interrupt", "run_to_scanline", "run_scanlines", "run_to_pixel",
                                "run_until_pc", "run_until", "watch_add", "watch_list", "watch_remove", "pace", "bp_add", "bp_remove", "bp_enable", "bp_disable", "bp_clear",
-                               "bp_list", "bp_reset_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
+                               "bp_list", "bp_reset_hits", "bp_hits", "bp_toggle", "bp_groups", "bp_group_set", "bp_note", "bp_condition",
                                "callbacks", "callback_resume", "callback_remove", "callback_policy",
                                "set_register", "port_out", "select_cpu", "wait", "take_control", "release_control"})
     {
@@ -1564,7 +1564,22 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["stop"]["type"] = "boolean";
     schema["properties"]["stop"]["description"] =
         "Optional for bp_add of execution / read / write / port / event / chipreg: false to only count the hits, never "
-        "stop (bp_list shows the count, 'count only'); default true";
+        "stop (bp_list shows the count, 'count only'; bp_hits lists when each hit came); default true";
+    schema["properties"]["hit_log"]["type"] = "integer";
+    schema["properties"]["hit_log"]["description"] =
+        "Optional for bp_add with stop false: the hits its per-hit record keeps (frame, t, pc, address, value; bp_hits "
+        "reads it), 0..100000, default 1000, 0 none";
+    schema["properties"]["hit_log_keep"]["type"] = "string";
+    schema["properties"]["hit_log_keep"]["enum"] = Json::Value(Json::arrayValue);
+    schema["properties"]["hit_log_keep"]["enum"].append("first");
+    schema["properties"]["hit_log_keep"]["enum"].append("last");
+    schema["properties"]["hit_log_keep"]["description"] =
+        "Optional for bp_add with stop false: first (default: the first hit_log hits) or last (the newest)";
+    schema["properties"]["hit_from"]["type"] = "integer";
+    schema["properties"]["hit_from"]["description"] =
+        "Optional for bp_hits: the first record index to list (default 0; the answer's next_from goes on)";
+    schema["properties"]["hit_limit"]["type"] = "integer";
+    schema["properties"]["hit_limit"]["description"] = "Optional for bp_hits: hits to list at most, 1..10000 (default 100)";
     schema["properties"]["page"]["type"] = "string";
     schema["properties"]["page"]["description"] =
         "Optional for bp_add of execution / read / write: 'ram32', 'rom3', 'cache0', 'bank8k33' (an 8K RAM bank), the ZX "
@@ -1623,8 +1638,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["group"]["description"] = "Optional group for bp_add (created on use; default 'default')";
     schema["properties"]["bp_id"]["type"] = "string";
     schema["properties"]["bp_id"]["description"] =
-        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_group_set/bp_note/bp_condition (bp_reset_hits "
-        "without it: all)";
+        "Breakpoint id for bp_remove/bp_enable/bp_disable/bp_reset_hits/bp_hits/bp_group_set/bp_note/bp_condition "
+        "(bp_reset_hits without it: all)";
     schema["properties"]["callback_id"]["type"] = "integer";
     schema["properties"]["callback_id"]["description"] =
         "Script callback id for callback_resume / callback_remove / callback_policy (the callbacks list shows them)";
@@ -1665,6 +1680,7 @@ void RegisterControlExecution(ToolRegistry& registry)
         "run_until_pc (until PC = pc), pace (run at a pace: 25 / 5 / 1 fps, a frame, lines or an instruction per "
         "interval). Also manages breakpoints (bp_add/bp_remove/bp_enable/bp_disable/bp_clear/bp_list/"
         "bp_reset_hits; bp_add takes ranges, physical pages, port masks, hit policies, conditions and keyboard keys; "
+        "a breakpoint with stop false only counts and records each hit's frame, t and pc, bp_hits lists them; "
         "bp_remove / bp_enable / bp_disable / bp_toggle take a bp_id or a select: all, a kind, group:<name>; bp_groups "
         "lists the groups, bp_group_set / bp_note / bp_condition change a breakpoint's group / note / condition). "
         "callbacks lists the script callbacks (Lua on_tap / on_breakpoint / on_game_event, Python emu.on_*) with their "
@@ -1852,6 +1868,9 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 out << " off";
                             if (bp["stop"].isBool() && !bp["stop"].asBool())
                                 out << " count only";
+                            if (bp["hit_log"].isObject())
+                                out << " log " << bp["hit_log"]["keep"].asString() << " "
+                                    << bp["hit_log"]["capacity"].asUInt();
                             if (bp["hit_mode"].isString() && bp["hit_mode"].asString() != "always")
                                 out << " mode " << bp["hit_mode"].asString();
                             if (bp["group"].isString() && bp["group"].asString() != "default")
@@ -1860,6 +1879,58 @@ void RegisterControlExecution(ToolRegistry& registry)
                                 out << " \"" << bp["note"].asString() << "\"";
                         }
                         result.text = out.str();
+                        done(std::move(result));
+                    });
+                    return;
+                }
+                if (action == "bp_hits")
+                {
+                    // The counts and the per-hit record (monitoring::Call breakpoint_hits); one line per hit in the text
+                    if (!args.isMember("bp_id"))
+                    {
+                        done(ToolResult::Error("bp_hits requires 'bp_id'"));
+                        return;
+                    }
+                    std::string query = "?cpu=" + (args.isMember("cpu") ? args["cpu"].asString() : std::string("main"));
+                    if (args.isMember("hit_from"))
+                        query += "&from=" + args["hit_from"].asString();
+                    if (args.isMember("hit_limit"))
+                        query += "&limit=" + args["hit_limit"].asString();
+                    ForwardCall("GET", Endpoint(id, "/breakpoints/" + args["bp_id"].asString() + "/hits" + query), nullptr,
+                                caller, "", [done](ToolResult result) {
+                        if (!result.isError)
+                        {
+                            const Json::Value& s = result.structured;
+                            std::ostringstream out;
+                            out << "Breakpoint " << s["id"].asUInt();
+                            if (s["cpu"].asString() != "main")
+                                out << " (" << s["cpu"].asString() << " CPU)";
+                            out << ": " << s["hit_count"].asUInt64() << " hits";
+                            if (s.isMember("match_count"))
+                                out << ", " << s["match_count"].asUInt64() << " matched";
+                            if (!s["log"].isObject())
+                                out << (s["stop"].asBool() ? "; it stops, no per-hit record" : "; no per-hit record kept");
+                            else
+                            {
+                                const Json::Value& log = s["log"];
+                                out << "; record keeps the " << log["keep"].asString() << " " << log["capacity"].asUInt()
+                                    << ", holds " << log["stored"].asUInt64() << ", dropped " << log["dropped"].asUInt64();
+                                for (const Json::Value& hit : s["hits"])
+                                {
+                                    out << "\n[" << hit["index"].asUInt64() << "] hit " << hit["hit"].asUInt64() << " frame "
+                                        << hit["frame"].asUInt64() << " t " << hit["t"].asUInt64() << " pc "
+                                        << Hex16(hit["pc"].asUInt()) << " " << hit["kind"].asString() << " "
+                                        << Hex16(hit["address"].asUInt());
+                                    if (hit.isMember("value"))
+                                        out << " = " << hit["value"].asUInt();
+                                    if (hit.isMember("cpu_time"))
+                                        out << " cpu_time " << hit["cpu_time"].asInt64();
+                                }
+                                if (s["more"].asBool())
+                                    out << "\nmore: hit_from " << s["next_from"].asUInt64();
+                            }
+                            result.text = out.str();
+                        }
                         done(std::move(result));
                     });
                     return;
@@ -1894,7 +1965,8 @@ void RegisterControlExecution(ToolRegistry& registry)
                     body["type"] = args.isMember("type") ? args["type"].asString() : "execution";
                     for (const char* key : {"address_end", "page", "slot_only", "port_mask", "hits", "hit_mode", "hit_target",
                                             "note", "group", "doors", "value", "value_mask", "hc", "key", "on", "stop",
-                                            "condition", "condition_dialect", "event", "chip", "unit"})
+                                            "hit_log", "hit_log_keep", "condition", "condition_dialect", "event", "chip",
+                                            "unit"})
                         if (args.isMember(key))
                             body[key] = args[key];
                     // A breakpoint never fires while the breakpoints feature is off, and the add itself says nothing:

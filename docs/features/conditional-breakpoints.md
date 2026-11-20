@@ -143,6 +143,54 @@ count (`wp 0x5C3A w --count if VAL != 0`). Memory, port, event and chip register
 watches): it is a tap of no sink, so it costs what a tap costs and runs in a direct run too. The list marks it
 `count only` (`stop: false`); a hit policy has nothing to pick there, every hit is counted.
 
+#### When each hit came: the per-hit record
+
+A breakpoint that only counts also records its hits (PLAN #122 V4): for each one the frame, the T-state in the frame,
+the PC of the instruction (execute: the one about to run; an access: the one doing it), the address or port (an
+event: its kind; a chip register breakpoint: the register), the byte when one came with the hit (a write, an OUT, an
+event, a chip register write), the kind and the hit's number. A sound card CPU's breakpoint records the ZX frame
+the card runs in, the card's time since that frame's start and its own clock (`cpu_time`).
+
+| Option | CLI | WebAPI / MCP `bp_add` | Lua / Python | Default |
+|:--|:--|:--|:--|:--|
+| Hits kept | `--log N` | `hit_log` | `hit_log` | 1000; 0 keeps none; at most 100000 |
+| Which ones | `--log-keep first\|last` | `hit_log_keep` | `hit_log_keep` | `first`: the first N, later hits only counted; `last`: the newest N |
+
+Read it with `bphits <id> [--from K] [--limit N] [--cpu gs]`, WebAPI `GET /api/v1/emulator/{id}/breakpoints/{bp_id}/hits?cpu=&from=&limit=`
+(also a WebSocket `call`), MCP `control_execution` `bp_hits` (`bp_id`, `hit_from`, `hit_limit`), Lua
+`bp_hit_log(id, {cpu=, from=, limit=})`, Python `emu.bp_hit_log(id, cpu=, from_index=, limit=)`. The answer:
+`hit_count` (and `match_count` with a condition), `log {capacity, keep, total, stored, dropped, oldest}` and
+`hits [{index, hit, frame, t, pc, address, value?, kind, cpu_time?}]`, `more` with `next_from` for the next page
+(`limit` 1..10000, default 100). `log` is null for a breakpoint that stops or keeps no record. The reset of the hit
+counts (`bphits reset`, `POST .../breakpoints/hits/reset`, `bp_reset_hits`) empties the record too.
+
+Pentagon 128K at the 128 menu, a counting breakpoint at `#0038` kept for 3 hits, about a second of running:
+
+```
+> bp 0x0038 --count --log 3
+> bplist
+   1 Memory     0x0038   X     Active   count only, log first 3 (hit 102x)
+> bphits 1
+Breakpoint #1: 102 hits; record keeps the first 3, holds 3, dropped 99
+[0] hit 1  frame 178  t 170  PC #0038  exec #0038
+[1] hit 2  frame 178  t 71659  PC #0038  exec #0038
+[2] hit 3  frame 179  t 178  PC #0038  exec #0038
+```
+
+Two hits per interrupt: the editor ROM's handler at `#0038` pages the 48K ROM in through `#5B00` and jumps to its
+`#0038`, about 200 T later (here across the frame's end).
+
+The record is the same as a breakpoint that stops on every hit would show: the oracle test runs one machine with a
+counting breakpoint and another with a breakpoint that stops on each hit, and compares frame, T and PC hit by hit
+(`core/tests/debugger/breakpointhitlog_test.cpp`). A hit policy records only the hits it passes (`--hits %3`: every
+third), a condition only the hits where it held. The record is filled by the manager's own count sink, which the
+walk calls only while some record still takes hits: a breakpoint that only counts with no record (`--log 0`), or
+whose record of the first N is full, calls nothing, as before the records (the hits a full record dropped follow from
+the count and the policy). A record of the newest (`--log-keep last`) is written on every hit: +22 % per frame on a
+breakpoint over the whole ROM, every instruction at the BASIC prompt a hit (`BM_BreakpointFrame_CountingKeepLast`); a machine without a
+counting breakpoint, or with records full, runs as before (`BM_BreakpointFrame_*`, the A/B in the commit). Reads never
+pause the machine: a short lock per hit written and per 256 records copied.
+
 ## Checks when a condition is set
 
 A condition is checked when it is set, whether with the breakpoint or later with `bpcond` / `bp_condition`. A bad

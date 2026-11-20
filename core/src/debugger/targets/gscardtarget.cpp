@@ -158,6 +158,24 @@ bool GSCardTarget::Registers(Z80Registers& out) const
     return true;
 }
 
+bool GSCardTarget::HitClock(bool event, DebugTargetHitClock& out) const
+{
+    const GeneralSoundCard* card = Card();
+    if (!card)
+        return false;
+    out.frame = CardFrame(card);
+    out.t = static_cast<uint32_t>(std::max<int64_t>(0, card->cardFrameTime()));
+    out.cpuTime = card->cardTime();
+    out.pc = _accessPc;
+    if (event || _busMasterAccess)
+    {
+        // An event or a bus master's write comes with no instruction of its own: the one the card CPU stands at
+        Z80CpuRegisters regs{};
+        out.pc = card->cardRegisters(regs) ? regs.pc : 0;
+    }
+    return true;
+}
+
 bool GSCardTarget::Peek(uint16_t address, uint8_t& out) const
 {
     GeneralSoundCard* card = Card();
@@ -411,6 +429,7 @@ uint8_t GSCardTarget::onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value)
 {
     if (!_replay.empty()) [[unlikely]]
         ReplayRead(ttd::TTDCardEdit::Read, addr, value);
+    _accessPc = pc;
     // A read tap's sync callback may hand the card another byte (fault injection, design §8A.7)
     Note(_breakpoints->HandleReplaceableRead(addr, value), addr, value, BreakpointHitKind::MemoryRead, pc);
     return value;
@@ -418,6 +437,7 @@ uint8_t GSCardTarget::onMemoryRead(uint16_t pc, uint16_t addr, uint8_t value)
 
 void GSCardTarget::onMemoryWrite(uint16_t pc, uint16_t addr, uint8_t value)
 {
+    _accessPc = pc;
     Note(_breakpoints->HandleMemoryWrite(addr, value), addr, value, BreakpointHitKind::MemoryWrite, pc);
 }
 
@@ -425,12 +445,14 @@ uint8_t GSCardTarget::onPortIn(uint16_t pc, uint16_t port, uint8_t value)
 {
     if (!_replay.empty()) [[unlikely]]
         ReplayRead(ttd::TTDCardEdit::PortIn, port, value);
+    _accessPc = pc;
     Note(_breakpoints->HandleReplaceablePortIn(port, value), port, value, BreakpointHitKind::PortIn, pc);
     return value;
 }
 
 void GSCardTarget::onPortOut(uint16_t pc, uint16_t port, uint8_t value)
 {
+    _accessPc = pc;
     Note(_breakpoints->HandlePortOut(port, value), port, value, BreakpointHitKind::PortOut, pc);
 }
 
@@ -448,7 +470,9 @@ void GSCardTarget::onEvent(GSCardEvent kind, uint16_t port, uint8_t value)
 
 void GSCardTarget::onBusMasterWrite(uint8_t master, uint8_t ramPage, uint16_t offset, uint8_t value)
 {
+    _busMasterAccess = true;
     const uint16_t id = _breakpoints->HandlePageWrite(BANK_RAM, ramPage, offset, value);
+    _busMasterAccess = false;
     if (id == BRK_INVALID || _pending.hit)
         return;
     // The card CPU was off the bus: the instruction it stands at

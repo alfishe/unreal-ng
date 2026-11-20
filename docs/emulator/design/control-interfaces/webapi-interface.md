@@ -1017,7 +1017,14 @@ DELETE /api/v1/emulator/{id}/breakpoints/{bp_id}           Remove specific
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/enable    Enable
 PUT    /api/v1/emulator/{id}/breakpoints/{bp_id}/disable   Disable
 GET    /api/v1/emulator/{id}/breakpoints/status            Last triggered breakpoint info (+ last_triggered_hit_count)
-POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 ({"id": N}: one; no id: all)
+POST   /api/v1/emulator/{id}/breakpoints/hits/reset        Hit counters to 0 and per-hit records emptied ({"id": N}: one; no id: all)
+GET    /api/v1/emulator/{id}/breakpoints/{bp_id}/hits      ?cpu=&from=&limit=: the counts and the per-hit record of a
+                                                           breakpoint that only counts ({stop: false, hit_log: N,
+                                                           hit_log_keep: "first"|"last"} on POST; default the first
+                                                           1000 hits): {hit_count, match_count?, log {capacity, keep,
+                                                           total, stored, dropped, oldest} | null, hits [{index, hit,
+                                                           frame, t, pc, address, value?, kind, cpu_time?}],
+                                                           first_index, more, next_from?}; never pauses the machine
 GET    /api/v1/emulator/{id}/breakpoints/active?select=    Is a selection on (all, an id, a kind, group:<name>)
 PUT    /api/v1/emulator/{id}/breakpoints/active            {select, active: true | false | "toggle"}: switch a selection
 POST   /api/v1/emulator/{id}/breakpoints/remove            {select}: remove a selection
