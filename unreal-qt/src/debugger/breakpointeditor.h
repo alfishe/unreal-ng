@@ -11,6 +11,7 @@
 #include <QGroupBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QSpinBox>
 #include <QValidator>
 #include "emulator/emulator.h"
 #include "debugger/breakpoints/breakpointmanager.h"
@@ -49,6 +50,8 @@ private:
     /// Compiles the condition for the selected kind and access (the manager's check: trigger, labels, this machine)
     /// and shows what it reads as or why it is refused, the place marked. False when refused
     bool checkCondition();
+    /// The record's fields follow the Count only box: editable only for a breakpoint that only counts
+    void updateHitLogRow();
     
     std::shared_ptr<Emulator> _emulator;
     Mode _mode;
@@ -96,7 +99,10 @@ private:
     QComboBox* _groupCombo;
     QLineEdit* _noteEdit;
     QCheckBox* _activeCheck;
-    QCheckBox* _countOnlyCheck;  // BreakpointSpec::stop = false: only counts the hits
+    QCheckBox* _countOnlyCheck = nullptr;  // BreakpointSpec::stop = false: only counts the hits
+    QWidget* _hitLogRow;         // a breakpoint that only counts: its per-hit record (BreakpointSpec::hitLog)
+    QSpinBox* _hitLogSpin;       // the hits kept, 0: none
+    QComboBox* _hitLogKeepCombo; // the first ones or the newest
     
     QPushButton* _okButton;
     QPushButton* _cancelButton;
