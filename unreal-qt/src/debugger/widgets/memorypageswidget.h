@@ -8,6 +8,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/memory/memory.h"
+#include "debugger/targets/debugcpuid.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MemoryPagesWidget; }
@@ -21,6 +22,9 @@ class MemoryPagesWidget : public QWidget
 public:
     explicit MemoryPagesWidget(QWidget *parent = nullptr);
     virtual ~MemoryPagesWidget() override;
+
+    /// The CPU whose four windows are named (the window's processor tab): a card's ROM / RAM pages
+    void setCpu(DebugCpuId cpu) { m_cpu = cpu; }
 
     // Helper methods
 protected:
@@ -51,6 +55,7 @@ private:
     QThread* m_mainThread;
 
     DebuggerWindow* m_debuggerWindow;
+    DebugCpuId m_cpu = DebugCpuId::Main;
 
     QLabel* page0Value;
     QLabel* page1Value;

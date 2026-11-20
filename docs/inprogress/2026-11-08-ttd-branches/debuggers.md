@@ -144,15 +144,18 @@ debuggers' time group, by the CPU in front.
   its instruction boundary`. Without one, the card's tab adds where the card stands.
 - **Refusals and answers** (`no_breakpoints`, `no_count`, `no_card`; `at_start`, `at_end`, `no_hit`) are said in a
   message (`TtdControls::inform`, a box; the self-check reads them) and in the branch button's tooltip.
-- **Embedded** has no card CPU view: its registers, listing and stack are the main CPU's (the card is seen only in
-  memory dumps of the card's RAM). Its moment label (`debuggertimetravel.cpp`, `DebuggerTimeTravel::CardMoment`, from
-  `TimeTravelController::PublishedCardPositions` while the machine is paused in the history) says where both CPUs
-  stand when another surface left the machine at a card position, so the main CPU's registers read right. Proposed,
-  not built: a CPU selector on the Embedded debugger's toolbar (Main / GS / MS) that switches the registers widget and
-  the disassembler to the card's `GSCardTarget` (an extension of the two existing widgets, the way eCat's tabs do it);
-  the time group would then route as eCat's does.
+- **Embedded** has processor tabs above its panes (`unreal-qt/src/debugger/debuggercpu.cpp`, `DebuggerCpuTabs`):
+  Main CPU and one per card CPU fitted (GS / NeoGS, MultiSound GS); with the main CPU alone there is no bar. The tab
+  in front is the CPU the registers, stack, memory pages, memory view (its 64 KB), disassembly (its labels and
+  breakpoints), the steps, run to cursor and the time group act on. With a card in front the time group routes as
+  eCat's (`DebuggerTimeTravel::setCpu`): Step Back `step-instruction {cpu, dir: back}`, Step In in the past
+  `step-instruction {cpu, dir: forward}` (live: `RunControl::CardStep`), Run Back `reverse-continue {cpu}`, Step Over
+  Back off. A breakpoint or step stop brings its CPU's tab to the front once per `Emulator::LastStop().serial`; a
+  pause and a move in time leave the tab alone, so the card's tab stays after its Step Back. The moment label
+  (`DebuggerTimeTravel::CardMoment`, from `TimeTravelController::PublishedCardPositions` while the machine is paused
+  in the history) names both CPUs at a card position; without one, a card's tab adds where its card stands.
 
 Tests: `DebuggerTimeTravelCard_Test` (unreal-qt-tests: the readout's words, a card position in the moment, a main move
-ending it); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
+ending it), `DebuggerCpuTabs_Test` (the tabs, the readers per CPU, a card stop once, a card Step Back); `unreal-debugger --self-check` in process and `--connect` (the card's tab: Step Back, F7 in the past, Run
 Back with and without a card breakpoint, at the start, a missing card, the main CPU's tab again).
 
