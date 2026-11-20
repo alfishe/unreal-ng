@@ -80,10 +80,10 @@ Not planned yet:
 - [ ] NR #8F memory mapping modes (Pentagon 512 / 1024 paging through #EFF7): stored only
 - [ ] SPI flash on port #E7 (config mode, 16 MB, a `[NEXT] FlashFile=`): the select is decoded and ignored
 - [ ] The generic `DivMmcPaging` as a `divmmc` slot card (machine reset, TTD blob, the +2A/+3 ROM-3-only automap); the Next has its own
-- [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` splits the line where the new
-  colour reaches the output, by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
+- [x] Border colour changes of the CPU (#FE) inside a line (2026-11-20): `ScreenNext::SetBorderColor` queues the place where the new
+  colour reaches the output and the line is drawn once with its border in runs (2000 changes a frame: +3.3 %), by the rule POC 028 scenario 54 measured on the RTL (17 clocks after the CPU clock's falling edge, the
   next 8-pixel cell; the Pentagon timing at once); design-video-timing.md section 6a, `NextBorder*_Test`. The outer border around
-  the grid and the Timex hi-res border are not split
+  the grid and the Timex hi-res border do not change mid-line
 - [ ] Sound: the AY through the standard stack's voicing and the `ym2149.vhd` volume table (NextAudio uses the generic AY levels); a test
   of the rendered levels of ABC / ACB / mono (NR #08 bit 5, NR #09 bits 7:5); PT3 players through NextZXOS, the demos' music phase against
   jnext, `zxnext_sfx` / DMA sample play
