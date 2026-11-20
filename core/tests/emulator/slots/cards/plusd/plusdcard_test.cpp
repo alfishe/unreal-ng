@@ -207,7 +207,7 @@ TEST_F(PlusDCard_Test, OverlayShowsRomAndRam)
 }
 
 /// The card's bus overlay is on only while it is paged in: paged out, the memory runs the plain interfaces, as on
-/// a 48K without the card (test-plan §7: the idle card costs nothing per access) (~5 ms)
+/// a 48K without the card (test-plan §6: the idle card costs nothing per access) (~5 ms)
 TEST_F(PlusDCard_Test, OverlayOnlyWhilePagedIn)
 {
     Create("48K", {{"edge.1", "plusd"}});
@@ -240,7 +240,7 @@ TEST_F(PlusDCard_Test, OverlayOnlyWhilePagedIn)
 }
 
 /// The WD1772 is stepped only while it is awake: asleep (2 s idle) the machine's step skips it, a port access
-/// wakes it (test-plan §7) (~5 ms)
+/// wakes it (test-plan §6) (~5 ms)
 TEST_F(PlusDCard_Test, WorkGateFollowsTheControllersSleep)
 {
     Create("48K", {{"edge.1", "plusd"}});

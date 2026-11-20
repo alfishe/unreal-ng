@@ -43,6 +43,9 @@
 #include "emulator/notifications.h"
 #include "emulator/platform.h"
 #include "emulator/state/statenodejson.h"
+#include "emulator/video/screen.h"
+#include "emulator/video/screenshotter.h"
+#include "3rdparty/lodepng/lodepng.h"
 #include "platform/processinfo.h"
 
 namespace ttd
@@ -416,6 +419,11 @@ private:
     /// @p frame absent: the machine as it stands now
     TTDReply MemoryAtCpu(std::optional<uint64_t> frame, uint32_t tin, uint64_t offset, uint64_t length);
     TTDReply MemoryDiff(const TTDRequest& request);
+    /// memory-series (PLAN #122 S1): ranges at many frame starts in one walk of the checkpoints (the controller's
+    /// ReadMemorySeries), bounded by rows and bytes
+    TTDReply MemorySeries(const TTDRequest& request);
+    /// screen-at (PLAN #122 V2): a past frame's picture, or the normal / shadow screen's bytes at its end
+    TTDReply ScreenAt(const TTDRequest& request);
     /// The engine's region a memory name means (a region name or alias, "ram", "ramN"), the byte offset of the
     /// name's start in it, and the checkpoint at or before `frame`. Empty: all good; otherwise the reply to send
     std::optional<TTDReply> ResolveRegionAt(const std::string& name, uint64_t frame, uint32_t& region, uint32_t& base,
@@ -488,7 +496,7 @@ const std::vector<std::string>& TTDControl::Verbs()
         "position", "seek", "step-back", "step-forward", "resume", "step-instruction", "reverse-step", "reverse-step-over",
         "markers", "bookmarks", "bookmark-add", "bookmark-note", "bookmark-delete", "bookmark-export",
         "port-events", "find-last", "reverse-continue", "probe-frames", "coverage-probe", "coverage-scan", "coverage-rare", "coverage-summary",
-        "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-diff", "file-info", "dump", "load", "export-clip",
+        "timeline", "cause-chain", "backtrace", "find-event", "explain-frame", "diff", "replay-check", "seek-check", "memory-at", "memory-series", "memory-diff", "screen-at", "file-info", "dump", "load", "export-clip",
         "branches", "branch-info", "branch-create", "branch-switch", "branch-update", "branch-delete", "branch-prune"};
     return verbs;
 }
@@ -524,6 +532,9 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
                            "max_frames", "limit"}},
         {"memory-at", {"space", "offset", "length", "frame", "tinframe"}},
         {"memory-diff", {"space", "from_frame", "to_frame", "limit"}},
+        {"memory-series", {"ranges", "from_frame", "to_frame", "step", "frames", "changes_only", "format", "limit",
+                           "max_bytes"}},
+        {"screen-at", {"frame", "which", "format", "area", "encoding"}},
         {"coverage-summary", {"from_frame", "to_frame", "kind", "bucket_size", "limit"}},
         {"timeline", {"from_frame", "to_frame", "bucket_size", "limit", "buckets", "ports", "min_phase_ms"}},
         {"cause-chain", {"addr", "phys_page", "reg", "frame", "tinframe", "depth", "max_links", "max_frames", "flags",
@@ -717,6 +728,10 @@ TTDReply TTDControlBackend::Run(const std::string& verb, const TTDRequest& reque
         return MemoryAt(request);
     if (verb == "memory-diff")
         return MemoryDiff(request);
+    if (verb == "memory-series")
+        return MemorySeries(request);
+    if (verb == "screen-at")
+        return ScreenAt(request);
     if (verb == "branches")
         return Branches(request);
     if (verb == "branch-switch")
@@ -5618,6 +5633,36 @@ std::optional<TTDReply> TTDControlBackend::ResolveRegionAt(const std::string& na
     return std::nullopt;
 }
 
+namespace
+{
+/// E4 (PLAN #122): the moment a read stands for, as fields (moment: frame_start / inside_frame / now; at_tinframe:
+/// where the CPU stood) and in words (moment_text)
+void AddMoment(StateNode& body, const std::string& kind, uint64_t frame, uint64_t atFrame, uint64_t atTin)
+{
+    body["moment"] = kind;
+    body["at_tinframe"] = atTin;
+    std::string text;
+    if (kind == "now")
+        text = "the machine now: frame " + std::to_string(atFrame) + ", tinframe " + std::to_string(atTin) +
+               " (no history read)";
+    else if (kind == "inside_frame")
+        text = "inside frame " + std::to_string(atFrame) + " at tinframe " + std::to_string(atTin) +
+               " (after every write before that point)";
+    else
+    {
+        text = "the start of frame " + std::to_string(atFrame) + ", before its first instruction";
+        if (atFrame != frame)
+            text += ": the newest checkpoint at or before frame " + std::to_string(frame) + " (that frame has none of "
+                    "its own; seek there for its exact start)";
+        if (atTin > 0)
+            text += " (the CPU stood " + std::to_string(atTin) +
+                    " T in, past the instruction that crossed the boundary; a write it made after the boundary "
+                    "counts in this frame and is not in these bytes, a seek here shows it)";
+    }
+    body["moment_text"] = text;
+}
+}  // namespace
+
 TTDReply TTDControlBackend::MemoryAt(const TTDRequest& request)
 {
     const std::string* space = Option(request, "space");
@@ -5729,6 +5774,15 @@ TTDReply TTDControlBackend::MemoryAt(const TTDRequest& request)
     reply.body["tinframe"] = tin;
     reply.body["at_frame"] = engine.Checkpoint(index)->position.frame;
     reply.body["exact"] = engine.Checkpoint(index)->position.frame == frame;
+    if (inside)
+        AddMoment(reply.body, "inside_frame", frame, frame, tin);
+    else
+    {
+        const uint64_t atFrame = engine.Checkpoint(index)->position.frame;
+        TTDTimePoint moment{atFrame, 0};
+        _manager->CheckpointMoment(atFrame, moment);
+        AddMoment(reply.body, "frame_start", frame, atFrame, moment.tInFrame);
+    }
     std::string hex;
     hex.reserve(size_t(length) * 2);
     static const char kHex[] = "0123456789ABCDEF";
@@ -5792,8 +5846,12 @@ TTDReply TTDControlBackend::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t 
     reply.body["at_frame"] = view.at.frame;
     // live: the machine now (at_tinframe where it stands); exact: the bytes are those of the asked point
     reply.body["live"] = live;
-    if (live)
-        reply.body["at_tinframe"] = static_cast<uint64_t>(view.at.tInFrame);
+    // A frame start read from the store names {frame, 0}: where the checkpoint's CPU actually stood is its moment
+    uint64_t atTin = view.at.tInFrame;
+    if (TTDTimePoint moment; !live && tin == 0 && atTin == 0 && _manager->CheckpointMoment(view.at.frame, moment))
+        atTin = moment.tInFrame;
+    AddMoment(reply.body, live ? "now" : tin > 0 ? "inside_frame" : "frame_start", frame ? *frame : view.at.frame,
+              view.at.frame, atTin);
     reply.body["exact"] = !live || !frame || tin == view.at.tInFrame;
     // The mapping the bytes were read through: each 16 KB window's ROM / RAM / cache page
     StateNode banks = StateNode::Array();
@@ -5818,6 +5876,524 @@ TTDReply TTDControlBackend::MemoryAtCpu(std::optional<uint64_t> frame, uint32_t 
         hex += kHex[b & 0x0F];
     }
     reply.body["hex"] = hex;
+    return reply;
+}
+
+namespace
+{
+/// memory-series' limits (PLAN #122 S1): ranges per call, bytes per row, rows and bytes per answer, frames listed
+constexpr size_t kSeriesMaxRanges = 16;
+constexpr uint64_t kSeriesMaxRowBytes = 65536;
+constexpr uint64_t kSeriesDefaultRows = 1000;
+constexpr uint64_t kSeriesMaxRows = 100000;
+constexpr uint64_t kSeriesDefaultBytes = uint64_t(1) << 20;
+constexpr uint64_t kSeriesMaxBytes = uint64_t(16) << 20;
+constexpr size_t kSeriesMaxFrameList = 100000;
+
+/// One range as asked: a space name ("cpu" when absent), an offset and a length, still as text
+struct SeriesRangeText
+{
+    std::string space = "cpu";
+    std::string offset;
+    std::string length;
+};
+
+/// `ranges`: "[space:]offset:length" items separated by commas, semicolons or spaces (space cpu when absent), or a
+/// JSON array of such strings or of {space, address | offset, page, length} objects. Empty: all good; otherwise the
+/// 400 text
+std::string ParseSeriesRanges(const std::string& text, std::vector<SeriesRangeText>& out)
+{
+    static const std::string kForm =
+        "ranges: \"[space:]offset:length\" items (space cpu when absent: Z80 addresses; ram, ramN or a memory's name), "
+        "e.g. \"0x5B00:32, ram7:0x1800:768\", or a JSON array of {space, address | offset, page, length}";
+    auto fromItem = [&](const std::string& item) -> std::string {
+        std::vector<std::string> parts;
+        size_t start = 0;
+        for (size_t colon = item.find(':'); colon != std::string::npos; colon = item.find(':', start))
+        {
+            parts.push_back(item.substr(start, colon - start));
+            start = colon + 1;
+        }
+        parts.push_back(item.substr(start));
+        SeriesRangeText r;
+        if (parts.size() == 2)
+        {
+            r.offset = parts[0];
+            r.length = parts[1];
+        }
+        else if (parts.size() == 3)
+        {
+            r.space = parts[0];
+            r.offset = parts[1];
+            r.length = parts[2];
+        }
+        else
+            return "Invalid range '" + item + "': " + kForm;
+        out.push_back(std::move(r));
+        return "";
+    };
+    const size_t first = text.find_first_not_of(" \t\r\n");
+    if (first != std::string::npos && text[first] == '[')
+    {
+        StateNode list;
+        std::string error;
+        if (!StateNodeFromJsonText(text, list, &error) || !list.isArray())
+            return "Invalid ranges: " + kForm + (error.empty() ? std::string() : " (" + error + ")");
+        auto scalar = [](const StateNode* n) -> std::optional<std::string> {
+            if (!n || n->kind == StateNode::Kind::Null)
+                return std::nullopt;
+            if (n->kind == StateNode::Kind::String)
+                return n->s;
+            if (n->kind == StateNode::Kind::Int)
+                return n->i < 0 ? std::string("-") : std::to_string(n->i);
+            return std::string("?");
+        };
+        for (const StateNode& item : list.items)
+        {
+            if (item.kind == StateNode::Kind::String)
+            {
+                if (std::string err = fromItem(item.s); !err.empty())
+                    return err;
+                continue;
+            }
+            if (!item.isObject())
+                return "Invalid ranges: " + kForm;
+            SeriesRangeText r;
+            const std::optional<std::string> space = scalar(item.find("space"));
+            const std::optional<std::string> page = scalar(item.find("page"));
+            const std::optional<std::string> address = scalar(item.find("address"));
+            const std::optional<std::string> offset = scalar(item.find("offset"));
+            const std::optional<std::string> length = scalar(item.find("length"));
+            const std::string where = "ranges[" + std::to_string(out.size()) + "]: ";
+            if (!length || (!address && !offset) || (address && offset))
+                return where + "needs length and one of address / offset";
+            if (page && space)
+                return where + "page names RAM page N (space ramN): give page or space";
+            if (page && address)
+                return where + "page takes offset (inside the page), not address";
+            r.space = page ? "ram" + *page : space ? *space : "cpu";
+            r.offset = address ? *address : *offset;
+            r.length = *length;
+            out.push_back(std::move(r));
+        }
+        return out.empty() ? "Invalid ranges: the list is empty" : "";
+    }
+    std::string item;
+    for (size_t i = 0; i <= text.size(); ++i)
+    {
+        const char c = i < text.size() ? text[i] : ',';
+        if (c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n' || c == '\r')
+        {
+            if (!item.empty())
+            {
+                if (std::string err = fromItem(item); !err.empty())
+                    return err;
+                item.clear();
+            }
+            continue;
+        }
+        item += c;
+    }
+    return out.empty() ? "Invalid ranges: " + kForm : "";
+}
+
+/// Bytes as the reply carries them: base64, hex or a list of numbers
+StateNode BytesNode(const uint8_t* data, size_t n, const std::string& format)
+{
+    if (format == "values")
+    {
+        StateNode list = StateNode::Array();
+        for (size_t i = 0; i < n; ++i)
+            list.push(static_cast<unsigned>(data[i]));
+        return list;
+    }
+    if (format == "hex")
+    {
+        static const char kHex[] = "0123456789ABCDEF";
+        std::string hex;
+        hex.reserve(n * 2);
+        for (size_t i = 0; i < n; ++i)
+        {
+            hex += kHex[data[i] >> 4];
+            hex += kHex[data[i] & 0x0F];
+        }
+        return StateNode(hex);
+    }
+    return StateNode(Screenshotter::Base64Encode(std::vector<uint8_t>(data, data + n)));
+}
+
+/// The 6912 bytes of a ZX screen (bitmap then attributes) as a 256 x 192 RGBA picture in @p palette (FLASH as
+/// not inverted)
+std::vector<uint8_t> DecodeZxScreen(const std::vector<uint8_t>& screen, const uint32_t palette[16])
+{
+    std::vector<uint8_t> rgba(size_t(256) * 192 * 4);
+    for (uint32_t y = 0; y < 192; ++y)
+        for (uint32_t col = 0; col < 32; ++col)
+        {
+            const uint8_t bits = screen[((y & 0xC0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2) | col];
+            const uint8_t attr = screen[6144 + (y >> 3) * 32 + col];
+            const uint32_t bright = (attr & 0x40) ? 8 : 0;
+            const uint32_t ink = palette[(attr & 7) + bright];
+            const uint32_t paper = palette[((attr >> 3) & 7) + bright];
+            for (uint32_t b = 0; b < 8; ++b)
+            {
+                const uint32_t c = (bits & (0x80 >> b)) ? ink : paper;
+                uint8_t* px = &rgba[(size_t(y) * 256 + col * 8 + b) * 4];
+                px[0] = static_cast<uint8_t>(c & 0xFF);
+                px[1] = static_cast<uint8_t>((c >> 8) & 0xFF);
+                px[2] = static_cast<uint8_t>((c >> 16) & 0xFF);
+                px[3] = 0xFF;
+            }
+        }
+    return rgba;
+}
+}  // namespace
+
+TTDReply TTDControlBackend::MemorySeries(const TTDRequest& request)
+{
+    const std::string* rangesText = Option(request, "ranges");
+    if (!rangesText)
+        return Fail(TTDControlError::BadRequest,
+                    "memory-series needs ranges (\"[space:]offset:length\", e.g. \"0x5B00:32, ram7:0x1800:768\"); "
+                    "frames: from_frame / to_frame / step (default: the whole history) or frames");
+    std::vector<SeriesRangeText> asked;
+    if (std::string err = ParseSeriesRanges(*rangesText, asked); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    if (asked.size() > kSeriesMaxRanges)
+        return Fail(TTDControlError::BadRequest, "ranges: at most " + std::to_string(kSeriesMaxRanges) + " per call (" +
+                                                     std::to_string(asked.size()) + " given)");
+
+    TTDSeriesQuery query;
+    const std::string* fromText = Option(request, "from_frame");
+    const std::string* toText = Option(request, "to_frame");
+    const std::string* stepText = Option(request, "step");
+    const std::string* listText = Option(request, "frames");
+    if (listText && (fromText || toText || stepText))
+        return Fail(TTDControlError::BadRequest, "frames lists the frames: it takes no from_frame, to_frame or step");
+    if (listText)
+    {
+        std::string item;
+        for (size_t i = 0; i <= listText->size(); ++i)
+        {
+            const char c = i < listText->size() ? (*listText)[i] : ',';
+            if (c == ',' || c == ' ' || c == ';' || c == '[' || c == ']')
+            {
+                if (item.empty())
+                    continue;
+                uint64_t f = 0;
+                if (!ParseU64(item, f))
+                    return Fail(TTDControlError::BadRequest, "Invalid frames: '" + item + "' is not a frame number");
+                if (!query.frames.empty() && f <= query.frames.back())
+                    return Fail(TTDControlError::BadRequest, "frames: list them in ascending order, each once");
+                if (query.frames.size() == kSeriesMaxFrameList)
+                    return Fail(TTDControlError::BadRequest, "frames: at most " + std::to_string(kSeriesMaxFrameList) +
+                                                                 " listed (use from_frame / to_frame / step)");
+                query.frames.push_back(f);
+                item.clear();
+                continue;
+            }
+            item += c;
+        }
+        if (query.frames.empty())
+            return Fail(TTDControlError::BadRequest, "frames: the list is empty");
+    }
+    else
+    {
+        query.fromStart = !fromText;
+        query.toEnd = !toText;
+        if (fromText && !ParseU64(*fromText, query.fromFrame))
+            return Fail(TTDControlError::BadRequest, "Invalid from_frame: '" + *fromText + "'");
+        if (toText && !ParseU64(*toText, query.toFrame))
+            return Fail(TTDControlError::BadRequest, "Invalid to_frame: '" + *toText + "'");
+        if (stepText && (!ParseU64(*stepText, query.step) || query.step == 0))
+            return Fail(TTDControlError::BadRequest, "Invalid step: '" + *stepText + "' (frames between rows, at least 1)");
+        if (fromText && toText && query.fromFrame > query.toFrame)
+            return Fail(TTDControlError::BadRequest, "from_frame is after to_frame");
+    }
+    if (std::string err = FlagOption(request, "changes_only", query.changesOnly); !err.empty())
+        return Fail(TTDControlError::BadRequest, err);
+    std::string format = "base64";
+    if (const std::string* t = Option(request, "format"))
+    {
+        format = *t;
+        std::transform(format.begin(), format.end(), format.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (format != "base64" && format != "hex" && format != "values")
+            return Fail(TTDControlError::BadRequest, "Invalid format: '" + *t + "' (base64, hex or values)");
+    }
+    uint64_t rows = kSeriesDefaultRows;
+    if (const std::string* t = Option(request, "limit"); t && (!ParseUpTo(*t, kSeriesMaxRows, rows) || rows == 0))
+        return Fail(TTDControlError::BadRequest, "Invalid limit: rows 1.." + std::to_string(kSeriesMaxRows));
+    uint64_t bytes = kSeriesDefaultBytes;
+    if (const std::string* t = Option(request, "max_bytes"); t && (!ParseUpTo(*t, kSeriesMaxBytes, bytes) || bytes == 0))
+        return Fail(TTDControlError::BadRequest, "Invalid max_bytes: 1.." + std::to_string(kSeriesMaxBytes) +
+                                                     " (bytes of rows per answer, before encoding)");
+    query.maxRows = static_cast<size_t>(rows);
+    query.maxBytes = static_cast<size_t>(bytes);
+
+    // The ranges' memories, named as memory-at names them
+    const TimeTravelEngine& engine = _manager->GetEngine();
+    uint64_t rowBytes = 0;
+    StateNode rangesNode = StateNode::Array();
+    for (size_t i = 0; i < asked.size(); ++i)
+    {
+        const SeriesRangeText& a = asked[i];
+        const std::string where = "ranges[" + std::to_string(i) + "] (" + a.space + ":" + a.offset + ":" + a.length + "): ";
+        uint64_t offset = 0;
+        uint64_t length = 0;
+        if (!ParseUpTo(a.offset, 0xFFFFFFFFull, offset))
+            return Fail(TTDControlError::BadRequest, where + "invalid offset '" + a.offset + "'");
+        if (!ParseUpTo(a.length, kSeriesMaxRowBytes, length) || length == 0)
+            return Fail(TTDControlError::BadRequest, where + "invalid length '" + a.length + "' (1.." +
+                                                         std::to_string(kSeriesMaxRowBytes) + ")");
+        std::string lower = a.space;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        TTDSeriesRange range;
+        range.length = static_cast<uint32_t>(length);
+        StateNode node = StateNode::Object();
+        if (lower == "cpu")
+        {
+            if (offset + length > 0x10000)
+                return Fail(TTDControlError::BadRequest,
+                            where + "space cpu: Z80 addresses end at 0xFFFF (offset + length at most 65536)");
+            range.cpu = true;
+            range.offset = offset;
+            node["space"] = "cpu";
+        }
+        else
+        {
+            uint32_t region = 0;
+            uint32_t base = 0;
+            size_t index = 0;
+            // Only the name is checked here (against the newest checkpoint): the frames are the series' own check
+            if (std::optional<TTDReply> refused = ResolveRegionAt(a.space, UINT64_MAX, region, base, index))
+                return Fail(refused->error, where + refused->message);
+            const TTDRegionDesc& desc = engine.Regions()[region];
+            if (base + offset + length > desc.bytes)
+                return Fail(TTDControlError::BadRequest,
+                            where + "past the end of " + desc.name + " (" + std::to_string(desc.bytes) + " bytes)");
+            range.region = region;
+            range.offset = base + offset;
+            node["space"] = desc.name;
+        }
+        node["offset"] = range.offset;
+        node["length"] = length;
+        rangesNode.push(node);
+        rowBytes += length;
+        query.ranges.push_back(range);
+    }
+    if (rowBytes > kSeriesMaxRowBytes)
+        return Fail(TTDControlError::BadRequest, "ranges: " + std::to_string(rowBytes) + " bytes per frame; at most " +
+                                                     std::to_string(kSeriesMaxRowBytes) + " (split the call)");
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    // A restore moves the machine for a while (put back after): a running machine is parked first. Reads from the
+    // store alone leave it running
+    if (_manager->MemorySeriesRestores(query))
+        PauseAndConfirm();
+    const TTDSeriesResult r = _manager->ReadMemorySeries(query);
+    if (!r.ok)
+    {
+        const bool asking = r.error.find("outside the history") != std::string::npos ||
+                            r.error.find("no recorded") != std::string::npos;
+        return Fail(r.notRecorded ? TTDControlError::NotFound
+                    : asking      ? TTDControlError::BadRequest
+                                  : TTDControlError::Conflict,
+                    "memory-series: " + r.error);
+    }
+
+    TTDReply reply;
+    reply.body["ranges"] = rangesNode;
+    reply.body["format"] = format;
+    reply.body["first_frame"] = r.firstFrame;
+    reply.body["last_frame"] = r.lastFrame;
+    if (query.frames.empty())
+    {
+        reply.body["from_frame"] = query.fromStart ? r.firstFrame : query.fromFrame;
+        reply.body["to_frame"] = query.toEnd ? r.lastFrame : query.toFrame;
+        reply.body["step"] = query.step;
+    }
+    else
+        reply.body["frames_asked"] = static_cast<uint64_t>(query.frames.size());
+    reply.body["changes_only"] = query.changesOnly;
+    reply.body["moment"] = "frame_start";
+    reply.body["moment_text"] = "each row: the start of its frame, before its first instruction (memory-at at that "
+                                "frame); at_tinframe: where the CPU stood, just past the instruction that crossed the "
+                                "frame boundary";
+    StateNode list = StateNode::Array();
+    for (const TTDSeriesRow& row : r.rows)
+    {
+        StateNode node = StateNode::Object();
+        node["frame"] = row.frame;
+        node["exact"] = row.atFrame == row.frame;
+        if (row.atFrame != row.frame)
+            node["at_frame"] = row.atFrame;
+        node["at_tinframe"] = static_cast<uint64_t>(row.atTinframe);
+        if (query.changesOnly && row.changed)
+        {
+            StateNode changed = StateNode::Array();
+            for (size_t i = 0; i < query.ranges.size() && i < 32; ++i)
+                if (row.changed & (1u << i))
+                    changed.push(static_cast<uint64_t>(i));
+            node["changed"] = changed;
+        }
+        StateNode data = StateNode::Array();
+        size_t pos = 0;
+        for (const TTDSeriesRange& range : query.ranges)
+        {
+            data.push(BytesNode(row.bytes.data() + pos, range.length, format));
+            pos += range.length;
+        }
+        node["data"] = data;
+        list.push(node);
+    }
+    reply.body["rows"] = list;
+    reply.body["row_count"] = static_cast<uint64_t>(r.rows.size());
+    reply.body["frames_read"] = r.framesRead;
+    reply.body["pieces_decoded"] = r.piecesDecoded;
+    reply.body["restored_frames"] = r.restoredFrames;
+    reply.body["truncated"] = r.truncated;
+    if (r.truncated)
+        reply.body["next_from_frame"] = r.nextFrame;
+    StateNode limits = StateNode::Object();
+    limits["limit"] = rows;
+    limits["max_bytes"] = bytes;
+    limits["bytes_per_row"] = rowBytes;
+    reply.body["limits"] = limits;
+    return reply;
+}
+
+TTDReply TTDControlBackend::ScreenAt(const TTDRequest& request)
+{
+    const std::string* frameText = Option(request, "frame");
+    uint64_t frame = 0;
+    if (!frameText)
+        return Fail(TTDControlError::BadRequest,
+                    "screen-at needs frame (which: shown, normal or shadow; format: png, bitmap, attributes or raw)");
+    if (!ParseU64(*frameText, frame))
+        return Fail(TTDControlError::BadRequest, "Invalid frame: '" + *frameText + "'");
+    auto word = [&](const char* name, const char* fallback, std::initializer_list<const char*> allowed,
+                    std::string& out) -> std::string {
+        out = fallback;
+        if (const std::string* t = Option(request, name))
+        {
+            out = *t;
+            std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        }
+        std::string names;
+        for (const char* a : allowed)
+        {
+            if (out == a)
+                return "";
+            names += (names.empty() ? "" : ", ") + std::string(a);
+        }
+        return std::string("Invalid ") + name + ": '" + out + "' (" + names + ")";
+    };
+    std::string which, format, area, encoding;
+    for (const std::string& err : {word("which", "shown", {"shown", "normal", "shadow"}, which),
+                                   word("format", "png", {"png", "bitmap", "attributes", "raw"}, format),
+                                   word("area", "full", {"full", "screen"}, area),
+                                   word("encoding", "base64", {"base64", "hex"}, encoding)})
+        if (!err.empty())
+            return Fail(TTDControlError::BadRequest, err);
+    if (Option(request, "area") && !(which == "shown" && format == "png"))
+        return Fail(TTDControlError::BadRequest, "area cuts the shown picture (which shown, format png); a screen's "
+                                                 "own picture is its 256 x 192 pixels");
+    if (Option(request, "encoding") && format == "png")
+        return Fail(TTDControlError::BadRequest, "encoding is for the bytes (format bitmap, attributes or raw); png is base64");
+    if (TTDReply refusal; RefuseWhileRecording(refusal, true))
+        return refusal;
+    PauseAndConfirm();
+    const TTDScreenAtResult r = _manager->ReadScreenAt(frame);
+    if (!r.ok)
+    {
+        const bool asking = r.error.find("no recorded") != std::string::npos ||
+                            r.error.find("has not ended") != std::string::npos;
+        return Fail(r.barrier ? TTDControlError::Conflict
+                    : asking  ? TTDControlError::BadRequest
+                              : TTDControlError::Internal,
+                    "screen-at: " + r.error);
+    }
+    if (which == "shadow" && !r.shadowCapable)
+        return Fail(TTDControlError::BadRequest, "screen-at: this machine has one screen (RAM page 5): which shadow needs "
+                                                 "a 128K-class machine");
+
+    TTDReply reply;
+    reply.body["frame"] = frame;
+    reply.body["which"] = which;
+    reply.body["format"] = format;
+    reply.body["shadow_capable"] = r.shadowCapable;
+    reply.body["border"] = static_cast<unsigned>(r.border);
+    auto shownNode = [](uint8_t screen, uint16_t page, uint8_t p7FFD) {
+        StateNode n = StateNode::Object();
+        n["screen"] = screen ? "shadow" : "normal";
+        n["page"] = static_cast<unsigned>(page);
+        n["p7ffd"] = static_cast<unsigned>(p7FFD);
+        return n;
+    };
+    StateNode shown = StateNode::Object();
+    shown["at_start"] = shownNode(r.shownAtStart, r.pageAtStart, r.p7FFDAtStart);
+    shown["at_end"] = shownNode(r.shownAtEnd, r.pageAtEnd, r.p7FFDAtEnd);
+    shown["changed_during_frame"] = r.shownAtStart != r.shownAtEnd || !r.flips.empty();
+    StateNode flips = StateNode::Array();
+    for (const auto& [tin, screen] : r.flips)
+    {
+        StateNode f = StateNode::Object();
+        f["tinframe"] = static_cast<uint64_t>(tin);
+        f["screen"] = screen ? "shadow" : "normal";
+        flips.push(f);
+    }
+    shown["flips"] = flips;
+    shown["flip_samples"] = static_cast<uint64_t>(TimeTravelController::kScreenAtSamples);
+    reply.body["shown"] = shown;
+
+    if (format == "png" && which == "shown")
+    {
+        ScreenshotOptions options;
+        options.area = area == "screen" ? ScreenshotArea::Screen : ScreenshotArea::Full;
+        const ScreenshotResult shot = Screenshotter::Render(*r.picture, options);
+        if (!shot.ok)
+            return Fail(TTDControlError::Internal, "screen-at: " + shot.errorMessage);
+        reply.body["area"] = area;
+        reply.body["width"] = static_cast<unsigned>(shot.width);
+        reply.body["height"] = static_cast<unsigned>(shot.height);
+        reply.body["mime"] = "image/png";
+        reply.body["size"] = static_cast<uint64_t>(shot.bytes.size());
+        reply.body["data"] = Screenshotter::Base64Encode(shot.bytes);
+        reply.body["moment_text"] = "the final picture of frame " + std::to_string(frame) +
+                                    ": what the beam drew from its start to its end";
+        return reply;
+    }
+    // A screen's bytes at the frame's end: the one shown then, or the one named
+    const bool shadow = which == "shadow" || (which == "shown" && r.shownAtEnd == 1);
+    const std::vector<uint8_t>& bytes = shadow ? r.shadow : r.normal;
+    if (bytes.size() != 6912)
+        return Fail(TTDControlError::Internal, "screen-at: the screen's RAM page could not be read");
+    reply.body["screen"] = shadow ? "shadow" : "normal";
+    reply.body["page"] = static_cast<unsigned>(shadow ? 7 : 5);
+    reply.body["moment_text"] = "RAM page " + std::to_string(shadow ? 7 : 5) + " at the end of frame " +
+                                std::to_string(frame) + " (the start of frame " + std::to_string(frame + 1) + ")";
+    if (format == "png")
+    {
+        uint32_t palette[16] = {};
+        if (_context && _context->pScreen)
+            _context->pScreen->GetRGBAPalette16(palette);
+        const std::vector<uint8_t> rgba = DecodeZxScreen(bytes, palette);
+        std::vector<uint8_t> png;
+        if (lodepng::encode(png, rgba.data(), 256, 192) != 0 || png.empty())
+            return Fail(TTDControlError::Internal, "screen-at: the PNG encoder failed");
+        reply.body["width"] = 256u;
+        reply.body["height"] = 192u;
+        reply.body["mime"] = "image/png";
+        reply.body["size"] = static_cast<uint64_t>(png.size());
+        reply.body["data"] = Screenshotter::Base64Encode(png);
+        return reply;
+    }
+    const size_t from = format == "attributes" ? 6144 : 0;
+    const size_t n = format == "bitmap" ? 6144 : format == "attributes" ? 768 : 6912;
+    reply.body["offset"] = static_cast<uint64_t>(from);
+    reply.body["length"] = static_cast<uint64_t>(n);
+    reply.body["encoding"] = encoding;
+    reply.body["data"] = BytesNode(bytes.data() + from, n, encoding);
     return reply;
 }
 
