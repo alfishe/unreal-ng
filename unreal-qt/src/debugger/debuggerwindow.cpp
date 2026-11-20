@@ -353,6 +353,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _cpuTabs = new DebuggerCpuTabs(cpuBar, this);
     _registersTitle = ui->registersGroup->title();
     _stackTitle = ui->stackGroup->title();
+    _pagesTitle = ui->pagesGroup->title();
     _memoryTitle = ui->memoryGroup->title();
     _disasmTitle = ui->disasmGroup->title();
     connect(_cpuTabs, &DebuggerCpuTabs::cpuChanged, this, [this](DebugCpuId cpu) {
@@ -2254,6 +2255,7 @@ void DebuggerWindow::retargetPanes()
     ui->disassemblerWidget->setCpu(cpu);
     ui->registersGroup->setTitle(_registersTitle + suffix);
     ui->stackGroup->setTitle(_stackTitle + suffix);
+    ui->pagesGroup->setTitle(_pagesTitle + suffix);
     ui->memoryGroup->setTitle(_memoryTitle + suffix);
     ui->disasmGroup->setTitle(_disasmTitle + suffix);
     // The view of the other CPU's memory goes; the CPU's own comes at its PC
