@@ -6,7 +6,7 @@
 #   USE       optimise with the profile in UNREAL_PGO_DIR
 #   (empty)   off: a normal build
 # Toolchains:
-#   MSVC      unreal-qt only (unreal_pgo_target): /GENPROFILE:EXACT, /USEPROFILE on the LTCG link. Needs LTO (/GL objects);
+#   MSVC      unreal-qt only (unreal_pgo_target): /GENPROFILE, /USEPROFILE on the LTCG link. Needs LTO (/GL objects);
 #             USE only relinks. The training writes unreal-qt!N.pgc into UNREAL_PGO_DIR (VCPROFILE_PATH), beside the .pgd.
 #   GCC       every object: -fprofile-generate / -fprofile-use. The .gcda files are named after the object paths,
 #             so GENERATE and USE build in the same directory.
@@ -84,10 +84,9 @@ function(unreal_pgo_target target)
         return()
     endif ()
     if (UNREAL_PGO STREQUAL "GENERATE")
-        # EXACT: interlocked counters. The emulation, sound and WebAPI threads run the same functions at once; with the
-        # plain counters the instrumented build crashed on Windows arm64 (two threads in NeoGS at the same address)
-        target_link_options(${target} PRIVATE
-                            "$<$<CONFIG:Release>:/GENPROFILE:EXACT,PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
+        # Plain counters: EXACT (interlocked) made the CI training run over five times longer on x64 and did not
+        # cure the Windows arm64 fault (that package builds without PGO, release.yml)
+        target_link_options(${target} PRIVATE "$<$<CONFIG:Release>:/GENPROFILE:PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
     else ()
         target_link_options(${target} PRIVATE "$<$<CONFIG:Release>:/USEPROFILE:PGD=${UNREAL_PGO_DIR}/${target}.pgd>")
     endif ()
