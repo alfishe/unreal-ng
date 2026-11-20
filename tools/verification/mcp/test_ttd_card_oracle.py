@@ -7,7 +7,9 @@ reached at its count by card_seek and by a step; card_reverse_continue must land
 meet the breakpoint's address. The firmware's wait loop calls no routine there, so the step over checks run on a
 program of the card's own (nested routines planted in its RAM, a short recording of its own): card_reverse_step_over
 must land where single steps back first meet the stack level again; card_step_over / card_step_out after the
-routine single steps forward run under the level"""
+routine single steps forward run under the level; card_run_to_cursor must land where single steps forward first meet
+the cursor (never reached: an error, nothing moved). After a live card step at the history's end (the machine stands
+inside the card's run) the moves in time work: a card step back, a frame step back"""
 
 import os
 import re
@@ -131,7 +133,7 @@ def test_reverse_continue_meets_single_steps_back(s):
     s.call('time_travel', {'action': 'invalidate'}, ok=False)
 
 
-PLANTED = []  # the card's own program's recording, made once: [True] when recorded
+PLANTED = []  # the card's own program's recording, made once: [its base address] when recorded
 
 
 def plant_card_routines(s):
@@ -173,7 +175,7 @@ def plant_card_routines(s):
     s.call('control_execution', {'action': 'run_frames', 'frames': 6})
     s.call('control_execution', {'action': 'pause'}, ok=False)
     s.call('time_travel', {'action': 'stop'}, ok=False)
-    PLANTED.append(True)
+    PLANTED.append(base)
 
 
 def find_routine_return(s, start):
@@ -234,6 +236,46 @@ def test_step_over_and_out_meet_single_steps_forward(s):
     card_seek(s, landing + 1)
     r = s.call('time_travel', {'action': 'card_step_out', 'cpu': 'gs'})
     expect(moved_to(r, f'card_step_out from #{landing + 1}') == n, f'step out lands at #{n}', r.text)
+
+
+def test_run_to_cursor_meets_single_steps_forward(s):
+    start = planted_start(s, 3)
+    cursor = PLANTED[0] + 0x20  # the innermost routine
+    card_seek(s, start)
+    expected = None
+    for _ in range(64):
+        s.call('time_travel', {'action': 'card_step', 'cpu': 'gs', 'count': 1})
+        if card(s)['pc'] == cursor:
+            expected, expected_card = count(s), card(s)
+            break
+    expect(expected is not None, f'single steps forward from #{start} meet #{cursor:04X}')
+    card_seek(s, start)
+    r = s.call('time_travel', {'action': 'card_run_to_cursor', 'cpu': 'gs', 'addr': '0x%04X' % cursor})
+    expect(moved_to(r, f'card_run_to_cursor from #{start}') == expected and card(s) == expected_card,
+           f'run to the cursor from #{start} lands at #{expected}', r.text)
+    expect('at the cursor' in r.text, 'the text says the card is at the cursor', r.text)
+    # Never reached (a byte of the planted window the program never runs): an error, nothing moved
+    r = s.call('time_travel', {'action': 'card_run_to_cursor', 'cpu': 'gs', 'addr': PLANTED[0] + 0x30, 'max_frames': 50},
+               ok=False)
+    expect(r.is_error and 'no_hit' in r.text, 'never reached: no_hit', r.text)
+    expect(count(s) == expected, 'not reached: the card where it stood', count(s))
+
+
+def test_moves_after_a_live_card_step_leave_the_cards_run(s):
+    plant_card_routines(s)
+    end = api(s, 'GET', '/ttd/status')['current_end_frame']
+    s.call('time_travel', {'action': 'seek', 'frame': end})
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    expect(not r.is_error, "a live card step at the history's end", r.text)
+    r = s.call('time_travel', {'action': 'card_step', 'cpu': 'gs', 'count': -1}, ok=False)
+    expect(not r.is_error and 'at card instruction' in r.text, 'a card step back right after it', r.text)
+    s.call('time_travel', {'action': 'seek', 'frame': end})
+    r = s.call('control_execution', {'action': 'step', 'cpu': 'gs'})
+    expect(not r.is_error, "a live card step at the history's end again", r.text)
+    r = s.call('time_travel', {'action': 'step_back_frame'}, ok=False)
+    expect(not r.is_error, 'a frame step back right after it', r.text)
+    status = api(s, 'GET', '/ttd/status')
+    expect(status.get('state') == 'detached', 'in the history again', status)
 
 
 if __name__ == '__main__':

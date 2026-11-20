@@ -222,8 +222,20 @@ reach its boundary.
     Lua / Python `ttd_card_step_over` / `ttd_card_step_out`, MCP `card_step_over` / `card_step_out`). F8 /
     Ctrl+F8 on the card's tab in the past in both debuggers.
   - F7 / F8 / Ctrl+F8 at the history's end (`at_end`) run the card's live step, unrecorded (D-3, as the main CPU).
-  - Left: run to cursor (F4) on a card's tab in the past is still the live card step (it leaves the card position).
-  - Tests: `TTD_CardReverseStepOver_*`, `TTD_CardStepForward_*` (trace oracles: the recording's own card PC / SP at
+  - [x] Run to cursor (F4) on a card's tab in the past (2026-11-20). **As built:**
+    `TimeTravelController::RunCardToCursor`, the same forward replay scan as the step over / out
+    (`CardForwardScan`, `GSCardTarget::ScanStep` with `StepKind::To` and the cursor): the card's first boundary at
+    the cursor after its position; its breakpoints end it first; not reached in the history or in `max_frames`
+    (default 1000) frames: `no_hit`, nothing moved, the live machine untouched (`truncated` when the frame limit
+    ended the search); at the history's end `at_end` and the debuggers run the live card run. `step-instruction
+    {cpu, kind: to, pc, max_frames}` on every plane (CLI `ttd si-forward --cpu gs --to <pc> [--max-frames N]`, Lua /
+    Python `ttd_card_run_to_cursor`, MCP `card_run_to_cursor` with `addr`, REST / WebSocket, OpenAPI); the reply adds
+    `cursor` and `hit`. F4 on the card's tab in both debuggers.
+  - [x] Moves right after a live card step at the history's end (D-3, 2026-11-20): they were refused (409) while the
+    machine stood inside the card's run; now the machine leaves it first (`Emulator::LeaveCardRun`, TTD branches
+    debuggers.md §7). A card step back from past the history's end lands at the history's newest card instruction
+    (`history_end`).
+  - Tests: `TTD_CardReverseStepOver_*`, `TTD_CardStepForward_*`, `TTD_CardRunToCursor_*` (trace oracles: the recording's own card PC / SP at
     every boundary), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`, Lua, MCP and OpenAPI tests,
     `DebuggerTimeTravelCard_Test.TheCardsTabStepsOverBackAndThroughThePast`, `unreal-debugger --self-check`, live
     `test_ttd_card_oracle.py` (step over back against single steps back, step over / out against single steps

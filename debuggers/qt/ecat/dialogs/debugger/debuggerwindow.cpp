@@ -609,6 +609,12 @@ bool DebuggerWindow::run_to_cursor()
     if (!held()) return false;
     mark_all();
     const unsigned int address = p->code->cursor_address();
+    //Not in ecat: on a card's tab in the past the card runs to the cursor through the history (at its end it runs
+    //on live, as the main CPU does)
+    if (m_ttd != nullptr && !m_router->read_only() && m_ttd->step_forward("to", address)) {
+        show_state();
+        return true;
+    }
     CPU * c = p->cpu;
     Emulator * em = e;
     e->invoke([em, c, address]() { em->debug_run_to(c, address); });

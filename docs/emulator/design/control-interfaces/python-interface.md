@@ -1729,6 +1729,8 @@ emu.ttd_card_seek('gs', 123456)            # the card at its instruction count; 
 emu.ttd_card_step('gs', -5)                # 5 card instructions back (positive: forward; default 1)
 emu.ttd_card_step_over('gs')               # the card's step over through the history ('history_end': not ended in
 emu.ttd_card_step_out('gs')                #  it, the card at its end; 'breakpoint': a card breakpoint ended it)
+emu.ttd_card_run_to_cursor('gs', 0x4020)   # the card's run to the cursor through the history ('hit', 'cursor';
+                                           #  not reached, max_frames=None -> 1000: 'reached' False, 'no_hit')
 emu.ttd_card_reverse_step_over('gs')       # one card instruction back, or past a whole card routine ('over_call',
                                            #  'skipped', 'text')
 emu.ttd_card_reverse_continue('gs', max_frames=200)  # back to the card's previous breakpoint hit

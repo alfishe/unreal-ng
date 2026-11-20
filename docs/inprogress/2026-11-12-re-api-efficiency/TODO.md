@@ -103,6 +103,11 @@
   `bp_reset_hits` take `cpu` now). Tests: `BreakpointHitLog_Test.*` (oracle: the counting run's frame / T / PC equal
   a stop-on-every-hit run's, across a frame boundary), `GSCardTarget_Test.ACountingBreakpointRecordsTheCardsMoments`,
   `tools/verification/mcp/test_breakpoint_hits.py`. Docs: [conditional-breakpoints](../../features/conditional-breakpoints.md#when-each-hit-came-the-per-hit-record).
+  Qt (2026-11-20, uncommitted on `bp-hitlog-ui`): the breakpoint editor's "Record hits" (size) and "keep" (first /
+  newest) under Count only, the core's defaults, an edit shows the breakpoint's own; the breakpoint list's counting
+  rows expand to the record's summary and its first / newest 200 hits (hit, frame, T, PC, address, value, kind, card
+  time), polled at 4 Hz through `GetHitLog` only while open, the records read only when the counts moved. Tests:
+  `BreakpointHits_Test.*` (unreal-qt-tests).
 - [ ] V5: L1 first / last frame per instruction; reader-PC filter (S).
 - [ ] V6: GS firmware state view (M).
 - [ ] V7: `--port-base auto` and a ports file (S).

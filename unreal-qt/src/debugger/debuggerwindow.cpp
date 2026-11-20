@@ -2358,10 +2358,11 @@ bool DebuggerWindow::cardStep(const char* kind, uint16_t address, QString* error
     clearStopBanner();
     if (m_speedControl)
         m_speedControl->stop();
-    // In the recorded past Step In / Over / Out replay the card's step through the history (rule 3); live, or at the
-    // history's end (D-3: on live, unrecorded), the card's own step runs
+    // In the recorded past Step In / Over / Out and Run to Cursor replay the card's step through the history (rule
+    // 3); live, or at the history's end (D-3: on live, unrecorded), the card's own step runs
     const std::string step = kind;
-    if ((step == "in" || step == "over" || step == "out") && _timeTravel && _timeTravel->stepForward(step))
+    if ((step == "in" || step == "over" || step == "out" || step == "to") && _timeTravel &&
+        _timeTravel->stepForward(step, address))
         return true;
     // The machine runs until the card ends the step (or a breakpoint, or the deadline), then pauses: as eCat's card
     // tab steps, on this thread

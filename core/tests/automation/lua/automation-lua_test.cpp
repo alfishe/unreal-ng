@@ -912,7 +912,8 @@ TEST(AutomationLuaPastReads_Test, MemorySeriesAndScreenAtAnswerTheirReplies)
 }
 
 /// Time travel on a sound card's CPU from Lua (gs-debugger design §8): ttd_card_seek / ttd_card_step /
-/// ttd_card_reverse_step_over / ttd_card_step_over / ttd_card_step_out / ttd_card_reverse_continue / ttd_card_position answer the TTDControl replies as tables
+/// ttd_card_reverse_step_over / ttd_card_step_over / ttd_card_step_out / ttd_card_run_to_cursor / ttd_card_reverse_continue /
+/// ttd_card_position answer the TTDControl replies as tables
 TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
 {
     ttdtest::Bench b;
@@ -949,6 +950,13 @@ TEST(AutomationLuaCardPositions_Test, CardMovesAnswerTheirReplies)
             "tostring(so.error or so.message))\n"
             "local st = ttd_card_step_out('neogs')\n"
             "assert(st.reached and st.kind == 'out' and st.from == so.target and st.target > st.from)\n"
+            "local cursor = ttd_card_seek('gs', " + t + " - 3).card.pc\n"
+            "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
+            "local to = ttd_card_run_to_cursor('gs', cursor)\n"
+            "assert(to.reached and to.hit and to.kind == 'to' and to.cursor == cursor and to.target == " + t + " - 3, "
+            "tostring(to.error or to.message))\n"
+            "local miss = ttd_card_run_to_cursor('gs', 0x5000, 1)\n"
+            "assert(miss.reached == false and miss.status == 'no_hit' and miss.hit == false, tostring(miss.status))\n"
             "assert(ttd_card_seek('gs', " + t + " - 4).reached)\n"
             "local none = ttd_card_reverse_continue('gs', 3)\n"
             "assert(none.ok == false and none.status == 'no_breakpoints', tostring(none.status))\n"

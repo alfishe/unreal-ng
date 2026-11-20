@@ -1303,7 +1303,16 @@ the GS slot.
 >   untouched. A step that does not end in the history goes to the history's end (`historyEnd`). There the
 >   debuggers run the next step live, unrecorded (TTD branches D-3). If it does not end within
 >   `kCardReverseMaxFrames` frames, it goes as far as they reach (`truncated`). At the history's end already the
->   answer is `AtEnd` and nothing moves. Run to cursor in the past is not covered: it is the live card step.
+>   answer is `AtEnd` and nothing moves.
+> - *Run to cursor forward* (`RunCardToCursor`, 2026-11-20): the same scan with `StepKind::To` and the cursor's
+>   address; a boundary ends it when the card's PC is the cursor. The card's breakpoints end it first. Not reached in
+>   the history or within `maxFrames` (default `kCardReverseMaxFrames`) frames: `NoHit`, the card put back where it
+>   stood, nothing moved (`truncated` when the frame limit ended the search). At the history's end: `AtEnd`, the
+>   debuggers run the card live.
+> - *Moves back from past the history's end* (after a live card step there, D-3): a step back whose target is
+>   beyond the history lands at the history's newest card instruction (the count at its last frame's checkpoint,
+>   `historyEnd`); a move asked while the machine stands inside the card's run first leaves it
+>   (`Emulator::LeaveCardRun`, TTD branches debuggers.md §7).
 > - *Leaving a card position*: the card's natural state (the one a plain seek to the main boundary gives) is kept
 >   with the position (`CardStand`). The machine leaves the position at the first input service outside a replay
 >   (`ServiceInput` -> `LeaveCardStand`: a resume, a run of frames or T-states), at a main-CPU step forward, on

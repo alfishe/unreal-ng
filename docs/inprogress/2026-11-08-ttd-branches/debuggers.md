@@ -120,10 +120,32 @@ a step of the card; at the frame end or in a host port access, neither a moment 
 - `StartRecording` there does not capture: the start is pending (`start_pending` in `status` and in the `start`
   reply, `state` idle) and `OnFrameBoundary` starts the recording at the next frame boundary, its baseline the frame's
   start as every other checkpoint. `stop`, `invalidate` and a session end cancel it.
-- The moves (`seek`, the steps, `reverse-*`, `resume`, `branch-switch`, `load`) are refused there (409): the rest of
-  the card's run and of the frame end would go on over the restored machine.
+- The moves (`seek`, the steps, `reverse-*`, `resume`, `branch-switch`, `branch-create`, `load`) were refused there
+  (409): the rest of the card's run and of the frame end would go on over the restored machine. Since 2026-11-20 they
+  leave it first (below).
 
-Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp`. The eCat self-check no longer runs frames before its
+**As built (2026-11-20): moves leave the card's run first.** A live card step at the history's end (F7 / F8 /
+Ctrl+F8 on a card's tab, D-3) parks the machine inside the card's catch-up, so Step Back, Frame Back and every other
+move right after it answered 409. Now `TTDControl` calls `Emulator::LeaveCardRun` before such a move:
+
+- the machine resumes (an internal requester) with `_leavingCardRun` set: the card targets drop every stop on the way
+  (`GSCardTarget::Park` returns at once), and `DebugManager::CardTight` holds tight mode on, so the cards catch up at
+  each main CPU instruction start;
+- the first main instruction start after the card's run (`DebugManager::CatchUpCards`, after its catch-up) calls
+  `Emulator::NoteMainBoundaryAfterCardRun`, which pauses the machine; the loop parks at its clean per-instruction
+  point after that instruction (live, unrecorded, as D-3's live steps), not inside the start hooks;
+- the caller waits (`WaitDebugChange`, 2 s at most) until the machine is parked outside the card's run, then the
+  move goes on. A card step back from there lands at the history's newest card instruction (`history_end`), as the
+  main CPU's step back from a live position lands on its last recorded instruction.
+
+The refusal (409, with the reason) stays only where leaving cannot work: the call runs on the machine's own thread
+or holds its CPU, the resume is refused, or the machine is not out within 2 s. The extra checks run only while
+leaving (an atomic load on the card park and catch-up paths, which run in tight / debug mode only); the live hot path
+is unchanged. Moves that bypass `TTDControl` (direct `TimeTravelController` calls) are not covered: every plane and
+both debuggers' time groups go through `TTDControl`.
+
+Test: `core/tests/debugger/ttd/ttdcontrol_cardpark_test.cpp` (a start pending inside the frame end's card run; a frame
+step back and a card step back right after a live `RunControl::CardStep`). The eCat self-check no longer runs frames before its
 `start`.
 
 ## 8. Positions on a sound card's CPU (2026-11-18)
@@ -139,7 +161,10 @@ debuggers' time group, by the CPU in front.
   {cpu}` (back past a whole card routine when the instruction before is its return), and Step over (F8) / Step out
   (Ctrl+F8) in the past are `step-instruction {cpu, kind: over | out}` (the card's step through the history, as a
   live card step would go; its breakpoints end it). At the history's end (`at_end`) F7 / F8 / Ctrl+F8 run the
-  card's live step, unrecorded, as the main CPU's steps do there (D-3); no message. Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
+  card's live step, unrecorded, as the main CPU's steps do there (D-3); no message. Since 2026-11-20 Run to cursor
+  (F4) on a card's tab in the past is `step-instruction {cpu, kind: to, pc}` (the card's next instruction at the
+  cursor, found by replay; not reached: a message, the live machine untouched; at the history's end the live run),
+  and the moves right after a live card step work (§7). Frame Back stays the frame's. The main CPU's tab is unchanged. A stop that names no
   processor (a pause, a move in time) no longer brings the main CPU's tab forward: the card's tab stays in front
   after its back step (`DebuggerWindow::on_debug_event`).
 - **The moment** (eCat's state label) names both CPUs at a card position, from `cards[]` of `position` (the poll
@@ -154,7 +179,8 @@ debuggers' time group, by the CPU in front.
   eCat's (`DebuggerTimeTravel::setCpu`): Step Back `step-instruction {cpu, dir: back}`, Step In in the past
   `step-instruction {cpu, dir: forward}`, Step Over / Step Out in the past `step-instruction {cpu, kind}` (live and
   at the history's end: `RunControl::CardStep`), Step Over Back `reverse-step-over {cpu}`, Run Back
-  `reverse-continue {cpu}`. Run to cursor on a card's tab is the live card step in the past too (left as it was).
+  `reverse-continue {cpu}`. Run to cursor on a card's tab in the past is `step-instruction {cpu, kind: to, pc}`
+  (`DebuggerTimeTravel::stepForward("to", address)`; at the history's end the live card run).
   The card's labels (its own `LabelManager`) are the ones its disassembly, memory tooltip and Label Manager show;
   the main CPU's labels and markup never appear on a card's tab (eCat's card disassembly likewise). A breakpoint or step stop brings its CPU's tab to the front once per `Emulator::LastStop().serial`; a
   pause and a move in time leave the tab alone, so the card's tab stays after its Step Back. The moment label

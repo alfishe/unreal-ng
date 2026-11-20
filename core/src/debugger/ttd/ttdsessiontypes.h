@@ -852,7 +852,7 @@ struct TTDCardPosition
 };
 
 /// @brief What a card seek, card step or card reverse continue did (TimeTravelController::SeekToCardInstruction,
-/// StepCardInstructions, StepCardForward, ReverseStepOverCard, ReverseContinueCard).
+/// StepCardInstructions, StepCardForward, RunCardToCursor, ReverseStepOverCard, ReverseContinueCard).
 struct TTDCardMoveResult
 {
     enum class Status : uint8_t
@@ -864,7 +864,7 @@ struct TTDCardMoveResult
         AtStart,         ///< before the earliest card position the history holds
         AtEnd,           ///< past the session's end (the live end)
         NoBreakpoints,   ///< reverse continue: the card CPU has no active stopping breakpoint
-        NoHit,           ///< reverse continue: no hit in the frames searched (the machine stayed)
+        NoHit,           ///< reverse continue: no hit; run to the cursor: not reached (frames searched; the machine stayed)
         Failed,          ///< the replay did not reach the instruction (named in message)
     };
     Status status = Status::Failed;
@@ -885,9 +885,10 @@ struct TTDCardMoveResult
     bool callOutOfReach = false;
     uint64_t skipped = 0;             ///< reverse step over, overCall: the routine's instructions passed over
     /// step over / step out through the past: the step did not end in the history; the card went to the history's
-    /// end (the next step runs on live, D-3)
+    /// end (the next step runs on live, D-3). A step back from a card past the history's end (it stepped on live,
+    /// unrecorded): the card went to the history's newest card instruction
     bool historyEnd = false;
-    /// step over / step out through the past: one of the card's breakpoints ended the step before it ended itself
+    /// step over / step out / run to the cursor through the past: one of the card's breakpoints ended it first
     bool stoppedByBreakpoint = false;
     bool Ok() const { return status == Status::Ok; }
 };

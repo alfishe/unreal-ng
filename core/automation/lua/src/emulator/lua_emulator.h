@@ -6867,6 +6867,17 @@ public:
             return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", {{"cpu", cpu}, {"kind", "out"}})));
         });
 
+        // ttd_card_run_to_cursor(cpu, pc [, max_frames]): the card's run to the cursor through the history (its next
+        // instruction at pc, its breakpoints first; not reached: reached false, status no_hit, nothing moved)
+        lua.set_function("ttd_card_run_to_cursor", [this](sol::this_state ts, const std::string& cpu, uint32_t pc,
+                                                          sol::optional<uint64_t> maxFrames) -> sol::object {
+            std::map<std::string, std::string> options{
+                {"cpu", cpu}, {"dir", "forward"}, {"kind", "to"}, {"pc", std::to_string(pc)}};
+            if (maxFrames)
+                options["max_frames"] = std::to_string(*maxFrames);
+            return StateNodeToLua(ts, TtdScriptValue(TtdRun("step-instruction", options)));
+        });
+
         // ttd_card_reverse_continue(cpu [, max_frames]): back to the card's previous breakpoint hit
         lua.set_function("ttd_card_reverse_continue", [this](sol::this_state ts, const std::string& cpu,
                                                              sol::optional<uint64_t> maxFrames) -> sol::object {
