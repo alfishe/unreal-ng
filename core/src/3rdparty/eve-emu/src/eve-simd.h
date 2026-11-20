@@ -118,39 +118,45 @@ inline void BlendSrcAlpha(uint8_t* dst, const uint32_t* texels, uint32_t count)
         vst4_u8(dst + 4 * i, d);
     }
 #elif defined(EVE_SIMD_SSE2)
-    // Two pixels per 16-bit lane group: unpack to words, multiply, divide, pack saturated
+    // Four pixels a pass: bytes reordered to R, G, B, A with shifts (no byte shuffle in
+    // SSE2), then two pixels per register as 16-bit channels
     const __m128i zero = _mm_setzero_si128();
     const __m128i half = _mm_set1_epi16(127);
     const __m128i one = _mm_set1_epi16(1);
     const __m128i full = _mm_set1_epi16(255);
-    for (; i + 2 <= count; i += 2)
+    const __m128i lowByte = _mm_set1_epi32(0xFF);
+    const __m128i byte1 = _mm_set1_epi32(0xFF00), byte2 = _mm_set1_epi32(0xFF0000);
+    for (; i + 4 <= count; i += 4)
     {
-        // Source channels into R, G, B, A byte order (the line buffer's), alpha in every lane
-        const uint32_t p0 = texels[i], p1 = texels[i + 1];
-        const uint32_t s0 = (p0 >> 24) | ((p0 >> 8) & 0xFF00) | ((p0 << 8) & 0xFF0000) | (p0 << 24);
-        const uint32_t s1 = (p1 >> 24) | ((p1 >> 8) & 0xFF00) | ((p1 << 8) & 0xFF0000) | (p1 << 24);
+        const __m128i x = _mm_loadu_si128(reinterpret_cast<const __m128i*>(texels + i));
         // Exact shortcuts: alpha 0 keeps the destination, alpha 255 gives the source
-        const uint32_t a0 = p0 & 0xFF, a1 = p1 & 0xFF;
-        if ((a0 | a1) == 0)
+        const __m128i alpha = _mm_and_si128(x, lowByte);
+        if (_mm_movemask_epi8(_mm_cmpeq_epi32(alpha, zero)) == 0xFFFF)
             continue;
-        if ((a0 & a1) == 0xFF)
+        const __m128i rgba = _mm_or_si128(_mm_or_si128(_mm_srli_epi32(x, 24), _mm_slli_epi32(x, 24)),
+                                          _mm_or_si128(_mm_and_si128(_mm_srli_epi32(x, 8), byte1),
+                                                       _mm_and_si128(_mm_slli_epi32(x, 8), byte2)));
+        if (_mm_movemask_epi8(_mm_cmpeq_epi32(alpha, lowByte)) == 0xFFFF)
         {
-            std::memcpy(dst + 4 * i, &s0, 4);
-            std::memcpy(dst + 4 * i + 4, &s1, 4);
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + 4 * i), rgba);
             continue;
         }
-        const __m128i s = _mm_unpacklo_epi8(_mm_set_epi32(0, 0, static_cast<int>(s1), static_cast<int>(s0)), zero);
-        const __m128i a = _mm_set_epi16(static_cast<short>(p1 & 0xFF), static_cast<short>(p1 & 0xFF),
-                                        static_cast<short>(p1 & 0xFF), static_cast<short>(p1 & 0xFF),
-                                        static_cast<short>(p0 & 0xFF), static_cast<short>(p0 & 0xFF),
-                                        static_cast<short>(p0 & 0xFF), static_cast<short>(p0 & 0xFF));
-        const __m128i inv = _mm_sub_epi16(full, a);
-        const __m128i d = _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(dst + 4 * i)), zero);
-        __m128i ts = _mm_add_epi16(_mm_mullo_epi16(s, a), half);
-        __m128i td = _mm_add_epi16(_mm_mullo_epi16(d, inv), half);
-        ts = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(ts, one), _mm_srli_epi16(ts, 8)), 8);
-        td = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(td, one), _mm_srli_epi16(td, 8)), 8);
-        _mm_storel_epi64(reinterpret_cast<__m128i*>(dst + 4 * i), _mm_packus_epi16(_mm_add_epi16(ts, td), zero));
+        const __m128i dq = _mm_loadu_si128(reinterpret_cast<const __m128i*>(dst + 4 * i));
+        __m128i res[2];
+        for (int h = 0; h < 2; ++h)
+        {
+            const __m128i s16 = h == 0 ? _mm_unpacklo_epi8(rgba, zero) : _mm_unpackhi_epi8(rgba, zero);
+            const __m128i d16 = h == 0 ? _mm_unpacklo_epi8(dq, zero) : _mm_unpackhi_epi8(dq, zero);
+            // Each pixel's alpha (its channel 3) in its four lanes
+            const __m128i a = _mm_shufflehi_epi16(_mm_shufflelo_epi16(s16, 0xFF), 0xFF);
+            const __m128i inv = _mm_sub_epi16(full, a);
+            __m128i ts = _mm_add_epi16(_mm_mullo_epi16(s16, a), half);
+            __m128i td = _mm_add_epi16(_mm_mullo_epi16(d16, inv), half);
+            ts = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(ts, one), _mm_srli_epi16(ts, 8)), 8);
+            td = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(td, one), _mm_srli_epi16(td, 8)), 8);
+            res[h] = _mm_add_epi16(ts, td);
+        }
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(dst + 4 * i), _mm_packus_epi16(res[0], res[1]));
     }
 #endif
     for (; i < count; ++i)
@@ -422,32 +428,39 @@ inline void BilinearBlend(const uint32_t* t00, const uint32_t* t10, const uint32
         vst4_u8(reinterpret_cast<uint8_t*>(out + i), r);
     }
 #elif defined(EVE_SIMD_SSE2)
+    // Four pixels a pass, two per register as 16-bit channels; the weights in the lanes of
+    // their pixel's channels (each product <= 255 x 256, the sum of the four <= 255)
     const __m128i zero = _mm_setzero_si128();
-    for (; i + 2 <= count; i += 2)
+    const __m128i vfy = _mm_set1_epi16(static_cast<short>(fy));
+    const __m128i v256fy = _mm_set1_epi16(static_cast<short>(256 - fy));
+    for (; i + 4 <= count; i += 4)
     {
-        auto weights = [fy](uint32_t f, uint16_t* w) {
-            const uint32_t w11 = (f * fy) >> 8;
-            w[0] = static_cast<uint16_t>(256 - f - fy + w11);
-            w[1] = static_cast<uint16_t>(f - w11);
-            w[2] = static_cast<uint16_t>(fy - w11);
-            w[3] = static_cast<uint16_t>(w11);
-        };
-        uint16_t w0[4], w1[4];
-        weights(fx[i], w0);
-        weights(fx[i + 1], w1);
-        const __m128i taps[4] = {
-            _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(t00 + i)), zero),
-            _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(t10 + i)), zero),
-            _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(t01 + i)), zero),
-            _mm_unpacklo_epi8(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(t11 + i)), zero)};
-        __m128i sum = zero;
-        for (int k = 0; k < 4; ++k)
+        int f4;
+        std::memcpy(&f4, fx + i, 4);
+        const __m128i f16 = _mm_unpacklo_epi8(_mm_cvtsi32_si128(f4), zero); // f0 f1 f2 f3
+        const __m128i f2 = _mm_unpacklo_epi16(f16, f16);                     // f0 f0 f1 f1 ...
+        const __m128i vfx[2] = {_mm_unpacklo_epi32(f2, f2), _mm_unpackhi_epi32(f2, f2)};
+        const __m128i q00 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t00 + i));
+        const __m128i q10 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t10 + i));
+        const __m128i q01 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t01 + i));
+        const __m128i q11 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(t11 + i));
+        __m128i res[2];
+        for (int h = 0; h < 2; ++h)
         {
-            const short a0 = static_cast<short>(w0[k]), a1 = static_cast<short>(w1[k]);
-            const __m128i w = _mm_set_epi16(a1, a1, a1, a1, a0, a0, a0, a0);
-            sum = _mm_add_epi16(sum, _mm_srli_epi16(_mm_mullo_epi16(taps[k], w), 8));
+            const __m128i w11 = _mm_srli_epi16(_mm_mullo_epi16(vfx[h], vfy), 8);
+            const __m128i w10 = _mm_sub_epi16(vfx[h], w11);
+            const __m128i w01 = _mm_sub_epi16(vfy, w11);
+            const __m128i w00 = _mm_add_epi16(_mm_sub_epi16(v256fy, vfx[h]), w11);
+            const __m128i a = h == 0 ? _mm_unpacklo_epi8(q00, zero) : _mm_unpackhi_epi8(q00, zero);
+            const __m128i b = h == 0 ? _mm_unpacklo_epi8(q10, zero) : _mm_unpackhi_epi8(q10, zero);
+            const __m128i c = h == 0 ? _mm_unpacklo_epi8(q01, zero) : _mm_unpackhi_epi8(q01, zero);
+            const __m128i e = h == 0 ? _mm_unpacklo_epi8(q11, zero) : _mm_unpackhi_epi8(q11, zero);
+            __m128i sum = _mm_srli_epi16(_mm_mullo_epi16(a, w00), 8);
+            sum = _mm_add_epi16(sum, _mm_srli_epi16(_mm_mullo_epi16(b, w10), 8));
+            sum = _mm_add_epi16(sum, _mm_srli_epi16(_mm_mullo_epi16(c, w01), 8));
+            res[h] = _mm_add_epi16(sum, _mm_srli_epi16(_mm_mullo_epi16(e, w11), 8));
         }
-        _mm_storel_epi64(reinterpret_cast<__m128i*>(out + i), _mm_packus_epi16(sum, zero));
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(out + i), _mm_packus_epi16(res[0], res[1]));
     }
 #endif
     for (; i < count; ++i)
