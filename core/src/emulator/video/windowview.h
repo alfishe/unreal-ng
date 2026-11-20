@@ -68,12 +68,16 @@ struct WindowPresentStats
     double machineHz = 0.0;
     double minRefreshHz = 0.0;
     double maxRefreshHz = 0.0;
-    uint64_t presented = 0;  ///< native presenter only (0 otherwise), as NativePresenter::Stats
+    /// Where presented / shown / dropped and error*Ms are taken: "screen" (a native presenter's screen times), "paint"
+    /// (the software screen: when the window paints a new frame, not when it reaches the screen; late, lead and the
+    /// sound offset judge nothing), "" (no times: the plain GL path)
+    std::string timedAt;
+    uint64_t presented = 0;  ///< as NativePresenter::Stats (timedAt "paint": the new frames painted)
     uint64_t shown = 0;
     uint64_t dropped = 0;
     uint64_t late = 0;        ///< shown more than a refresh after their time
     double leadMs = 0.0;      ///< the adaptive lead in effect
-    double errorP50Ms = 0.0;  ///< screen time minus the time asked for
+    double errorP50Ms = 0.0;  ///< screen (or paint) time minus the time asked for
     double errorP99Ms = 0.0;
     double errorMaxMs = 0.0;
     double gpuWaitP50Ms = 0.0;  ///< the wait for GL's draw before the native pass
@@ -84,6 +88,10 @@ struct WindowPresentStats
     /// The clock the frame on screen was timed by (FrameClockSourceName): "audio" (when its sound is heard),
     /// "emulated" (no audio device delivering), "latch" (turbo, a run not paced to real time), "none" (untimed)
     std::string clock = "none";
+    /// Low-latency video (feature `lowlatency`) timed the frame on screen: it goes to the first refresh after its latch
+    /// (VRR: at once), with no lead and no smooth motion. A frame is asked for at once, so `error*Ms` is the way from
+    /// the hand-over to the screen and `late` / `leadMs` judge nothing
+    bool lowLatency = false;
     uint64_t beatFrames = 0;  ///< native presenter only: pictures judged against the beat pattern (ScreenBeat)
     uint64_t offBeat = 0;     ///< ... on screen for a refresh count outside it: a refresh missed, held, never shown
     double soundOffsetP50Ms = 0.0;  ///< screen time minus the picture's sound (the clock's time, the lip-sync trim out)
@@ -247,11 +255,11 @@ struct WindowRecordingRequest
     std::string keyboard;  ///< "" = the picture only; "default" = the model's keyboard; else a keyboard picture id
     std::string codec = "prores";  ///< "prores" (ProRes 4444, full colour), "h264" (4:4:4) or "h265" (4:4:4)
     bool hardware = false;  ///< h264 / h265 on the GPU's encoder where there is one (4:2:0: a CRT mask loses colour)
-    bool ffmpegOnly = false;  ///< with hardware: through ffmpeg's GPU encoder (found by probing), never the Mac's own writer
+    bool ffmpegOnly = false;  ///< "engine ffmpeg": always ffmpeg (ProRes, the GPU encoder found by probing), never the Mac's own writer
     int fps = 0;       ///< 0: the machine's frame rate (3.5 MHz / t-states per frame: 48.83 on a Pentagon)
     bool audio = true; ///< the machine's sound, frame for frame with the picture (needs fps 0)
     int scale = 1;  ///< the window's pixels as scale x scale blocks (1..4); the keyboard drawn at the file's width
-    int pictureHeight = 0;  ///< > 0: the CRT drawn at this height in device pixels, not the window's (GPU only)
+    int pictureHeight = 0;  ///< > 0: the CRT drawn at this height in device pixels, not the window's (GPU and software screen)
     bool fit = false;  ///< scale the picture to the frame (aspect kept, centred), up or down, instead of refusing a mismatch
     uint16_t frameWidth = 0;   ///< the file's frame; 0: the picture with the keyboard under it
     uint16_t frameHeight = 0;

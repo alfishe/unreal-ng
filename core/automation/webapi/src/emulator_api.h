@@ -405,6 +405,9 @@ public:
                   drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioBeeper, "/api/v1/emulator/{id}/state/audio/beeper", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioGS, "/api/v1/emulator/{id}/state/audio/gs", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStats, "/api/v1/emulator/{id}/state/audio/gs/stats", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getStateAudioGSStatsSection, "/api/v1/emulator/{id}/state/audio/gs/stats/{section}",
+                  drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioCovox, "/api/v1/emulator/{id}/state/audio/covox", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::getStateAudioChannels, "/api/v1/emulator/{id}/state/audio/channels", drogon::Get);
     // GS control actions (GS design §11.2)
@@ -621,6 +624,10 @@ public:
     ADD_METHOD_TO(EmulatorAPI::postPcHistory, "/api/v1/emulator/{id}/debug/pchist", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Get);
     ADD_METHOD_TO(EmulatorAPI::putSelectedCpu, "/api/v1/emulator/{id}/debug/selected_cpu", drogon::Put);
+    // Device boards (debugger-model widget catalog §4): layout and values as data, the board's actions
+    ADD_METHOD_TO(EmulatorAPI::getDebugBoards, "/api/v1/emulator/{id}/debug/boards", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::getDebugBoard, "/api/v1/emulator/{id}/debug/boards/{board}", drogon::Get);
+    ADD_METHOD_TO(EmulatorAPI::postDebugBoardAction, "/api/v1/emulator/{id}/debug/boards/{board}/actions/{action}", drogon::Post);
     ADD_METHOD_TO(EmulatorAPI::getDisasmPage, "/api/v1/emulator/{id}/disasm/page", drogon::Get);
     // endregion Debug Commands
 
@@ -1568,6 +1575,17 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
     void getStateAudioGS(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) const;
 
+    /// @brief GET /api/v1/emulator/{id}/state/audio/gs/stats[/{section}]?since=<baseline>&fresh=1
+    ///        The GS slot's statistics block (gsslotstats.h, gs-debugger N7): counters of both mailbox sides,
+    ///        interrupts, the coprocessor, audio; on NeoGS DMA, SPI, SD, MP3, flash; rates and errors. A running
+    ///        machine answers from the next frame end (the read turns publishing on for 2 s); 503 after 500 ms
+    void getStateAudioGSStats(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id) const;
+    void getStateAudioGSStatsSection(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                     const std::string& id, const std::string& section) const;
+
     /// @brief POST /api/v1/emulator/{id}/control/audio/gs — body:
     ///        {"action": "reset|reset_card|nmi|send_command|send_data|read_status|read_data|switch_personality",
     ///         "value": 0..255, "personality": "z80|lle|lw|lightweight"}
@@ -2047,6 +2065,13 @@ void findMemory(const drogon::HttpRequestPtr& req, std::function<void(const drog
                         const std::string& id) const;
     void putSelectedCpu(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                         const std::string& id) const;
+    /// GET /debug/boards, GET /debug/boards/{board}, POST /debug/boards/{board}/actions/{action} (core DebugBoards)
+    void getDebugBoards(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                        const std::string& id) const;
+    void getDebugBoard(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                       const std::string& id, const std::string& board) const;
+    void postDebugBoardAction(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& id, const std::string& board, const std::string& action) const;
     void getDisasm(const drogon::HttpRequestPtr& req, std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                    const std::string& id) const;
     void getDisasmPage(const drogon::HttpRequestPtr& req,

@@ -18,6 +18,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/io/fdc/upd765.h"
+#include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/portdecoder.h"
 #include "emulator/sound/chips/soundchip_turbosoundfm.h"
 #include "emulator/sound/soundmanager.h"
@@ -280,6 +281,45 @@ TEST_F(DeviceState_Test, FdcReportListsControllerAndDrives)
     const std::string text = DeviceState::ToText(fdc);
     EXPECT_NE(text.find("fsm_state: S_IDLE"), std::string::npos);
     EXPECT_NE(text.find("drives:"), std::string::npos);
+}
+
+/// The Pentagon 2.666 LE has no floppy controller: the report is its FPGA's WD1793 imitation on the RAM disk (the
+/// command in hand, the system register, the RAM disk's pages), not the WD1793 object every model carries
+TEST(DeviceStateFdc_Test, P2666ReportsTheRamDiskBetaDisk)
+{
+    Emulator* emulator = EmulatorTestHelper::CreateStandardEmulator("P2666", LoggerLevel::LogError);
+    ASSERT_NE(emulator, nullptr);
+    EmulatorContext* context = emulator->GetContext();
+    auto* decoder = dynamic_cast<PortDecoderP2666*>(context->pPortDecoder);
+    ASSERT_NE(decoder, nullptr);
+    P2666BetaDisk* ramDisk = decoder->GetRamDisk();
+    ASSERT_NE(ramDisk, nullptr) << "the RAM disk is the default Beta Disk";
+
+    const uint64_t edge = decoder->BoardEdge();
+    ramDisk->WriteSystem(0x3C, edge);          // drive A, out of reset, side 0
+    ramDisk->WriteRegister(3, 0x05, edge);     // data: the cylinder to seek
+    ramDisk->WriteRegister(0, 0x10, edge);     // seek: busy until its delay ends
+
+    const StateNode fdc = DeviceState::Fdc(context);
+    ASSERT_TRUE(At(fdc, "available").b);
+    EXPECT_EQ(At(fdc, "controller").s, "P2666 Beta Disk emulator (WD1793 imitation on the RAM disk)");
+    EXPECT_EQ(At(fdc, "phase").s, "seek");
+    EXPECT_EQ(At(At(fdc, "registers"), "command").i, 0x10);
+    EXPECT_EQ(At(At(fdc, "registers"), "data").i, 0x05);
+    EXPECT_TRUE(At(At(fdc, "status_bits"), "busy").b);
+    EXPECT_EQ(At(At(fdc, "system_register"), "value").i, 0x3C);
+    EXPECT_EQ(At(At(fdc, "system_register"), "drive").i, 0);
+    EXPECT_FALSE(At(At(fdc, "system_register"), "reset_held").b);
+    EXPECT_EQ(At(At(fdc, "system_register"), "side").i, 0);
+    EXPECT_EQ(At(At(fdc, "ram_disk"), "first_page").i, 0x4E);
+    EXPECT_EQ(At(At(fdc, "ram_disk"), "last_page").i, 0x76);
+    EXPECT_EQ(At(fdc, "drives").size(), 1u) << "drive A only";
+
+    // A step written while the seek runs adds its flag (the FPGA's flags are level-set): both are named
+    ramDisk->WriteRegister(0, 0x20, edge);
+    EXPECT_EQ(At(DeviceState::Fdc(context), "phase").s, "seek+step");
+
+    EmulatorTestHelper::CleanupEmulator(emulator);
 }
 
 /// The +3 reports its own controller, the uPD765A, not the WD1793 every model carries: the command in

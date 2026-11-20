@@ -20,6 +20,7 @@
 #include <emulator/io/tape/tapecatalog.h>
 #include <emulator/io/tape/tape.h>
 #include <emulator/io/fdc/wd1793.h>
+#include <emulator/ports/models/portdecoder_p2666.h>
 #include <emulator/io/fdc/diskimage.h>
 #include <emulator/io/fdc/trdoscatalog.h>
 #include <emulator/io/storage/fs/diskfs.h>
@@ -1309,12 +1310,25 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     // hardware convention, not a missing feature; requesting it for another drive is a hard error, not
     // silently ignored). Supported via JSON body ("autostart": true) or X-Autostart header for raw uploads
     bool autostart = false;
+    // An MGT disk on the +D: the BASIC of the reset ("" = the machine's own, "48", "128"); the core checks it
+    std::string basic;
     {
         auto json = req->getJsonObject();
         if (json && json->isMember("autostart"))
             autostart = (*json)["autostart"].asBool();
         else if (content.isEmbedded)
             autostart = (req->getHeader("X-Autostart") == "true");
+        if (json && json->isMember("basic"))
+        {
+            // "48" or 48 alike; anything else goes through as text and the core refuses it by name
+            const Json::Value& value = (*json)["basic"];
+            basic = value.isIntegral() ? std::to_string(value.asInt64())
+                    : value.isString() ? value.asString()
+                    : value.isNull()   ? std::string()
+                                       : std::string("(not text)");
+        }
+        else if (content.isEmbedded)
+            basic = req->getHeader("X-Autostart-Basic");
     }
     // TTD refuses this while recording: answer why instead of a bare failure
     if (const std::string refusal = emulator->AskMediaChange(Emulator::MediaChange::LoadDisk, driveNum, path); !refusal.empty())
@@ -1334,7 +1348,7 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
     bool success;
     if (autostart)
     {
-        autostartResult = emulator->AutostartDisk(path, driveNum);
+        autostartResult = emulator->AutostartDisk(path, driveNum, basic);
         success = autostartResult.mounted;
     }
     else
@@ -1348,6 +1362,15 @@ void EmulatorAPI::insertDisk(const HttpRequestPtr& req,
         ret["autostarted"] = autostartResult.started;
         ret["autostart_message"] = autostartResult.message;
         ret["ttd_session_ended"] = autostartResult.ttdSessionEnded;
+        if (!autostartResult.plan.empty())
+        {
+            // An MGT disk on the +D: the plan, the start command, where G+DOS comes from (the steps run after the
+            // answer: state fdc -> autostart)
+            ret["plan"] = autostartResult.plan;
+            ret["command"] = autostartResult.command;
+            ret["dos"] = autostartResult.dos;
+            ret["basic"] = autostartResult.basic;
+        }
     }
     ret["status"] = success ? "success" : "error";
     if (success)
@@ -1676,8 +1699,14 @@ void EmulatorAPI::getDiskDrives(const HttpRequestPtr& /*req*/,
         ret["drives"].append(driveInfo);
     }
     
-    // FDC state
-    if (context && context->pBetaDisk) {
+    // FDC state: the Pentagon 2.666 LE's controller is its RAM-disk Beta Disk (the WD1793 object is not wired there)
+    const auto* p2666 = context ? dynamic_cast<const PortDecoderP2666*>(context->pPortDecoder) : nullptr;
+    if (const P2666BetaDisk* ramDisk = p2666 ? p2666->GetRamDisk() : nullptr) {
+        Json::Value fdcState;
+        fdcState["track_reg"] = ramDisk->Track();
+        fdcState["sector_reg"] = ramDisk->Sector();
+        ret["fdc_state"] = fdcState;
+    } else if (context && context->pBetaDisk) {
         Json::Value fdcState;
         fdcState["track_reg"] = context->pBetaDisk->getTrackRegister();
         fdcState["sector_reg"] = context->pBetaDisk->getSectorRegister();

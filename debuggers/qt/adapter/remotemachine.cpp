@@ -196,6 +196,7 @@ struct Snapshot {
     QString state;          // running | paused | stopped
     QString reason;         // none | pause | breakpoint | step
     QString stop_cpu;       // the CPU of the stop: main, gs, ms
+    uint64_t stop_serial = 0; // the stop's number (pause.serial): one more at every stop
     QString stop_main;      // a card's stop: where the main CPU stood (pause.main.text)
     QJsonObject regs;
     QByteArray memory;      // the CPU's 64 KB
@@ -802,6 +803,7 @@ public:
         m_snap.state = s.value("state").toString();
         m_snap.reason = s.value("pause").toObject().value("reason").toString();
         m_snap.stop_cpu = s.value("pause").toObject().value("cpu").toString();
+        m_snap.stop_serial = (uint64_t)s.value("pause").toObject().value("serial").toDouble();
         m_snap.stop_main = s.value("pause").toObject().value("main").toObject().value("text").toString();
         m_snap.regs = s.value("regs").toObject();
         const QJsonArray mem = s.value("memory").toArray();
@@ -1009,6 +1011,7 @@ public:
     {
         return const_cast<RemoteMachine *>(this)->snap().stop_main.toStdString();
     }
+    uint64_t debug_stop_serial() const override { return const_cast<RemoteMachine *>(this)->snap().stop_serial; }
     int debug_stop_reason() const override
     {
         const QString r = const_cast<RemoteMachine *>(this)->snap().reason;

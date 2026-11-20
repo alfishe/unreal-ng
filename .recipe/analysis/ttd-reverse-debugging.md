@@ -32,6 +32,9 @@ These are the "answer the question backwards" primitives:
   `.ttd` file, not in the agent's context. No `seek_bookmark` + `inspect_state` + `disassemble` + memory reads per
   bookmark
 - *What ran just before the crash?* → `reverse-step` / `reverse-continue`
+- *What did the sound card's CPU do before this?* (the General Sound / NeoGS or the MultiSound's GS) → `card_step`
+  with a negative count, `card_reverse_continue` to its breakpoint's previous hit, `card_seek` to an instruction
+  count ([TTD on a sound card's CPU](../../docs/emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu))
 - *What happened in this recording, and where?* → `timeline` first (MCP `timeline`: the phases with their tags and
   busiest frames, one call, no replay), then the queries below on a phase
 - *Which frames touched this address range?* → coverage probe/scan/summary
@@ -69,6 +72,14 @@ time_travel {"action":"find_last","addr_from":"0x4000","addr_to":"0x57FF","acces
              "pc_from":"0x8000","pc_to":"0x8FFF","phys_page":5,"before_frame":11800}
 time_travel {"action":"reverse_step","count":50}               # or {"tstates":2000} — exactly one
 time_travel {"action":"reverse_continue","pcs":[33156,"0x82F0"]}
+
+# on the sound card's CPU (gs / neogs, ms / multisound): every move is a replay, the main CPU follows and stands at
+# its last completed instruction ("+7 T into its next instruction" when the card's moment is inside one)
+time_travel {"action":"card_position"}                          # Card gs: instruction N, PC ...
+time_travel {"action":"card_step","cpu":"gs","count":-5}        # 5 card instructions back (positive: forward)
+time_travel {"action":"card_seek","cpu":"gs","instruction":123456}
+control_execution {"action":"bp_add","address":"0x0A3C","cpu":"gs"}
+time_travel {"action":"card_reverse_continue","cpu":"gs","max_frames":200}   # the card breakpoint's previous hit
 
 # why a value: the chain back from it (store <- A <- load <- (IX+3) <- block copy <- ... <- initial / port / constant)
 time_travel {"action":"cause_chain","addr":"0x5C78"}            # the byte at the current position

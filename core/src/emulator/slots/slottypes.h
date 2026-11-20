@@ -111,9 +111,13 @@ enum class Src : uint16_t
     ZxspKempstonJoy,
     SincTimesKempston,
     MameBeta128,
+    FusePlusD,
+    MameMgt,
     // The SL-0 research of this design (facts collected from sources without a direct URL, e.g. SVN-only)
     RepoSlotsResearchMachines,
     RepoSlotsResearchCards,
+    KoePentagon2666,
+    RepoPentagon2666,
     Count
 };
 

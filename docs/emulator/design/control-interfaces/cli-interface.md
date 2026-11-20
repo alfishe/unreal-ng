@@ -290,6 +290,7 @@ The CLI exposes the TTD surface with the `ttd` top-level verb and a subcommand. 
 | `ttd reverse-step` | `ttd rs` | Reverse-step execution. | ✅ Implemented |
 | `ttd reverse-step-over` | `ttd rso` | Step back over a routine when the instruction before is its return; otherwise one instruction back. | ✅ Implemented |
 | `ttd reverse-continue` | `ttd rc` | Reverse-continue execution. | ✅ Implemented |
+| `ttd seek --cpu gs <n>`, `ttd si-back` / `si-forward` / `reverse-step --cpu gs [--count N]`, `ttd reverse-continue --cpu gs [--max-frames N]` | — | The same moves on a sound card's CPU (`gs` / `neogs`, `ms` / `multisound`): the card at an instruction count, N card instructions back / forward, back to the card's previous breakpoint hit; the main CPU follows by replay. `ttd position` prints a `Card gs:` line per card. See [TTD on a sound card's CPU](./command-interface.md#ttd-on-a-sound-cards-cpu). | ✅ Implemented |
 | `ttd probe-frames` | `ttd pf` | The frames a game profile's probes fired in (a replay of the window). | ✅ Implemented |
 | `ttd timeline` | `ttd tl` | The recording cut into phases of the same activity, each with its facts (no replay). | ✅ Implemented |
 | `ttd cause <addr>[:page] \| <reg>` | `ttd cause-chain` | Where a byte or a register got its value: the chain back to constants, port reads and the initial memory, one line per link (`--frame F [--tin T]`, `--depth N`, `--links N`, `--frames N`, `--flags`). | ✅ Implemented |

@@ -87,6 +87,16 @@ bool ApplyWord(WindowRecordingRequest& request, const std::string& key, const st
     }
     else if (key == "codec" || key == "layout")
         (key == "codec" ? request.codec : request.layout) = WindowDisplay::Lower(value);
+    else if (key == "engine")
+    {
+        // native = the Mac's own writer for hardware H.26x and ProRes (the default), ffmpeg = always ffmpeg (its
+        // GPU encoder with hardware, found by probing; MKV is ffmpeg's in the GUI too)
+        const std::string engine = WindowDisplay::Lower(value);
+        if (engine == "native" || engine == "ffmpeg")
+            request.ffmpegOnly = engine == "ffmpeg";
+        else
+            error = "engine takes native or ffmpeg";
+    }
     else if (key == "hardware" || key == "fit")
     {
         if (!WindowDisplay::ParseBool(value, key == "hardware" ? request.hardware : request.fit))

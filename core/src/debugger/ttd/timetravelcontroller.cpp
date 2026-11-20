@@ -678,6 +678,8 @@ void TimeTravelController::SetState(TTDSessionState next)
     if (next == TTDSessionState::Recording)
         NoteTimelineEnd();   // read by other threads from now on (SessionEndPosition)
     _state = next;
+    if (leavesHistory)
+        LeaveCardStand();   // a card position is a place in the history: the card back as the boundary had it
     if (leavesHistory && !_inReplayMode)
     {
         // Off the recorded history: sectors, interrupt vectors and IN results are live again
@@ -2498,6 +2500,11 @@ void TimeTravelController::ServiceInput()
     if (!_context)
         return;
 
+    // The machine runs from a card position: the card back as the main CPU's boundary had it (gs-debugger design
+    // §8), so the main CPU finishes its instruction with the card behind it, as recorded
+    if (_cardStand && !_inReplayMode)
+        LeaveCardStand();
+
     // 0. Running forward through a paused recording: at the paused end, the
     // recording goes on (D8). Not inside a seek's own replay
     if (_recordingPaused && _state == TTDSessionState::Detached && !_inReplayMode &&
@@ -2623,7 +2630,7 @@ void TimeTravelController::DrainPendingLiveInput()
 uint32_t TimeTravelController::InputIdleLimit() const
 {
     // Journal playback only: live input and the watch for a paused recording's end act at every boundary
-    if (!_context || _pendingQueued.load() || (_recordingPaused && _state == TTDSessionState::Detached))
+    if (!_context || _pendingQueued.load() || (_recordingPaused && _state == TTDSessionState::Detached) || _cardStand)
         return 0;
     if (!_inputPlaybackArmed || !_replayEngine)
         return UINT32_MAX;
@@ -2650,7 +2657,8 @@ void TimeTravelController::UpdateInputWorkFlag()
 
     // A paused recording is watched for the moment execution reaches where it paused
     const bool watchPausedEnd = _recordingPaused && _state == TTDSessionState::Detached;
-    const bool work = _inputPlaybackArmed || _pendingQueued.load() || watchPausedEnd;
+    // A card position is left at the first instruction the machine runs from it (ServiceInput)
+    const bool work = _inputPlaybackArmed || _pendingQueued.load() || watchPausedEnd || _cardStand != nullptr;
     _context->SetStepWork(EmulatorContext::kStepWorkTtdInput, work);
     // A producer that queued between the load and the clear set the flag before it: set it again
     if (!work && _pendingQueued.load())
@@ -2693,6 +2701,7 @@ void TimeTravelController::DisarmInputPlayback()
 void TimeTravelController::OnMachineReset()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    _cardStand.reset();   // the reset replaced the card's state
     DisarmInputPlayback();
     if (_replayEngine && (_replayEngine->BusReads().GetMode() == TTDPortJournal::Mode::Play ||
                           _replayEngine->BusWrites().GetMode() == TTDPortJournal::Mode::Play))
@@ -3717,6 +3726,7 @@ bool TimeTravelController::SeekToInternal(const TTDTimePoint& target, TTDSeekRes
 {
     _perf.lastReplayNs = 0;
     _perf.lastPresentNs = 0;
+    _cardStand.reset();   // the restore below replaces the card's state too
 
     // ------------------------------------------------------------------
     // Default the out-result to a failure state. Every return path below
@@ -4118,6 +4128,7 @@ void TimeTravelController::PresentPosition(bool frameTarget)
     ComposeDisplay(frameTarget);
     _lastEngineCheck = seekCheck;
     PublishSeekedFrame();
+    PublishCardReadouts();
     _perf.lastPresentNs = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
 }
@@ -4260,6 +4271,7 @@ bool TimeTravelController::ResumeRecordingFrom(const TTDTimePoint& from)
 bool TimeTravelController::ContinueRecordingAt(const TTDTimePoint& from)
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    LeaveCardStand();   // the recording goes on from the main CPU's boundary, the card as it had it
     const size_t preTimelineSize  = _line->timeline.size();
     const size_t preJournalSize   = _line->inputJournal.Size();
     const size_t preMarkerCount   = _line->externalEvents.Size();
@@ -7013,6 +7025,8 @@ bool TimeTravelController::StepBackInstruction()
 bool TimeTravelController::StepForwardInstruction()
 {
     const SessionOperation op{*this, SessionOperation::Kind::Change};
+    // From a card position: the main CPU's instruction with the card behind it, as the machine runs from there
+    LeaveCardStand();
     // Browsing while recording pauses the recording (D8): resumed where it paused, it goes on
     if (_state == TTDSessionState::Recording)
         PauseRecordingForBrowsing();
@@ -7911,6 +7925,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out, bool withMemory
     // live snapshot can sit anywhere inside a frame, so it is kept here
     // (checkpoints carry it in TTDChipsetState::cpu_t_in_frame).
     out.z80TInFrame = z80 ? z80->t : 0;
+    out.cardStand = _cardStand;
 
     // Peripherals — the same registry the checkpoints are captured through
     _peripherals.SaveLive(out.deviceStates);
@@ -8044,6 +8059,9 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
     _inputStartFrame = snap.inputStartFrame;
     _inputFrameStart = snap.inputFrameStart;
     _inputFrameKnown = snap.inputFrameKnown;
+    // The caller's card position: its card copy again (the devices' blobs above hold no card memory regions)
+    _cardStand = snap.cardStand;
+    ReapplyCardStand();
     UpdateInputWorkFlag();
     if (_replayEngine)
     {

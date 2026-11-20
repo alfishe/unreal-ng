@@ -605,12 +605,8 @@ void HandheldMenu::machineRows(std::vector<Row>& list) const
     bool turbo = false;
     if (emulator != nullptr)
     {
-        const CONFIG& config = machineContext()->config;
         // As the picker names it (MachineCatalog): a variant by its title, a model with its RAM size when it has several
-        const std::vector<MachineFamily>& all = MachineCatalog::All();
-        if (const MachinePlace place = MachineCatalog::Locate(all, MachineCatalog::NameOf(*emulator)); place.family >= 0)
-            model = QString::fromStdString(MachineCatalog::Title(
-                all[static_cast<size_t>(place.family)].machines[static_cast<size_t>(place.machine)], config.ramsize));
+        model = QString::fromStdString(MachineCatalog::TitleOf(*emulator));
         speed = QStringLiteral("%1×").arg(static_cast<int>(emulator->GetSpeedMultiplier()));
         turbo = emulator->IsTurboMode();
     }

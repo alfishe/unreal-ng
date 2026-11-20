@@ -51,6 +51,7 @@ namespace
         AtmTurbo,     ///< ATM Turbo 2+ 7.10 and ATM3 / ZX-Evo Base: the ATM pager; a Spectrum 128K layout through EnterSpectrum128Paging
         Atm450,       ///< ATM Turbo 2 v4.50: its own pager; a Spectrum 128K layout through EnterSpectrum128Paging
         ProfiBoard,   ///< Profi v5 / v3: #7FFD + #DFFD; plain #7FFD in its Spectrum 128K layout
+        P2666Board,   ///< Pentagon 2.666 LE: two maps of window registers; a Pentagon 128 through EnterSpectrum128Paging
         BankHost,     ///< A machine that holds a Spectrum state inside a mode it runs (a Sprinter in a ZX mode): no paging of its own to move
         Other         ///< Machine-specific paging (TSConf, ProfROM, ...)
     };
@@ -80,6 +81,8 @@ namespace
             case MM_PROFI:
             case MM_PROFI3:
                 return PagingFamily::ProfiBoard;
+            case MM_P2666:
+                return PagingFamily::P2666Board;
             default:
                 // ProfROM Scorpion carries a ROM-plane state machine no other model has
                 return PagingFamily::Other;
@@ -115,6 +118,8 @@ namespace
                 return "ATM Turbo 2 v4.50";
             case PagingFamily::ProfiBoard:
                 return "Profi";
+            case PagingFamily::P2666Board:
+                return "Pentagon 2.666 LE";
             case PagingFamily::BankHost:
                 return "Sprinter";
             default:
@@ -225,6 +230,7 @@ namespace
             case PagingFamily::AtmTurbo:
             case PagingFamily::Atm450:
             case PagingFamily::ProfiBoard:
+            case PagingFamily::P2666Board:
                 // Its own pager state moves only to the ATM Turbo 2+ line (PlanMachine decides that); in a Spectrum 128K layout
                 // it is a 128K machine to everything else
                 if (statetransfer::IsSpectrum128Layout(source))
@@ -344,7 +350,7 @@ namespace
         const bool target128Class = targetFamily == PagingFamily::Spectrum128 || targetFamily == PagingFamily::Plus3 ||
                                     targetFamily == PagingFamily::Pentagon || targetFamily == PagingFamily::Scorpion ||
                                     targetFamily == PagingFamily::AtmTurbo || targetFamily == PagingFamily::Atm450 ||
-                                    targetFamily == PagingFamily::ProfiBoard;
+                                    targetFamily == PagingFamily::ProfiBoard || targetFamily == PagingFamily::P2666Board;
         // A machine with a state-transfer host holds it in the Spectrum mode it runs: the banks go behind its own mapping, the machine
         // is not reset
         if (targetFamily == PagingFamily::BankHost && (a.need == Need::Mode48 || a.need == Need::Mode128))
@@ -727,6 +733,7 @@ namespace
         {
             case TTDDeviceType::BetaDisk:
             case TTDDeviceType::Upd765:
+            case TTDDeviceType::PlusD:  // the card's blob holds its WD1772 and drives
                 return Binding::Floppy;
             case TTDDeviceType::Tape:
                 return Binding::Tape;
@@ -906,8 +913,10 @@ namespace
 
         ports.UnlockPaging();
 
-        // The ATM boards come out of a reset with a pager of their own: put them in the plain Spectrum 128K layout first
-        if (targetFamily == PagingFamily::AtmTurbo || targetFamily == PagingFamily::Atm450)
+        // The ATM boards come out of a reset with a pager of their own, the Pentagon 2.666 in Gluk at 28 MHz: put them in
+        // the plain Spectrum 128K layout first
+        if (targetFamily == PagingFamily::AtmTurbo || targetFamily == PagingFamily::Atm450 ||
+            targetFamily == PagingFamily::P2666Board)
             ports.EnterSpectrum128Paging(pc);
         // A Sprinter keeps its Spectrum mode: the banks go behind its cells, then the latch (FinishSprinterTarget)
         if (targetFamily == PagingFamily::BankHost)
@@ -1218,6 +1227,8 @@ MachineStateTransfer::Report MachineStateTransfer::Apply(EmulatorContext& source
                 for (uint16_t bank = 0; bank < pages; bank++)
                     CopyBank(source, target, bank);
             }
+            // The Pentagon 2.666 maps a locked #C000 to page 32 + bank (its D-3): the bank goes there too
+            target.pPortDecoder->FinishSpectrum128State();
         }
 
         // The target's clock chip stays its own (no transfer between two of them): it keeps its time over the jump

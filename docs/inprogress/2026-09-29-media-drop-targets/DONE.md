@@ -13,6 +13,12 @@ Design: [design.md](design.md).
 - [ ] M2: `media targets` on every surface; `media insert` refuses what no slot takes.
 - [x] M3 (2026-10-01): Qt `loadFile` on the plan (`placeMedium`: one target at once, several through a slot chooser menu at the cursor, the command line and the CLI's `open` take the first and log it; a floppy / tape with no machine starts one as before, a CD / hard-disk / card image never does); the drop area turns red with the reason in the status bar while a file nothing takes is dragged (blue otherwise, with the target or "choose a slot"); a drop on a media panel row checks the row's slot takes the file (an empty IDE unit may still swap its drive); a folder is also a tape candidate; File > Open lists CD, hard-disk and card images.
 - [x] M4 (2026-10-02): `DropTargetOverlay` - drop zones with device icons on a 1.5 s hold (Alt: at once), the same tiles as a chooser after a quick drop with several targets and for File > Insert Medium... (Ctrl+Shift+I), the red refusal over the screen at once; new device icons (`resources/icons/media/`); floppy sets to A-D; the M3 status-bar text and `QMenu` removed (user, 2026-10-02: "after the graphical overlay, throw out the text"). Layout tests `DropTargetLayout_Test` (hud-core-tests). Design §5 "As built in M4".
+- [x] Drag and drop fixes (2026-11-19, `40361f6e2`, on master `e59af2004`): Finder can drag a file as a file
+      reference URL whose volume id is stale, which Qt turns into an empty URL (the GPU screen dropped it silently):
+      `DropPaths` reads the drag pasteboard and resolves the reference by its inode on the local volumes, and says why
+      when nothing opens; the zones held still under the cursor drop where a quick drop would (drive A with
+      autostart), a tile is picked after 12 px of movement; a floppy image dropped while another drive holds it moves
+      there (refused only with unsaved writes). Tests `DropPaths_Test`, `FloppyMove_Test`, `DropTargetOverlay_Test`.
 - [ ] Left from §5: the media panel row turning red while a file is dragged over it; asking about a dirty hard disk / card in the chosen slot instead of refusing.
 - [x] Boot compatibility advisory (§10, decided + implemented 2026-09-30): `blockadvisory.{h,cpp}`,
       `DescribeBlockLayoutMismatch` wired into `MediaManager::Insert`, keyed by slot tags

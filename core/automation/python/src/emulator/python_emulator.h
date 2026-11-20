@@ -16,6 +16,7 @@
 #include "debugger/ports/portwrite.h"
 #include "debugger/snapshot/debugsnapshot.h"
 #include "debugger/search/memorysearch.h"
+#include "debugger/boards/debugboards.h"
 #include "debugger/targets/cpuview.h"
 #include "emulator/state/statenodejson.h"
 #include "emulator/io/keyboard/pckey.h"
@@ -63,6 +64,7 @@
 #include <emulator/memory/atm/evoflashrequest.h>
 #include <emulator/sound/soundmanager.h>
 #include <emulator/sound/chips/soundchip_ay8910.h>
+#include <emulator/sound/chips/gs/gsslotstats.h>
 #include <emulator/sound/chips/gs/soundchip_gs.h>
 #include <base/featuremanager.h>
 #include <debugger/disassembler/z80disasm.h>
@@ -416,6 +418,20 @@ inline pybind11::object BusReplyToPy(const StateNode& node)
 inline ttd::TTDReply TtdRunPy(Emulator& self, const std::string& verb, std::map<std::string, std::string> options = {})
 {
     return ttd::TTDControl(self.GetContext()).Execute({verb, std::move(options)});
+}
+
+/// A card move's reply as a script sees it: the body; a refusal with ok False and error; a bad request raises
+inline pybind11::object TtdCardReplyPy(const ttd::TTDReply& reply)
+{
+    if (reply.error == ttd::TTDControlError::BadRequest)
+        throw pybind11::value_error(reply.message);
+    StateNode value = reply.body;
+    if (!reply.Ok())
+    {
+        value["ok"] = false;
+        value["error"] = reply.message;
+    }
+    return StateNodeToPy(value);
 }
 
 /// The reply's body; a failure raises RuntimeError with the message, as the bindings always did
@@ -3205,7 +3221,7 @@ namespace PythonBindings
                                             static_cast<uint8_t>(sides));
             }, "Create blank disk (format: auto = plus3 on a +3, unformatted elsewhere; unformatted / raw, plus3, trdos (formatted, empty catalogue); 0 = the format's geometry)",
                py::arg("drive"), py::arg("cylinders") = 0, py::arg("sides") = 0, py::arg("format") = "auto")
-            .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart) -> py::dict {
+            .def("disk_load", [](Emulator& self, const std::string& path, int drive, bool autostart, const std::string& basic) -> py::dict {
                 py::dict result;
                 if (drive < 0 || drive > 3)
                 {
@@ -3218,11 +3234,19 @@ namespace PythonBindings
                     // Drive A (0) only - a TR-DOS/Beta 128 hardware convention: requesting it for another
                     // drive is a hard failure (result["success"]=False, message explains why), never
                     // silently ignored or redirected to drive A.
-                    Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive));
+                    Emulator::DiskAutostartResult r = self.AutostartDisk(path, static_cast<uint8_t>(drive), basic);
                     result["success"] = r.mounted;
                     result["started"] = r.started;
                     result["ttd_session_ended"] = r.ttdSessionEnded;
                     result["message"] = r.message;
+                    if (!r.plan.empty())
+                    {
+                        // An MGT disk on the +D: the steps go on after the call (state fdc -> autostart)
+                        result["plan"] = r.plan;
+                        result["command"] = r.command;
+                        result["dos"] = r.dos;
+                        result["basic"] = r.basic;
+                    }
                 }
                 else
                 {
@@ -3235,8 +3259,9 @@ namespace PythonBindings
                 return result;
             }, "Insert a disk image (.trd/.scl/.fdi/.udi/...) into the requested drive (0-3 / A-D), optionally "
                "quick-resetting into TR-DOS to run it (autostart, drive A only - same as the Qt UI's "
-               "drag-and-drop autostart)",
-               py::arg("path"), py::arg("drive") = 0, py::arg("autostart") = false)
+               "drag-and-drop autostart). An .mgt on the MGT +D runs its plan; basic = '48' / '128' picks the BASIC of "
+               "its reset ('' = the machine's own, '128' refused on a 48K)",
+               py::arg("path"), py::arg("drive") = 0, py::arg("autostart") = false, py::arg("basic") = "")
             .def("disk_list", [](Emulator& self) -> py::list {
                 py::list drives;
                 auto* ctx = self.GetContext();
@@ -5631,6 +5656,60 @@ namespace PythonBindings
                     throw py::key_error(reply.text);
                 return StateNodeToPy(reply.body);
             }, "A send by id (0: the last): its bytes, replies and state", py::arg("id") = 0)
+            // The GS slot's statistics (gsslotstats.h, gs-debugger N7)
+            .def("gs_stats", [](Emulator& self, const std::string& section, uint32_t since) -> py::object {
+                GSStatsQuery query;
+                query.section = section;
+                query.since = since;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release; // a running machine answers from the next frame end
+                    reply = GSStatsRead(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "The GS slot's statistics: the block or one section (card, mailbox, interrupts, cpu, audio, dma, spi, sd, "
+               "mp3, flash, rates, errors); since: a baseline from gs_reset_counters", py::arg("section") = "",
+               py::arg("since") = 0)
+            .def("gs_reset_counters", [](Emulator& self) -> py::object {
+                GSStatsQuery query;
+                query.waitMs = 500;
+                GSStatsReply reply;
+                {
+                    py::gil_scoped_release release;
+                    reply = GSStatsResetCounters(self.GetContext(), query);
+                }
+                if (reply.pending)
+                    throw std::runtime_error("no frame ended within 500 ms; read again");
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A statistics baseline: {baseline, frame}; gs_stats(since=baseline) reads the counters since then")
+            // Device boards (debugger-model widget catalog §4, core DebugBoards): the same data as /debug/boards
+            .def("boards", [](Emulator& self) -> py::object {
+                return StateNodeToPy(DebugBoards::List(self.GetContext()).body["boards"]);
+            }, "The device boards the machine has now: [{id, title, device, cpu, available, actions}]")
+            .def("board", [](Emulator& self, const std::string& id, bool values) -> py::object {
+                const DebugBoardReply reply = DebugBoards::Read(self.GetContext(), id, values);
+                if (reply.status != 200)
+                    throw py::key_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "One device board: its layout and values (values=True: {id, available, values})", py::arg("id"),
+               py::arg("values") = false)
+            .def("board_action", [](Emulator& self, const std::string& id, const std::string& action,
+                                    const std::string& arg) -> py::object {
+                const DebugBoardReply reply = DebugBoards::Action(self.GetContext(), id, action, arg);
+                if (reply.status == 400 || reply.status == 404)
+                    throw py::value_error(reply.text);
+                if (reply.status != 200)
+                    throw std::runtime_error(reply.text);
+                return StateNodeToPy(reply.body);
+            }, "A board's action: neogs_sd insert <image or folder> / eject (the media manager's slot sd.ngs), "
+               "neogs_flash save", py::arg("id"), py::arg("action"), py::arg("arg") = std::string())
             .def("gs_read_data", [](Emulator& self) -> int {
                 auto* ctx = self.GetContext();
                 GeneralSoundCard* gs = ctx && ctx->pSoundManager ? ctx->pSoundManager->getGeneralSound() : nullptr;
@@ -7073,6 +7152,47 @@ namespace PythonBindings
                "(at or before), from_frame (not older)",
                py::arg("pcs"))
 
+            // Positions on a sound card's CPU (gs-debugger design §8): cpu "gs" / "neogs" / "ms" / "multisound"; the
+            // main CPU follows by replay. Each returns the move's reply dict (status, reached, from, target, card);
+            // a refusal has ok False and error; an unknown cpu or a bad value raises ValueError
+            .def("ttd_card_seek", [](Emulator& self, const std::string& cpu, uint64_t instruction) -> py::object {
+                return TtdCardReplyPy(TtdRunPy(self, "seek", {{"cpu", cpu}, {"instruction", std::to_string(instruction)}}));
+            }, "Move to a sound card CPU's instruction count (the main CPU follows by replay)",
+               py::arg("cpu"), py::arg("instruction"))
+
+            .def("ttd_card_step", [](Emulator& self, const std::string& cpu, int64_t n) -> py::object {
+                const uint64_t count = n < 0 ? 0 - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
+                return TtdCardReplyPy(TtdRunPy(self, "step-instruction", {{"cpu", cpu},
+                                                                          {"dir", n < 0 ? "back" : "forward"},
+                                                                          {"count", std::to_string(count)}}));
+            }, "Step a sound card's CPU by n instructions (negative: back)",
+               py::arg("cpu"), py::arg("n") = 1)
+
+            .def("ttd_card_reverse_continue", [](Emulator& self, const std::string& cpu, std::optional<uint64_t> maxFrames) -> py::object {
+                std::map<std::string, std::string> options{{"cpu", cpu}};
+                if (maxFrames)
+                    options["max_frames"] = std::to_string(*maxFrames);
+                return TtdCardReplyPy(TtdRunPy(self, "reverse-continue", options));
+            }, "Back to a sound card CPU's previous breakpoint hit (status no_hit when there is none)",
+               py::arg("cpu"), py::arg("max_frames") = py::none())
+
+            .def("ttd_card_position", [](Emulator& self, std::optional<std::string> cpu) -> py::object {
+                const ttd::TTDReply reply = TtdRunPy(self, "position");
+                const StateNode* cards = reply.Ok() ? reply.body.find("cards") : nullptr;
+                if (!cpu)
+                    return StateNodeToPy(cards ? *cards : StateNode::Array());
+                DebugCpuId id = DebugCpuId::Main;
+                if (!DebugManager::ParseCpuName(*cpu, id))
+                    throw py::value_error("Unknown cpu '" + *cpu + "' (main, gs, neogs, ms or multisound)");
+                if (cards)
+                    for (const StateNode& card : cards->items)
+                        if (card.find("cpu")->s == DebugCpuName(id))
+                            return StateNodeToPy(card);
+                return py::none();
+            }, "A sound card CPU's readout (instruction, pc, card_position, main); all cards' list without cpu; None "
+               "for a cpu without a card",
+               py::arg("cpu") = py::none())
+
             .def("ttd_coverage_probe", [](Emulator& self, uint64_t frame, const std::string& kindStr,
                                           uint32_t addrFrom, uint32_t addrTo, py::object pageObj, py::object spaceObj) -> py::object {
                 std::map<std::string, std::string> options{{"frame", std::to_string(frame)}, {"kind", kindStr},
@@ -7825,6 +7945,9 @@ namespace PythonBindings
             // GMX: the card's register file (the /state/paging `gmx` view)
             if (config.mem_model == MM_GMX)
                 d["gmx"] = StateNodeToPy(DeviceState::GmxPaging(context));
+            // Pentagon 2.666 LE: the window maps and the board latches (the /state/paging `p2666` view)
+            if (config.mem_model == MM_P2666)
+                d["p2666"] = StateNodeToPy(DeviceState::P2666Paging(context));
             d["banks"] = banks;
             return d;
         }, "Tagged paging latches + bank table (P1-2 design)")
@@ -8020,7 +8143,7 @@ namespace PythonBindings
         }, "Record the GUI window as it draws (CRT and all) with the on-screen keyboard and the machine's sound, one "
            "video frame per emulated frame, to path (.mov: prores, .mp4: h264): keyboard= ('default', a picture id, "
            "False), codec= ('prores', 'h264'), audio= (bool), fps= (1..100, audio=False only), scale= (1..4), "
-           "hardware= / fit= (booleans), picture_height= (0..4320, GPU), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
+           "hardware= / fit= (booleans), picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout= ('below', 'side'); returns {recording, "
            "path, keyboard, frames, width, height, fps, audio, sample_rate, audio_samples} or {ok: False, error, kind}",
            py::arg("path"))
         .def("window_record_frames", [](Emulator& self, int frames) -> py::object {

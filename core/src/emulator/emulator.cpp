@@ -41,6 +41,8 @@
 #include "debugger/ttd/ttdsessionport.h"
 #include "emulator/coordinator/machinecoordinator.h"
 #include "emulator/notifications.h"
+#include "emulator/slots/cards/plusd/plusdautostart.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/sound/chips/gs/generalsoundcard.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
 #include "emulator/tstaterunbudget.h"
@@ -81,6 +83,11 @@ struct Emulator::AutostartRequest
     DiskAutostart* autostart = nullptr;
     DiskAutostart::Plan plan;
     bool started = false;
+    // The MGT +D branch: its plan, the work's file (it goes back into drive 1 after the system disk), the system disk
+    bool plusd = false;
+    PlusDAutostart::Plan plusdPlan;
+    std::string workPath;
+    std::string systemDisk;
 };
 
 /// The emulator's side of the coordinator: the machine thread (the execution arbiter's CPU hold), the clock, the RZX
@@ -1229,16 +1236,40 @@ void Emulator::ClearAudioCallback()
 
 // region Disk autostart
 
-Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, uint8_t drive)
+Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, uint8_t drive, const std::string& basic)
 {
     DiskAutostartResult result;
 
+    const bool mgt = IsMgtDisk(path);
+    if (drive != 0 && mgt)
+    {
+        result.message = "autostart boots the +D's drive 1 (A) - insert into drive " +
+                         std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
+        MLOGERROR("AutostartDisk: %s", result.message.c_str());
+        return result;
+    }
     if (drive != 0)
     {
         result.message = "autostart only supports drive A (TR-DOS/Beta 128's \"RUN boot\" convention "
                           "always boots from drive A) - insert into drive " +
                           std::string(1, static_cast<char>('A' + drive)) + " without autostart instead";
         MLOGERROR("AutostartDisk: %s", result.message.c_str());
+        return result;
+    }
+
+    // The BASIC of an MGT reset is the caller's parameter: a wrong one is refused before anything is mounted, so
+    // every plane answers an error, not "mounted, not started"
+    // (without the card the MGT refusal below names the models that have it)
+    const bool is48K = _context->config.mem_model == MM_SPECTRUM48;
+    const bool plusdCard = mgt && PlusDCard::Find(_context) != nullptr;
+    if (plusdCard && !basic.empty() && basic != "48" && basic != "128")
+    {
+        result.message = "BASIC '" + basic + "': 48 or 128";
+        return result;
+    }
+    if (plusdCard && basic == "128" && is48K)
+    {
+        result.message = "no 128 BASIC on a 48K: use 128K-PLUSD";
         return result;
     }
 
@@ -1265,7 +1296,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
             NC_DISK_AUTOSTART, new DiskAutostartPayload(_context->emulatorId, text, started, error));
     };
 
-    FDD* driveA = _context->coreState.diskDrives[0];
+    PlusDCard* plusd = mgt ? PlusDCard::Find(_context) : nullptr;
+    FDD* driveA = plusd ? plusd->Drive(0) : _context->coreState.diskDrives[0];
     DiskImage* image = driveA ? driveA->getDiskImage() : nullptr;
     DiskAutostart* autostart = _context->pDiskAutostart;
     if (image == nullptr || autostart == nullptr)
@@ -1280,6 +1312,47 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
     AutostartRequest request;
     request.image = image;
     request.autostart = autostart;
+    if (plusd)
+    {
+        // The plan from the directory (nothing changes); a disk with nothing to start stays mounted, no reset
+        request.plusd = true;
+        request.workPath = FileHelper::AbsolutePath(path);
+        request.systemDisk = PlusDAutostart::FindSystemDisk();
+        request.plusdPlan = PlusDAutostart::MakePlan(*image, is48K, request.systemDisk);
+        request.plusdPlan.basic = !basic.empty() ? basic : (is48K ? "48" : "128");
+        result.basic = request.plusdPlan.basic;
+        result.plan = request.plusdPlan.kind;
+        result.command = request.plusdPlan.command;
+        result.dos = request.plusdPlan.dos;
+        if (!request.plusdPlan.Starts())
+        {
+            report(request.plusdPlan.message, false, false);
+            return result;
+        }
+        if (request.plusdPlan.dos == "system-disk")
+        {
+            // G+DOS from the emulator's system disk, read only: the work's disk goes back once the DOS is in the +D
+            // RAM (PlusDAutostart's swap step)
+            MediaSource source;
+            source.path = request.systemDisk;
+            InsertOptions options;
+            options.immediate = true;
+            options.access = AccessMode::ReadOnly;
+            options.disposition = Disposition::Discard;
+            options.ttdReason = "plusd-autostart";
+            MediaResult inserted;
+            {
+                CpuHold hold(*this, "plusd system disk");
+                inserted = _context->pMediaManager->Insert(PlusDCard::kDriveSlotIds[0], source, options);
+            }
+            if (!inserted.Ok())
+            {
+                result.plan = "mount";
+                report("Autostart: the system disk did not go into drive 1: " + inserted.message, false, true);
+                return result;
+            }
+        }
+    }
     coordinator::MachineOp op;
     op.kind = coordinator::OpKind::Autostart;
     op.summary = path;
@@ -1294,7 +1367,7 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 
     result.started = request.started;
     result.ttdSessionEnded = hadSession && ttd->GetState() == ttd::TTDSessionState::Idle;
-    std::string text = request.plan.message;
+    std::string text = request.plusd ? request.plusdPlan.message : request.plan.message;
     if (result.ttdSessionEnded)
         text += " (the TTD session ended)";
     report(text, request.started, request.plan.action == DiskAutostart::Action::Unsupported);
@@ -1304,6 +1377,8 @@ Emulator::DiskAutostartResult Emulator::AutostartDisk(const std::string& path, u
 bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& stage)
 {
     CpuHold hold(*this, "disk autostart");   // nested in the coordinator's hold (free)
+    if (request.plusd)
+        return AutostartPlusDNow(request, stage);
     request.plan = request.autostart->Prepare(*request.image);
     const DiskAutostart::Action action = request.plan.action;
     request.started = action == DiskAutostart::Action::Boot || action == DiskAutostart::Action::BootNamed ||
@@ -1330,6 +1405,20 @@ bool Emulator::AutostartNow(AutostartRequest& request, coordinator::OpStage& sta
     request.autostart->ArmColdStartFinish();  // the model's paging for the disk's program (ATM710: the 128K way)
     if (action == DiskAutostart::Action::BootNamed)
         request.autostart->Arm(request.plan.bootName);
+    return true;
+}
+
+bool Emulator::AutostartPlusDNow(AutostartRequest& request, coordinator::OpStage& stage)
+{
+    // The plan was made and the system disk inserted before the operation (AutostartDisk): reset and arm the steps
+    request.started = true;
+    stage.CommitPoint();
+    request.autostart->Disarm();
+    // The ROM boots (the +D pages in at the reset, G+DOS's ROM hands over to BASIC). Not the RESET= setting: 128
+    // BASIC starts from the 128K's menu (the typer chooses it), 48 BASIC from the 48K ROM
+    _core->ResetKeepingClock(request.plusdPlan.basic == "128" ? RM_128 : RM_SOS);
+    RestartFrame();
+    request.autostart->PlusD().Arm(request.plusdPlan, request.workPath);
     return true;
 }
 
@@ -1865,6 +1954,7 @@ void Emulator::OnIntentEdgeGate(const execution::IntentEdge& edge, bool parked)
                            : edge.reason == "watch"  ? DebugStop::Reason::Watch
                                                      : DebugStop::Reason::Pause;
         _lastStop.breakpoint = _pendingPauseCause;
+        _lastStop.serial++;
         {
             std::lock_guard<std::mutex> causes(_edgeCausesMutex);
             _edgeCauses.emplace_back(edge.seq, _pendingPauseCause);
@@ -2402,7 +2492,17 @@ bool Emulator::LoadSnapshotNow(SnapshotRequest& request, coordinator::OpStage& s
             options.beforeCommit();
         stage.CommitPoint();
     };
+    // The loaders reset the machine, and a reset pages an MGT +D in: a snapshot whose format keeps the +D paging (SZX
+    // PLSD, .z80 byte 59) restores it, every other one runs its program with the +D paged out
+    PlusDCard* plusd = PlusDCard::Find(_context);
+    if (plusd)
+        plusd->BeginSnapshotLoad();
     request.loaded = (*request.load)(request.error, planned);
+    if (plusd && request.loaded)
+        plusd->EndSnapshotLoad();
+    // A model whose window shows another page than #7FFD names puts the state's bank there (the Pentagon 2.666, D-3)
+    if (request.loaded && _context->pPortDecoder)
+        _context->pPortDecoder->FinishSpectrum128State();
     // The loader reset the machine and replaced its state (ports, memory,
     // registers): start the frame again from the loaded state, so devices
     // and the video raster take their frame bases from it
@@ -2852,6 +2952,27 @@ bool Emulator::CreateBlankDisk(uint8_t drive, BlankDiskFormat format, uint8_t cy
     return true;
 }
 
+bool Emulator::IsMgtDisk(const std::string& path)
+{
+    const std::string resolved = FileHelper::AbsolutePath(path);
+    return !FileHelper::IsFolder(resolved) && FileHelper::FileExists(resolved) && FloppyFormats::Probe(resolved) == "mgt";
+}
+
+std::string Emulator::MgtDriveSlot(const std::string& path, uint8_t drive, std::string& slotId) const
+{
+    if (!IsMgtDisk(path))
+        return {};
+    // An MGT disk is a +D (G+DOS) disk: a Beta 128 drive cannot run it (owner decision D-3: refuse, never switch the
+    // model)
+    if (PlusDCard::Find(_context) == nullptr)
+        return "no +D on this machine: an MGT disk needs the +D card (models 48K-PLUSD, 128K-PLUSD, or plusd in an edge "
+               "slot)";
+    if (drive >= PlusDCard::kDrives)
+        return std::string("the +D has drives 1 and 2 (A, B): drive ") + static_cast<char>('A' + drive) + " is not one";
+    slotId = PlusDCard::kDriveSlotIds[drive];
+    return {};
+}
+
 bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* error)
 {
     auto fail = [&](const std::string& message) -> bool
@@ -2869,7 +2990,9 @@ bool Emulator::LoadDisk(const std::string& path, uint8_t drive, std::string* err
     if (drive >= 4)
         return fail("invalid drive index " + std::to_string(static_cast<int>(drive)) + " (valid range: 0-3 / A-D)");
 
-    const std::string slotId = FloppyDriveSlot::IdFor(drive);
+    std::string slotId = FloppyDriveSlot::IdFor(drive);
+    if (std::string refusal = MgtDriveSlot(path, drive, slotId); !refusal.empty())
+        return fail(refusal);
     if (!_context || !_context->pMediaManager || !_context->pMediaManager->HasSlot(slotId))
         return fail(std::string("drive ") + static_cast<char>('A' + drive) + " is not present on this machine");
 
@@ -3485,10 +3608,15 @@ Emulator::DirectStepScope::~DirectStepScope()
     {
         if (_emulator._context && _emulator._context->pDebugManager)
             _emulator._context->pDebugManager->OnDirectRun(false);  // the CPU still held
+        // A time travel replay (a seek, a step in the past) runs the machine directly but is no stop of the
+        // debugger's: the stop before it stays the last one (a debugger would otherwise take every move in time for
+        // a main CPU step and bring that tab to the front)
+        if (!(_emulator._context && _emulator._context->ttdReplayActive))
         {
             std::lock_guard<std::mutex> lock(_emulator._prevStopMutex);
             _emulator._lastStop.reason = _emulator._directStop.hit ? DebugStop::Reason::Breakpoint : DebugStop::Reason::Step;
             _emulator._lastStop.breakpoint = _emulator._directStop;
+            _emulator._lastStop.serial++;
         }
         // What the run left mid-frame on a screen that catches up on its own events (Screen::CatchesUpOnEvents)
         if (Screen* screen = _emulator._context ? _emulator._context->pScreen : nullptr; screen && screen->CatchesUpOnEvents())

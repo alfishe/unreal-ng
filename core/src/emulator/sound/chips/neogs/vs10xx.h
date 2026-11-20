@@ -115,6 +115,19 @@ public:
     uint64_t samplesPlayed() const { return _samplesPlayed; }
     uint64_t bytesReceived() const { return _bytesReceived; }
     bool running() const { return _running; }
+    int bitrateKbps() const { return _bitrateKbps; }
+
+    /// Errors and traffic (neogs-automation-design.md §4.10): statistics, not machine state (no snapshot)
+    struct Counters
+    {
+        uint64_t bytesWhileBusy = 0; // SDI bytes sent while DREQ was low (taken while the FIFO has room)
+        uint64_t bytesDropped = 0;   // SDI bytes with the FIFO full: lost
+        uint64_t resyncBytes = 0;    // stream bytes skipped looking for a frame header
+        uint64_t underruns = 0;      // the audio FIFO ran dry while a stream played
+        uint64_t controlReads = 0;   // SCI register reads
+        uint64_t controlWrites = 0;  // SCI register writes
+    };
+    const Counters& counters() const { return _counters; }
 
     /// Snapshot (TTD). Everything but the output resampler's pending samples,
     /// which are audio only. `machineVisibleOnly` zeroes the decoded PCM and
@@ -188,6 +201,8 @@ private:
     uint64_t _samplesPlayed = 0;
     uint64_t _bytesReceived = 0;
     uint64_t _decodedSamplesSecondBase = 0;
+    Counters _counters;
+    bool _underrun = false;        // for the counter only: inside a dry spell
 
     // Output resampler: stream samples played since the last render, and the
     // last one for interpolation across frame edges

@@ -748,6 +748,32 @@ TEST_F(McpTools_Test, LoadSoftware_Disk_UsesDriveParameter)
     EXPECT_TRUE(_caller->Saw("POST", "/api/v1/emulator/emu-1/disk/B/insert"));
 }
 
+TEST_F(McpTools_Test, LoadSoftware_MgtAutostart_ForwardsTheBasicAndSaysThePlan)
+{
+    Json::Value answer(Json::objectValue);
+    answer["status"] = "success";
+    answer["autostarted"] = true;
+    answer["autostart_message"] = "Autostart: RUN (G+DOS from the disk)";
+    answer["plan"] = "run";
+    answer["basic"] = "48";
+    _caller->routes["POST /api/v1/emulator/emu-1/disk/A/insert"] = {200, answer};
+
+    Json::Value args;
+    args["path"] = "no-such-dir/work.mgt";  // not a local file: the path goes in the JSON body
+    args["autostart"] = true;
+    args["basic"] = "48";
+    mcp::ToolResult result = RunTool(*_registry, "load_software", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    const auto* call = _caller->Last("POST", "/api/v1/emulator/emu-1/disk/A/insert");
+    ASSERT_NE(call, nullptr);
+    EXPECT_TRUE(call->body["autostart"].asBool());
+    EXPECT_EQ(call->body["basic"].asString(), "48");
+    // An agent may see only the text: the plan, its BASIC and where the progress is
+    EXPECT_NE(result.text.find("plan run, 48 BASIC"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("inspect_state fdc"), std::string::npos) << result.text;
+}
+
 TEST_F(McpTools_Test, LoadSoftware_UnknownExtension_IsError)
 {
     Json::Value args;
@@ -1948,6 +1974,47 @@ TEST_F(McpTools_Test, InspectState_DeviceAspects_FetchOverviewAndChips)
     EXPECT_NE(result.text.find("A: /tmp/disk.trd track 3 motor on"), std::string::npos) << result.text;
 }
 
+// The MGT +D after a reset has no drive on the select lines (selected_drive -1): the call answers (an unsigned read of
+// -1 threw in the formatter and the request never answered), the text says "drive none", names the controller and
+// shows the autostart
+TEST_F(McpTools_Test, InspectState_FdcWithNoDriveSelected)
+{
+    Json::Value fdc;
+    fdc["available"] = true;
+    fdc["controller"] = "WD1772 (MGT +D)";
+    fdc["fsm_state"] = "S_IDLE";
+    fdc["last_command"] = "restore";
+    fdc["registers"]["status"] = 0;
+    fdc["registers"]["track"] = 0;
+    fdc["registers"]["sector"] = 1;
+    fdc["selected_drive"] = -1;
+    fdc["side"] = 0;
+    fdc["density"] = "MFM";
+    fdc["drives"] = Json::Value(Json::arrayValue);
+    fdc["autostart"]["plan"] = "run+load";
+    fdc["autostart"]["basic"] = "48";
+    fdc["autostart"]["command"] = "LOAD d1\"CONFIG\"";
+    fdc["autostart"]["active"] = true;
+    fdc["autostart"]["stage"] = "run";
+    fdc["autostart"]["message"] = "";
+    Json::Value step;
+    step["step"] = "reset";
+    step["frame"] = 0;
+    fdc["autostart"]["steps"].append(step);
+    _caller->routes["GET /api/v1/emulator/emu-1/state/fdc"] = {200, fdc};
+
+    Json::Value args;
+    args["aspects"] = Json::Value(Json::arrayValue);
+    args["aspects"].append("fdc");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("[fdc] WD1772 (MGT +D): S_IDLE, last restore, status 0 track 0 sector 1, drive none side 0, MFM"),
+              std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("autostart run+load, 48 BASIC, LOAD d1\"CONFIG\", running (stage run); steps reset @0"),
+              std::string::npos) << result.text;
+}
+
 // device_history: read goes to /history/{device}?last=N and answers with the stats line and one line per record;
 // config posts only the fields given
 TEST_F(McpTools_Test, DeviceHistory_ReadAndConfig)
@@ -2077,6 +2144,98 @@ TEST_F(McpTools_Test, InspectState_DevicesAspect_ListsTheReportsWithTheirAspects
     EXPECT_NE(result.text.find("ay: AY sound chips (TurboSound FM (2 x YM2203, SSG halves)), aspect audio_ay"), std::string::npos)
         << result.text;
     EXPECT_NE(result.text.find("fdc: Disk controller, aspect fdc"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_BoardAspect_ShowsEveryControlInTheText)
+{
+    // A device board (GET /debug/boards/{id}): the text names each group and each control with its value as its type
+    // shows it - the agent may see only the text
+    Json::Value board;
+    board["id"] = "neogs";
+    board["title"] = "NeoGS card hardware";
+    board["available"] = true;
+    Json::Value control;
+    control["id"] = "gscfg0";
+    control["label"] = "GSCFG0";
+    control["type"] = "bits";
+    control["value"] = 0x05;
+    for (const char* name : {"NOROM", "RAMRO", "8CHANS", "EXPAG", "CLK0", "CLK1", "PAN4CH", "INV7B"})
+        control["names"].append(name);
+    Json::Value group;
+    group["title"] = "Config";
+    group["raw"] = "GSCFG0=#05";
+    group["controls"].append(control);
+    control = Json::Value();
+    control["id"] = "led_on";
+    control["label"] = "LED";
+    control["type"] = "led";
+    control["value"] = true;
+    group["controls"].append(control);
+    Json::Value column;
+    column["groups"].append(group);
+    board["columns"].append(column);
+    Json::Value action;
+    action["id"] = "save";
+    action["title"] = "Save the flash";
+    board["actions"].append(action);
+    _caller->routes["GET /api/v1/emulator/emu-1/debug/boards/neogs"] = {200, board};
+
+    Json::Value args;
+    args["aspects"].append("board.neogs");
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/debug/boards/neogs"));
+    EXPECT_NE(result.text.find("Config  GSCFG0=#05"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("GSCFG0: #05 [NOROM 8CHANS]"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("LED: on"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("actions (emulator_manage board_action): save"), std::string::npos) << result.text;
+
+    // The action goes to the board's route with its argument
+    Json::Value done;
+    done["board"] = "neogs_sd";
+    done["action"] = "insert";
+    done["arg"] = "/sd";
+    done["status"] = "done";
+    _caller->routes["POST /api/v1/emulator/emu-1/debug/boards/neogs_sd/actions/insert"] = {200, done};
+    Json::Value manage;
+    manage["action"] = "board_action";
+    manage["board"] = "neogs_sd";
+    manage["operation"] = "insert";
+    manage["path"] = "/sd";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Board neogs_sd insert /sd: done"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, InspectState_GsStatsAspect_ForwardsTheSectionAndBaseline)
+{
+    // The GS slot's statistics (gs-debugger N7): the section is the route's last part, the baseline and fresh its
+    // query; the text is the server's lines, and gs_reset_counters names the baseline
+    Json::Value stats;
+    stats["implementation"] = "ngs";
+    stats["mailbox"]["host_commands"] = 1;
+    stats["text"] = "GS slot stats: ngs, frame 9, since baseline 3\nmailbox: host_commands 1\n";
+    _caller->routes["GET /api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"] = {200, stats};
+
+    Json::Value args;
+    args["aspects"].append("audio_gs_stats.mailbox");
+    args["gs_stats_since"] = 3;
+    args["gs_stats_fresh"] = true;
+    mcp::ToolResult result = RunTool(*_registry, "inspect_state", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_TRUE(_caller->Saw("GET", "/api/v1/emulator/emu-1/state/audio/gs/stats/mailbox?since=3&fresh=1"));
+    EXPECT_NE(result.text.find("[audio_gs_stats.mailbox] GS slot stats: ngs"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("mailbox: host_commands 1"), std::string::npos) << result.text;
+
+    Json::Value baseline;
+    baseline["baseline"] = 4;
+    baseline["frame"] = 12;
+    _caller->routes["POST /api/v1/emulator/emu-1/control/audio/gs"] = {200, baseline};
+    Json::Value manage;
+    manage["action"] = "gs_reset_counters";
+    result = RunTool(*_registry, "emulator_manage", manage, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("GS statistics baseline 4 at frame 12"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, InspectState_MouseAspect_FetchesMouseStatus)
@@ -3263,6 +3422,70 @@ TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesThePresentTiming)
     EXPECT_EQ(fits.text.find("video delay held"), std::string::npos) << fits.text;
 }
 
+/// Low-latency video asks for each frame at once: the text says so and names neither a lead, nor refreshes late, nor
+/// the interpolation it turns off
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesLowLatency)
+{
+    Json::Value settings;
+    settings["gpu"] = true;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "metal";
+    present["refresh_hz"]["max"] = 60.0;
+    present["sync"]["mode"] = "interpolate";
+    present["clock"] = "latch";
+    present["low_latency"] = true;
+    present["presented"] = 600;
+    present["late"] = 250;
+    present["lead_ms"] = 36.7;
+    present["error_ms"]["p50"] = 24.75;
+    present["error_ms"]["p99"] = 54.34;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    for (const char* part : {"low latency: each frame at once", "hand-over to screen p50 24.75 p99 54.34 ms"})
+        EXPECT_NE(read.text.find(part), std::string::npos) << part << " in " << read.text;
+    for (const char* part : {"a refresh late", "lead 36.7", "video sync interpolate"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+}
+
+/// The software screen times its paints: the text gives them as such, without a refresh grid, a lead or a sound offset
+TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheSoftwareScreensPaintTimes)
+{
+    Json::Value settings;
+    Json::Value& present = settings["present"];
+    present["presenter"] = "software";
+    present["refresh_hz"]["max"] = 60.0;
+    present["clock"] = "audio";
+    present["timed_at"] = "paint";
+    present["presented"] = 480;
+    present["dropped"] = 3;
+    present["error_ms"]["p50"] = 4.25;
+    present["error_ms"]["p99"] = 11.5;
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+
+    Json::Value args;
+    args["action"] = "window_display";
+    mcp::ToolResult read = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(read.isError) << read.text;
+    EXPECT_NE(read.text.find("480 new frames painted, 3 skipped, painted vs asked p50 4.25 p99 11.5 ms (paint times, "
+                             "not the screen)"),
+              std::string::npos)
+        << read.text;
+    for (const char* part : {"a refresh late", "off the beat", "screen to sound"})
+        EXPECT_EQ(read.text.find(part), std::string::npos) << part << " in " << read.text;
+
+    // Low latency: the time asked for is the latch
+    settings["present"]["low_latency"] = true;
+    settings["present"]["clock"] = "latch";
+    _caller->routes["GET /api/v1/emulator/emu-1/video/window"] = {200, settings};
+    mcp::ToolResult low = RunTool(*_registry, "capture_media", args, *_caller);
+    ASSERT_FALSE(low.isError) << low.text;
+    EXPECT_NE(low.text.find("made to painted p50 4.25"), std::string::npos) << low.text;
+}
+
 TEST_F(McpTools_Test, CaptureMedia_WindowDisplay_TextNamesTheVrrSupport)
 {
     Json::Value settings;
@@ -4312,6 +4535,149 @@ TEST_F(McpTools_Test, TimeTravel_ReverseStepOver_PostsTheVerbAndSaysWhatItDid)
     // An agent may read only the text: what happened and where
     EXPECT_NE(result.text.find("over a routine (6 instructions) to #8004"), std::string::npos) << result.text;
     EXPECT_NE(result.text.find("12"), std::string::npos) << result.text;
+}
+
+/// A card move's reply as the WebAPI answers it (TTDControl CardMove)
+static Json::Value CardMoveReply(bool reached, const char* status, uint64_t from, uint64_t target)
+{
+    Json::Value reply;
+    reply["cpu"] = "gs";
+    reply["status"] = status;
+    reply["reached"] = reached;
+    reply["from"] = static_cast<Json::UInt64>(from);
+    reply["target"] = static_cast<Json::UInt64>(target);
+    if (!reached)
+        reply["message"] = "card instruction 3 is before the history: it starts at card instruction 900";
+    reply["card"]["cpu"] = "gs";
+    reply["card"]["known"] = true;
+    reply["card"]["instruction"] = static_cast<Json::UInt64>(reached ? target : from);
+    reply["card"]["pc"] = 0x0A3C;
+    reply["card"]["card_position"] = true;
+    reply["card"]["caught_up"] = true;
+    reply["card"]["main"]["frame"] = 12;
+    reply["card"]["main"]["tinframe"] = 30411;
+    reply["card"]["main"]["pc"] = 0x8009;
+    reply["card"]["main"]["t_offset"] = 7;
+    reply["card"]["main"]["inside"] = true;
+    reply["frame"] = 12;
+    reply["tinframe"] = 30411;
+    return reply;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardSeek_PostsCpuAndInstructionAndSaysWhereBothCpusStand)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/seek"] = {200, CardMoveReply(true, "ok", 1000, 1205)};
+
+    Json::Value missing;
+    missing["action"] = "card_seek";
+    missing["instruction"] = 1205;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", missing, *_caller).isError) << "cpu is required";
+    Json::Value noInstruction;
+    noInstruction["action"] = "card_seek";
+    noInstruction["cpu"] = "gs";
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", noInstruction, *_caller).isError);
+    EXPECT_TRUE(_caller->calls.empty());
+
+    Json::Value args;
+    args["action"] = "card_seek";
+    args["cpu"] = "gs";
+    args["instruction"] = 1205;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/seek");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "gs");
+    EXPECT_EQ(call->body["instruction"].asUInt64(), 1205u);
+    EXPECT_FALSE(call->body.isMember("frame"));
+    // An agent may read only the text: the card's instruction and PC, the main CPU's boundary and offset
+    EXPECT_NE(result.text.find("gs at card instruction 1205 (from 1000)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x0A3C"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("0x8009"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("7 T into its next instruction"), std::string::npos) << result.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardStep_ANegativeCountStepsBack)
+{
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/step-instruction"] = {200, CardMoveReply(true, "ok", 1205, 1200)};
+    Json::Value zero;
+    zero["action"] = "card_step";
+    zero["cpu"] = "gs";
+    zero["count"] = 0;
+    EXPECT_TRUE(RunTool(*_registry, "time_travel", zero, *_caller).isError);
+
+    Json::Value args;
+    args["action"] = "card_step";
+    args["cpu"] = "neogs";
+    args["count"] = -5;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["cpu"].asString(), "neogs");
+    EXPECT_EQ(call->body["dir"].asString(), "back");
+    EXPECT_EQ(call->body["count"].asUInt64(), 5u);
+
+    Json::Value one;
+    one["action"] = "card_step";
+    one["cpu"] = "gs";
+    ASSERT_FALSE(RunTool(*_registry, "time_travel", one, *_caller).isError);
+    call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/step-instruction");
+    EXPECT_EQ(call->body["dir"].asString(), "forward");
+    EXPECT_EQ(call->body["count"].asUInt64(), 1u);
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardReverseContinue_NoHitIsAnErrorTheModelReads)
+{
+    Json::Value reply = CardMoveReply(false, "no_hit", 1205, 0);
+    reply["message"] = "no hit of cpu gs's breakpoints before card instruction 1205 in the history";
+    reply["searched_frames"] = 7;
+    reply["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, reply};
+
+    Json::Value args;
+    args["action"] = "card_reverse_continue";
+    args["cpu"] = "gs";
+    args["max_frames"] = 50;
+    const mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    EXPECT_TRUE(result.isError);
+    const FakeApiCaller::RecordedCall* call = _caller->Last("POST", "/api/v1/emulator/emu-1/ttd/reverse-continue");
+    ASSERT_NE(call, nullptr);
+    EXPECT_EQ(call->body["max_frames"].asUInt64(), 50u);
+    EXPECT_FALSE(call->body.isMember("pcs"));
+    EXPECT_NE(result.text.find("did not move (no_hit)"), std::string::npos) << result.text;
+    EXPECT_NE(result.text.find("searched 7 frame(s)"), std::string::npos) << result.text;
+
+    Json::Value hit = CardMoveReply(true, "ok", 1205, 1100);
+    hit["breakpoint"]["id"] = 3;
+    hit["breakpoint"]["kind"] = "execute";
+    hit["breakpoint"]["address"] = 0x0A3C;
+    hit["searched_frames"] = 1;
+    hit["truncated"] = false;
+    _caller->routes["POST /api/v1/emulator/emu-1/ttd/reverse-continue"] = {200, hit};
+    const mcp::ToolResult found = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(found.isError) << found.text;
+    EXPECT_NE(found.text.find("breakpoint 3 (execute 0x0A3C)"), std::string::npos) << found.text;
+}
+
+TEST_F(McpTools_Test, TimeTravel_CardPosition_ReadsThePositionsCards)
+{
+    Json::Value position;
+    position["current"]["frame"] = 12;
+    position["current"]["tinframe"] = 30411;
+    position["state"] = "detached";
+    position["cards"].append(CardMoveReply(true, "ok", 0, 1205)["card"]);
+    _caller->routes["GET /api/v1/emulator/emu-1/ttd/position"] = {200, position};
+
+    Json::Value args;
+    args["action"] = "card_position";
+    mcp::ToolResult result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("Card gs: instruction 1205, PC 0x0A3C (card position"), std::string::npos) << result.text;
+
+    args["cpu"] = "multisound";
+    result = RunTool(*_registry, "time_travel", args, *_caller);
+    ASSERT_FALSE(result.isError) << result.text;
+    EXPECT_NE(result.text.find("No card CPU 'multisound'"), std::string::npos) << result.text;
 }
 
 TEST_F(McpTools_Test, TimeTravel_ReverseContinue_ConvertsHexPcs)

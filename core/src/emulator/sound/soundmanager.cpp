@@ -9,6 +9,7 @@
 
 #include "base/featuremanager.h"
 #include "common/dumphelper.h"
+#include "common/sound/audiodevicedescriptor.h"
 #include "common/sound/audiohelper.h"
 #include "common/sound/audioutils.h"
 #include "common/stringhelper.h"
@@ -661,6 +662,9 @@ int ModelPartFor(const IModelAudioSource* model, AudioSourceType source)
 {
     if (model == nullptr)
         return -1;
+    for (size_t part = 0; part < model->AudioPartCount(); part++)
+        if (model->AudioPartType(part) == source)
+            return static_cast<int>(part);  // a part on a standard row (the Pentagon 2.666's AYs, Covox, beeper)
     AudioSourceType wanted = source;
     if (source == AudioSourceType::COVOX)
         wanted = AudioSourceType::NextDac;
@@ -1385,6 +1389,12 @@ void SoundManager::renderCdAudio(size_t samples)
     }
 }
 
+void SoundManager::publishGsStats()
+{
+    // One relaxed load unless a reader asked in the last 2 s (gsslotstats.h)
+    _gsStats.FrameEnd(_gs, _context->config.frame_duration_us / 1e6, _context->pTimeTravelHooks);
+}
+
 void SoundManager::handleFrameEnd()
 {
     // CD drives: the optical head moves through the frame in every mode (machine
@@ -1440,6 +1450,7 @@ void SoundManager::handleFrameEnd()
             v.stage->invalidateHistory();
         if (_gs)
             _gs->handleFrameEnd(0);
+        publishGsStats();
         if (_modelAudio)
             _modelAudio->AudioFrameEnd(0);
         renderCdAudio(0);
@@ -1695,6 +1706,7 @@ void SoundManager::handleFrameEnd()
     // into the registry buffer
     if (_gs)
         _gs->handleFrameEnd(samplesThisFrame);
+    publishGsStats();
 
     // Slot-built cards: run to the frame end and render their rows
     for (ICardAudio* card : _slotCards)
@@ -1764,6 +1776,7 @@ void SoundManager::handleFrameEnd()
         // A part of the model audio source (the Next's AYs and DAC): its mute / solo / volume are in the device's own
         // mix already (applyModelAudioParts), its meter is the device's. The device's one buffer is mixed with the
         // first part, at unity, where the COVOX row of a device without parts mixes it
+        const int16_t* srcBuffer = nullptr;
         if (const int part = _modelAudio ? modelAudioPart(d.type) : -1; part >= 0)
         {
             d.peak = _modelAudio->AudioPartPeak(static_cast<size_t>(part));
@@ -1771,10 +1784,11 @@ void SoundManager::handleFrameEnd()
             if (part != 0)
                 continue;
             audible = true;
+            srcBuffer = _modelAudio->AudioBuffer();  // the lead part, whatever its row (the Next's AY 1, P2.666's AY 1)
         }
 
         // Get the device's buffer
-        const int16_t* srcBuffer = nullptr;
+        if (!srcBuffer)
         switch (d.type)
         {
             case AudioSourceType::Beeper:
@@ -1794,9 +1808,6 @@ void SoundManager::handleFrameEnd()
                 break;
             case AudioSourceType::COVOX:
                 srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : _covox ? _covox->getBuffer() : nullptr;
-                break;
-            case AudioSourceType::NextAy1:  // the lead part (the others continued above)
-                srcBuffer = _modelAudio ? _modelAudio->AudioBuffer() : nullptr;
                 break;
             case AudioSourceType::GeneralSound:
                 srcBuffer = _gs ? _gs->getBuffer() : nullptr;
@@ -2098,6 +2109,7 @@ void SoundManager::updateDrcControl()
         _drcResampler.setRatio(1.0);
         _drcErrIntegral = 0.0;
         _drcOccFiltered = -1.0;
+        _drcTrim.store(0.0, std::memory_order_relaxed);
         return;
     }
 
@@ -2116,7 +2128,12 @@ void SoundManager::updateDrcControl()
     else
         _drcOccFiltered += DRC_EMA_ALPHA * (occMs - _drcOccFiltered);
 
-    const double err = (_drcOccFiltered - DRC_TARGET_MS) / DRC_TARGET_MS;
+    // The error is scaled by the default target whatever the setpoint: the gains were tuned for it, and scaling by a
+    // lower setpoint (lowlatency) multiplies the loop gain by 40 / setpoint - on a device that pulls 10 ms at a time
+    // (WASAPI) the trim then swung rail to rail every few seconds, an audible pitch wobble
+    updateLowLatencyTarget();
+    const double target = drcTargetMs();
+    const double err = (_drcOccFiltered - target) / DRC_TARGET_MS;
 
     // Soft deadband: inside the band the error is noise, above it the band
     // width is subtracted (unit slope, continuous at the edge - no chatter).
@@ -2147,6 +2164,28 @@ void SoundManager::updateDrcControl()
     }
 
     _drcResampler.setRatio(baseRatio * (1.0 + trim));
+    _drcTrim.store(trim, std::memory_order_relaxed);
+}
+
+void SoundManager::updateLowLatencyTarget()
+{
+    const AudioDeviceDescriptor* desc = _context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
+    const bool active = _feature_lowlatency.load(std::memory_order_relaxed) && desc != nullptr;
+    const double ms =
+        desc ? _llTarget.Update(active, desc->troughWindows.load(std::memory_order_acquire),
+                                desc->troughFrames.load(std::memory_order_relaxed),
+                                desc->underruns.load(std::memory_order_relaxed),
+                                desc->sampleRate.load(std::memory_order_relaxed))
+             : _llTarget.Update(false, 0, LowLatencyTarget::kNoTrough, 0, 0);
+    _llTargetMs.store(ms, std::memory_order_relaxed);
+    _llTargetRaises.store(_llTarget.Raises(), std::memory_order_relaxed);
+}
+
+double SoundManager::drcTargetMs() const
+{
+    if (_feature_lowlatency.load(std::memory_order_relaxed))
+        return _llTargetMs.load(std::memory_order_relaxed);
+    return DRC_TARGET_MS;
 }
 
 bool SoundManager::ttdPinsTurboSoundRender() const
@@ -2202,6 +2241,8 @@ void SoundManager::UpdateFeatureCache()
         _feature_soundhq_enabled = _context->pFeatureManager->isEnabled(Features::kSoundHQ);
 
         _feature_sound_enabled = newSoundEnabled;
+        _feature_lowlatency.store(_context->pFeatureManager->isEnabled(Features::kLowLatency),
+                                  std::memory_order_relaxed);
 
         // Propagate the effective HQ flag (feature state minus the turbo override) to TurboSound. From the thread that
         // runs the frames (or before the first frame) at once. From any other thread (GUI, WebAPI, CLI toggling a
@@ -2724,8 +2765,16 @@ void SoundManager::attachModelAudioSource(IModelAudioSource* source)
     // mixed with the first part (handleFrameEnd)
     if (const size_t parts = source->AudioPartCount(); parts > 0)
     {
+        // A part on a row the machine has already (the beeper) takes that row over: no second row of the type
+        _modelAudioAddedRows.clear();
         for (size_t p = 0; p < parts; p++)
-            _devices.push_back({source->AudioPartType(p), source->AudioPartName(p), false, false, 1.0f, 0.0f, false});
+        {
+            const AudioSourceType type = source->AudioPartType(p);
+            if (device(type) != nullptr)
+                continue;
+            _devices.push_back({type, source->AudioPartName(p), false, false, 1.0f, 0.0f, false});
+            _modelAudioAddedRows.push_back(type);
+        }
         return;
     }
 
@@ -2751,11 +2800,9 @@ void SoundManager::detachModelAudioSource(IModelAudioSource* source)
     _modelAudio = nullptr;
     if (const size_t parts = source->AudioPartCount(); parts > 0)
     {
-        for (size_t p = 0; p < parts; p++)
-        {
-            const AudioSourceType type = source->AudioPartType(p);
+        for (const AudioSourceType type : _modelAudioAddedRows)
             std::erase_if(_devices, [type](const AudioDeviceInfo& d) { return d.type == type; });
-        }
+        _modelAudioAddedRows.clear();
         return;
     }
     for (auto it = _devices.begin(); it != _devices.end(); ++it)

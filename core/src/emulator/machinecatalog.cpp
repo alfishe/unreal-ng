@@ -25,8 +25,8 @@ struct FamilyDef
 const std::vector<FamilyDef>& FamilyDefs()
 {
     static const std::vector<FamilyDef> defs = {
-        {"sinclair", "Sinclair", {"48K", "48K-BETA128", "128k", "PLUS2", "PLUS2A", "PLUS3"}},
-        {"pentagon", "Pentagon", {"PENTAGON"}},
+        {"sinclair", "Sinclair", {"48K", "48K-BETA128", "48K-PLUSD", "128k", "128K-PLUSD", "PLUS2", "PLUS2A", "PLUS3"}},
+        {"pentagon", "Pentagon", {"PENTAGON", "P2666"}},
         {"atm", "ATM Turbo", {"ATM450", "ATM710"}},
         {"zx-evo", "ZX-Evo", {"ATM3", "TSL", "TSL-VDAC2", "TSL-VDAC4"}},
         {"profi", "Profi", {"PROFI3", "PROFI", "PROFI-PLUS"}},
@@ -252,6 +252,18 @@ std::string Title(const MachineEntry& machine, uint32_t ramKb)
     if (machine.ramSizesKb.size() <= 1)
         return machine.title;
     return machine.title + " " + std::to_string(ramKb) + "K";
+}
+
+std::string TitleOf(Emulator& emulator)
+{
+    const MachineIdentity identity = EmulatorManager::GetMachineIdentity(emulator);
+    if (!identity.Valid)
+        return {};
+    const std::vector<MachineFamily>& all = All();
+    const MachinePlace place = Locate(all, NameOf(emulator));
+    if (place.family < 0)
+        return identity.Model;
+    return Title(all[static_cast<size_t>(place.family)].machines[static_cast<size_t>(place.machine)], identity.RamKb);
 }
 
 } // namespace MachineCatalog

@@ -108,8 +108,8 @@ public:
     static constexpr int kNativeHeight = 288;
 
 signals:
-    void filesDropped(const QStringList& paths);
-    void dragEntered(const QString& filePath);  ///< the first dragged file (empty: not a local file)
+    void filesDropped(const QStringList& paths, const QString& refusal);  ///< DropPaths: the files, or why none
+    void dragEntered(const QString& filePath, const QString& refusal);    ///< the first dragged file, or why none
     void dragLeft();
 
 public slots:
@@ -313,6 +313,7 @@ private:
     int64_t _linkRefreshNs = 0;                   ///< native way: the display link's refresh being drawn (0: none)
     int64_t _linkPeriodNs = 0;                    ///< ... and the refresh period it gave
     int64_t _lastPacedRefreshNs = 0;              ///< native way: the refresh the last link tick drew for
+    bool _latchWake = false;  ///< low-latency video under a display link: the timer's wake draws the latched frame
     int64_t _lastLinkTickNs = 0;                  ///< native way: when the display link last ticked
 
     QOpenGLTexture* _texture = nullptr;

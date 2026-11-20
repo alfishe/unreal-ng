@@ -935,6 +935,8 @@ emu.disk_load("/path/to/game.trd", drive=0, autostart=True)  # + autostart: quic
     # into TR-DOS and run the disk (same as the Qt UI's drag-and-drop autostart /
     # WebAPI "autostart": true / CLI "disk insert <drive> <file> autostart") - drive 0 only
 # -> {"success", "started", "message"}; message explains what autostart did
+emu.disk_load("/path/to/work.mgt", 0, True, basic="48")  # an .mgt on the MGT +D: its plan, the
+    # reset in 48 BASIC ("" = the machine's own, "128" refused on a 48K); adds "plan", "command", "dos", "basic"
 #    (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
 emu.disk_eject(0)
 
@@ -1712,6 +1714,16 @@ hit = emu.ttd_reverse_continue([0x8000, 0x8010])
 #    Dicts carry 'covered_from', 'covered_from_tinframe', 'covered_to',
 #    'covered_to_tinframe': the searched span (command-interface.md -> Search window).
 
+# On a sound card's CPU ('gs' / 'neogs', 'ms' / 'multisound'; command-interface.md -> TTD on a sound card's CPU):
+# the TTDControl reply as a dict (cpu, status, reached, from, target, card, frame, tinframe, ...)
+emu.ttd_card_seek('gs', 123456)            # the card at its instruction count; the main CPU follows by replay
+emu.ttd_card_step('gs', -5)                # 5 card instructions back (positive: forward; default 1)
+emu.ttd_card_reverse_continue('gs', max_frames=200)  # back to the card's previous breakpoint hit
+emu.ttd_card_position('gs')                # {'cpu', 'known', 'instruction', 'pc', 'card_position', 'caught_up',
+                                           #  'main': {'frame', 'tinframe', 'pc', 't_offset', 'inside'}}; None: no card
+emu.ttd_card_position()                    # every card CPU (a list)
+# An unknown cpu raises ValueError; a refused move answers {'ok': False, 'error': ...}
+
 # One Z80 address on two banks: only the runs from page 3; every hit, newest first, the machine stays
 hits = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, limit=500)
 # {'hits': [{'frame': 4700, 'tinframe': 812, 't': 336899052, 'pc': 0xC000, 'phys_page': 3}, ...],
@@ -2113,7 +2125,7 @@ emu.window_record('/abs/demo.mp4', keyboard='default', codec='h264')  # record t
                                      #   on-screen keyboard, the machine's sound, one video frame per emulated frame);
                                      #   keyboard= ('default', a picture id, False), codec= ('prores', 'h264'),
                                      #   audio= (bool), fps= (1..100, audio=False only), scale= (1..4),
-                                     #   hardware, fit, picture_height= (0..4320, GPU), width= / height= (the frame), layout=
+                                     #   hardware, fit, picture_height= (0..4320: the CRT drawn at that height), width= / height= (the frame), layout=
                                      #   ('below', 'side'). Returns {'recording', 'path', 'keyboard', 'frames', 'width',
                                      #   'height', 'fps', 'audio', 'sample_rate', 'audio_samples', 'frames_pending', and the timings in ms since
                                      #   the start: 'writer_start_ms', 'encoder_ready_ms', 'first_frame_ms',

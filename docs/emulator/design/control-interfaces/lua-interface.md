@@ -359,6 +359,9 @@ local r = disk_load("/path/to/game.trd", 0, true) -- + autostart: quick-reset in
                                                     -- "autostart":true / CLI "disk insert
                                                     -- <drive> <file> autostart) - drive 0 only
 -- r = {success, started, message}; message explains what autostart did
+local r = disk_load("/path/to/work.mgt", 0, true, "48") -- an .mgt on the MGT +D: its plan, the
+                                                    -- reset in 48 BASIC ("" = the machine's own,
+                                                    -- "128" refused on a 48K); r adds plan, command, dos, basic
 --     (e.g. "Autostart: boot", "No BASIC programs on disk - mounted only")
 local ok = disk_eject(0)
 
@@ -1263,6 +1266,17 @@ local r = ttd_reverse_continue({0x8000, 0x8010})
 -- Options (second table): phys_page (0..255 or "rom"), all, limit, before_frame / before_tin or before (machine T),
 -- from_frame. all = true: every hit newest first, the machine stays
 local hits = ttd_reverse_continue({0xC000}, { phys_page = 3, all = true, limit = 500 })
+
+-- On a sound card's CPU ("gs" / "neogs", "ms" / "multisound"; command-interface.md -> TTD on a sound card's CPU):
+-- each answers the TTDControl reply as a table: cpu, status, reached, from, target, card, frame, tinframe, ...
+ttd_card_seek("gs", 123456)          --> the card at its instruction count 123456; the main CPU follows by replay
+ttd_card_step("gs", -5)              --> 5 card instructions back (positive n: forward; default 1)
+ttd_card_reverse_continue("gs", 200) --> back to the card's previous breakpoint hit, at most 200 frames searched;
+                                     --    breakpoint = {id, kind, address}; status "no_hit" / "no_breakpoints"
+ttd_card_position("gs")              --> { cpu, known, instruction, pc, card_position, caught_up,
+                                     --    main = {frame, tinframe, pc, t_offset, inside} }; nil: no such card
+ttd_card_position()                  --> every card CPU (an array)
+-- A bad request (unknown cpu) answers { ok = false, error = "..." }
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
@@ -1656,8 +1670,8 @@ emu.window_record("/abs/demo.mp4", {keyboard = "default", codec = "h264"})  -- r
                                      --   the on-screen keyboard, the machine's sound, one video frame per emulated
                                      --   frame); options: keyboard ("default", a picture id, false), codec ("prores" /
                                      --   "h264"), audio (boolean), fps (1..100, audio = false only), scale (1..4),
-                                     --   hardware, fit, picture_height (0..4320, GPU), width / height (the frame), layout ("below" /
-                                     --   "side"). Returns { recording, path, keyboard, frames, width, height, fps,
+                                     --   hardware, fit, picture_height (0..4320: the CRT at that height), width / height
+                                     --   (the frame), layout ("below" / "side"). Returns { recording, path, keyboard, frames, width, height, fps,
                                      --   audio, sample_rate, audio_samples, frames_pending, writer_start_ms, encoder_ready_ms, first_frame_ms,
                                      --   slowest_frame_ms }, or { ok = false, error, kind }
 emu.window_record_frames(100)        -- a paused machine runs 100 frames, every one recorded; the status with ran

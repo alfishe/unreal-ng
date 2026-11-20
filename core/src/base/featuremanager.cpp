@@ -762,6 +762,14 @@ void FeatureManager::setDefaults()
                      {Features::kStateOff, Features::kStateOn},
                      Features::kCategoryPerformance});
 
+    registerFeature({Features::kLowLatency,
+                     Features::kLowLatencyAlias,
+                     Features::kLowLatencyDesc,
+                     false,  // OFF by default: picture and sound in sync; Steam Deck Game Mode turns it on
+                     "",
+                     {Features::kStateOff, Features::kStateOn},
+                     Features::kCategoryPerformance});
+
     registerFeature({Features::kGSLightweight,
                      Features::kGSLightweightAlias,
                      Features::kGSLightweightDesc,

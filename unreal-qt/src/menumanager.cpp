@@ -822,6 +822,11 @@ void MenuManager::createMachineMenu()
             addMachineAction(menu, machine, ram, QString("%1K").arg(ram));
     };
 
+    // The running configuration, read only: the check mark sits in a submenu, this says it at a glance
+    _currentMachineAction = _machineMenu->addAction(tr("No machine"));
+    _currentMachineAction->setEnabled(false);
+    _machineMenu->addSeparator();
+
     for (const MachineFamily& family : MachineCatalog::Creatable())
     {
         const QString familyTitle = QString::fromStdString(family.title);
@@ -969,6 +974,13 @@ void MenuManager::createMachineMenu()
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
 
+    // Game mode: the 'lowlatency' feature (synced in updateMenuStates; Steam Deck Game Mode turns it on)
+    _lowLatencyAction = _machineMenu->addAction(tr("&Low Latency (Game Mode)"));
+    _lowLatencyAction->setStatusTip(
+        tr("Show each frame as soon as it is made and shorten the sound path; off keeps picture and sound in step"));
+    _lowLatencyAction->setCheckable(true);
+    connect(_lowLatencyAction, &QAction::triggered, this, &MenuManager::lowLatencyToggled);
+
     // Where the host keyboard goes ([INPUT] HostKeyboard=): the ZX matrix, the PS/2
     // keyboard controller (ZX-Evo AVR, ATM Turbo 2+), both
     _hostKeyboardMenu = _machineMenu->addMenu(tr("Host &Keyboard"));
@@ -1043,6 +1055,16 @@ void MenuManager::setAutostartDisksChecked(bool checked)
 
 void MenuManager::updateMachineModelSelection(std::shared_ptr<Emulator> activeEmulator)
 {
+    // The read-only "current configuration" entry and the window title follow the running machine
+    const QString current = activeEmulator ? QString::fromStdString(MachineCatalog::TitleOf(*activeEmulator)) : QString();
+    if (_currentMachineAction)
+        _currentMachineAction->setText(current.isEmpty() ? tr("No machine") : current);
+    if (current != _currentMachineTitle)
+    {
+        _currentMachineTitle = current;
+        emit currentMachineChanged(current);
+    }
+
     if (!activeEmulator)
         return;
 
@@ -1686,6 +1708,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
             _contentionAction->setEnabled(!timelineBound);
             _contentionAction->setChecked(featureManager && featureManager->isEnabled(Features::kContention));
         }
+        if (_lowLatencyAction)
+        {
+            _lowLatencyAction->setEnabled(featureManager != nullptr);
+            _lowLatencyAction->setChecked(featureManager && featureManager->isEnabled(Features::kLowLatency));
+        }
     }
     else
     {
@@ -1708,6 +1735,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (_contentionAction)
         {
             _contentionAction->setEnabled(false);
+        }
+        if (_lowLatencyAction)
+        {
+            _lowLatencyAction->setEnabled(false);
+            _lowLatencyAction->setChecked(false);
         }
     }
 

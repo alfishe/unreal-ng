@@ -41,6 +41,27 @@ Every action is a TTDControl verb through `Emulator::ttd_call` (`ecat/dialogs/de
 directly, over the WebAPI as the `/ttd/...` routes (`GET` for `status` / `position` / `branches`, the branch routes
 for switch / update / delete, `POST /ttd/<verb>` for the rest).
 
+**On a sound card's CPU.** With the card's tab in front (`gs`: the General Sound or NeoGS; `ms`: the MultiSound's
+GS), the time group acts on the card, by card instructions
+([gs-debugger design §8](../../docs/inprogress/2026-09-27-gs-debugger/design.md)):
+
+| Button | Key | Verb on the card's tab |
+|--------|-----|------------------------|
+| Step Back | Shift+F7 | `step-instruction {cpu, dir: back}` |
+| Step (in the past only) | F7 | `step-instruction {cpu, dir: forward}`: one card instruction forward through the history; live, the card's own step |
+| Run Back | Shift+F9 | `reverse-continue {cpu}`: back to the previous hit of the card's own breakpoints |
+| Step Over Back | Shift+F8 | off: the main CPU's only |
+| Frame Back | - | `step-back`, as on the main CPU's tab |
+
+The state label then names both CPUs: `gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next
+instruction` (the main CPU's tab shows its registers at its last completed instruction; `at its instruction boundary`
+when the card's moment is not inside one). Without a card position the card's tab adds where the card stands
+(`gs at instruction 1200, PC #0A3C`, or `gs: no instruction counts in this recording`). A refusal (no card
+breakpoint, no counts) and an answer that moved nothing (the start or the end of the history, no earlier hit) are
+said in a message with the core's words. The main CPU's tab acts on the main CPU as before; any main-CPU move ends
+the card position. A move in time or a pause keeps the tab in front (only a processor's own stop, a breakpoint or
+a step, brings its tab forward).
+
 ## Run
 
 ```text

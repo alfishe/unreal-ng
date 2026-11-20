@@ -30,6 +30,7 @@
 #include "emulator/emulatorbinding.h"
 #include "emulator/emulatormanager.h"
 #include "emulator/media/mediacontrol.h"
+#include "media/droppaths.h"
 #include "media/flattendialog.h"
 
 namespace
@@ -87,12 +88,8 @@ void MediaSlotTable::dragMoveEvent(QDragMoveEvent* event)
 void MediaSlotTable::dropEvent(QDropEvent* event)
 {
     const int row = rowAt(event->position().toPoint().y());
-    QStringList paths;
-    for (const QUrl& url : event->mimeData()->urls())
-    {
-        if (url.isLocalFile())
-            paths << url.toLocalFile();
-    }
+    // Finder's file references too (DropPaths)
+    const QStringList paths = DropPaths::FromMime(event->mimeData()).paths;
     if (row >= 0 && !paths.isEmpty())
     {
         event->acceptProposedAction();

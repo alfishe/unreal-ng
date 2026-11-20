@@ -1,7 +1,7 @@
 # FT812 drawing on its own thread (eve-emu `EveSetAsyncDrawing`)
 
-Status: implemented on branch `vdac4-ft-speed`, 2026-11-17. Origin: POC 051 measurement 1
-(`tools/poc/051-xtensa-jit/measurement-1-profile.md` on the POC branch): after the cheap levers (ROM trap kind per
+Status: implemented on branch `vdac4-ft-speed`, 2026-11-17. Origin: POC 052 measurement 1
+(`tools/poc/052-xtensa-jit/measurement-1-profile.md` on the POC branch): after the cheap levers (ROM trap kind per
 index, one SPI transaction per FT word, the whole-word frame conversion) the VDAC4 ESP worker spends about 28 % of
 its busy time drawing FT812 lines and converting the picture, inside the ESP job, on the critical path of the
 frame.

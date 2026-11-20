@@ -35,7 +35,10 @@
         "extended_ram_bank (bits 2:0), sco, worom, cpm, scr and video_512x240 (bit 7). On GMX `gmx` is the card's "
         "register file: port_00 (scheme, fixrom, blkext, blkex2, pentagon_int, reconf_pending), port_7efd (rom_plane, "
         "turbo, video_640x200, magic_blocked), port_78fd + page_8000, port_dffd + page_c000, port_7afd / port_7cfd + "
-        "scroll_start, trdos_page_1ffd and magic (frozen, frozen_7afd, frozen_7efd, shift).";
+        "scroll_start, trdos_page_1ffd and magic (frozen, frozen_7afd, frozen_7efd, shift). On P2666 (Pentagon 2.666 LE) "
+        "`p2666` is the board: port_xx77 (video_mode, turbo1_28mhz, cpm, palette_blocked_in_dos), port_eff7 (p16, "
+        "mode128, ram0, turbo0_3_5mhz, cmos), cpu_mhz, dos, dos_kept_in_ram_bf0, map (#7FFD bit 4), windows (register, "
+        "kind pentagon / ram / rom, page), other_map registers, palette (16 words), border_bright and covox.";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/state/paging"]["get"]["parameters"][0]["required"] = true;
@@ -904,7 +907,9 @@
         "machine thread at the next instruction boundary ('status': 'queued' while the emulator runs, 'done' "
         "otherwise); sd_insert/sd_eject while TTD records are events of the recording at the next frame boundary. "
         "stereo_mode ('mode': separated | gs | mono) sets how the NeoGS DAC channels reach the two sides: separated as on "
-        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame.";
+        "the board, gs a 50% cross-feed like the classic GS, mono; kept by the emulator and applied at the next frame. "
+        "reset_counters stores the statistics counters as a baseline and returns its id ('baseline'; read with "
+        "GET state/audio/gs/stats?since=<baseline>); nothing on the card changes.";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["name"] = "id";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["in"] = "path";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["parameters"][0]["required"] = true;
@@ -927,6 +932,8 @@
                                                                ["properties"]["action"]["enum"].append("read_status");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["action"]["enum"].append("read_data");
+    paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                                                               ["properties"]["action"]["enum"].append("reset_counters");
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
                                                                ["properties"]["value"]["type"] = "integer";
     paths["/api/v1/emulator/{id}/control/audio/gs"]["post"]["requestBody"]["content"]["application/json"]["schema"]

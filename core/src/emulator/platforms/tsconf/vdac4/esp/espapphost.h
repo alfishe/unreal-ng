@@ -257,7 +257,7 @@ private:
     uint64_t _sliceUsedCycles = 0;  ///< cycles the running core used in this slice (millis inside a slice)
     uint64_t _instructions = 0;
 #ifdef UNREAL_XTENSA_PROFILE
-    // POC 051: where the ESP's host time goes; dumped every emulated second (UNREAL_XTENSA_PROFILE=<prefix>)
+    // POC 052: where the ESP's host time goes; dumped every emulated second (UNREAL_XTENSA_PROFILE=<prefix>)
     struct Profile
     {
         uint64_t budget[2] = {};      ///< cycles offered per core

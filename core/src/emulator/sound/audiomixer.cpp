@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 
+#include "common/sound/audiodevicedescriptor.h"
 #include "common/stringhelper.h"
 #include "debugger/analyzers/analyzermanager.h"
 #include "debugger/analyzers/audiocapture/audiocaptureanalyzer.h"
@@ -418,6 +419,39 @@ StateNode AudioMixer(EmulatorContext* context)
     host["frames_delivered"] = sm->hostFramesDelivered();
     host["frames_audible"] = sm->hostFramesAudible();
     host["frames_held"] = sm->hostFramesHeld();
+    // The host device and its ring: the ring is held at drc_target_ms (the occupancy before a frame's sound goes in;
+    // under lowlatency adaptive, drc_target_raises: times it went up);
+    // trough_ms: the least the device callbacks left in it over the last closed window of a second (its margin
+    // against a gap; null before the first window), trough_windows: windows closed; underruns: gaps (callbacks that
+    // found the ring short after a full one); latency_ms: ring now + device buffer + the OS's output latency
+    StateNode device = StateNode::Object();
+    device["drc_target_ms"] = ::AudioMixer::Round3(sm->drcTargetMs());
+    device["drc_trim"] = std::round(sm->drcTrim() * 1e6) / 1e6;
+    device["drc_target_raises"] = sm->drcTargetRaises();
+    if (const AudioDeviceDescriptor* desc = context->pAudioDeviceDescriptor.load(std::memory_order_acquire);
+        desc && desc->sampleRate.load(std::memory_order_relaxed) != 0)
+    {
+        const double rate = desc->sampleRate.load(std::memory_order_relaxed);
+        const auto ms = [rate](uint64_t frames) {
+            return ::AudioMixer::Round3(static_cast<double>(frames) * 1000.0 / rate);
+        };
+        device["name"] = std::string(desc->deviceName);
+        device["sample_rate_hz"] = static_cast<uint64_t>(rate);
+        device["buffer_ms"] = ms(desc->deviceBufferFrames.load(std::memory_order_relaxed));
+        device["output_latency_ms"] = ms(desc->deviceOutputLatencyFrames.load(std::memory_order_relaxed));
+        device["ring_ms"] = ms(desc->occupancyFrames.load(std::memory_order_relaxed));
+        const uint32_t trough = desc->troughFrames.load(std::memory_order_relaxed);
+        if (trough != AudioDeviceDescriptor::kNoTrough)
+            device["trough_ms"] = ms(trough);
+        else
+            device["trough_ms"] = StateNode();
+        device["trough_windows"] = desc->troughWindows.load(std::memory_order_acquire);
+        device["underruns"] = desc->underruns.load(std::memory_order_relaxed);
+        device["ring_overruns"] = desc->enqueueErrors.load(std::memory_order_relaxed);
+        device["latency_ms"] = ::AudioMixer::Round3(desc->audioLatencyMs());
+        device["reinits"] = static_cast<uint64_t>(desc->reinitCount.load(std::memory_order_relaxed));
+    }
+    host["device"] = device;
     ret["host_output"] = host;
     StateNode devices = StateNode::Array();
     bool anySolo = false;

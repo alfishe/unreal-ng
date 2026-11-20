@@ -457,6 +457,16 @@ bool Z80::IdleStepsInert(uint32_t allowedWork) const
     if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
         ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && _context->pBetaDisk && !_context->pBetaDisk->IsAsleep())
         return false;
+    // A card's controller (MGT +D) the same way; none on most machines
+    for (size_t i = 0; i < _context->cardFdcCount; i++)
+    {
+        const WD1793* fdc = _context->cardFdcs[i];
+        if (!fdc->IsStepInert())
+            return false;
+        if (const ttd::ITimeTravelHooks* ttd = _context->pTimeTravelHooks;
+            ttd && (ttd->IsRecording() || ttd->IsReplayActive()) && !fdc->IsAsleep())
+            return false;
+    }
 
     // The peripherals MainLoop::OnCPUStep steps: the screen and the sound catch up by time; the tape writes
     // its edges into the sound per step, the floppy controller runs its state machine per step
@@ -1099,6 +1109,13 @@ void Z80::RecomputeFrameTiming()
     _frameLimit = state.BaseToCpuT(config.frame);
     _intStart = state.BaseToCpuT(config.intstart);
     _intEnd = state.BaseToCpuT(config.intstart + config.intlen);
+    uint32_t boardStart = 0;
+    uint32_t boardEnd = 0;
+    if (_context->pPortDecoder && _context->pPortDecoder->FrameIntWindow(boardStart, boardEnd))
+    {
+        _intStart = boardStart;
+        _intEnd = boardEnd;
+    }
 
     // INT window crossing the frame end: its tail lives at the start of the
     // next frame (raised there by BeginFrame), so the in-frame end wraps

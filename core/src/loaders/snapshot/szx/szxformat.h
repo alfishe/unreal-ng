@@ -47,6 +47,7 @@ constexpr uint32_t kGs = BlockId('G', 'S', '\0', '\0');
 constexpr uint32_t kGsRamPage = BlockId('G', 'S', 'R', 'P');
 constexpr uint32_t kCovox = BlockId('C', 'O', 'V', 'X');
 constexpr uint32_t kSpecDrum = BlockId('D', 'R', 'U', 'M');
+constexpr uint32_t kPlusD = BlockId('P', 'L', 'S', 'D');
 
 constexpr uint8_t kVersionMajor = 1;
 constexpr uint8_t kVersionMinor = 5;
@@ -73,6 +74,15 @@ constexpr uint32_t kBetaPaged = 0x04;
 constexpr uint32_t kBetaAutoboot = 0x08;
 constexpr uint32_t kBetaSeekLower = 0x10;
 constexpr size_t kBeta128Size = 10;  ///< without a custom ROM
+/// PLSD dwFlags, chRomType (libspectrum szx.c)
+constexpr uint32_t kPlusDPaged = 0x01;
+constexpr uint32_t kPlusDCompressed = 0x02;
+constexpr uint32_t kPlusDSeekLower = 0x04;
+constexpr uint8_t kPlusDRomGdos = 0;
+constexpr uint8_t kPlusDRomUnidos = 1;
+constexpr uint8_t kPlusDRomCustom = 2;
+constexpr size_t kPlusDSize = 19;     ///< without the RAM and a custom ROM
+constexpr size_t kPlusDRamSize = 0x2000;
 /// BDSK dwFlags, chDiskType
 constexpr uint32_t kDiskEmbedded = 0x01;
 constexpr uint32_t kDiskCompressed = 0x02;
@@ -187,6 +197,20 @@ struct Beta128
     uint8_t status = 0;
 };
 
+/// PLSD: the MGT +D, its WD1772 and its 8K RAM (the RAM inflated; a custom ROM is not kept)
+struct PlusD
+{
+    uint32_t flags = 0;
+    uint8_t romType = kPlusDRomGdos;
+    uint8_t control = 0;
+    uint8_t drives = 2;
+    uint8_t track = 0;
+    uint8_t sector = 0;
+    uint8_t data = 0;
+    uint8_t status = 0;
+    std::vector<uint8_t> ram;   ///< kPlusDRamSize bytes
+};
+
 /// BDSK: a Beta 128 drive and its disk, linked or embedded
 struct BetaDisk
 {
@@ -291,6 +315,7 @@ struct Stage
     std::optional<Ay> ay;
     std::optional<Beta128> beta;
     std::vector<BetaDisk> betaDisks;
+    std::optional<PlusD> plusd;
     std::optional<Plus3> plus3;
     std::vector<DskFile> dskFiles;
     std::optional<Tape> tape;

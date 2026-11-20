@@ -483,7 +483,10 @@ Each hold ends with the run, seek or turbo span that took it (also when it fails
 whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
 `GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
 `ttd_replay`, `turbo`, `unpaced`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
-`frames_delivered`, `frames_audible`, `frames_held`.
+`frames_delivered`, `frames_audible`, `frames_held`, and `device`: the host device and its ring (`drc_target_ms`,
+`drc_trim`, `drc_target_raises`, `name`, `sample_rate_hz`, `buffer_ms`, `output_latency_ms`, `ring_ms`, `trough_ms` - the least the
+device callbacks left over the last second, `trough_windows`, `underruns` - gaps, `ring_overruns`, `latency_ms`,
+`reinits`).
 
 **Operation log** (`ops`):
 
@@ -637,6 +640,25 @@ card catches up (a host port access or the frame end). The reply names the card'
 `selected-cpu [main|gs|ms]` sets or shows the CPU the debugger front-ends show: a card shown follows the main CPU's
 steps of the paused machine, so its state is the one at the main CPU's moment. Every
 plane: [the sound card CPU](../debugger/breakpoints-and-traces.md#8-the-sound-card-cpu).
+
+`board [list]`, `board <id> [values]` and `board <id> <action> [arg]` read the device boards: a device's hardware as
+groups of named controls with their values (the GS slot's card publishes `gs`, or on NeoGS `neogs`, `neogs_dma`,
+`neogs_sd`, `neogs_mp3`, `neogs_flash`). `board neogs_sd insert <image or folder>` and `board neogs_sd eject` go to the
+media manager's slot `sd.ngs`, `board neogs_flash save` saves the flash. Every plane: WebAPI `GET /debug/boards`,
+`GET /debug/boards/{id}` (`?values=1`), `POST /debug/boards/{id}/actions/{action}`; MCP `inspect_state` aspects
+`boards` / `board.<id>` and `emulator_manage` `board_action`; Lua and Python `boards()`, `board(id)`,
+`board_action(id, action, arg)` ([gs-debugger design §6.5](../../../inprogress/2026-09-27-gs-debugger/design.md#65-device-boards-n4-n8)).
+
+`gs stats [section] [--since <id>] [--fresh]` reads the GS slot's statistics: what the fitted card did, one block for
+every card - `card` (resets), `mailbox` (both sides: host commands, data and status polls, the card's reads and acks,
+overwrites), `interrupts`, `cpu`, `audio`; on NeoGS also `dma` (transactions per module), `spi`, `sd` (commands by
+index, errors), `mp3`, `flash`; `rates` per second over the last 50 frames and `errors` with their total. A running
+machine answers from the next frame end (a read keeps the block published for 2 s). `gs stats reset` stores a
+baseline and prints its id; `--since <id>` reads the counters since then (the machine keeps counting). Every plane:
+WebAPI `GET /state/audio/gs/stats[/{section}]?since=&fresh=1`, `POST /control/audio/gs` `reset_counters`; MCP
+`inspect_state` aspect `audio_gs_stats[.<section>]` (`gs_stats_since`, `gs_stats_fresh`) and `emulator_manage`
+`gs_reset_counters`; Lua and Python `gs_stats(section, since)`, `gs_reset_counters()`; the debugger's board
+`gs_stats` ([neogs-automation-design §10](../../../inprogress/2026-09-19-general-sound/neogs-automation-design.md#10-as-built-2026-11-17)).
 
 #### 3.1 Memory Commands
 
@@ -932,7 +954,7 @@ emulator instance, which the WebSocket `instances` topic announces, so the catal
 | ZX-MultiSound card (slot and options - DIP functions, `gsRam`, `ctrlMask` with the note on the unofficial `classic` mask -, fit, the built-ins its slot shadows, CPLD latches, the YM2203 pair: each chip's SSG half as the AY chip report and FM half as the TurboSound FM chip report, SAA1099 registers / voices / envelopes, the General Sound report plus the card firmware state, the four DACs, a MIDI summary) | `multisound` (`--full`, `--json`) | `GET /state/audio/multisound` | `multisound_state()` | `multisound_state()` | `audio_multisound` |
 | MIDI line and SAM2695 synthesizer (the YM pin, level, edges; bank; 16 parts: program, preset name, volume, pan, expression, pitch bend, voices, the notes sounding; polyphony, effects, UART / parser counters) | `midi` (`--json`) | `GET /state/audio/midi` | `midi_state()` | `midi_state()` | `audio_midi` |
 | MIDI panic: every voice stops (All Sound Off on all 16 parts; programs, controllers and the MIDI stream in progress stay), applied at the next instruction boundary as a TTD live input (journaled, replayed) | `midi panic` | `POST /control/audio/midi {"action": "panic"}` | `midi_panic()` -> `ok, message` | `midi_panic()` -> `{ok, message}` | `invoke_api` |
-| Beta Disk WD1793 | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
+| Disk controller: Beta Disk WD1793, the +3's uPD765A, or the Pentagon 2.666 LE's RAM-disk Beta Disk emulator (no floppy controller on that board: registers, status, `phase`, `system_register`, head, `ram_disk` pages, drive A) | `state fdc` | `GET /state/fdc` | `fdc_state()` | `fdc_state()` | `fdc` |
 | IDE board (disks, CD-ROM) | `state ide` | `GET /state/ide` | `ide_state()` | `ide_state()` | `ide` |
 | CD audio of the ATAPI CD drives (disc and tracks, status 11h-15h, head as LBA / MSF / track / index, play range, page 0Eh volume, mixer row) | `state cdaudio` / `cdaudio` | `GET /state/cdaudio` | `cdaudio_state()` | `cdaudio_state()` | `cdaudio` |
 | CD audio control: `play` (`track=N [to=M]`, `lba=X frames=N`, `msf=MM:SS:FF end=..`), `pause`, `resume`, `stop`, `volume` (`left= right= route= sotc=`), `mixer` (`volume= mute= solo=`); `drive` = `ide0.slave` / unit / first CD drive. One source: `CdAudioControl` | `cdaudio <verb> [drive] k=v ..` | `POST /cdaudio/{verb}` | `cdaudio(verb, drive, {k=v})` | `cdaudio(verb, drive, k=v)` | `invoke_api` POST `/cdaudio/{verb}` |
@@ -1426,7 +1448,8 @@ Commands to view and control emulator runtime features for the selected emulator
 | `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
 | `esxdos` | `esx` | OFF | ZX Spectrum Next esxDOS mode: on the bare machine (no `[NEXT] BootRom`) the emulator serves the esxDOS API itself (`RST $08` calls `$80` and up: files, directories, +3DOS headers, `DISK_FILEMAP` and the stream, the date from the RTC) against the FAT volume of SD card 0, so a program that uses it runs without NextZXOS. Off: `RST $08` runs the ROM as on the board. Design: [esxdos-and-sd.md](../../../inprogress/2026-10-07-zx-next/esxdos-and-sd.md) section 5a | None (one compare at `#0008`) |
-| `esp_jit` | `jit` | ON | ESP32 code (the VDAC4 board's apps) translated to host code (arm64, x86_64). OFF runs it in the interpreter: the same results, slower; the fallback for code the translator gets wrong. Switches at the next frame end. `UNREAL_XTENSA_JIT=0/1` overrides it. Design: [POC 051](../../../../tools/poc/051-xtensa-jit/README.md) | OFF: ESP code ~1.3x slower |
+| `esp_jit` | `jit` | ON | ESP32 code (the VDAC4 board's apps) translated to host code (arm64, x86_64). OFF runs it in the interpreter: the same results, slower; the fallback for code the translator gets wrong. Switches at the next frame end. `UNREAL_XTENSA_JIT=0/1` overrides it. Design: [POC 051](../../../../tools/poc/052-xtensa-jit/README.md) | OFF: ESP code ~1.3x slower |
+| `lowlatency` | `ll` | OFF | Low latency: each frame is due at its latch, so the newest finished frame is shown at once instead of when its sound is heard, and the sound path is shortened (the audio ring held from 15 ms instead of 40 ms, lowered to 6 ms on macOS, 10 ms on Linux, 15 ms on Windows after quiet spells, raised by gaps and near-gaps; a 128-frame device period on macOS, two 10 ms WASAPI periods on Windows). The picture comes about 50 ms sooner and leads the sound by the shortened audio path's delay (~20-30 ms; ~45 ms on Windows). Steam Deck Game Mode turns it on for the machine its window shows; in Qt it is Machine > Low Latency (Game Mode). A temporal effect (ZX DLSS) still delays the picture by its look-ahead. The temporal status's `video_delay_frames` / `video_delay_ms` and the screenshots' frame on screen follow it. | None |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
 **Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
@@ -1935,7 +1958,10 @@ the frames reach the screen: `presenter` metal / dxgi / gl-timed (Linux: a threa
 gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
 yes / no / unknown, `reason`: X11 RandR `vrr_capable` and a fullscreen window, unknown on Wayland and Windows}, `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
 it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
-on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo, `none`),
+on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo or under the feature `lowlatency`, `none`),
+`low_latency` (the frame on screen shown at once by `lowlatency`: `error_ms` is then its way from the hand-over to the
+screen, `late` and `lead_ms` judge nothing), `timed_at` (`screen`: a native presenter's screen times; `paint`: the
+software screen's paints of new frames, `presented` / `dropped` / `error_ms` from them, not the screen; `""`: none),
 `timing` {`delay_clamped` (the frame timed last: its sound comes later than the screen holds its frames, a long audio
 path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_delay_ms` after its frame's end and the
 picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
@@ -1993,7 +2019,7 @@ the host. Recipe: [.recipe/media/window-recording.md](../../../../.recipe/media/
 | Command | Arguments | Description | Implementation Status |
 | :--- | :--- | :--- | :--- |
 | `video window record` / `video window record status` | | The recording: on or off, the file, its frame size and rate, frames and sound samples so far, the keyboard. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
-| `video window record <path> [<key>=<value> ...]` | `keyboard` = `default` (the one the window shows) / a picture id of the machine (`pentagon2plus`) or of another with the same matrix (`zxnext` on a Pentagon, for the recording only) / `off`; `codec` = `prores` (default) / `h264` / `h265`; `hardware` = on / off (h264 / h265 on the GPU's encoder: macOS VideoToolbox, no ffmpeg, 4:2:0, H.265 4:2:2; real time at 4K; default off = x264 / x265 4:4:4 through ffmpeg); `fit` = on / off (the picture scaled to a given `width` x `height` frame, aspect kept, instead of refusing a mismatch); `audio` = on (default) / off; `fps` = 1..100 (only with `audio=off`; left out = the machine's rate); `scale` = 1..4 (the picture in blocks); `picture_height` = 0..4320 (the CRT drawn at that height, GPU only); `width`, `height` (the file's frame; left out = the picture with the keyboard under it); `layout` = `below` / `side` | Start recording the window showing the selected instance. A wrong keyboard lists the offered ones; a frame smaller than the picture is refused with the sizes. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
+| `video window record <path> [<key>=<value> ...]` | `keyboard` = `default` (the one the window shows) / a picture id of the machine (`pentagon2plus`) or of another with the same matrix (`zxnext` on a Pentagon, for the recording only) / `off`; `codec` = `prores` (default) / `h264` / `h265`; `hardware` = on / off (h264 / h265 on the GPU's encoder: macOS VideoToolbox, no ffmpeg, 4:2:0, H.265 4:2:2; real time at 4K; default off = x264 / x265 4:4:4 through ffmpeg); `engine` = `native` (default: hardware h264 / h265 and prores by the Mac's own writer) / `ffmpeg` (always ffmpeg: ProRes, or with `hardware` its GPU encoder found by probing; the GUI's MKV); `fit` = on / off (the picture scaled to a given `width` x `height` frame, aspect kept, with the keyboard: below as wide as the picture, beside in half the width at least, instead of refusing a mismatch); `audio` = on (default) / off; `fps` = 1..100 (only with `audio=off`; left out = the machine's rate); `scale` = 1..4 (the picture in blocks); `picture_height` = 0..4320 (the CRT drawn at that height, on the GPU and the software screen); `width`, `height` (the file's frame; left out = the picture with the keyboard under it); `layout` = `below` / `side` | Start recording the window showing the selected instance. A wrong keyboard lists the offered ones; a frame smaller than the picture is refused with the sizes. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window record frames <N>` | 1..100000 | A paused machine runs N frames, each one drawn by the window and written before the next runs; no time limit. Run control held by another surface: refused. | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 | `video window record stop` | | Finish the file: waits for ffmpeg, then muxes the sound in (the picture copied, seconds). | ✅ CLI, REST, WebSocket, Lua, Python, MCP |
 
@@ -3285,6 +3311,51 @@ All `ttd` subcommands act on the currently selected emulator instance. Frame num
 | `ttd help` | `ttd ?`, `ttd` alone | — | Print the subcommand list. | ✅ Implemented |
 
 There is no relative-unit `step-back --unit/--count` form; use `ttd step-back` (one frame), `ttd step-instruction` (one instruction) or `ttd reverse-step --count N` / `--scanlines L`. A dial or a key steps through the history in a unit with the action `ttd.seek_by` (`unit`: frames, seconds, batch, instructions, tstates, scanlines, bookmarks) and `ttd.unit_back` / `ttd.unit_forward` (see §16).
+
+#### TTD on a sound card's CPU
+
+The history is also browsed on the CPU of a sound card: the General Sound / NeoGS (`--cpu gs` or `neogs`) and the
+ZX-MultiSound's GS (`--cpu ms` or `multisound`). The card counts its instructions; a count is a position in the
+history, so the card is seeked, stepped and reverse-continued like the main CPU
+([gs-debugger design §8](../../../inprogress/2026-09-27-gs-debugger/design.md)).
+
+- **Every card move is a replay to a card instruction count.** The frame whose checkpoint is the latest at or
+  before the count is replayed; the card is caught up to that count and kept there.
+- **The main CPU** stands at its last completed instruction at or before the card's moment, with its registers
+  there, plus the T-states the card's moment is into its next instruction (`t_offset`; `inside` when the moment is
+  within one, e.g. inside an LDIR step). The reply's `frame` / `tinframe` are that boundary.
+- **Running on** (run, resume, a frame, a main-CPU step) first lets the main CPU reach its boundary with the card
+  as the boundary has it, then runs both as recorded. Any main-CPU move ends the card position.
+- **Status and position** list every card CPU in `cards[]`: `cpu`, `known`, `instruction` (the count; `null` for a
+  recording made before the count existed), `pc`, `card_position` (the machine stands at a card position),
+  `caught_up`, and while at a card position `main {frame, tinframe, pc, t_offset, inside}`.
+
+| Verb (`TTDControl`) | Options with `cpu` | What it does |
+|---|---|---|
+| `seek` | `cpu`, `instruction` (required) | The card at that instruction count |
+| `step-instruction` | `cpu`, `dir` (`back` / `forward`), `count` (default 1) | N card instructions back or forward |
+| `reverse-step` | `cpu`, `count` (required) | N card instructions back |
+| `reverse-continue` | `cpu`, `max_frames` (default 1000) | Back to the latest earlier hit of the card's own breakpoints (`bp ... --cpu gs`); the hits are found by replay, the breakpoints' hit counts stay as they were and taps do not fire |
+
+The reply: `cpu`, `status` (`ok`, `at_start`, `at_end`, `no_hit`, `no_card`, `no_count`, `no_history`,
+`no_breakpoints`, `failed`), `reached`, `from`, `target`, `message` (when nothing moved), `card` (the readout above),
+`frame`, `tinframe`, `state`, `check`; reverse-continue adds `searched_frames`, `truncated` and
+`breakpoint {id, kind, address}`. `at_start` / `at_end` / `no_hit` are answers (HTTP 200, `reached: false`, the
+machine where it was); `no_card`, `no_count`, `no_history`, `no_breakpoints` are 409; a bad option is 400 (an
+unknown `cpu`; `instruction` or `max_frames` without `cpu`; another unit with `cpu`). `cpu main` is the main CPU's
+verb as before.
+
+| Plane | Seek | Step | Reverse continue | Readout |
+|---|---|---|---|---|
+| CLI | `ttd seek --cpu gs <n>` | `ttd si-back` / `si-forward --cpu gs [--count N]`, `ttd reverse-step --cpu gs [--count N]` | `ttd reverse-continue --cpu gs [--max-frames N]` | `ttd position` (a `Card gs:` line) |
+| WebAPI / WebSocket | `POST /ttd/seek {cpu, instruction}` | `POST /ttd/step-instruction {cpu, dir, count}`, `POST /ttd/reverse-step {cpu, count}` | `POST /ttd/reverse-continue {cpu, max_frames}` | `GET /ttd/position`, `GET /ttd/status` (`cards`) |
+| MCP `time_travel` | `card_seek` (`cpu`, `instruction`) | `card_step` (`cpu`, `count`; negative: back) | `card_reverse_continue` (`cpu`, `max_frames`) | `card_position` (`cpu` optional) |
+| Lua | `ttd_card_seek(cpu, n)` | `ttd_card_step(cpu [, n])` | `ttd_card_reverse_continue(cpu [, max_frames])` | `ttd_card_position([cpu])` |
+| Python | `emu.ttd_card_seek(cpu, instruction)` | `emu.ttd_card_step(cpu, n=1)` | `emu.ttd_card_reverse_continue(cpu, max_frames=None)` | `emu.ttd_card_position(cpu=None)` |
+
+Example: `ttd si-back --cpu gs --count 5` prints `TTD: gs at instruction 1200 (from 1205)` and
+`  Card gs: instruction 1200, PC #0A3C (card position; main CPU at frame 12 t 30411, PC #8009, +7 T inside its
+instruction)`.
 
 **Sessions on disk (`ttd dump` / `ttd load`).**
 
@@ -4806,7 +4877,7 @@ The `disk` commands below keep working for drive-letter scripts.
 
 | Command | Arguments | Description | Status |
 | :--- | :--- | :--- | :--- |
-| `disk insert <drive> <file> [autostart]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
+| `disk insert <drive> <file> [autostart [48\|128]]` | `<A\|B\|C\|D> <filename> [autostart\|--autostart [48\|128]]` | Insert disk image (.trd, .scl, .fdi, .udi, .dsk, .td0, .mgt, .img). Optional trailing `autostart` (drive A only): quick-reset into TR-DOS and run the disk, same as the Qt UI's drag-and-drop autostart and the WebAPI's `"autostart": true` insert flag. An `.mgt` on the MGT +D (`48K-PLUSD`, `128K-PLUSD`) runs its plan instead (run, run+load, system-disk+load, mount; the steps go on after the answer, progress in `state fdc` -> `autostart`); the word after `autostart` is the BASIC of its reset: omitted = the machine's own (48 BASIC on a 48K, 128 BASIC on a 128K), `48` = 48 BASIC on any machine, `128` = 128 BASIC (refused on a 48K). Every plane: WebAPI / MCP `basic`, Python / Lua `basic` argument, action `media.open` param `basic`. See [.recipe/machines/plusd.md](../../../../.recipe/machines/plusd.md). | ✅ Implemented (`CLIProcessor::HandleDiskInsert`) |
 | `disk eject <drive>` | `<A\|B\|C\|D>` | Eject disk from drive. | 🔮 Planned |
 | `disk info <drive>` | `<A\|B\|C\|D>` | Show disk information (format, tracks, sectors, files). | 🔮 Planned |
 | `disk catalog <drive>` | `<A\|B\|C\|D>` | List the files of the disk's first file system (TR-DOS, +3DOS, iS-DOS, ATM CP/M, MB-02, MDOS, FAT) through DiskFs; every volume and directory: `media files <drive>`. | ✅ Implemented |

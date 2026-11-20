@@ -882,6 +882,17 @@ if (TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/presenterrecovery.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/presentstats_test.cpp"
         # The Linux presenter's decisions (VRR, swap mode, timed swap, vblank grid, RandR mode), on every platform
+        # The files a drag carries: Finder's file references Qt leaves empty, a stale volume id, a refusal that says why
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/droppaths_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/droppaths.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/droppaths.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/floppymove.h"
+        # The drop zones: held still, a drop goes where a quick drop would (drive A), not to the tile under the cursor
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/droptargetoverlay_test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/droptargetoverlay.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/droptargetoverlay.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/droptargetlayout.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/media/core/droptargetlayout.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/qt/linuxpresent_test.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/linuxpresent.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/nativepresenter.cpp"
@@ -889,6 +900,7 @@ if (TESTS)
     )
     if (APPLE)
         list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/mousecapture_macos.mm")
+        list(APPEND UNREAL_QT_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/droppaths_macos.mm")
     endif()
     if (WIN32)
         # The DXGI presenter made anew for the same window (a real window and interop: skips without them)

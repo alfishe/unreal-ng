@@ -11,6 +11,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -132,9 +133,13 @@ std::unique_ptr<Machine> Boot(benchmark::State& state, bool soundHq)
 
 double ThreadCpuMicroseconds()
 {
+#ifdef _MSC_VER  // no POSIX thread clock: wall time, as nextlayercapture_benchmark.cpp
+    return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
     timespec t;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
     return static_cast<double>(t.tv_sec) * 1e6 + static_cast<double>(t.tv_nsec) * 1e-3;
+#endif
 }
 
 double Median(std::vector<double> v)

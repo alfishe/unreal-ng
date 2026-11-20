@@ -42,6 +42,7 @@ void NeoGSSpi::deliver(Master master)
     if (!m.pending)
         return;
     m.pending = false;
+    _counters[master].bytes++;
     SpiDevice* device = _device[master];
     m.rx = device ? device->exchange(m.tx) : 0xFF;
 }
@@ -63,6 +64,7 @@ void NeoGSSpi::start(Master master, uint8_t tx, int64_t now, int64_t unitsPerCyc
     {
         // Restart: the byte in flight is cut off on the wire
         m.pending = false;
+        _counters[master].restarts++;
         if (_device[master])
             _device[master]->truncatedByte();
     }

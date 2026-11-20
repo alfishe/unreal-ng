@@ -168,6 +168,35 @@ fixed RAM window, 3: high ROM at `#C000`).
      WebAPI / MCP / Lua / Python, `GSHostDriver_Test`. Design §6.4 "As built". Left: firmware objects (F5, phase
      6), a MultiSound card's send, Qt.
 5. [ ] **NeoGS boards, stats, SD (N4, N7, N8).** `GET /debug/boards`, the stats block, the SD board over `sd.ngs`.
+   - 5a done (17c5a3e40): the boards and the SD board over `sd.ngs`, design §6.5.
+   - 5b done (bbe0ec4aa, 2026-11-18): the statistics block, the `gs_stats` board, every plane; design §6.6,
+     neogs-automation-design.md §10. Checked: `core-tests` (GS, NeoGS, boards, MCP filters), `unreal-qt` zero
+     warnings, live `test_gs_debugger.py` 15/15; A/B benchmarks on .20 in neogs-automation-design.md §10 (frames
+     unchanged, +0.5 ns per host `OUT`). Left: the gcc check.
+
+## Design §8 (TTD positions on the card's CPU) — branch `card-positions` (2026-11-17), not landed
+
+Owner decision 2026-11-17: either CPU is stepped both ways; the other CPU is computed by replay from the nearest
+checkpoint; the main CPU is shown at its last completed instruction plus a T offset; a run first lets the main CPU
+reach its boundary.
+
+- [x] Core: the card's instruction count in its TTD blob (GS bytes 59-67, NeoGS 240-248, outside the hash);
+  `GSCardTarget` scans (`ScanScope`: capture at a count, breakpoint hits by replay, hit counts kept);
+  `TimeTravelController::SeekToCardInstruction` / `StepCardInstructions` / `ReverseContinueCard` /
+  `CardPositionNow` / `PublishedCardPositions` (`ttdcontrollercardpositions.cpp`); the card position (`CardStand`)
+  left at the first run, carried by `LiveStateSnapshot`.
+- [x] Every plane: `TTDControl` `cpu` on `seek` / `step-instruction` / `reverse-step` / `reverse-continue`, `cards[]`
+  in `position` / `status`; CLI `--cpu`, Lua / Python `ttd_card_*`, MCP `card_seek` / `card_step` /
+  `card_reverse_continue` / `card_position`, REST / WebSocket and OpenAPI. Docs:
+  [command-interface.md](../../emulator/design/control-interfaces/command-interface.md#ttd-on-a-sound-cards-cpu).
+- [x] Tests: `TTD_CardPositions_*` (GS, NeoGS, MultiSound GS), `TTDControl_CardPositions_Test`, `CliTTDCards_Test`,
+  `OpenApiTTDCards_Test`, MCP and Lua tests, live `tools/verification/mcp/test_ttd_card_positions.py`.
+- [x] UI (landed a6be6598d 2026-11-18): eCat's time group on the card's tab (Step Back, F7 in the past,
+  Run Back to the card's breakpoints; in process and over REST), the moment naming both CPUs (`gs at instruction N,
+  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded has no card CPU view, its moment label shows a
+  card position. [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
+  Tests: `DebuggerTimeTravelCard_Test`, `unreal-debugger --self-check` (both modes).
+- [ ] Embedded: a CPU selector (Main / GS / MS) for its registers and disassembler (proposed, not built).
 
 ### Later
 

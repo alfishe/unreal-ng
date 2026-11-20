@@ -49,6 +49,7 @@ constexpr const char* const kContention = "contention";
 constexpr const char* const kTTDRestart = "ttdrestart";
 constexpr const char* const kEsxDos = "esxdos";
 constexpr const char* const kEspJit = "esp_jit";
+constexpr const char* const kLowLatency = "lowlatency";
 
 // Feature Aliases
 constexpr const char* const kDebugModeAlias = "dbg";
@@ -79,6 +80,7 @@ constexpr const char* const kContentionAlias = "cont";
 constexpr const char* const kTTDRestartAlias = "ttdre";
 constexpr const char* const kEsxDosAlias = "esx";
 constexpr const char* const kEspJitAlias = "jit";
+constexpr const char* const kLowLatencyAlias = "ll";
 
 // Feature Descriptions
 constexpr const char* const kDebugModeDesc = "Master debug mode, enables/disables all debug features for performance";
@@ -150,6 +152,13 @@ constexpr const char* const kEsxDosDesc =
     "calls #80 and up: files, directories, the file map and stream, the date) against the FAT volume of SD card 0, so "
     "a program that uses it runs without NextZXOS. Off: RST $08 runs the ROM as on the board. Cannot change while the "
     "machine is bound to a TTD timeline or an RZX recording plays.";
+
+constexpr const char* const kLowLatencyDesc =
+    "Low latency: each frame is shown as soon as it is made, not when its sound is heard, and the sound path is "
+    "shortened (audio ring of 15 ms instead of 40 ms, down to 6-15 ms where the host holds it, raised only as far as it needs). The "
+    "picture comes about 50 ms sooner and leads "
+    "the sound by the shortened audio path's delay. Off by default; Steam Deck Game Mode turns it on. A temporal "
+    "effect (ZX DLSS) still delays the picture by its look-ahead.";
 
 constexpr const char* const kTTDRestartDesc =
     "Start a new TTD session after one ends. A machine reset, a snapshot load, an autostart and a change of the machine itself "

@@ -19,6 +19,7 @@
 #include "emulator/memory/scorpion/scorpionmemory.h"
 #include "emulator/memory/sprinter/sprintermemory.h"
 #include "emulator/memory/next/nextmemory.h"
+#include "emulator/memory/p2666/p2666memory.h"
 #include "emulator/memory/tsconf/tsconfmemory.h"
 #include "emulator/io/rtc/ds12887.h"
 #include "emulator/ports/portdecoder.h"
@@ -81,6 +82,10 @@ bool Core::Init()
             // The Sinclair / Amstrad 128 machines share the 17.7345 MHz / 5 clock
             baseFrequency = 3'546'900;
             break;
+        case MM_P2666:
+            // mainclk 114 MHz / 32 (Pentagon 2.666 LE hardware-reference §1.1); turbo 14.25 / 28.5 MHz
+            baseFrequency = 3'562'500;
+            break;
         default:
             baseFrequency = 3'500'000;
             break;
@@ -122,6 +127,8 @@ bool Core::Init()
         _memory = new SprinterMemory(_context);
     else if (_config->mem_model == MM_NEXT)
         _memory = new NextMemory(_context);
+    else if (_config->mem_model == MM_P2666)
+        _memory = new P2666Memory(_context);
     else
         _memory = new Memory(_context);
     if (_memory)

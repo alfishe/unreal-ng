@@ -20,6 +20,7 @@
 #include "emulator/ports/models/portdecoder_atm3.h"
 #include "emulator/ports/models/portdecoder_atm450.h"
 #include "emulator/ports/models/portdecoder_atm710.h"
+#include "emulator/ports/models/portdecoder_p2666.h"
 #include "emulator/ports/models/portdecoder_pentagon128.h"
 #include "emulator/ports/models/portdecoder_pentagon512.h"
 #include "emulator/ports/models/portdecoder_pentagon1024.h"
@@ -151,6 +152,7 @@ bool PortDecoder::IsModelSupported(MEM_MODEL model)
         case MM_TSL:
         case MM_SPRINTER:
         case MM_NEXT:
+        case MM_P2666:
             return true;
         default:
             return false;
@@ -226,6 +228,9 @@ PortDecoder* PortDecoder::GetPortDecoderForModel(MEM_MODEL model, EmulatorContex
             break;
         case MM_NEXT:
             result = new PortDecoder_Next(context);
+            break;
+        case MM_P2666:
+            result = new PortDecoderP2666(context);
             break;
         default:
             // Static method - no _logger member, so MLOGERROR is not available here.
@@ -654,6 +659,7 @@ PortTraceSessionInfo PortDecoder::getPortTraceSessionInfo() const
             case MM_ATM450:      info.modelName = "ATM450"; break;
             case MM_ATM710:      info.modelName = "ATM710"; break;
             case MM_ATM3:        info.modelName = "ZXEvoBaseConf"; break;
+            case MM_P2666:       info.modelName = "Pentagon2666LE"; break;
             default:             info.modelName = "Unknown"; break;
         }
     }
@@ -908,6 +914,38 @@ std::vector<PortMapEntry> PortDecoder::getPortMapEntries() const
                                           : "Evo register readback (A12..A8 index); #10BD/#11BD breakpoint, #13BD virtual-drive mask",
                                nullptr, Tags(PortTag::System)});
             entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
+            break;
+        }
+        case MM_P2666:
+        {
+            // PortDecoderP2666 (hardware-reference.md §4 of docs/inprogress/2026-11-11-pentagon-2666-le)
+            const char* dos = "DOS on (TR-DOS ROM, CP/M or #BF bit 0)";
+            const char* noDos = "DOS off";
+            entries.push_back({0x7FFD, 0x8002, 0x0000, "Memory paging (64 pages via bits 7..5, shadow screen, ROM, lock)",
+                               "lock only in 128 mode (#EFF7 bit 2) out of DOS",
+                               Tags(PortTag::Memory) | PortTag::Rom | PortTag::Screen, PagingLatch::P7FFD});
+            entries.push_back({0xEFF7, 0xF029, 0xE021, "#EFF7: 16c / 128 mode / RAM0 / 3.5 MHz / CMOS enable", nullptr,
+                               Tags(PortTag::Memory) | PortTag::Screen | PortTag::System, PagingLatch::PEFF7});
+            entries.push_back({0xDFF7, 0xFFFF, 0xDFF7, "Gluk CMOS address", "#EFF7 bit 7", Tags(PortTag::System)});
+            entries.push_back({0xBFF7, 0xFFFF, 0xBFF7, "Gluk CMOS data", "#EFF7 bit 7", Tags(PortTag::System)});
+            entries.push_back({0x3FF7, 0x3FFF, 0x3FF7, "Dispatcher window register (A15:A14 = window)", dos,
+                               Tags(PortTag::Memory) | PortTag::Rom});
+            entries.push_back({0x37F7, 0x3FFF, 0x37F7, "Dispatcher RAM page register, x7F7 (A15:A14 = window)", dos,
+                               Tags(PortTag::Memory)});
+            entries.push_back({0xFF77, 0x00FF, 0x0077, "ATM register (video mode, 28 MHz, CP/M = A9, pen2 = A14)", dos,
+                               Tags(PortTag::Memory) | PortTag::Screen | PortTag::System});
+            entries.push_back({0x0077, 0x00FF, 0x0077, "Z-Controller SD config", noDos, Tags(PortTag::StorageSd)});
+            entries.push_back({0x0057, 0x00FF, 0x0057, "Z-Controller SD data (config with A15 = 1 in DOS)", nullptr,
+                               Tags(PortTag::StorageSd)});
+            entries.push_back({0x00FF, 0x00FF, 0x00FF, "Palette write (entry = border colour, data D7..0 + A15..8)",
+                               "out of 128 mode; in DOS only with pen2 = 0", Tags(PortTag::Screen)});
+            entries.push_back({0x00BF, 0x00FF, 0x00BF, "#BF bit 0: DOS stays on in RAM", nullptr, Tags(PortTag::System)});
+            entries.push_back({0x001F, 0x00FF, 0x001F, "Kempston joystick", noDos, Tags(PortTag::Joystick)});
+            entries.push_back({0x00FB, 0x00FF, 0x00FB, "Covox (mono #FB)", nullptr, Tags(PortTag::SoundCovox)});
+            entries.push_back({0x0000, 0x0006, 0x0000, "Nemo IDE (A2 = A1 = 0; even registers read as #FE)", nullptr,
+                               Tags(PortTag::StorageIde)});
+            entries.push_back({0xF8EF, 0xF8FF, 0xF8EF, "UART (16550-like, register = A10..8)",
+                               "reads: the Beta Disk row wins in DOS", Tags(PortTag::System)});
             break;
         }
         case MM_SPRINTER:
@@ -1544,8 +1582,8 @@ void PortDecoder::Default_Port_FE_Out(uint16_t port, uint8_t value, uint16_t pc)
     _tape->handlePortOut(value);
     _soundManager->getBeeper().handlePortOut(value, _context->emulatorState.AudioTstate(tState));
 
-    // Set border color
-    _screen->SetBorderColor(borderColor);
+    // Set border color (with the bright bit of a machine whose border has 16 colours)
+    _screen->SetBorderColor(static_cast<uint8_t>(borderColor | _borderHighBits));
 
     /// region <Debug logging>
 

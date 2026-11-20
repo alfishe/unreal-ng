@@ -62,13 +62,24 @@ settings ⓘ popup.
 | Component | Value | Where set | Why |
 |---|---|---|---|
 | Ring target `DRC_TARGET_MS` | **40 ms** | `soundmanager.h` | Floor is structural: production is bursty (one whole ~20.5 ms frame lands at once) while the DAC drains continuously, so occupancy must cover ≥1 frame + scheduler jitter. 40 ms = ~7 callback periods of underrun margin. 70 ms (the original value) was audibly late. |
-| Device HW buffer | ~11.6 ms | frontend `init()` (2 x 256 frames) | miniaudio low-latency profile. |
+| Low-latency ring target `LOW_LATENCY_DRC_TARGET_MS` | **6 ms** (macOS), **10 ms** (Linux), **15 ms** (Windows): the floor of an adaptive setpoint that starts at `LOW_LATENCY_DRC_START_MS` **15 ms** | `soundmanager.h`; adapted by `LowLatencyTarget` (`lowlatencytarget.h`) while the `lowlatency` feature is on (`SoundManager::drcTargetMs`) | The floor is what an idle host holds: macOS trough >= 7.6 ms at 10 ms (128-frame period; at 6 ms, 10 min idle and with all cores busy, >= 2.6 ms and no gap, the setpoint stopping at 6-7 ms), Steam Deck >= 6.8 ms (256), Windows (WASAPI shared, 3 x 10 ms) >= 7.6 ms at 15 but 3.4 ms at 10. No fixed value holds everywhere: with all cores busy the Deck had 2-3 gaps per 10 min at 10 ms, and a Next on Windows dips ~17 ms below its usual trough. So the setpoint rises when the host needs it - +5 ms on a gap, +2 ms on a second whose trough fell below 2 ms (3 s holdoff while the ring fills) - and falls 1 ms after each 30 quiet seconds (trough >= 6 ms; with 10 s the loaded Deck had 1-2 gaps per 10 min and the setpoint swung up to 27 ms), between the floor and `DRC_TARGET_MS`. It starts at 15 ms, not at the floor: starting at 10 ms the loaded Deck had its one gap within the first minute (Pentagon and Next), and 16 ms held from then on; a quiet host comes down to the floor in about 2.5 minutes. Must stay above one device pull and keep the refill below its trough (`SoundAdaptivity.LowLatencyBudget`); the rules: `LowLatencyTarget_Test`. |
+| Device HW buffer | ~11.6 ms; ~5.8 ms on macOS under `lowlatency`; Windows 30 ms, 20 ms under `lowlatency` | frontend `init()` (2 x 256 frames; 2 x 128 on macOS under `lowlatency`; Windows 3 x 10 ms, 2 x 10 ms under `lowlatency`; the device is reopened when the feature changes) | miniaudio low-latency profile. WASAPI shared mode mixes in 10 ms engine periods whatever is asked, so Windows asks for whole ones; two under `lowlatency` had no more gaps than three on the RME ADI-2 DAC (10 min runs, 12 cores busy and an idle Next) and cut 10 ms. |
 | Device output latency | device-dependent | queried from CoreAudio (device latency + safety offset) | **Below our pipeline.** Virtual loopback devices (Background Music, BlackHole) report large values here — this is how a desync living outside the emulator is identified. |
 | Video present delay | the audio path's (~52 ms), no setting | `Screen` frame times (`FrameClock`) | Every latched frame gets the time its sound is heard; readers are served the frame due at their time ([frame presenter](../../../inprogress/2026-10-26-frame-presenter/README.md), section 3). `[VIDEO] LipSyncOffsetMs` trims it; the old `AVSyncDelayFrames` is ignored. Recording is unaffected (taps emulated time upstream of presentation). |
 | Emergency refill `EMERGENCY_REFILL_MS` | **15 ms** | `soundmanager.h`, used by `mainloop.cpp` | Must sit BELOW the occupancy sawtooth trough (target − 1 frame ≈ 19.5 ms) — see field note 6.4. Rate-aware (converted to device frames at the live device rate). |
 | Hard resync `HARD_RESYNC_MS` | **160 ms** (4x target) | `soundmanager.h`, used by frontend device callback | Overfill beyond this is unrecoverable by ±0.5% trim in reasonable time; the consumer discards down to target in one step — see field note 6.6. |
 
-Controller gains: `KP=0.08`, `KI=0.0008`, `EMA_ALPHA=0.05`, trim ±0.5%.
+Where the target sits in the sawtooth: the DRC reads the occupancy *before* a
+frame's sound is enqueued, so it holds the **trough** of the sawtooth near the
+target, and the ring averages about half a frame more. Measured on macOS at
+target 40 ms: trough 36 ms, ring median 49 ms, audio latency 61 ms (with the
+device buffer and the device's output latency). The live trough, gaps and
+latency are in `GET /audio/mixer` -> `host_output.device` (section 7).
+
+Controller gains: `KP=0.08`, `KI=0.0008`, `EMA_ALPHA=0.05`, trim ±0.5%. The error is the
+occupancy's distance from the setpoint over `DRC_TARGET_MS`, whatever the setpoint: dividing by a
+lower setpoint multiplies the loop gain (x2.7 at 15 ms), and on WASAPI (10 ms pulls) the trim then
+swung rail to rail every few seconds - a ±8.6 cent pitch wobble.
 Convergence from a disturbance takes a few seconds by design — big,
 fast corrections are what the refill (low side) and hard resync (high
 side) are for; the PI only does fine tracking.
@@ -93,6 +104,12 @@ Consequences:
 - The **actual per-sample latency is constant** — every frame's audio
   waits behind the same queue. The sawtooth is a sampling artifact of
   *when you look*.
+- What a player hears late is the **trough plus the device buffer plus the frame's compute time**
+  (input is read at the frame's start; the frame's sound enters the ring a few ms later and its first
+  sample plays after the trough has drained). The ring's mean (`latency_ms`) overstates it by about
+  half a frame. Enqueueing a frame in slices, emulated in step with the wall clock, would flatten the
+  sawtooth but make every sample later (each slice waits for its own wall-clock time) and the picture a
+  frame later: the levers are the setpoint and the device buffer.
 - Any consumer of occupancy must decide which value it needs:
   - the **controller** and the **A/V readout** use the EMA-filtered value;
   - the **emergency refill** compares against the instantaneous value and
@@ -213,6 +230,13 @@ same device kept the old negotiated rate behind a hidden OS resampler.
   latency, reinit count, live occupancy, lifetime frame totals,
   over/underrun counters. Error counters must stay at zero permanently
   under converged control — growth is the first sign of trouble.
+  Ring statistics kept permanently by the device callback
+  (`AudioDeviceDescriptor::OnCallbackConsumed`): `troughFrames` (the least
+  occupancy a callback left over the last closed one-second window),
+  `troughWindows`, `underruns` (gaps: a short read after a full one; the
+  empty ring a fresh device starts on is not one). The mixer state
+  (`GET /audio/mixer`, CLI `mixer`) shows them under `host_output.device`
+  with `drc_target_ms`, `drc_trim` and `drc_target_raises`.
 - Video side: `Screen::LatchFramebuffer` stamps a steady-clock timestamp;
   the GUI frame source computes the refresh's time minus the latch of the
   frame it shows (`Screen::CopyFrameAt`, the frame presenter) as a signed EMA into `pVideoPresentLatencyUs`. (The EMA must be signed — the first
@@ -229,6 +253,11 @@ same device kept the old negotiated rate behind a hidden OS resampler.
 | `SoundAdaptivity.AVLatencyBudget` | target vs perception threshold, underrun margin, refill-below-trough, hard-resync band |
 | `SoundAdaptivity.EmergencyRefill_NeverFiresAtSteadyState` | closed loop: refill count 0 at converged steady state, sampled at the sawtooth trough |
 | `SoundAdaptivity.DRC_ConvergesToTargetOccupancy` | PI convergence from both directions |
+| `SoundAdaptivity.LowLatencyBudget` | low-latency target: below half the default, above one device pull (above the 10 ms WASAPI period on Windows), refill below its trough |
+| `SoundAdaptivity.DRC_LowLatencyFollowsFeatureAndConverges` | the target follows the `lowlatency` feature; closed loop converges from 40 ms to it |
+| `AudioDeviceDescriptor_Test.*` | trough per window, gaps counted once |
+| `LowLatencyTarget_Test.*` | adaptive setpoint: holds the floor while the margin is kept, gap / near-gap raises with holdoff, steps down after quiet spells, floor and ceiling, a start above the floor |
+| `SoundAdaptivity.DRC_LowLatencyTrimStaysOffTheRailsWithChunkedPulls` | the loop gain does not grow at a low setpoint: 10 ms device chunks never rail the trim |
 | `SoundAdaptivity.DRC_NativeDeviceRate48k_ConvergesAndConverts` | native-rate base ratio |
 | `SoundAdaptivity.DRC_RebasesOnDeviceRateChangeMidRun` | reroute re-base + re-convergence |
 | `SoundAdaptivity.SoundManager_ExactSampleCountOverAccumulatorPeriod` | drift-free accumulator |

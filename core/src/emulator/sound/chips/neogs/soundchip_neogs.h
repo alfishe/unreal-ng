@@ -57,6 +57,18 @@ namespace ttd
 enum class TTDExternalEventKind : uint8_t;
 }
 
+/// The card's own counters beside its devices' (neogs-automation-design.md §4.1, §4.3, §4.9, §4.11): statistics,
+/// not machine state (no snapshot)
+struct NeoGSCounters
+{
+    uint64_t interrupts[3] = {};   // accepted, by source: timer, SD DMA, MP3 DMA (the request the acknowledge served)
+    uint64_t interruptsNoSource = 0; // accepted with no enabled request left (IM 2 vector #FF)
+    uint64_t clockSwitches = 0;    // GSCFG0 clock changes applied
+    uint64_t sdInserts = 0;
+    uint64_t sdEjects = 0;
+    uint64_t flashSaves = 0;
+};
+
 class SoundChip_NeoGS : public GeneralSoundCard, public ttd::ITTDRegionSource, private NeoGSDma::Host,
                         private NeoGSZxDma::Host
 {
@@ -158,7 +170,16 @@ public:
     double cardUnitsPerSecond() const override { return TICKS_PER_SECOND; }
 
     const GSActivityCounters& getActivityCounters() const override { return _activityCounters; }
-    void resetActivityCounters() override { _activityCounters = GSActivityCounters{}; }
+    void resetActivityCounters() override
+    {
+        _instructionCountOffset += static_cast<int64_t>(_activityCounters.cpuSteps);   // the count goes on
+        _activityCounters = GSActivityCounters{};
+    }
+    bool cardInstructionCount(uint64_t& count) const override
+    {
+        count = _activityCounters.cpuSteps + static_cast<uint64_t>(_instructionCountOffset);
+        return _instructionCountKnown;
+    }
 
     void attachPortTrace(GSHistory* history) override { _portTrace.attach(history, _context); }
 
@@ -285,6 +306,7 @@ public:
         return !sdCardPresent() ? std::string() : _sdSlotRegistered ? _sdSource : _sd->path();
     }
     bool neogsState(NeoGSStateInfo& out) const override;
+    void collectStats(GSStatsWriter& sections) const override;
     bool peekCardMemory(uint16_t addr, uint8_t& out) const override
     {
         out = _mem.peek(addr);
@@ -315,6 +337,10 @@ public:
     /// out - they are the engine's memory regions (a v1 checkpoint carried up
     /// to 4.5 MB of them)
     static constexpr uint8_t TTD_LAYOUT = 4;
+    /// The card CPU's instruction count in the fixed part: a little-endian u64, then its flag byte (1: present; a
+    /// blob made before the count has 0 there)
+    static constexpr size_t TTD_COUNT_OFFSET = 240;
+    static constexpr size_t TTD_COUNT_FLAG_OFFSET = 248;
 
 private:
     friend class GSCardRunner<SoundChip_NeoGS>;
@@ -624,6 +650,10 @@ private:
 
     GSUploadCapture _upload;
     GSActivityCounters _activityCounters;
+    NeoGSCounters _counters;
+    // The instruction count (cardInstructionCount) = cpuSteps + this; false after a TTD blob without a count
+    int64_t _instructionCountOffset = 0;
+    bool _instructionCountKnown = true;
     GSPortTraceRecorder _portTrace;
     IGSDebugHooks* _debugHooks = nullptr;  // a card CPU debugger (setDebugHooks): the debug loop and bus
 };

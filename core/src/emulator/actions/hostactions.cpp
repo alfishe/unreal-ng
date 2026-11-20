@@ -466,7 +466,7 @@ ActionResult OpenTape(Emulator& emulator, const std::string& path, bool autostar
     return ActionResult::Success(std::move(body), why.empty() ? "Tape loaded, LOAD \"\" typed" : "Tape loaded; " + why);
 }
 
-ActionResult OpenDisk(Emulator& emulator, const std::string& path, uint8_t drive, bool autostart)
+ActionResult OpenDisk(Emulator& emulator, const std::string& path, uint8_t drive, bool autostart, const std::string& basic)
 {
     StateNode body = StateNode::Object();
     body["kind"] = "disk";
@@ -477,9 +477,16 @@ ActionResult OpenDisk(Emulator& emulator, const std::string& path, uint8_t drive
     if (autostart && drive == 0)
     {
         // A quick reset into TR-DOS that runs the disk (drive A only, as the route's autostart)
-        const Emulator::DiskAutostartResult result = emulator.AutostartDisk(path, drive);
+        const Emulator::DiskAutostartResult result = emulator.AutostartDisk(path, drive, basic);
         body["autostarted"] = result.started;
         body["autostart_message"] = result.message;
+        if (!result.plan.empty())
+        {
+            body["plan"] = result.plan;
+            body["command"] = result.command;
+            body["dos"] = result.dos;
+            body["basic"] = result.basic;
+        }
         if (!result.mounted)
             return ActionResult::Failure("Bad Request", "Failed to insert disk: " + result.message, std::move(body));
         return ActionResult::Success(std::move(body), result.message);
@@ -622,7 +629,7 @@ ActionResult OpenMedia(const ActionCall& call)
         uint8_t drive = 0;
         if (!DriveIndex(TextParam(call.value, "drive").value_or("A"), drive))
             return BadRequest("drive: A..D");
-        return OpenDisk(*call.emulator, path, drive, autostart);
+        return OpenDisk(*call.emulator, path, drive, autostart, TextParam(call.value, "basic").value_or(""));
     }
     return BadRequest("kind: auto, snapshot, tape or disk");
 }
@@ -1357,7 +1364,7 @@ std::vector<RegistrationHandle> RegisterHostActions(ActionRegistry& registry)
     const char* media = "Media";
     add(
         "media.open", "Open software", media, ValueKind::Press,
-        "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), switch_model?",
+        "path, kind? (auto|snapshot|tape|disk), drive? (A), autostart? (true), basic? (48|128: an MGT +D disk), switch_model?",
         OpenMedia,
         RouteRules("POST", "/tape/load"));
     {

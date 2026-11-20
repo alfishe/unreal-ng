@@ -17,6 +17,7 @@
 #include "common/sound/filters/filter_interpolate.h"
 #include "common/sound/filters/audio_character_chain.h"
 #include "common/sound/filters/voicingstage.h"
+#include "emulator/sound/lowlatencytarget.h"
 #include "emulator/sound/audio.h"
 #include "common/sound/filters/masterlimiter.h"
 #include "common/sound/filters/resampler_drc.h"
@@ -29,6 +30,7 @@
 #include "emulator/sound/audiodeviceinfo.h"
 #include "emulator/sound/mixerchannel.h"
 #include "emulator/sound/chips/gs/gshostdriver.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/chips/gs/soundchip_gs.h"
 #include "emulator/sound/chips/gs/soundchip_gslw.h"
 #include "emulator/sound/chips/neogs/soundchip_neogs.h"
@@ -147,12 +149,14 @@ protected:
     std::unique_ptr<GSCommandLog> _gsCommandLog;
     // The debugger's send (gshostdriver.h): steps at the frame start while it has one
     std::shared_ptr<GSHostDriver> _gsHostDriver;
+    GSStatsPublisher _gsStats;  ///< the GS slot's statistics, published at frame ends while read (N7)
     /// Points the fitted card at the machine's GS history (created with the first card, kept across personalities)
     void attachGeneralSoundHistory();  // TurboSound slot (legacy AY pair today, TSFM later - design §3.3)
     Covox* _covox = nullptr;
     // A machine's own DAC (the Sprinter's Covox / Covox-Blaster), owned by its port decoder and
     // mixed in the COVOX slot (attachModelAudioSource). Null for every other machine
     IModelAudioSource* _modelAudio = nullptr;
+    std::vector<AudioSourceType> _modelAudioAddedRows;  ///< the rows its parts added (not the ones they took over)
     std::optional<GSActivityCounters> _gsCountersBeforeReplay;   ///< beginReplayTelemetry .. endReplayTelemetry
     GeneralSoundCard* _gs = nullptr;  // General Sound slot ([SOUND] GSType=Z80|LW - any personality, GS design §5.1)
     // Not under UNREALNG_HAVE_OPL4: the class must have one layout in every translation unit. Targets that read these
@@ -286,6 +290,36 @@ public:
     // only through abnormal events (device re-init windows, long stalls).
     static constexpr double HARD_RESYNC_MS = 160.0;  // 4x target
 
+    // Feature lowlatency (Steam Deck Game Mode): the floor of the adaptive setpoint (LowLatencyTarget) the ring is held
+    // at instead of DRC_TARGET_MS; gaps and near-gaps raise it up to DRC_TARGET_MS, quiet spells bring it back. The
+    // occupancy the DRC reads is the one before the frame's sound goes in (the trough of the sawtooth), so this is
+    // the margin the ring keeps against an underrun: a device callback period plus the emulation thread's wake jitter.
+    // Measured with every core busy (20 s windows, the least trough per second): macOS 10 ms (2 x 128-frame periods)
+    // kept >= 8 ms; the Steam Deck 10 ms (2 x 256) kept >= 4.5 ms; Windows (WASAPI shared, 3 x 10 ms) at 10 ms fell to
+    // 0.6 ms, at 15 ms kept >= 9 ms. macOS goes to 6 ms: over 10 min with every core busy (Pentagon, Next) and idle
+    // it kept >= 2.6 ms with no gap, the setpoint itself stopping at 6-7 ms (only quiet seconds lower it)
+#ifdef _WIN32
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 15.0;
+#elif defined(__APPLE__)
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 6.0;
+#else
+    static constexpr double LOW_LATENCY_DRC_TARGET_MS = 10.0;
+#endif
+    // Where the adaptive setpoint starts (feature on, or a new device): above the floor, since a host shows its jitter
+    // only under load. The Steam Deck starting at 10 ms with every core busy had its one gap within the first minute
+    // (Pentagon and Next alike), after which 16 ms held; thirty quiet seconds per 1 ms bring it down to the floor
+    // (2.5 minutes to 10 ms)
+    static constexpr double LOW_LATENCY_DRC_START_MS = 15.0;
+
+    /// The ring's setpoint now: DRC_TARGET_MS, or with the feature lowlatency the adaptive one (LowLatencyTarget:
+    /// starts at LOW_LATENCY_DRC_START_MS, stays between LOW_LATENCY_DRC_TARGET_MS and DRC_TARGET_MS, raised by gaps
+    /// and near-gaps, lowered after quiet spells)
+    double drcTargetMs() const;
+    /// Times the adaptive low-latency setpoint went up (gaps or near-gaps)
+    uint64_t drcTargetRaises() const { return _llTargetRaises.load(std::memory_order_relaxed); }
+    /// The DRC's trim of the resample ratio (+-DRC_MAX_TRIM; 0 while disengaged)
+    double drcTrim() const { return _drcTrim.load(std::memory_order_relaxed); }
+
     /// Restart the DRC controller state (EMA seed + integrator): called on
     /// device re-establishment so tracking resumes from the fresh occupancy
     /// instead of stale pre-reroute state
@@ -351,6 +385,15 @@ protected:
     // the emulation thread)
     std::atomic<bool> _feature_sound_enabled{true};
     std::atomic<bool> _feature_soundhq_enabled{true};
+    /// Feature lowlatency: the ring held at the adaptive setpoint (from LOW_LATENCY_DRC_TARGET_MS) instead of DRC_TARGET_MS
+    std::atomic<bool> _feature_lowlatency{false};
+    /// The DRC's last trim (the resample ratio over its base, minus one; 0 while disengaged), for the reports
+    std::atomic<double> _drcTrim{0.0};
+    /// The adaptive low-latency setpoint (emulation thread) and its published value / raise count (any thread)
+    LowLatencyTarget _llTarget{LOW_LATENCY_DRC_START_MS, LOW_LATENCY_DRC_TARGET_MS, DRC_TARGET_MS};
+    std::atomic<double> _llTargetMs{LOW_LATENCY_DRC_START_MS};
+    std::atomic<uint64_t> _llTargetRaises{0};
+    void updateLowLatencyTarget();
     /// The thread that runs the frames (stored by handleFrameStart; a default id until the first frame). The
     /// TurboSound device's setters run its renderer, which only that thread may do while the machine runs
     std::atomic<std::thread::id> _emulationThread{};
@@ -605,6 +648,10 @@ public:
     {
         return _gsHostDriver;
     }
+    /// The GS slot's statistics (gsslotstats.h): any thread
+    void publishGsStats();
+    GSStatsPublisher& gsStats() { return _gsStats; }
+    const GSStatsPublisher& gsStats() const { return _gsStats; }
     /// The AY clock of the TurboSound slot, set by the machine (the Profi in
     /// hi-res: 1.5 MHz). Takes effect at the current CPU T-state; see
     /// ITurboSoundDevice::SetPsgClock. False when the slot is empty or its

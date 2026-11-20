@@ -211,17 +211,36 @@ std::string WindowDisplaySummary(const Json::Value& s)
             !vrrSupport.get("state", "").asString().empty())
             line += ", VRR support " + vrrSupport["state"].asString() +
                     (vrrSupport.get("reason", "").asString().empty() ? "" : " (" + vrrSupport["reason"].asString() + ")");
+        // Low-latency video asks for each frame at once: no lead, no interpolation, nothing a refresh late, the error
+        // is the hand-over to the screen (VRR and a switched display rate still apply)
+        const bool lowLatency = present.get("low_latency", false).asBool();
         const Json::Value& sync = present["sync"];
-        if (sync.isObject() && sync.get("mode", "off").asString() != "off")
+        if (sync.isObject() && sync.get("mode", "off").asString() != "off" &&
+            !(lowLatency && sync["mode"].asString() == "interpolate"))
             line += ", video sync " + sync["mode"].asString() +
                     (sync.get("reason", "").asString().empty() ? "" : " (" + sync["reason"].asString() + ")");
-        if (present.get("presented", 0).asUInt64() > 0)
+        if (lowLatency)
+            line += ", low latency: each frame at once, not held for its sound";
+        const Json::Value& errorMs = present["error_ms"];
+        if (present.get("timed_at", "").asString() == "paint" && present.get("presented", 0).asUInt64() > 0)
         {
-            const Json::Value& error = present["error_ms"];
+            // The software screen: its paints, not screen times; no refresh grid, lead or sound offset to judge by
+            line += ", " + std::to_string(present["presented"].asUInt64()) + " new frames painted, " +
+                    std::to_string(present.get("dropped", 0).asUInt64()) + " skipped, " +
+                    (lowLatency ? "made to painted p50 " : "painted vs asked p50 ") +
+                    NumberText(std::round(errorMs.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
+                    NumberText(std::round(errorMs.get("p99", 0.0).asDouble() * 100) / 100) +
+                    " ms (paint times, not the screen)";
+        }
+        else if (present.get("presented", 0).asUInt64() > 0)
+        {
+            const Json::Value& error = errorMs;  // the screen's times
             line += ", " + std::to_string(present["presented"].asUInt64()) + " presented, " +
                     std::to_string(present.get("dropped", 0).asUInt64()) + " dropped, " +
-                    std::to_string(present.get("late", 0).asUInt64()) + " a refresh late, lead " +
-                    NumberText(std::round(present.get("lead_ms", 0.0).asDouble() * 10) / 10) + " ms, error p50 " +
+                    (lowLatency ? std::string("hand-over to screen p50 ")
+                                : std::to_string(present.get("late", 0).asUInt64()) + " a refresh late, lead " +
+                                      NumberText(std::round(present.get("lead_ms", 0.0).asDouble() * 10) / 10) +
+                                      " ms, error p50 ") +
                     NumberText(std::round(error.get("p50", 0.0).asDouble() * 100) / 100) + " p99 " +
                     NumberText(std::round(error.get("p99", 0.0).asDouble() * 100) / 100) + " ms";
             const Json::Value& beat = present["beat"];
@@ -554,6 +573,13 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
     schema["properties"]["hardware"]["description"] =
         "window_record_start: h264 / h265 on the GPU's encoder (macOS VideoToolbox: real time at 4K, no ffmpeg; "
         "4:2:0, H.265 4:2:2 10-bit); false = x264 / x265 4:4:4 through ffmpeg";
+    schema["properties"]["engine"]["type"] = "string";
+    schema["properties"]["engine"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* engine : {"native", "ffmpeg"})
+        schema["properties"]["engine"]["enum"].append(engine);
+    schema["properties"]["engine"]["description"] =
+        "window_record_start: native (default: hardware H.264 / H.265 and ProRes by the Mac's own writer) or ffmpeg "
+        "(always ffmpeg: with hardware its GPU encoder, found by probing)";
     schema["properties"]["fit"]["type"] = "boolean";
     schema["properties"]["fit"]["description"] =
         "window_record_start: scale the picture to a given width x height frame (aspect kept, centred) instead of "
@@ -1316,7 +1342,7 @@ void RegisterCaptureMediaImpl(ToolRegistry& registry)
                         return;
                     }
                     body["path"] = path;
-                    for (const char* field : {"keyboard", "codec", "hardware", "fit", "fps", "scale", "picture_height", "width", "height",
+                    for (const char* field : {"keyboard", "codec", "hardware", "engine", "fit", "fps", "scale", "picture_height", "width", "height",
                                         "layout"})
                         if (args.isMember(field))
                             body[field] = args[field];

@@ -425,6 +425,9 @@ protected:
     bool _replayWalk = false;          // the resolve under way is a TTD replay's: only _replaySink's taps are told
     bool _tapsOnlyWalk = false;        // the resolve under way is HandlePCTaps': taps only, no breakpoint counted
     bool _tapStop = false;             // StopAtThisTap: the sink being told asked for a stop
+    bool _replayEvaluate = false;      // BeginReplayEvaluate: a replay's resolve walks the breakpoints, no taps
+    std::map<uint16_t, std::pair<uint32_t, uint32_t>> _replayEvaluateCounts;   // id -> hitCount, matchCount before
+    uint16_t _replayEvaluateLast = 0xFFFF;   // the last triggered id before it
 
     // Batch: mutations inside it repaint once, at the end
     int _batchDepth = 0;
@@ -704,6 +707,13 @@ public:
     /// tells this sink's memory and port taps and nothing else; every other breakpoint and tap stays silent, nothing
     /// stops and no read is replaced. BRK_NO_TAP (the default): a replay tells no one. Set with the CPU held
     void SetReplayTapSink(uint8_t sinkId) { _replaySink = sinkId; }
+    /// A TTD card scan (TimeTravelController::ReverseContinueCard, gs-debugger design §8 D4): while on, a TTD
+    /// replay's resolve walks this manager's breakpoints as a live run does (their conditions and hit policy, the
+    /// counts as they stood when it began); taps stay silent. Off puts every hit and match count back, so the scan
+    /// leaves no trace. Set with the CPU held, on the emulation thread's side of the replay
+    void BeginReplayEvaluate();
+    void EndReplayEvaluate();
+    bool ReplayEvaluating() const { return _replayEvaluate; }
     std::string GetBreakpointListAsStringByGroup(const std::string& groupName) const;
     void ActivateBreakpointGroup(const std::string& groupName);
     void DeactivateBreakpointGroup(const std::string& groupName);

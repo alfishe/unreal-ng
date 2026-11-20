@@ -1,6 +1,11 @@
 # Machine families: a grouped machine picker
 
-Status: in progress (branch `machine-families`).
+Status: done, on master.
+
+- `bcaa8ca97`: the catalog (`MachineCatalog`), the grouped Qt Machine menu and handheld Model picker (with `.` / `..`
+  rows), `GET /emulator/machines`, MCP `list_machines`, CLI / Python / Lua `machines`
+- `3aefa523f`: the running configuration (`MachineCatalog::TitleOf`) as a read-only first entry of the Machine menu
+  and in the main window title
 
 ## 1. Problem
 
@@ -24,8 +29,8 @@ machine with one RAM size has no RAM level.
 
 | Family | Machines |
 |---|---|
-| Sinclair | 48K, 48K + Beta 128, 128K, +2, +2A, +3 |
-| Pentagon | Pentagon (128 / 512 / 1024) |
+| Sinclair | 48K, 48K + Beta 128, 48K + Plus D, 128K, 128K + Plus D, +2, +2A, +3 |
+| Pentagon | Pentagon (128 / 512 / 1024), Pentagon 2.666 LE |
 | ATM Turbo | v4.50 (512 / 1024), 2+ v7.10 (128 / 256 / 512 / 1024) |
 | ZX-Evo | BaseConf, TS-Conf, TS-Conf + VDAC2, TS-Conf + VDAC4 |
 | Profi | v3, v5, Profi+ |

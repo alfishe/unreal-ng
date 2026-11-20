@@ -9,6 +9,7 @@
 #include "emulator/memory/memory.h"
 #include "emulator/memory/next/nextmemory.h"
 #include "emulator/ports/portdecoder.h"
+#include "emulator/slots/cards/plusd/plusdcard.h"
 #include "emulator/sound/chips/soundchip_ay8910.h"
 #include "emulator/sound/soundmanager.h"
 #include "emulator/video/screen.h"
@@ -200,6 +201,32 @@ MachineView DefaultView(EmulatorContext& context)
             for (uint16_t page = 0; page < 16; page++)
                 AddBanks(view, memory, {page});
             break;
+        case MM_P2666:
+        {
+            // Pentagon 2.666 LE: a Pentagon 128 while its windows show one, the ZX picture is on and #EFF7 keeps #7FFD a
+            // 128K's (design section 8: a snapshot load puts the board there). Its own modes have no snapshot id
+            std::string inUse = WindowMapDiffers(memory, state.p7FFD);
+            const auto add = [&inUse](const std::string& what) { inUse += (inUse.empty() ? "" : ", ") + what; };
+            if ((state.p2666.pxx77 & 0x07) != 0x03)
+                add("an ATM video mode is on");
+            if (state.pEFF7 & 0x01)
+                add("the Pentagon 16-colour mode is on");
+            if (!(state.pEFF7 & 0x04))
+                add("#EFF7 bit 2 is off (#7FFD bits 5..7 page the 1 MB)");
+            if (!inUse.empty())
+                return Unavailable("the board is not a Pentagon 128 now (" + inUse + "): a snapshot holds the Pentagon "
+                                   "128 view only. Run a Spectrum 128K program first (a snapshot load puts the board "
+                                   "there)",
+                                   "mode:pentagon128");
+            view.note = "the board runs as a Pentagon 128: RAM pages 0-7 are banks 0-7";
+            view.model = MM_PENTAGON;
+            view.ramKb = 128;
+            view.machineHint = "pentagon128";
+            view.timingHint = "pentagon";
+            for (uint16_t page = 0; page < 8; page++)
+                AddBanks(view, memory, {page});
+            break;
+        }
         default:
             return Unavailable("this machine has no snapshot view yet (its memory is not the Spectrum 128K's, and no capture "
                                "rule exists for it: Kay, Quorum, LSY256, Phoenix and ZX Next cannot be created yet)",
@@ -444,6 +471,10 @@ bool CaptureImage(EmulatorContext& context, const MachineView& view, Image& out)
     out.paging.p1FFD = view.p1FFD;
     out.paging.pEFF7 = view.pEFF7;
     out.trdosPaged = (state.flags & CF_TRDOS) != 0;
+    // An MGT +D: its paging, as the .z80 v3 hardware 3 / 6 keep it (SZX writes the whole card: LoaderSZX::Capture)
+    if (const PlusDCard* plusd = PlusDCard::Find(&context))
+        out.extensions.push_back({"capture", "plusd", 2, plusd->IsPaged() ? "MGT +D, paged in" : "MGT +D, paged out",
+                                  {static_cast<uint8_t>(plusd->IsPaged() ? 1 : 0), 16}});
 
     Cpu& cpu = out.cpu;
     cpu.af = z.af;

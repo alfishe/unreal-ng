@@ -12,6 +12,10 @@ Planned, in this order:
   waits a clock on every CPU and DMA read of the SRAM (a DMA read with cycle length 2 takes 2 + 1), core 3.03 (`NEXT-DDMA`) on none (the
   Z80 at 28 MHz without the +1, a DMA read in its cycle length). `PortDecoder_Next::UpdateContention`, pinned by
   `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Plan: `design-zxnddma.md` section 8
+- [x] DMA against MAME (fc76bc07, 2026-11-19) and the RTL (2026-11-18): the IM2 DMA delay (NR #CC-#CE) now stops a running block at the
+  next byte boundary (dma.vhd WRITE_4 -> START_DMA; the requests are latched at the DMA's clock, `NextInterruptSource::DmaDelayAt`), and
+  the prescaler period is the RTL's, 32 N + 3 CPU clocks in continuous mode (POC 036 `dmaprescc` in GHDL: 152 clocks of 28 MHz at
+  3.5 MHz, N = 4; 0 durations differ after the fix). Audit: `audit-dma-timing-2026-10-09.md` section "MAME and the RTL, 2026-11-18"
 - [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
 - [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
   CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket

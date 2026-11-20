@@ -18,6 +18,7 @@
 #include "emulator/media/mediamanager.h"
 #include "emulator/media/medium.h"
 #include "emulator/sound/chips/gs/gshostclock.h"
+#include "emulator/sound/chips/gs/gsslotstats.h"
 #include "emulator/sound/chips/neogs/neogsflashimages.h"
 
 namespace
@@ -199,6 +200,7 @@ bool SoundChip_NeoGS::openSdImage(const std::string& path)
         MLOGWARNING("NeoGS: SD card image '%s' cannot be opened - slot left empty", FileHelper::PrintablePath(path).c_str());
         return false;
     }
+    _counters.sdInserts++;
     reselectSd();
     return true;
 }
@@ -215,6 +217,7 @@ bool SoundChip_NeoGS::ejectSdCard()
         return result.Ok();
     }
     _sd->close();   // no media manager (a bare card): no machine, no rules
+    _counters.sdEjects++;
     return true;
 }
 
@@ -246,6 +249,7 @@ SoundChip_NeoGS::SdSlot::SdSlot(SoundChip_NeoGS& owner) : _owner(owner)
 void SoundChip_NeoGS::SdSlot::Attach(Medium& medium)
 {
     _owner._sd->attach(*medium.Block(), _owner.sdType());
+    _owner._counters.sdInserts++;
     _owner._sdSource = medium.Source().path;
     _owner.reselectSd();
 }
@@ -253,6 +257,7 @@ void SoundChip_NeoGS::SdSlot::Attach(Medium& medium)
 void SoundChip_NeoGS::SdSlot::Detach()
 {
     _owner._sd->detach();
+    _owner._counters.sdEjects++;
     _owner._sdSource.clear();
 }
 
@@ -378,6 +383,7 @@ void SoundChip_NeoGS::hostReset()
 
 void SoundChip_NeoGS::resetCard()
 {
+    _activityCounters.resetsHost++;
     // Host #33 = 100: the FPGA registers and the CPU reset; the loader runs
     // again from flash page 0. Latches, volumes, PG2/PG3 and the dividers stay.
     fpgaReset();
@@ -385,6 +391,7 @@ void SoundChip_NeoGS::resetCard()
 
 void SoundChip_NeoGS::coldBoot()
 {
+    _activityCounters.resetsCold++;
     Z80CpuReset(_cpu);
 
     // The crystal dividers start from zero at configuration
@@ -504,6 +511,7 @@ void SoundChip_NeoGS::writeGscfg0(uint8_t value)
 void SoundChip_NeoGS::applyClockChange()
 {
     const int64_t now = _runner.now();
+    _counters.clockSwitches++;
     _spi.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
     _dma.onClockChange(now, _ticksPerCycle, _nextTicksPerCycle);
     _ticksPerCycle = _nextTicksPerCycle;
@@ -606,9 +614,14 @@ void SoundChip_NeoGS::loadROM(const std::string& flashPath)
 
 bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
 {
+    static const char* const kWriteModes[] = {"session", "persist", "off"};
     out = NeoGSStateInfo{};
     out.flashTitle = _flashTitle;
     out.flashModified = _flash.modified();
+    out.flashMode = _flash.busyUntil() != INT64_MAX ? "busy" : _flash.arrayMode() ? "read" : "command";
+    out.flashVendor = _config.flashId == NeoGSConfig::FlashId::AMD ? "AMD" : "ST";
+    out.flashWriteMode = kWriteModes[static_cast<int>(_config.flashWrite) % 3];
+    out.flashPersistPath = _flashPersistPath;
     out.gscfg0 = _gscfg0;
     out.clockHz = cardClockHz();
     for (int w = 0; w < 4; w++)
@@ -619,11 +632,23 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     out.mpag = _mem.lastMpag();
     out.ledOn = ledOn();
     out.readyForCommands = isReadyForCommands();
+    out.dacLeft = dacLevel(false);
+    out.dacRight = dacLevel(true);
     out.intEnable = _irq.enable();
     out.intRequest = _irq.readRequest();
     out.timFreq = _irq.timFreq();
     out.sctrl = _spi.readSctrl();
     out.sdPresent = sdCardPresent();
+    out.sdWriteMode = kWriteModes[static_cast<int>(_config.sdWrite) % 3];
+    out.sdWriteProtect = _sdWriteProtect;
+    if (_sd)
+    {
+        out.sdInitialized = _sd->initialized();
+        out.sdState = _sd->stateName();
+        out.sdMode = _sd->modeName();
+        out.sdLastCommand = _sd->lastCommand();
+        out.sdLastArgument = _sd->lastArgument();
+    }
     if (out.sdPresent)
     {
         out.sdPath = sdCardImage();
@@ -636,13 +661,24 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     if (_mp3)
     {
         out.mp3Chip = _mp3->chip() == Vs10xxDecoder::Chip::VS1011 ? "VS1011" : "VS1001";
+        out.mp3Running = _mp3->running();
         out.mp3Dreq = _mp3->running() && _mp3->inputFill() + Vs10xxDecoder::DREQ_FREE <= Vs10xxDecoder::INPUT_FIFO;
         out.mp3Rate = _mp3->streamRate();
         out.mp3Channels = _mp3->streamChannels();
         out.mp3Frames = _mp3->framesDecoded();
         out.mp3DecodeSeconds = _mp3->streamRate() ? static_cast<uint32_t>(_mp3->samplesPlayed() / _mp3->streamRate()) : 0;
         out.mp3InputFill = _mp3->inputFill();
+        out.mp3PcmQueued = _mp3->pcmQueued();
+        out.mp3SamplesPlayed = _mp3->samplesPlayed();
+        out.mp3BytesReceived = _mp3->bytesReceived();
+        out.mp3Gain = _config.mp3Gain;
+        for (int r = 0; r < 16; r++)
+            out.mp3Sci[r] = _mp3->reg(r);
     }
+    // SSTAT as the card's IN (#12) would read it, without the read's SPI catch-up: {0000, MCRDY, SD_WP, SD_DET, DREQ},
+    // WP and DET low-active
+    out.sstat = static_cast<uint8_t>((_spi.busy(NeoGSSpi::MC, _runner.now()) ? 0 : 0x08) | (_sdWriteProtect ? 0 : 0x04) |
+                                     (out.sdPresent ? 0 : 0x02) | (out.mp3Dreq ? 0x01 : 0));
     out.dmaSelect = _dma.moduleSelect();
     for (int m = 0; m < 3; m++)
     {
@@ -671,6 +707,164 @@ bool SoundChip_NeoGS::neogsState(NeoGSStateInfo& out) const
     return true;
 }
 
+void SoundChip_NeoGS::collectStats(GSStatsWriter& sections) const
+{
+    NeoGSStateInfo s;
+    neogsState(s);
+
+    GSStatsWriter card = sections.Child("card");
+    card.State("clock_hz", s.clockHz);
+    card.State("gscfg0", s.gscfg0);
+    StateNode pages = StateNode::Array();
+    StateNode windowFlash = StateNode::Array();
+    for (int w = 0; w < 4; w++)
+    {
+        pages.push(s.pages[w]);
+        windowFlash.push(s.windowFlash[w]);
+    }
+    card.State("pages", std::move(pages));
+    card.State("window_flash", std::move(windowFlash));
+    card.State("mpag", s.mpag);
+    card.State("led", s.ledOn);
+    card.Counter("clock_switches", _counters.clockSwitches);
+
+    GSStatsWriter interrupts = sections.Child("interrupts");
+    interrupts.State("enable", s.intEnable);
+    interrupts.State("request", s.intRequest);
+    interrupts.State("tim_freq", s.timFreq);
+    GSStatsWriter bySource = interrupts.Child("by_source");
+    bySource.Counter("timer", _counters.interrupts[0]);
+    bySource.Counter("sd_dma", _counters.interrupts[1]);
+    bySource.Counter("mp3_dma", _counters.interrupts[2]);
+    bySource.Counter("none", _counters.interruptsNoSource);
+
+    GSStatsWriter audio = sections.Child("audio");
+    audio.State("mode", (s.gscfg0 & NeoGSSound::CFG_8CHANS) ? "8ch" : (s.gscfg0 & NeoGSSound::CFG_PAN4CH) ? "pan4ch" : "4ch");
+    GSStatsWriter level = audio.Child("dac_level");
+    level.State("left", s.dacLeft);
+    level.State("right", s.dacRight);
+
+    // DMA as transactions (§4.7)
+    GSStatsWriter dma = sections.Child("dma");
+    static constexpr const char* kModules[3] = {"zx", "sd", "mp3"};
+    for (int m = 0; m < 3; m++)
+    {
+        const NeoGSDma::Counters& c = _dma.counters(static_cast<NeoGSDma::Module>(m));
+        GSStatsWriter module = dma.Child(kModules[m]);
+        module.State("selected", s.dmaSelect == m + 1);
+        module.State("running", s.dmaRunning[m]);
+        module.State("address", s.dmaAddress[m] & 0x1FFFFF);
+        module.State("page", (s.dmaAddress[m] & 0x1FFFFF) >> 14);
+        module.Counter("starts", c.starts);
+        module.Counter("completions", c.completions);
+        if (m != NeoGSDma::ZX)
+        {
+            module.Counter("bytes", c.bytes);
+            module.Counter("aborts", c.aborts);
+            module.Counter("stall_clocks", c.stallClocks);
+            GSStatsWriter last = module.Child("last");
+            last.State("address", c.lastAddress);
+            last.State("bytes", c.lastBytes);
+        }
+        if (m == NeoGSDma::SD)
+            module.Counter("errors", c.errors);
+    }
+    GSStatsWriter zx = dma.Child("zx");
+    zx.State("mode", s.zxMode);
+    zx.State("overlay_installed", s.zxOverlayInstalled);
+    zx.State("read_latch", s.zxReadLatch);
+    zx.State("pending", s.zxPending);
+    zx.State("pending_address", s.zxPendingAddress);
+    zx.Counter("bytes_read", s.zxBytesRead);
+    zx.Counter("bytes_written", s.zxBytesWritten);
+    zx.Counter("bytes_dropped", s.zxBytesDropped);
+    zx.Counter("wait_tstates", s.zxWaitTStates);
+    zx.Counter("late_starts", s.zxLateStarts);
+    zx.Counter("late_start_units", s.zxLateStartUnits);
+    zx.State("watch_setting", s.zxWatchSetting);
+    zx.State("watch_frames", s.zxWatchFrames);
+    zx.State("watch_frames_left", s.zxWatchFramesLeft);
+
+    GSStatsWriter spi = sections.Child("spi");
+    spi.State("sctrl", s.sctrl);
+    static constexpr const char* kMasters[3] = {"sd", "mc", "md"};
+    for (int m = 0; m < 3; m++)
+    {
+        const NeoGSSpi::Master master = static_cast<NeoGSSpi::Master>(m);
+        GSStatsWriter w = spi.Child(kMasters[m]);
+        w.Counter("bytes", _spi.counters(master).bytes);
+        w.Counter("restarts", _spi.counters(master).restarts);
+        w.State("last_tx", _spi.state(master).tx);
+        w.State("last_rx", _spi.state(master).rx);
+    }
+
+    GSStatsWriter sd = sections.Child("sd");
+    sd.State("present", s.sdPresent);
+    sd.State("path", s.sdPath);
+    sd.State("type", s.sdPresent ? (s.sdSdhc ? "sdhc" : "sdsc") : "");
+    sd.State("size_bytes", s.sdSizeBytes);
+    sd.State("initialized", s.sdInitialized);
+    sd.State("write_mode", s.sdWriteMode);
+    sd.State("write_protect", s.sdWriteProtect);
+    if (_sd)
+    {
+        const SdCardSpi::Counters& c = _sd->counters();
+        GSStatsWriter commands = sd.Child("commands");
+        for (int i = 0; i < 64; i++)
+        {
+            if (c.commands[i])
+                commands.Counter("cmd" + std::to_string(i), c.commands[i]);
+            if (c.appCommands[i])
+                commands.Counter("acmd" + std::to_string(i), c.appCommands[i]);
+        }
+        sd.Counter("illegal_commands", c.illegal);
+        sd.Counter("crc_errors", c.crcErrors);
+        sd.Counter("write_errors", c.writeErrors);
+        sd.Counter("out_of_range", c.outOfRange);
+    }
+    sd.Counter("blocks_read", s.sdBlocksRead);
+    sd.Counter("blocks_written", s.sdBlocksWritten);
+    sd.Counter("inserts", _counters.sdInserts);
+    sd.Counter("ejects", _counters.sdEjects);
+
+    if (_mp3)
+    {
+        const Vs10xxDecoder::Counters& c = _mp3->counters();
+        GSStatsWriter mp3 = sections.Child("mp3");
+        mp3.State("chip", s.mp3Chip);
+        mp3.State("running", s.mp3Running);
+        mp3.State("dreq", s.mp3Dreq);
+        mp3.State("rate", s.mp3Rate);
+        mp3.State("channels", s.mp3Channels);
+        mp3.State("bitrate_kbps", _mp3->bitrateKbps());
+        mp3.State("input_fill", static_cast<uint64_t>(s.mp3InputFill));
+        mp3.State("pcm_queued", static_cast<uint64_t>(s.mp3PcmQueued));
+        mp3.State("gain", s.mp3Gain);
+        mp3.Counter("bytes_received", s.mp3BytesReceived);
+        mp3.Counter("frames_decoded", s.mp3Frames);
+        mp3.Counter("samples_played", s.mp3SamplesPlayed);
+        mp3.Counter("bytes_while_busy", c.bytesWhileBusy);
+        mp3.Counter("bytes_dropped", c.bytesDropped);
+        mp3.Counter("resync_bytes", c.resyncBytes);
+        mp3.Counter("underruns", c.underruns);
+        mp3.Counter("control_reads", c.controlReads);
+        mp3.Counter("control_writes", c.controlWrites);
+    }
+
+    const Flash29F040B::Counters& f = _flash.counters();
+    GSStatsWriter flash = sections.Child("flash");
+    flash.State("title", s.flashTitle);
+    flash.State("modified", s.flashModified);
+    flash.State("write_mode", s.flashWriteMode);
+    flash.State("persist_path", s.flashPersistPath);
+    flash.State("busy", std::string(s.flashMode) == "busy");
+    flash.Counter("bytes_programmed", f.bytesProgrammed);
+    flash.Counter("program_failures", f.programFailures);
+    flash.Counter("sectors_erased", f.sectorsErased);
+    flash.Counter("chip_erases", f.chipErases);
+    flash.Counter("saves", _counters.flashSaves);
+}
+
 bool SoundChip_NeoGS::saveFlash()
 {
     if (!_flashLoaded || _flashPersistPath.empty())
@@ -681,6 +875,7 @@ bool SoundChip_NeoGS::saveFlash()
         return false;
     }
     _flash.clearModified();
+    _counters.flashSaves++;
     MLOGINFO("NeoGS: flash saved to '%s'", FileHelper::PrintablePath(_flashPersistPath).c_str());
     return true;
 }
@@ -823,8 +1018,18 @@ void SoundChip_NeoGS::onIntAccepted()
 {
     // The acknowledge clears the request it served (priority at its M1)
     const uint8_t vector = _irq.vector();
+    const uint8_t pending = static_cast<uint8_t>(_irq.readRequest() & _irq.enable());
     _irq.acknowledge();
     _activityCounters.interruptsAccepted++;
+    // The request the acknowledge served: the lowest pending bit (NeoGSInterrupts::priority)
+    if (pending & NeoGSInterrupts::REQ_TIMER)
+        _counters.interrupts[0]++;
+    else if (pending & NeoGSInterrupts::REQ_SD_DMA)
+        _counters.interrupts[1]++;
+    else if (pending & NeoGSInterrupts::REQ_MP3_DMA)
+        _counters.interrupts[2]++;
+    else
+        _counters.interruptsNoSource++;
     traceEvent(GSTraceSide::Interrupt, 0, vector, false);
 }
 
@@ -1134,6 +1339,7 @@ uint8_t SoundChip_NeoGS::portDeviceInMethod(uint16_t port)
             return _mb.dataToHost;
         case 0xBB: // status: bit 7 data, bit 0 command; bits 6:1 read as 1
             hostPortSync();
+            _activityCounters.hostStatusPolls++;
             traceEvent(GSTraceSide::Host, PORT_COMMAND, _mb.status | 0x7E, false);
             return _mb.status | 0x7E;
         default:
@@ -1157,6 +1363,7 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
                     return;
                 case 0x40:
                     hostPortSync();
+                    _activityCounters.nmiRequests++;
                     _nmiPending = true;
                     return;
                 case 0x20:
@@ -1188,6 +1395,7 @@ void SoundChip_NeoGS::portDeviceOutMethod(uint16_t port, uint8_t value)
 void SoundChip_NeoGS::onHostDataWrite(uint8_t value)
 {
     _activityCounters.hostDataWritten++;
+    _activityCounters.dataOverwrites += _mb.status >> 7;
     _mb.dataFromHost = value;
     _mb.status |= 0x80;
     _upload.onData(value, _mem.ramSize());
@@ -1196,6 +1404,7 @@ void SoundChip_NeoGS::onHostDataWrite(uint8_t value)
 void SoundChip_NeoGS::onHostCommandWrite(uint8_t value)
 {
     _activityCounters.hostCommandsReceived++;
+    _activityCounters.commandOverwrites += _mb.status & 0x01;
     _mb.commandFromHost = value;
     _mb.status |= 0x01;
     _upload.onCommand(value);
@@ -1233,6 +1442,7 @@ void SoundChip_NeoGS::sendData(uint8_t data)
 void SoundChip_NeoGS::triggerNMI()
 {
     hostPortSync();
+    _activityCounters.nmiRequests++;
     _nmiPending = true;
 }
 
@@ -1257,13 +1467,16 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
     switch (p)
     {
         case P_ZXCMD:
+            _activityCounters.cardCommandsRead++;
             value = _mb.commandFromHost;
             break;
         case P_ZXDATRD:
+            _activityCounters.cardDataIn++;
             _mb.status &= 0x7F;
             value = _mb.dataFromHost;
             break;
         case P_ZXSTAT:
+            _activityCounters.cardStatusPolls++;
             value = static_cast<uint8_t>(_mb.status | 0x7E);
             // The v1.11 main ROM's command poll loop (neogs-tdd.md §7.1)
             if (!_ready && _mainRomV111 && Z80CpuInstructionPc(_cpu) == MAIN_ROM_COMINT && _gscfg0 == GSCFG0_MAIN_ROM &&
@@ -1271,6 +1484,7 @@ uint8_t SoundChip_NeoGS::cardIn(uint16_t port)
                 _ready = true;
             break;
         case P_CLRCBIT:
+            _activityCounters.cardCommandAcks++;
             _mb.status &= 0xFE;
             break;
         case P_DAMNPORT1:
@@ -1354,10 +1568,13 @@ void SoundChip_NeoGS::cardOut(uint16_t port, uint8_t value)
             _led = static_cast<uint8_t>(value & 1);
             return;
         case P_ZXDATWR:
+            _activityCounters.cardDataOut++;
+            _activityCounters.dataOverwrites += _mb.status >> 7;
             _mb.dataToHost = value;
             _mb.status |= 0x80;
             return;
         case P_CLRCBIT:
+            _activityCounters.cardCommandAcks++;
             _mb.status &= 0xFE;
             return;
         case P_DAMNPORT1:
@@ -1617,6 +1834,7 @@ void SoundChip_NeoGS::restoreMailbox(const GSForwardMailbox& snapshot)
 void SoundChip_NeoGS::accumulateActivityCounters(const GSActivityCounters& other)
 {
     accumulateGSActivityCounters(_activityCounters, other);
+    _instructionCountOffset -= static_cast<int64_t>(other.cpuSteps);   // the folded steps are not this card's
 }
 
 bool SoundChip_NeoGS::captureModuleUpload(std::vector<uint8_t>& bytes, bool& playing) const
@@ -1734,6 +1952,13 @@ void SoundChip_NeoGS::serializeFixedState(uint8_t* dst) const
 
     _flash.saveState(dst + 200); // 200..231
     put64(dst + 232, _nextTimerCrystal);
+    // 240..247 + 248: the card CPU's instruction count and its flag (TTDHashState leaves them out: a position)
+    uint64_t count = 0;
+    if (cardInstructionCount(count))
+    {
+        putU64(dst + TTD_COUNT_OFFSET, count);
+        dst[TTD_COUNT_FLAG_OFFSET] = 1;
+    }
 }
 
 void SoundChip_NeoGS::serializeDeviceState(uint8_t* dst, bool machineVisibleOnly) const
@@ -1837,6 +2062,10 @@ void SoundChip_NeoGS::TTDLoadState(const uint8_t* src)
 
     _flash.loadState(src + 200);
     _nextTimerCrystal = get64(src + 232);
+    _instructionCountKnown = src[TTD_COUNT_FLAG_OFFSET] == 1;
+    if (_instructionCountKnown)
+        _instructionCountOffset =
+            static_cast<int64_t>(get64(src + TTD_COUNT_OFFSET)) - static_cast<int64_t>(_activityCounters.cpuSteps);
     _sd->loadState(src + TTD_SD_OFFSET);
     if (_mp3)
         _mp3->loadState(src + TTD_MP3_OFFSET);
@@ -1902,6 +2131,7 @@ uint64_t SoundChip_NeoGS::TTDHashState() const
 {
     std::vector<uint8_t> blob(TTD_DEVICE_STATE_END);
     serializeFixedState(blob.data());
+    std::fill_n(blob.begin() + TTD_COUNT_OFFSET, 9, static_cast<uint8_t>(0));   // the instruction count: a position
     serializeDeviceState(blob.data() + TTD_SD_OFFSET, true);
     uint64_t hash = 14695981039346656037ull;
     for (const uint8_t byte : blob)
