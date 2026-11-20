@@ -91,6 +91,17 @@ def run_machine(api, model, frames, setup=None):
         api.call('DELETE', emulator)
 
 
+def set_feature(api, emulator, name, enabled):
+    """Switch a feature; False when this build does not have it (esp_jit comes with the ESP32 JIT)"""
+    try:
+        api.call('PUT', f'{emulator}/feature/{name}', {'enabled': enabled})
+        return True
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        raise
+
+
 def pause(api, emulator):
     try:
         api.call('POST', emulator + '/pause')
@@ -128,18 +139,22 @@ def workload(api, scratch, quick):
         shutil.copy(os.path.join(TESTDATA, 'vdac4', name), sd)
     sd = sd.replace('\\', '/')
 
+    jit = {'present': False}
+
     def doom(emulator):
-        api.call('PUT', emulator + '/feature/esp_jit', {'enabled': True})
+        jit['present'] = set_feature(api, emulator, 'esp_jit', True)
         load(api, emulator, sd + '/_DOOM.SPG', sd)
         pause(api, emulator)
+        frames = max(100, int(DOOM_FRAMES * scale))
         start = time.time()
-        api.call('POST', emulator + '/run_frames', {'frames': max(100, int(DOOM_FRAMES * scale))})
-        print(f'  DOOM (JIT) {1000.0 * (time.time() - start) / max(100, int(DOOM_FRAMES * scale)):7.2f} ms/frame',
-              flush=True)
-        api.call('PUT', emulator + '/feature/esp_jit', {'enabled': False})
+        api.call('POST', emulator + '/run_frames', {'frames': frames})
+        label = 'JIT' if jit['present'] else 'no JIT in this build'
+        print(f'  DOOM ({label}) {1000.0 * (time.time() - start) / frames:7.2f} ms/frame', flush=True)
+        if jit['present']:
+            set_feature(api, emulator, 'esp_jit', False)
 
     ms = run_machine(api, 'TSL-VDAC4', max(10, int(DOOM_INTERPRETER_FRAMES * scale)), doom)
-    print(f'  DOOM (interpreter) {ms:7.2f} ms/frame', flush=True)
+    print(f'  DOOM ({"interpreter" if jit["present"] else "continued"}) {ms:7.2f} ms/frame', flush=True)
 
 
 def merge_clang_profile(profile_dir, llvm_profdata):
@@ -155,6 +170,18 @@ def merge_clang_profile(profile_dir, llvm_profdata):
     output = os.path.join(profile_dir, 'default.profdata')
     subprocess.run(tool + ['merge', '-o', output] + raw, check=True)
     print(f'merged {len(raw)} .profraw into {output}')
+
+
+def print_log_tail(path, lines=60):
+    """The end of the application's log (on the CI the file stays on the runner)"""
+    try:
+        with open(path, errors='replace') as f:
+            tail = f.read().splitlines()[-lines:]
+    except OSError:
+        return
+    print(f'--- the last {len(tail)} lines of {path}', file=sys.stderr)
+    for line in tail:
+        print(line, file=sys.stderr)
 
 
 def main():
@@ -189,15 +216,18 @@ def main():
                 api.wait_up(process)
                 workload(api, scratch, args.quick)
             except BaseException:
+                crashed = process.poll()   # None: still running (the script failed), else how it ended
                 process.kill()
                 process.wait()
-                print(f'training failed; the application log: {log_path}', file=sys.stderr)
+                state = 'still running' if crashed is None else f'exit code {crashed:#x}'
+                print(f'training failed, unreal-qt {state}', file=sys.stderr)
+                print_log_tail(log_path)
                 raise
             process.stdin.close()   # the script returns, the application quits and writes the profile
             code = process.wait(timeout=300)
         print(f'unreal-qt exited with {code} after {time.time() - started:.0f} s')
         if code != 0:
-            print(f'the application log: {log_path}', file=sys.stderr)
+            print_log_tail(log_path)
             return 1
 
     merge_clang_profile(profile_dir, args.llvm_profdata)
