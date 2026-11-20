@@ -16,6 +16,7 @@
 #include <QRegularExpression>
 #include <QSplitter>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
@@ -37,6 +38,9 @@
 #include "debugger/disksectordialog.h"
 #include "debugger/diskfilesdialog.h"
 #include "debugger/livesourcewindow.h"
+#include "debugger/nextpanes.h"
+#include "emulator/emulatorcontext.h"
+#include "debugger/reportpane.h"
 #include "debugger/markup/memorymarkup.h"
 #include "debugger/panefocus.h"
 #include "debugger/pchistorypane.h"
@@ -73,20 +77,41 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
 
     // Panels: one frame style for all of them (the speed control's), the panels' text in the window's monospace font
     // (a group box's style sheet font would pass its small title size down to the contents)
-    // The PC history: a third splitter pane right of the disassembly, shown (and recording) by its toolbar toggle
-    QGroupBox* historyGroup = new QGroupBox("PC history", this);
-    historyGroup->setObjectName("historyGroup");
-    QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
+    // The splitter's third pane, right of the disassembly: tabs of every view the machine has, the PC history (recording
+    // while its tab is in front) and, on a ZX Spectrum Next, its panes (NextREG, MMU, Copper, Sprites, DMA, CTC / IM2)
+    _sideGroup = new QGroupBox("PC history", this);
+    _sideGroup->setObjectName("historyGroup");
+    QVBoxLayout* historyLayout = new QVBoxLayout(_sideGroup);
     historyLayout->setSpacing(0);
-    _pcHistoryPane = new PcHistoryPane(_emulator, historyGroup);
-    historyLayout->addWidget(_pcHistoryPane);
-    ui->mainSplitter->addWidget(historyGroup);
-    historyGroup->hide();
+    _sideTabs = new QTabWidget(_sideGroup);
+    _sideTabs->setObjectName("debuggerSideTabs");
+    _sideTabs->setDocumentMode(true);
+    _pcHistoryPane = new PcHistoryPane(_emulator, _sideTabs);
+    _sideTabs->addTab(_pcHistoryPane, "PC history");
+    for (const NextPanes::Pane& pane : NextPanes::Create(_sideTabs))
+    {
+        const int index = _sideTabs->addTab(pane.pane, pane.title);
+        _sideTabs->setTabToolTip(index, pane.tooltip);
+        _sideTabs->setTabVisible(index, false);
+        _nextPanes.push_back(pane.pane);
+    }
+    historyLayout->addWidget(_sideTabs);
+    ui->mainSplitter->addWidget(_sideGroup);
+    connect(_sideTabs, &QTabWidget::currentChanged, this, [this]() {
+        updateSidePane();
+        refreshNextPanes(_emulator && !_emulator->IsPaused());
+    });
+    _nextPanesTimer = new QTimer(this);
+    _nextPanesTimer->setInterval(200);
+    connect(_nextPanesTimer, &QTimer::timeout, this, [this]() {
+        if (_emulator && !_emulator->IsPaused())
+            refreshNextPanes(true);
+    });
 
     const QFont panelFont = font();
     for (QWidget* contents : std::initializer_list<QWidget*>{ui->registersWidget, ui->stackWidget,
                                                               ui->memorypagesWidget, ui->hexView,
-                                                              ui->disassemblerWidget, _pcHistoryPane})
+                                                              ui->disassemblerWidget, _sideTabs})
         contents->setFont(panelFont);
     setStyleSheet(QStringLiteral(R"(
         QGroupBox#registersGroup, QGroupBox#stackGroup, QGroupBox#pagesGroup, QGroupBox#memoryGroup,
@@ -128,7 +153,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     ui->mainSplitter->setStretchFactor(0, 0);
     ui->mainSplitter->setStretchFactor(1, 1);
     ui->mainSplitter->setStretchFactor(2, 0);
-    ui->mainSplitter->setSizes({400, 700, 260});
+    ui->mainSplitter->setSizes({400, 640, 380});
 
     // Create floating toolbar
     // toolBar = new QToolBar("Debugger toolbar", this);
@@ -241,11 +266,6 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     liveSourceAction = new QAction("Live source", this);
     liveSourceAction->setToolTip("The source an assembler (ALASM, TASM 4.12) holds in RAM, followed while you type: its labels in the debugger, its errors on their lines");
     toolBar->addAction(liveSourceAction);
-    pcHistoryAction = new QAction("PC history", this);
-    pcHistoryAction->setToolTip("The PC history pane: the newest instructions the CPU started, with their window's page "
-                                "(records while shown)");
-    pcHistoryAction->setCheckable(true);
-    toolBar->addAction(pcHistoryAction);
     QMenu* machineMenu = new QMenu(this);
     QAction* portWatchAction = machineMenu->addAction("Ports");
     portWatchAction->setToolTip("Every port the machine decodes, the latched ones with their values (changes lit)");
@@ -290,7 +310,6 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     connect(diskSectorAction, &QAction::triggered, this, &DebuggerWindow::showDiskSector);
     connect(diskFilesAction, &QAction::triggered, this, &DebuggerWindow::showDiskFiles);
     connect(liveSourceAction, &QAction::triggered, this, &DebuggerWindow::showLiveSource);
-    connect(pcHistoryAction, &QAction::toggled, this, &DebuggerWindow::showPcHistory);
     connect(_pcHistoryPane, &PcHistoryPane::addressPicked, ui->disassemblerWidget, &DisassemblerWidget::goToAddress);
     connect(this, &DebuggerWindow::readyForChildren, _pcHistoryPane, &PcHistoryPane::refresh);
     connect(labelsAction, &QAction::triggered, this, &DebuggerWindow::showLabelManager);
@@ -651,6 +670,7 @@ void DebuggerWindow::updateMachineActions()
     diskSectorAction->setToolTip(drives ? "View and edit a floppy sector's data field (CRC recalculated, the image "
                                           "counts as modified)"
                                         : "This machine has no floppy drives");
+    updateSidePane();
 }
 
 void DebuggerWindow::onBindingBound()
@@ -727,10 +747,9 @@ void DebuggerWindow::onBindingStateChanged(EmulatorStateEnum state)
 void DebuggerWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    if (pcHistoryAction && pcHistoryAction->isChecked() && !_pcHistoryPane->isRecording())
-        _pcHistoryPane->setRecording(true);
     if (_cpuTabs)
         _cpuTabs->setActive(true);  // a card in front follows the main CPU's steps again
+    updateSidePane();
     emit visibilityChanged(true);
 }
 
@@ -741,6 +760,7 @@ void DebuggerWindow::hideEvent(QHideEvent* event)
         _pcHistoryPane->setRecording(false);  // a closed debugger costs the emulation nothing
     if (_cpuTabs)
         _cpuTabs->setActive(false);  // nor does a card it showed
+    _nextPanesTimer->stop();  // nor do the Next panes
     emit visibilityChanged(false);
 }
 
@@ -1131,6 +1151,8 @@ void DebuggerWindow::updateState()
         ui->stackWidget->refresh();
 
         _pcHistoryPane->refresh();
+        updateSidePane();  // a model switch keeps the machine: the Next panes follow it
+        refreshNextPanes(false);
         showMemoryAtPc();
     }
     else
@@ -1825,10 +1847,45 @@ void DebuggerWindow::showLiveSource()
     _liveSourceWindow->activateWindow();
 }
 
-void DebuggerWindow::showPcHistory(bool shown)
+void DebuggerWindow::updateSidePane()
 {
-    _pcHistoryPane->parentWidget()->setVisible(shown);
-    _pcHistoryPane->setRecording(shown);
+    EmulatorContext* context = _emulator ? _emulator->GetContext() : nullptr;  // lifetime-ok: read once, not kept
+    const bool next = context && context->config.mem_model == MM_NEXT;
+    if (next != _nextMachine)
+    {
+        _nextMachine = next;
+        for (ReportPane* pane : _nextPanes)
+        {
+            pane->clearMarks();  // another machine: nothing to compare with
+            _sideTabs->setTabVisible(_sideTabs->indexOf(pane), next);
+        }
+        _sideGroup->setTitle(next ? "PC history / Next" : "PC history");
+    }
+    // The PC history records while its tab is in front of a shown window (records cost every instruction); the live
+    // refresh of a Next tab runs while one is in front, a paused machine is refreshed by its stop (updateState)
+    const bool shown = isVisible();
+    const bool history = shown && _sideTabs->currentWidget() == _pcHistoryPane;
+    if (_pcHistoryPane->isRecording() != history)
+        _pcHistoryPane->setRecording(history);
+    if (shown && qobject_cast<ReportPane*>(_sideTabs->currentWidget()))
+        _nextPanesTimer->start();
+    else
+        _nextPanesTimer->stop();
+}
+
+void DebuggerWindow::refreshNextPanes(bool live)
+{
+    if (!_emulator || !_nextMachine || !isVisible())
+        return;
+    ReportPane* pane = qobject_cast<ReportPane*>(_sideTabs->currentWidget());
+    if (!pane)
+        return;
+    if (!live && _emulator->IsDirectStepping())
+        return;  // the stepping's end refreshes (updateState)
+    Emulator::ContextLease lease = _emulator->LeaseContext();
+    if (!lease)
+        return;
+    pane->refresh(_emulator->GetContext(), live);  // lifetime-ok: the lease holds it for this refresh
 }
 
 void DebuggerWindow::showPortWatch()

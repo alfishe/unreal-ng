@@ -43,6 +43,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
+#include <QTableWidget>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QToolBar>
@@ -77,6 +78,7 @@
 #include "dialogs/debugger/disasmview.h"
 #include "dialogs/debugger/ttdcontrols.h"
 #include "dialogs/debugger/memoryview.h"
+#include "dialogs/debugger/nextviews.h"
 #include "dialogs/debugger/pagedmemory.h"
 #include "dialogs/debugger/sideviews.h"
 
@@ -949,6 +951,26 @@ int self_check(ecatshim::Emulator * m, QWidget * window)
     for (unsigned int i = 0; i < m->dm->device_count; i++)
         fields += m->dm->get_device(i)->device->get_device_fields().size();
     check(fields > 20, "devices tab has fields");
+
+    // A Next's own tabs (NextREG, MMU, Copper, Sprites, DMA, CTC / IM2): there on a Next only, each read whole
+    {
+        QTabWidget * side = tabs_with(window, "Devices");
+        QList<NextReportView *> views;  // in the tabs' order
+        for (int i = 0; side != nullptr && i < side->count(); i++)
+            if (auto * v = qobject_cast<NextReportView *>(side->widget(i))) views << v;
+        check(views.size() == 6, "next tabs: six views");
+        const bool next = !views.isEmpty() && views.front()->present();
+        bool shown = side != nullptr;
+        for (NextReportView * v : views) shown = shown && side->isTabVisible(side->indexOf(v)) == next;
+        check(shown, next ? "next tabs: shown on a Next" : "next tabs: hidden on another machine");
+        if (next) {
+            for (NextReportView * v : views) v->refresh();
+            check(views[0]->table() && views[0]->table()->rowCount() > 100, "next tabs: NextREG lists the registers");
+            check(views[1]->table() && views[1]->table()->rowCount() == 8, "next tabs: MMU lists the eight slots");
+            check(views[4]->fields()->topLevelItemCount() > 10, "next tabs: DMA fields");
+            check(views[5]->table() && views[5]->table()->rowCount() == 4, "next tabs: four CTC channels");
+        }
+    }
 
     window_check(window, cpu, check);
 
