@@ -1,6 +1,6 @@
 # MGT +D disk interface
 
-Created: 2026-11-15 · Status: **landed** (P0-P5; open: P5.3 MSVC / MinGW) · PLAN #123
+Created: 2026-11-15 · Status: **landed** (P0-P5; deferred: P0.6, P7 DISCiPLE) · PLAN #123
 
 One more machine configuration: the emulator read MGT images (`unrealdisk::LoaderMGT`) but had no +D, the interface
 they were made for. This folder designs the +D (Miles Gordon

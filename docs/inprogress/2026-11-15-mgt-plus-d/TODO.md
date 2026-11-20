@@ -4,7 +4,8 @@ Status: **P0-P4 done** (P4.5 2026-11-18), landed on master 4531969d5 (2026-11-18
 `48K-PLUSD` / `128K-PLUSD` machines in the Sinclair family of the Qt and handheld menus, the recipe
 `.recipe/machines/plusd.md`. 2026-11-19: P5.2 (the `basic` param on every plane, the MCP `inspect_state fdc` text
 for the card). P5.1, P5.4 (overlay only while paged in, card FDCs stepped behind a sleep flag), P5.5 done, landed
-e4399ec70 (2026-11-19). Open: P5.3 (MSVC / MinGW, batched).
+e4399ec70 (2026-11-19); G+DOS writes (P4.6) 9761657f2. Build checks are left to the GitHub CI / Release runs.
+Deferred: P0.6 (the PAL dump), P7 (DISCiPLE).
 
 ## Phases
 
@@ -123,7 +124,6 @@ e4399ec70 (2026-11-19). Open: P5.3 (MSVC / MinGW, batched).
   `.recipe/media/insert-disk.md` and `load-snapshot.md`, `.recipe/run/autostart-disk.md`, the device-history table,
   the `UNREAL_PLUSD_*` test variables in `docs/emulator/environment-variables.md`
 - [x] P5.2 All planes for the new fields / actions (`basic` on REST, WebSocket, MCP, CLI, Python, Lua, `media.open`); MCP live block `test_plusd.py`
-- [ ] P5.3 MSVC / MinGW build, zero warnings (the gcc / Linux build is dropped from this plan)
 - [x] P5.4 A/B benchmark (test-plan §6; results there). The card as landed cost a 48K without it about 3 % (the
   per-step loop over card FDCs) and kept its bus overlay on for good (48K-PLUSD idle +13.6 % over 48K). Fixed: the
   overlay is installed only while the card is paged in, and `MainLoop` steps card FDCs behind one flag that follows
