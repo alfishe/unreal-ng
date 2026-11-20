@@ -5,8 +5,7 @@ A Sinclair 48K or 128K with the MGT +D disk interface on its edge connector: G+D
 
 Ground truth: the variants in [machinevariants.cpp](../../core/src/emulator/machinevariants.cpp) (`48K-PLUSD`,
 `128K-PLUSD`), the card in [plusdcard.cpp](../../core/src/emulator/slots/cards/plusd/plusdcard.cpp), the autostart
-in [plusdautostart.cpp](../../core/src/emulator/slots/cards/plusd/plusdautostart.cpp), the design and the corpus
-results in [docs/inprogress/2026-11-15-mgt-plus-d/](../../docs/inprogress/2026-11-15-mgt-plus-d/README.md).
+in [plusdautostart.cpp](../../core/src/emulator/slots/cards/plusd/plusdautostart.cpp), the design in [docs/inprogress/2026-11-15-mgt-plus-d/](../../docs/inprogress/2026-11-15-mgt-plus-d/README.md).
 
 ## Setup
 
@@ -23,7 +22,7 @@ results in [docs/inprogress/2026-11-15-mgt-plus-d/](../../docs/inprogress/2026-1
   - G+DOS loads `+SYS` from drive 1 on `RUN`. A disk without `+SYS` needs the system disk first:
     [data/boot/plusd/gdos-2a-system.mgt](../../data/boot/plusd/README.md) (the autostart does this itself).
 - **Which machine for a work:** a type 9 (128K) snapshot, a 128K loader or a work that needs 128 BASIC goes on
-  `128K-PLUSD`; the rest runs on `48K-PLUSD`. Of 243 corpus disks, 217 run on both, 24 need the 128K.
+  `128K-PLUSD`; the rest runs on `48K-PLUSD`.
 
 ## MCP (preferred)
 

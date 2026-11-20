@@ -10,7 +10,7 @@
 #include "emulator/mainloop.h"
 #include "emulator/slots/cards/plusd/plusdautostart.h"
 
-/// The MGT +D's cost per frame (docs/inprogress/2026-11-15-mgt-plus-d/test-plan.md §7): a 48K without the card, a
+/// The MGT +D's cost per frame (docs/inprogress/2026-11-15-mgt-plus-d/test-plan.md §6): a 48K without the card, a
 /// 48K-PLUSD idle in BASIC (the card traps KEY-SCAN at #028E every interrupt, so it pages in and out each frame),
 /// and a 48K-PLUSD while G+DOS reads the system disk (the autostart's `LOAD d1"CONFIG"`: the WD1772 busy, the motor
 /// on). Frames through MainLoop::RunFramePublic() at 1x (no turbo), after 300 frames of boot.
