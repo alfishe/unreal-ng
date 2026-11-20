@@ -11,6 +11,7 @@ project(unreal-qt LANGUAGES CXX)
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Sanitize.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Lto.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../cmake/Pgo.cmake)
 
 # Automation options follow the root CMakeLists.txt (single source of truth).
 # option() never overrides an existing cache entry: in a root-level build the values
@@ -254,6 +255,8 @@ set_source_files_properties(src/widgets/crtrenderer.cpp src/widgets/crtbeammodel
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/fp:precise,-ffp-contract=off>")
 
 add_executable(${PROJECT_NAME} ${CPP_FILES} ${UI_HEADERS} ${APP_ICON_MACOS})
+# The executable the PGO training runs (cmake/Pgo.cmake; MSVC instruments at this link)
+unreal_pgo_target(${PROJECT_NAME})
 
 # Application icon as a Qt resource (window / taskbar icon on Windows and Linux).
 # AUTORCC is off, so the .qrc is compiled explicitly.

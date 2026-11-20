@@ -43,6 +43,11 @@ loop configure once with `-DENABLE_LTO=OFF` (the next `build.sh` runs keep it). 
 link takes over 40 minutes there) and in sanitizer builds. gcc's cross-unit warnings (`-Wodr`) only appear with it:
 a class or an enum that differs between two files is reported at link time.
 
+**The release packages are profile-guided** ([`cmake/Pgo.cmake`](../../cmake/Pgo.cmake), `UNREAL_PGO`): the release
+workflow builds an instrumented `unreal-qt`, runs its training ([`tools/pgo/`](../pgo/README.md)) and rebuilds with
+the profile, about 20 % less frame time. Local and agent builds stay without it; to reproduce a package's code, follow
+[`tools/pgo/README.md`](../pgo/README.md).
+
 `build.sh` also runs the **source checks of the CI `lint` job** first
 (`tools/verification/gui-instance-reads.sh`, a fraction of a second). A failure is printed as
 `== lint FAILED` above the build output and does not stop the build: the CI `lint` job fails on it alone, without

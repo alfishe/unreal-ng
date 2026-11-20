@@ -47,6 +47,8 @@ project(unreal VERSION 1.0.0)
 # -DSANITIZE=address,undefined | thread: before any target (docs/testing/sanitizers.md)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitize.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Lto.cmake)
+# -DUNREAL_PGO=GENERATE | USE: the release workflow's profile-guided build (tools/pgo/README.md)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Pgo.cmake)
 
 # Validate toolchain/dependency compatibility (MSVC+vcpkg OR MinGW+pacman)
 validate_toolchain_dependencies()

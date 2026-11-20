@@ -35,6 +35,11 @@
 # lib/SDL, static; -DUNREAL_TUI_SDL_REQUIRED=ON fails a configure without it, the checks read the video drivers from
 # --help), beside unreal-qt (macOS: UnrealNG.app/Contents/MacOS).
 #
+# Profile-guided optimisation (cmake/Pgo.cmake, tools/pgo/README.md): every build job configures with
+# -DUNREAL_PGO=GENERATE, builds the instrumented unreal-qt, runs tools/pgo/train.py with it (headless: every model
+# boots, two programs, DOOM on VDAC4 with the ESP32 JIT and interpreter) and rebuilds everything with
+# -DUNREAL_PGO=USE in the same build directory. About 20 % less frame time; the jobs take about twice as long.
+#
 # Dependencies: everything except Qt is vendored and linked statically. Qt comes
 # from the Qt SDK - on Linux baked into the project's build image
 # (docker/Dockerfile.universal), on macOS/Windows from the cached install-qt-action -
@@ -65,6 +70,7 @@ on:
       - 'cmake/**'
       - '.github/workflows/release.yml'
       - 'tools/package-appimage.sh'
+      - 'tools/pgo/**'
       - 'lib/SDL'
       - 'companions/streamdeck/linux/**'
       - 'companions/streamdeck/studio/install/**'
@@ -162,10 +168,21 @@ jobs:
             -DUNREAL_BUNDLE_QT=ON \
             -DUNREAL_STREAMDECK=ON \
             -DUNREAL_TUI_SDL_REQUIRED=ON \
-            -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64
+            -DUNREAL_PACKAGE_BASENAME=UnrealNG-Suite-Linux-x86_64 \
+            -DUNREAL_PGO=GENERATE
+
+      # Profile-guided build (cmake/Pgo.cmake, tools/pgo/README.md): an instrumented unreal-qt, its training run,
+      # then everything rebuilt with the profile in the same build directory
+      - name: Build instrumented unreal-qt (PGO)
+        run: cmake --build build --parallel --target unreal-qt
+
+      - name: PGO training run
+        run: python3 tools/pgo/train.py build/bin/unreal-qt --profile-dir build/pgo
 
       - name: Build
-        run: cmake --build build --parallel
+        run: |
+          cmake -S . -B build -DUNREAL_PGO=USE
+          cmake --build build --parallel
 
       - name: Package DEB
         run: cpack --config build/CPackConfig.cmake -G DEB
@@ -371,11 +388,24 @@ jobs:
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
-            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DUNREAL_PGO=GENERATE
+
+      # Profile-guided build (cmake/Pgo.cmake, tools/pgo/README.md): an instrumented unreal-qt, its training run,
+      # then everything rebuilt with the profile in the same build directory
+      - name: Build instrumented unreal-qt (PGO)
+        shell: bash
+        run: cmake --build build --parallel --target unreal-qt
+
+      - name: PGO training run
+        shell: bash
+        run: python tools/pgo/train.py build/bin/unreal-qt.exe --profile-dir build/pgo
 
       - name: Build
         shell: bash
-        run: cmake --build build --parallel
+        run: |
+          cmake -S . -B build -DUNREAL_PGO=USE
+          cmake --build build --parallel
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
@@ -499,11 +529,24 @@ jobs:
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
-            -DQT_INSTALL_PATH="$QT_PATH"
+            -DQT_INSTALL_PATH="$QT_PATH" \
+            -DUNREAL_PGO=GENERATE
+
+      # Profile-guided build (cmake/Pgo.cmake, tools/pgo/README.md): an instrumented unreal-qt, its training run,
+      # then everything rebuilt with the profile in the same build directory
+      - name: Build instrumented unreal-qt (PGO)
+        shell: msys2 {0}
+        run: cmake --build build --parallel --target unreal-qt
+
+      - name: PGO training run
+        shell: msys2 {0}
+        run: python3 tools/pgo/train.py build/bin/unreal-qt.exe --profile-dir build/pgo
 
       - name: Build
         shell: msys2 {0}
-        run: cmake --build build --parallel
+        run: |
+          cmake -S . -B build -DUNREAL_PGO=USE
+          cmake --build build --parallel
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
@@ -643,10 +686,21 @@ jobs:
             -DTRANTOR_USE_TLS=none \
             -DBUILD_C-ARES=OFF \
             -DPACKAGE_SYMBOLS=${{ env.PACKAGE_SYMBOLS }} \
-            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}"
+            -DQT_INSTALL_PATH="${{ env.QT_ROOT_DIR }}" \
+            -DUNREAL_PGO=GENERATE
+
+      # Profile-guided build (cmake/Pgo.cmake, tools/pgo/README.md): an instrumented unreal-qt, its training run,
+      # then everything rebuilt with the profile in the same build directory
+      - name: Build instrumented unreal-qt (PGO)
+        run: cmake --build build --parallel --target unreal-qt
+
+      - name: PGO training run
+        run: python3 tools/pgo/train.py build/bin/unreal-qt.app/Contents/MacOS/unreal-qt --profile-dir build/pgo
 
       - name: Build
-        run: cmake --build build --parallel
+        run: |
+          cmake -S . -B build -DUNREAL_PGO=USE
+          cmake --build build --parallel
 
       - name: Package Symbols
         if: env.PACKAGE_SYMBOLS == 'ON'
