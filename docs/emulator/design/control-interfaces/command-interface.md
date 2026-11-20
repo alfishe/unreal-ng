@@ -503,8 +503,9 @@ Commands to control the CPU execution flow for the selected emulator instance. T
   travel move ends the timeline: the next run counts from where the machine stands. Time travel's own internal
   `RunTStates` calls stay off the timeline (one instruction at least, counted from the current position). A state
   transfer (`MachineStateTransfer`, clone) hands the source's timeline to the target, so both continue alike.
-  The CPU profile books an instruction, and a frame end it crossed, when the next one starts: a report read right
-  after a run whose target lies within the first instruction of a frame shows that frame's end with the next run.
+  The CPU profile books the run's last instruction and a frame end it crossed when the run ends: a report read right
+  after a run counts every frame end and T-state it ran, wherever its target lies
+  ([cpu-profile.md](../../analysis/cpu-profile.md), "The window's end").
 
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.

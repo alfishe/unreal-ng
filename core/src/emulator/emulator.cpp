@@ -27,6 +27,7 @@
 #include "common/systemhelper.h"
 #include "common/threadhelper.h"
 #include "common/timehelper.h"
+#include "debugger/analyzers/analyzermanager.h"
 #include "debugger/breakpoints/breakpointmanager.h"
 #include "debugger/callbacks/scriptcallbacks.h"
 #include "debugger/debugmanager.h"
@@ -2065,6 +2066,10 @@ void Emulator::WaitWhilePaused()
         screen->UpdateScreen();
     if (IsPaused())
         NoteDebugChange();   // a stop (a breakpoint's park inside the frame) the debugger snapshot's seq counts
+    // The analyzers close what they keep pending: a report read while parked has the last instruction
+    if (_context && _context->pDebugManager)
+        if (AnalyzerManager* analyzers = _context->pDebugManager->GetAnalyzerManager())
+            analyzers->dispatchRunStop();
 
     // Parks until the machine may run again, serving posted commands meanwhile; false on stop (the frame then
     // finishes and MainLoop::Run sees the stop request). Parked, this thread does not drive the Z80

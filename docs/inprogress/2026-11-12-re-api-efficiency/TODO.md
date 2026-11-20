@@ -22,8 +22,9 @@
   analysis) stay off it; `MachineStateTransfer` hands the source's timeline to the target (a clone continues
   alike). `core/tests/emulator/runsplit_test.cpp`: 100 == 30+70 == 1x100 == t-state slices, digest equal on
   Pentagon, 48K, General Sound and tight General Sound (a 47-T loop, so every run overshoots; a control test shows
-  the old rule drifts). Tests that relied on the drift: ProfileAnalyzer InterruptsHaltMarksAndFrames (window now
-  starts mid-frame), GmxBoot LoaderSchemeFour (both machines start at the same t mod 4: HALT's 4-T phase), TTD CI
+  the old rule drifts). Tests that relied on the drift: ProfileAnalyzer InterruptsHaltMarksAndFrames (window started
+  mid-frame; since 2026-11-20 the profile books the last instruction and its frame end at the frame end and at the
+  run's end, so the test is back at t=0 and a run ending on a frame's first instruction shows N frames), GmxBoot LoaderSchemeFour (both machines start at the same t mod 4: HALT's 4-T phase), TTD CI
   gate bm7_file rows (1 / 4 / 18 bytes less: the saved tail is shorter).
 - [x] F3: TTD dump failure reasons; chunk records over 1 GiB; partial file handling (M).
   As built (2026-11-16, uncommitted on `transfer-dump`): the cause was measured, the write journal written whole with

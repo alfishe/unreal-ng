@@ -177,6 +177,10 @@ void DebugManager::SelectCpu(DebugCpuId cpu)
 
 void DebugManager::OnDirectRun(bool running)
 {
+    // The run's last instruction ended: the analyzers close what they keep pending (the CPU profile books it and a
+    // frame end it crossed, instead of at the next run's first instruction)
+    if (!running && _analyzerManager)
+        _analyzerManager->dispatchRunStop();
     if (SelectedCpu() == DebugCpuId::Main)
     {
         _directRun.store(running, std::memory_order_release);
