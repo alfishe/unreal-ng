@@ -193,10 +193,18 @@ reach its boundary.
   `OpenApiTTDCards_Test`, MCP and Lua tests, live `tools/verification/mcp/test_ttd_card_positions.py`.
 - [x] UI (landed a6be6598d 2026-11-18): eCat's time group on the card's tab (Step Back, F7 in the past,
   Run Back to the card's breakpoints; in process and over REST), the moment naming both CPUs (`gs at instruction N,
-  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded has no card CPU view, its moment label shows a
-  card position. [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
+  PC #...; main CPU PC #..., +N T into the next instruction`); Embedded's moment label shows a card position (and,
+  since its processor tabs, its time group is the card's too: the item below). [TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md#8-positions-on-a-sound-cards-cpu-2026-11-18).
   Tests: `DebuggerTimeTravelCard_Test`, `unreal-debugger --self-check` (both modes).
-- [ ] Embedded: a CPU selector (Main / GS / MS) for its registers and disassembler (proposed, not built).
+- [x] Embedded: processor tabs (2026-11-18): Main CPU plus one per card CPU fitted (GS / NeoGS, MultiSound GS), no bar
+  with the main CPU alone. The tab in front retargets the registers (card edits through `CpuView::SetRegister`), the
+  stack, the memory pages (the card's windows by name), the memory view (the card's 64 KB, 16 KB at a time), the
+  disassembly (`debuggercpu::CardSource`: the card's bytes, labels and breakpoints; F2 toggles the card's), the steps
+  and run to cursor (`RunControl::CardStep`, also Debug menu's and the main window's keys) and the time group
+  (`DebuggerTimeTravel::setCpu`: the card verbs, as eCat). A card's stop brings its tab forward once per
+  `LastStop().serial`; a move in time does not. Guiplane: `debugger.select_cpu {cpu}`, `cpu` / `cpus` in the
+  `debugger` state, `cpu` in the views'. Code: `unreal-qt/src/debugger/debuggercpu.cpp`. Tests:
+  `DebuggerCpuTabs_Test` (unreal-qt-tests).
 
 ### Later
 

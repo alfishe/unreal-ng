@@ -39,7 +39,8 @@ protected:
 
     // Device reroute handling (OS default-output change / hotplug)
     std::atomic<bool> _shuttingDown{false};
-    std::atomic<bool> _silent{false};  ///< a windowless session: zeros out, the clock unchanged
+    std::atomic<bool> _silent{false};
+    bool _lowLatency = false;  ///< setLowLatency: the period init() asks for  ///< a windowless session: zeros out, the clock unchanged
     // macOS: CoreAudio property listener for NOMINAL SAMPLE RATE changes on
     // the SAME device (e.g. Audio MIDI Setup / Background Music switching
     // 48k -> 192k). miniaudio only fires 'rerouted' on device changes, not
@@ -106,6 +107,10 @@ public:
     void stop();
     /// Silent output: the device keeps running and pulling samples (it paces the emulation), the speakers get zeros
     void setSilent(bool silent) { _silent.store(silent, std::memory_order_relaxed); }
+    /// The bound machine's feature lowlatency: a shorter device period where the platform keeps up with one (macOS:
+    /// 128 frames instead of 256, measured clean under load); the device opens again when its period changes (GUI
+    /// thread)
+    void setLowLatency(bool lowLatency);
 
 signals:
     /// Emitted after the audio device was re-established at a DIFFERENT native

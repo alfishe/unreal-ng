@@ -174,6 +174,7 @@ private slots:
     void handleEmulatorSelectionChanged(int id, Message* message);
     /// An automation session took, released or lost control of an emulator (any thread): the guard re-reads it
     void handleRunControlChanged(int id, Message* message);
+    void handleFeatureChanged(int id, Message* message);
     /// The toolbar's Take Back Control and the HUD's REMOTE indicator follow the guard
     void updateRemoteControlUi();
     void openFileDialog();
@@ -208,6 +209,7 @@ private slots:
     void handleFastDiskToggled(bool enabled);
     void handleAutostartDisksToggled(bool enabled);
     void handleContentionToggled(bool enabled);
+    void handleLowLatencyToggled(bool enabled);
     void handleFrontPanelTurboToggled(bool on);
     void handleFrontPanelCpmToggled(bool on);
     void handleStepIn();
@@ -217,6 +219,9 @@ private slots:
     void handleStepOut();
     void handleRunToCursor();
     void submitGuiAction(const char* id, StateNode params = StateNode::Object());
+    /// A step of the card in front of the Embedded debugger (`kind` in / over / out / to): false with the main CPU in
+    /// front or the debugger hidden (the step is the main CPU's as before)
+    bool cardStepInDebugger(const char* kind, uint16_t address = 0);
     // Debug menu: breakpoints and the debugger's panes
     void handleToggleBreakpoint();
     void handleClearAllBreakpoints();
@@ -401,7 +406,11 @@ private:
     /// While a file is dragged over the window: the highlight; nothing takes it:
     /// the red refusal over the screen at once; several slots take it: the drop
     /// zones after a 1.5 s hold
-    void showDropVerdict(const QString& filePath);
+    /// `refusal`: the drag carries no file that can be opened, and why (DropPaths)
+    void showDropVerdict(const QString& filePath, const QString& refusal = QString());
+    void connectScreenDrops();  ///< the screen window's drag and drop to this window's drop handling
+    /// A drop's files (DropPaths): opened after the drop event returns, or why none can be, over the screen
+    void onFilesDropped(const QStringList& paths, const QString& refusal);
     void clearDropVerdict();
     void onDropDragLeft();
     /// The screen area in global coordinates (where the overlay goes)

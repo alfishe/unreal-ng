@@ -132,8 +132,8 @@ TEST_F(NextDma_Test, BurstModeMovesOneByteAndThePrescalerPacesTheNextOnes)
     Send({0xCF, 0x87});
     EXPECT_EQ(_dma.Run(256, 0), 1u) << "burst: one byte";
     EXPECT_TRUE(_dma.Waiting());
-    EXPECT_EQ(_dma.Run(256, 10), 0u) << "the prescaler period (2 * 32 clocks) has not passed";
-    EXPECT_EQ(_dma.Run(256, 64), 1u);
+    EXPECT_EQ(_dma.Run(256, 87), 0u) << "the prescaler period (2 * 32 clocks), WAITING_CYCLES -> START_DMA and BUSRQ's sampling have not passed";
+    EXPECT_EQ(_dma.Run(256, 88), 1u) << "3.5 MHz: 8 CPU clocks to the period, +1 to see the timer, +1 START_DMA, +1 the T80 registers BUSRQ";
 }
 
 TEST_F(NextDma_Test, DisableAndResetStopTheTransfer)
@@ -155,17 +155,17 @@ TEST_F(NextDma_Test, TheLastBytesPrescalerPeriodIsWaitedBeforeTheBlockEnds)
 {
     Send({0x7D, 0x00, 0x80, 0x02, 0x00});
     Send({0x14});
-    Send({0x50, 0x20, 0x02});  // prescaler 2: 64 clocks of 28 MHz between bytes
+    Send({0x50, 0x20, 0x02});  // prescaler 2: 64 clocks of 28 MHz, then two CPU clocks to FINISH_DMA / START_DMA (+1 BUSRQ's sampling)
     Send({0xCD, 0x00, 0x90});
     Send({0xCF, 0x87});
     EXPECT_EQ(_dma.Run(256, 0), 1u);
-    EXPECT_EQ(_dma.Run(256, 64), 1u) << "the last byte";
+    EXPECT_EQ(_dma.Run(256, 88), 1u) << "the last byte";
     EXPECT_TRUE(_dma.Active()) << "its period is still to be waited";
     EXPECT_FALSE(_dma.EndOfBlock());
     EXPECT_TRUE(_dma.Waiting());
-    EXPECT_EQ(_dma.Run(256, 127), 0u);
+    EXPECT_EQ(_dma.Run(256, 167), 0u);
     EXPECT_TRUE(_dma.Active());
-    EXPECT_EQ(_dma.Run(256, 128), 0u);
+    EXPECT_EQ(_dma.Run(256, 168), 0u);
     EXPECT_FALSE(_dma.Active()) << "the period is over: the block ends";
     EXPECT_TRUE(_dma.EndOfBlock());
 }
@@ -180,9 +180,9 @@ TEST_F(NextDma_Test, AutoRestartKeepsTheByteSpacingAcrossTheSeam)
     Send({0xCF, 0x87});
     EXPECT_EQ(_dma.Run(256, 0), 1u);
     EXPECT_EQ(_dma.Run(256, 1), 0u);
-    EXPECT_EQ(_dma.Run(256, 63), 0u);
-    EXPECT_EQ(_dma.Run(256, 64), 0u) << "the seam is crossed";
-    EXPECT_EQ(_dma.Run(256, 64), 1u) << "the next pass's first byte";
+    EXPECT_EQ(_dma.Run(256, 79), 0u);
+    EXPECT_EQ(_dma.Run(256, 80), 0u) << "the seam is crossed";
+    EXPECT_EQ(_dma.Run(256, 80), 1u) << "the next pass's first byte";
 }
 
 // An auto-restart does not clear the end-of-block flag (only LOAD, CONTINUE, 0x8B and a reset do): the status reads 0x1A
@@ -209,7 +209,7 @@ TEST_F(NextDma_Test, OnlyBurstModeReleasesTheBusInThePrescalerWait)
     EXPECT_EQ(_dma.Run(256, 0), 1u);
     EXPECT_TRUE(_dma.Waiting());
     EXPECT_TRUE(_dma.HoldsBus()) << "continuous: the CPU stays stopped";
-    EXPECT_EQ(_dma.WaitEnd(), 64u);
+    EXPECT_EQ(_dma.WaitEnd(), 88u) << "8 clocks to the period, WAITING_CYCLES sees it a clock later, then WAITING_ACK, READ_1";
     Send({0xCD});  // burst
     EXPECT_FALSE(_dma.HoldsBus());
 }
@@ -248,10 +248,9 @@ TEST_F(NextDma_Test, StatusBitZeroIsSetBetweenTheBytesOfARunningBlock)
     EXPECT_EQ(_dma.Run(256, 0), 1u);
     Send({0xBF});
     EXPECT_EQ(_dma.Read(), 0x3B);
-    _dma.Run(256, 64);
-    _dma.Run(256, 128);
-    _dma.Run(256, 192);
-    _dma.Run(256, 256);
+    _dma.Run(256, 88);   // the bytes are 88 clocks apart (prescaler 2 at 3.5 MHz, dma.vhd WAITING_CYCLES -> START_DMA, BUSRQ sampled)
+    _dma.Run(256, 176);
+    _dma.Run(256, 256);  // the last byte's wait (80 clocks, no bus to ask for) is over: FINISH_DMA
     Send({0xBF});
     EXPECT_FALSE(_dma.Active());
     EXPECT_EQ(_dma.Read() & 1, 0);
@@ -301,4 +300,134 @@ TEST_F(NextDma_Test, AWr4WithOnlyBit4SetLocksTheRegisterInterfaceUntilReset)
     _dma.Reset();
     MemoryCopy(0x8000, 0x9000, 4);
     EXPECT_TRUE(_dma.Active());
+}
+
+// dma.vhd WRITE_4: with im2_dma_delay up after a byte that is not the last, the sequencer goes to START_DMA, gives the bus back and
+// waits there; the block goes on from the next byte once the delay is over
+TEST_F(NextDma_Test, TheInterruptDelayStopsABlockAtTheNextByteBoundary)
+{
+    bool delay = false;
+    unsigned writes = 0;
+    NextDma::Bus bus;
+    bus.readMemory = [this](uint16_t a) { return _memory[a]; };
+    bus.writeMemory = [&](uint16_t a, uint8_t v) {
+        _memory[a] = v;
+        if (++writes == 3)
+            delay = true;  // the chosen interrupt comes during the third byte
+    };
+    bus.delay = [&]() { return delay; };
+    _dma.SetBus(bus);
+    for (unsigned i = 0; i < 8; i++)
+        _memory[0x8000 + i] = static_cast<uint8_t>(0x40 + i);
+    MemoryCopy(0x8000, 0x9000, 8);
+    EXPECT_EQ(_dma.Run(256, 0), 3u) << "the byte under way is finished, the next one waits";
+    EXPECT_TRUE(_dma.Active());
+    EXPECT_FALSE(_dma.BusHeld()) << "START_DMA drops BUSRQ";
+    EXPECT_EQ(_dma.Counter(), 3);
+    EXPECT_EQ(_memory[0x9003], 0);
+    delay = false;
+    EXPECT_EQ(_dma.Run(256, 0), 5u);
+    EXPECT_FALSE(_dma.Active());
+    for (unsigned i = 0; i < 8; i++)
+        EXPECT_EQ(_memory[0x9000 + i], 0x40 + i);
+}
+
+// The gate is looked at only on the WRITE_4 -> READ_1 path: not after the last byte (FINISH_DMA) and not on the way out of a prescaler
+// wait of a held bus (WAITING_CYCLES -> WAITING_ACK)
+TEST_F(NextDma_Test, TheInterruptDelayIsNotAskedAfterTheLastByteOrAPrescalerWait)
+{
+    unsigned asked = 0;
+    NextDma::Bus bus;
+    bus.readMemory = [this](uint16_t a) { return _memory[a]; };
+    bus.writeMemory = [this](uint16_t a, uint8_t v) { _memory[a] = v; };
+    bus.delay = [&]() {
+        asked++;
+        return true;
+    };
+    _dma.SetBus(bus);
+    MemoryCopy(0x8000, 0x9000, 1);
+    EXPECT_EQ(_dma.Run(256, 0), 1u);
+    EXPECT_FALSE(_dma.Active()) << "a one-byte block ends without asking";
+    EXPECT_EQ(asked, 0u);
+
+    Send({0x7D, 0x00, 0x80, 0x03, 0x00});
+    Send({0x14});
+    Send({0x50, 0x20, 0x02});  // prescaler 2
+    Send({0xAD, 0x00, 0x90});  // continuous
+    Send({0xCF, 0x87});
+    uint64_t now = 0;
+    unsigned moved = 0;
+    for (unsigned i = 0; i < 10 && _dma.Active(); i++, now += 64)
+        moved += _dma.Run(256, now);
+    EXPECT_EQ(moved, 3u);
+    EXPECT_FALSE(_dma.Active());
+    EXPECT_EQ(asked, 0u) << "continuous with a prescaler keeps the bus through the delay";
+}
+
+// The prescaler period on the RTL (dma.vhd, POC 036 `dmaprescc` in GHDL): the timer clears in READ_1, adds the 28 MHz clocks of a CPU
+// clock each CPU clock and is compared registered, then WAITING_ACK and READ_1 follow. At 3.5 MHz with N = 4 the board's port writes
+// are 152 clocks of 28 MHz apart (32 N + 3 CPU clocks), at 28 MHz 32 N + 3; a byte that outlasts the period goes on without a wait
+class NextDmaClock_Test : public NextDma_Test
+{
+protected:
+    uint64_t _clock = 0;
+    unsigned _ticks = 8;
+    std::vector<uint64_t> _writesAt;
+
+    void Bind(unsigned ticks)
+    {
+        _ticks = ticks;
+        _dma.SetClockTicks(ticks);
+        NextDma::Bus bus;
+        bus.readMemory = [this](uint16_t a) { return _memory[a]; };
+        bus.writeMemory = [this](uint16_t a, uint8_t v) {
+            _memory[a] = v;
+            _writesAt.push_back(_clock);
+        };
+        bus.advance = [this](unsigned clocks) { _clock += static_cast<uint64_t>(clocks) * _ticks; };
+        bus.now28 = [this]() { return _clock; };
+        _dma.SetBus(bus);
+    }
+    /// A continuous block of `bytes` with prescaler `n` (timing 3 + 3); the host's part: idle clocks to the end of each wait
+    void RunContinuous(uint8_t n, uint8_t bytes)
+    {
+        Send({0x7D, 0x00, 0x80, bytes, 0x00});
+        Send({0x14});
+        Send({0x50, 0x21, n});
+        Send({0xAD, 0x00, 0x90});
+        Send({0xCF, 0x87});
+        for (unsigned guard = 0; guard < 1000 && _dma.Active(); guard++)
+        {
+            _dma.Run(256, _clock);
+            while (_dma.Waiting() && _clock < _dma.WaitEnd())
+                _clock += _ticks;
+        }
+    }
+};
+
+TEST_F(NextDmaClock_Test, ContinuousPrescalerSpacingIsTheRtls)
+{
+    Bind(8);
+    RunContinuous(4, 4);
+    ASSERT_EQ(_writesAt.size(), 4u);
+    for (size_t i = 1; i < _writesAt.size(); i++)
+        EXPECT_EQ(_writesAt[i] - _writesAt[i - 1], 152u) << "3.5 MHz, N = 4 (GHDL: 152)";
+}
+
+TEST_F(NextDmaClock_Test, ContinuousPrescalerSpacingAt28MHz)
+{
+    Bind(1);
+    RunContinuous(1, 3);
+    ASSERT_EQ(_writesAt.size(), 3u);
+    EXPECT_EQ(_writesAt[1] - _writesAt[0], 35u) << "32 + 3 CPU clocks";
+    EXPECT_EQ(_writesAt[2] - _writesAt[1], 35u);
+}
+
+TEST_F(NextDmaClock_Test, AByteLongerThanThePeriodIsNotFollowedByAWait)
+{
+    Bind(8);
+    RunContinuous(1, 3);  // 32 clocks of 28 MHz: the 6-clock byte's WRITE_4 already sees the timer at 32
+    ASSERT_EQ(_writesAt.size(), 3u);
+    EXPECT_EQ(_writesAt[1] - _writesAt[0], 48u) << "the byte's own 6 CPU clocks";
+    EXPECT_EQ(_writesAt[2] - _writesAt[1], 48u);
 }

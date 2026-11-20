@@ -12,6 +12,15 @@ Planned, in this order:
   waits a clock on every CPU and DMA read of the SRAM (a DMA read with cycle length 2 takes 2 + 1), core 3.03 (`NEXT-DDMA`) on none (the
   Z80 at 28 MHz without the +1, a DMA read in its cycle length). `PortDecoder_Next::UpdateContention`, pinned by
   `NextDdmaVariant_Test.OnlyCore30203WaitsForTheSramAt28MHz`. Plan: `design-zxnddma.md` section 8
+- [x] DMA against MAME (fc76bc07, 2026-11-19) and the RTL (2026-11-18): the IM2 DMA delay (NR #CC-#CE) now stops a running block at the
+  next byte boundary (dma.vhd WRITE_4 -> START_DMA; the requests are latched at the DMA's clock, `NextInterruptSource::DmaDelayAt`), and
+  the prescaler period is the RTL's, 32 N + 3 CPU clocks in continuous mode (POC 036 `dmaprescc` in GHDL: 152 clocks of 28 MHz at
+  3.5 MHz, N = 4; 0 durations differ after the fix). Audit: `audit-dma-timing-2026-10-09.md` section "MAME and the RTL, 2026-11-18"
+- [x] The DMA takes the bus inside an instruction (2026-11-19): the burst mode's next byte and the enable's first byte go at the T80's
+  machine-cycle ends (`Z80NEngine` contention hook, `IMachineCycleEndTurn`, `Z80nCpuIdleLeft`), the burst wait with the +1 clock of the
+  sampled BUSRQ. POC 036 `dmaprescb` / `dmaburst` / `dmaprescc` / `dmacont` on 48K / 128K / +3: 0 durations differ. `mod_player.nex`
+  NEXT-DDMA 3 blocks ahead of NEXT: no SRAM wait at 28 MHz on core 3.03, the init is shorter (audit section "The bus inside an
+  instruction, 2026-11-19")
 - [ ] zxnDDMA: the issue-dependent SRAM range (issue 2/4/5), history / report / automation planes for the new DMA state
 - [x] Host hard reset on every plane (2026-11-12): `Reset()` is the board's soft reset, `Reset(true)` the power-on (boot ROM + firmware);
   CLI `reset hard`, Python `reset(hard=True)`, Lua `reset{hard = true}`, MCP `emulator_manage {action: reset, hard: true}`, REST / WebSocket
@@ -47,7 +56,8 @@ Planned, in this order:
   (`z80dma` `clk_i = i_CLK_CPU`, the +3 wait through `dma_wait_n`, zxnext.vhd 1844), so `NextDma::Bus::contend` gives its memory cycles
   the CPU's waits; test `NextSkeleton_Test.DmaCyclesWaitOnContendedMemoryNotOnPorts`; 2026-10-26 by the RTL (POC 036): its port
   cycles take no port contention, only the address's).
-  No change for the rest: the DMA steps between instructions, so it never runs inside a RETI and the tail ends with it as
+  No change for the rest: the DMA steps between instructions (since 2026-11-19 a burst byte and the enable's first byte also at a
+  machine-cycle end inside one, the in-service state lasting to the RETI's callback), and the tail ends with it as
   `NextInterruptSource::DmaDelay` (in service until the RETI) does; the `z80dma` of the core has no interrupt output (zxnext.vhd 1773:
   no int port), so there is no DMA interrupt pulse; the expansion bus has no devices, so nothing arbitrates with it)
 - [x] DMA: the heights of the `dma` / `zilogDMA` border blocks are not measured (a board photo) (done 2026-10-26 by the RTL: POC 036

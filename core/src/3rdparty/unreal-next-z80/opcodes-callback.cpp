@@ -118,8 +118,9 @@ static Z80NINLINE void Z80nHaltT(Z80nRegs*& rf, Z80nCPU* cpu, int& tact)
 
 // Internal (no-MREQ) T-states with addr on the address bus (cpuidle): the
 // plain count without a contention hook; with one, one Z80nCpuAccessInternal
-// call per T-state at its start, its waits inserted before that T. No MREQ,
-// so no waits but the hook's.
+// call per T-state at its start, its waits inserted before that T, with the
+// group's T-states left from it on (Z80nCpuIdleLeft). No MREQ, so no waits
+// but the hook's.
 static Z80NINLINE void Z80nIdleT(Z80nRegs*& rf, Z80nCPU* cpu, uint16_t addr, int n, int& tact)
 {
     if (__builtin_expect(cpu->contend == nullptr, 1))
@@ -129,6 +130,7 @@ static Z80NINLINE void Z80nIdleT(Z80nRegs*& rf, Z80nCPU* cpu, uint16_t addr, int
     }
     for (int i = 0; i < n; i++)
     {
+        cpu->idleLeft = n - i;
         tact += Z80nContendSlow(cpu, addr, Z80nCpuAccessInternal, tact);
         tact += 1;
     }

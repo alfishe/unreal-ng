@@ -14,6 +14,7 @@
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
 #include "emulator/cpu/z80.h"
+#include "debugger/targets/debugcpuid.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class RegistersWidget; }
@@ -30,6 +31,10 @@ public:
     virtual ~RegistersWidget() override;
 
     void setZ80State(Z80State* state);
+    /// The CPU the registers are (the window's processor tab): a card's are edited through its debug target
+    /// (CpuView::SetRegister), its ISR read in its own memory, and it has no T counter of the frame
+    void setCpu(DebugCpuId cpu) { m_cpu = cpu; }
+    DebugCpuId cpu() const { return m_cpu; }
     /// The 16-bit value cells a double click follows into the memory view, for the pane cursor
     std::vector<QWidget*> cursorCells() const;
 
@@ -98,6 +103,9 @@ private:
     QClickableLabel* m_isrCell = nullptr;
 
     Z80Registers* m_z80Registers;
+    DebugCpuId m_cpu = DebugCpuId::Main;
+    /// A register set by a tool on the CPU shown: "" on success, else why not
+    std::string writeRegister(const QString& name, uint16_t value);
     bool m_isShuttingDown = false;  // Flag to block refreshes during shutdown
 };
 

@@ -110,6 +110,9 @@ public:
     /// on with NR #CC bit 7: the DMA gives the bus back at the next byte boundary and takes it again afterwards. Hardware IM2 mode only
     /// (the device state machines are held in reset in the pulse mode)
     bool DmaDelay(bool nmiActive) const;
+    /// The same at CPU clock `t` while no instruction boundary comes (a DMA block holds the CPU): the CTC catches up and the frame and
+    /// line requests passed by `t` are latched first, as IsIntAsserted does
+    bool DmaDelayAt(uint32_t t, bool nmiActive);
 
     /// region <IInterruptSource>
     bool IsIntAsserted(uint32_t t) override;

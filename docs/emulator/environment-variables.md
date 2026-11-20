@@ -354,6 +354,10 @@ The last three are in the shared bench code, so they also act in `core-tests`' `
 | Variable | Values (default) | What it does | Read by |
 |---|---|---|---|
 | `UNREAL_PACKAGE_VERSION` | `YYYYMMDD.HHMMSS` (required) | Version of the Linux AppImage (and the `VERSION` file of the Steam Deck bundle, `install/steamdeck/package.sh`); the release workflow sets it and also passes it to CMake. | `tools/package-appimage.sh:31`, `.github/workflows/release.yml:118` ([README](../../README.md)) |
+| `UNREAL_DEPLOY_BUILD_HOST` | an SSH target (none) | The x86_64 Linux host that builds the Steam Deck bundle; `--host` overrides it. | `tools/deploy/steamdeck/remote-build.sh` ([README](../../tools/deploy/steamdeck/README.md)) |
+| `UNREAL_DEPLOY_BUILD_DIR` | a folder on that host, relative to its home or absolute (none) | Your own checkout there (clone or worktree with submodules) that the bundle is built in; `--dir` overrides it. | `tools/deploy/steamdeck/remote-build.sh` |
+| `UNREAL_DEPLOY_DECK` | an SSH target (none) | The Steam Deck to install on; `--deck` / the second argument overrides it. | `tools/deploy/steamdeck/remote-build.sh`, `deploy.sh` |
+| `UNREAL_DEPLOY_SSH` | an ssh command (`ssh`) | The ssh the deploy tools run, and rsync's transport: `ssh -i <key>` when `~/.ssh/config` does not have the key. | `tools/deploy/steamdeck/remote-build.sh`, `deploy.sh` |
 | `CI_MIN_INTERVAL_MINUTES` | minutes (60; 0 = off) | GitHub repository variable: pushes to master build at most once per interval. | `.github/workflows/cmake-ci.yml:44` |
 | `BUILD_TYPE`, `QT_VERSION`, `MACOS_DEPLOYMENT_TARGET`, `OPENSSL_VERSION`, `OPENSSL_SHA256`, `PACKAGE_SYMBOLS` | Release, 6.9.3, 12.0, ... | Workflow-level settings of the CI and release builds (edited in the workflow, not set by hand). | `.github/workflows/cmake-ci.yml:26`, `release.yml:77` |
 | `REGISTRY`, `IMAGE_NAME` | `ghcr.io`, the repository | Where the Docker build image is pushed. | `.github/workflows/docker-build.yml:10` |

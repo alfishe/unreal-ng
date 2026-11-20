@@ -45,8 +45,12 @@ public:
     /// @param owner the main window: the overlay stays above it
     explicit DropTargetOverlay(QWidget* owner);
 
-    /// Over `globalArea`: the tiles of `plan`, taking the drag
-    void showZones(const QRect& globalArea, const QString& fileName, const MediaPlan& plan);
+    /// Over `globalArea`: the tiles of `plan`, taking the drag. The zones open under a cursor held still, over
+    /// whichever tile lands there: tile `restIndex` (where a quick drop goes) glows instead, and a drop before the
+    /// cursor moves kPickSlop away goes to it; after that, to the tile under the cursor
+    void showZones(const QRect& globalArea, const QString& fileName, const MediaPlan& plan, int restIndex = -1);
+
+    static constexpr int kPickSlop = 12;  ///< px the cursor moves after the zones open before a tile is picked
     /// Over `globalArea`: the tiles of `plan`, taking clicks and keys
     void showChooser(const QRect& globalArea, const QString& fileName, const MediaPlan& plan);
     /// Over `globalArea`: red, the file's name and `reason`. autoHideMs > 0:
@@ -61,6 +65,12 @@ public:
     static constexpr int kConfirmFadeMs = 400;
 
     Mode mode() const { return _mode; }
+    /// Tile `index`'s place in the overlay (empty when there is none)
+    QRect tileRect(int index) const
+    {
+        return index >= 0 && index < static_cast<int>(_tiles.size()) ? _tiles[static_cast<size_t>(index)] : QRect();
+    }
+    int hovered() const { return _hovered; }  ///< the glowing tile, -1: none
     const MediaPlan& plan() const { return _plan; }
 
     /// The icon resource of a device kind (":/icons/media/floppy.svg", ...)
@@ -90,6 +100,7 @@ private:
     void open(Mode mode, const QRect& globalArea, const QString& fileName, const MediaPlan& plan);
     void layoutTiles();
     int tileAt(const QPoint& pos) const;
+    int zoneAt(const QPoint& pos);  ///< Zones: the tile a drop at `pos` goes to (the rest tile until the cursor moves)
     void setHovered(int index);
     const QPixmap& iconFor(FileKind kind, int size);
 
@@ -99,6 +110,10 @@ private:
     QString _reason;
     std::vector<QRect> _tiles;
     int _hovered = -1;
+    int _restIndex = -1;      ///< Zones: the tile a drop goes to before the cursor moves (-1: the one under it)
+    bool _restSet = false;    ///< Zones: the cursor's resting place is known (the first drag event after opening)
+    bool _picking = false;    ///< Zones: the cursor moved off its resting place: the tile under it is the pick
+    QPoint _restPos;
     QTimer _autoHide;
     QTimer _confirmHold;        ///< Confirm: the glow stays this long, then the fade starts
     QPropertyAnimation _fade;   ///< Confirm: window opacity 1 -> 0

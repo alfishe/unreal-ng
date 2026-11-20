@@ -12,6 +12,8 @@
 
 #include "emulator/media/mediacontrol.h"
 #include "emulator/media/mediaformatregistry.h"
+#include "media/droppaths.h"
+#include "media/floppymove.h"
 #include "media/droptargetoverlay.h"
 #include "media/flattendialog.h"
 #include "media/core/closeprompt.h"
@@ -69,6 +71,9 @@
 #include "3rdparty/message-center/eventqueue.h"
 #include "common/dockingmanager.h"
 #include "controllers/controllersdialog.h"
+#ifdef __linux__
+#include "platform/linux/steamdeckgamemode.h"
+#endif
 #include "controllers/controllersmenu.h"
 #include "controllers/controllertoast.h"
 #include "controllers/guiactions.h"
@@ -317,7 +322,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         if (plan.targets.size() < 2)
             return;
         _pendingPlacement = {_dragPath, false, LoadOrigin::Drop, true};
-        _dropOverlay->showZones(dropArea(), QFileInfo(_dragPath).fileName(), plan);
+        // Held still, the drop goes where a quick drop would (drive A, with autostart), not to the tile that
+        // happens to open under the cursor
+        _dropOverlay->showZones(dropArea(), QFileInfo(_dragPath).fileName(), plan,
+                                plan.defaultTarget >= 0 ? plan.defaultTarget : QuickDropTarget(plan));
     });
     connect(_dropOverlay, &DropTargetOverlay::targetChosen, this, [this](int index) {
         clearDropVerdict();
@@ -345,17 +353,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
         clearDropVerdict();
     });
 
-    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
-        showDropVerdict(filePath);
-    });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
-        qDebug() << "Files dropped via GPU window:" << paths;
-        clearDropVerdict();
-        // After the drop event returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
-    });
+    connectScreenDrops();
 
     _hudWrapper = new HudOverlayWrapper(_screenWrapper->widget(), _screenWrapper->isGPUAccelerated());
     _hudWrapper->setVisible(false);
@@ -748,6 +746,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::fastDiskToggled, this, &MainWindow::handleFastDiskToggled);
     connect(_menuManager, &MenuManager::autostartDisksToggled, this, &MainWindow::handleAutostartDisksToggled);
     connect(_menuManager, &MenuManager::contentionToggled, this, &MainWindow::handleContentionToggled);
+    connect(_menuManager, &MenuManager::lowLatencyToggled, this, &MainWindow::handleLowLatencyToggled);
     connect(_menuManager, &MenuManager::frontPanelTurboToggled, this, &MainWindow::handleFrontPanelTurboToggled);
     connect(_menuManager, &MenuManager::frontPanelCpmToggled, this, &MainWindow::handleFrontPanelCpmToggled);
     // The bound instance can be removed by automation at any moment (the UI
@@ -863,6 +862,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // stay possible during a session (revoking only takes power away)
     _remoteControl->exempt(_menuManager->companionsAction());
     _remoteControl->exempt(_menuManager->streamDeckAction());
+    // Tools > Video Synchronization only shows how the frames reach the display (its switch is locked in the window)
+    _remoteControl->exempt(_menuManager->videoSyncWindowAction());
     _companions = new CompanionController(this);
     connect(_menuManager, &MenuManager::controllersRequested, this, [this] {
         if (_controllersDialog)
@@ -1095,6 +1096,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     ObserverCallbackMethod runControlCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
     messageCenter.AddObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+
+    ObserverCallbackMethod featureCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleFeatureChanged);
+    messageCenter.AddObserver(NC_FEATURE_CHANGED, observerInstance, featureCallback);
 
     qDebug() << "MainWindow: Subscribed to global instance lifecycle events";
 
@@ -1996,9 +2000,9 @@ void MainWindow::handleWindowStateChangeLinux(Qt::WindowStates oldState, Qt::Win
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event)
 {
-    // Highlight the drop area: red, with the reason in the status bar, when nothing takes the file
-    const QList<QUrl> urls = event->mimeData()->urls();
-    showDropVerdict(urls.isEmpty() ? QString() : urls.first().toLocalFile());
+    // Highlight the drop area: red, with the reason over the screen, when nothing takes the file
+    const DropPaths::Result dragged = DropPaths::FromMime(event->mimeData());
+    showDropVerdict(dragged.paths.isEmpty() ? QString() : dragged.paths.first(), dragged.refusal);
 
     // Allow dropping files into window (a refused file is told again, and nothing happens)
     event->acceptProposedAction();
@@ -2012,28 +2016,13 @@ void MainWindow::dragLeaveEvent(QDragLeaveEvent* event)
 
 void MainWindow::dropEvent(QDropEvent* event)
 {
-    const QMimeData* mimeData = event->mimeData();
-
-    if (mimeData->hasUrls())
+    if (event->mimeData()->hasUrls())
     {
-        QStringList pathList;
-        QList<QUrl> urlList = mimeData->urls();
-
-        // extract the local paths of the files
-        for (int i = 0; i < urlList.size() && i < 32; i++)
-        {
-            pathList.append(urlList.at(i).toLocalFile());
-        }
-
-        qDebug() << pathList.size() << "files dropped";
-        qDebug() << pathList.join(",");
-
-        // Shift held while dropping = mount a disk without autostart. After the drop event
-        // returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, pathList, mountOnly]() { dropFiles(pathList, mountOnly); });
+        const DropPaths::Result dropped = DropPaths::FromMime(event->mimeData());
+        qDebug() << dropped.paths.size() << "files dropped:" << dropped.paths.join(",") << dropped.refusal;
+        onFilesDropped(dropped.paths, dropped.refusal);
+        return;
     }
-
     clearDropVerdict();
 }
 
@@ -3497,6 +3486,24 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
             const uint8_t drive = static_cast<uint8_t>(target.slotId.back() - 'a');
             if (RefusedWhileRecording(this, *_emulator, Emulator::MediaChange::LoadDisk, drive, file))
                 return;
+            // The same image in another drive (a drop that went to D by mistake, then to A): moved, not refused
+            // as "already in slot" (FloppyMove)
+            if (EmulatorContext* context = _emulator->GetContext())
+            {
+                const int holder = FloppyMove::DriveHolding(context->coreState.diskFilePaths, drive, file);
+                std::string ejectError;
+                if (holder >= 0 && !_emulator->EjectDisk(static_cast<uint8_t>(holder), false, &ejectError))
+                {
+                    refuseFile(filePath,
+                               tr("it is in drive %1, which cannot give it up: %2")
+                                   .arg(QChar('A' + holder), QString::fromStdString(ejectError)),
+                               origin);
+                    return;
+                }
+                if (holder >= 0)
+                    qInfo() << "Moved" << filePath << "from drive" << QChar('A' + holder) << "to drive"
+                            << QChar('A' + drive);
+            }
             const bool autostart = target.autostart && _autostartDisks && !mountOnly &&
                                    (freshlyStarted || (_emulator->IsRunning() && !_emulator->IsPaused()));
             std::string error;
@@ -3617,11 +3624,18 @@ QRect MainWindow::dropArea() const
     return QRect(area->mapToGlobal(QPoint(0, 0)), area->size());
 }
 
-void MainWindow::showDropVerdict(const QString& filePath)
+void MainWindow::showDropVerdict(const QString& filePath, const QString& refusal)
 {
     _dragActive = true;
     _dragPath = filePath;
     _dropHoldTimer.stop();
+    if (filePath.isEmpty() && !refusal.isEmpty())
+    {
+        // The drag names no file that can be opened (DropPaths): why, at once
+        ui->contentFrame->setStyleSheet("border: 2px solid red;");
+        _dropOverlay->showRefusal(dropArea(), tr("Dragged file"), refusal);
+        return;
+    }
     if (filePath.isEmpty())
     {
         ui->contentFrame->setStyleSheet("border: 2px solid #3daee9;");
@@ -3660,6 +3674,30 @@ void MainWindow::onDropDragLeft()
     if (_dropOverlay && _dropOverlay->mode() == DropTargetOverlay::Mode::Refusal)
         _dropOverlay->dismiss();
     clearDropVerdict();
+}
+
+void MainWindow::connectScreenDrops()
+{
+    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this,
+            [this](const QString& filePath, const QString& refusal) { showDropVerdict(filePath, refusal); });
+    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
+    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, &MainWindow::onFilesDropped);
+}
+
+void MainWindow::onFilesDropped(const QStringList& paths, const QString& refusal)
+{
+    clearDropVerdict();
+    if (paths.isEmpty())
+    {
+        // Files the drop could not name (DropPaths): why, over the screen, instead of "file not found: ''"
+        if (!refusal.isEmpty())
+            _dropOverlay->showRefusal(dropArea(), tr("Dropped file"), refusal, 2500);
+        return;
+    }
+    // Shift held while dropping = mount a disk without autostart. After the drop event returns: the slot chooser
+    // may open
+    const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+    QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
 }
 
 void MainWindow::insertMediumDialog()
@@ -4203,6 +4241,14 @@ void MainWindow::handleContentionToggled(bool enabled)
     _menuManager->updateMenuStates(_emulator);  // the menu shows what the core kept
 }
 
+void MainWindow::handleLowLatencyToggled(bool enabled)
+{
+    // The feature change reaches the audio device and the screen through NC_FEATURE_CHANGED
+    if (FeatureManager* featureManager = _emulator ? _emulator->GetFeatureManager() : nullptr)
+        featureManager->setFeature(Features::kLowLatency, enabled);
+    _menuManager->updateMenuStates(_emulator);
+}
+
 void MainWindow::handleFrontPanelTurboToggled(bool on)
 {
     if (_emulator)
@@ -4225,8 +4271,23 @@ void MainWindow::handleAutostartDisksToggled(bool enabled)
     qDebug() << "Disk autostart" << (enabled ? "enabled" : "disabled");
 }
 
+bool MainWindow::cardStepInDebugger(const char* kind, uint16_t address)
+{
+    // The Embedded debugger shown with a sound card's tab in front: the step is that card's (its window says why a
+    // refused one did not run)
+    if (debuggerWindow == nullptr || !debuggerWindow->isVisible() || !IsCardCpu(debuggerWindow->currentCpu()))
+        return false;
+    QString error;
+    debuggerWindow->cardStep(kind, address, &error);
+    if (!error.isEmpty())
+        statusBar()->showMessage(tr("Card step: %1").arg(error), 5000);
+    return true;
+}
+
 void MainWindow::handleStepIn()
 {
+    if (cardStepInDebugger("in"))
+        return;
     if (_emulator)
     {
         _emulator->RunSingleCPUCycle(false);
@@ -4236,6 +4297,8 @@ void MainWindow::handleStepIn()
 
 void MainWindow::handleStepOver()
 {
+    if (cardStepInDebugger("over"))
+        return;
     if (_emulator)
     {
         _emulator->StepOver();
@@ -4245,6 +4308,8 @@ void MainWindow::handleStepOver()
 
 void MainWindow::handleStepOut()
 {
+    if (cardStepInDebugger("out"))
+        return;
     submitGuiAction("run.step_out");
 }
 
@@ -4257,6 +4322,8 @@ void MainWindow::handleRunToCursor()
         statusBar()->showMessage(tr("Run to cursor: the disassembly has no cursor row, click one first"), 5000);
         return;
     }
+    if (cardStepInDebugger("to", *cursor))
+        return;
     StateNode params = StateNode::Object();
     params["addr"] = static_cast<int>(*cursor);
     submitGuiAction("run.to_cursor", std::move(params));
@@ -5301,17 +5368,7 @@ void MainWindow::rebuildScreen(bool enabled, bool force)
     installHandheldOverlay();
 
     // Re-establish drag/drop connections for the new wrapper
-    connect(_screenWrapper, &DeviceScreenWrapper::dragEntered, this, [this](const QString& filePath) {
-        showDropVerdict(filePath);
-    });
-    connect(_screenWrapper, &DeviceScreenWrapper::dragLeft, this, [this]() { onDropDragLeft(); });
-    connect(_screenWrapper, &DeviceScreenWrapper::filesDropped, this, [this](const QStringList& paths) {
-        qDebug() << "Files dropped via GPU window:" << paths;
-        clearDropVerdict();
-        // After the drop event returns: the slot chooser may open
-        const bool mountOnly = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
-        QTimer::singleShot(0, this, [this, paths, mountOnly]() { dropFiles(paths, mountOnly); });
-    });
+    connectScreenDrops();
 
     // Restore state
     _hudWrapper->setVisible(hudVisible);
@@ -6001,6 +6058,9 @@ void MainWindow::unsubscribeFromMessageBus()
     ObserverCallbackMethod runControlCallback =
         static_cast<ObserverCallbackMethod>(&MainWindow::handleRunControlChanged);
     messageCenter.RemoveObserver(NC_RUN_CONTROL_CHANGED, observerInstance, runControlCallback);
+
+    ObserverCallbackMethod featureCallback = static_cast<ObserverCallbackMethod>(&MainWindow::handleFeatureChanged);
+    messageCenter.RemoveObserver(NC_FEATURE_CHANGED, observerInstance, featureCallback);
 }
 
 void MainWindow::handleRunControlChanged(int id, Message* message)
@@ -6195,6 +6255,9 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
     emulator->SetAudioCallback(_soundManager, &AppSoundManager::audioCallback, _soundManager->occupancyCell(),
                                _soundManager->deviceDescriptor());
     emulator->SetAudioDeviceSampleRate(_soundManager->deviceSampleRate());
+    // The device follows the bound machine's feature lowlatency (a shorter period where the platform takes one)
+    if (FeatureManager* features = emulator->GetFeatureManager())
+        _soundManager->setLowLatency(features->isEnabled(Features::kLowLatency));
 
     qDebug() << "MainWindow::bindEmulatorAudio() - Audio device now owned by emulator"
              << QString::fromStdString(emulator->GetId());
@@ -6204,6 +6267,23 @@ void MainWindow::bindEmulatorAudio(std::shared_ptr<Emulator> emulator)
 /// An instance the manager removed (or is removing): released, announced as
 /// destroyed, or no longer registered. Binding the UI to it would leave every
 /// widget and the next unbind calling into a context that is gone
+/// A feature changed on some machine (any thread): the bound machine's lowlatency reaches the audio device on the
+/// GUI thread
+void MainWindow::handleFeatureChanged(int id, Message* message)
+{
+    (void)id;
+    const auto* payload = message ? dynamic_cast<const FeatureChangedPayload*>(message->obj) : nullptr;
+    if (!payload || payload->featureId != Features::kLowLatency)
+        return;
+    const std::string emulatorId = payload->emulatorId.toString();
+    const bool enabled = payload->enabled;
+    QMetaObject::invokeMethod(this, [this, emulatorId, enabled]() {
+        QMutexLocker locker(&_audioMutex);
+        if (_soundManager && emulatorId == _audioBoundId)
+            _soundManager->setLowLatency(enabled);
+    }, Qt::QueuedConnection);
+}
+
 bool MainWindow::isEmulatorGone(const std::shared_ptr<Emulator>& emulator)
 {
     if (!emulator || emulator->IsReleased() || emulator->IsRetiring())
@@ -6382,6 +6462,11 @@ void MainWindow::adoptEmulator(std::shared_ptr<Emulator> emulator, EmulatorOrigi
         _hudWrapper->setVisible(_hudOverlayVisible);
         _hudWrapper->syncGeometryWithParent();
     }
+
+#ifdef __linux__
+    // Steam Deck Game Mode: the picture as soon as it is made (platform/linux/steamdeckgamemode.h)
+    steamdeck::ApplyGameModeFeatures(_emulator->GetFeatureManager());
+#endif
 
     // The published copy follows the new binding
     schedulePublishWindowDisplay();

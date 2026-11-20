@@ -155,6 +155,8 @@ WindowPresentStats DeviceScreen::presentStats() const
     out.syncReason = _syncReason;
     out.machineHz = _frameRate.Hz();
     out.clock = FrameClockSourceName(_shownClock);
+    out.lowLatency = _shownAtOnce;
+    _paintTiming.Fill(out);
     if (_displayRate == DisplayRate::Match)
     {
         out.displayState = "unchanged";
@@ -165,7 +167,8 @@ WindowPresentStats DeviceScreen::presentStats() const
 
 bool DeviceScreen::smoothActive() const
 {
-    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled &&
+    // Low-latency video shows each frame at once: an interpolated picture would wait for the frame after it
+    return _smooth.GetMode() != smoothmotion::Mode::Off && _nextFrameSource && !_temporalEnabled && !_shownAtOnce &&
            (!_smoothAuto || _sync == VideoSync::Interpolate);
 }
 
@@ -192,6 +195,10 @@ void DeviceScreen::refresh()
         return;
     }
 
+    // A frame came. The frames are shown by time: while a paint waits for the next frame's time, it shows this one (a
+    // paint now would show the frame on screen again). Smooth motion paints now all the same (PaintPacer)
+    if (!_paintPacer.PaintNow())
+        return;
     update();  // Schedule paint event - Qt will read fresh buffer data in paintEvent
 }
 
@@ -215,6 +222,8 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
     QImage* drawImage = nullptr;
     PictureGeometry geometry;
     uint64_t serial = 0;  ///< the frame's serial (0: the legacy buffer, no serial)
+    _preparedSerial = 0;
+    _preparedTargetNs = 0;
     {
         std::lock_guard<std::mutex> lock(_frameSourceMutex);
 
@@ -234,13 +243,17 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
             geometry = info.geometry;  // the geometry latched with the frame: the picture view cuts by it
             serial = info.serial;
             _shownClock = info.source;
+            _shownAtOnce = info.atOnce;
+            _preparedSerial = info.serial;
+            _preparedTargetNs = info.targetNs;
             if (_smoothAuto)
             {
                 if (info.serial != 0 && info.serial != _meteredSerial && info.targetNs > 0)
                 {
                     _meteredSerial = info.serial;
-                    // A turbo frame (timed by its latch) says nothing about the machine's rate
-                    if (info.source == FrameClockSource::Latch)
+                    // A turbo frame (timed by its latch) says nothing about the machine's rate; a low-latency one is
+                    // latched at the machine's own pace
+                    if (info.source == FrameClockSource::Latch && !info.atOnce)
                         _frameRate.PushUnpaced();
                     else
                         _frameRate.Push(info.targetNs, info.periodNs);
@@ -265,18 +278,17 @@ const QImage* DeviceScreen::preparePicture(QImage& legacyCopy)
                 }
             }
             // The next frame is due later than this paint: a repaint at its time (frames by time, no vsync here).
-            // Smooth motion: a repaint a refresh on, the picture moves in between
-            if (info.nextSerial != 0 && !_repaintScheduled)
+            // Smooth motion: a repaint a refresh on, the picture moves in between (PaintPacer)
+            if (info.nextSerial != 0 && !_paintPacer.Scheduled())
             {
-                _repaintScheduled = true;
                 const QScreen* display = screen();
                 const double hz = display && display->refreshRate() >= 20.0 ? display->refreshRate() : 60.0;
                 const int64_t waitMs =
-                    smooth ? std::max<int64_t>(1, static_cast<int64_t>(1000.0 / hz))
-                           : std::clamp<int64_t>((info.nextTargetNs - now + 999'999) / 1'000'000, 1, 100);
-                QTimer::singleShot(static_cast<int>(waitMs), this, [this] {
-                    _repaintScheduled = false;
-                    refresh();
+                    _paintPacer.Schedule(now, smooth, static_cast<int64_t>(1e9 / hz), info.nextTargetNs);
+                QTimer::singleShot(static_cast<int>(waitMs), smooth ? Qt::CoarseTimer : Qt::PreciseTimer, this, [this] {
+                    _paintPacer.Fired();
+                    if (!_isShuttingDown)
+                        update();
                 });
             }
         }
@@ -391,6 +403,18 @@ bool DeviceScreen::composePicture(Composer& composer, const QImage& picture, QSi
 
 void DeviceScreen::paintEvent(QPaintEvent* event)
 {
+    // A new frame's paint time, taken when this paint is done (on every way out); declared before the painter, so the
+    // drawing has ended when it is read. Only the window's paints: a screenshot or the recorder's picture is none
+    uint64_t paintedSerial = 0;
+    int64_t paintedTargetNs = 0;
+    struct PaintDone
+    {
+        PaintTiming& timing;
+        const uint64_t& serial;
+        const int64_t& targetNs;
+        ~PaintDone() { timing.Painted(serial, targetNs, SteadyNowNs()); }
+    } paintDone{_paintTiming, paintedSerial, paintedTargetNs};
+
     QPainter painter = QPainter(this);
 
     // Destination is always the full widget - clip to dirty region for efficiency.
@@ -401,6 +425,8 @@ void DeviceScreen::paintEvent(QPaintEvent* event)
 
     QImage legacyCopy;
     const QImage* drawImage = preparePicture(legacyCopy);
+    paintedSerial = _preparedSerial;
+    paintedTargetNs = _preparedTargetNs;
     if (!drawImage)
         return;
     // Drawn 1:1 at device pixels

@@ -59,9 +59,57 @@ nothing. There are no real-board numbers; this item stays "arithmetic" until a b
 | NR #08 contention latch | at `hc(8)` | at the end of the line's contention window (2026-10-25) |
 | Port contention details | `#BF3B`, `#FF3B`, per-8K-page decision | **done 2026-10-24**: memory contention per 8K page, odd-port contention only `#7FFD` (128K timing) and the ULA+ pair, no wait before IORQ |
 | Other contended internal cycles (48K / 128K) | `o_cpu_contend` also for no-MREQ cycles | moderate confidence |
-| DMA bus contention / handover latency | DMA cycles go through the same waits | not modelled |
+| DMA bus contention / handover latency | DMA cycles go through the same waits | contention done (POC 036); the bus goes at the CPU's machine-cycle ends, inside instructions too (2026-11-19, section below) |
 | DMA power-on values, register read from #6B by the DMA | no initialisers in the VHDL | not determined |
 | `Other Z80N opcodes` MREQ shapes | only `NEXTREG` was checked | PUSH nn, ADD rr,nn, LDIRX ... |
+
+## MAME and the RTL, 2026-11-18
+
+A Next developer named MAME's DMA "almost perfect". MAME master fc76bc07 (`src/mame/sinclair/next/specnext_dma.cpp` on
+`src/devices/machine/z80dma.cpp`) was read against `dma.vhd` (core 3.02.03) and ours. MAME has no zxnDDMA and no contention.
+
+| Item | RTL | MAME | Ours before | Now | Test |
+|:--|:--|:--|:--|:--|:--|
+| IM2 DMA delay inside a block | WRITE_4 goes to START_DMA when `dma_delay_i`, which gives the bus back until the delay ends | pauses after the write | only before the block: the requests were latched at instruction boundaries, so a whole block ran first | the DMA asks `Bus::delay` after each byte that is not the last and not followed by a prescaler wait; the requests are latched at the DMA's clock | `TheInterruptDelayStopsABlockAtTheNextByteBoundary`, `TheInterruptDelayIsNotAskedAfterTheLastByteOrAPrescalerWait`, `AChosenInterruptStopsARunningDmaBlockUntilItsReti` |
+| Prescaler period | timer cleared in READ_1, compared registered, then WAITING_ACK, READ_1: 32 N + 3 CPU clocks (continuous) | exactly 32 N | 32 N + 1 CPU clock | the RTL's; a byte that outlasts the period goes on (WRITE_4 sees the timer) | `ContinuousPrescalerSpacingIsTheRtls` (152 at 3.5 MHz, N = 4), `ContinuousPrescalerSpacingAt28MHz`, `AByteLongerThanThePeriodIsNotFollowedByAWait` |
+| Auto restart on a held bus | WRITE_4 -> FINISH_DMA -> WAITING_ACK -> READ_1 | - | no gap | +2 CPU clocks | (unit, through the restart tests) |
+| Block length 0 | 1 byte | never ends | 1 byte | - | - |
+| Timing byte 11 | 4 clocks | 1 clock | 4 | - | - |
+| A control byte while running | only WR3 enable, #87, #83, #C3 change the transfer | disables (b12c66e1, the generic Z80-DMA) | as the RTL | - | - |
+
+POC 036 ran `dmaprescc` / `dmaprescb` (16 bytes to port #FE, prescaler 4, timing 3 + 3) in GHDL: continuous writes are 152 clocks of
+28 MHz apart, burst 176-192 (the CPU's M-cycle ends). Ours after the fix: continuous 0 instruction durations differ (48K and 128K
+timing); burst 8 pairs differed by where the byte lands (the RTL takes the bus inside an instruction, ours after it: 14 + 13 T against
+4 + 23 T, the same sum), the limit of a DMA run between instructions. Lifted on 2026-11-19 (next section).
+
+Regression check of the fix: 247 `.nex` of the local corpus run headless (`LoaderNexRun_Test`) before and after, hashes of the last frame
+and of the 64K RAM. NEXT at 1500 and 5000 frames: 0 differ (A/A run equal). NEXT-DDMA at 1500 frames: only `mod_player.nex` (the same
+file twice) differs, one stack byte at `$FF66`, the frame equal.
+
+## The bus inside an instruction, 2026-11-19
+
+The T80 (`t80n.vhd`) registers BUSRQ a CPU clock late (`BusReq_s`) and grants it at `T_Res`, the end of ANY machine cycle, internal
+ones included. Two DMA moments meet that inside an instruction: the burst mode's next byte (START_DMA asks again after WAITING_CYCLES)
+and the first byte after an enable (written in the enabling instruction's last cycle, so the next instruction's M1 ends before the
+grant). The RTL trace of `dmaprescb` (loop NOP / DJNZ) has grants after DJNZ's M1, after its displacement read, after its internal
+M3 and after the NOP; from one grant to the next 19 < D <= 22 CPU clocks, so the burst's wait end has the same +1 clock of the sampled
+BUSRQ as the continuous mode (`NextDma::PrescalerWaitEnd`; without it 6 durations differ).
+
+Ours: the library reports every bus cycle's start and every internal T-state to the contention hook (`Z80nCpuAccessKind`); the
+T80's machine cycles are told apart there (`Z80NEngine::IdleGroupCycleStart`: an idle group either stretches the cycle before it or is
+one or two machine cycles of its own, by its length and what it follows; `Z80nCpuIdleLeft` gives the group's length). While a burst
+block runs or the enable's first byte waits, `PortDecoder_Next` hands the engine an `IMachineCycleEndTurn`: at each machine-cycle end
+the DMA moves its byte when its wait is over (the first byte at the end of the next instruction's M1), its cycles going in as the CPU's
+waits. Nothing is asked otherwise (no cost outside a burst). The native interpreter (no Next uses it) keeps the old rule.
+
+POC 036 against GHDL, all of `dmaprescb`, `dmaburst`, `dmaprescc`, `dmacont` on 48K / 128K / +3 timing: 0 instruction durations
+differ (`dmaprescb` had 8). Unit: `NextDma_Test` burst spacing 88 clocks of 28 MHz at 3.5 MHz, N = 2 (80 + the sampled BUSRQ); the last
+byte's wait stays 80 (no bus to ask for).
+
+`mod_player.nex` on NEXT-DDMA moves 3 blocks more in the first 1500 frames than on NEXT: it switches to 28 MHz (`NEXTREG 7,3`) and
+core 3.03 has no SRAM wait there (`SetSramWait28`, section above), so its init is ~1.7 M clocks of 28 MHz shorter and the playback
+starts ~61 ms earlier (the blocks are 567 263 clocks apart). With the wait forced on NEXT-DDMA the run equals NEXT (RAM, frame, 1464
+blocks).
 
 ## Demonstration of the DMA sample demo
 

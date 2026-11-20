@@ -1,8 +1,6 @@
 # TODO: Pentagon 2.666 LE
 
-Status 2026-11-18: P0..P5 done, landed on master (8a6481e3e); real software checked
-([testdata/machines/p2666/software/README.md](../../../testdata/machines/p2666/software/README.md)). Left: the gcc 16
-check of the last changes (fdc report, MCP line, machine catalog) in the day's batch.
+Status 2026-11-19: **done** ([DONE.md](DONE.md)), on master.
 See [README.md](README.md).
 
 ## Phases

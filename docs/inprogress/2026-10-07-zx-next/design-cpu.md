@@ -84,7 +84,8 @@ isolation test (shared code names no model) is extended to `MM_NEXT`.
 
 ## 5. DMA as a bus agent
 
-The zxnDMA takes the bus (BUSREQ) between instructions. The adapter's `machineStep` hook asks the DMA whether it
+The zxnDMA takes the bus (BUSREQ) between instructions; the burst mode's next byte and the enable's first byte also at a T80
+machine-cycle end inside one (2026-11-19: `Z80NEngine`'s contention hook, `IMachineCycleEndTurn`). The adapter's `machineStep` hook asks the DMA whether it
 owns the bus; if yes it runs its transfer in 28 MHz-tick units, advancing the machine time exactly as the CPU
 would have, and returns when the DMA gives the bus back (end of burst or byte, or interleaved prescaler waits in
 burst mode). The Sprinter's accelerator is the in-tree precedent for "something else owns the bus"; this adds no

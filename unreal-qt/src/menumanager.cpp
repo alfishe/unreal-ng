@@ -974,6 +974,13 @@ void MenuManager::createMachineMenu()
     _contentionAction->setChecked(true);
     connect(_contentionAction, &QAction::triggered, this, &MenuManager::contentionToggled);
 
+    // Game mode: the 'lowlatency' feature (synced in updateMenuStates; Steam Deck Game Mode turns it on)
+    _lowLatencyAction = _machineMenu->addAction(tr("&Low Latency (Game Mode)"));
+    _lowLatencyAction->setStatusTip(
+        tr("Show each frame as soon as it is made and shorten the sound path; off keeps picture and sound in step"));
+    _lowLatencyAction->setCheckable(true);
+    connect(_lowLatencyAction, &QAction::triggered, this, &MenuManager::lowLatencyToggled);
+
     // Where the host keyboard goes ([INPUT] HostKeyboard=): the ZX matrix, the PS/2
     // keyboard controller (ZX-Evo AVR, ATM Turbo 2+), both
     _hostKeyboardMenu = _machineMenu->addMenu(tr("Host &Keyboard"));
@@ -1701,6 +1708,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
             _contentionAction->setEnabled(!timelineBound);
             _contentionAction->setChecked(featureManager && featureManager->isEnabled(Features::kContention));
         }
+        if (_lowLatencyAction)
+        {
+            _lowLatencyAction->setEnabled(featureManager != nullptr);
+            _lowLatencyAction->setChecked(featureManager && featureManager->isEnabled(Features::kLowLatency));
+        }
     }
     else
     {
@@ -1723,6 +1735,11 @@ void MenuManager::updateMenuStates(std::shared_ptr<Emulator> activeEmulator)
         if (_contentionAction)
         {
             _contentionAction->setEnabled(false);
+        }
+        if (_lowLatencyAction)
+        {
+            _lowLatencyAction->setEnabled(false);
+            _lowLatencyAction->setChecked(false);
         }
     }
 

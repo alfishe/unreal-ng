@@ -483,7 +483,10 @@ Each hold ends with the run, seek or turbo span that took it (also when it fails
 whose reason is not in effect then, so a resumed machine is always heard. The mixer (`mixer`,
 `GET /audio/mixer`) reports it under `host_output`: `held`, `holders` (active holds by reason: `direct_run`,
 `ttd_replay`, `turbo`, `unpaced`), `holds_taken` (by reason), `stale_holds_cleared` (leaked holds a resume dropped),
-`frames_delivered`, `frames_audible`, `frames_held`.
+`frames_delivered`, `frames_audible`, `frames_held`, and `device`: the host device and its ring (`drc_target_ms`,
+`drc_trim`, `drc_target_raises`, `name`, `sample_rate_hz`, `buffer_ms`, `output_latency_ms`, `ring_ms`, `trough_ms` - the least the
+device callbacks left over the last second, `trough_windows`, `underruns` - gaps, `ring_overruns`, `latency_ms`,
+`reinits`).
 
 **Operation log** (`ops`):
 
@@ -1445,6 +1448,7 @@ Commands to view and control emulator runtime features for the selected emulator
 | `ttdrestart` | `ttdre` | OFF | Start a new TTD session after one ends: a reset, an autostart, a snapshot load and a change of the machine itself END the recording session; with this on a new session starts at the next frame boundary. Off: the machine is left without a recording. A black box always restarts. See *TTD Session Rules* |
 | `gs_lightweight` | `gslw` | OFF | General Sound lightweight personality: fit the built-in ProTracker player card, which needs no coprocessor firmware. Off keeps the personality from `[SOUND] GSType`. | None (a choice of card, not a cost) |
 | `esxdos` | `esx` | OFF | ZX Spectrum Next esxDOS mode: on the bare machine (no `[NEXT] BootRom`) the emulator serves the esxDOS API itself (`RST $08` calls `$80` and up: files, directories, +3DOS headers, `DISK_FILEMAP` and the stream, the date from the RTC) against the FAT volume of SD card 0, so a program that uses it runs without NextZXOS. Off: `RST $08` runs the ROM as on the board. Design: [esxdos-and-sd.md](../../../inprogress/2026-10-07-zx-next/esxdos-and-sd.md) section 5a | None (one compare at `#0008`) |
+| `lowlatency` | `ll` | OFF | Low latency: each frame is due at its latch, so the newest finished frame is shown at once instead of when its sound is heard, and the sound path is shortened (the audio ring held from 15 ms instead of 40 ms, lowered to 6 ms on macOS, 10 ms on Linux, 15 ms on Windows after quiet spells, raised by gaps and near-gaps; a 128-frame device period on macOS, two 10 ms WASAPI periods on Windows). The picture comes about 50 ms sooner and leads the sound by the shortened audio path's delay (~20-30 ms; ~45 ms on Windows). Steam Deck Game Mode turns it on for the machine its window shows; in Qt it is Machine > Low Latency (Game Mode). A temporal effect (ZX DLSS) still delays the picture by its look-ahead. The temporal status's `video_delay_frames` / `video_delay_ms` and the screenshots' frame on screen follow it. | None |
 | `contention` | `cont` | ON | Video memory contention on the machines that have it (48K / 128K / +2 ULA, +2A / +3 gate array): the CPU waits for the screen fetches, opcode fetches included. OFF runs those machines uncontended for comparison; no effect on machines without contention. `state contention` shows the rule, the switch and where the CPU waits. | None on machines without contention |
 
 **Features held off by time-travel debugging (TTD).** A recording must show the code running at real speed and replay must run the same code paths, so TTD holds some features off:
@@ -1953,7 +1957,10 @@ the frames reach the screen: `presenter` metal / dxgi / gl-timed (Linux: a threa
 gl / software, `fixed_display`, `vrr` (each frame at its own time, else on the refresh grid), `vrr_support` {`state`
 yes / no / unknown, `reason`: X11 RandR `vrr_capable` and a fullscreen window, unknown on Wayland and Windows}, `sync` {mode: off / vrr / display_rate / interpolate, reason: why the steps before
 it are not} (View > Video Synchronization's step in effect), `refresh_hz` {min, max}, `clock` (what timed the frame
-on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo, `none`),
+on screen: `audio` when its sound is heard, `emulated` with no audio device delivering, `latch` in turbo or under the feature `lowlatency`, `none`),
+`low_latency` (the frame on screen shown at once by `lowlatency`: `error_ms` is then its way from the hand-over to the
+screen, `late` and `lead_ms` judge nothing), `timed_at` (`screen`: a native presenter's screen times; `paint`: the
+software screen's paints of new frames, `presented` / `dropped` / `error_ms` from them, not the screen; `""`: none),
 `timing` {`delay_clamped` (the frame timed last: its sound comes later than the screen holds its frames, a long audio
 path such as a Bluetooth headset or a large lip-sync trim, so it is due `max_delay_ms` after its frame's end and the
 picture leads its sound; the one-line summary says so), `max_delay_ms` (9 frames), `clamped_frames`, `early`
