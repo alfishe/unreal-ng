@@ -3488,7 +3488,7 @@ void MainWindow::placeMedium(const QString& filePath, const FileClass& fileClass
                 return;
             // The same image in another drive (a drop that went to D by mistake, then to A): moved, not refused
             // as "already in slot" (FloppyMove)
-            if (EmulatorContext* context = _emulator->GetContext())
+            if (EmulatorContext* context = _emulator->GetContext())  // lifetime-ok: held by _emulator
             {
                 const int holder = FloppyMove::DriveHolding(context->coreState.diskFilePaths, drive, file);
                 std::string ejectError;
