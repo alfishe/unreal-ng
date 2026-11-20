@@ -87,7 +87,8 @@ public:
     /// True when the CPU in front changed
     bool update();
     /// A new stop (LastStop().serial moved) of a breakpoint or a step brings its CPU's tab to the front, once per
-    /// stop. True when the CPU in front changed
+    /// stop; a main CPU step keeps a card in front (it follows the main CPU's steps). Shown, a CPU another front-end
+    /// selected comes to the front first. True when the CPU in front changed
     bool followStop();
 
     DebugCpuId current() const { return _current; }
@@ -106,6 +107,10 @@ signals:
 private:
     void rebuild();
     void applySelection();
+    /// Shown: the machine's selected CPU (DebugManager::SelectCpu by another front-end) comes to the front
+    bool adoptMachineChoice();
+    /// The machine's selected CPU (DebugManager::SelectedCpu), the main CPU without a machine
+    DebugCpuId MachineChoice() const;
     void release();
 
     QTabBar* _bar = nullptr;
