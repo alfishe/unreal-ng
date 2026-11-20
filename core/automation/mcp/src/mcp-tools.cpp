@@ -6101,6 +6101,92 @@ std::string FormatSearchWindow(const Json::Value& b)
            FormatTimePoint(b["covered_to"], b["covered_to_tinframe"]) + ".";
 }
 
+/// memory_series as text (an agent may read only this): the moment, the ranges, then one line per row with each
+/// range's bytes (hex shown up to 64 digits per range; the full bytes in the data)
+std::string FormatMemorySeries(const Json::Value& b)
+{
+    std::ostringstream out;
+    out << b["row_count"].asUInt64() << " row(s) of " << b["frames_read"].asUInt64() << " frame(s) read";
+    if (b.isMember("from_frame"))
+        out << " (frames " << b["from_frame"].asUInt64() << ".." << b["to_frame"].asUInt64() << " step "
+            << b["step"].asUInt64() << ")";
+    if (b["changes_only"].asBool())
+        out << ", changes only";
+    out << "; the machine did not move. Each row: " << b["moment_text"].asString() << ".";
+    out << "\nRanges:";
+    Json::ArrayIndex index = 0;
+    for (const Json::Value& r : b["ranges"])
+    {
+        std::ostringstream offset;
+        offset << "0x" << std::uppercase << std::hex << r["offset"].asUInt64();
+        out << " [" << index++ << "] " << r["space"].asString() << ":" << offset.str() << "+" << r["length"].asUInt64();
+    }
+    const Json::Value& rows = b["rows"];
+    const Json::ArrayIndex shown = std::min<Json::ArrayIndex>(rows.size(), 200);
+    for (Json::ArrayIndex i = 0; i < shown; ++i)
+    {
+        const Json::Value& row = rows[i];
+        out << "\n  frame " << row["frame"].asUInt64();
+        if (!row["exact"].asBool())
+            out << " (as at frame " << row["at_frame"].asUInt64() << ")";
+        if (row.isMember("changed"))
+        {
+            std::string changed;
+            for (const Json::Value& c : row["changed"])
+                changed += (changed.empty() ? "" : ",") + std::to_string(c.asUInt());
+            out << " changed [" << changed << "]";
+        }
+        out << ":";
+        for (const Json::Value& d : row["data"])
+        {
+            std::string text = d.isString() ? d.asString() : std::string("[") + std::to_string(d.size()) + " values]";
+            if (text.size() > 64)
+                text = text.substr(0, 64) + "...";
+            out << " " << text;
+        }
+    }
+    if (rows.size() > shown)
+        out << "\n  ... " << (rows.size() - shown) << " more row(s) in the structured result";
+    if (b["restored_frames"].asUInt64() > 0)
+        out << "\n" << b["restored_frames"].asUInt64() << " frame(s) read by restoring their checkpoint (their paging is "
+            << "not stored)";
+    if (b["truncated"].asBool())
+        out << "\n[TRUNCATED] limit or max_bytes reached: go on with from_frame=" << b["next_from_frame"].asUInt64();
+    return out.str();
+}
+
+/// screen_at as text: what the picture is, which screen was shown and where it flipped
+std::string FormatScreenAt(const Json::Value& b)
+{
+    std::ostringstream out;
+    const Json::Value& shown = b["shown"];
+    if (b.get("mime", "").asString() == "image/png")
+        out << "Frame " << b["frame"].asUInt64() << " " << b["width"].asUInt() << "x" << b["height"].asUInt() << " png ("
+            << b["which"].asString() << "): " << b["moment_text"].asString() << ".";
+    else
+        out << "Frame " << b["frame"].asUInt64() << ": " << b["length"].asUInt64() << " bytes of the " << b["screen"].asString()
+            << " screen (" << b["format"].asString() << ", " << b["encoding"].asString() << "): "
+            << b["moment_text"].asString() << ".";
+    out << " Shown at the start: " << shown["at_start"]["screen"].asString() << " (page " << shown["at_start"]["page"].asUInt()
+        << "), at the end: " << shown["at_end"]["screen"].asString() << " (page " << shown["at_end"]["page"].asUInt() << ")";
+    if (shown["changed_during_frame"].asBool())
+    {
+        std::string flips;
+        for (const Json::Value& f : shown["flips"])
+            flips += (flips.empty() ? "" : ", ") + f["screen"].asString() + " at t=" + std::to_string(f["tinframe"].asUInt64());
+        out << "; it changed during the frame (" << flips << ")";
+    }
+    else
+        out << "; no change during the frame";
+    out << ". Border " << b["border"].asUInt() << ". The machine did not move.";
+    if (b.get("mime", "").asString() != "image/png" && b["data"].isString())
+    {
+        const std::string data = b["data"].asString();
+        out << "\n" << (data.size() > 256 ? data.substr(0, 256) + "... (full in the data)" : data);
+    }
+    return out.str();
+}
+
 /// Like ForwardCall, but the text summary is built from the 2xx body. A 2xx
 /// body with "ok": false (dump) is a failure. A 409 (a history operation
 /// while recording) gets the MCP-side remedy appended.
@@ -6280,7 +6366,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                "branch_switch", "branch_update", "branch_delete", "branch_prune", "coverage_probe", "coverage_scan", "coverage_rare", "coverage_summary", "timeline",
                                "cause_chain", "backtrace", "find_event", "explain_frame", "diff", "replay_check", "seek_check_on", "seek_check_off", "history_limit", "journal_on", "journal_off", "journal_build", "journal_build_cancel",
                                "export_clip",
-                               "memory_at", "memory_diff", "card_seek", "card_step", "card_reverse_continue",
+                               "memory_at", "memory_series", "memory_diff", "screen_at", "card_seek", "card_step", "card_reverse_continue",
                                "card_position"})
     {
         schema["properties"]["action"]["enum"].append(action);
@@ -6413,7 +6499,16 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "Write journal (who wrote an address last, answered at once; off by default): 'journal_on' / 'journal_off' "
         "switch it at any moment, also while recording (each on-off span is a segment); 'journal_build' builds it by "
         "replaying frames from_frame..to_frame (default: the whole session; about 2-4 ms per frame; not while "
-        "recording); 'journal_build_cancel' stops a build that runs. find_last works without it too: outside the journal it replays one frame.";
+        "recording); 'journal_build_cancel' stops a build that runs. find_last works without it too: outside the journal it replays one frame. "
+        "Reads of the past (the machine does not move): 'memory_at' (bytes of space at frame: the state at the start of "
+        "that frame, before its first instruction - the answer says so in words, with at_tinframe where the CPU "
+        "stood; with tinframe: inside the frame; space cpu without frame: the machine now), 'memory_series' (one call "
+        "instead of a memory_at loop: memory_ranges at the start of every frame from_frame..to_frame by step (default: "
+        "the whole history) or of the frames listed, in one walk of the checkpoints; changes_only keeps only the frames "
+        "where a range changed; limit rows (default 1000), max_bytes; past them the answer says next_from_frame), "
+        "'screen_at' (a past frame as a picture: which shown (default: the frame's final picture, as seeking there "
+        "shows it), normal or shadow (RAM page 5 / 7 at the frame's end); screen_format png (an image) or bitmap / "
+        "attributes / raw bytes; names the screen shown at the frame's start and end and where it flipped).";
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["target"]["description"] = "Emulator id, or 'auto' to reuse the single instance";
@@ -6625,7 +6720,8 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "the walk ends once every PC has its hit";
     schema["properties"]["changes_only"]["type"] = "boolean";
     schema["properties"]["changes_only"]["description"] =
-        "find_last (access write): skip writes that store the byte already there; each hit gives old_value";
+        "find_last (access write): skip writes that store the byte already there; each hit gives old_value. "
+        "memory_series: only the frames where a range differs from the frame read before (the first always)";
     schema["properties"]["before"]["type"] = "integer";
     schema["properties"]["before"]["description"] =
         "find_last / reverse_continue: at or before this machine time (T-states, the hits' 't'); instead of before_frame";
@@ -6710,6 +6806,46 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "branch_list: rows to skip";
     schema["properties"]["length"]["type"] = "integer";
     schema["properties"]["length"]["description"] = "memory_at: bytes, default 256, at most 65536";
+    schema["properties"]["memory_ranges"]["type"] = Json::Value(Json::arrayValue);
+    schema["properties"]["memory_ranges"]["type"].append("string");
+    schema["properties"]["memory_ranges"]["type"].append("array");
+    schema["properties"]["memory_ranges"]["description"] =
+        "memory_series (required): '[space:]offset:length' items, e.g. '0x5B00:32, ram7:0x1800:768' (space cpu when "
+        "absent: Z80 addresses through the paging then; ram, ramN or a memory's name), or a list of such strings or of "
+        "{space, address | offset, page, length}; at most 16 ranges, 65536 bytes per frame";
+    schema["properties"]["step"]["type"] = "integer";
+    schema["properties"]["step"]["description"] = "memory_series: frames between rows (default 1)";
+    schema["properties"]["frames"]["type"] = "array";
+    schema["properties"]["frames"]["items"]["type"] = "integer";
+    schema["properties"]["frames"]["description"] =
+        "memory_series: the frames to read, ascending (instead of from_frame / to_frame / step)";
+    schema["properties"]["data_format"]["type"] = "string";
+    schema["properties"]["data_format"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* f : {"hex", "base64", "values"})
+        schema["properties"]["data_format"]["enum"].append(f);
+    schema["properties"]["data_format"]["description"] =
+        "memory_series: the bytes as hex (default here: readable in the text), base64 or a list of numbers";
+    schema["properties"]["max_bytes"]["type"] = "integer";
+    schema["properties"]["max_bytes"]["description"] =
+        "memory_series: row bytes per answer before encoding (default 1 MiB, at most 16 MiB)";
+    schema["properties"]["which"]["type"] = "string";
+    schema["properties"]["which"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* w : {"shown", "normal", "shadow"})
+        schema["properties"]["which"]["enum"].append(w);
+    schema["properties"]["which"]["description"] =
+        "screen_at: shown (default: the frame's final picture with the border), normal (RAM page 5) or shadow (RAM "
+        "page 7, 128K-class machines) at the frame's end";
+    schema["properties"]["screen_format"]["type"] = "string";
+    schema["properties"]["screen_format"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* f : {"png", "bitmap", "attributes", "raw"})
+        schema["properties"]["screen_format"]["enum"].append(f);
+    schema["properties"]["screen_format"]["description"] =
+        "screen_at: png (default: an image) or the screen's bytes - bitmap (6144), attributes (768), raw (6912)";
+    schema["properties"]["area"]["type"] = "string";
+    schema["properties"]["area"]["enum"] = Json::Value(Json::arrayValue);
+    for (const char* a : {"full", "screen"})
+        schema["properties"]["area"]["enum"].append(a);
+    schema["properties"]["area"]["description"] = "screen_at (which shown, png): full (with the border, default) or screen";
     schema["properties"]["access"]["type"] = "string";
     schema["properties"]["access"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* access : {"write", "read", "execute", "io"})
@@ -7089,6 +7225,35 @@ void RegisterTimeTravel(ToolRegistry& registry)
                         done(ToolResult::Error(error));
                         return;
                     }
+            }
+            else if (action == "memory_series")
+            {
+                if (!(args["memory_ranges"].isString() || args["memory_ranges"].isArray()) || args["memory_ranges"].empty())
+                {
+                    done(ToolResult::Error("Action 'memory_series' requires 'memory_ranges', e.g. '0x5B00:32, "
+                                           "ram7:0x1800:768' (from_frame / to_frame / step or frames optional)"));
+                    return;
+                }
+                (*body)["ranges"] = args["memory_ranges"];
+                (*body)["format"] = args.isMember("data_format") ? args["data_format"] : Json::Value("hex");
+                for (const char* field : {"from_frame", "to_frame", "step", "frames", "changes_only", "limit", "max_bytes"})
+                    if (args.isMember(field))
+                        (*body)[field] = args[field];
+            }
+            else if (action == "screen_at")
+            {
+                if (!args.isMember("frame"))
+                {
+                    done(ToolResult::Error("Action 'screen_at' requires 'frame' (which, screen_format, area optional)"));
+                    return;
+                }
+                (*body)["frame"] = args["frame"];
+                if (args.isMember("which"))
+                    (*body)["which"] = args["which"];
+                if (args.isMember("screen_format"))
+                    (*body)["format"] = args["screen_format"];
+                if (args.isMember("area"))
+                    (*body)["area"] = args["area"];
             }
             else if (action == "memory_at" || action == "memory_diff")
             {
@@ -7542,9 +7707,44 @@ void RegisterTimeTravel(ToolRegistry& registry)
                                 banks += (banks.empty() ? "" : ", ") + w["addr"].asString() + " " + w["name"].asString();
                             text += " [" + banks + "]";
                         }
+                        // E4: the moment the bytes stand for, in words
+                        if (b.isMember("moment_text"))
+                            text += " - " + b["moment_text"].asString();
                         text += ": ";
                         return text + (hex.size() > 128 ? hex.substr(0, 128) + "... (full in the data)" : hex);
                     }, done);
+                }
+                else if (action == "memory_series")
+                {
+                    CallAndSummarize("POST", Endpoint(id, "/ttd/memory-series"), body.get(), caller, [](const Json::Value& b) {
+                        return FormatMemorySeries(b);
+                    }, done);
+                }
+                else if (action == "screen_at")
+                {
+                    caller.Call("POST", Endpoint(id, "/ttd/screen-at"), body.get(), [done](int status, Json::Value b) {
+                        if (status < 200 || status >= 300)
+                        {
+                            const std::string details = DescribeErrorBody(b);
+                            done(ToolResult::Error(status == 0 ? std::string("WebAPI unreachable — is the emulator running "
+                                                                             "with WebAPI enabled (port 8090)?")
+                                                               : "WebAPI returned HTTP " + std::to_string(status) +
+                                                                     (details.empty() ? "" : ": " + details)));
+                            return;
+                        }
+                        const std::string text = FormatScreenAt(b);
+                        // A picture goes as an MCP image block: the model looks at it instead of base64 text
+                        std::string image;
+                        if (b.get("mime", "").asString() == "image/png" && b["data"].isString())
+                            image = b["data"].asString();
+                        ToolResult result = ToolResult::Ok(text, std::move(b));
+                        if (!image.empty())
+                        {
+                            result.imageData = std::move(image);
+                            result.imageMimeType = "image/png";
+                        }
+                        done(std::move(result));
+                    });
                 }
                 else if (action == "memory_diff")
                 {
