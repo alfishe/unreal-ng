@@ -422,7 +422,7 @@ The media follow ([media.md → Model switch](../../../features/media.md#model-s
 ### Execution Control
 ```
 POST /api/v1/emulator/{id}/step              Execute single instruction
-POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N})
+POST /api/v1/emulator/{id}/steps             Execute N instructions (body: {"count": N}, 1..10000000; more: 400 with count and max, nothing runs); answers count, executed, instructions_run, frames_run, tstates_run, frame, t, stop {cpu, reason step|breakpoint|stopped, ...}, message
 POST /api/v1/emulator/{id}/stepover          Step over CALL instructions
 POST /api/v1/emulator/{id}/stepout            Step out of current subroutine (breakpoints skipped)
 POST /api/v1/emulator/{id}/skip_until         Fast-forward until PC reaches target (body: {"pc": "0x8000", "max_tstates": N, "breakpoints": false}; true: a breakpoint stops it first, run to a cursor; answers hit, target, max_tstates, stop; ?cpu=gs / ms: that card CPU runs to pc, a breakpoint ends it, answers the card step's reply plus hit)
@@ -430,13 +430,13 @@ POST /api/v1/emulator/{id}/run_until         Whole frames until frame-end rules 
 GET  /api/v1/emulator/{id}/watches           Armed frame watches: {count, watches: [{id, label?, spec, then, once, armed_frame, hits, last_hit?, error?}], text}
 POST /api/v1/emulator/{id}/watches           Arm a frame watch (the run_until rules plus "label"?, "then"?: "pause"|"notify", "once"?: true): 201 {id, watch, text}; 400 a bad spec or 16 armed. A hit: watch_hit on debug.events, debug/wait wakes, then=pause pauses (stop reason "watch")
 DELETE /api/v1/emulator/{id}/watches/{watch} One watch by id, or "all": {removed: [ids], text}; 404 unknown
-POST /api/v1/emulator/{id}/run_tstates       Run N t-states (body: {"count": N})
+POST /api/v1/emulator/{id}/run_tstates       Run N t-states on the run timeline (body: {"tstates": N} or {"count": N}, 1..14000000000; "breakpoints"?: false); more: 400, nothing runs; answers as run_frames
 POST /api/v1/emulator/{id}/run_to_scanline   Run until scanline N (body: {"scanline": N})
 POST /api/v1/emulator/{id}/run_scanlines     Run N scanlines forward (body: {"count": N})
 POST /api/v1/emulator/{id}/run_to_pixel      Run until next screen pixel boundary
 POST /api/v1/emulator/{id}/run_to_interrupt  Run until Z80 accepts INT
 POST /api/v1/emulator/{id}/run_frame         Run exactly one video frame
-POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N})
+POST /api/v1/emulator/{id}/run_frames        Run N video frames (body: {"count": N} or {"frames": N}, 1..200000; "breakpoints"?: false: true lets the first one end the run); more: 400 with count and max, nothing runs, never cut; split-independent (30 + 70 == 100); answers count, frames_run, tstates_run, frame, t, stop {cpu, reason done|breakpoint|stopped, breakpoint_id?, address?, access?}, message, pc, sp, state
 GET  /api/v1/emulator/{id}/run_pace          The paced run: {emulator_id, pace: {preset, label, index, unit, count, interval_ms, effective_ms, adjustable, running, ticks, stop_reason, breakpoint?, presets}}
 POST /api/v1/emulator/{id}/run_pace          {op: set|next|prev|by|start|stop|toggle|step, preset?, interval_ms?, delta?} -> {status, message, pace, state} (scope run; 409 "Run-control held", 400 for a bad preset / interval)
 ```

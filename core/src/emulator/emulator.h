@@ -375,6 +375,29 @@ private:
     unsigned _frameStepTargetPos = 0;                   // Target t-state position within frame
     bool _hasFrameStepTarget = false;                   // Whether target has been set
 
+    /// The direct-run timeline (RunNFrames, RunTStates on the timeline): where the last such run that reached its
+    /// target stopped, and how many T-states its last instruction ran past that target. A timeline run that starts
+    /// exactly there (same frame, t, frame length, PC and SP: nothing moved the machine since) counts its budget from
+    /// that target, not from where the machine stands, so a run split into calls ends where one call ends (run 100
+    /// frames == 30 + 70 == 100 x 1). Any other run (a step, the running machine, a time travel seek) moves the
+    /// machine away from the stored position and so ends the timeline; one that leaves it exactly there leaves the
+    /// state the timeline describes
+    struct RunTimeline
+    {
+        bool valid = false;
+        uint64_t frame = 0;
+        uint32_t t = 0;
+        uint32_t frameLimit = 0;
+        uint16_t pc = 0;
+        uint16_t sp = 0;
+        uint64_t overshoot = 0;
+    };
+    RunTimeline _runTimeline;
+    /// The T-states the last timeline run ran past its target when the machine still stands where it ended, else 0
+    uint64_t RunTimelineCarry() const;
+    /// A timeline run reached its target, its last instruction `overshoot` T-states past it
+    void NoteRunTimelineEnd(uint64_t overshoot);
+
     // Line-step anchor (prevents horizontal drift when stepping by scanlines)
     // Stores the initial offset within a scanline; subsequent steps target the same offset.
     int _lineStepAnchorOffset = -1;                     // -1 = not set (first line-step will capture it)
@@ -839,7 +862,18 @@ public:
     /// Returns the instructions executed: fewer than asked when a breakpoint stopped the run (LastDirectStop)
     unsigned RunNCPUCycles(unsigned cycles, bool skipBreakpoints = false);
     void RunFrame(bool skipBreakpoints = true);                   // Run until next frame boundary
-    void RunNFrames(unsigned frames, bool skipBreakpoints = true); // Run N complete frames (64-bit T-state budget: TStateRunBudget)
+    /// What a counted direct run did (RunNFrames, RunTStates): every surface's answer is built from it
+    struct DirectRunResult
+    {
+        uint64_t tstates = 0;    ///< CPU T-states run by this call
+        uint64_t frames = 0;     ///< frame ends passed
+        bool reached = false;    ///< it ran all it was asked; false: a breakpoint, a stop or an abort ended it first
+    };
+    /// Run N frames' worth of T-states (64-bit budget, TStateRunBudget) on the direct-run timeline: the target is N
+    /// frames after the previous timeline run's target when the machine still stands where that run ended
+    /// (RunTimeline), else N frames after the current position. Splitting a run into calls does not change where it
+    /// ends: 100 == 30 + 70 == 100 x 1, the same T-state and the same machine state
+    DirectRunResult RunNFrames(unsigned frames, bool skipBreakpoints = true);
     void StepOver();                                              // Execute instruction, skip calls and subroutines
     void StepOut();                                               // Run until the current subroutine returns (SP-tracking)
 
@@ -847,7 +881,11 @@ public:
     void CancelPendingStepOver();
 
     // Atomic debug stepping — zero overhead in non-debug mode (never called from hot path)
-    void RunTStates(uint64_t tStates, bool skipBreakpoints = true);           // Run exact N t-states (1 = ULA step / 2 pixels)
+    /// Run exact N t-states (1 = ULA step / 2 pixels); the run ends with the instruction that reaches the target.
+    /// `onTimeline`: the target is N T-states after the previous timeline run's target (RunTimeline), as the
+    /// automation planes' run_tstates does, so slices of a run end where one run ends; false (the default, the
+    /// internal callers: time travel, analysis) counts from the current position as before
+    DirectRunResult RunTStates(uint64_t tStates, bool skipBreakpoints = true, bool onTimeline = false);
     void RunUntilScanline(unsigned targetLine, bool skipBreakpoints = true);  // Run until scanline N boundary
     void RunNScanlines(unsigned count, bool skipBreakpoints = true);          // Run N complete scanlines from current position (drift-free)
     void ResetLineStepAnchor();                                               // Clear scanline-step anchor (call when switching away from line stepping)
@@ -868,6 +906,10 @@ public:
     /// Start the current frame again after machine state was replaced from
     /// outside the frame flow (reset, snapshot load). See MainLoop::RestartFrame
     void RestartFrame();
+
+    /// A machine that takes another's whole state (MachineStateTransfer) continues the other's run timeline from
+    /// where it now stands: the next RunNFrames of both ends at the same point, as their states are the same
+    void ContinueRunTimelineOf(const Emulator& source);
 
 private:
     /// The one stepping primitive of every Emulator::Run* path: a single

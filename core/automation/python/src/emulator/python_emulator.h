@@ -3328,8 +3328,11 @@ namespace PythonBindings
             }, "Execute one frame", py::arg("skip_breakpoints") = true)
             .def("run_frames", [](Emulator& self, unsigned count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunNFrames(count, skipBreakpoints);
-            }, "Execute N frames", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunNFrames(count, skipBreakpoints);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("frames", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N frames on the direct-run timeline (split-independent: 30 + 70 == 100); dict with count, "
+               "frames_run, tstates_run, frame, t, stop, message", py::arg("count"), py::arg("skip_breakpoints") = true)
 
             // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until(text="PRESS", max_frames=500)
             // (condition= for if=), watch_add(condition="...", then="notify"), watches(), watch_remove(id | "all")
@@ -3346,10 +3349,13 @@ namespace PythonBindings
             }, "Remove a frame watch by id, or \"all\"", py::arg("id"))
 
             // T-state and scanline stepping
-            .def("run_tstates", [](Emulator& self, unsigned count, bool skipBreakpoints) {
+            .def("run_tstates", [](Emulator& self, uint64_t count, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
-                self.RunTStates(count, skipBreakpoints);
-            }, "Execute N T-states", py::arg("count"), py::arg("skip_breakpoints") = true)
+                const Emulator::DirectRunResult r = self.RunTStates(count, skipBreakpoints, /*onTimeline=*/true);
+                return StateNodeToPy(execution::RunOutcomeNode(
+                    self, execution::RunOutcomeOf("tstates", count, r.frames, r.tstates, r.reached)));
+            }, "Execute N T-states on the run_frames timeline (slices end where one run ends); the run_frames dict",
+               py::arg("count"), py::arg("skip_breakpoints") = true)
             .def("run_to_scanline", [](Emulator& self, unsigned scanline, bool skipBreakpoints) {
                 execution::script::Check(self, execution::Origin::Python);
                 self.RunUntilScanline(scanline, skipBreakpoints);

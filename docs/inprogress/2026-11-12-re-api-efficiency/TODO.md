@@ -8,8 +8,23 @@
 ## Proposals, in priority order
 
 ### P1
-- [ ] F1: no silent clamp in `run_frames` / `/steps` / `run_tstates`; answers carry `frames_run`, `frame`, `t`, `stop`; MCP text from the answer (S).
-- [ ] F2: `RunNFrames` aims at an absolute frame boundary; split-independent runs, with a test (M).
+- [x] F1: no silent clamp in `run_frames` / `/steps` / `run_tstates`; answers carry `frames_run`, `frame`, `t`, `stop`; MCP text from the answer (S).
+  As built (2026-11-19, uncommitted on `run-exact`): one implementation in `execution::RunControl` (REST, WebSocket,
+  MCP, the `run.*` actions) with limits 1..200000 frames, 1..14000000000 t-states, 1..10000000 instructions; a larger
+  count is refused (400 with `count`, `max`), nothing runs. `RunOutcomeNode` / `RunOutcomeText`: `count`, `frames_run`,
+  `tstates_run`, `frame`, `t`, `stop {reason done|breakpoint|stopped, ...}`, `message`; the MCP text is `message`.
+  `breakpoints: true` on run_frames / run_tstates. CLI same limits and text; Lua / Python return the answer as a
+  table / dict. Docs: command-interface.md "Counted runs", plane docs, OpenAPI.
+- [x] F2: `RunNFrames` aims at an absolute frame boundary; split-independent runs, with a test (M).
+  As built (2026-11-19, uncommitted on `run-exact`): `Emulator::RunTimeline` keeps the end position and the overshoot
+  of a run that reached its target; the next `RunNFrames` / planes' `RunTStates(onTimeline)` starting exactly there
+  credits the overshoot. Any other run moves the position and ends the timeline. Internal `RunTStates` callers (TTD,
+  analysis) stay off it; `MachineStateTransfer` hands the source's timeline to the target (a clone continues
+  alike). `core/tests/emulator/runsplit_test.cpp`: 100 == 30+70 == 1x100 == t-state slices, digest equal on
+  Pentagon, 48K, General Sound and tight General Sound (a 47-T loop, so every run overshoots; a control test shows
+  the old rule drifts). Tests that relied on the drift: ProfileAnalyzer InterruptsHaltMarksAndFrames (window now
+  starts mid-frame), GmxBoot LoaderSchemeFour (both machines start at the same t mod 4: HALT's 4-T phase), TTD CI
+  gate bm7_file rows (1 / 4 / 18 bytes less: the saved tail is shorter).
 - [x] F3: TTD dump failure reasons; chunk records over 1 GiB; partial file handling (M).
   As built (2026-11-16, uncommitted on `transfer-dump`): the cause was measured, the write journal written whole with
   the last part (8.3 KB raw per frame, 1 GiB at about 130 000 frames; SimCity's 139 382 frames refused as "disk full").

@@ -617,8 +617,11 @@ def gui_call(method: str, target: str = "", **params) -> dict:
     def run_frame(self):
         """Run exactly one video frame (config.frame t-states)"""
         
-    def run_frames(self, count: int):
-        """Run exactly N video frames"""
+    def run_frames(self, count: int, skip_breakpoints: bool = True) -> dict:
+        """N video frames on the run timeline (split-independent: 30 + 70 == 100); returns {count, unit, frames_run,
+        tstates_run, frame, t, stop: {cpu, reason: done|breakpoint|stopped, ...}, message}
+        (command-interface.md, Counted runs). run_tstates(count, skip_breakpoints=True) runs t-states on the same
+        timeline and returns the same dict"""
         
     def get_id(self) -> str:
         """Get emulator UUID"""

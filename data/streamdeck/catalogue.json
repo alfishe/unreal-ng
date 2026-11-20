@@ -212,7 +212,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..100000, 1)"
+   "params": "count? (1..10000000, 1; more is refused)"
   },
   {
    "id": "run.frames",
@@ -220,7 +220,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..10000, 1)"
+   "params": "count? (1..200000, 1; more is refused)"
   },
   {
    "id": "run.tstates",
@@ -228,7 +228,7 @@
    "group": "Run",
    "kind": "press",
    "held": false,
-   "params": "count? (1..10000000, 1)"
+   "params": "count? (1..14000000000, 1; more is refused)"
   },
   {
    "id": "mach.start",

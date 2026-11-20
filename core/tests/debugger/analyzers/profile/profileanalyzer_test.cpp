@@ -309,6 +309,10 @@ TEST_F(ProfileAnalyzer_Test, InterruptsHaltMarksAndFrames)
     for (uint32_t a = 0x9000; a <= 0x9100; ++a)
         _context->pMemory->DirectWriteToZ80Memory(static_cast<uint16_t>(a), 0x92);
     Poke(0x9292, {0xFB, 0xC9});  // EI; RET
+    // Mid-frame before the window starts: run_frames ends exactly at its target (split-independent runs), and the
+    // profile books an instruction - and a frame end it crossed - when the next one starts; a target near a frame
+    // start would leave the last frame end of a run to the next run
+    _emulator->RunTStates(1000, true);
     Start({{"frames", "true"}, {"ring_kib", "64"}});
     _emulator->RunNFrames(4, true);
     ASSERT_TRUE(Op("mark", {{"name", "late"}}).Ok());

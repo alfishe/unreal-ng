@@ -408,14 +408,14 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 | `stepover` | | | Execute one instruction, treating subroutine calls (`CALL`, `RST`) as atomic operations. If the instruction is a call, execution continues until the corresponding `RET`, then pauses. If not a call instruction, behaves like `step`. Essential for stepping over function calls without diving into them. |
 | `stepout` | | | Execute until the current subroutine returns to its caller. Breakpoints are skipped for the walk (same no-trap rule as step over) and frames rendered during the walk are not captured by the recording subsystem (raw CPU stepping path). Returns the new PC and SP. |
 | `skip_until <pc>` | | `<address> [max_tstates]` | Fast-forward execution until PC reaches `<address>` (hex or decimal), or the t-state budget is exhausted. Breakpoints are skipped for the walk. Default budget: 100 frames of emulated time (~2 s), hard cap 700,000,000 t-states. Returns hit/timeout status and the final PC. |
-| `run_tstates <N>` | | `<count>` | Run the CPU for exactly `<N>` t-states (1 t-state = 1 ULA clock tick / 2 pixels). Useful for precise timing analysis and ULA-level debugging. |
+| `run_tstates <N> [breakpoints]` | | `<count>` | Run the CPU for exactly `<N>` t-states (1 t-state = 1 ULA clock tick / 2 pixels), 1..14,000,000,000 in one call (more is refused, never cut), on the run timeline (**Counted runs** below). Useful for precise timing analysis and ULA-level debugging. |
 | `run_to_scanline <N>` | | `<scanline>` | Run until the ULA beam reaches scanline `<N>`. For models with 312 scanlines (PAL), valid range is 0–311. |
 | `run_scanlines <N>` | | `<count>` | Run forward by `<N>` scanlines from the current beam position. |
 | `run_to_pixel` | | | Run until the next visible screen pixel boundary. Steps one pixel at a time through the display area. |
 | `run_to_interrupt` | | | Run until the Z80 accepts a maskable interrupt (INT). Useful for stepping to the next frame boundary when interrupts are enabled. |
 | `run_frame` | | | Run exactly one complete video frame worth of t-states. The beam stops at approximately the same position in the next frame, providing consistent "one frame forward" behavior. |
-| `run_frames <N>` | | `<count>` | Run exactly `<N>` complete video frames. Equivalent to calling `run_frame` N times but more efficient. Max: 10,000. |
-| `run_ncycles <N>` | | `<count>` | Run exactly `<N>` CPU cycles (instructions). Each cycle executes one complete Z80 instruction. Max: 100,000. |
+| `run_frames <N> [breakpoints]` | | `<count>` | Run `<N>` video frames' worth of t-states, 1..200,000 in one call (more is refused, never cut). Split-independent: `run_frames 30` + `run_frames 70` ends at the same t-state with the same machine state as `run_frames 100` (**Counted runs** below). `breakpoints`: the first breakpoint ends the run (default: skipped). |
+| `run_ncycles <N>` | | `<count>` | Run exactly `<N>` CPU cycles (instructions). Each cycle executes one complete Z80 instruction. 1..10,000,000 (more is refused). |
 | `pace [verb]` | | `[show \| presets \| set <preset> [ms] \| interval <ms> \| next \| prev \| start \| stop \| toggle \| step] [--json]` | The paced run (see **2.1 Paced run** below): the machine steps a frame, N scanlines or an instruction per interval on its own and stops at a breakpoint. |
 
 **Implementation Details**:
@@ -472,8 +472,39 @@ Commands to control the CPU execution flow for the selected emulator instance. T
 **Frame Stepping** (`run_frame`, `run_frames`):
 - Executes exactly `config.frame` t-states per frame (model-dependent)
 - Maintains beam position consistency across multiple frame steps
-- Uses a persistent target position to prevent cumulative drift
+- `run_frame` uses a persistent target position to prevent cumulative drift; `run_frames` and `run_tstates` use the
+  run timeline (**Counted runs** below)
 - Resets target when other stepping commands are used
+
+**Counted runs** (`run_frames`, `run_tstates`, `steps` / `run_ncycles`; re-api-efficiency F1, F2, 2026-11-19):
+- **No silent limit.** A remote call (CLI, REST, WebSocket, MCP, the actions) runs every frame, t-state or
+  instruction it asks for, or is refused before anything runs (REST 400, `count` and `max` in the body; the CLI and
+  MCP text name the limit): `run_frames` 1..200,000 (as `run_until`'s `max_frames`), `run_tstates`
+  1..14,000,000,000, `steps` 1..10,000,000. Lua and Python run in-process and take any count. Until 2026-11-19 the
+  WebAPI cut `run_frames` to 10,000, `steps` to 100,000 and `run_tstates` to 10,000,000 without a word and the MCP
+  text named the requested number.
+- **The answer says what ran**, on every plane (`RunControl`'s `RunOutcomeNode`, `core/src/emulator/execution/runcontrol.h`):
+  `count` (as asked), `frames_run`, `tstates_run`, `frame` (the frame counter) and `t` where it ended, and `stop`
+  `{cpu, reason, breakpoint_id?, address?, access?, cpu_pc?}` with `reason` `done` (all of it ran; `steps` keep their
+  `step`), `breakpoint` or `stopped`; `steps` add `executed` / `instructions_run`. `message` is one line built from
+  that answer ("Ran 31000 frames (frame 31012, t 1234)", "Ran 12 of 31000 frames: stopped at breakpoint #2 (execute
+  $8000) (frame 24, t 5678)"); the MCP text is that line, never the request. Lua `run_frames` / `run_tstates` return
+  it as a table, Python as a dict.
+- **Breakpoints**: skipped by default; `breakpoints` (REST / MCP / WebSocket body `"breakpoints": true`, CLI
+  `run_frames <N> breakpoints`, Lua / Python `skip_breakpoints` false) lets the first one end the run, `stop` says
+  which. The user taking control back ends a run at once (`revoked_by_user`, as every run).
+- **The run timeline** (`Emulator::RunTimeline`): a run ends after the instruction that reaches its target, a few
+  t-states past it. `run_frames` and the planes' `run_tstates` keep that overshoot: a run that starts exactly where
+  the previous one ended (nothing moved the machine in between) aims at the previous target plus its own length, not
+  at the current position plus its length. So one call of 100 frames, calls of 30 + 70, 100 calls of one frame and
+  t-state slices adding up to 100 frames all end at the same frame, t-state and machine state
+  (`core/tests/emulator/runsplit_test.cpp`: Pentagon, 48K, General Sound, tight General Sound). A slice already
+  passed by the previous run's last instruction runs nothing (`tstates_run` 0). Any other run, a resume or a time
+  travel move ends the timeline: the next run counts from where the machine stands. Time travel's own internal
+  `RunTStates` calls stay off the timeline (one instruction at least, counted from the current position). A state
+  transfer (`MachineStateTransfer`, clone) hands the source's timeline to the target, so both continue alike.
+  The CPU profile books an instruction, and a frame end it crossed, when the next one starts: a report read right
+  after a run whose target lies within the first instruction of a frame shows that frame's end with the next run.
 
 **Host audio** (every stepping command, `run_frames` included): the run goes at full host speed, so the host
 audio output gets nothing for its duration, on every machine and from every sound source - as while paused.
@@ -581,7 +612,9 @@ revoked answer, `pc`, `sp`, `state`), on every plane:
 | run until PC | `pc`, `max_tstates?` (0: 100 frames, at most 700000000), `breakpoints?` (false: skipped) | `skip_until <pc> [max]` | `POST /skip_until` `{pc, max_tstates?, breakpoints?}` | `run_until_pc` (`pc`, `max_tstates`, `breakpoints`) | `skip_until(pc, max)` | `run.until_pc` (`pc`, `max_tstates?`, `breakpoints?`) |
 | run to the cursor | `addr?` (else the Qt disassembly's cursor), `max_tstates?` (0: 500 frames); a breakpoint on the way stops it | `action run run.to_cursor addr=#8000` | `POST /skip_until` `{pc, breakpoints: true}` | `run_until_pc` with `breakpoints` true | `action("run.to_cursor", addr=...)` | `run.to_cursor`; Qt Debug menu "Run to Cursor" |
 | run until a frame-end rule holds | `if?` (a frame-end condition), `text?` (ROM-font OCR), `screen?` (`changed` / `stable`, `stable_frames?` 25), `event?` (a game event), `match?` (`any` / `all`), `max_frames?` (3000, at most 200000), `breakpoints?` (false) | `run_until [N] text="PRESS" if="M(#5C3A)==1"` | `POST /run_until` | `run_until` (`condition` for `if`) | `run_until(text=..., condition=...)` / `run_until{text=...}` | |
-| N instructions | `count` 1..100000 | `run_ncycles <N>`, `steps <N>` | `POST /steps` | `step_n` (`count`) | `steps(n)` | `run.steps` (`count`) |
+| N instructions | `count` 1..10000000 (more is refused) | `run_ncycles <N>`, `steps <N>` | `POST /steps` | `step_n` (`count`) | `steps(n)` | `run.steps` (`count`) |
+| N frames (**Counted runs** above) | `count` 1..200000, `breakpoints?` | `run_frames <N> [breakpoints]` | `POST /run_frames` `{count, breakpoints?}` | `run_frames` (`frames`, `breakpoints`) | `run_frames(n, skip_breakpoints)` | `run.frames` (`count`) |
+| N t-states, on the run timeline | `count` 1..14000000000, `breakpoints?` | `run_tstates <N> [breakpoints]` | `POST /run_tstates` `{tstates, breakpoints?}` | `run_tstates` (`tstates`, `breakpoints`) | `run_tstates(n, skip_breakpoints)` | `run.tstates` (`count`) |
 | step a source line | `max_tstates?` | `listing step_line` | `POST /listing/step_line` | `symbols` `step_line` | `listing_step_line()` | `run.step_line` |
 | run to a source line | `line`, `max_tstates?` | `listing run_to_line <N>` | `POST /listing/run_to_line` | `symbols` `run_to_line` | `listing_run_to_line(n)` | `run.to_line` (`line`) |
 

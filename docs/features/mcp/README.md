@@ -127,8 +127,12 @@ and `name` (a case-insensitive substring) and writes the first `limit` (default 
 JSON. `inspect_state registers` writes the full set (the alternate registers, I, R, MEMPTR, IM, IFF1/2),
 `manage_symbols resolve` the answer (`CLS = 0x0D6B rom3 code ; comment`), `type_input list_keys` the key names.
 `control_execution bp_add` switches the breakpoints feature on when it is off (a breakpoint never fires without it)
-and says so; `run_frame` / `run_frames` / `run_tstates` / `run_to_interrupt` skip breakpoints: `resume` and `wait`
-stop at one. Live checks of all of this: [tools/verification/mcp](../../../tools/verification/mcp/README.md). Tools that perform real multi-step work report
+and says so; `run_frame` / `run_to_interrupt` skip breakpoints: `resume` and `wait` stop at one; `run_frames` /
+`run_tstates` skip them unless `breakpoints` is true. `run_frames` (1..200000), `run_tstates` and `step_n` run all
+they are asked or refuse: no silent limit. Their text is the server's answer ("Ran 31000 frames (frame 31012, t 1234)",
+"Ran 12 of 31000 frames: stopped at breakpoint #2 ..."), the structured result adds `frames_run`, `tstates_run`,
+`frame`, `t` and `stop`; runs are split-independent (30 + 70 frames == 100:
+[counted runs](../../emulator/design/control-interfaces/command-interface.md)). Live checks of all of this: [tools/verification/mcp](../../../tools/verification/mcp/README.md). Tools that perform real multi-step work report
 progress when the request carries a `_meta.progressToken` (see
 [Protocol details](#protocol-details)).
 

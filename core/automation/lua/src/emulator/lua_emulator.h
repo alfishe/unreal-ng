@@ -3016,10 +3016,15 @@ public:
             effectiveEmulator()->RunFrame(skipBP.value_or(true));
         });
 
-        lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
+        // run_frames(n [, skip_breakpoints = true]) -> {count, frames_run, tstates_run, frame, t, stop, message}: on the
+        // direct-run timeline (split-independent: 30 + 70 == 100), any count
+        lua.set_function("run_frames", [this](unsigned count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
-            effectiveEmulator()->RunNFrames(count, skipBP.value_or(true));
+            Emulator& emulator = *effectiveEmulator();
+            const Emulator::DirectRunResult r = emulator.RunNFrames(count, skipBP.value_or(true));
+            return StateNodeToLua(ts, execution::RunOutcomeNode(
+                                          emulator, execution::RunOutcomeOf("frames", count, r.frames, r.tstates, r.reached)));
         });
 
         // Frame watches (docs/inprogress/2026-11-03-run-until-watches): run_until{text = "PRESS", max_frames = 500}
@@ -3059,10 +3064,15 @@ public:
         });
 
         // Atomic stepping methods
-        lua.set_function("run_tstates", [this](unsigned count, sol::optional<bool> skipBP) {
-            if (!effectiveEmulator()) return;
+        // run_tstates(n [, skip_breakpoints = true]) -> the run_frames answer; on the same timeline (slices end where
+        // one run ends)
+        lua.set_function("run_tstates", [this](uint64_t count, sol::optional<bool> skipBP, sol::this_state ts) -> sol::object {
+            if (!effectiveEmulator()) return sol::lua_nil;
             execution::script::Check(*effectiveEmulator(), execution::Origin::Lua);
-            effectiveEmulator()->RunTStates(count, skipBP.value_or(true));
+            Emulator& emulator = *effectiveEmulator();
+            const Emulator::DirectRunResult r = emulator.RunTStates(count, skipBP.value_or(true), /*onTimeline=*/true);
+            return StateNodeToLua(ts, execution::RunOutcomeNode(
+                                          emulator, execution::RunOutcomeOf("tstates", count, r.frames, r.tstates, r.reached)));
         });
 
         lua.set_function("run_to_scanline", [this](unsigned scanline, sol::optional<bool> skipBP) {

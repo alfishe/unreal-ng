@@ -700,7 +700,10 @@ r = emu:steps(count)     -- up to N instructions; a breakpoint ends the run earl
 -- r = {executed, stopped, breakpoint_id, address, access}: an execution breakpoint stops
 -- before its instruction, a memory / port one after it (.recipe/analysis/breakpoints-and-events.md)
 emu:run_frame()          -- Run exactly one video frame
-emu:run_frames(count)    -- Run exactly N video frames
+r = emu:run_frames(count [, skip_breakpoints = true])  -- N video frames on the run timeline (split-independent)
+r = emu:run_tstates(count [, skip_breakpoints = true]) -- N t-states on the same timeline
+-- r = {count, unit, frames_run, tstates_run, frame, t, stop = {cpu, reason = done|breakpoint|stopped, ...}, message}
+-- (command-interface.md, Counted runs)
 
 -- Registers (global functions, the bound or selected emulator)
 regs = get_registers()   -- pc sp af bc de hl ix iy af_ bc_ de_ hl_ i r memptr q im iff1 iff2 halted boundary t

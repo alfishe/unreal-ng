@@ -1451,9 +1451,10 @@ void RegisterControlExecution(ToolRegistry& registry)
     }
     schema["properties"]["action"]["description"] =
         "Execution primitive. Stepping/running actions return the new register state. bp_* actions manage breakpoints "
-        "(bp_add switches the breakpoints feature on). run_frame / run_frames / run_tstates / run_to_interrupt skip "
-        "breakpoints: to stop at one, resume and then wait. run_to_scanline / run_scanlines / run_to_pixel skip them too; "
-        "run_until_pc skips them unless breakpoints=true (run to a cursor). run_until: whole frames until a rule holds "
+        "(bp_add switches the breakpoints feature on). run_frame / run_to_interrupt skip breakpoints: to stop at one, "
+        "resume and then wait; run_frames / run_tstates / run_until_pc skip them unless breakpoints=true. run_frames / "
+        "run_tstates / step_n run all they are asked or refuse (no silent limit) and say what ran (frames_run, frame, t, "
+        "stop). run_to_scanline / run_scanlines / run_to_pixel skip breakpoints too. run_until: whole frames until a rule holds "
         "at a frame end (condition, text, screen, event; max_frames) - one call instead of run_frames + a read per "
         "chunk. watch_add arms the same rules on the running machine (then pause / notify): resume, then wait. "
         "pace: the paced run (pace_op). callbacks / "
@@ -1464,7 +1465,9 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["target"]["type"] = "string";
     schema["properties"]["target"]["default"] = "auto";
     schema["properties"]["count"]["type"] = "integer";
-    schema["properties"]["count"]["description"] = "Instruction count for step_n; scanline count for run_scanlines (1..1000)";
+    schema["properties"]["count"]["description"] =
+        "Instruction count for step_n (1..10000000; more is refused, never cut); scanline count for run_scanlines "
+        "(1..1000)";
     schema["properties"]["scanline"]["type"] = "integer";
     schema["properties"]["scanline"]["description"] = "For run_to_scanline: the scanline to stop at (0..319 on most models)";
     schema["properties"]["pc"]["oneOf"][0]["type"] = "integer";
@@ -1473,7 +1476,8 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["max_tstates"]["type"] = "integer";
     schema["properties"]["max_tstates"]["description"] = "For run_until_pc: the t-state budget (0 / absent: 100 frames)";
     schema["properties"]["breakpoints"]["type"] = "boolean";
-    schema["properties"]["breakpoints"]["description"] = "For run_until_pc: a breakpoint on the way stops it (default false)";
+    schema["properties"]["breakpoints"]["description"] =
+        "For run_until_pc, run_frames, run_tstates: a breakpoint on the way stops it (default false)";
     schema["properties"]["pace_op"]["type"] = "string";
     schema["properties"]["pace_op"]["enum"] = Json::Value(Json::arrayValue);
     for (const char* op : {"get", "set", "next", "prev", "start", "stop", "toggle", "step"})
@@ -1493,9 +1497,14 @@ void RegisterControlExecution(ToolRegistry& registry)
     schema["properties"]["lease_seconds"]["description"] =
         "For take_control: the session ends after this long without a call (default 60; 0 = none)";
     schema["properties"]["frames"]["type"] = "integer";
-    schema["properties"]["frames"]["description"] = "Frame count for run_frames";
+    schema["properties"]["frames"]["description"] =
+        "Frame count for run_frames: 1..200000 in one call (more is refused, never cut). Runs are split-independent: "
+        "calls of 30 and 70 frames end at the same T-state and state as one call of 100. The answer gives frames_run, "
+        "tstates_run, frame, t and stop (done / breakpoint / stopped)";
     schema["properties"]["tstates"]["type"] = "integer";
-    schema["properties"]["tstates"]["description"] = "T-state count for run_tstates";
+    schema["properties"]["tstates"]["description"] =
+        "T-state count for run_tstates: 1..14000000000 in one call (more is refused). On the same timeline as run_frames: "
+        "slices end where one run ends (a slice already reached by the previous one's last instruction runs nothing)";
     schema["properties"]["address"]["oneOf"][0]["type"] = "integer";
     schema["properties"]["address"]["oneOf"][1]["type"] = "string";
     schema["properties"]["address"]["description"] =
@@ -2320,8 +2329,7 @@ void RegisterControlExecution(ToolRegistry& registry)
                     else if (action == "step_n")
                     {
                         path = Endpoint(id, "/steps");
-                        body["count"] = args.isMember("count") ? args["count"].asUInt() : 1u;
-                        summary = "Stepped " + std::to_string(body["count"].asUInt()) + " instructions. ";
+                        body["count"] = args.isMember("count") ? args["count"] : Json::Value(1u);
                     }
                     else if (action == "step_over")
                     {
@@ -2336,15 +2344,17 @@ void RegisterControlExecution(ToolRegistry& registry)
                     else if (action == "run_frame" || action == "run_frames")
                     {
                         path = Endpoint(id, "/run_frames");
-                        unsigned frames = action == "run_frame" ? 1u : (args.isMember("frames") ? args["frames"].asUInt() : 1u);
-                        body["frames"] = frames;
-                        summary = "Ran " + std::to_string(frames) + " frame(s). ";
+                        body["frames"] = action == "run_frame" ? Json::Value(1u)
+                                                               : (args.isMember("frames") ? args["frames"] : Json::Value(1u));
+                        if (args.isMember("breakpoints"))
+                            body["breakpoints"] = args["breakpoints"];
                     }
                     else if (action == "run_tstates")
                     {
                         path = Endpoint(id, "/run_tstates");
-                        body["tstates"] = args.isMember("tstates") ? args["tstates"].asUInt() : 1u;
-                        summary = "Ran " + std::to_string(body["tstates"].asUInt()) + " t-states. ";
+                        body["tstates"] = args.isMember("tstates") ? args["tstates"] : Json::Value(1u);
+                        if (args.isMember("breakpoints"))
+                            body["breakpoints"] = args["breakpoints"];
                     }
                     else if (action == "run_to_interrupt")
                     {
@@ -2396,10 +2406,17 @@ void RegisterControlExecution(ToolRegistry& registry)
 
                     if (cardCpu)
                         path += cpuQuery;
+                    // A counted run's text is the server's answer (what really ran, where it ended, why it stopped),
+                    // never the request: an agent may read only the text
+                    const bool counted = !cardCpu && (action == "step_n" || action == "run_frame" ||
+                                                      action == "run_frames" || action == "run_tstates");
                     const Json::Value* bodyPtr = body.isNull() ? nullptr : &body;
-                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done, cardCpu, cpuQuery](int status, Json::Value response) mutable {
+                    caller.Call(method, path, bodyPtr, [summary, &caller, id, done, cardCpu, cpuQuery, counted](int status, Json::Value response) mutable {
+                        if (counted && response.isObject() && response.isMember("message") &&
+                            response.isMember("frames_run"))
+                            summary = response["message"].asString() + ". ";
                         // A breakpoint that ended a step says so (the structured result carries `stop`)
-                        if (response.isObject() && response.isMember("stop") &&
+                        else if (response.isObject() && response.isMember("stop") &&
                             response["stop"].get("reason", "").asString() == "breakpoint")
                         {
                             const Json::Value& stop = response["stop"];

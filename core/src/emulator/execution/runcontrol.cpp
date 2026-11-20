@@ -9,6 +9,7 @@
 #include "debugger/listing/listingparser.h"
 #include "debugger/targets/gscardtarget.h"
 #include "debugger/watch/framewatch.h"
+#include "emulator/cpu/core.h"
 #include "emulator/cpu/z80.h"
 #include "emulator/emulator.h"
 #include "emulator/emulatorcontext.h"
@@ -474,49 +475,191 @@ RunReply RunControl::RunNScanlines(const Requester& requester, unsigned count)
     return reply;
 }
 
-RunReply RunControl::Steps(const Requester& requester, unsigned count)
+RunReply RunControl::Steps(const Requester& requester, uint64_t count)
 {
     if (!_emulator)
         return Missing();
+    if (count < 1 || count > kMaxRunSteps)
+        return CountRefusal("instructions", count, kMaxRunSteps);
     if (HeldByOther(_emulator->GetContext(), requester))
         return HeldReply("step");
-    count = std::clamp(count, 1u, 100000u);  // safety limit, as POST /steps
-    const unsigned executed = _emulator->RunNCPUCycles(count, false);
-    RunReply reply = Finish("Executed " + std::to_string(executed) + " of " + std::to_string(count) + " instructions");
-    if (reply.Ok())
+    const Position before = Where();
+    const unsigned executed = _emulator->RunNCPUCycles(static_cast<unsigned>(count), false);
+    RunOutcome outcome;
+    outcome.unit = "instructions";
+    outcome.requested = count;
+    outcome.instructionsRun = executed;
+    outcome.reached = executed == count && !_emulator->LastDirectStop().hit;
+    Since(before, outcome);
+    return FinishRun(outcome);
+}
+
+RunReply RunControl::RunFrames(const Requester& requester, uint64_t count, bool breakpoints)
+{
+    if (!_emulator)
+        return Missing();
+    if (count < 1 || count > kMaxRunFrames)
+        return CountRefusal("frames", count, kMaxRunFrames);
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    const Emulator::DirectRunResult result = _emulator->RunNFrames(static_cast<unsigned>(count), !breakpoints);
+    RunOutcome outcome;
+    outcome.unit = "frames";
+    outcome.requested = count;
+    outcome.framesRun = result.frames;
+    outcome.tstatesRun = result.tstates;
+    outcome.reached = result.reached;
+    return FinishRun(outcome);
+}
+
+RunReply RunControl::RunTStates(const Requester& requester, uint64_t count, bool breakpoints)
+{
+    if (!_emulator)
+        return Missing();
+    if (count < 1 || count > kMaxRunTStates)
+        return CountRefusal("tstates", count, kMaxRunTStates);
+    if (HeldByOther(_emulator->GetContext(), requester))
+        return HeldReply("step");
+    const Emulator::DirectRunResult result = _emulator->RunTStates(count, !breakpoints, /*onTimeline=*/true);
+    RunOutcome outcome;
+    outcome.unit = "tstates";
+    outcome.requested = count;
+    outcome.framesRun = result.frames;
+    outcome.tstatesRun = result.tstates;
+    outcome.reached = result.reached;
+    return FinishRun(outcome);
+}
+
+RunControl::Position RunControl::Where() const
+{
+    Position position;
+    if (const EmulatorContext* context = _emulator->GetContext())
+        position.frame = context->emulatorState.frame_counter;
+    if (Z80State* z80 = _emulator->GetZ80State())
+        position.t = z80->t;
+    return position;
+}
+
+void RunControl::Since(const Position& before, RunOutcome& outcome) const
+{
+    const Position after = Where();
+    const EmulatorContext* context = _emulator->GetContext();
+    const uint64_t frameLength =
+        context != nullptr && context->pCore != nullptr ? context->pCore->GetZ80()->_frameLimit : 0;
+    outcome.framesRun = after.frame >= before.frame ? after.frame - before.frame : 0;
+    const int64_t tstates = static_cast<int64_t>(outcome.framesRun * frameLength) + static_cast<int64_t>(after.t) -
+                            static_cast<int64_t>(before.t);
+    outcome.tstatesRun = tstates > 0 ? static_cast<uint64_t>(tstates) : 0;
+}
+
+RunReply RunControl::CountRefusal(const char* unit, uint64_t count, uint64_t max) const
+{
+    RunReply reply;
+    reply.status = RunReply::Status::BadRequest;
+    reply.error = "Bad Request";
+    reply.message = RunCountRefusal(unit, count, max);
+    reply.body["emulator_id"] = _emulator->GetId();
+    reply.body["count"] = static_cast<int64_t>(count);
+    reply.body["max"] = static_cast<int64_t>(max);
+    return reply;
+}
+
+RunReply RunControl::FinishRun(const RunOutcome& outcome)
+{
+    const std::string text = RunOutcomeText(*_emulator, outcome);
+    RunReply reply = Finish(text);
+    if (!reply.Ok())
+        return reply;
+    const StateNode node = RunOutcomeNode(*_emulator, outcome);
+    for (const auto& [key, value] : node.members)
+        reply.body[key] = value;
+    return reply;
+}
+
+namespace
+{
+const char* UnitName(const char* unit, uint64_t count)
+{
+    const std::string u = unit;
+    if (u == "tstates")
+        return count == 1 ? "t-state" : "t-states";
+    if (u == "instructions")
+        return count == 1 ? "instruction" : "instructions";
+    return count == 1 ? "frame" : "frames";
+}
+
+uint64_t RanOf(const RunOutcome& outcome)
+{
+    const std::string u = outcome.unit;
+    return u == "tstates" ? outcome.tstatesRun : u == "instructions" ? outcome.instructionsRun : outcome.framesRun;
+}
+}  // namespace
+
+std::string RunCountRefusal(const char* unit, uint64_t count, uint64_t max)
+{
+    return "count " + std::to_string(count) + ": 1.." + std::to_string(max) + " " + UnitName(unit, max) +
+           " in one call; split the run into calls (they end where one call would)";
+}
+
+std::string RunOutcomeText(Emulator& emulator, const RunOutcome& outcome)
+{
+    const uint64_t ran = RanOf(outcome);
+    std::string text = outcome.reached ? "Ran " + std::to_string(outcome.requested) + " " +
+                                             UnitName(outcome.unit, outcome.requested)
+                                       : "Ran " + std::to_string(ran) + " of " + std::to_string(outcome.requested) +
+                                             " " + UnitName(outcome.unit, outcome.requested);
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    if (stop.hit)
     {
-        reply.body["count"] = count;
-        reply.body["executed"] = executed;
+        char where[128];
+        std::snprintf(where, sizeof(where), ": stopped at breakpoint #%u (%s $%04X%s)",
+                      static_cast<unsigned>(stop.breakpointId), BreakpointHitKindName(stop.kind),
+                      static_cast<unsigned>(stop.address), stop.cpu != DebugCpuId::Main ? ", card CPU" : "");
+        text += where;
     }
-    return reply;
+    else if (!outcome.reached)
+        text += ": stopped";
+    const EmulatorContext* context = emulator.GetContext();
+    const Z80State* z80 = emulator.GetZ80State();
+    if (context != nullptr && z80 != nullptr)
+        text += " (frame " + std::to_string(context->emulatorState.frame_counter) + ", t " + std::to_string(z80->t) + ")";
+    return text;
 }
 
-RunReply RunControl::RunFrames(const Requester& requester, unsigned count)
+StateNode RunOutcomeNode(Emulator& emulator, const RunOutcome& outcome)
 {
-    if (!_emulator)
-        return Missing();
-    if (HeldByOther(_emulator->GetContext(), requester))
-        return HeldReply("step");
-    count = std::clamp(count, 1u, 10000u);  // safety limit, as POST /run_frames
-    _emulator->RunNFrames(count);
-    RunReply reply = Finish("Ran " + std::to_string(count) + " frames");
-    if (reply.Ok())
-        reply.body["count"] = count;
-    return reply;
-}
+    StateNode node = StateNode::Object();
+    const std::string unit = outcome.unit;
+    node["count"] = static_cast<int64_t>(outcome.requested);
+    node["unit"] = unit;
+    node["frames_run"] = static_cast<int64_t>(outcome.framesRun);
+    node["tstates_run"] = static_cast<int64_t>(outcome.tstatesRun);
+    if (unit == "instructions")
+    {
+        node["instructions_run"] = static_cast<int64_t>(outcome.instructionsRun);
+        node["executed"] = static_cast<int64_t>(outcome.instructionsRun);
+    }
+    if (const EmulatorContext* context = emulator.GetContext())
+        node["frame"] = static_cast<int64_t>(context->emulatorState.frame_counter);
+    if (const Z80State* z80 = emulator.GetZ80State())
+        node["t"] = static_cast<int64_t>(z80->t);
 
-RunReply RunControl::RunTStates(const Requester& requester, uint64_t count)
-{
-    if (!_emulator)
-        return Missing();
-    if (HeldByOther(_emulator->GetContext(), requester))
-        return HeldReply("step");
-    count = std::clamp<uint64_t>(count, 1, 10000000);  // safety limit, as POST /run_tstates
-    _emulator->RunTStates(count);
-    RunReply reply = Finish("Ran " + std::to_string(count) + " t-states");
-    if (reply.Ok())
-        reply.body["tstates"] = static_cast<int64_t>(count);
-    return reply;
+    const Emulator::BreakpointStop& stop = emulator.LastDirectStop();
+    StateNode stopNode = StateNode::Object();
+    stopNode["cpu"] = DebugCpuName(stop.cpu);
+    // Steps keep their reason "step" for a run that did it all (the debuggers read it)
+    stopNode["reason"] = stop.hit ? "breakpoint" : !outcome.reached ? "stopped" : unit == "instructions" ? "step" : "done";
+    if (stop.hit)
+    {
+        stopNode["breakpoint_id"] = static_cast<int>(stop.breakpointId);
+        stopNode["address"] = static_cast<int>(stop.address);
+        stopNode["access"] = BreakpointHitKindName(stop.kind);
+        if (stop.cpu != DebugCpuId::Main)
+            stopNode["cpu_pc"] = static_cast<int>(stop.cpuPc);
+    }
+    node["stop"] = std::move(stopNode);
+    node["message"] = RunOutcomeText(emulator, outcome);
+    return node;
 }
 
 void RunControl::AddStop(RunReply& reply) const
