@@ -1227,6 +1227,11 @@ the GS slot.
   panels in read-only mode, opened from the audio menu when an LW card is
   fitted.
 - The TUI debugger (U3) uses the same `TargetDebugContext` API.
+- **As built (2026-11-18).** Not a window per CPU: the Embedded `DebuggerWindow` has processor tabs (Main CPU, then
+  each card CPU fitted) above its shared panes, and the tab in front retargets them (`DebuggerCpuTabs`,
+  `debuggercpu::CardSource` in `unreal-qt/src/debugger/debuggercpu.cpp`; widgets' `setCpu`). The card is read
+  through `GSCardTarget` on the GUI thread of a paused machine; steps through `RunControl::CardStep`; the time group
+  by the card verbs ([TTD branches debuggers.md §8](../2026-11-08-ttd-branches/debuggers.md)).
 
 ### 7.4 External debuggers (A3)
 

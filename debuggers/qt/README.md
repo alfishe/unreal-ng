@@ -24,7 +24,8 @@ the core's classes of the same names would clash.
 ## Time travel
 
 While the machine has a recorded history (TTD), the toolbar shows a time group after the forward steps, the same as
-unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md)):
+unreal-qt's Embedded debugger ([TTD branches: debuggers](../../docs/inprogress/2026-11-08-ttd-branches/debuggers.md);
+both route the group to a sound card's CPU when its tab is in front: Embedded has processor tabs too):
 
 | Button | Key | Verb |
 |--------|-----|------|

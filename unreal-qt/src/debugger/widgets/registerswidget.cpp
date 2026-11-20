@@ -8,7 +8,9 @@
 #include <QMetaObject>
 
 #include "common/widgets/qclickablelabel.h"
+#include "debugger/debuggercpu.h"
 #include "debugger/debuggerwindow.h"
+#include "debugger/targets/cpuview.h"
 #include "emulator/memory/memory.h"
 #include "emulator/remotecontrolguard.h"
 #include "ui_registerswidget.h"
@@ -92,12 +94,13 @@ uint16_t RegistersWidget::isrAddress() const
     if (!m_z80Registers || m_z80Registers->im != 2)
         return 0x0038;
     // IM2 reads its vector at I * 256 + the bus byte; the ULA leaves the bus at FF (a device may drive another one)
-    Memory* memory = const_cast<RegistersWidget*>(this)->getMemory();
-    if (!memory)
+    // The CPU's own memory: a card's vector table is in its 64 KB
+    EmulatorContext* context = const_cast<RegistersWidget*>(this)->getEmulatorContext();
+    if (!context)
         return 0x0038;
     const uint16_t table = static_cast<uint16_t>((m_z80Registers->i << 8) | 0xFF);
-    return static_cast<uint16_t>(memory->DirectReadFromZ80Memory(table) |
-                                 (memory->DirectReadFromZ80Memory(static_cast<uint16_t>(table + 1)) << 8));
+    return static_cast<uint16_t>(debuggercpu::Peek(context, m_cpu, table) |
+                                 (debuggercpu::Peek(context, m_cpu, static_cast<uint16_t>(table + 1)) << 8));
 }
 
 bool RegistersWidget::setRegister(const QString& name, uint16_t value)
@@ -112,16 +115,28 @@ bool RegistersWidget::setRegister(const QString& name, uint16_t value)
         QMessageBox::information(this, tr("Edit %1").arg(name), tr("Pause the machine to edit its registers."));
         return false;
     }
-    std::string refused;
-    if (!emulator->SetRegisterFromTool("qt registers", name.toStdString(), value, &refused))
+    if (const std::string refused = writeRegister(name, value); !refused.empty())
     {
-        QMessageBox::warning(this, tr("Edit %1").arg(name),
-                             refused.empty() ? tr("%1 was not changed.").arg(name) : QString::fromStdString(refused));
+        QMessageBox::warning(this, tr("Edit %1").arg(name), QString::fromStdString(refused));
         return false;
     }
     refresh();
     emit registerEdited(name);
     return true;
+}
+
+std::string RegistersWidget::writeRegister(const QString& name, uint16_t value)
+{
+    Emulator* emulator = getEmulator();
+    if (emulator == nullptr)
+        return tr("No machine").toStdString();
+    // A card's register: its debug target's edit (a tool edit, refused in the recorded past)
+    if (IsCardCpu(m_cpu))
+        return CpuView::SetRegister(emulator, m_cpu, "qt registers", name.toStdString(), value);
+    std::string refused;
+    if (!emulator->SetRegisterFromTool("qt registers", name.toStdString(), value, &refused))
+        return refused.empty() ? tr("%1 was not changed.").arg(name).toStdString() : refused;
+    return {};
 }
 
 void RegistersWidget::toggleFlag(int bit)
@@ -267,11 +282,9 @@ void RegistersWidget::editRegister(const QString& name)
                                  .arg(maximum, 0, 16));
         return;
     }
-    std::string refused;
-    if (!emulator->SetRegisterFromTool("qt registers", name.toStdString(), static_cast<uint16_t>(value), &refused))
+    if (const std::string refused = writeRegister(name, static_cast<uint16_t>(value)); !refused.empty())
     {
-        QMessageBox::warning(this, tr("Edit %1").arg(name),
-                             refused.empty() ? tr("%1 was not changed.").arg(name) : QString::fromStdString(refused));
+        QMessageBox::warning(this, tr("Edit %1").arg(name), QString::fromStdString(refused));
         return;
     }
     refresh();
@@ -455,7 +468,9 @@ void RegistersWidget::refresh()
         ui->valIY->setText(QStringLiteral("%1").arg(m_z80Registers->iy, 4, 16, QLatin1Char('0')).toUpper());
 
         ui->valIR->setText(QStringLiteral("%1").arg((m_z80Registers->i << 8) | Z80::RegisterR(m_z80Registers), 4, 16, QLatin1Char('0')).toUpper());
-        ui->valT->setText(QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
+        // A card counts its own clock: no T of the frame
+        ui->valT->setText(IsCardCpu(m_cpu) ? QStringLiteral("-")
+                                           : QStringLiteral("%1").arg(m_z80Registers->t, 4, 16, QLatin1Char('0')).toUpper());
         // Interrupt mode, the enable flip-flops (set: bold, clear: gray) and where an INT would go
         ui->valINT->setText(QStringLiteral("IM%1").arg(m_z80Registers->im));
         const QString on = QStringLiteral("QLabel { font-weight: bold; }");

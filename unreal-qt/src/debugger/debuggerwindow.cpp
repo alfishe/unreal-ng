@@ -1,4 +1,5 @@
 #include "debuggerwindow.h"
+#include "debugger/debuggercpu.h"
 #include "debugger/debuggertimetravel.h"
 #include "emulator/remotecontrolguard.h"
 
@@ -14,6 +15,7 @@
 #include <QPointer>
 #include <QRegularExpression>
 #include <QSplitter>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTimer>
 #include <Qt>
@@ -45,7 +47,9 @@
 #include "debugger/labeleditor.h"
 #include "debugvisualizationwindow.h"
 #include "emulator/emulator.h"
+#include "emulator/execution/runcontrol.h"
 #include "emulator/readoutschanged.h"
+#include "debugger/targets/cpuview.h"
 #include "widgets/speedcontrolwidget.h"
 #include "ui_debuggerwindow.h"
 
@@ -101,6 +105,24 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
             left: 8px;
             padding: 0 4px;
             color: palette(text);
+        }
+        QTabBar#debuggerCpuTabs::tab {
+            padding: 3px 14px;
+            margin-right: 2px;
+            border: 1px solid transparent;
+            border-bottom: 2px solid transparent;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            background: transparent;
+            color: palette(text);
+        }
+        QTabBar#debuggerCpuTabs::tab:hover:!selected {
+            background: palette(midlight);
+        }
+        QTabBar#debuggerCpuTabs::tab:selected {
+            border: 1px solid palette(mid);
+            border-bottom: 2px solid palette(highlight);
+            background: palette(base);
         }
     )"));
     ui->mainSplitter->setStretchFactor(0, 0);
@@ -199,6 +221,7 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
         emit screenRefreshRequested();
     });
     connect(_timeTravel, &DebuggerTimeTravel::showInTtdPanel, this, &DebuggerWindow::showInTtdPanelRequested);
+    _timeTravel->setCpu([this]() { return currentCpu(); });
 
     // Create toolbar actions
     resetAction = new QAction("Reset", this);
@@ -322,6 +345,20 @@ DebuggerWindow::DebuggerWindow(std::shared_ptr<Emulator> emulator, QWidget* pare
     _stopBanner->setVisible(false);
     connect(_stopBanner, &QLabel::linkActivated, this, &DebuggerWindow::onStopBannerLink);
     ui->verticalLayout_2->insertWidget(2, _stopBanner);
+
+    // The processor tabs (debuggercpu.h): the main CPU and each sound card CPU fitted, above the panes they retarget;
+    // hidden with the main CPU alone
+    auto* cpuBar = new QTabBar(this);
+    ui->verticalLayout_2->insertWidget(3, cpuBar);
+    _cpuTabs = new DebuggerCpuTabs(cpuBar, this);
+    _registersTitle = ui->registersGroup->title();
+    _stackTitle = ui->stackGroup->title();
+    _memoryTitle = ui->memoryGroup->title();
+    _disasmTitle = ui->disasmGroup->title();
+    connect(_cpuTabs, &DebuggerCpuTabs::cpuChanged, this, [this](DebugCpuId cpu) {
+        retargetPanes();
+        emit cpuChanged(cpu);
+    });
 
     connect(m_speedControl, &SpeedControlWidget::stepped, this, [this]() {
         updateState();
@@ -589,6 +626,8 @@ void DebuggerWindow::propagateEmulator()
     if (_visualizationWindow)
         _visualizationWindow->setEmulator(_emulator);
     _pcHistoryPane->setEmulator(_emulator);
+    if (_cpuTabs)
+        _cpuTabs->setEmulator(_emulator);
     if (_timeTravel)
         _timeTravel->setEmulator(_emulator);
     // Port events holds the machine it searches: another machine (or none) closes it
@@ -689,6 +728,8 @@ void DebuggerWindow::showEvent(QShowEvent* event)
     QWidget::showEvent(event);
     if (pcHistoryAction && pcHistoryAction->isChecked() && !_pcHistoryPane->isRecording())
         _pcHistoryPane->setRecording(true);
+    if (_cpuTabs)
+        _cpuTabs->setActive(true);  // a card in front follows the main CPU's steps again
     emit visibilityChanged(true);
 }
 
@@ -697,6 +738,8 @@ void DebuggerWindow::hideEvent(QHideEvent* event)
     QWidget::hideEvent(event);
     if (_pcHistoryPane->isRecording())
         _pcHistoryPane->setRecording(false);  // a closed debugger costs the emulation nothing
+    if (_cpuTabs)
+        _cpuTabs->setActive(false);  // nor does a card it showed
     emit visibilityChanged(false);
 }
 
@@ -707,7 +750,9 @@ void DebuggerWindow::onBindingReady()
     // Point the registers widget at the *bound* emulator's Z80 before it refreshes.
     // Its cached pointer may still belong to a previous, already destroyed emulator
     // (ready fires on the new emulator's first pause, before any CPU step refresh).
-    ui->registersWidget->setZ80State(_emulator ? _emulator->GetZ80State() : nullptr);
+    if (_cpuTabs)
+        _cpuTabs->update();  // the machine is complete now: its card CPUs have tabs
+    ui->registersWidget->setZ80State(_emulator ? cpuState() : nullptr);
 
     // Dispatch to children via signal (widgets are connected to readyForChildren)
     emit readyForChildren();
@@ -719,9 +764,10 @@ void DebuggerWindow::showMemoryAtPc()
 {
     // The memory view follows PC (or the register memoryFollow names): its 16 KB page read again (a step changes
     // memory), the PC byte marked; a page picked by hand stays until the next stop. Off: the page stays, read again
-    if (!_emulator || !_emulator->IsPaused() || !_emulator->GetZ80State())
+    Z80State* state = _emulator && _emulator->IsPaused() ? cpuState() : nullptr;
+    if (!state)
         return;
-    const Z80Registers& registers = *_emulator->GetZ80State();
+    const Z80Registers& registers = *state;
     std::optional<uint16_t> address;
     if (_memoryFollow == QLatin1String("pc"))
         address = registers.pc;
@@ -778,6 +824,9 @@ QColor MarkupKindColour(analysis::RegionKind kind)
 
 std::optional<uint16_t> DebuggerWindow::memoryViewBase() const
 {
+    // A card's tab: the card CPU's 16 KB window shown
+    if (IsCardCpu(currentCpu()))
+        return _emulator ? _cardMemoryBase : std::nullopt;
     // The view shows one 16 KB page: the CPU window mapping it now places the markup (none: not mapped)
     Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
     if (!memory)
@@ -802,7 +851,14 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
     const auto hex = [](unsigned value, int digits) {
         return QString("%1").arg(value, digits, 16, QLatin1Char('0')).toUpper();
     };
-    const auto read = [memory](uint16_t at) { return memory->DirectReadFromZ80Memory(at); };
+    const DebugCpuId cpu = currentCpu();
+    const Emulator::ContextLease lease = _emulator->LeaseContext();
+    EmulatorContext* context = lease.get();
+    if (!context)
+        return {};
+    const auto read = [memory, context, cpu](uint16_t at) {
+        return IsCardCpu(cpu) ? debuggercpu::Peek(context, cpu, at) : memory->DirectReadFromZ80Memory(at);
+    };
     const auto escaped = [](const std::string& text) { return QString::fromStdString(text).toHtmlEscaped(); };
 
     // The cell: its address, the byte and the word from it
@@ -812,6 +868,18 @@ QString DebuggerWindow::memoryToolTip(qint64 offset)
     if (byte >= 0x20 && byte < 0x7F)
         tip += QString(" '%1'").arg(QString(QChar(byte)).toHtmlEscaped());
     tip += QString("&nbsp; word #%1 = %2").arg(hex(word, 4)).arg(word);
+
+    // A card's 64 KB: the cell and the card's PC (the markup and the labels here are the main CPU's)
+    if (IsCardCpu(cpu))
+    {
+        tip += QString("<br>%1, %2")
+                   .arg(debuggercpu::Title(context, cpu),
+                        debuggercpu::CardWindowName(context, cpu, static_cast<uint8_t>(address >> 14)));
+        Z80Registers card{};
+        if (_emulator->IsPaused() && debuggercpu::Registers(context, cpu, card) && card.pc == address)
+            tip += "<br><b>PC</b>";
+        return "<p style='white-space:nowrap'>" + tip + "</p>";
+    }
 
     // The metadata's notes off: the cell and its label only
     markup::MemoryMarkup* markup = _emulator->GetDebugManager() &&
@@ -904,8 +972,10 @@ void DebuggerWindow::paintMemoryMetadata()
 
     std::set<analysis::RegionKind> shown;
     const MetadataSettings& settings = MetadataSettings::Instance();
-    markup::MemoryMarkup* markup = _emulator->GetDebugManager() ? _emulator->GetDebugManager()->GetMemoryMarkup()
-                                                                : nullptr;
+    // The markup is the main CPU's: none on a card's tab
+    markup::MemoryMarkup* markup = _emulator->GetDebugManager() && !IsCardCpu(currentCpu())
+                                       ? _emulator->GetDebugManager()->GetMemoryMarkup()
+                                       : nullptr;
     if (markup && base)
     {
         // The metadata's colours, its comments: each switched apart (Debug > Metadata)
@@ -925,9 +995,9 @@ void DebuggerWindow::paintMemoryMetadata()
                 metadata->setComment(comment.address - *base, comment.address - *base + 1,
                                  QString::fromStdString(comment.text));
     }
-    if (base && _emulator->IsPaused() && _emulator->GetZ80State())
+    if (Z80State* state = base && _emulator->IsPaused() ? cpuState() : nullptr)
     {
-        const uint16_t pc = _emulator->GetZ80State()->Z80Registers::pc;
+        const uint16_t pc = state->Z80Registers::pc;
         if ((pc & 0xC000) == *base)
             metadata->setMetadata(pc & 0x3FFF, (pc & 0x3FFF) + 1, Qt::black, QColor(255, 255, 140), tr("PC"));
     }
@@ -1037,7 +1107,14 @@ void DebuggerWindow::updateState()
 
     if (_emulator)
     {
-        Z80State* state = _emulator->GetZ80State();
+        // A stop of a card's breakpoint or step brings its tab to the front, once per stop; a card fitted since gets
+        // its tab (retargetPanes refreshes the panes when the CPU in front changes)
+        if (_cpuTabs)
+        {
+            _cpuTabs->update();
+            _cpuTabs->followStop();
+        }
+        Z80State* state = cpuState();
 
         // Refresh registers widget
         ui->registersWidget->setZ80State(state);
@@ -1282,7 +1359,10 @@ void DebuggerWindow::onBreakpointHit(const BreakpointHit& hit)
         return;
 
     const uint16_t breakpointID = hit.id;
-    BreakpointManager* bpManager = _emulator->GetDebugManager()->GetBreakpointsManager();
+    // The breakpoint's own CPU: a card's breakpoints are in the card's manager
+    DebugCpuId hitCpu = DebugCpuId::Main;
+    DebugManager::ParseCpuName(hit.cpu, hitCpu);
+    BreakpointManager* bpManager = _emulator->GetDebugManager()->GetBreakpointsManager(hitCpu);
     if (!bpManager)
     {
         return;
@@ -1480,6 +1560,10 @@ void DebuggerWindow::stepIn()
     if (m_speedControl)
         m_speedControl->stop();
 
+    // A card's tab: the card's step (in the recorded past: one card instruction forward through the history)
+    if (cardStep("in"))
+        return;
+
     if (_emulator)
     {
         // Execute single Z80 command (Step execution does not trigger any breakpoints)
@@ -1503,6 +1587,8 @@ void DebuggerWindow::stepOver()
 
     if (!_emulator)
         return;
+    if (cardStep("over"))
+        return;
 
     // Use the new core Emulator::StepOver() method
     // Note: For step-in fallback (non-call instructions), this executes synchronously
@@ -1520,6 +1606,9 @@ void DebuggerWindow::stepOut()
     qDebug() << "DebuggerWindow::stepOut()";
 
     _breakpointTriggered = false;
+
+    if (cardStep("out"))
+        return;
 
     if (_emulator)
     {
@@ -1949,6 +2038,8 @@ bool DebuggerWindow::showMemoryAt(uint16_t address)
 {
     if (!_emulator || !_emulator->GetMemory())
         return false;
+    if (IsCardCpu(currentCpu()) && !debuggercpu::Card(_emulator->LeaseContext().get(), currentCpu()))
+        return false;
     changeMemoryViewZ80Address(address);
     return true;
 }
@@ -1979,6 +2070,17 @@ void DebuggerWindow::changeMemoryViewZ80Address(uint16_t addr)
     Memory* memory = _emulator ? _emulator->GetMemory() : nullptr;
     if (!memory)
         return;
+    // A card's tab: the card CPU's 16 KB window holding the address, read by peeks (no side effects)
+    if (const DebugCpuId cpu = currentCpu(); IsCardCpu(cpu))
+    {
+        const auto base = static_cast<uint16_t>(addr & 0xC000);
+        std::vector<uint8_t> bytes;
+        if (!CpuView::Read(_emulator->LeaseContext().get(), cpu, base, 0x4000, bytes) || bytes.size() != 0x4000)
+            return;
+        _cardMemoryBase = base;
+        changeMemoryViewAddress(bytes.data(), bytes.size(), base, static_cast<uint16_t>(addr & 0x3FFF));
+        return;
+    }
     uint8_t bank = memory->GetZ80BankFromAddress(addr);
     uint8_t* pageAddress = memory->GetPhysicalAddressForZ80Page(bank);
     if (!pageAddress)
@@ -1999,6 +2101,14 @@ void DebuggerWindow::changeMemoryViewBank(uint8_t bank)
 
     // Only 4 pages are available (4 x 16Kb pages in Z80 address space)
     bank &= 0b0000'0011;
+    if (!_emulator)
+        return;
+    // A card's tab: the card CPU's window
+    if (IsCardCpu(currentCpu()))
+    {
+        changeMemoryViewZ80Address(static_cast<uint16_t>(bank * 0x4000));
+        return;
+    }
 
     // Getting address of specified memory page
     Memory* memory = _emulator->GetMemory();
@@ -2084,6 +2194,119 @@ void DebuggerWindow::showVisualizationWindow()
 }
 
 /// endregion </Event handlers / Slots>
+
+/// region <The processor tabs>
+
+DebugCpuId DebuggerWindow::currentCpu() const
+{
+    return _cpuTabs ? _cpuTabs->current() : DebugCpuId::Main;
+}
+
+std::vector<DebugCpuId> DebuggerWindow::cpus() const
+{
+    return _cpuTabs ? _cpuTabs->cpus() : std::vector<DebugCpuId>{DebugCpuId::Main};
+}
+
+bool DebuggerWindow::selectCpu(DebugCpuId cpu)
+{
+    if (!_cpuTabs)
+        return false;
+    _cpuTabs->update();
+    return _cpuTabs->select(cpu);
+}
+
+uint8_t DebuggerWindow::readCpuByte(uint16_t address)
+{
+    const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+    return debuggercpu::Peek(lease.get(), currentCpu(), address);
+}
+
+Z80State* DebuggerWindow::cpuState()
+{
+    if (!_emulator)
+        return nullptr;
+    const DebugCpuId cpu = currentCpu();
+    if (!IsCardCpu(cpu))
+        return _emulator->GetZ80State();
+    // A copy of the card's registers read now (its CPU state is the card's own, not a Z80State)
+    Z80Registers registers{};
+    if (!debuggercpu::Registers(_emulator->LeaseContext().get(), cpu, registers))
+        return nullptr;
+    static_cast<Z80Registers&>(_cardState) = registers;
+    return &_cardState;
+}
+
+void DebuggerWindow::retargetPanes()
+{
+    const DebugCpuId cpu = currentCpu();
+    ui->registersWidget->setCpu(cpu);
+    ui->stackWidget->setCpu(cpu);
+    ui->memorypagesWidget->setCpu(cpu);
+    // The panes' titles name a card's CPU (a machine being removed is not read, as updateState)
+    QString suffix;
+    {
+        const Emulator::ContextLease lease = _emulator ? _emulator->LeaseContext() : Emulator::ContextLease{};
+        if (_emulator && !lease)
+            return;
+        if (IsCardCpu(cpu))
+            suffix = QStringLiteral(" - ") + debuggercpu::Title(lease.get(), cpu);
+    }
+    ui->disassemblerWidget->setCpu(cpu);
+    ui->registersGroup->setTitle(_registersTitle + suffix);
+    ui->stackGroup->setTitle(_stackTitle + suffix);
+    ui->memoryGroup->setTitle(_memoryTitle + suffix);
+    ui->disasmGroup->setTitle(_disasmTitle + suffix);
+    // The view of the other CPU's memory goes; the CPU's own comes at its PC
+    _cardMemoryBase.reset();
+    ui->hexView->reset();
+    if (_timeTravel)
+        _timeTravel->refresh();
+    if (!_emulator)
+        return;
+    ui->registersWidget->setZ80State(cpuState());
+    if (_emulator->IsPaused() && !_emulator->IsDirectStepping())
+    {
+        ui->registersWidget->refresh();
+        ui->stackWidget->refresh();
+        ui->memorypagesWidget->refresh();
+        showMemoryAtPc();
+    }
+    else
+        ui->registersWidget->reset();
+}
+
+bool DebuggerWindow::cardStep(const char* kind, uint16_t address, QString* error)
+{
+    if (error)
+        error->clear();
+    const DebugCpuId cpu = currentCpu();
+    if (!_emulator || !IsCardCpu(cpu))
+        return false;
+    if (RemoteControlGuard::Refuse(this))  // an automation session holds the machine
+        return true;
+    clearStopBanner();
+    if (m_speedControl)
+        m_speedControl->stop();
+    // In the recorded past Step In replays one card instruction forward (rule 3); live, the card's own step runs
+    if (std::string(kind) == "in" && _timeTravel && _timeTravel->stepForward())
+        return true;
+    // The machine runs until the card ends the step (or a breakpoint, or the deadline), then pauses: as eCat's card
+    // tab steps, on this thread
+    const execution::RunReply reply = execution::RunControl(_emulator).CardStep(
+        execution::Requester{execution::Origin::Gui, {}}, cpu, kind, 1, address);
+    if (!reply.Ok())
+    {
+        const QString said = QString::fromStdString(reply.message.empty() ? reply.error : reply.message);
+        if (error)
+            *error = said;
+        qWarning() << "DebuggerWindow: card step refused:" << said;
+    }
+    updateState();
+    emit screenRefreshRequested();
+    return true;
+}
+
+/// endregion </The processor tabs>
 
 void DebuggerWindow::prepareForShutdown()
 {
