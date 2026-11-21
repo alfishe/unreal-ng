@@ -56,11 +56,6 @@ struct Settings
     std::string stream;        ///< a JSONL file the series is appended to while the profile runs (empty: none)
     bool countReplay = false;  ///< book TTD replay passes too: the profile of a recording on an analysis clone
                                ///< (analysis::ReplayWindow); a live instance skips them (not the CPU's time now)
-    /// How the call stack learns of calls and returns. 0: the CPU's flow events (Z80::FlowHook, raised only by CALL /
-    /// RST / RET-family instructions); 1: the previous instruction's opcode (Z80::opcode / prefix) decoded at every
-    /// step; 2: the instruction's byte re-read from memory at every step (the first version). 1 and 2 are kept for
-    /// the A/B of POC 046 only
-    uint8_t flowSource = 0;
 };
 
 constexpr uint32_t kBeamBins = 64;
@@ -242,12 +237,10 @@ private:
     };
 
     using StepFn = void (*)(void*, Z80*, uint16_t);
-    template <bool kStack, bool kBeam, bool kFrames, int kFlowSource>
-    static void Step(void* context, Z80* cpu, uint16_t pc);
     template <bool kStack, bool kBeam, bool kFrames>
-    StepFn PickFlow() const;
+    static void Step(void* context, Z80* cpu, uint16_t pc);
     StepFn PickStep() const;
-    /// Z80::FlowHook: a CALL / RST pushed or a RET popped (flowSource 0)
+    /// Z80::FlowHook: a CALL / RST pushed or a RET popped: the call stack's only source of transfers
     static void OnFlow(void* context, Z80* cpu, Z80::FlowEvent event, uint16_t target, uint16_t slot, uint16_t ret);
 
     static void Add(std::atomic<uint64_t>& a, uint64_t d)
@@ -271,7 +264,6 @@ private:
     void PopTop(bool abandoned);
     void ClearStack();
     void AbandonAt(uint16_t slot);
-    bool ResolveFlow(uint8_t flow, uint16_t spAfter, uint16_t next, uint16_t pc, uint32_t phys);
     void Called(uint16_t target, uint32_t phys, uint16_t slot, uint16_t ret, profile::EntryKind kind);
     void Returned(uint16_t target, uint32_t phys, uint16_t slot);
     bool CatchUp();
@@ -317,11 +309,8 @@ private:
     std::vector<Frame> _stack;
     std::atomic<uint64_t> _topSince{0};  ///< when the routine on top last became the top
     std::atomic<uint32_t> _top{0};       ///< the routine on top (readers add its open stretch)
-    uint64_t _arrivedAt = ~uint64_t(0);  ///< _instructions when the last flow event moved the stack (flowSource 0)
+    uint64_t _arrivedAt = ~uint64_t(0);  ///< _instructions when the last flow event moved the stack
     Z80* _hookedCpu = nullptr;            ///< the CPU whose flow hook is ours
-    uint8_t _prevFlow = 0;
-    uint16_t _prevSp = 0;
-    uint16_t _prevPc = 0;
     std::vector<std::array<uint32_t, 3>> _flushScratch;
 
     // totals

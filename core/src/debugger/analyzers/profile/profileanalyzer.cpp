@@ -21,37 +21,6 @@ constexpr uint32_t kPageCells = 0x4000;
 constexpr uint32_t kRidShift = 40;
 constexpr uint64_t kCountMask = (uint64_t(1) << kRidShift) - 1;
 
-/// How an instruction moves the control flow, as the shadow stack needs it
-enum Flow : uint8_t
-{
-    FlowNone = 0,
-    FlowCall = 1,  ///< CALL nn, CALL cc,nn (3 bytes)
-    FlowRst = 2,   ///< RST n (1 byte)
-    FlowRet = 3,   ///< RET, RET cc, RETN, RETI
-    FlowEd = 4,    ///< the ED prefix: the second byte decides
-};
-
-struct FlowTable
-{
-    uint8_t main[256] = {};
-    uint8_t ed[256] = {};
-    constexpr FlowTable()
-    {
-        main[0xCD] = FlowCall;
-        for (int op = 0xC4; op <= 0xFC; op += 8)
-            main[op] = FlowCall;
-        for (int op = 0xC7; op <= 0xFF; op += 8)
-            main[op] = FlowRst;
-        for (int op = 0xC0; op <= 0xF8; op += 8)
-            main[op] = FlowRet;
-        main[0xC9] = FlowRet;
-        main[0xED] = FlowEd;
-        for (int op = 0x45; op <= 0x7D; op += 8)
-            ed[op] = FlowRet;
-    }
-};
-constexpr FlowTable kFlow;
-
 uint64_t Load(const std::atomic<uint64_t>& a)
 {
     return a.load(std::memory_order_relaxed);
@@ -127,7 +96,6 @@ void ProfileAnalyzer::Reset()
     _lastCell = nullptr;
     _started = false;
     _heldAck = 0;
-    _prevFlow = FlowNone;
     _topSince.store(0, std::memory_order_relaxed);
     _top.store(0, std::memory_order_relaxed);
     for (auto* a : {&_now, &_instructions, &_acks, &_ackT, &_frames, &_discontinuities, &_stackOverflows,
@@ -179,7 +147,7 @@ void ProfileAnalyzer::onActivate(AnalyzerManager* manager)
     // The idle stretch of a halted CPU is one delta booked to its HALT: the CPU may run it in one go
     manager->subscribeCPUStep(PickStep(), this, kId, /*idleTolerant=*/true);
     // the call stack's transfers from the CPU: only CALL / RST / RET-family instructions pay for them
-    if (_settings.stack && _settings.flowSource == 0 && _context && _context->pCore)
+    if (_settings.stack && _context && _context->pCore)
     {
         _hookedCpu = _context->pCore->GetZ80();
         _hookedCpu->SetFlowHook(&OnFlow, this);
@@ -221,27 +189,17 @@ void ProfileAnalyzer::onDeactivate()
     _manager = nullptr;
 }
 
-template <bool kStack, bool kBeam, bool kFrames>
-ProfileAnalyzer::StepFn ProfileAnalyzer::PickFlow() const
-{
-    if (_settings.flowSource == 1)
-        return &Step<kStack, kBeam, kFrames, 1>;
-    if (_settings.flowSource == 2)
-        return &Step<kStack, kBeam, kFrames, 2>;
-    return &Step<kStack, kBeam, kFrames, 0>;
-}
-
 ProfileAnalyzer::StepFn ProfileAnalyzer::PickStep() const
 {
     if (!_settings.stack)
-        return &Step<false, false, false, 0>;
+        return &Step<false, false, false>;
     if (_settings.beam && _settings.frames)
-        return PickFlow<true, true, true>();
+        return &Step<true, true, true>;
     if (_settings.beam)
-        return PickFlow<true, true, false>();
+        return &Step<true, true, false>;
     if (_settings.frames)
-        return PickFlow<true, false, true>();
-    return PickFlow<true, false, false>();
+        return &Step<true, false, true>;
+    return &Step<true, false, false>;
 }
 
 ProfileAnalyzer::Cell* ProfileAnalyzer::AllocPage(uint32_t page, uint16_t pc)
@@ -374,24 +332,6 @@ void ProfileAnalyzer::ClearStack()
     CloseSelf();
     while (!_stack.empty())
         DropFrame(_stack.size() - 1, false);
-    _prevFlow = FlowNone;
-}
-
-bool ProfileAnalyzer::ResolveFlow(uint8_t flow, uint16_t spAfter, uint16_t next, uint16_t pc, uint32_t phys)
-{
-    if (flow == FlowCall || flow == FlowRst)
-    {
-        if (spAfter != static_cast<uint16_t>(_prevSp - 2))
-            return false;  // a conditional call not taken
-        const uint16_t ret = static_cast<uint16_t>(_prevPc + (flow == FlowCall ? 3 : 1));
-        Called(next, next == pc ? phys : _memory->ExecPhysOffset(next), spAfter, ret,
-               flow == FlowCall ? EntryCall : EntryRst);
-        return true;
-    }
-    if (flow != FlowRet || spAfter != static_cast<uint16_t>(_prevSp + 2))
-        return false;  // a conditional return not taken
-    Returned(next, next == pc ? phys : _memory->ExecPhysOffset(next), _prevSp);
-    return true;
 }
 
 void ProfileAnalyzer::Called(uint16_t target, uint32_t phys, uint16_t slot, uint16_t ret, EntryKind kind)
@@ -693,7 +633,7 @@ void ProfileAnalyzer::StopStream()
 
 /// region <The step>
 
-template <bool kStack, bool kBeam, bool kFrames, int kFlowSource>
+template <bool kStack, bool kBeam, bool kFrames>
 void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
 {
     ProfileAnalyzer& p = *static_cast<ProfileAnalyzer*>(context);
@@ -715,8 +655,6 @@ void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
         p._ackSeen = cpu->acknowledges;
         p._heldAck = 0;
         p._lastFrameCounter = p._context->emulatorState.frame_counter;
-        p._prevFlow = FlowNone;
-        p._prevSp = static_cast<uint16_t>(cpu->sp + 1);  // no transfer matches it: the opcode before is not ours
         p._topSince.store(Load(p._now), std::memory_order_relaxed);
     }
     const uint32_t lastStart = p._lastT;
@@ -791,37 +729,13 @@ void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
         if (!repeat)
         {
             bool arrived = false;
-            const uint16_t sp = cpu->sp;
-            uint16_t retAddr = 0;
             if (interrupted) [[unlikely]]
             {
                 // the acknowledge pushed the address it interrupted
-                retAddr = static_cast<uint16_t>(p._memory->DirectReadFromZ80Memory(sp) |
-                                                (p._memory->DirectReadFromZ80Memory(static_cast<uint16_t>(sp + 1)) << 8));
-            }
-            if constexpr (kFlowSource != 0)
-            {
-                // the transfer of the instruction before, decoded now; with an acknowledge between, the previous
-                // instruction left SP 2 higher and the PC at the address the acknowledge pushed
-                const uint16_t next = interrupted ? retAddr : pc;
-                const uint16_t spAfter = interrupted ? static_cast<uint16_t>(sp + 2) : sp;
-                uint8_t flow;
-                if constexpr (kFlowSource == 1)
-                {
-                    const uint16_t prefix = cpu->prefix;
-                    flow = prefix == 0xED ? kFlow.ed[cpu->opcode]
-                           : (prefix == 0 || prefix == 0xDD || prefix == 0xFD) ? kFlow.main[cpu->opcode]
-                                                                               : static_cast<uint8_t>(FlowNone);
-                }
-                else
-                {
-                    flow = p._prevFlow;
-                }
-                if (flow) [[unlikely]]
-                    arrived = p.ResolveFlow(flow, spAfter, next, pc, off);
-            }
-            if (interrupted) [[unlikely]]
-            {
+                const uint16_t sp = cpu->sp;
+                const uint16_t retAddr = static_cast<uint16_t>(
+                    p._memory->DirectReadFromZ80Memory(sp) |
+                    (p._memory->DirectReadFromZ80Memory(static_cast<uint16_t>(sp + 1)) << 8));
                 p.AbandonAt(sp);
                 p.Push(p.RoutineAt(off, pc), sp, retAddr, EntryInterrupt);
                 arrived = true;
@@ -829,22 +743,9 @@ void ProfileAnalyzer::Step(void* context, Z80* cpu, uint16_t pc)
             if (rid) [[unlikely]]
             {
                 // an entry reached by a jump or a fall in: the time stays with the routine that jumped (said so)
-                if constexpr (kFlowSource == 0)
-                    arrived = arrived || p._arrivedAt + 1 == Load(p._instructions);
+                arrived = arrived || p._arrivedAt + 1 == Load(p._instructions);
                 if (!arrived && static_cast<uint32_t>(rid - 1) != p.Top())
                     Inc(p.RoutinePtr(static_cast<uint32_t>(rid - 1))->jumpIns);
-            }
-            if constexpr (kFlowSource == 2)
-            {
-                uint8_t flow = kFlow.main[p._memory->PhysByte(off)];
-                if (flow == FlowEd) [[unlikely]]
-                    flow = kFlow.ed[p._memory->PhysByte(off + 1)];
-                p._prevFlow = flow;
-            }
-            if constexpr (kFlowSource != 0)
-            {
-                p._prevSp = sp;
-                p._prevPc = pc;
             }
         }
     }
