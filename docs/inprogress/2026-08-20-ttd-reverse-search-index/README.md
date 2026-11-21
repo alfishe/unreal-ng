@@ -1,5 +1,7 @@
 # Reverse-search acceleration and per-configuration TTD
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../emulator/design/debugger/time-travel-debug/README.md)
+
 Status: complete. Per-configuration defects fixed; coverage index implemented,
 wired into reverse search and reverse breakpoints, persisted into `.ttd`,
 benchmarked and differentially tested; write journal block-compressed.

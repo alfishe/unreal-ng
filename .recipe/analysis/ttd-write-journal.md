@@ -1,5 +1,7 @@
 # Recipe: TTD write journal on demand — record it, switch it, build it later
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 The write journal records every memory write (time, address, value, PC). It
 answers "who wrote address X last" at once. It is **off by default**: on
 busy programs it is many times larger than the rest of a recording

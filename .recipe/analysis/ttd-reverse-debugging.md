@@ -1,5 +1,7 @@
 # Recipe: TTD Reverse Debugging — find-last, reverse-step, reverse-continue, coverage
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Precondition: a recorded session — see [ttd-recording.md](ttd-recording.md).
 `find-last`, `reverse-step` and `reverse-continue` while recording pause the
 recording and answer. The coverage queries answer at any time. Session rules

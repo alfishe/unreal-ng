@@ -1,5 +1,7 @@
 # TTD session tools
 
+> TTD index: [docs/emulator/design/debugger/time-travel-debug/README.md](../../../docs/emulator/design/debugger/time-travel-debug/README.md)
+
 Maintenance of time-travel sessions with branches, without an emulator: look inside a `.ttd` file or a recording
 folder, check it, extract a branch's lineage, prune branches, join or recover a crashed recording, rebuild a folder's
 `branches.tdx`, delete old crashed recordings. Design:
