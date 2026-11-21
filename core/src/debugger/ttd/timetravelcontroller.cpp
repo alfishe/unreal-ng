@@ -1955,6 +1955,9 @@ void TimeTravelController::RestoreCheckpoint(const TTDCheckpoint& cp)
     // --- Screen: the renderer's derived state (active screen bank, border) ---
     ResyncScreenState();
 
+    // The histories that follow time travel (the GS command log's decoder) go back to this frame's start
+    _context->histories.TimeRestored();
+
     _perf.lastRestoreCpuChipsetNs = elapsedNs(restoreStart, memoryStart);
     _perf.lastRestoreMemoryNs = elapsedNs(memoryStart, devicesStart);
     _perf.lastRestoreDevicesNs = elapsedNs(devicesStart, devicesEnd);
@@ -4122,6 +4125,9 @@ void TimeTravelController::ComposeDisplay(bool frameTarget, uint64_t targetFrame
 void TimeTravelController::PresentPosition(bool frameTarget)
 {
     const auto start = std::chrono::steady_clock::now();
+    // The histories that follow time travel show the line up to here (the GS command log, D3)
+    if (_context)
+        _context->histories.TimeLanded(nullptr);
     // Composing the picture restores neighboring checkpoints; the position's
     // own settings and media check stays the seek's
     const TTDRestoreResult seekCheck = _lastEngineCheck;
@@ -7929,6 +7935,7 @@ void TimeTravelController::SaveLiveState(LiveStateSnapshot& out, bool withMemory
 
     // Peripherals — the same registry the checkpoints are captured through
     _peripherals.SaveLive(out.deviceStates);
+    _context->histories.SaveFollowers(out.historyFollowers);
     out.inputCursor = _line->inputCursor;
     out.inputPlaybackArmed = _inputPlaybackArmed;
     out.engineEventCursor = _engineEventCursor;
@@ -8027,6 +8034,7 @@ void TimeTravelController::RestoreLiveState(const LiveStateSnapshot& snap)
         z80->RecomputeFrameTiming();  // geometry follows the restored multiplier
     }
     _peripherals.LoadLive(snap.deviceStates);
+    _context->histories.LoadFollowers(snap.historyFollowers);
     if (_memory)
     {
         _memory->RestorePaging();

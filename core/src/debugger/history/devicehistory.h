@@ -25,9 +25,11 @@
 /// Threads: the device pushes on the emulation thread; configuration, reads and clears come from the automation
 /// threads. A mutex guards the buffers; it is only taken when the history is on.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -98,12 +100,48 @@ public:
 /// The stats of a history as the planes report them
 StateNode StatsNode(const IDeviceHistory& history);
 
+/// A moment of the machine in time travel's units: the frame and the time since its start (TTDTimePoint)
+struct TimeMoment
+{
+    uint64_t frame = 0;
+    uint64_t tInFrame = 0;
+};
+
+/// A history that follows the machine through time travel (TTD): the controller tells it when the machine moves, so
+/// it shows the line of history up to where the machine stands (gs-debugger design §6.3, D3). Opt-in: a history
+/// whose records need no cut does not register one. Called on the control thread, the emulation thread parked
+class ITimeFollower
+{
+public:
+    virtual ~ITimeFollower() = default;
+
+    /// The machine state was put back from a checkpoint (a seek, a query's replay): what the history derives from
+    /// the machine (a decoder) goes back to that moment
+    virtual void Restored() = 0;
+    /// A move of the machine ended where it stands (a seek, a step, a reverse continue, a card move, a branch
+    /// switch). @p lineSince: the machine left its line of history, the two are the same up to that moment only
+    virtual void Landed(const TimeMoment* lineSince) = 0;
+    /// The derived state around a query that replays elsewhere and puts the machine back (SaveLiveState)
+    virtual void SaveLive(std::vector<uint8_t>& out) const = 0;
+    virtual void LoadLive(const std::vector<uint8_t>& in) = 0;
+};
+
 /// The histories of one machine (EmulatorContext::histories): its devices register theirs while they live
 class Registry
 {
 public:
     void Add(IDeviceHistory* history);
     void Remove(IDeviceHistory* history);
+
+    /// The histories that follow time travel (ITimeFollower), registered while they live
+    void AddFollower(ITimeFollower* follower);
+    void RemoveFollower(ITimeFollower* follower);
+    /// The controller's calls, to every follower; none registered: one relaxed load
+    void TimeRestored() const;
+    void TimeLanded(const TimeMoment* lineSince) const;
+    void SaveFollowers(std::vector<std::vector<uint8_t>>& out) const;
+    /// A SaveFollowers snapshot back; none when the followers changed since
+    void LoadFollowers(const std::vector<std::vector<uint8_t>>& in) const;
 
     /// Runs `f(IDeviceHistory&)` on the history of a device; false when it has none. Under the registry's lock: a
     /// device cannot go away meanwhile
@@ -128,6 +166,8 @@ public:
 private:
     mutable std::mutex _mutex;
     std::vector<IDeviceHistory*> _histories;
+    std::vector<ITimeFollower*> _followers;
+    std::atomic<size_t> _followerCount{ 0 };
 };
 
 namespace detail
@@ -422,6 +462,65 @@ public:
 
     /// endregion </The device's path (emulation thread)>
 
+    /// region <Time travel (ITimeFollower; the emulation thread parked)>
+
+    /// The machine moved within its line of history: the newest kept records `after(record)` is true for are held
+    /// back (neither kept nor counted), and the oldest held ones it is false for are kept again, in order. Records
+    /// are in time order, so either part is a run at one end. A record kept again is not streamed a second time
+    template <typename After>
+    void Rewind(After&& after)
+    {
+        std::lock_guard lock(_mutex);
+        DrainLocked();
+        FlushOpen();
+        _hasOverflow = false;
+        const size_t keep = KeptBeforeLocked(after);
+        if (keep < _records.size())
+        {
+            _held.insert(_held.begin(), _records.begin() + static_cast<std::ptrdiff_t>(keep), _records.end());
+            _written -= _records.size() - keep;
+            _records.erase(_records.begin() + static_cast<std::ptrdiff_t>(keep), _records.end());
+        }
+        size_t back = 0;
+        while (back < _held.size() && !after(_held[back]))
+            back++;
+        for (size_t i = 0; i < back; i++)
+            KeepLocked(_held[i]);
+        _held.erase(_held.begin(), _held.begin() + static_cast<std::ptrdiff_t>(back));
+    }
+
+    /// The machine left the line the records after a moment belong to: the kept and the held records
+    /// `after(record)` is true for go (@p dropHeld: every held one)
+    template <typename After>
+    void Truncate(After&& after, bool dropHeld)
+    {
+        std::lock_guard lock(_mutex);
+        DrainLocked();
+        FlushOpen();
+        _hasOverflow = false;
+        const size_t keep = KeptBeforeLocked(after);
+        _written -= _records.size() - keep;
+        _records.erase(_records.begin() + static_cast<std::ptrdiff_t>(keep), _records.end());
+        if (dropHeld)
+            _held.clear();
+        else
+        {
+            size_t held = 0;
+            while (held < _held.size() && !after(_held[held]))
+                held++;
+            _held.erase(_held.begin() + static_cast<std::ptrdiff_t>(held), _held.end());
+        }
+    }
+
+    /// Records held back by Rewind
+    size_t Held() const
+    {
+        std::lock_guard lock(_mutex);
+        return _held.size();
+    }
+
+    /// endregion </Time travel>
+
     /// region <IDeviceHistory>
 
     std::string Device() const override
@@ -542,6 +641,45 @@ public:
     }
 
 private:
+    /// The kept records in time order from index 0 (a wrapped ring rotated, _head 0), and how many come before the
+    /// newest run `after` is true for
+    template <typename After>
+    size_t KeptBeforeLocked(After& after)
+    {
+        if (_head != 0)
+        {
+            std::rotate(_records.begin(), _records.begin() + static_cast<std::ptrdiff_t>(_head), _records.end());
+            _head = 0;
+        }
+        size_t keep = _records.size();
+        while (keep > 0 && after(_records[keep - 1]))
+            keep--;
+        return keep;
+    }
+
+    /// A held record kept again: PushLocked without the stream (it went there when first pushed)
+    void KeepLocked(const Record& record)
+    {
+        if (_config.mode == Mode::Off)
+            return;
+        _written++;
+        if (_config.mode == Mode::Ring)
+        {
+            if (_records.size() < _capacity)
+                _records.push_back(record);
+            else
+            {
+                _records[_head] = record;
+                _head = (_head + 1) % _capacity;
+                _dropped++;
+            }
+        }
+        else if (_config.limit == 0 || _records.size() < _config.limit)
+            _records.push_back(record);
+        else
+            _dropped++;
+    }
+
     Record* Newest()
     {
         if (_records.empty())
@@ -574,6 +712,7 @@ private:
     void ResetLocked()
     {
         _records.clear();
+        _held.clear();
         _head = 0;
         _written = 0;
         _dropped = 0;
@@ -604,6 +743,7 @@ private:
     Config _config;
     size_t _capacity = 0;
     std::vector<Record> _records;
+    std::vector<Record> _held;      ///< after the machine's moment (Rewind): oldest first, back when it gets there
     size_t _head = 0;               ///< the ring's oldest record once it wrapped
     uint64_t _written = 0;
     uint64_t _dropped = 0;

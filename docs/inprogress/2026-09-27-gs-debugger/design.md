@@ -964,7 +964,8 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
 - **TTD (D3).** The log is not part of the checkpoint. On a TTD seek, entries
   with a time after the seek target are cut off, using the per-entry frame
   and cycle. Replay forward regenerates them, because the hooks fire during
-  replay as well.
+  replay as well. (As built below: a replay is not logged, the cut entries are
+  held back and come back on a move forward; a live run logs anew.)
 
 **As built (phase 4, item 3).**
 
@@ -985,7 +986,33 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
   changes the mailbox, so it sees the status the access met.
   - While the log is off a hook is a null test and one relaxed load. A log switched on again starts over and
     identifies the firmware again.
-  - A TTD replay is not recorded (as in the WD1793's history).
+  - A TTD replay is not recorded (as in the WD1793's history); the decoder still runs in it (D3 below).
+- **TTD (D3, done 2026-11-20).** The log follows time travel (`history::ITimeFollower`, devicehistory.h): it shows
+  the line of history up to where the machine stands. The rule:
+  - **Order.** An entry is after the machine's moment when its `(frame, t)` (the main CPU's T-state in the frame) is
+    later. A move lands on an instruction boundary; an access happens inside an instruction, so the entries of one
+    instruction are all before it or all after it. Entries at a frame start (`card_took` seen there, a stall) carry
+    the checkpoint's own moment and stay.
+  - **A move** (seek, step either way, reverse continue, bookmark, card move: every one ends in `PresentPosition`)
+    holds the entries after the moment back (`DeviceHistory::Rewind`): not shown, not counted. A move forward on the
+    same line keeps the held ones up to the new moment again, in order; a seek back to the end restores the log
+    exactly. A replay logs nothing, so nothing is twice.
+  - **A live run from the past** (a resume forks a branch, a tool's access there) is a new line: at its first hook
+    the held entries and the kept ones after the moment go (`Truncate`), and the run logs anew. After a seek back
+    and a run forward the log equals what a straight run logged, a wrapped ring included (written and dropped
+    counts too).
+  - **A branch switch** (`SwitchBranch`) keeps the past the two lines share (`LineagesPartAt`, the fork of their
+    lineages): entries after the parting go. Past the parting the target line's entries are not there (the log did
+    not see them on this pass) and the decoder starts over.
+  - **The decoder** follows the machine. At each frame start after traffic the log keeps a mark: the decoder's
+    state there (at most 65,536, oldest dropped). A checkpoint restore (any, `TimeRestored`) puts back the newest
+    mark at or before its frame (none: the decoder starts over), the replay to the target runs the decoder without
+    logging, and a query that replays elsewhere saves and loads it around (`SaveLiveState`). So a post byte, a
+    reply or an upload's byte count due at the target is decoded as a straight run decodes it.
+  - **Cost.** Off: the hooks as before (a null test, one relaxed load); the controller's calls are one relaxed load
+    with no follower and a test per follower. On: a mark per frame with traffic, the decoder in a seek's replay.
+  - **Not cut:** the stream file (a record goes there once, when first pushed). Planes see the cut through the
+    history verbs; no API change.
 - **The card side is not hooked.** `CardTook` is seen at the next host access, when status bit 0 is clear. The
   card's own reads of `#01` / `#02` and its reply writes `#03` are not entries.
 - **Profile.** The ROM digest selects it (§6.1); the lightweight card uses gs105a's. NeoGS firmware has no profile,
@@ -1010,11 +1037,13 @@ static_assert(sizeof(GSCommandLogEntry) == 32);
     bit 7, so once the card took the command the reply is in the register without the flag.
   - `transfer_stalled`: an upload with no byte for 50 frames, reported once.
 - **Tests.** `GSCommandLog_Test`: decoding on the lightweight card; one block per upload with the stall; `#14` at its
-  length; the three host anomalies on the LLE card; a reset; a restart. The MCP check is
+  length; the three host anomalies on the LLE card; a reset; a restart. D3: `TtdSeekBackCutsAndSeekForwardRestores`
+  (seek back, forward, frame step back, back to the end; the decoder at the target), `TtdRunAfterSeekBackLogsAsAStraightRun`
+  (the default ring and a wrapped one of 256; then a switch to the trunk), `TtdSeekWithTheLogOff`; `DeviceHistory_Test`
+  `RewindHoldsBackAndBringsBackAWrappedRing`, `TruncateKeepsTheSharedPartAndTheStreamOnce`. The MCP check is
   `test_the_command_log_is_a_device_history`.
 - **Benchmark (P2).** `BM_GSCommandLog_HostTraffic_{None,Off,Ring}`: one frame of an upload with 256 host writes.
-- **Not done.** TTD cut-off on a seek (D3, phase 6). The log starting itself when a debugger attaches (an option,
-  F1b). A Qt panel (U2).
+- **Not done.** The log starting itself when a debugger attaches (an option, F1b). A Qt panel (U2).
 
 ### 6.4 Protocol state and firmware objects (F3, F5, W2, W3)
 
@@ -1334,7 +1363,7 @@ the GS slot.
     (`time-travel-debugging-tdd.md`), in a separate stream.
   - Without card debugging active, "who wrote" answers by replaying the frame
     range in debug mode.
-- **Command log (D3):** §6.3.
+- **Command log (D3):** §6.3 (done 2026-11-20: the log follows every move, "As built").
 - **Card breakpoints in reverse search (D4)** reuse the main CPU's reverse
   search, which replays checkpoints forward and records hits. It runs with
   the `gs` breakpoint manager armed.

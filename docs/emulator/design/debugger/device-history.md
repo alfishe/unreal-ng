@@ -34,6 +34,15 @@ bit, so the processor pays nothing while it is off.
 
 Nothing is recorded while TTD replays silently (a seek re-executes what the history already holds).
 
+A history may follow time travel (`history::ITimeFollower`, registered in the machine's registry with
+`AddFollower`); the GS command log does (gs-debugger design §6.3, D3). The controller tells the followers when a
+checkpoint is restored (`TimeRestored`, any restore), when a move ends where the machine stands (`TimeLanded`, from
+`PresentPosition` and `SwitchBranch`, with the moment two lines part for a switch to another line), and saves and
+loads their derived state around a query (`SaveLiveState` / `RestoreLiveState`). Two generic cuts serve them:
+`Rewind(after)` holds the newest records after the moment back (not kept, not counted) and keeps held ones again once
+the machine is past them; `Truncate(after, dropHeld)` drops the records of a line the machine left. A record kept
+again is not streamed twice; the stream file is never cut. Histories that do not follow keep everything they saw.
+
 A configuration starts afresh: the records, the counts and the stream file (opened again, truncated). Fields a request
 leaves out keep their value.
 

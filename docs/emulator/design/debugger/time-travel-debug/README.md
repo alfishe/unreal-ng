@@ -66,7 +66,7 @@ Related design docs next door: [device-history.md](../device-history.md) (per-de
 | [2026-11-07-ttd-backtrace](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | the call stack at a moment | done 2026-11-07 | [README.md](../../../../inprogress/2026-11-07-ttd-backtrace/README.md) | #119 | - |
 | [2026-11-08-ttd-branches](../../../../inprogress/2026-11-08-ttd-branches/README.md) | branched history, two tiers, surfaces, `ttdtool` | closed 2026-11-16 (P4 not planned) | [DONE.md](../../../../inprogress/2026-11-08-ttd-branches/DONE.md) | #76 (W1) | `e0ac62a53`, `912e8dd68`, `47ebc9dd3` |
 | [2026-11-12-re-api-efficiency](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) | reverse-engineering agents vs MCP / WebAPI (TTD items among others) | open | [TODO.md](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md), [analysis.md](../../../../inprogress/2026-11-12-re-api-efficiency/analysis.md) | #122 | F1-F3, S1, V2, E4 (`e918537f5`), F6, V4 |
-| [2026-09-27-gs-debugger](../../../../inprogress/2026-09-27-gs-debugger/TODO.md) | card CPU debugger; TTD positions on the card's CPU (§8) | open (TTD part landed; D3 left) | [TODO.md](../../../../inprogress/2026-09-27-gs-debugger/TODO.md), [design.md §8](../../../../inprogress/2026-09-27-gs-debugger/design.md#8-ttd-d1-d4) | #45 | `3945ca4f3` / `7dce0959a`, `a6be6598d`, `61276899f`, `e97d71a26` |
+| [2026-09-27-gs-debugger](../../../../inprogress/2026-09-27-gs-debugger/TODO.md) | card CPU debugger; TTD positions on the card's CPU (§8) | open (TTD part landed, D3 done 2026-11-20) | [TODO.md](../../../../inprogress/2026-09-27-gs-debugger/TODO.md), [design.md §8](../../../../inprogress/2026-09-27-gs-debugger/design.md#8-ttd-d1-d4) | #45 | `3945ca4f3` / `7dce0959a`, `a6be6598d`, `61276899f`, `e97d71a26` |
 | [2026-09-29-rzx-replay](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | RZX playback, recording, TTD interop | open (R0-R3 done; R4, R5 left) | [TODO.md](../../../../inprogress/2026-09-29-rzx-replay/TODO.md) | #27 | R0-R3 2026-09-29 |
 | [2026-09-29-model-what-if](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | machine state transfer, branches (W1), forks to other models | open (W3 postponed) | [TODO.md](../../../../inprogress/2026-09-29-model-what-if/TODO.md) | #76 | W0 `6f5759f3`, `570ca3ce`, `7ddbef11` |
 
@@ -216,7 +216,6 @@ Open, by priority:
 | E8 | Capability check before a session | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | F8 | Port history flush and frame counter reset on snapshot load (next to TTD) | P3 | open (verify first) | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
 | E3 | Frame counter in `/registers` (next to TTD; run answers done in `c3ab886b3`) | P3 | partly done | [re-api TODO](../../../../inprogress/2026-11-12-re-api-efficiency/TODO.md) |
-| D3 | GS command log: cut entries after the target on a TTD seek | GS phase 6 | open | [gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4) |
 | P1.S10 | Real-use sessions over days; quiet-machine A/B of C1d | - | open | [v2 DONE, Phase 5](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-5--switch-the-emulator-to-the-engine) |
 | P4.S6 | Kaitai-generated parser run against `ttd.ksy` (no compiler on the build host) | - | open (minor) | [v2 DONE, Phase 4](../../../../inprogress/2026-09-25-ttd-v2-migration/DONE.md#phase-4--the-session-file) |
 | P7-info | `ttdtool info` shows no memory / disk tiers | - | open (minor) | [branches tools.md](../../../../inprogress/2026-11-08-ttd-branches/tools.md) |
@@ -261,6 +260,10 @@ Not planned (owner decisions; do not propose again):
 | Registry 2-5 | Peripheral registry phases 2-5 | went with v1 (closed 2026-10-30) | [registry TODO](../../../../inprogress/2026-09-10-ttd-registry-integration/TODO.md) |
 | C-mem | Separate TTD-only memory path | left out by the plan (no explicit owner veto) | [phase-2-plan](../../../../inprogress/2026-10-28-ttd-analysis-feedback/phase-2-plan.md#c-halt-idle-while-ttd-records-and-replays) |
 | EF limit | Explain frame across frames (call graph) | design scope | [explain design §7](../../../../inprogress/2026-11-02-ttd-explain-frame/design.md#7-what-it-does-not-do) |
+
+Done since the index was collected: D3, the GS command log follows TTD moves (2026-11-20,
+[gs-debugger design §6.3](../../../../inprogress/2026-09-27-gs-debugger/design.md#63-the-command-log-f1-f1c-f3-f4-w1-w4),
+the generic part in [device-history.md](../device-history.md)).
 
 Checked and closed (stale notes; nothing left to do): branches on resume / edit in the past, a file continuing
 across a resume, branch operations in the UI (all done by TTD branches, ticked in the v2 DONE.md); the GS debugger's

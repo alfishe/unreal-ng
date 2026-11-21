@@ -2042,6 +2042,8 @@ private:
     bool _walkingTrailBack = false;
     /// The active branch changes from @p left: onto the trail (not twice in a row, at most kBranchTrailMax)
     void LeaveBranch(uint32_t left);
+    /// The moment the lineages of lines @p a and @p b part (their history is the same up to it); none for one lineage
+    std::optional<TTDTimePoint> LineagesPartAt(uint32_t a, uint32_t b) const;
     /// The trail's last live branch other than the active one; kTTDNoBranch: none
     uint32_t PreviousOnTrail() const;
     /// The active lineage as the bookmark readers see it: a copy under its own lock, so a read while recording
@@ -2317,6 +2319,8 @@ private:
         uint32_t screenPrevTstate = 0;     ///< renderer draw cursor (Screen::_prevTstate)
         /// The card position the caller stood at (a read that replays elsewhere comes back to it)
         std::shared_ptr<CardStand> cardStand;
+        /// The derived state of the histories that follow time travel (history::ITimeFollower)
+        std::vector<std::vector<uint8_t>> historyFollowers;
     };
 
     /// Reused across builds; vector capacities are retained, so the sizable

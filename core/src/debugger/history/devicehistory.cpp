@@ -69,6 +69,60 @@ void Registry::Remove(IDeviceHistory* history)
     _histories.erase(std::remove(_histories.begin(), _histories.end(), history), _histories.end());
 }
 
+void Registry::AddFollower(ITimeFollower* follower)
+{
+    std::lock_guard lock(_mutex);
+    _followers.push_back(follower);
+    _followerCount.store(_followers.size(), std::memory_order_relaxed);
+}
+
+void Registry::RemoveFollower(ITimeFollower* follower)
+{
+    std::lock_guard lock(_mutex);
+    _followers.erase(std::remove(_followers.begin(), _followers.end(), follower), _followers.end());
+    _followerCount.store(_followers.size(), std::memory_order_relaxed);
+}
+
+void Registry::TimeRestored() const
+{
+    if (_followerCount.load(std::memory_order_relaxed) == 0)
+        return;
+    std::lock_guard lock(_mutex);
+    for (ITimeFollower* follower : _followers)
+        follower->Restored();
+}
+
+void Registry::TimeLanded(const TimeMoment* lineSince) const
+{
+    if (_followerCount.load(std::memory_order_relaxed) == 0)
+        return;
+    std::lock_guard lock(_mutex);
+    for (ITimeFollower* follower : _followers)
+        follower->Landed(lineSince);
+}
+
+void Registry::SaveFollowers(std::vector<std::vector<uint8_t>>& out) const
+{
+    out.clear();
+    if (_followerCount.load(std::memory_order_relaxed) == 0)
+        return;
+    std::lock_guard lock(_mutex);
+    out.resize(_followers.size());
+    for (size_t i = 0; i < _followers.size(); i++)
+        _followers[i]->SaveLive(out[i]);
+}
+
+void Registry::LoadFollowers(const std::vector<std::vector<uint8_t>>& in) const
+{
+    if (_followerCount.load(std::memory_order_relaxed) == 0)
+        return;
+    std::lock_guard lock(_mutex);
+    if (in.size() != _followers.size())
+        return;
+    for (size_t i = 0; i < _followers.size(); i++)
+        _followers[i]->LoadLive(in[i]);
+}
+
 StateNode Registry::List() const
 {
     std::lock_guard lock(_mutex);

@@ -521,11 +521,58 @@ bool TimeTravelController::SwitchBranch(uint32_t branch, const std::optional<TTD
     }
     _lastVisited.resize(_lines.size());
     _lastVisited[branch] = target;
+    // The histories that follow time travel keep the past the two lines share (the GS command log, D3)
+    if (const std::optional<TTDTimePoint> part = LineagesPartAt(oldTip, branch))
+    {
+        const history::TimeMoment moment{part->frame, part->tInFrame};
+        _context->histories.TimeLanded(&moment);
+    }
+    else
+        _context->histories.TimeLanded(nullptr);
     if (!_walkingTrailBack && oldTip != branch)
         LeaveBranch(oldTip);
     if (const TTDBranchInfo* switched = _branches.Get(branch))
         NoteBranchEvent("switched", *switched);
     return true;
+}
+
+std::optional<TTDTimePoint> TimeTravelController::LineagesPartAt(uint32_t a, uint32_t b) const
+{
+    if (a == b)
+        return std::nullopt;
+    auto chainOf = [&](uint32_t id) {
+        std::vector<uint32_t> chain;
+        for (uint32_t l = id; _engine->HasLine(l); l = _engine->LineParent(l))
+            chain.push_back(l);
+        return chain;
+    };
+    const std::vector<uint32_t> ca = chainOf(a);
+    const std::vector<uint32_t> cb = chainOf(b);
+    // The deepest line both lineages hold; each side parts from it where its child on that side forks
+    TTDTimePoint part{UINT64_MAX, UINT32_MAX};
+    bool common = false;
+    for (size_t i = 0; i < ca.size() && !common; i++)
+        for (size_t j = 0; j < cb.size(); j++)
+            if (ca[i] == cb[j])
+            {
+                common = true;
+                auto earlier = [&](uint32_t child) {
+                    const TTDPosition fork = _engine->LineFork(child);
+                    const TTDTimePoint at{fork.frame, static_cast<uint32_t>(fork.tInFrame)};
+                    if (at < part)
+                        part = at;
+                };
+                if (i > 0)
+                    earlier(ca[i - 1]);
+                if (j > 0)
+                    earlier(cb[j - 1]);
+                break;
+            }
+    if (!common)
+        return TTDTimePoint{0, 0};
+    if (part.frame == UINT64_MAX)
+        return std::nullopt;
+    return part;
 }
 
 void TimeTravelController::LeaveBranch(uint32_t left)
