@@ -32,7 +32,7 @@ namespace WindowDisplay
 {
 /// The settings a change can name, in the order every surface lists them
 inline constexpr const char* kKeys =
-    "gpu, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
+    "gpu, renderer, crt, crt_profile, blending, blending_frames, blending_weights, blending_decay, smooth_motion, effects_device, "
     "present_policy, display_rate, lip_sync_offset_ms, fullscreen, view, scale, toolbar, "
     "status_bar, hud, hud_theme, hud_notice.<id>, osd_keyboard, osd_keyboard_picture, osd_keyboard_style, next_layers, next_layers_mode, "
     "next_layer.<ula|layer2|tilemap|sprites>";
@@ -198,6 +198,17 @@ inline bool ApplyWord(WindowDisplayChange& change, const std::string& key, const
         return flag(change.crt);
     if (k == "blending")
         return flag(change.blending);
+    if (k == "renderer")
+    {
+        const std::string name = Lower(value) == "opengl" ? "gl" : Lower(value);
+        if (name != "gl" && name != "vulkan")
+        {
+            error = "'renderer' takes gl or vulkan, not '" + value + "'";
+            return false;
+        }
+        change.renderer = name;
+        return true;
+    }
     if (k == "crt_profile")
     {
         change.crtProfile = Lower(value);
@@ -450,6 +461,12 @@ inline Result Set(const WindowDisplayChange& change)
         return Fail(Status::BadParameter, "Unknown keyboard style '" + *change.osdKeyboardStyle + "': use " +
                                               Joined(now.settings.osdKeyboardStyles));
     }
+    if (change.renderer && !OneOf(now.settings.renderers, *change.renderer))
+        return Fail(Status::Unavailable, "The " + *change.renderer + " renderer is not available here (" +
+                                             (*change.renderer == "vulkan"
+                                                  ? "a build without Vulkan, or no hardware Vulkan 1.3 GPU"
+                                                  : "no OpenGL") +
+                                             "): use " + Joined(now.settings.renderers));
     if (change.gpu && *change.gpu && !now.settings.gpuAvailable)
         return Fail(Status::Unavailable, "GPU acceleration is not available on this host (no OpenGL)");
     // A libretro preset or a custom shader ("shader:<name>", offered when the host has a GPU) runs on the GPU only: on
@@ -560,7 +577,7 @@ inline StateNode PresentReport(const WindowPresentStats& p)
     return node;
 }
 
-/// The report every surface returns: backend, gpu_available, gpu, crt, crt_profile, crt_profiles[], blending,
+/// The report every surface returns: backend, gpu_available, gpu, renderer, renderers[], renderer_active, crt, crt_profile, crt_profiles[], blending,
 /// blending_frames, blending_weights, smooth_motion, effects_device, present_policy, display_rate, lip_sync_offset_ms, present
 /// (PresentReport), emulator (the instance
 /// the window shows, "" = none)
@@ -570,6 +587,12 @@ inline StateNode Report(const WindowDisplaySettings& s)
     node["backend"] = s.backend;
     node["gpu_available"] = s.gpuAvailable;
     node["gpu"] = s.gpu;
+    node["renderer"] = s.renderer;
+    StateNode renderers = StateNode::Array();
+    for (const std::string& name : s.renderers)
+        renderers.items.emplace_back(name);
+    node["renderers"] = renderers;
+    node["renderer_active"] = s.rendererActive;
     node["crt"] = s.crt;
     node["crt_profile"] = s.crtProfile;
     StateNode profiles = StateNode::Array();
@@ -640,6 +663,10 @@ inline StateNode ErrorNode(const Result& r)
 inline std::string Summary(const WindowDisplaySettings& s)
 {
     std::string line = std::string("gpu ") + (s.gpu ? "on" : "off") + (s.gpuAvailable ? " (available)" : " (unavailable)");
+    // The renderer only where there is a choice, and what draws when it is not the one asked
+    if (s.renderers.size() > 1 || s.renderer != "gl")
+        line += ", renderer " + s.renderer +
+                (!s.rendererActive.empty() && s.rendererActive != s.renderer ? " (" + s.rendererActive + " draws)" : "");
     line += std::string(", crt ") + (s.crt ? s.crtProfile : "off");
     line += std::string(", blending ") + (s.blending ? "on" : "off") + " (" + std::to_string(s.blendingFrames) +
             " frames, " + s.blendingWeights + (s.blendingWeights == "exponential" ? " " + NumberWord(s.blendingDecay) : "") +
@@ -647,7 +674,8 @@ inline std::string Summary(const WindowDisplaySettings& s)
     line += ", smooth motion " + s.smoothMotion + (s.smoothMotion == "off" ? "" : " (" + s.effectsDevice + ")");
     // The policy in effect only where a native presenter applies it
     const bool native =
-        s.present.presenter == "metal" || s.present.presenter == "dxgi" || s.present.presenter == "gl-timed";
+        s.present.presenter == "metal" || s.present.presenter == "dxgi" || s.present.presenter == "gl-timed" ||
+        s.present.presenter == "vulkan";
     line += ", present " + s.presentPolicy + (native ? (s.present.vrr ? " (vrr)" : " (vsync)") : "");
     if (s.present.sync != "off")
         line += ", video sync " + s.present.sync + (s.present.syncReason.empty() ? "" : " (" + s.present.syncReason + ")");

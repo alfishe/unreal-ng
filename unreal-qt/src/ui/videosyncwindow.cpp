@@ -324,7 +324,7 @@ void VideoSyncWindow::refresh()
         set("display_rate", tr("unchanged: %1").arg(QString::fromStdString(p.displayReason)));
     else
         set("display_rate", tr("the display's own"));
-    const bool native = p.presenter == "metal" || p.presenter == "dxgi";
+    const bool native = p.presenter == "metal" || p.presenter == "dxgi" || p.presenter == "vulkan";
     // The software screen times its paints: when the window draws a new frame, not when the screen shows it
     const bool painted = !native && p.timedAt == "paint";
     set("presenter", QString::fromStdString(p.presenter) +

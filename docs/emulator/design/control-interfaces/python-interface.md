@@ -2088,7 +2088,9 @@ emu.video_temporal_set('mod-tpgwafsd') # switch it on; 'off' or '' switches it o
                                      #   mod-tpgwafsd with the default A/V delay of 2) and the sound is delayed
                                      #   by the difference ('audio_extra_delay_frames', 5 here) to stay in sync.
 emu.window_display()                 # GUI window display settings: {'backend' ('gpu' / 'software'), 'gpu_available',
-                                     #   'gpu', 'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
+                                     #   'gpu', 'renderer' ('gl' / 'vulkan'), 'renderers' (offered),
+                                     #   'renderer_active' (what draws: 'gl' / 'vulkan', '' software),
+                                     #   'crt', 'crt_profile', 'crt_profiles': [...], 'blending' (temporal
                                      #   blending), 'blending_frames' (2..5), 'blending_weights' ('equal' /
                                      #   'exponential'), 'blending_decay' (0.1..0.9), 'smooth_motion' ('off' /
                                      #   'blend' / 'interpolate' / 'auto'), 'effects_device' ('gpu' / 'cpu'),
@@ -2102,7 +2104,8 @@ emu.window_display()                 # GUI window display settings: {'backend' (
                                      #   'osd_keyboard_style', 'osd_keyboard_styles',
                                      #   'next_layers', 'next_layers_mode', 'next_layers_shown'}; headless
                                      #   {'ok': False, 'error', 'kind': 'no-window'}
-emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, crt=, blending=, fullscreen=,
+emu.window_display_set(crt_profile='basic', blending=True)  # any of gpu=, renderer= ('vulkan': one of
+                                     #   renderers; re-creates the GPU screen), crt=, blending=, fullscreen=,
                                      #   toolbar=, status_bar=, hud=, osd_keyboard=, next_layers= (bool),
                                      #   crt_profile= (one of crt_profiles: none, basic, ...,
                                      #   shader:<name> (a preset or a custom shader) with the GPU; other

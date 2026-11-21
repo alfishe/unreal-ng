@@ -21,6 +21,7 @@ Reference: [frame presenter design](../../docs/inprogress/2026-10-26-frame-prese
   |:--|:--|:--|
   | `smooth_motion` | `off`, `blend`, `interpolate`, `auto` | the picture between two frames on a fixed display: the frame due, a mix of the two, the moving layers drawn at the refresh's time, or interpolate only while the display has neither VRR nor a fitting rate. VRR shows each frame as it is whatever this says |
   | `effects_device` | `gpu`, `cpu` | where smooth motion runs; the same bits either way |
+  | `renderer` | `gl`, `vulkan` (one of `renderers`) | what the GPU screen draws with (the window's, kept across sessions); `renderer_active` says what draws, `present.presenter` is `vulkan` on its swapchain |
   | `present_policy` | `auto`, `vrr`, `vsync` | native presenter (Metal, DXGI): each frame at its own time, or on the refresh grid |
   | `display_rate` | `keep`, `match` | switch the display to a rate fitting the machine (50 / 100 Hz) while the window shows it |
   | `lip_sync_offset_ms` | -200..200 | moves the frames' target times against the sound |

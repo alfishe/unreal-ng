@@ -184,6 +184,7 @@ StateNode VideoPresent()
     const WindowPresentStats& p = settings->present;
     node["emulator"] = settings->emulatorId;
     node["presenter"] = p.presenter;
+    node["renderer"] = settings->rendererActive;  // a fall back from Vulkan to GL is a topic message
     node["present_policy"] = settings->presentPolicy;
     node["fixed_display"] = p.fixedDisplay;
     node["vrr"] = p.vrr;

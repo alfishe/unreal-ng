@@ -1075,8 +1075,11 @@ bool WindowRecorder::begin(DeviceScreenWrapper* screen, const std::shared_ptr<Em
     // those times, microsecond-exact, are the file's
     QStringList args{"-v", "error", "-y", "-f", "matroska", "-i", "-"};
     QString hardwareEncoder;
+    // The sound's input not analysed: its format is given, and ffmpeg probing it waits for seconds of sound a paused,
+    // stepped machine has not made yet, reading no picture meanwhile (frames that change, a key pressed on the
+    // on-screen keyboard, fill the picture's pipe and the recording stalls)
     if (!fifo.isEmpty())
-        args << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
+        args << "-analyzeduration" << "0" << "-probesize" << "32" << "-thread_queue_size" << "512" << "-f" << "s16le" << "-ar" << QString::number(_sampleRate) << "-ac"
              << QString::number(AUDIO_CHANNELS) << "-i" << fifo << "-map" << "0:v:0" << "-map" << "1:a:0";
     if (!pipeFilter.isEmpty())
         args << "-vf" << pipeFilter;

@@ -290,6 +290,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     // Put emulator screen into resizable content frame
     // Wrapper auto-selects GPU or software backend
     QFrame* contentFrame = ui->contentFrame;
+    restoreRendererSetting();
     _screenWrapper = new DeviceScreenWrapper(contentFrame);
     registerWindowView();
     // Windows that show the same moment as the screen refresh with it
@@ -1034,6 +1035,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     connect(_menuManager, &MenuManager::statusBarToggled, this, &MainWindow::handleStatusBarToggled);
     connect(_menuManager, &MenuManager::hudOverlayToggled, this, &MainWindow::handleHudOverlayToggled);
     connect(_menuManager, &MenuManager::gpuAccelerationToggled, this, &MainWindow::handleGpuAccelerationToggled);
+    connect(_menuManager, &MenuManager::rendererChanged, this, &MainWindow::handleRendererChanged);
     connect(_menuManager, &MenuManager::crtEffectsToggled, this, &MainWindow::handleCrtEffectsToggled);
     connect(_menuManager, &MenuManager::crtProfileChanged, this, &MainWindow::handleCrtProfileChanged);
     connect(_menuManager, &MenuManager::crtShaderChanged, this, &MainWindow::handleCrtShaderChanged);
@@ -1043,6 +1045,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     bool gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     _menuManager->setGpuAccelerationAvailable(gpuAvailable);
     _menuManager->setGpuAccelerationChecked(_screenWrapper->isGPUAccelerated());
+    updateRendererMenu();
 #ifdef ENABLE_RECORDING
     UiGpuAcceleration() = _screenWrapper->isGPUAccelerated();  // recording follows View > GPU acceleration
 #endif

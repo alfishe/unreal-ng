@@ -48,7 +48,9 @@ struct GpuPassMs
 /// presenter's on-screen timing over its last presents (ms) and smooth motion's counters since it started
 struct WindowPresentStats
 {
-    std::string presenter;  ///< "metal", "dxgi", "gl-timed" (present-at-time), "gl" (the window's own swap), "software"
+    /// "metal", "dxgi", "gl-timed" (present-at-time), "vulkan" (the Vulkan renderer's swapchain), "gl" (the window's
+    /// own swap), "software"
+    std::string presenter;
     bool fixedDisplay = true;  ///< a fixed refresh (min = max); false: VRR / ProMotion range
     bool vrr = false;          ///< frames presented each at its own time (c-vrr); false: on the refresh grid (b-vsync)
     /// Can the display under the window follow the frames: "yes", "no", "unknown" (Wayland: no client query; Windows:
@@ -139,6 +141,11 @@ struct WindowDisplaySettings
     std::string backend;                   ///< "gpu" / "software"
     bool gpuAvailable = false;             ///< the host can draw with the GPU
     bool gpu = false;                      ///< GPU acceleration on
+    std::string renderer = "gl";           ///< View > Renderer as asked: "gl" / "vulkan" (the GPU screen draws with it)
+    std::vector<std::string> renderers;    ///< the renderers this host offers ("gl"; "vulkan": a build with it and a
+                                           ///< hardware Vulkan 1.3 GPU)
+    std::string rendererActive;            ///< what the GPU screen draws with now: "gl" / "vulkan" ("" = the software
+                                           ///< screen; "gl" under "vulkan": it fell back)
     bool crt = false;                      ///< CRT effects on (a profile other than "none" switches them on)
     std::string crtProfile;                ///< e.g. "none", "basic", "shader:<name>"
     std::vector<std::string> crtProfiles;  ///< every profile the window offers
@@ -181,6 +188,7 @@ struct WindowDisplaySettings
 struct WindowDisplayChange
 {
     std::optional<bool> gpu;
+    std::optional<std::string> renderer;
     std::optional<bool> crt;
     std::optional<std::string> crtProfile;
     std::optional<bool> blending;
@@ -209,7 +217,7 @@ struct WindowDisplayChange
 
     bool Empty() const
     {
-        return !gpu && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
+        return !gpu && !renderer && !crt && !crtProfile && !blending && !blendingFrames && !blendingWeights && !blendingDecay &&
                !smoothMotion && !effectsDevice && !presentPolicy && !displayRate && !lipSyncOffsetMs && !fullscreen && !view && !scale && !toolbar && !statusBar && !hud && !hudTheme && hudNotices.empty() &&
                !osdKeyboard && !osdKeyboardPicture && !osdKeyboardStyle && !nextLayers && !nextLayersMode && nextLayersShown.empty();
     }

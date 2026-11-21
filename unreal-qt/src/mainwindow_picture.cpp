@@ -30,6 +30,7 @@
 #include "ui/temporaleffectsdialog.h"
 #include "ui/videosyncwindow.h"
 #include "widgets/crtprofiles.h"
+#include "widgets/devicescreenglwindow.h"
 #include "widgets/slangpresetrunner.h"
 
 namespace
@@ -117,6 +118,9 @@ WindowDisplaySettings MainWindow::windowDisplaySettings() const
     s.backend = _screenWrapper->isGPUAccelerated() ? "gpu" : "software";
     s.gpuAvailable = DeviceScreenWrapper::isGPUAvailable();
     s.gpu = _screenWrapper->isGPUAccelerated();
+    s.renderer = DeviceScreenGLWindow::wantedRenderer();
+    s.renderers = DeviceScreenGLWindow::availableRenderers();
+    s.rendererActive = _screenWrapper->activeRenderer();
     s.crt = _screenWrapper->crtEffectsEnabled();
     // A custom shader is "shader:<name>", offered when the host has a GPU (it needs the GPU on: WindowDisplay::Set)
     const QString shader = _screenWrapper->customShader();
@@ -185,6 +189,8 @@ void MainWindow::applyWindowDisplay(const WindowDisplayChange& change)
 {
     // The order of the menu: the backend first (it re-creates the screen and carries the rest over), then the profile
     // (it switches CRT on or off by itself), then the switches that name it
+    if (change.renderer)
+        handleRendererChanged(QString::fromStdString(*change.renderer));
     if (change.gpu)
     {
         _menuManager->setGpuAccelerationChecked(*change.gpu);
@@ -541,6 +547,50 @@ void MainWindow::connectWindowDisplayPublishing()
         if (guard)
             guard->schedulePublishWindowDisplay();
     });
+    schedulePublishWindowDisplay();
+}
+
+void MainWindow::restoreRendererSetting()
+{
+    if (!qEnvironmentVariableIsEmpty("UNREAL_RENDERER") ||
+        qEnvironmentVariable("UNREAL_QT_VIEW_SETTINGS").compare("off", Qt::CaseInsensitive) == 0)
+        return;
+    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+    const QString renderer = settings.value(QStringLiteral("%1/Renderer").arg(kViewGroup)).toString();
+    if (!renderer.isEmpty())
+        DeviceScreenGLWindow::setWantedRenderer(renderer.toLower().toStdString());
+}
+
+void MainWindow::updateRendererMenu()
+{
+    const std::vector<std::string> offered = DeviceScreenGLWindow::availableRenderers();
+    _menuManager->setRenderer(QString::fromStdString(DeviceScreenGLWindow::wantedRenderer()),
+                              std::find(offered.begin(), offered.end(), "vulkan") != offered.end(),
+                              DeviceScreenGLWindow::vulkanBuilt());
+}
+
+void MainWindow::handleRendererChanged(const QString& renderer)
+{
+    const std::string name = renderer.toLower().toStdString();
+    const std::vector<std::string> offered = DeviceScreenGLWindow::availableRenderers();
+    if (std::find(offered.begin(), offered.end(), name) == offered.end() ||
+        !DeviceScreenGLWindow::setWantedRenderer(name))
+    {
+        updateRendererMenu();  // the check back on what stays
+        return;
+    }
+    if (_viewSettingsEnabled)
+    {
+        QSettings settings(QSettings::IniFormat, QSettings::UserScope, "Unreal", "Unreal-NG");
+        settings.setValue(QStringLiteral("%1/Renderer").arg(kViewGroup), renderer.toLower());
+    }
+    updateRendererMenu();
+    // The GPU screen made anew with it (the other settings carry over); the software screen takes it when the GPU
+    // comes on. A Vulkan GPU beside a software GL lets the GPU screen run now
+    const bool gpu = _gpuWanted && DeviceScreenWrapper::isGPUAvailable();
+    _menuManager->setGpuAccelerationAvailable(DeviceScreenWrapper::isGPUAvailable());
+    if (gpu != _screenWrapper->isGPUAccelerated() || (gpu && _screenWrapper->activeRenderer() != name))
+        rebuildScreen(gpu, true);
     schedulePublishWindowDisplay();
 }
 

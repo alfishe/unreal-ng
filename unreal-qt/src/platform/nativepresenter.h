@@ -9,6 +9,11 @@
 
 #include "emulator/video/presentpolicy.h"
 
+namespace gpu
+{
+class Texture;
+}
+
 /// A native presenter (frame presenter design, docs/inprogress/2026-10-26-frame-presenter, sections 4.1 and 6.2): the
 /// GL renderer draws each picture into a texture shared with the platform's API, and the presenter shows it on the
 /// window at the frame's audio time. On a VRR display every frame is on screen for its own period; on a fixed one it
@@ -80,6 +85,14 @@ public:
     /// The GL context current: a framebuffer of `width` x `height` device pixels to draw the next picture into,
     /// bound as GL_FRAMEBUFFER. @return its name, 0 on failure
     virtual unsigned BeginFrame(int width, int height) = 0;
+    /// A presenter of the GPU layer's (Vulkan, gpu/vulkanpresenter.h): the texture of `width` x `height` device pixels
+    /// to draw the next picture into with its device, GL rows. nullptr: a GL presenter (BeginFrame), or a failure
+    virtual gpu::Texture* BeginTexture(int width, int height)
+    {
+        (void)width;
+        (void)height;
+        return nullptr;
+    }
     /// The picture drawn: shown at `atNs` (steady clock; at once when it is 0 or past). GL rows count from the bottom,
     /// the presenter turns them over
     virtual void PresentFrame(int64_t atNs, const TraceInfo& trace) = 0;

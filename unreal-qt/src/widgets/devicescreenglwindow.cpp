@@ -22,13 +22,22 @@
 #include <QOffscreenSurface>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLPaintDevice>
-#include <QOpenGLPixelTransferOptions>
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QTimer>
 #include <QUrl>
 #include <QVector2D>
 #include <QVector4D>
+
+#include <QOpenGLExtraFunctions>
+#include <QOpenGLShaderProgram>
+
+#include "gpu/gldevice.h"
+#ifdef UNREAL_VULKAN
+#include "gpu/vulkandevice.h"
+#include "gpu/vulkanpresenter.h"
+#include "gpu/vulkansurface.h"
+#endif
 #include <cmath>
 #include <cstring>
 
@@ -82,12 +91,78 @@ constexpr int kHiddenPollMs = 100;
     "is off: no screen times here (Wayland / EGL, or GLX without GLX_OML_sync_control), the plain GL swap keeps the "
     "refresh grid; present_policy=vrr swaps each frame at its time";
 
+/// The renderer asked for (View > Renderer, the automation's renderer; UNREAL_RENDERER at start): "gl" / "vulkan".
+/// The GUI thread
+std::string& WantedRenderer()
+{
+    static std::string wanted =
+        qEnvironmentVariable("UNREAL_RENDERER").compare(QStringLiteral("vulkan"), Qt::CaseInsensitive) == 0 ? "vulkan"
+                                                                                                           : "gl";
+    return wanted;
+}
+
+// The Vulkan probe (the GUI thread): -1 none yet, 0 no hardware Vulkan 1.3 GPU, 1 one; its name
+int gVulkanProbe = -1;
+QString gVulkanName;
+
+/// A hardware Vulkan 1.3 GPU (llvmpipe, SwiftShader only with UNREAL_GPU_ALLOW_SOFTWARE=1), asked once until
+/// reprobeGPUAcceleration: a device made takes ~50 ms
+bool VulkanAvailable()
+{
+#ifdef UNREAL_VULKAN
+    if (gVulkanProbe < 0)
+    {
+        gVulkanProbe = 0;
+        gVulkanName.clear();
+        std::string error;
+        auto device = gpu::VulkanDevice::Create(gpu::VulkanDevice::Setup{}, error);
+        if (device)
+        {
+            const std::string name = device->Describe();
+            gVulkanName = QString::fromStdString(name);
+            qInfo() << "DeviceScreenGLWindow: Vulkan:" << gVulkanName;
+            const bool software =
+                name.find("llvmpipe") != std::string::npos || name.find("SwiftShader") != std::string::npos;
+            if (!software || qEnvironmentVariableIntValue("UNREAL_GPU_ALLOW_SOFTWARE") == 1)
+                gVulkanProbe = 1;
+            else
+                qInfo() << "DeviceScreenGLWindow: the Vulkan GPU is a software one: no Vulkan renderer";
+        }
+        else
+        {
+            qInfo() << "DeviceScreenGLWindow: no Vulkan renderer:" << QString::fromStdString(error);
+        }
+    }
+    return gVulkanProbe == 1;
+#else
+    return false;
+#endif
+}
+
+/// The Vulkan renderer (docs/inprogress/2026-11-19-vulkan-renderer): asked for, and a GPU for it
+bool UseVulkanRenderer()
+{
+    return WantedRenderer() == "vulkan" && VulkanAvailable();
+}
+
+/// Vulkan: the HUD image over the picture, its rows turned over into GL's
+const char* const kHudFragment = R"(
+#version 330
+uniform sampler2D hud;
+uniform int height;
+out vec4 color;
+void main() {
+    color = texelFetch(hud, ivec2(int(gl_FragCoord.x), height - 1 - int(gl_FragCoord.y)), 0);
+}
+)";
+
 // The last probe (the GUI thread): -1 none yet, 0 no GPU, 1 a hardware one; the renderer it saw
 std::atomic<int> gGpuProbe{-1};
 QString gGpuRenderer;
 }  // namespace
 
-DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _native(UseNativePresenter())
+DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent)
+    : QWindow(parent), _vulkan(UseVulkanRenderer()), _native(_vulkan || UseNativePresenter())
 {
 #ifdef __APPLE__
     setSurfaceType(_native ? QSurface::MetalSurface : QSurface::OpenGLSurface);
@@ -96,7 +171,7 @@ DeviceScreenGLWindow::DeviceScreenGLWindow(QWindow* parent) : QWindow(parent), _
     setSurfaceType(QSurface::OpenGLSurface);
 #endif
     setupVSync();
-    if (UseNativePresenter())
+    if (_native)
     {
         bool ok = false;
         const int leadMs = qEnvironmentVariableIntValue("UNREAL_PRESENT_LEAD_MS", &ok);
@@ -218,28 +293,32 @@ bool DeviceScreenGLWindow::recreateLostContext()
 
 void DeviceScreenGLWindow::releaseGLObjects()
 {
-    delete _texture;
-    _texture = nullptr;
-    delete _gradedTexture;
-    _gradedTexture = nullptr;
-    delete _indexTexture;
-    _indexTexture = nullptr;
-    delete _factorTexture;
-    _factorTexture = nullptr;
-    delete _composeShader;
-    _composeShader = nullptr;
+    _texture.reset();
+    _gradedTexture.reset();
+    _indexTexture.reset();
+    _factorTexture.reset();
+    _composeShader.reset();
     _modelGpu.destroy();
     _smooth.SetDevice(nullptr);
     _smoothGpu.Destroy();
-    delete _customShader;
-    _customShader = nullptr;
+    _customShader.reset();
     if (_slangRunner)
         _slangRunner->release();
     _slangRunner.reset();
-    _quadBuffer.destroy();
-    _quadVao.destroy();
     _gpuTimes.Release(false);
-    _presenter.reset();  // its GL objects in this context
+    _hudTexture.reset();
+    _hudProgram.reset();
+    _frameTarget = nullptr;
+    _presenter.reset();  // its GL objects in this context; Vulkan: its swapchain, before the device and the surface
+    _gpu.reset();
+#ifdef UNREAL_VULKAN
+    if (_vkSurface)
+        vkDestroySurfaceKHR(_vkInstance, _vkSurface, nullptr);
+    _vkSurface = VK_NULL_HANDLE;
+    if (_vkInstance)
+        vkDestroyInstance(_vkInstance, nullptr);
+    _vkInstance = VK_NULL_HANDLE;
+#endif
 }
 
 bool DeviceScreenGLWindow::makeCurrent()
@@ -306,8 +385,26 @@ void DeviceScreenGLWindow::renderNative(bool force)
     _toldWaiting = false;
     force = force || _presentPending;
     _presentPending = false;
+    if (_vulkan && _gpu && _gpu->Lost())
+    {
+        dropVulkan("lost its device (a GPU reset)");
+        return;
+    }
     if (!_presenter)
     {
+#ifdef UNREAL_VULKAN
+        if (_vulkan && _gpu && _gpu->GetBackend() == gpu::Device::Backend::Vulkan)
+        {
+            std::string error;
+            _presenter = gpu::VulkanPresenter::Create(this, static_cast<gpu::VulkanDevice&>(*_gpu), _vkSurface, error);
+            if (!_presenter)
+            {
+                dropVulkan("its presenter was not made: " + error);
+                return;
+            }
+        }
+        else
+#endif
         if (!_recovery.GlOnly())
 #ifdef __linux__
             _presenter = NativePresenter::Create(static_cast<QWindow*>(this));
@@ -349,7 +446,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
         _recovery.Created();
 #ifdef __linux__
         // Without screen times (Wayland, EGL) the timed swap is for policy vrr only: the plain swap otherwise
-        if (!linuxpresent::UseTimedSwap(_presentPolicy, NativePresenter::PresentFeedback() == 1))
+        if (!_vulkan && !linuxpresent::UseTimedSwap(_presentPolicy, NativePresenter::PresentFeedback() == 1))
         {
             useGlSwap(kNoFeedbackReason);
             return;
@@ -471,7 +568,8 @@ void DeviceScreenGLWindow::renderNative(bool force)
     {
         const QSize pixels = (QSizeF(size()) * devicePixelRatio()).toSize();
         const bool failHook = _presentFailAtNs != 0 && now >= _presentFailAtNs;  // UNREAL_TEST_PRESENT_FAIL
-        if (!failHook && _presenter->BeginFrame(pixels.width(), pixels.height()) != 0)
+        _frameTarget = _vulkan ? _presenter->BeginTexture(pixels.width(), pixels.height()) : nullptr;
+        if (!failHook && (_vulkan ? _frameTarget != nullptr : _presenter->BeginFrame(pixels.width(), pixels.height()) != 0))
         {
             if (pixels != _glSize)
             {
@@ -498,6 +596,7 @@ void DeviceScreenGLWindow::renderNative(bool force)
                 trace.targetNs = _smoothRefreshNs;
             }
             _presenter->PresentFrame(at, trace);
+            _frameTarget = nullptr;
             if (const int64_t failedNs = _recovery.Presented(now); failedNs > 0)
                 qInfo().noquote() << "DeviceScreenGLWindow: presenting again after" << failedNs / 1'000'000 << "ms,"
                                   << _recovery.Failures() << "pictures not presented";
@@ -711,6 +810,8 @@ WindowPresentStats DeviceScreenGLWindow::presentStats() const
 #else
         out.presenter = "gl-timed";
 #endif
+        if (_vulkan)
+            out.presenter = "vulkan";  // the Vulkan renderer's swapchain (gpu::VulkanPresenter) on every platform
         const NativePresenter::Stats s = _presenter->GetStats();
         out.timedAt = "screen";
         out.minRefreshHz = s.minRefreshHz;
@@ -812,6 +913,7 @@ bool DeviceScreenGLWindow::probeGPUAcceleration()
 
 bool DeviceScreenGLWindow::reprobeGPUAcceleration()
 {
+    gVulkanProbe = -1;  // asked again with the rest
     QString renderer;
     const int available = probeGPUAccelerationOnce(renderer) ? 1 : 0;
     const bool changed = available != gGpuProbe.load() || renderer != gGpuRenderer;
@@ -820,8 +922,48 @@ bool DeviceScreenGLWindow::reprobeGPUAcceleration()
     return changed;
 }
 
+std::vector<std::string> DeviceScreenGLWindow::availableRenderers()
+{
+    std::vector<std::string> renderers = {"gl"};
+    if (VulkanAvailable())
+        renderers.emplace_back("vulkan");
+    return renderers;
+}
+
+bool DeviceScreenGLWindow::vulkanBuilt()
+{
+#ifdef UNREAL_VULKAN
+    return true;
+#else
+    return false;
+#endif
+}
+
+std::string DeviceScreenGLWindow::wantedRenderer()
+{
+    return WantedRenderer();
+}
+
+bool DeviceScreenGLWindow::setWantedRenderer(const std::string& name)
+{
+    if (name != "gl" && name != "vulkan")
+        return false;
+    if (name == WantedRenderer())
+        return true;
+    WantedRenderer() = name;
+    gGpuProbe.store(-1);  // the GPU probe asks the renderer's own GPU: again at the next ask
+    return true;
+}
+
 bool DeviceScreenGLWindow::probeGPUAccelerationOnce(QString& rendererName)
 {
+    // The Vulkan renderer draws on a Vulkan GPU, whatever GL the display has (Xvfb's llvmpipe beside an NVIDIA): that
+    // GPU decides. None: the GL probe below (the window falls back to GL)
+    if (UseVulkanRenderer())
+    {
+        rendererName = gVulkanName;
+        return true;
+    }
     QOpenGLContext ctx;
     ctx.setFormat(surfaceFormat());
     if (!ctx.create())
@@ -1351,29 +1493,22 @@ void DeviceScreenGLWindow::initializeGL()
     initializeOpenGLFunctions();
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
-    _texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
-    _texture->setMinificationFilter(QOpenGLTexture::Nearest);
-    _texture->setMagnificationFilter(QOpenGLTexture::Nearest);
-    _texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-
-    // The quad: two triangles as a strip, its corners top left, top right, bottom left, bottom right
-    static const float kCorners[] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f};
-    _quadVao.create();
-    _quadVao.bind();
-    _quadBuffer.create();
-    _quadBuffer.bind();
-    _quadBuffer.allocate(kCorners, static_cast<int>(sizeof(kCorners)));
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
-    _quadBuffer.release();
-    _quadVao.release();
-
-    _composeShader = new QOpenGLShaderProgram(this);
-    if (!_composeShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) ||
-        !_composeShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::kCompositionShader) ||
-        !_composeShader->link())
-        qWarning() << "CRT composition shader failed:" << _composeShader->log();
-    if (!_modelGpu.create())
+#ifdef UNREAL_VULKAN
+    if (_vulkan && !createVulkanDevice())
+        _vulkan = false;
+#endif
+    if (!_gpu)
+        _gpu = gpu::GlDevice::Create();
+    if (!_gpu)
+    {
+        qWarning() << "DeviceScreenGLWindow: no GPU device on the context";
+        return;
+    }
+    std::string log;
+    _composeShader = _gpu->CreateProgram(CRT_VERTEX_SHADER, CRTRenderer::kCompositionShader, log);
+    if (!_composeShader)
+        qWarning() << "CRT composition shader failed:" << QString::fromStdString(log);
+    if (!_modelGpu.create(_gpu.get()))
         qWarning() << "CRT model shader failed:" << _modelGpu.log();
 
     // A custom shader or preset chosen before the context existed
@@ -1381,8 +1516,8 @@ void DeviceScreenGLWindow::initializeGL()
         compileCustomShader(_customShaderSource);
     if (!_slangPresetName.isEmpty() && !applySlangPreset(_slangPresetName))
         _slangPresetName.clear();
-    if (!_gpuTimes.Init(QOpenGLContext::currentContext()))
-        qInfo() << "DeviceScreenGLWindow: no GL timer queries, the GPU pass times stay 0";
+    if (!_gpuTimes.Init(_gpu.get()))
+        qInfo() << "DeviceScreenGLWindow: no GPU timestamps, the GPU pass times stay 0";
 }
 
 void DeviceScreenGLWindow::setCRTEffectsEnabled(bool enabled)
@@ -1539,8 +1674,10 @@ bool DeviceScreenGLWindow::applySlangPreset(const QString& name)
     _slangRunner.reset();
     if (name.isEmpty())
         return true;
+    if (!_gpu)
+        return false;
     auto runner = std::make_unique<SlangPresetRunner>();
-    if (!runner->load(SlangPresetRunner::presetDirectory(name)))
+    if (!runner->load(SlangPresetRunner::presetDirectory(name), _gpu.get()))
     {
         qWarning() << "CRT preset" << name << "failed:" << runner->error();
         return false;
@@ -1553,18 +1690,15 @@ bool DeviceScreenGLWindow::applySlangPreset(const QString& name)
 
 bool DeviceScreenGLWindow::compileCustomShader(const QString& source)
 {
-    delete _customShader;
-    _customShader = nullptr;
-    if (source.isEmpty())
+    _customShader.reset();
+    if (source.isEmpty() || !_gpu)
+        return source.isEmpty();
+    std::string log;
+    _customShader =
+        _gpu->CreateProgram(CRT_VERTEX_SHADER, CRTRenderer::coreFragmentSource(source).toStdString(), log);
+    if (_customShader)
         return true;
-    _customShader = new QOpenGLShaderProgram(this);
-    if (_customShader->addShaderFromSourceCode(QOpenGLShader::Vertex, CRT_VERTEX_SHADER) &&
-        _customShader->addShaderFromSourceCode(QOpenGLShader::Fragment, CRTRenderer::coreFragmentSource(source)) &&
-        _customShader->link())
-        return true;
-    qWarning() << "Custom CRT shader failed:" << _customShader->log();
-    delete _customShader;
-    _customShader = nullptr;
+    qWarning() << "Custom CRT shader failed:" << QString::fromStdString(log);
     _customShaderName.clear();
     _customShaderSource.clear();
     return false;
@@ -1631,6 +1765,35 @@ QImage DeviceScreenGLWindow::renderWindowImage(bool hud, int pictureHeight)
         _renderPicture = QSize(static_cast<int>(pictureHeight * static_cast<double>(this->ratio)), pictureHeight);
     const QSize pixels = _renderPicture.isEmpty() ? (QSizeF(size()) * ratio).toSize() : _renderPicture;
     QImage image;
+    if (_gpu && _gpu->GetBackend() == gpu::Device::Backend::Vulkan)
+    {
+        // Into a texture of its own, read back (GL rows: turned over)
+        auto target = _gpu->CreateTexture(pixels.width(), pixels.height(), gpu::Format::RGBA8);
+        if (target)
+        {
+            _renderingImage = true;
+            updateTexture(refreshTargetNs());
+            const uint32_t windowCount = _slangRunner ? _slangRunner->frameCount() : 0;
+            if (_slangRunner)
+                _slangRunner->setFrameCount(_imageFrameCount++);
+            _frameTarget = target.get();
+            paintGL();
+            _frameTarget = nullptr;
+            if (_slangRunner)
+                _slangRunner->setFrameCount(windowCount);
+            _renderingImage = false;
+            std::vector<uint8_t> rows(static_cast<size_t>(pixels.width()) * pixels.height() * 4);
+            if (_gpu->Read(*target, {0, 0, pixels.width(), pixels.height()}, rows.data()))
+            {
+                QImage read(pixels, QImage::Format_RGBA8888);
+                const size_t row = static_cast<size_t>(pixels.width()) * 4;
+                for (int y = 0; y < pixels.height(); ++y)
+                    std::memcpy(read.scanLine(y), &rows[static_cast<size_t>(pixels.height() - 1 - y) * row], row);
+                image = read.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+        }
+    }
+    else
     {
         QOpenGLFramebufferObject fbo(pixels);
         fbo.bind();
@@ -1716,7 +1879,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         // before the queued re-attach runs - a null or dangling image would be uploaded to the GPU.
         else if (!_frameSource && _devicePixels != nullptr)
         {
-            if (!forced && _texture->isCreated())
+            if (!forced && _texture)
             {
                 _idleRefreshes++;
                 return;
@@ -1744,8 +1907,8 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
     if (sourceImage == &_latchedFrame && smoothActive() && _smooth.Width() == sourceImage->width() &&
         _smooth.Height() == sourceImage->height())
     {
-        // The GPU passes in this context (current: updateTexture draws), made on the first use
-        if (_smoothOnGpu && !_smoothGpu.IsCreated() && !_smoothGpuFailed && !_smoothGpu.Create())
+        // The GPU passes on the window's device (GL: its context current, updateTexture draws), made on the first use
+        if (_smoothOnGpu && _gpu && !_smoothGpu.IsCreated() && !_smoothGpuFailed && !_smoothGpu.Create(_gpu.get()))
         {
             _smoothGpuFailed = true;
             qWarning() << "DeviceScreenGLWindow: smooth motion on the CPU, the GPU passes failed:" << _smoothGpu.Log();
@@ -1758,7 +1921,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         if (plan.kind != smoothmotion::SmoothMotion::Kind::None)
         {
             _smoothUsed = true;
-            kept = plan == _smoothShown && !forced && _texture->isCreated();
+            kept = plan == _smoothShown && !forced && _texture;
             if (!kept)
             {
                 if (_smoothFrame.size() != sourceImage->size())
@@ -1772,7 +1935,21 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
                 if (timed)
                     _gpuTimes.Open(GpuPassTimes::Smooth);
                 const auto drawStart = std::chrono::steady_clock::now();
+                // GL: the layer's passes leave framebuffer 0 bound; the one paintGL draws into comes back
+                const bool gl = _gpu && _gpu->GetBackend() == gpu::Device::Backend::GL;
+                GLint framebuffer = 0;
+                GLint viewport[4] = {};
+                if (gl && draws)
+                {
+                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+                    glGetIntegerv(GL_VIEWPORT, viewport);
+                }
                 const bool drawn = !draws || _smooth.Draw(plan, reinterpret_cast<uint32_t*>(_smoothFrame.bits()));
+                if (gl && draws)
+                {
+                    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(framebuffer));
+                    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+                }
                 if (draws)
                     _gpuTimes.Record(GpuPassTimes::SmoothCpu,
                                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
@@ -1802,7 +1979,7 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
         _smoothGpu.ReleaseBuffers();  // smooth motion off: its textures back to 1 x 1
     }
     // The frame is in the texture already (a viewport change forces the upload, it does not repeat the frame)
-    if (!smoothImage && !newFrame && !forced && _texture->isCreated())
+    if (!smoothImage && !newFrame && !forced && _texture)
         return;
 
     QImage* uploadImage = smoothImage ? smoothImage : sourceImage;
@@ -1830,24 +2007,13 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
 
     const int w = uploadImage->width();
     const int h = uploadImage->height();
-    if (!_texture->isCreated() || _texture->width() != w || _texture->height() != h)
-    {
-        if (_texture->isCreated())
-            _texture->destroy();
-        _texture->create();
-        _texture->setSize(w, h);
-        _texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-        _texture->setMipLevels(1);
-        _texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-        _texture->setMinificationFilter(QOpenGLTexture::Nearest);
-        _texture->setMagnificationFilter(QOpenGLTexture::Nearest);
-        _texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-    }
-
-    QOpenGLPixelTransferOptions transfer;
-    transfer.setAlignment(1);
-    transfer.setRowLength(static_cast<int>(uploadImage->bytesPerLine() / 4));
-    _texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, uploadImage->constBits(), &transfer);
+    if (!_gpu)
+        return;
+    if (!_texture || _texture->Width() != w || _texture->Height() != h)
+        _texture = _gpu->CreateTexture(w, h, gpu::Format::RGBA8);
+    if (!_texture)
+        return;
+    _gpu->Upload(*_texture, {0, 0, w, h}, uploadImage->constBits(), static_cast<int>(uploadImage->bytesPerLine() / 4));
 
     _shownFrame = uploadImage;
     ++_frameSerial;
@@ -1856,27 +2022,14 @@ void DeviceScreenGLWindow::updateTexture(int64_t hostNs, bool atRefresh)
 
 namespace
 {
-/// A tight RGBA8 image into a nearest-sampled texture, (re)allocated for its size
-void UploadRgba(QOpenGLTexture*& texture, int width, int height, const uint8_t* pixels)
+/// A tight RGBA8 image into a texture, (re)allocated for its size
+void UploadRgba(gpu::Device& device, std::unique_ptr<gpu::Texture>& texture, int width, int height,
+                const uint8_t* pixels)
 {
-    if (!texture)
-        texture = new QOpenGLTexture(QOpenGLTexture::Target2D);
-    if (!texture->isCreated() || texture->width() != width || texture->height() != height)
-    {
-        if (texture->isCreated())
-            texture->destroy();
-        texture->create();
-        texture->setSize(width, height);
-        texture->setFormat(QOpenGLTexture::RGBA8_UNorm);
-        texture->setMipLevels(1);
-        texture->allocateStorage(QOpenGLTexture::RGBA, QOpenGLTexture::UInt8);
-        texture->setMinificationFilter(QOpenGLTexture::Nearest);
-        texture->setMagnificationFilter(QOpenGLTexture::Nearest);
-        texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-    }
-    QOpenGLPixelTransferOptions transfer;
-    transfer.setAlignment(1);
-    texture->setData(0, QOpenGLTexture::RGBA, QOpenGLTexture::UInt8, pixels, &transfer);
+    if (!texture || texture->Width() != width || texture->Height() != height)
+        texture = device.CreateTexture(width, height, gpu::Format::RGBA8);
+    if (texture)
+        device.Upload(*texture, {0, 0, width, height}, pixels);
 }
 
 }  // namespace
@@ -1909,9 +2062,13 @@ void main() { color = vec4(1.0); }
     program.bind();
     program.setUniformValue("stepBy", 0.0f);
     program.setUniformValue("limit", 1.0f);
-    _quadVao.bind();
+    GLuint vao = 0;
+    auto* gl = QOpenGLContext::currentContext()->extraFunctions();
+    gl->glGenVertexArrays(1, &vao);
+    gl->glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    _quadVao.release();
+    gl->glBindVertexArray(0);
+    gl->glDeleteVertexArrays(1, &vao);
     program.release();
     glFlush();
 }
@@ -1931,43 +2088,71 @@ void DeviceScreenGLWindow::paintGL()
     const qreal dpr = devicePixelRatio();
     const int surfaceWidth = _renderPicture.isEmpty() ? qRound(width() * dpr) : _renderPicture.width();
     const int surfaceHeight = _renderPicture.isEmpty() ? qRound(height() * dpr) : _renderPicture.height();
-    glViewport(0, 0, surfaceWidth, surfaceHeight);
-    glDisable(GL_DITHER);  // the composition writes exact values
-    // The HUD's QPainter of the previous frame may leave its state behind
-    glDisable(GL_BLEND);
-    glDisable(GL_SCISSOR_TEST);
-    glDisable(GL_STENCIL_TEST);
-    glDisable(GL_DEPTH_TEST);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
-    glClear(GL_COLOR_BUFFER_BIT);
+    // Vulkan: the presenter's texture (or renderWindowImage's); GL: the bound framebuffer
+    const bool vulkan = _gpu && _gpu->GetBackend() == gpu::Device::Backend::Vulkan;
+    std::unique_ptr<gpu::Texture> wrapped;
+    GLint bound = 0;
+    if (vulkan)
+    {
+        if (!_frameTarget)
+            return;
+        _gpu->Clear(*_frameTarget, 0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    else
+    {
+        glViewport(0, 0, surfaceWidth, surfaceHeight);
+        glDisable(GL_DITHER);  // the composition writes exact values
+        // The HUD's QPainter of the previous frame may leave its state behind
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);  // a preset's framebuffers clear to other colours
+        glClear(GL_COLOR_BUFFER_BIT);
+        // The bound framebuffer (the window's, the presenter's or renderWindowImage's) as the layer's target
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &bound);
+        if (_gpu)
+            wrapped = static_cast<gpu::GlDevice&>(*_gpu).WrapFramebuffer(static_cast<GLuint>(bound), surfaceWidth,
+                                                                          surfaceHeight);
+    }
+    gpu::Texture* target = vulkan ? _frameTarget : wrapped.get();
 
     _gpuTimes.Collect();
     const QRect picture = pictureDeviceRect();
-    if (_texture && _texture->isCreated() && !picture.isEmpty())
+    if (target && _texture && !picture.isEmpty())
     {
         _gpuTimes.Begin(GpuPassTimes::Picture);
         // The viewport is the picture, to the device pixel: the quad covers it, the CRT composition reads its tables
-        // per pixel. GL counts rows from the bottom
+        // per pixel. GL counts rows from the bottom (Vulkan's images keep GL's rows, gpudevice.h)
         const int glY = surfaceHeight - picture.y() - picture.height();
-        glViewport(picture.x(), glY, picture.width(), picture.height());
+        const gpu::Rect viewport{picture.x(), glY, picture.width(), picture.height()};
 
         // With or without CRT effects the composition draws (CRTProfile::None: the plain nearest scale), the software
         // screen's picture bit for bit
         if (_crtEnabled && _slangRunner)
-            drawSlangPreset(picture, glY);
-        else if (_crtEnabled && _customShader && _customShader->isLinked())
-            drawCustomCrt(picture);
+            drawSlangPreset(picture, *target, viewport);
+        else if (_crtEnabled && _customShader)
+            drawCustomCrt(picture, *target, viewport);
         else if (_crtEnabled && CRTBeamModel::isModel(_crtParams.profile) && _modelGpu.isCreated() && _shownFrame)
-            drawModelCrt(picture);
-        else if (_composeShader && _composeShader->isLinked() && _shownFrame)
-            drawComposedCrt(picture);
-        glViewport(0, 0, surfaceWidth, surfaceHeight);
+            drawModelCrt(picture, *target, viewport);
+        else if (_composeShader && _shownFrame)
+            drawComposedCrt(picture, *target, viewport);
         _gpuTimes.End(GpuPassTimes::Picture);
+        if (!vulkan)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(bound));  // the layer leaves 0 bound: the HUD's
+            glViewport(0, 0, surfaceWidth, surfaceHeight);
+        }
     }
 
     const bool hudShown = _hudOverlay && _hudOverlay->isVisible();
     if ((hudShown || _overlayPainter) && !_renderingImage)
     {
+        if (vulkan)
+        {
+            drawHudOverTarget(*target, surfaceWidth, surfaceHeight, dpr);
+            return;
+        }
         // QPainter's glyph cache uploads assume GL's default pixel store and texture unit; a picture pass that left
         // others (alignment 1, a row length) skews every newly cached glyph into diagonal stripes
         glActiveTexture(GL_TEXTURE0);
@@ -1986,15 +2171,113 @@ void DeviceScreenGLWindow::paintGL()
     }
 }
 
-void DeviceScreenGLWindow::drawQuad(QOpenGLShaderProgram* program, float srcX1, float srcY1, float srcX2, float srcY2)
+void DeviceScreenGLWindow::drawHudOverTarget(gpu::Texture& target, int surfaceWidth, int surfaceHeight, qreal dpr)
 {
-    program->setUniformValue("texRect", QVector4D(srcX1, srcY1, srcX2, srcY2));
-    _quadVao.bind();
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    _quadVao.release();
+    if (!_hudProgram)
+    {
+        std::string log;
+        _hudProgram = _gpu->CreateProgram(CRT_VERTEX_SHADER, kHudFragment, log);
+        if (!_hudProgram)
+        {
+            qWarning() << "DeviceScreenGLWindow: the HUD program failed:" << QString::fromStdString(log);
+            return;
+        }
+    }
+    if (_hudImage.width() != surfaceWidth || _hudImage.height() != surfaceHeight)
+        _hudImage = QImage(surfaceWidth, surfaceHeight, QImage::Format_RGBA8888_Premultiplied);
+    _hudImage.fill(Qt::transparent);
+    _hudImage.setDevicePixelRatio(dpr);
+    {
+        QPainter painter(&_hudImage);
+        if (_hudOverlay && _hudOverlay->isVisible())
+            _hudOverlay->renderHUD(painter, width(), height(), dpr);
+        if (_overlayPainter)
+            _overlayPainter(painter, width(), height());
+    }
+    if (!_hudTexture || _hudTexture->Width() != surfaceWidth || _hudTexture->Height() != surfaceHeight)
+        _hudTexture = _gpu->CreateTexture(surfaceWidth, surfaceHeight, gpu::Format::RGBA8);
+    if (!_hudTexture)
+        return;
+    _gpu->Upload(*_hudTexture, {0, 0, surfaceWidth, surfaceHeight}, _hudImage.constBits(),
+                 static_cast<int>(_hudImage.bytesPerLine() / 4));
+    _hudProgram->SetTexture("hud", _hudTexture.get());
+    _hudProgram->SetInt("height", surfaceHeight);
+    _hudProgram->SetFloat4("texRect", 0.0f, 0.0f, 1.0f, 1.0f);
+    gpu::DrawState state;
+    state.viewport = {0, 0, surfaceWidth, surfaceHeight};
+    state.blend = gpu::Blend::Premultiplied;
+    _gpu->Draw(*_hudProgram, target, state);
 }
 
-void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture)
+#ifdef UNREAL_VULKAN
+bool DeviceScreenGLWindow::createVulkanDevice()
+{
+    std::string error;
+    _vkInstance = gpu::VulkanDevice::CreateInstance(true, error);
+    if (_vkInstance)
+        _vkSurface = gpu::CreateWindowSurface(_vkInstance, this, error);
+    std::unique_ptr<gpu::VulkanDevice> device;
+    if (_vkSurface)
+    {
+        gpu::VulkanDevice::Setup setup;
+        setup.instance = _vkInstance;
+        setup.surface = _vkSurface;
+        setup.optionalExtensions = {VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME,
+                                    VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME};
+        device = gpu::VulkanDevice::Create(setup, error);
+    }
+    if (!device)
+    {
+        const char* step = !_vkInstance ? "instance" : !_vkSurface ? "window surface" : "device";
+        qWarning().noquote() << "DeviceScreenGLWindow: the Vulkan renderer is not available (" << step << "):"
+                             << QString::fromStdString(error.empty() ? std::string("no reason given") : error)
+                             << "- GL draws";
+        if (_vkSurface)
+            vkDestroySurfaceKHR(_vkInstance, _vkSurface, nullptr);
+        _vkSurface = VK_NULL_HANDLE;
+        if (_vkInstance)
+            vkDestroyInstance(_vkInstance, nullptr);
+        _vkInstance = VK_NULL_HANDLE;
+        return false;
+    }
+    qInfo().noquote() << "DeviceScreenGLWindow: the Vulkan renderer," << QString::fromStdString(device->Describe());
+    _gpu = std::move(device);
+    return true;
+}
+#else
+bool DeviceScreenGLWindow::createVulkanDevice()
+{
+    return false;
+}
+#endif
+
+void DeviceScreenGLWindow::dropVulkan(const std::string& why)
+{
+    qWarning().noquote() << "DeviceScreenGLWindow: the Vulkan renderer" << QString::fromStdString(why)
+                         << "- GL draws from now on";
+    makeCurrent();  // the GL objects (smooth motion, timers) are in the context
+    releaseGLObjects();
+    _vulkan = false;
+    _glInitialized = false;
+    _glSize = QSize();
+    _smoothShown = {};
+    _uploadedSerial = 0;
+    _gradedSerial = ~0ull;
+    _modelTablesUploaded = false;
+    _modelSerial = ~0ull;
+    update();
+}
+
+void DeviceScreenGLWindow::drawQuad(gpu::Program& program, gpu::Texture& target, gpu::Rect viewport, float srcX1,
+                                    float srcY1, float srcX2, float srcY2)
+{
+    program.SetFloat4("texRect", srcX1, srcY1, srcX2, srcY2);
+    gpu::DrawState state;
+    state.viewport = viewport;
+    _gpu->Draw(program, target, state);
+}
+
+void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
 {
     CRTRenderer::Layout layout;
     layout.outWidth = picture.width();
@@ -2011,33 +2294,27 @@ void DeviceScreenGLWindow::drawComposedCrt(const QRect& picture)
     const bool rebuilt = _crtRenderer.setLayout(layout, params);
     if (rebuilt || !_indexTexture || !_factorTexture)
     {
-        UploadRgba(_indexTexture, layout.outWidth, layout.outHeight, _crtRenderer.indexTable().data());
-        UploadRgba(_factorTexture, layout.outWidth, layout.outHeight, _crtRenderer.factorTable().data());
+        UploadRgba(*_gpu, _indexTexture, layout.outWidth, layout.outHeight, _crtRenderer.indexTable().data());
+        UploadRgba(*_gpu, _factorTexture, layout.outWidth, layout.outHeight, _crtRenderer.factorTable().data());
     }
     if (rebuilt || !_gradedTexture || _gradedSerial != _frameSerial)
     {
         _crtRenderer.grade(_shownFrame->constBits(), static_cast<int>(_shownFrame->bytesPerLine()), params);
-        UploadRgba(_gradedTexture, layout.frameWidth, layout.frameHeight, _crtRenderer.graded().data());
+        UploadRgba(*_gpu, _gradedTexture, layout.frameWidth, layout.frameHeight, _crtRenderer.graded().data());
         _gradedSerial = _frameSerial;
     }
 
-    _composeShader->bind();
-    _gradedTexture->bind(0);
-    _indexTexture->bind(1);
-    _factorTexture->bind(2);
-    _composeShader->setUniformValue("frame", 0);
-    _composeShader->setUniformValue("indexTable", 1);
-    _composeShader->setUniformValue("factorTable", 2);
-    _composeShader->setUniformValue("frameSize", QVector2D(static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight)));
-    drawQuad(_composeShader, 0.0f, 0.0f, 1.0f, 1.0f);
-    _factorTexture->release(2);
-    _indexTexture->release(1);
-    _gradedTexture->release(0);
-    glActiveTexture(GL_TEXTURE0);
-    _composeShader->release();
+    if (!_gradedTexture || !_indexTexture || !_factorTexture)
+        return;
+    gpu::Program& p = *_composeShader;
+    p.SetTexture("frame", _gradedTexture.get());
+    p.SetTexture("indexTable", _indexTexture.get());
+    p.SetTexture("factorTable", _factorTexture.get());
+    p.SetFloat2("frameSize", static_cast<float>(layout.frameWidth), static_cast<float>(layout.frameHeight));
+    drawQuad(p, target, viewport, 0.0f, 0.0f, 1.0f, 1.0f);
 }
 
-void DeviceScreenGLWindow::drawModelCrt(const QRect& picture)
+void DeviceScreenGLWindow::drawModelCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
 {
     CRTBeamModel::Layout layout;
     layout.outWidth = picture.width();
@@ -2062,50 +2339,44 @@ void DeviceScreenGLWindow::drawModelCrt(const QRect& picture)
         _modelGpu.uploadFrame(_crtModel);
         _modelSerial = _frameSerial;
     }
-    _modelGpu.draw(_crtModel);
-    glActiveTexture(GL_TEXTURE0);
+    _modelGpu.draw(_crtModel, target, viewport);
 }
 
-void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture)
+void DeviceScreenGLWindow::drawCustomCrt(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
 {
     const QRectF source = displaySourceRect();
-    const float texW = static_cast<float>(_texture->width());
-    const float texH = static_cast<float>(_texture->height());
+    const float texW = static_cast<float>(_texture->Width());
+    const float texH = static_cast<float>(_texture->Height());
 
-    _customShader->bind();
-    _texture->bind(0);
-    _customShader->setUniformValue("tex", 0);
-    _customShader->setUniformValue("texSize", QVector2D(texW, texH));
-    _customShader->setUniformValue("outputSize", QVector2D(static_cast<float>(picture.width()), static_cast<float>(picture.height())));
+    gpu::Program& p = *_customShader;
+    p.SetTexture("tex", _texture.get());
+    p.SetFloat2("texSize", texW, texH);
+    p.SetFloat2("outputSize", static_cast<float>(picture.width()), static_cast<float>(picture.height()));
     // The profiles have no phosphor mask: the mask uniforms of the documented interface stay, as "none"
-    _customShader->setUniformValue("maskType", 0);
-    _customShader->setUniformValue("curvature", _crtParams.curvature);
-    _customShader->setUniformValue("cornerRadius", _crtParams.cornerRadius);
-    _customShader->setUniformValue("scanlineWeight", _crtParams.scanlineWeight);
-    _customShader->setUniformValue("maskStrength", 0.0f);
-    _customShader->setUniformValue("maskDotPitch", 0.0f);
-    _customShader->setUniformValue("bloomStrength", _crtParams.bloomStrength);
-    _customShader->setUniformValue("saturation", _crtParams.saturation);
-    _customShader->setUniformValue("brightness", _crtParams.brightness);
-    _customShader->setUniformValue("contrast", _crtParams.contrast);
-    _customShader->setUniformValue("gamma", _crtParams.gamma);
-    drawQuad(_customShader, static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
+    p.SetInt("maskType", 0);
+    p.SetFloat("curvature", _crtParams.curvature);
+    p.SetFloat("cornerRadius", _crtParams.cornerRadius);
+    p.SetFloat("scanlineWeight", _crtParams.scanlineWeight);
+    p.SetFloat("maskStrength", 0.0f);
+    p.SetFloat("maskDotPitch", 0.0f);
+    p.SetFloat("bloomStrength", _crtParams.bloomStrength);
+    p.SetFloat("saturation", _crtParams.saturation);
+    p.SetFloat("brightness", _crtParams.brightness);
+    p.SetFloat("contrast", _crtParams.contrast);
+    p.SetFloat("gamma", _crtParams.gamma);
+    drawQuad(p, target, viewport, static_cast<float>(source.left()) / texW, static_cast<float>(source.top()) / texH,
              static_cast<float>(source.right()) / texW, static_cast<float>(source.bottom()) / texH);
-    _texture->release(0);
-    _customShader->release();
 }
 
-void DeviceScreenGLWindow::drawSlangPreset(const QRect& picture, int glY)
+void DeviceScreenGLWindow::drawSlangPreset(const QRect& picture, gpu::Texture& target, gpu::Rect viewport)
 {
-    // The passes render into their own framebuffers; the last one is copied 1:1 into the picture of the target (the
-    // window or renderWindowImage's framebuffer object)
-    GLint target = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &target);
-    const QRect source = displaySourceRect().toRect().intersected(QRect(0, 0, _texture->width(), _texture->height()));
+    // The passes render into their own textures; the last one is copied 1:1 into the picture of the target (the
+    // window, the presenter's frame or renderWindowImage's framebuffer object)
+    const QRect source = displaySourceRect().toRect().intersected(QRect(0, 0, _texture->Width(), _texture->Height()));
     if (source.isEmpty())
         return;
-    _slangRunner->render(_texture->textureId(), source, picture.size());
-    _slangRunner->drawTo(static_cast<GLuint>(target), QRect(picture.x(), glY, picture.width(), picture.height()));
+    _slangRunner->render(*_texture, source, picture.size());
+    _slangRunner->drawTo(target, QRect(viewport.x, viewport.y, viewport.width, viewport.height));
 }
 
 void DeviceScreenGLWindow::keyPressEvent(QKeyEvent* event)

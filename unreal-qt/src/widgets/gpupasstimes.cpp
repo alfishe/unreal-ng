@@ -1,14 +1,12 @@
 #include "gpupasstimes.h"
 
 #include <QDebug>
-#include <QOpenGLContext>
 #include <algorithm>
+
+#include "gpu/gpudevice.h"
 
 namespace
 {
-constexpr GLenum kTimestamp = 0x8E28;             // GL_TIMESTAMP
-constexpr GLenum kQueryResult = 0x8866;           // GL_QUERY_RESULT
-constexpr GLenum kQueryResultAvailable = 0x8867;  // GL_QUERY_RESULT_AVAILABLE
 
 const char* PassName(GpuPassTimes::Pass pass)
 {
@@ -24,38 +22,26 @@ const char* PassName(GpuPassTimes::Pass pass)
 }
 }  // namespace
 
-bool GpuPassTimes::Init(QOpenGLContext* context)
+bool GpuPassTimes::Init(gpu::Device* device)
 {
     if (_ready)
         return true;
-    if (!context || context->isOpenGLES())
+    // Per pass, slot and segment a begin and an end query
+    constexpr int kQueries = static_cast<int>(PassCount * kSlots * kSegments * 2);
+    if (!device || !device->CreateTimestamps(kQueries))
         return false;
-    const QSurfaceFormat format = context->format();
-    if (format.version() < qMakePair(3, 3) && !context->hasExtension("GL_ARB_timer_query"))
-        return false;
-    _gen = reinterpret_cast<GenQueries>(context->getProcAddress("glGenQueries"));
-    _delete = reinterpret_cast<DeleteQueries>(context->getProcAddress("glDeleteQueries"));
-    _counter = reinterpret_cast<QueryCounter>(context->getProcAddress("glQueryCounter"));
-    _available = reinterpret_cast<GetQueryObjectiv>(context->getProcAddress("glGetQueryObjectiv"));
-    _result = reinterpret_cast<GetQueryObjectui64v>(context->getProcAddress("glGetQueryObjectui64v"));
-    if (!_gen || !_delete || !_counter || !_available || !_result)
-        return false;
-    // A GL that has the calls but no clock behind them (Apple's GL over Metal reads 0 for every timestamp) measures
-    // nothing: not ready, rather than zeros
-    using GetInteger64v = void(QOPENGLF_APIENTRYP)(GLenum, GLint64*);
-    const auto now = reinterpret_cast<GetInteger64v>(context->getProcAddress("glGetInteger64v"));
-    GLint64 clock = 0;
-    if (now)
-        now(kTimestamp, &clock);
-    if (clock == 0)
-        return false;
+    _device = device;
     std::lock_guard<std::mutex> lock(_mutex);
+    int next = 0;
     for (PassState& state : _passes)
     {
         for (Slot& slot : state.queries)
         {
-            _gen(static_cast<GLsizei>(kSegments), slot.begin.data());
-            _gen(static_cast<GLsizei>(kSegments), slot.end.data());
+            for (size_t s = 0; s < kSegments; ++s)
+            {
+                slot.begin[s] = next++;
+                slot.end[s] = next++;
+            }
             slot.segments = 0;
             slot.pending = false;
         }
@@ -82,11 +68,6 @@ void GpuPassTimes::Release(bool contextLost)
         for (Slot& slot : state.queries)
         {
             pending += slot.pending ? 1 : 0;
-            if (!contextLost)
-            {
-                _delete(static_cast<GLsizei>(kSegments), slot.begin.data());
-                _delete(static_cast<GLsizei>(kSegments), slot.end.data());
-            }
             slot = {};
         }
         state.current = nullptr;
@@ -97,6 +78,8 @@ void GpuPassTimes::Release(bool contextLost)
                                  << pending << " unfinished, " << state.measured << " measured, the longest "
                                  << state.longest << " ms";
     }
+    _device->DestroyTimestamps(contextLost);
+    _device = nullptr;
     _ready = false;
 }
 
@@ -158,7 +141,7 @@ void GpuPassTimes::Begin(Pass pass)
     Slot* slot = state.current;
     if (!slot || slot->segments >= kSegments)
         return;
-    _counter(slot->begin[slot->segments], kTimestamp);
+    _device->WriteTimestamp(slot->begin[slot->segments]);
     state.inSegment = true;
 }
 
@@ -170,7 +153,7 @@ void GpuPassTimes::End(Pass pass)
     if (!state.inSegment || !state.current)
         return;
     Slot& slot = *state.current;
-    _counter(slot.end[slot.segments], kTimestamp);
+    _device->WriteTimestamp(slot.end[slot.segments]);
     slot.segments++;
     state.inSegment = false;
     if (!state.open)
@@ -209,18 +192,16 @@ void GpuPassTimes::Collect()
             Slot& slot = state.queries[(state.next + i) % kSlots];
             if (!slot.pending)
                 continue;
-            GLint available = 0;
-            _available(slot.end[slot.segments - 1], kQueryResultAvailable, &available);
-            if (!available)
+            uint64_t last = 0;
+            if (!_device->ReadTimestamp(slot.end[slot.segments - 1], last))
                 break;
             double ms = 0.0;
             for (size_t s = 0; s < slot.segments; ++s)
             {
-                GLuint64 begin = 0;
-                GLuint64 end = 0;
-                _result(slot.begin[s], kQueryResult, &begin);
-                _result(slot.end[s], kQueryResult, &end);
-                ms += end > begin ? static_cast<double>(end - begin) / 1e6 : 0.0;
+                uint64_t begin = 0;
+                uint64_t end = 0;
+                if (_device->ReadTimestamp(slot.begin[s], begin) && _device->ReadTimestamp(slot.end[s], end))
+                    ms += end > begin ? static_cast<double>(end - begin) / 1e6 : 0.0;
             }
             slot.pending = false;
             Add(static_cast<Pass>(p), state, ms);

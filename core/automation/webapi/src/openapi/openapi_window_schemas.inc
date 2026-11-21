@@ -9,6 +9,16 @@
         field("backend", "string", "How the window draws: gpu or software");
         field("gpu_available", "boolean", "The host can draw with the GPU (OpenGL)");
         field("gpu", "boolean", "GPU acceleration on");
+        field("renderer", "string",
+              "View > Renderer as asked: gl or vulkan (the GPU screen draws with it; kept across sessions, "
+              "UNREAL_RENDERER overrides it at start)");
+        s["properties"]["renderers"]["type"] = "array";
+        s["properties"]["renderers"]["items"]["type"] = "string";
+        s["properties"]["renderers"]["description"] =
+            "Renderers this host offers: gl; vulkan in a build with it (Linux by default) on a hardware Vulkan 1.3 GPU";
+        field("renderer_active", "string",
+              "What the GPU screen draws with now: gl or vulkan; \"\" for the software screen; gl under renderer "
+              "vulkan when the Vulkan device or presenter failed (the log says why)");
         field("crt", "boolean", "CRT effects on (with profile none they show nothing)");
         field("crt_profile", "string", "The CRT profile: one of crt_profiles (none, basic, ..., shader:<name> for a libretro preset or a custom shader)");
         s["properties"]["crt_profiles"]["type"] = "array";
@@ -37,8 +47,8 @@
                 p["properties"][name]["description"] = description;
             };
             pf("presenter", "string",
-               "metal, dxgi, gl-timed (Linux: a thread swaps GL; present at the frame's time), gl (the window's own "
-               "swap), software");
+               "metal, dxgi, gl-timed (Linux: a thread swaps GL; present at the frame's time), vulkan (the Vulkan "
+               "renderer's swapchain, UNREAL_RENDERER=vulkan), gl (the window's own swap), software");
             pf("fixed_display", "boolean", "A fixed refresh rate (false: VRR / ProMotion range)");
             pf("vrr", "boolean",
                "Native presenters: each frame presented at its own time (true) or on the refresh grid (false), as the "
