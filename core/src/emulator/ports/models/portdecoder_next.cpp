@@ -64,10 +64,10 @@ PortDecoder_Next::PortDecoder_Next(EmulatorContext* context) : PortDecoder_Spect
         if (_engine)
             _engine->SetStacklessNmi(on, _interrupts.get());
     };
-    _ctc.onInterrupt = [this](unsigned channel) {
-        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
-    };
+    // ZC/TO is the CTC's interrupt request (zxnext.vhd 1941 ctc_zc_to), whatever the channel's enable: the status bit records it, the
+    // controller requests (or pulses) only while the channel's interrupt is on (Raise checks ctc_int_en)
     _ctc.onZeroCount = [this](unsigned channel) {
+        _interrupts->Raise(static_cast<NextInterruptSource::Source>(NextInterruptSource::kCtc0 + channel));
         // joy_iomode_pin7, mode 01: ZC/TO(3) toggles the pin; with NR #0B bit 0 clear it only goes from 0 to 1 and stays
         const uint8_t nr0b = _board->Stored(0x0B);
         if (channel == 3 && (nr0b & 0x30) == 0x10 && ((nr0b & 0x01) || !_joyPin7))
@@ -1201,8 +1201,9 @@ void PortDecoder_Next::BindDma()
     };
     // zxnDDMA physical mode: the SRAM direct, no MMU, and the Layer 2 destination's bank and resolution
     bus.readPhysical = [this](uint32_t address) {
-        // the same wait for a read of the SRAM; the bank 7 block RAM has its own port (SRAM #040000 + 7 x #4000 = #05C000)
-        if (Mem().SramWait28() && (address & 0x3FFFFF) / 0x4000 != 0x10 + 7)
+        // the same wait for a read of the SRAM: a physical address is always the SRAM (banks 5 and 7 too: their SRAM side, not the
+        // block RAM the MMU reaches)
+        if (Mem().SramWait28())
             _context->pCore->GetZ80()->InsertWaitStates(1);
         return Mem().PhysicalRead(address);
     };
@@ -2233,6 +2234,11 @@ bool PortDecoder_Next::GenerateDriveNmi()
     return true;
 }
 
+bool PortDecoder_Next::NmiAcceptsCause() const
+{
+    return !_multiface->NmiHold() && !_divMmc->NmiHold();
+}
+
 bool PortDecoder_Next::GenerateMultifaceNmi()
 {
     return RaiseMultifaceNmi("m1_button");
@@ -2256,7 +2262,7 @@ void PortDecoder_Next::IoTrap(uint16_t port, bool write, uint8_t value)
     if (write && (low == 0xF1 || low == 0xF9) && PortEnabled(18))
         return;
     // the cause and the byte are taken while no NMI is on its way (nmi_accept_cause: the state machine idle or fetching)
-    if (!_multiface->NmiHold() && !_divMmc->NmiHold())
+    if (NmiAcceptsCause())
         _board->LatchIoTrap(cause, write, value);
     RaiseMultifaceNmi("io_trap");  // nmi_sw_gen_mf: the same assertion as the M1 button, behind NR #06 bit 3
 }

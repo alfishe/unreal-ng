@@ -4,6 +4,7 @@
 |:--|:--|
 | [`cosim/`](cosim/README.md) | run the same Next boot on jnext / ZEsarUX / MAME and on ours, write one common trace, diff it |
 | [`realboard/`](realboard/README.md) | the ZXSpectrumNextTests programs on our machine: pictures, board photographs side by side, automatic verdicts |
+| [`regress/`](regress/README.md) | software regression check: NextZXOS boot, every collection title and the real-board programs on one binary, two runs compared picture by picture |
 | [`browser-drive/`](browser-drive/README.md) | drive NextZXOS's menu and Browser (boot, find, run) through the WebAPI keyboard |
 | [`fpga-extract/`](fpga-extract/README.md) | the boot ROM image and the NextREG table, generated from the FPGA sources and the distribution |
 | [`z80n-fork/`](z80n-fork/README.md) | the Z80N CPU library made from the z84c15 fork |

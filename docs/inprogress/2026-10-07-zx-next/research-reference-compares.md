@@ -92,7 +92,7 @@ NextREG read-back masks are the subject of the ZEsarUX pass (its section 1) and 
 
 | Topic | Wiki page / manual | VHDL (file:line) | unreal-ng (file:line) | Verdict |
 |-------|--------------------|------------------|-----------------------|---------|
-| Banks 5 and 7 exist twice: the CPU / DMA / ULA / tilemap see an FPGA BRAM, Layer 2 (display **and** the `#123B` mapping) and the NR `#04` config mapping see the external SRAM | [Memory map](https://wiki.specnext.dev/Memory_map) "exist in two instances", three exceptions; [Layer 2](https://wiki.specnext.dev/Layer_2) "secret memory" | `zxnext.vhd` 2961-2962 (`mem_active_bank5` = pages `#0A`/`#0B`, `bank7` = `#0E`), 3039-3041 and 3061-3063 (`sram_pre_active <= not bank5 and not bank7`: an MMU access to those pages never reaches the SRAM), 3100-3104 (`sram_layer2_map_en`: SRAM, `sram_bank5 <= '0'`), 3043-3048 (config mapping: SRAM), 1665 (`o_RAM_B_ADDR <= layer2_addr_eff`: the Layer 2 fetch is SRAM port B) | one array: `MapSlot` (memory/next/nextmemory.cpp 434-530), `ApplyLayer2` (537-555, `RAMPageAddress(bank16)`), the config bank (484) and the renderer (`in.ram = RAMPageAddress(0)`, video/next/screennext.cpp 639) all address the same bytes of page `#0A`/`#0B`/`#0E` | **BUG A** |
+| Banks 5 and 7 exist twice: the CPU / DMA / ULA / tilemap see an FPGA BRAM, Layer 2 (display **and** the `#123B` mapping) and the NR `#04` config mapping see the external SRAM | [Memory map](https://wiki.specnext.dev/Memory_map) "exist in two instances", three exceptions; [Layer 2](https://wiki.specnext.dev/Layer_2) "secret memory" | `zxnext.vhd` 2961-2962 (`mem_active_bank5` = pages `#0A`/`#0B`, `bank7` = `#0E`), 3039-3041 and 3061-3063 (`sram_pre_active <= not bank5 and not bank7`: an MMU access to those pages never reaches the SRAM), 3100-3104 (`sram_layer2_map_en`: SRAM, `sram_bank5 <= '0'`), 3043-3048 (config mapping: SRAM), 1665 (`o_RAM_B_ADDR <= layer2_addr_eff`: the Layer 2 fetch is SRAM port B) | one array: `MapSlot` (memory/next/nextmemory.cpp 434-530), `ApplyLayer2` (537-555, `RAMPageAddress(bank16)`), the config bank (484) and the renderer (`in.ram = RAMPageAddress(0)`, video/next/screennext.cpp 639) all address the same bytes of page `#0A`/`#0B`/`#0E` | **BUG A, fixed**: `NextMemory::SramTwin` (24K) is the SRAM side |
 | NR `#22` bit 7 reads the INT pulse "even when Z80N has interrupts disabled" | [NextReg $22](https://wiki.specnext.dev/NextReg:$22) | `(not pulse_int_n) & "0000" & ...` (`zxnext.vhd` 5991-5992; the pulse 2017-2031, 32 / 36 CPU clocks) | `_lineControl` only (io/z80n/nextinterrupts.cpp 99-101; written `& 0x07`, 40) | **BUG** = tbblue BUG 2 (confirmed independently) |
 | Invalid ULANext format: the border | [NextReg $42](https://wiki.specnext.dev/NextReg:$42), [Palettes](https://wiki.specnext.dev/Palettes): paper **and border** from NR `#4A` | border fallback only for `#FF` (`zxula.vhd` 497-504); the paper of an invalid format falls back (526) | `UlaBorderPixel` (video/next/nextvideorenderer.cpp 171) | wiki stale; unreal-ng ok |
 | NR `#06` bit 6 | [NextReg $06](https://wiki.specnext.dev/NextReg:$06): "DMA mode (0 = zxnDMA, 1 = Z80 DMA)" next to "BEEP-only to internal speaker" | bit 6 = `nr_06_internal_speaker_beep` (5163, 5900); the DMA mode is latched from the port used: `dma_mode <= port_0b_lsb` on every `#0B` / `#6B` access (1811-1819) | the mode latch by port (io/z80n/nextdma.h 61) | wiki stale (core 3.1.2 change) |
@@ -147,6 +147,18 @@ it), so low priority; the fix is a second 24K array for the SRAM side of the thr
 mapping and the config mapping. Proposed test: `NextMemory_Test.Layer2MappingOfBank5WritesTheSramNotTheUlaScreen` - NR `#12` = 5,
 port `#123B` = `#01` (write mapping, segment 0), write `#AA` to `#0000`, port `#123B` = 0; expect `#4000` (MMU page `#0A`, BRAM) to
 still read its old value and a Layer 2 pixel at (0, 0) to be palette index `#AA`.
+
+**Fixed** (2026-11-20). The VHDL has no write-through: `cpu_bank5_we` / `cpu_bank7_we` and `sram_req` exclude each other
+(`sram_active` is 0 whenever `sram_bank5` / `sram_bank7` is 1), and the Layer 2 mapping clears `sram_bank5` / `sram_bank7`. Who reaches
+which copy: block RAM - the CPU and the DMA through the MMU or the 128K paging (`cpu_a <= dma_a` while the DMA holds the bus, 1834), the
+ULA (`vram_bank_a1`, both banks), LoRes (bank 5, port A), the tilemap (bank 5 or the 8K of bank 7); SRAM - the Layer 2 fetch, the
+`#123B` read / write mapping, the NR `#04` config mapping and (unreal-ng's zxnDDMA) the physical addresses. Sprites and the copper have
+their own memories. Page `#0F` is SRAM only (`mem_active_bank7` is page `#0E` alone: the bank 7 block RAM is 8K), one instance for
+everybody. unreal-ng: `RAMPageAddress(5)` / `(7)` stay what the CPU sees (snapshot loaders, the TTD page store and the memory views keep
+working on them); the SRAM side of `#0A`, `#0B`, `#0E` is a 24K twin in the buffer's cache area (`NextMemory::SramTwin`,
+`SramPageOffset`), used by `ApplyLayer2`, the config bank, `PhysicalRead` / `PhysicalWrite` and the Layer 2 fetch of
+`NextVideoRenderer::Layer2Line` (only when NR `#12` is 0-7) and the pixel inspector. TTD saves it at the end of the `NextSystemArea`
+blob (256K + 24K). Observable only through Layer 2 / NR `#04` / physical DMA on banks 5 and 7: tests `NextMemory_Test.*`.
 
 **NR `#22` bit 7 (tbblue BUG 2).** The wiki and the VHDL agree that bit 7 reads the INT pulse (`not pulse_int_n`, `zxnext.vhd`
 5992, 2017-2031), usable with interrupts disabled to wait for the frame; unreal-ng reads 0 (io/z80n/nextinterrupts.cpp 99-101).

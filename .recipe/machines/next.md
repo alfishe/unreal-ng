@@ -501,6 +501,10 @@ control_execution {"action":"step"}  ×2
 Browser, run) and photographs the result beside the board photograph; `tools/machines/next/realboard/run-all.py` runs them straight
 through the snapshot loader with automatic verdicts for the four programs that paint their own pass / fail.
 
+`tools/machines/next/regress/` runs all of it at once (NextZXOS boot, every collection title by both load paths, realboard) on
+one binary and compares two runs picture by picture: the check before landing a Next emulation change
+([README](../../tools/machines/next/regress/README.md)).
+
 ### 5b. Playing a game: the keys are the game's own
 
 The Next has **no standard set of game keys**. A game reads what its author chose and says so in its own readme or menu: the keyboard ports `#FE`, the Kempston joystick `#1F` / `#37`, Mega Drive pads, often a redefine menu. Read the readme (it is in the game's folder) before pressing keys, and do not take one game's keys for the platform's.

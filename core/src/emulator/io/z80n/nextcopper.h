@@ -108,6 +108,8 @@ public:
 private:
     friend struct NextStateCodec;  // the TTD state codec (nextstatecodec.cpp)
     uint64_t LineClocks() const { return static_cast<uint64_t>(_hcPerLine) * kClocksPerPixel; }
+    /// Mode 11's restart: the clock where cvc (the line count with NR #64) is 0 at horizontal 0
+    uint64_t RestartClock() const { return ((_lines - _offset % _lines) % _lines) * LineClocks(); }
     /// false: the observer held an instruction (the copper stands at it)
     bool RunSegment(uint64_t end);
 

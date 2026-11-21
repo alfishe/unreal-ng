@@ -25,6 +25,7 @@ struct InspectEnv
 {
     const uint8_t* ram = nullptr;  ///< 16K page p at ram + p * 16K (NextVideoInputs::ram)
     unsigned ramPages = 0;
+    const uint8_t* sramTwin = nullptr;  ///< the SRAM side of pages #0A, #0B, #0E Layer 2 reads (NextVideoInputs::sramTwin)
     const NextVideoRegs* regs = nullptr;  ///< palettes (the palette entry behind a recomputed index)
     const NextSprites* sprites = nullptr;
 };
