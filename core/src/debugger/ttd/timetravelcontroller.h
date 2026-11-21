@@ -1297,30 +1297,30 @@ private:
     ///
     /// Read, Execute and Write searches reach the replay loop (a Write only
     /// for frames outside the write journal's segments; Io answers from the
-    /// port journal), and pruning is sound only when the
-    /// query's Z80 address range collapses to one non-wrapping offset interval
-    /// inside a 16 KB page. A range spanning a page boundary, or wider than a
-    /// page, could match any offset, so it is left unpruned rather than
-    /// approximated.
-    /// May frame `frame` hold an access q matches (CanPruneByCoverage first): the coverage keys name the byte's true
-    /// offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no known half asks both halves
-    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
-
+    /// port journal). Any non-empty address range prunes: its Z80 addresses map
+    /// to in-page offsets (CoverageOffsets) - one interval inside a 16 KB page,
+    /// two for a range that wraps a page boundary, every offset for a range of
+    /// 16 KB or more (then only a frame with no access of that kind, or none on
+    /// the query's page, is skipped).
     inline bool CanPruneByCoverage(const TTDSearchQuery& q) const
     {
         if (!_enableCoverageIndex)
             return false;
         if (q.access != TTDAccessType::Read && q.access != TTDAccessType::Execute && q.access != TTDAccessType::Write)
             return false;
-        if (q.addrTo < q.addrFrom)
-            return false;
-        if (static_cast<uint32_t>(q.addrTo - q.addrFrom) >= 0x4000u)
-            return false;  // Wider than a page — every offset is possible.
-
-        // Reject ranges that wrap across a 16 KB boundary: their offsets are two
-        // disjoint intervals, which FrameMayContain does not model.
-        return (q.addrFrom & 0x3FFF) <= (q.addrTo & 0x3FFF);
+        return q.addrTo >= q.addrFrom;
     }
+
+    /// @brief Add the in-page offsets (and the page) q's address range may touch to @p out.
+    ///
+    /// The coverage keys name the byte's true offset in its page (Memory::TtdKeyOf), so on 8K slots a query with no
+    /// known half asks both halves. A wrapping range is its two offset intervals; 16 KB or more is every offset.
+    void CoverageOffsets(const TTDSearchQuery& q, TTDCoverageOffsetSet& out) const;
+
+    /// May frame `frame` hold an access q matches (CanPruneByCoverage first)
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const;
+    /// The same for offsets built once (CoverageOffsets): one decode of the frame for any number of them
+    bool CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDCoverageOffsetSet& set) const;
 
 public:
 
@@ -1792,6 +1792,8 @@ public:
     /// @brief Number of model-RAM pages (set at StartRecording from the
     /// active model's RAM size).
     inline uint16_t GetModelRamPages() const { return _modelRamPages; }
+    /// Dirty RAM pages at or past GetModelRamPages() the captures of this session met (not recorded; should be 0)
+    inline uint64_t GetPagesBeyondBound() const { return _pagesBeyondBound; }
 
     /// Devices fitted but deliberately not recorded: the loaded file's when the
     /// session came from one, else the live registry's
@@ -2630,6 +2632,9 @@ private:
     /// machine has 3 pages but uses page numbers {0, 2, 5}, so its bound is 6
     /// and three slots inside the range stay unused. See ResolveModelRamPages().
     uint16_t _modelRamPages = 0;
+    /// Dirty pages at or past _modelRamPages a capture met this session (the bound is wrong for the model: those
+    /// writes are not recorded). Warned once; zero on every model the tests sweep
+    uint64_t _pagesBeyondBound = 0;
 
     /// Latches the first "dirty page outside the captured range" warning so a
     /// mis-sized model reports once per session instead of every frame.

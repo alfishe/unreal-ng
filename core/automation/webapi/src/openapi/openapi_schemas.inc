@@ -2193,6 +2193,10 @@
     schemas["TTDReverseContinueRequest"]["properties"]["all"]["type"] = "boolean";
     schemas["TTDReverseContinueRequest"]["properties"]["all"]["description"] =
         "Every hit newest first (up to limit) in hits[]; the machine does not move";
+    schemas["TTDReverseContinueRequest"]["properties"]["condition"]["type"] = "string";
+    schemas["TTDReverseContinueRequest"]["properties"]["condition"]["description"] =
+        "Only hits where this breakpoint condition holds at the instruction's start (the breakpoint condition "
+        "language); x@prev is refused, HITS reads 0. A condition that does not compile: 400";
     schemas["TTDReverseContinueRequest"]["properties"]["limit"]["type"] = "integer";
     schemas["TTDReverseContinueRequest"]["properties"]["limit"]["minimum"] = 1;
     schemas["TTDReverseContinueRequest"]["properties"]["limit"]["maximum"] = 10000;

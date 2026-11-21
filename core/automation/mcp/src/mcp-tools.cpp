@@ -6502,7 +6502,7 @@ void RegisterTimeTravel(ToolRegistry& registry)
         "or back past a whole routine to its CALL / RST when the instruction before is the routine's return), 'reverse_continue' (run backward until PC hits one of pcs; "
         "phys_page keeps only runs on that page; all=true lists every hit newest first up to limit and leaves the machine "
         "where it is; next_before pages on; first_per_pc=true lists one hit per PC, its newest, and names the PCs that "
-        "did not run), "
+        "did not run; condition keeps only hits where a breakpoint condition holds), "
         "'find_last' (latest write/read/execute/io at an address before the current point, or before before_frame; "
         "changes_only=true skips writes that store the byte already there and gives old_value; all=true lists the hits "
         "newest first up to limit, the machine stays; next_before pages on). "
@@ -6833,6 +6833,10 @@ void RegisterTimeTravel(ToolRegistry& registry)
     schema["properties"]["first_per_pc"]["description"] =
         "reverse_continue: the list as with all, one hit per PC (its newest) - when did each of these PCs last run; "
         "the walk ends once every PC has its hit";
+    schema["properties"]["condition"]["type"] = "string";
+    schema["properties"]["condition"]["description"] =
+        "reverse_continue: only hits where this breakpoint condition holds at the instruction's start (the language "
+        "of breakpoint conditions, e.g. 'A == 5 && M(#5C78) > 3'); x@prev is refused, HITS reads 0";
     schema["properties"]["changes_only"]["type"] = "boolean";
     schema["properties"]["changes_only"]["description"] =
         "find_last (access write): skip writes that store the byte already there; each hit gives old_value. "
@@ -7274,6 +7278,15 @@ void RegisterTimeTravel(ToolRegistry& registry)
                 {
                     done(ToolResult::Error(error));
                     return;
+                }
+                if (args.isMember("condition"))
+                {
+                    if (!args["condition"].isString())
+                    {
+                        done(ToolResult::Error("'condition' must be a string (a breakpoint condition)"));
+                        return;
+                    }
+                    (*body)["condition"] = args["condition"];
                 }
                 if (args.isMember("changes_only"))
                 {

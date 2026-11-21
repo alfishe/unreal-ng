@@ -1747,6 +1747,8 @@ more = emu.ttd_reverse_continue([0xC000], phys_page=3, all=True, before=hits['ne
 # When did each of these PCs last run: one hit per PC (its newest), the walk ends once each has one
 last = emu.ttd_reverse_continue([0x8200, 0x9A10, 0xC000], first_per_pc=True)
 # {'hits': [...], 'count': 2, 'pcs_without_hit': [39440], ...}
+# condition: only hits where a breakpoint condition holds at the instruction's start
+hit = emu.ttd_reverse_continue([0x8200], condition="A == 5 && M(#5C78) > 3")
 # phys_page='rom': runs from the ROM. Bounds: before_frame= / before_tin= or before= (machine T), from_frame=
 ```
 

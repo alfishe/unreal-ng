@@ -7165,7 +7165,7 @@ namespace PythonBindings
                 for (uint16_t pc : pcs)
                     list += (list.empty() ? "" : ",") + std::to_string(pc);
                 std::map<std::string, std::string> options{{"pcs", list}};
-                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame
+                // phys_page, all, first_per_pc, limit, before_frame, before_tin, before, from_frame, condition
                 TtdKwargsPy(options, kwargs);
                 const ttd::TTDReply reply = TtdRunPy(self, "reverse-continue", options);
                 if (reply.error == ttd::TTDControlError::BadRequest)

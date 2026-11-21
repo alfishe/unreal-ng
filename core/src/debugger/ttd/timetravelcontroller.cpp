@@ -359,6 +359,7 @@ bool TimeTravelController::StartRecording()
     _journalLostUpTo = 0;
 
     _modelRamPages = ResolveModelRamPages();
+    _pagesBeyondBound = 0;
     if (_modelRamPages == 0 || _modelRamPages > MAX_RAM_PAGES)
     {
         MLOGWARNING("TimeTravelController::StartRecording — implausible modelRamPages=%u, refusing to start",
@@ -5338,6 +5339,16 @@ bool TimeTravelController::FeedShadow(const TTDCheckpoint& out, bool baseline)
             in.deviceStates.push_back({static_cast<uint32_t>(_shadowEntryDevice[i]), raw.data(), raw.size()});
     }
     auto addPage = [&](uint16_t page) {
+        if (page >= _modelRamPages)
+        {
+            // A write to a page the model's bound (ResolveModelRamPages) leaves out: the bound is wrong for this
+            // configuration. Said once per session and counted, never handed to the engine (no such piece)
+            if (_pagesBeyondBound++ == 0)
+                MLOGWARNING("TimeTravelController: RAM page %u written, but the model's TTD page bound is %u: that "
+                            "page is not recorded (ResolveModelRamPages is wrong for this configuration)",
+                            static_cast<unsigned>(page), static_cast<unsigned>(_modelRamPages));
+            return;
+        }
         const uint8_t* bytes = _memory->RAMPageAddress(page);
         if (!bytes)
             return;
@@ -5706,21 +5717,51 @@ void TimeTravelController::SyncCoverageSink()
         _context->ttdCoverage = nullptr;
 }
 
-bool TimeTravelController::CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const
+void TimeTravelController::CoverageOffsets(const TTDSearchQuery& q, TTDCoverageOffsetSet& out) const
 {
-    const TTDCoverageIndex& coverage = CoverageOfFrame(frame);   // the lineage line holding the frame
-    auto may = [&](uint16_t low, uint16_t high) {
-        return coverage.FrameMayContain(kind, frame, low, high, q.hasPhysPageFilter, q.physPage);
+    out.hasPage = q.hasPhysPageFilter;
+    out.pageField = q.hasPhysPageFilter ? CoveragePageField(q.physPage) : 0;
+    const bool slots8k = _memory && _memory->HasTtdSlots8k();
+    auto add = [&](uint16_t low, uint16_t high) {
+        if (!slots8k)
+            out.AddRange(low, high);
+        else if ((low ^ high) & 0x2000)
+            out.AddRange(0, 0x3FFF);   // both halves of the page
+        else if (q.hasPhysPageFilter && q.flip >= 0)
+            out.AddRange(static_cast<uint16_t>(low ^ (q.flip << 13)), static_cast<uint16_t>(high ^ (q.flip << 13)));
+        else
+        {
+            out.AddRange(low, high);
+            out.AddRange(static_cast<uint16_t>(low ^ 0x2000), static_cast<uint16_t>(high ^ 0x2000));
+        }
     };
+    if (q.addrTo < q.addrFrom || static_cast<uint32_t>(q.addrTo - q.addrFrom) >= 0x3FFFu)
+    {
+        out.AddRange(0, 0x3FFF);   // 16 KB or more: every offset of a page
+        return;
+    }
     const uint16_t low = static_cast<uint16_t>(q.addrFrom & 0x3FFF);
     const uint16_t high = static_cast<uint16_t>(q.addrTo & 0x3FFF);
-    if (!_memory || !_memory->HasTtdSlots8k())
-        return may(low, high);
-    if ((low ^ high) & 0x2000)
-        return may(0, 0x3FFF);   // both halves of the page
-    if (q.hasPhysPageFilter && q.flip >= 0)
-        return may(static_cast<uint16_t>(low ^ (q.flip << 13)), static_cast<uint16_t>(high ^ (q.flip << 13)));
-    return may(low, high) || may(static_cast<uint16_t>(low ^ 0x2000), static_cast<uint16_t>(high ^ 0x2000));
+    if (low <= high)
+        add(low, high);
+    else
+    {
+        add(low, 0x3FFF);   // wraps a page boundary: the end of one window and the start of the next
+        add(0, high);
+    }
+}
+
+bool TimeTravelController::CoverageMayContain(TTDCoverageKind kind, uint64_t frame, const TTDSearchQuery& q) const
+{
+    TTDCoverageOffsetSet set;
+    CoverageOffsets(q, set);
+    return CoverageMayContain(kind, frame, set);
+}
+
+bool TimeTravelController::CoverageMayContain(TTDCoverageKind kind, uint64_t frame,
+                                              const TTDCoverageOffsetSet& set) const
+{
+    return CoverageOfFrame(frame).FrameMayContain(kind, frame, set);   // the lineage line holding the frame
 }
 
 void TimeTravelController::RecordMemoryWrite(uint16_t addr, uint8_t oldVal, uint8_t newVal,
@@ -6166,6 +6207,8 @@ std::optional<TTDSearchResult> TimeTravelController::FindLastAccessOnLine(const 
     };
 
     // Walk backward from the target checkpoint to the beginning.
+    TTDCoverageOffsetSet pruneOffsets;   // the query's offsets, built at the first frame the index may prune
+    bool pruneOffsetsBuilt = false;
     for (size_t i = targetCpIdx + 1; i-- > 0; )
     {
         const TTDCheckpoint& cp = _line->timeline[i];
@@ -6243,8 +6286,12 @@ std::optional<TTDSearchResult> TimeTravelController::FindLastAccessOnLine(const 
             const TTDCoverageKind coverageKind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
                                                  : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
                                                                                     : TTDCoverageKind::Read;
-
-            if (!CoverageMayContain(coverageKind, cp.time.frame, q))
+            if (!pruneOffsetsBuilt)
+            {
+                CoverageOffsets(q, pruneOffsets);   // once per search: one decode per frame, whatever the range
+                pruneOffsetsBuilt = true;
+            }
+            if (!CoverageMayContain(coverageKind, cp.time.frame, pruneOffsets))
             {
                 continue;  // Proven absent — no restore, no replay.
             }
@@ -6560,6 +6607,8 @@ TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, 
             probeQuery.hasPcFilter = false;
         }
 
+        TTDCoverageOffsetSet pruneOffsets;   // the query's offsets, built at the first frame the index may prune
+        bool pruneOffsetsBuilt = false;
         for (size_t i = targetCpIdx + 1; atOrBefore >= 0 && !stopped && i-- > 0;)
         {
             const TTDCheckpoint& cp = _line->timeline[i];
@@ -6632,7 +6681,12 @@ TTDFindResult TimeTravelController::FindAccessesOnLine(const TTDSearchQuery& q, 
                 const TTDCoverageKind coverageKind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
                                                      : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
                                                                                         : TTDCoverageKind::Read;
-                if (!CoverageMayContain(coverageKind, cp.time.frame, q))
+                if (!pruneOffsetsBuilt)
+                {
+                    CoverageOffsets(q, pruneOffsets);
+                    pruneOffsetsBuilt = true;
+                }
+                if (!CoverageMayContain(coverageKind, cp.time.frame, pruneOffsets))
                     continue;
             }
 
@@ -6745,7 +6799,7 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
     }
 
     // The coverage index prunes a frame when no memory probe may hit in it; a port probe needs every frame
-    std::vector<std::pair<TTDCoverageKind, TTDSearchQuery>> prune;
+    std::vector<std::pair<TTDCoverageKind, TTDCoverageOffsetSet>> prune;
     bool canPrune = true;
     for (size_t p = 0; p < probes.size() && canPrune; ++p)
     {
@@ -6768,13 +6822,14 @@ TTDProbeFramesResult TimeTravelController::ProbeFrames(const std::vector<control
         const TTDCoverageKind kind = q.access == TTDAccessType::Execute ? TTDCoverageKind::Executed
                                      : q.access == TTDAccessType::Write ? TTDCoverageKind::Written
                                                                         : TTDCoverageKind::Read;
-        prune.emplace_back(kind, q);
+        prune.emplace_back(kind, TTDCoverageOffsetSet{});
+        CoverageOffsets(q, prune.back().second);
     }
     auto pruned = [&](uint64_t frame) {
         if (!canPrune)
             return false;
-        for (const auto& [kind, q] : prune)
-            if (CoverageMayContain(kind, frame, q))
+        for (const auto& [kind, offsets] : prune)
+            if (CoverageMayContain(kind, frame, offsets))
                 return false;
         return true;
     };
@@ -7584,6 +7639,53 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
         return result;
     }
 
+    // A condition: checked during the replays at each wanted PC's instruction start, with the machine as the
+    // replay has it there (the moment a live execution breakpoint checks its own). The probe keeps only the
+    // instruction starts it holds for, so the walk below needs no change and the index still nominates the frames
+    BreakpointConditionPtr condition;
+    if (!query.condition.empty())
+    {
+        BreakpointManager* breakpoints =
+            _context->pDebugManager ? _context->pDebugManager->GetBreakpointsManager() : nullptr;
+        std::string error = "no debugger on this machine";
+        if (breakpoints)
+            condition = breakpoints->CompileCondition(BRK_MEMORY, BRK_MEM_EXECUTE, query.condition,
+                                                      BreakpointConditionDialect::Unreal, error);
+        if (condition && condition->UsesPrevious())
+        {
+            condition.reset();
+            error = "condition: x@prev has no meaning in a backward search (it would compare with a later moment)";
+        }
+        if (!condition)
+        {
+            result.error = error.rfind("condition", 0) == 0 ? error : "condition: " + error;
+            return result;
+        }
+    }
+    std::vector<uint64_t> conditionPcs;   // the wanted PCs as a 64K-bit set (the probe's filter)
+    TTDAccessProbe::ExecuteFilter filter;
+    if (condition)
+    {
+        conditionPcs.assign(0x10000 / 64, 0);
+        for (const uint16_t pc : query.pcs)
+            conditionPcs[pc >> 6] |= uint64_t{1} << (pc & 63);
+        filter.pcBits = conditionPcs.data();
+        filter.condition = [this, &condition]() {
+            BreakpointConditionContext x;
+            x.cpu = _context->pCore ? _context->pCore->GetZ80() : nullptr;
+            x.memory = _context->pMemory;
+            x.state = &_context->emulatorState;
+            x.machine = _context->pConditionMachine;
+            return condition->Evaluate(x) == BreakpointConditionResult::True;   // an error: not a hit
+        };
+    }
+    struct FilterScope
+    {
+        TTDAccessProbe& probe;
+        ~FilterScope() { probe.SetExecuteFilter(nullptr); }
+    } filterScope{_context->ttdProbe};
+    _context->ttdProbe.SetExecuteFilter(condition ? &filter : nullptr);
+
     const bool all = query.all || query.firstPerPc;
     const size_t limit = all ? std::clamp(query.limit, size_t{1}, kReverseHitLimitMax) : 1;
     std::vector<uint16_t> pcs = query.pcs;
@@ -7624,6 +7726,11 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     const TTDSessionState stateBefore = _state;
     if (all)
         SaveLiveState(_liveSnapshot);
+    // Single mode without a hit stays where it was. A candidate frame without a hit (an offset shared by
+    // several addresses, or a condition that does not hold) has replayed the machine elsewhere by then
+    LiveStateSnapshot here;
+    if (!all)
+        SaveLiveState(here);
 
     // One enumerated interval, newest instruction first. True: the walk is over (the limit, or a barrier)
     bool done = false;
@@ -7691,7 +7798,11 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     // them in one pass, differing only by N checkpoint restores. Measured with
     // 100 breakpoints: 65 ms per-frame against 76 ms bulk. An explicit bail-out
     // to the bulk path was tried and made it worse (97 ms), because the
-    // fruitless per-frame work is then paid twice.
+    // fruitless per-frame work is then paid twice. The PCs not hit yet are one
+    // offset set, so a frame's key set is decoded once whatever their number
+    // (RSI-bpset, Pentagon 128, 300 frames, no hit: 1 PC 0.53 ms against
+    // 602 ms unindexed; 16 PCs 286 / 332 ms; 1024 PCs 399 / 434 ms: past a
+    // few PCs one of their offsets runs in some bank, mostly ROM).
     // ------------------------------------------------------------------
     uint64_t coverFirst = 0, coverLast = 0;
     const bool coverageUsable =
@@ -7705,23 +7816,29 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
     {
         const uint64_t scanFrom = std::min<uint64_t>(TimePointAt(endT - 1).frame, coverLast);
         const uint64_t scanTo = std::max<uint64_t>(coverFirst, query.fromFrame);
+        // The PCs still searched for, as one offset set: one decode of a frame's executed keys answers for all of
+        // them (a decode per PC per frame cost more than the replays it saved once the set held tens of PCs).
+        // Rebuilt when first_per_pc retires a PC
+        TTDCoverageOffsetSet wanted;
+        size_t wantedHit = SIZE_MAX;
         for (uint64_t frame = scanFrom + 1; !done && frame-- > scanTo;)
         {
-            bool candidate = false;
-            for (size_t k = 0; k < pcs.size(); ++k)
+            if (wantedHit != pcsHit)
             {
-                if (hit[k])
-                    continue;
-                TTDSearchQuery at;   // the PC's offset in its page, either half on the Next's 8K slots
-                at.addrFrom = at.addrTo = pcs[k];
-                at.hasPhysPageFilter = hasPage;
-                at.physPage = page;
-                if (CoverageMayContain(TTDCoverageKind::Executed, frame, at))
+                wanted = TTDCoverageOffsetSet{};
+                for (size_t k = 0; k < pcs.size(); ++k)
                 {
-                    candidate = true;
-                    break;
+                    if (hit[k])
+                        continue;
+                    TTDSearchQuery at;   // the PC's offset in its page, either half on the Next's 8K slots
+                    at.addrFrom = at.addrTo = pcs[k];
+                    at.hasPhysPageFilter = hasPage;
+                    at.physPage = page;
+                    CoverageOffsets(at, wanted);
                 }
+                wantedHit = pcsHit;
             }
+            const bool candidate = CoverageMayContain(TTDCoverageKind::Executed, frame, wanted);
             // Enumerate only this frame, clipped to the bounds
             if (candidate)
                 collect(std::max(floorT, GlobalT(TTDTimePoint{frame, 0})),
@@ -7771,6 +7888,10 @@ TimeTravelController::ReverseContinue(const TTDReverseContinueQuery& query)
 
     if (result.hits.empty())
     {
+        ReplayModeScope restore(*this);
+        RestoreLiveState(here);
+        restore.Exit();
+        SetState(stateBefore);
         MLOGINFO("TimeTravelController::ReverseContinue — no PC match");
         return result;
     }
@@ -8214,20 +8335,14 @@ TTDCoverageProbeResult TimeTravelController::QueryCoverageProbe(
         return result;
     }
 
-    uint16_t offsetLow = addrFrom & 0x3FFF;
-    uint16_t offsetHigh = addrTo & 0x3FFF;
-    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
-    {
-        offsetLow = 0;
-        offsetHigh = 0x3FFF;
-    }
-
+    // The range's in-page offsets (CoverageOffsets): a range that wraps a 16 KB boundary is its two intervals, 16 KB
+    // or more (or a reversed range) every offset
     const bool hasPage = physPage.has_value();
     const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
     TTDSearchQuery q;
-    q.addrFrom = offsetLow;
-    q.addrTo = offsetHigh;
+    q.addrFrom = addrFrom;
+    q.addrTo = addrTo;
     q.hasPhysPageFilter = hasPage;
     q.physPage = page;
     result.touched = CoverageMayContain(kind, frame, q);   // both halves of a page on the Next's 8K slots
@@ -8275,14 +8390,8 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
         return result;
     }
 
-    uint16_t offsetLow = addrFrom & 0x3FFF;
-    uint16_t offsetHigh = addrTo & 0x3FFF;
-    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
-    {
-        offsetLow = 0;
-        offsetHigh = 0x3FFF;
-    }
-
+    // The range's in-page offsets (CoverageOffsets): a range that wraps a 16 KB boundary is its two intervals, 16 KB
+    // or more (or a reversed range) every offset
     const bool hasPage = physPage.has_value();
     const PhysPage page = hasPage ? *physPage : PhysPage{0};
 
@@ -8327,15 +8436,17 @@ TTDCoverageScanResult TimeTravelController::QueryCoverageScan(
         }
     };
     TTDSearchQuery q;
-    q.addrFrom = offsetLow;
-    q.addrTo = offsetHigh;
+    q.addrFrom = addrFrom;
+    q.addrTo = addrTo;
     q.hasPhysPageFilter = hasPage;
     q.physPage = page;
+    TTDCoverageOffsetSet offsets;
+    CoverageOffsets(q, offsets);   // both halves of a page on the Next's 8K slots
     for (uint64_t i = 0; i <= endFrame - startFrame; ++i)
     {
         const uint64_t f = newestFirst ? endFrame - i : startFrame + i;
         result.scannedFrames++;
-        if (CoverageMayContain(kind, f, q))   // both halves of a page on the Next's 8K slots
+        if (CoverageMayContain(kind, f, offsets))
             take(f);
     }
 
@@ -8368,22 +8479,16 @@ TTDCoverageRareResult TimeTravelController::QueryCoverageRare(
     if (startFrame > endFrame)
         return result;
 
-    // The range as QueryCoverageScan reads it: offsets in a page, every offset when it spans a page or more
-    uint16_t offsetLow = addrFrom & 0x3FFF;
-    uint16_t offsetHigh = addrTo & 0x3FFF;
-    if (addrTo < addrFrom || (addrTo - addrFrom) >= 0x3FFF || offsetLow > offsetHigh)
-    {
-        offsetLow = 0;
-        offsetHigh = 0x3FFF;
-    }
+    // The range as QueryCoverageScan reads it (CoverageOffsets): its offsets in a page - two intervals when it wraps
+    // a 16 KB boundary, every offset when it spans a page or more, either half on the Next's 8K slots
+    TTDSearchQuery q;
+    q.addrFrom = addrFrom;
+    q.addrTo = addrTo;
+    TTDCoverageOffsetSet offsets;
+    CoverageOffsets(q, offsets);
     const std::optional<uint32_t> pageField =
         physPage ? std::optional<uint32_t>(CoveragePageField(*physPage)) : std::nullopt;
-    // The keys name the byte's offset in its page: on the Next's 8K slots an address range means either half
-    const bool bothHalves = _memory && _memory->HasTtdSlots8k() && !((offsetLow ^ offsetHigh) & 0x2000);
-    auto offsetIn = [&](uint16_t offset) {
-        return (offset >= offsetLow && offset <= offsetHigh) ||
-               (bothHalves && (offset ^ 0x2000) >= offsetLow && (offset ^ 0x2000) <= offsetHigh);
-    };
+    auto offsetIn = [&](uint16_t offset) { return offsets.Contains(offset); };
 
     // Per key: its frame count, and its frames while they are few enough to list
     struct Seen

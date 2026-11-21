@@ -64,6 +64,10 @@ public:
     /// kMaxRunBackPcs addresses. Empty: none
     static std::string RunBackPcs(const BreakpointManager& breakpoints);
     static constexpr size_t kMaxRunBackPcs = 1024;
+    /// The same breakpoints' conditions as one reverse-continue `condition`: "(PC >= #8000 && PC <= #8000 && (A ==
+    /// 5)) || (PC >= #9000 && PC <= #9000)" - a breakpoint without one holds at its addresses. Empty when no enabled
+    /// execution breakpoint has a condition
+    static std::string RunBackCondition(const BreakpointManager& breakpoints);
     /// The moment's card part: "gs at instruction 1200, PC #0A3C; main CPU PC #8009, +7 T into the next instruction"
     /// for the card the machine stands at a position of (", at its instruction boundary" when not inside one); empty
     /// without a card position

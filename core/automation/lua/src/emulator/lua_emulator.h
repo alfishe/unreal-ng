@@ -6903,7 +6903,8 @@ public:
             return sol::make_object(ts, sol::lua_nil);
         });
 
-        // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=})
+        // ttd_reverse_continue({pcs}, {phys_page=, all=, first_per_pc=, limit=, before_frame=, before_tin=, before=, from_frame=,
+        // condition=})
         lua.set_function("ttd_reverse_continue", [this](sol::this_state ts, sol::table pcsTable,
                                                         sol::optional<sol::table> optionsTable) -> sol::object {
             std::string pcs;

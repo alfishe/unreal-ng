@@ -1298,6 +1298,8 @@ ttd_card_position()                  --> every card CPU (an array)
 -- --> { hits = { {frame, tinframe, t, pc, phys_page}, ... }, count, truncated, next_before, ... }
 -- first_per_pc = true: one hit per PC (its newest), the walk ends once each has one; pcs_without_hit names the rest
 local last = ttd_reverse_continue({0x8200, 0x9A10, 0xC000}, { first_per_pc = true })
+-- condition: only hits where a breakpoint condition holds at the instruction's start
+local hit = ttd_reverse_continue({0x8200}, { condition = "A == 5 && M(#5C78) > 3" })
 ```
 
 **Reverse search:**

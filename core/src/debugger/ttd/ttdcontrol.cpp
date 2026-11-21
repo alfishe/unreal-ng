@@ -522,8 +522,8 @@ const std::vector<std::string>& TTDControl::OptionsFor(const std::string& verb)
         {"port-events", {"*"}},
         {"find-last", {"addr", "addr_from", "addr_to", "access", "value", "pc_from", "pc_to", "phys_page", "space",
                        "before_frame", "before_tin", "before", "changes_only", "all", "limit", "from_frame"}},
-        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "limit", "before_frame", "before_tin", "before",
-                              "from_frame", "cpu", "max_frames"}},
+        {"reverse-continue", {"pcs", "phys_page", "all", "first_per_pc", "condition", "limit", "before_frame",
+                              "before_tin", "before", "from_frame", "cpu", "max_frames"}},
         {"coverage-probe", {"frame", "kind", "addr_from", "addr_to", "phys_page", "space"}},
         {"coverage-scan", {"from_frame", "to_frame", "kind", "addr_from", "addr_to", "phys_page", "space", "limit",
                            "order", "ranges"}},
@@ -3667,12 +3667,17 @@ TTDReply TTDControlBackend::ReverseContinue(const TTDRequest& request)
         return Fail(TTDControlError::BadRequest, err);
     if (std::string err = SearchBounds(request, query.beforeGlobalT, query.fromFrame); !err.empty())
         return Fail(TTDControlError::BadRequest, err);
+    // condition: only hits where it holds at the instruction's start (the breakpoint condition language)
+    if (const std::string* t = Option(request, "condition"))
+        query.condition = *t;
 
     if (TTDReply refusal; RefuseWhileRecording(refusal, true))
         return refusal;
     PauseAndConfirm();
     TTDReverseContinueResult r;
     r = _manager->ReverseContinue(query);
+    if (!r.error.empty())
+        return Fail(TTDControlError::BadRequest, r.error);
     const bool list = query.all || query.firstPerPc;
     if (!list)
         NotifyFrameRefresh();

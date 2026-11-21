@@ -516,6 +516,8 @@ void CLIProcessor::ShowTTDHelp(const ClientSession& session)
     ss << "      [--phys-page P|rom] [--all] [--limit N] [--before-frame F [--before-tin T] | --before T] [--from-frame F]"
        << NEWLINE;
     ss << "    [--pc <B> ...]                    (repeat --pc for multiple breakpoints)" << NEWLINE;
+    ss << "    [--condition <expression>]        Only where it holds at the instruction (last: the rest of the line)"
+       << NEWLINE;
     ss << "  ttd probe-frames <exec|read|write|port-in|port-out> <address>   The frames a profile probe fired in" << NEWLINE;
     ss << "      [--end A] [--page N] [--port-mask M] [--if \"COND\"] | --probes '[{...}, ...]'" << NEWLINE;
     ss << "      [--from-frame F] [--to-frame F] [--limit N]   (replays the window; the machine stays)" << NEWLINE;
@@ -1929,6 +1931,14 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
             options["all"] = "true";
         else if (args[i] == "--first-per-pc")
             options["first_per_pc"] = "true";   // the list, each PC's newest hit only
+        else if (args[i] == "--condition" && i + 1 < args.size())
+        {
+            // Only hits where it holds: the rest of the line is the condition (it may hold spaces)
+            std::string condition;
+            while (++i < args.size())
+                condition += (condition.empty() ? "" : " ") + args[i];
+            options["condition"] = condition;
+        }
         else if (flag != flags.end() && i + 1 < args.size())
             options[flag->second] = args[++i];
     }
@@ -1936,7 +1946,7 @@ void CLIProcessor::HandleTTDReverseContinue(const ClientSession& session, Emulat
     {
         session.SendResponse(std::string("Error: --pc is required (at least one)") + NEWLINE +
                              "Usage: ttd reverse-continue --pc <A> [--pc <B> ...] [--phys-page P|rom] [--all | --first-per-pc] [--limit N] "
-                             "[--before-frame F [--before-tin T] | --before T] [--from-frame F]" + NEWLINE);
+                             "[--before-frame F [--before-tin T] | --before T] [--from-frame F] [--condition <expression>]" + NEWLINE);
         return;
     }
     options["pcs"] = pcs;
